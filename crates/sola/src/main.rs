@@ -5,7 +5,12 @@ use tracing_subscriber::util::SubscriberInitExt;
 /// Sola desktop shell — a Wayland compositor with WebView-based UI.
 #[derive(Parser)]
 #[command(name = "sola", about = "Sola desktop shell")]
-struct Cli {}
+struct Cli {
+    /// Inherit a Wayland listening socket FD from a previous instance.
+    /// Used internally for seamless restart — not meant to be set manually.
+    #[arg(long)]
+    wayland_fd: Option<i32>,
+}
 
 fn main() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -29,11 +34,11 @@ fn main() {
         .with(file_layer)
         .init();
 
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
 
     tracing::info!("sola starting (logs → stderr + {log_dir}/sola.log)");
 
-    if let Err(err) = sola_compositor::run() {
+    if let Err(err) = sola_compositor::run(cli.wayland_fd) {
         tracing::error!(%err, "compositor exited with error");
         std::process::exit(1);
     }

@@ -1,8 +1,8 @@
 /// Minimal Wayland test client for Sola.
 ///
 /// Connects to the Wayland compositor, creates a solid blue window, and
-/// prints all pointer/keyboard events to stdout. Used to verify native
-/// Wayland client support without XWayland in the path.
+/// prints all pointer/keyboard events to stdout. Reconnects automatically
+/// if the compositor restarts (seamless restart support).
 ///
 /// Usage: WAYLAND_DISPLAY=wayland-0 sola-wtest
 use std::os::unix::io::{AsFd, AsRawFd, FromRawFd};
@@ -18,7 +18,35 @@ const WIDTH: i32 = 400;
 const HEIGHT: i32 = 300;
 
 fn main() {
-    let conn = Connection::connect_to_env().expect("failed to connect to Wayland display");
+    println!("sola-wtest: starting");
+
+    loop {
+        match run_session() {
+            SessionResult::Quit => {
+                println!("sola-wtest: exiting");
+                break;
+            }
+            SessionResult::Disconnected => {
+                println!("sola-wtest: compositor disconnected, reconnecting in 1s...");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+    }
+}
+
+enum SessionResult {
+    Quit,
+    Disconnected,
+}
+
+fn run_session() -> SessionResult {
+    let conn = match Connection::connect_to_env() {
+        Ok(c) => c,
+        Err(e) => {
+            println!("sola-wtest: connect failed: {e}, retrying...");
+            return SessionResult::Disconnected;
+        }
+    };
     let display = conn.display();
 
     let mut event_queue = conn.new_event_queue::<App>();
@@ -28,19 +56,30 @@ fn main() {
 
     let mut app = App::default();
 
-    // Round-trip to bind globals.
-    event_queue.roundtrip(&mut app).expect("roundtrip failed");
+    if event_queue.roundtrip(&mut app).is_err() {
+        return SessionResult::Disconnected;
+    }
 
-    let compositor = app.compositor.clone().expect("wl_compositor not found");
-    let shm = app.shm.clone().expect("wl_shm not found");
-    let xdg_wm_base = app.xdg_wm_base.clone().expect("xdg_wm_base not found");
-    let seat = app.seat.clone().expect("wl_seat not found");
+    let compositor = match app.compositor.clone() {
+        Some(c) => c,
+        None => return SessionResult::Disconnected,
+    };
+    let shm = match app.shm.clone() {
+        Some(s) => s,
+        None => return SessionResult::Disconnected,
+    };
+    let xdg_wm_base = match app.xdg_wm_base.clone() {
+        Some(x) => x,
+        None => return SessionResult::Disconnected,
+    };
+    let seat = match app.seat.clone() {
+        Some(s) => s,
+        None => return SessionResult::Disconnected,
+    };
 
-    // Get pointer and keyboard from seat.
     seat.get_pointer(&qh, ());
     seat.get_keyboard(&qh, ());
 
-    // Create surface + xdg_surface + xdg_toplevel.
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
@@ -48,8 +87,9 @@ fn main() {
     toplevel.set_app_id("sola-wtest".into());
     surface.commit();
 
-    // Wait for configure.
-    event_queue.roundtrip(&mut app).expect("roundtrip failed");
+    if event_queue.roundtrip(&mut app).is_err() {
+        return SessionResult::Disconnected;
+    }
 
     // Create a shared memory buffer with solid blue pixels.
     let stride = WIDTH * 4;
@@ -59,7 +99,7 @@ fn main() {
     let pool = shm.create_pool(file.as_fd(), size as i32, &qh, ());
     let buffer = pool.create_buffer(0, WIDTH, HEIGHT, stride, wl_shm::Format::Xrgb8888, &qh, ());
 
-    // Fill with blue (XRGB8888: XX RR GG BB in little-endian = bytes BB GG RR XX).
+    // Fill with blue.
     unsafe {
         let ptr = libc::mmap(
             std::ptr::null_mut(),
@@ -85,13 +125,14 @@ fn main() {
 
     app.running = true;
     println!("sola-wtest: window opened, waiting for events...");
-    println!("Move mouse over window, click, press keys. Press 'q' to quit.");
 
     while app.running {
-        event_queue
-            .blocking_dispatch(&mut app)
-            .expect("dispatch failed");
+        if event_queue.blocking_dispatch(&mut app).is_err() {
+            return SessionResult::Disconnected;
+        }
     }
+
+    SessionResult::Quit
 }
 
 /// Create an anonymous shared memory file for wl_shm.
@@ -100,7 +141,6 @@ fn create_shm_file(size: usize) -> std::fs::File {
     let name = CString::new("/sola-wtest-shm").unwrap();
 
     unsafe {
-        // Clean up any stale file, then create fresh.
         libc::shm_unlink(name.as_ptr());
         let fd = libc::shm_open(
             name.as_ptr(),
@@ -108,7 +148,7 @@ fn create_shm_file(size: usize) -> std::fs::File {
             0o600,
         );
         assert!(fd >= 0, "shm_open failed");
-        libc::shm_unlink(name.as_ptr()); // Unlink immediately; fd keeps it alive.
+        libc::shm_unlink(name.as_ptr());
         libc::ftruncate(fd, size as libc::off_t);
         std::fs::File::from_raw_fd(fd)
     }

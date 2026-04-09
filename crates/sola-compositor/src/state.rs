@@ -9,6 +9,7 @@
 /// which would violate Rust's borrowing rules if both lived in the same struct.
 /// The `Display` is kept as a separate local in `run()`.
 use std::collections::{HashMap, HashSet};
+use std::os::unix::io::RawFd;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -122,6 +123,10 @@ pub struct Sola {
     /// `map_window_request` and `surface_associated` have fired.
     pub xwayland_mapped: HashSet<smithay::xwayland::xwm::X11Window>,
 
+    /// Raw FD of the Wayland listening socket. Stored so the restart path
+    /// can preserve it across execv by clearing FD_CLOEXEC.
+    pub wayland_socket_fd: Option<RawFd>,
+
     /// The cursor image loaded from the xcursor theme. `None` if loading failed.
     pub cursor_buffer: Option<MemoryRenderBuffer>,
 
@@ -173,6 +178,7 @@ impl Sola {
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             restart_requested: Arc::new(AtomicBool::new(false)),
+            wayland_socket_fd: None,
             dmabuf_state: None,
             xwm: None,
             xwayland_shell_state: None,

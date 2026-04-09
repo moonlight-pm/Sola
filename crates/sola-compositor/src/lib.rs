@@ -13,6 +13,8 @@ pub mod state;
 pub mod types;
 pub mod wayland;
 
+use std::os::unix::io::RawFd;
+
 use smithay::backend::session::Session;
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
@@ -26,7 +28,10 @@ pub use state::Sola;
 /// Initializes all subsystems in order, enters the event loop, then
 /// performs graceful shutdown (with optional restart if the binary
 /// was replaced on disk).
-pub fn run() -> Result<(), CompositorError> {
+///
+/// `wayland_fd`: If provided, adopt this FD as the Wayland listening socket
+/// instead of creating a new one. Used for seamless restart after execv.
+pub fn run(wayland_fd: Option<RawFd>) -> Result<(), CompositorError> {
     tracing::info!("sola compositor starting");
 
     let mut event_loop: EventLoop<Sola> =
@@ -68,7 +73,8 @@ pub fn run() -> Result<(), CompositorError> {
     backend::watcher::watch_binary(sola.restart_requested.clone());
 
     // -- Wayland socket --
-    let socket_name = backend::socket::listen(&event_loop.handle())?;
+    let (socket_name, socket_fd) = backend::socket::listen(&event_loop.handle(), wayland_fd)?;
+    sola.wayland_socket_fd = Some(socket_fd);
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &socket_name) };
 
     // -- XWayland --

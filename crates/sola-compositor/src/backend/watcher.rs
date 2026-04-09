@@ -98,9 +98,9 @@ pub fn watch_binary(restart_flag: Arc<AtomicBool>) {
 
 /// Replace the current process with a fresh copy of the binary.
 ///
-/// Should be called AFTER graceful shutdown (XWayland, Wayland socket, DRM
-/// devices all dropped) so lock files and sockets are released.
-pub fn exec_new_binary() -> ! {
+/// If `socket_fd` is provided, passes `--wayland-fd <N>` to the new process
+/// so it can adopt the preserved listening socket.
+pub fn exec_new_binary(socket_fd: Option<std::os::unix::io::RawFd>) -> ! {
     let mut exe =
         std::env::current_exe().expect("cannot resolve binary for restart");
 
@@ -113,11 +113,30 @@ pub fn exec_new_binary() -> ! {
     let exe_cstr = CString::new(exe.as_os_str().as_encoded_bytes().to_vec())
         .expect("binary path contains null byte");
 
-    let args: Vec<CString> = std::env::args()
-        .map(|a| CString::new(a).expect("arg contains null byte"))
+    // Build args: original args (minus any previous --wayland-fd) plus the new FD.
+    let mut args: Vec<CString> = std::env::args()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .scan(false, |skip_next, arg| {
+            if *skip_next {
+                *skip_next = false;
+                return Some(None); // skip the value after --wayland-fd
+            }
+            if arg == "--wayland-fd" {
+                *skip_next = true;
+                return Some(None); // skip --wayland-fd itself
+            }
+            Some(Some(CString::new(arg).expect("arg contains null byte")))
+        })
+        .flatten()
         .collect();
 
-    tracing::info!(path = %exe.display(), "execv");
+    if let Some(fd) = socket_fd {
+        args.push(CString::new("--wayland-fd").unwrap());
+        args.push(CString::new(fd.to_string()).unwrap());
+    }
+
+    tracing::info!(path = %exe.display(), ?socket_fd, "execv");
 
     match nix::unistd::execv(&exe_cstr, &args) {
         Ok(infallible) => match infallible {},

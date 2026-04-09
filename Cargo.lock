@@ -1214,6 +1214,7 @@ name = "sola-compositor"
 version = "0.1.0"
 dependencies = [
  "drm-fourcc",
+ "libc",
  "nix",
  "notify",
  "smithay",
