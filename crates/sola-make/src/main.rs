@@ -95,13 +95,20 @@ fn deploy_canto() {
     println!("Preparing canto...");
     run_or_exit("ssh", &["canto", "mkdir -p /opt/sola/bin /opt/sola/log"]);
 
-    println!("Deploying sola to canto...");
-    run_or_exit(
-        "rsync",
-        &["-az", "--progress", "target/release/sola", "canto:/opt/sola/bin/"],
-    );
+    // Deploy all binaries from target/release that start with "sola".
+    println!("Deploying binaries to canto...");
+    for name in &["sola", "sola-xtest"] {
+        let src = format!("target/release/{name}");
+        if std::path::Path::new(&src).exists() {
+            run_or_exit(
+                "rsync",
+                &["-az", "--progress", &src, "canto:/opt/sola/bin/"],
+            );
+            println!("  deployed {name}");
+        }
+    }
 
-    println!("Deployed to canto:/opt/sola/bin/sola");
+    println!("Deployed to canto:/opt/sola/bin/");
 }
 
 /// Run an external command, exiting on failure.

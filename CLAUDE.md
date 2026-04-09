@@ -45,6 +45,11 @@ docs/
 - Always use `cargo make build` and `cargo make deploy canto` — never raw `cargo build` or `rsync`.
 - This ensures our build system stays tested and current.
 
+### Debugging
+- Before adding debug logging or guessing at fixes, look up how reference implementations handle the same problem. Check niri, anvil, cosmic-comp, or Smithay docs first.
+- Read the actual Smithay source for the API you're calling — don't assume signatures or behavior.
+- One targeted fix based on understanding beats five speculative attempts.
+
 ### Code Quality
 - This is a deliberate, careful rebuild. The user reviews and approves all code.
 - Keep modules small and focused. Prefer many small files over few large ones.
