@@ -105,9 +105,9 @@ pub fn run() -> Result<(), CompositorError> {
     backend::input::setup(&event_loop.handle(), &sola.session)?;
 
     // -- Binary watcher --
-    // Restart the compositor when the binary is replaced on disk (deploy).
-    // Runs in a separate thread, independent of the event loop.
-    backend::watcher::watch_binary();
+    // Uses inotify to watch the binary's parent directory for changes.
+    // Sets restart_requested flag; the main loop handles graceful shutdown.
+    backend::watcher::watch_binary(sola.restart_requested.clone());
 
     // -- Wayland socket --
     // Create the socket that clients connect to. Set WAYLAND_DISPLAY so
@@ -183,8 +183,13 @@ pub fn run() -> Result<(), CompositorError> {
 
     tracing::info!("entering event loop");
     while sola.running {
-        // Update Space bookkeeping — sends output enter/leave events to
-        // clients and cleans up dead windows.
+        // Check if the binary watcher requested a restart.
+        if sola.restart_requested.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!("restart requested by binary watcher");
+            sola.running = false;
+            break;
+        }
+
         sola.space.refresh();
 
         display
@@ -194,9 +199,6 @@ pub fn run() -> Result<(), CompositorError> {
             .flush_clients()
             .map_err(|e| CompositorError::Display(e.to_string()))?;
 
-        // Render all outputs. If new damage exists (window mapped, surface
-        // committed), this will composite and page-flip. If no damage,
-        // render_frame returns is_empty and we skip the flip — no waste.
         render::render_all(&mut sola);
 
         event_loop
@@ -204,11 +206,23 @@ pub fn run() -> Result<(), CompositorError> {
             .map_err(|e| CompositorError::EventLoop(e.to_string()))?;
     }
 
+    let should_restart = sola.restart_requested.load(std::sync::atomic::Ordering::Relaxed);
+
     tracing::info!("sola compositor shutting down");
 
-    // Drop DRM devices while we still hold the session and event loop.
-    // See comment in error.rs about the Smithay/libseat DRM master quirk.
+    sola.xwm = None;
     sola.devices.clear();
+    drop(display);
+    drop(event_loop);
+
+    if should_restart {
+        // Remove X11 lock file so the new process can bind to :0.
+        // The old XWayland is dead (killed by event loop drop) but may
+        // not have cleaned up its lock file yet.
+        let _ = std::fs::remove_file("/tmp/.X0-lock");
+        let _ = std::fs::remove_file("/tmp/.X11-unix/X0");
+        backend::watcher::exec_new_binary();
+    }
 
     Ok(())
 }
