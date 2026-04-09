@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 
 use smithay::backend::drm::DrmNode;
+use smithay::backend::renderer::element::memory::MemoryRenderBuffer;
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::desktop::{Space, Window};
 use smithay::input::{Seat, SeatState};
@@ -90,6 +91,13 @@ pub struct Sola {
 
     /// Current pointer position in compositor-space coordinates.
     pub pointer_location: (f64, f64),
+
+    /// The cursor image loaded from the xcursor theme. `None` if loading failed.
+    pub cursor_buffer: Option<MemoryRenderBuffer>,
+
+    /// The cursor hotspot — the pixel offset within the cursor image that
+    /// represents the actual click point.
+    pub cursor_hotspot: (i32, i32),
 }
 
 impl Sola {
@@ -131,6 +139,8 @@ impl Sola {
             seat,
             space: Space::default(),
             pointer_location: (0.0, 0.0),
+            cursor_buffer: None,
+            cursor_hotspot: (0, 0),
         }
     }
 }

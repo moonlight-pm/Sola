@@ -4,6 +4,7 @@
 /// Wayland protocol handling, output management, and rendering.
 
 pub mod backend;
+pub mod cursor;
 pub mod error;
 pub mod output;
 pub mod state;
@@ -61,6 +62,14 @@ pub fn run() -> Result<(), CompositorError> {
     let gpu_manager = backend::gpu::create_manager()?;
 
     let mut sola = Sola::new(dh, event_loop.handle(), session, gpu_manager, primary_gpu);
+
+    // Load the cursor image from the system xcursor theme.
+    if let Some((buffer, hotspot)) = cursor::load_default() {
+        sola.cursor_buffer = Some(buffer);
+        sola.cursor_hotspot = hotspot;
+    } else {
+        tracing::warn!("failed to load cursor from xcursor theme");
+    }
 
     event_loop
         .handle()

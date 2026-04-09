@@ -1,27 +1,20 @@
 /// Frame rendering and DRM output management types.
 ///
-/// Provides type aliases for the concrete DRM output types, the VBlank
-/// handler, and the render function.
-///
-/// ## The render loop
-///
-/// ```text
-/// render_output() → queue_frame() → [hardware scans out] → VBlank fires
-///     ↑                                                          |
-///     └──── frame_submitted() ← on_vblank() ←───────────────────┘
-/// ```
-///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/drm/output/index.html
 use smithay::backend::allocator::gbm::GbmAllocator;
 use smithay::backend::drm::compositor::FrameFlags;
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::output::{DrmOutput, DrmOutputManager};
 use smithay::backend::drm::{DrmDeviceFd, DrmNode};
+use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
+use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::texture::TextureRenderElement;
+use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::multigpu::gbm::GbmGlesBackend;
 use smithay::backend::renderer::multigpu::{MultiRenderer, MultiTexture};
 use smithay::backend::renderer::Color32F;
+use smithay::desktop::space::SpaceRenderElements;
 use smithay::reexports::drm::control::crtc;
 use smithay::utils::IsAlive;
 
@@ -30,28 +23,33 @@ use crate::Sola;
 /// Background color — dark blue-gray.
 pub const CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.2, 1.0);
 
-// -- Type aliases for concrete Smithay types --
+// -- Type aliases --
 
 type GlesBackend = GbmGlesBackend<GlesRenderer, DrmDeviceFd>;
 
-/// The multi-GPU renderer type returned by `GpuManager::single_renderer()`.
+/// The multi-GPU renderer type.
 pub type SolaRenderer<'a> = MultiRenderer<'a, 'a, GlesBackend, GlesBackend>;
 
-/// Simple texture element type — used for initialization and non-window elements.
+/// Simple texture element type — used for initialization.
 pub type Element = TextureRenderElement<MultiTexture>;
 
-/// DRM output manager — owns the DRM device and manages compositors.
 pub type SolaOutputManager =
     DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
 
-/// A single DRM output handle (one per connected display).
 pub type SolaOutput =
     DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
 
+// Combined render element enum — holds both window surfaces and cursor.
+// Pinned to our concrete SolaRenderer rather than being generic, because
+// SpaceRenderElements requires ImportAll (ImportMemWl + ImportDmaWl) which
+// is hard to express in the render_elements! macro's `where` clause.
+smithay::backend::renderer::element::render_elements! {
+    pub OutputElement<='a, SolaRenderer<'a>>;
+    Space=SpaceRenderElements<SolaRenderer<'a>, WaylandSurfaceRenderElement<SolaRenderer<'a>>>,
+    Cursor=MemoryRenderBufferRenderElement<SolaRenderer<'a>>,
+}
+
 /// Handle a VBlank event (page flip complete) for a CRTC.
-///
-/// This is the heartbeat of the render loop: release the old buffer,
-/// send frame callbacks to clients, then render and submit the next frame.
 pub fn on_vblank(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
     let Some(device) = sola.devices.get_mut(&node) else {
         return;
@@ -65,8 +63,7 @@ pub fn on_vblank(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
         return;
     }
 
-    // Send frame callbacks to clients so they know they can submit their
-    // next frame. Without this, clients stall waiting for acknowledgement.
+    // Send frame callbacks to clients.
     let time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -83,13 +80,7 @@ pub fn on_vblank(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
 }
 
 /// Render all outputs across all devices.
-///
-/// Called from the main event loop to ensure any new damage (new windows,
-/// surface commits) gets rendered. If the frame has no damage,
-/// `render_frame` returns `is_empty = true` and we skip the queue — no
-/// wasted page flips.
 pub fn render_all(sola: &mut Sola) {
-    // Collect (node, crtc) pairs to avoid borrow conflicts.
     let targets: Vec<(DrmNode, crtc::Handle)> = sola
         .devices
         .iter()
@@ -104,9 +95,6 @@ pub fn render_all(sola: &mut Sola) {
 }
 
 /// Render a frame for a specific output and submit it for scanout.
-///
-/// Collects window surfaces from the Space, composites them with the
-/// background color, and submits the result to the DRM output.
 pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
     let device = sola.devices.get_mut(&node).unwrap();
     let render_node = device.render_node;
@@ -119,16 +107,43 @@ pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
         }
     };
 
-    // Get render elements from the Space. The elements have the renderer's
-    // lifetime, so we collect them into a Vec before passing to render_frame.
+    // Collect space elements (window surfaces).
     let output = sola.space.outputs().next().cloned();
-    let elements = if let Some(ref output) = output {
+    let mut elements: Vec<OutputElement> = if let Some(ref output) = output {
         sola.space
             .render_elements_for_output(&mut renderer, output, 1.0)
             .unwrap_or_default()
+            .into_iter()
+            .map(OutputElement::Space)
+            .collect()
     } else {
         vec![]
     };
+
+    // Add cursor element at the pointer position.
+    if let Some(ref cursor_buffer) = sola.cursor_buffer {
+        let (hx, hy) = sola.cursor_hotspot;
+        let (px, py) = sola.pointer_location;
+        // Position the cursor image so the hotspot aligns with the pointer.
+        let cursor_pos = (px as i32 - hx, py as i32 - hy);
+
+        match MemoryRenderBufferRenderElement::from_buffer(
+            &mut renderer,
+            (cursor_pos.0 as f64, cursor_pos.1 as f64),
+            cursor_buffer,
+            None,
+            None,
+            None,
+            Kind::Cursor,
+        ) {
+            Ok(cursor_element) => {
+                elements.push(OutputElement::Cursor(cursor_element));
+            }
+            Err(err) => {
+                tracing::warn!(?err, "failed to create cursor render element");
+            }
+        }
+    }
 
     let drm_output = device.outputs.get_mut(&crtc).unwrap();
 

@@ -31,7 +31,6 @@ impl CompositorHandler for Sola {
     /// its bounding box.
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
-        tracing::info!("surface commit");
 
         if let Some(window) = self.space.elements().find(|w| {
             w.toplevel()
