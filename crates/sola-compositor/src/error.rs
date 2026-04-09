@@ -24,6 +24,9 @@ pub enum CompositorError {
     #[error("input: {0}")]
     Input(#[from] InputError),
 
+    #[error("socket: {0}")]
+    Socket(#[from] SocketError),
+
     #[error("udev: {0}")]
     Udev(#[from] io::Error),
 
@@ -74,6 +77,16 @@ pub enum DeviceError {
 
     #[error("failed to register event source for {node:?}: {reason}")]
     EventSource { node: DrmNode, reason: String },
+}
+
+/// Wayland socket errors.
+#[derive(Debug, Error)]
+pub enum SocketError {
+    #[error("failed to bind Wayland socket: {0}")]
+    Bind(String),
+
+    #[error("failed to register socket event source: {0}")]
+    EventSource(String),
 }
 
 /// Input subsystem errors.

@@ -12,6 +12,7 @@ use std::collections::HashMap;
 
 use smithay::backend::drm::DrmNode;
 use smithay::backend::session::libseat::LibSeatSession;
+use smithay::desktop::{Space, Window};
 use smithay::input::SeatState;
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_server::DisplayHandle;
@@ -70,6 +71,14 @@ pub struct Sola {
 
     /// Tracks `xdg_wm_base` — desktop window management (toplevel + popup).
     pub xdg_shell_state: XdgShellState,
+
+    // -- Desktop state --
+
+    /// Tracks mapped windows and their positions on outputs.
+    /// `Space` is Smithay's built-in window manager: it handles z-order,
+    /// output assignment, and provides render elements for compositing.
+    /// `Window` is Smithay's wrapper around a toplevel surface.
+    pub space: Space<Window>,
 }
 
 impl Sola {
@@ -101,6 +110,7 @@ impl Sola {
             data_device_state,
             output_manager_state,
             xdg_shell_state,
+            space: Space::default(),
         }
     }
 }

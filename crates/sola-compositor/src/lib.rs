@@ -86,6 +86,15 @@ pub fn run() -> Result<(), CompositorError> {
     // -- Input --
     backend::input::setup(&event_loop.handle(), &sola.session)?;
 
+    // -- Wayland socket --
+    // Create the socket that clients connect to. Set WAYLAND_DISPLAY so
+    // child processes (and clients launched from the same session) can
+    // find the compositor.
+    let socket_name = backend::socket::listen(&event_loop.handle())?;
+    // Safety: we set this before spawning any threads or child processes,
+    // and no other thread is reading environment variables concurrently.
+    unsafe { std::env::set_var("WAYLAND_DISPLAY", &socket_name) };
+
     // Listen for GPU hotplug events.
     event_loop
         .handle()
@@ -100,6 +109,10 @@ pub fn run() -> Result<(), CompositorError> {
 
     tracing::info!("entering event loop");
     while sola.running {
+        // Update Space bookkeeping — sends output enter/leave events to
+        // clients and cleans up dead windows.
+        sola.space.refresh();
+
         display
             .dispatch_clients(&mut sola)
             .map_err(|e| CompositorError::Display(e.to_string()))?;
@@ -197,6 +210,10 @@ fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> Result
         wl_output.change_current_state(Some(wl_mode), Some(Transform::Normal), None, None);
         wl_output.set_preferred(wl_mode);
         wl_output.create_global::<Sola>(&sola.display_handle);
+
+        // Register the output with the Space so it knows where to place windows
+        // and which render elements belong to which display.
+        sola.space.map_output(&wl_output, (0, 0));
 
         let mut render_elements =
             DrmOutputRenderElements::<SolaRenderer, Element>::new();
