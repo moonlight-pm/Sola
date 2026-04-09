@@ -1,24 +1,27 @@
 /// Input device handling via libinput.
 ///
-/// Sets up libinput, tracks modifier state, and dispatches raw key events.
-/// Keybinding logic (what actions keys trigger) lives here temporarily
-/// but will move to a shell layer as the compositor grows.
+/// Sets up libinput, tracks modifier state, checks compositor keybindings,
+/// and forwards keyboard/pointer events through the Wayland seat so
+/// focused clients receive them.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/libinput/index.html
-use smithay::backend::input::{InputEvent, KeyState, KeyboardKeyEvent};
+use smithay::backend::input::{
+    AbsolutePositionEvent, Event, InputEvent, KeyState, KeyboardKeyEvent,
+    PointerButtonEvent, PointerMotionEvent,
+};
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::Session;
+use smithay::input::keyboard::FilterResult;
+use smithay::input::pointer::{ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::input::Libinput;
+use smithay::utils::SERIAL_COUNTER;
 
 use crate::Sola;
 use crate::error::InputError;
 
-/// Key codes as reported by libinput on canto's Mac keyboard.
-///
-/// Evdev codes offset by +8 from raw Linux input codes (XKB convention).
-/// Discovered empirically via key logging.
+/// Key codes (evdev + 8 offset, XKB convention).
 pub mod keycode {
     pub const BACKSPACE: u32 = 22;
     pub const LEFT_SHIFT: u32 = 50;
@@ -33,8 +36,6 @@ pub struct ModifierState {
 }
 
 impl ModifierState {
-    /// Update modifier tracking for a key event.
-    /// Returns `true` if the key was a modifier (and was consumed).
     pub fn update(&mut self, code: u32, pressed: bool) -> bool {
         match code {
             keycode::LEFT_SUPER => {
@@ -59,7 +60,6 @@ pub enum Action {
 
 /// Check if a key event triggers a compositor-level action.
 pub fn check_binding(code: u32, pressed: bool, modifiers: &ModifierState) -> Action {
-    // Super + Shift + Backspace → quit (on release).
     if !pressed
         && code == keycode::BACKSPACE
         && modifiers.super_held
@@ -91,35 +91,115 @@ pub fn setup(
 
     loop_handle
         .insert_source(libinput_backend, move |event, _, sola| {
-            if let InputEvent::Keyboard { event } = event {
-                let code = event.key_code().raw();
-                let pressed = event.state() == KeyState::Pressed;
+            match event {
+                InputEvent::Keyboard { event } => {
+                    let code = event.key_code().raw();
+                    let pressed = event.state() == KeyState::Pressed;
 
-                modifiers.update(code, pressed);
+                    modifiers.update(code, pressed);
 
-                tracing::debug!(
-                    code,
-                    state = if pressed { "pressed" } else { "released" },
-                    super_held = modifiers.super_held,
-                    shift_held = modifiers.shift_held,
-                    "key event"
-                );
+                    tracing::debug!(code, pressed, "key event");
 
-                match check_binding(code, pressed, &modifiers) {
-                    Action::Quit => {
-                        tracing::info!(
-                            "kill chord (Super+Shift+Backspace released), shutting down"
-                        );
-                        sola.running = false;
+                    match check_binding(code, pressed, &modifiers) {
+                        Action::Quit => {
+                            tracing::info!("kill chord, shutting down");
+                            sola.running = false;
+                            return;
+                        }
+                        Action::None => {}
                     }
-                    Action::None => {}
+
+                    // Forward keyboard event through the seat to the focused client.
+                    let serial = SERIAL_COUNTER.next_serial();
+                    let time = event.time_msec();
+                    {
+                        let keyboard = sola.seat.get_keyboard().unwrap();
+                        keyboard.input::<(), _>(
+                            sola,
+                            event.key_code(),
+                            event.state(),
+                            serial,
+                            time,
+                            |_, _, _| FilterResult::Forward,
+                        );
+                    }
                 }
+
+                InputEvent::PointerMotion { event } => {
+                    // Relative motion (mouse). Accumulate into pointer position.
+                    let delta = event.delta();
+                    let (max_x, max_y) = output_size(sola);
+                    sola.pointer_location.0 = (sola.pointer_location.0 + delta.x).clamp(0.0, max_x);
+                    sola.pointer_location.1 = (sola.pointer_location.1 + delta.y).clamp(0.0, max_y);
+
+                    forward_pointer_motion(sola);
+                }
+
+                InputEvent::PointerMotionAbsolute { event } => {
+                    // Absolute motion (touchpad or tablet).
+                    let (max_x, max_y) = output_size(sola);
+                    sola.pointer_location = (
+                        event.x_transformed(max_x as i32) as f64,
+                        event.y_transformed(max_y as i32) as f64,
+                    );
+
+                    forward_pointer_motion(sola);
+                }
+
+                InputEvent::PointerButton { event } => {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    let pointer = sola.seat.get_pointer().unwrap();
+                    pointer.button(
+                        sola,
+                        &ButtonEvent {
+                            serial,
+                            time: event.time_msec(),
+                            button: event.button_code(),
+                            state: event.state(),
+                        },
+                    );
+                }
+
+                _ => {}
             }
         })
         .map_err(|e| InputError::EventSource(e.to_string()))?;
 
     tracing::info!("libinput initialized for seat '{seat_name}'");
     Ok(())
+}
+
+/// Forward the current pointer position through the seat to the client.
+fn forward_pointer_motion(sola: &mut Sola) {
+    let (x, y) = sola.pointer_location;
+    let serial = SERIAL_COUNTER.next_serial();
+
+    // Find what's under the pointer in the Space.
+    let under = sola.space.element_under((x, y)).map(|(window, loc)| {
+        let surface = window.toplevel().unwrap().wl_surface().clone();
+        (surface, loc.to_f64())
+    });
+
+    let pointer = sola.seat.get_pointer().unwrap();
+    pointer.motion(
+        sola,
+        under,
+        &MotionEvent {
+            location: (x, y).into(),
+            serial,
+            time: 0,
+        },
+    );
+}
+
+/// Get the output size for clamping pointer position.
+fn output_size(sola: &Sola) -> (f64, f64) {
+    sola.space
+        .outputs()
+        .next()
+        .and_then(|o| o.current_mode())
+        .map(|m| (m.size.w as f64, m.size.h as f64))
+        .unwrap_or((1920.0, 1080.0))
 }
 
 #[cfg(test)]

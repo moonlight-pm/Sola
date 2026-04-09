@@ -7,7 +7,7 @@
 /// See: https://docs.rs/smithay/0.7.0/smithay/wayland/shell/xdg/trait.XdgShellHandler.html
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::protocol::wl_seat::WlSeat;
-use smithay::utils::Serial;
+use smithay::utils::{Serial, SERIAL_COUNTER};
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
 };
@@ -20,21 +20,21 @@ impl XdgShellHandler for Sola {
     }
 
     /// A client created a new toplevel window.
-    ///
-    /// We wrap it in a Smithay `Window`, map it into the `Space` at (0, 0),
-    /// and send an initial configure event so the client knows it can start
-    /// rendering. In later phases this is where zone-based positioning and
-    /// size negotiation will happen.
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         tracing::info!("new toplevel window from client");
 
-        // Send an initial configure event — the client won't render until
-        // it receives this. An empty configure lets the client choose its
-        // own size.
+        // Send initial configure so the client knows it can start rendering.
         surface.send_configure();
 
+        // Give this window keyboard focus so it receives input immediately.
+        let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface);
-        self.space.map_element(window, (0, 0), false);
+        // `true` = activate (bring to top of z-order).
+        self.space.map_element(window, (0, 0), true);
+
+        let serial = SERIAL_COUNTER.next_serial();
+        let keyboard = self.seat.get_keyboard().unwrap();
+        keyboard.set_focus(self, Some(wl_surface), serial);
     }
 
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}

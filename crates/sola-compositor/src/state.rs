@@ -13,13 +13,14 @@ use std::collections::HashMap;
 use smithay::backend::drm::DrmNode;
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::desktop::{Space, Window};
-use smithay::input::SeatState;
+use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_server::DisplayHandle;
 use smithay::wayland::compositor::CompositorState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
+use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
 
 use crate::backend::device::Device;
@@ -63,6 +64,10 @@ pub struct Sola {
     /// Tracks `wl_seat` — input devices (keyboard, pointer, touch).
     pub seat_state: SeatState<Self>,
 
+    /// The compositor's seat (keyboard + pointer). Stored directly
+    /// since we always have exactly one seat.
+    pub seat: Seat<Self>,
+
     /// Tracks `wl_data_device_manager` — clipboard and drag-and-drop.
     pub data_device_state: DataDeviceState,
 
@@ -72,13 +77,19 @@ pub struct Sola {
     /// Tracks `xdg_wm_base` — desktop window management (toplevel + popup).
     pub xdg_shell_state: XdgShellState,
 
+    /// Tracks `xdg_decoration_manager` — controls client vs server decorations.
+    #[allow(dead_code)]
+    pub xdg_decoration_state: XdgDecorationState,
+
     // -- Desktop state --
 
     /// Tracks mapped windows and their positions on outputs.
     /// `Space` is Smithay's built-in window manager: it handles z-order,
     /// output assignment, and provides render elements for compositing.
-    /// `Window` is Smithay's wrapper around a toplevel surface.
     pub space: Space<Window>,
+
+    /// Current pointer position in compositor-space coordinates.
+    pub pointer_location: (f64, f64),
 }
 
 impl Sola {
@@ -92,10 +103,6 @@ impl Sola {
         let compositor_state = CompositorState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let mut seat_state = SeatState::new();
-
-        // Add a seat named "seat-0" with keyboard and pointer capabilities.
-        // This advertises the wl_seat global to clients — without it,
-        // clients like foot refuse to start ("no seats available").
         let mut seat = seat_state.new_wl_seat(&dh, "seat-0");
         seat.add_keyboard(Default::default(), 200, 25)
             .expect("failed to add keyboard to seat");
@@ -104,6 +111,7 @@ impl Sola {
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
+        let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
 
         Self {
             running: true,
@@ -119,7 +127,10 @@ impl Sola {
             data_device_state,
             output_manager_state,
             xdg_shell_state,
+            xdg_decoration_state,
+            seat,
             space: Space::default(),
+            pointer_location: (0.0, 0.0),
         }
     }
 }

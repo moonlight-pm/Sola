@@ -7,6 +7,7 @@
 /// See: https://docs.rs/smithay/0.7.0/smithay/index.html#protocols
 mod compositor;
 mod data;
+mod decoration;
 mod output;
 mod seat;
 mod shell;
