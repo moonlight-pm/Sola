@@ -202,9 +202,11 @@ fn add_x11_to_space(sola: &mut Sola, surface: X11Surface) {
         "adding X11 window to space"
     );
 
+    // Use the X11 window's requested geometry for positioning.
+    let geo = surface.geometry();
     let wl_surface = surface.wl_surface();
     let window = Window::new_x11_window(surface);
-    sola.space.map_element(window, (0, 0), true);
+    sola.space.map_element(window, geo.loc, true);
 
     // Reset all DRM output buffers so the compositor has no cached frame
     // state. This forces a full re-render on the next frame, ensuring the
