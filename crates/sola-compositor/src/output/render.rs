@@ -14,12 +14,6 @@
 ///     └──── frame_submitted() ← on_vblank() ←───────────────────┘
 /// ```
 ///
-/// - `render_output()`: Renders into an off-screen buffer via OpenGL ES,
-///   then calls `queue_frame()` to submit for scanout via page-flip
-/// - VBlank fires when the display finishes scanning the previous frame
-/// - `on_vblank()` / `frame_submitted()`: Releases the old buffer back to
-///   the swapchain and triggers the next `render_output()`
-///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/drm/output/index.html
 use smithay::backend::allocator::gbm::GbmAllocator;
 use smithay::backend::drm::compositor::FrameFlags;
@@ -27,7 +21,9 @@ use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::output::{DrmOutput, DrmOutputManager};
 use smithay::backend::drm::{DrmDeviceFd, DrmNode};
 use smithay::backend::renderer::element::texture::TextureRenderElement;
-use smithay::backend::renderer::multigpu::MultiTexture;
+use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::multigpu::gbm::GbmGlesBackend;
+use smithay::backend::renderer::multigpu::{MultiRenderer, MultiTexture};
 use smithay::backend::renderer::Color32F;
 use smithay::reexports::drm::control::crtc;
 
@@ -36,11 +32,24 @@ use crate::Sola;
 /// Background color — dark blue-gray.
 pub const CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.2, 1.0);
 
-/// Type alias for the concrete DrmOutputManager used in Sola.
+// -- Type aliases for the concrete Smithay types used throughout Sola --
+//
+// Smithay is heavily generic. These aliases pin the generic parameters to
+// our specific backend choices (GBM allocator, GLES renderer, DRM fd)
+// so the rest of the codebase doesn't need to spell them out.
+
+/// The GBM+GLES backend type, parameterized for our DRM fd type.
+type GlesBackend = GbmGlesBackend<GlesRenderer, DrmDeviceFd>;
+
+/// The multi-GPU renderer type. Even with a single GPU, Smithay's
+/// GpuManager returns this wrapper type from `single_renderer()`.
+pub type SolaRenderer<'a> = MultiRenderer<'a, 'a, GlesBackend, GlesBackend>;
+
+/// DRM output manager — owns the DRM device and manages compositors.
 pub type SolaOutputManager =
     DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
 
-/// Type alias for a DRM output handle.
+/// A single DRM output handle (one per connected display).
 pub type SolaOutput =
     DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
 
@@ -97,9 +106,6 @@ pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
                     tracing::error!(?err, ?crtc, "queue_frame failed");
                 }
             }
-            // If is_empty, no damage — skip this frame (display keeps showing
-            // the previous one). Next VBlank won't fire since we didn't queue,
-            // so the loop pauses until something changes.
         }
         Err(err) => {
             tracing::error!(?err, ?crtc, "render_frame failed");

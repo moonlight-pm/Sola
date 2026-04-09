@@ -17,12 +17,14 @@
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/drm/struct.DrmDevice.html
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/allocator/gbm/index.html
+use std::collections::HashMap;
 use std::path::Path;
 
 use smithay::backend::allocator::gbm::GbmDevice;
 use smithay::backend::drm::{DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmNode};
-use smithay::backend::session::Session;
 use smithay::backend::session::libseat::LibSeatSession;
+use smithay::backend::session::Session;
+use smithay::reexports::drm::control::crtc;
 use smithay::reexports::drm::Device as DrmDeviceTrait;
 use smithay::reexports::rustix::fs::OFlags;
 use smithay::utils::DeviceFd;
@@ -36,7 +38,7 @@ pub struct Device {
     /// Owns the `DrmDevice` internally.
     pub output_manager: SolaOutputManager,
     /// Active display outputs, keyed by CRTC handle.
-    pub outputs: std::collections::HashMap<smithay::reexports::drm::control::crtc::Handle, SolaOutput>,
+    pub outputs: HashMap<crtc::Handle, SolaOutput>,
     /// GPU buffer allocator.
     pub gbm: GbmDevice<DrmDeviceFd>,
     /// The render node for this GPU (used to get a renderer from GpuManager).

@@ -2,11 +2,7 @@
 ///
 /// The `wl_compositor` global is the core of the Wayland protocol. It lets
 /// clients create surfaces — the fundamental building blocks that represent
-/// rectangular regions of pixels on screen. Every visible window, popup, or
-/// overlay starts as a `wl_surface`.
-///
-/// Smithay requires us to implement `CompositorHandler` so it knows how to
-/// route surface lifecycle events to our compositor.
+/// rectangular regions of pixels on screen.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/wayland/compositor/trait.CompositorHandler.html
 use smithay::reexports::wayland_server::Client;
@@ -23,19 +19,13 @@ impl CompositorHandler for Sola {
 
     /// Return per-client compositor state.
     ///
-    /// Smithay stores bookkeeping per client (e.g., which surfaces belong to
-    /// them). We stash a `ClientState` containing `CompositorClientState` in
-    /// the client's user data when they connect — see `ClientState` in
-    /// `wayland/mod.rs`.
+    /// `ClientState` is stored in each client's user data when they connect
+    /// — see `wayland/mod.rs`.
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
         &client.get_data::<ClientState>().unwrap().compositor_state
     }
 
     /// Called when a client commits new state to a surface.
-    ///
-    /// A "commit" in Wayland means the client has finished preparing a frame
-    /// and wants the compositor to display it. In Phase 1 we have no clients,
-    /// so this is a no-op.
     fn commit(&mut self, _surface: &WlSurface) {}
 }
 

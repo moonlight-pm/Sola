@@ -15,7 +15,7 @@ use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags};
 use smithay::backend::drm::compositor::FrameFlags;
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
 use smithay::backend::drm::output::DrmOutputRenderElements;
-use smithay::backend::drm::{DrmDeviceFd, DrmEvent, DrmNode, NodeType};
+use smithay::backend::drm::{DrmEvent, DrmNode, NodeType};
 use smithay::backend::renderer::ImportDma;
 use smithay::backend::session::Session;
 use smithay::backend::udev::{UdevBackend, UdevEvent};
@@ -24,7 +24,7 @@ use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
 use smithay::utils::Transform;
 
-use output::render::{self, Element, CLEAR_COLOR};
+use output::render::{self, Element, SolaRenderer, CLEAR_COLOR};
 
 pub use state::Sola;
 
@@ -212,23 +212,8 @@ fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> anyhow
         wl_output.create_global::<Sola>(&sola.display_handle);
 
         // Prepare render elements for DrmOutputManager initialization.
-        // These are passed so the output manager can force a composited frame
-        // during setup to validate the pipeline.
-        let mut render_elements = DrmOutputRenderElements::<
-            smithay::backend::renderer::multigpu::MultiRenderer<
-                '_,
-                '_,
-                smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<
-                    smithay::backend::renderer::gles::GlesRenderer,
-                    DrmDeviceFd,
-                >,
-                smithay::backend::renderer::multigpu::gbm::GbmGlesBackend<
-                    smithay::backend::renderer::gles::GlesRenderer,
-                    DrmDeviceFd,
-                >,
-            >,
-            Element,
-        >::new();
+        let mut render_elements =
+            DrmOutputRenderElements::<SolaRenderer, Element>::new();
         render_elements.add_output(&crtc, CLEAR_COLOR, std::iter::empty());
 
         // Initialize the DRM output — creates the DRM compositor internally,
@@ -265,8 +250,6 @@ fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> anyhow
                         tracing::info!(?crtc, "first page-flip queued");
                     }
                 } else {
-                    // initialize_output already consumed the damage. Force a
-                    // page-flip by using commit_frame (synchronous).
                     tracing::info!(?crtc, "render_frame empty after init, display should be showing");
                 }
             }

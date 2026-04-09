@@ -1,15 +1,7 @@
 /// Wayland seat protocol handler.
 ///
-/// A "seat" in Wayland represents a group of input devices (keyboard, mouse,
-/// touch) that belong together — typically one physical user's setup. The seat
-/// protocol lets the compositor tell clients what input capabilities are
-/// available and manages input focus (which surface receives keyboard/pointer
-/// events).
-///
-/// The associated types (`KeyboardFocus`, `PointerFocus`, `TouchFocus`) tell
-/// Smithay what types can receive input focus. For now we use `WlSurface`
-/// directly — later these may become an enum that also handles XWayland
-/// surfaces or other focus targets.
+/// A "seat" represents a group of input devices (keyboard, mouse, touch)
+/// belonging to one user. Manages input focus — which surface receives events.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/input/trait.SeatHandler.html
 use smithay::input::{Seat, SeatHandler, SeatState};
@@ -27,13 +19,9 @@ impl SeatHandler for Sola {
         &mut self.seat_state
     }
 
-    fn cursor_image(&mut self, _seat: &Seat<Self>, _image: CursorImageStatus) {
-        // Will handle cursor rendering in a later phase.
-    }
+    fn cursor_image(&mut self, _seat: &Seat<Self>, _image: CursorImageStatus) {}
 
-    fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&Self::KeyboardFocus>) {
-        // Will handle focus tracking in a later phase.
-    }
+    fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&Self::KeyboardFocus>) {}
 }
 
 smithay::delegate_seat!(Sola);

@@ -2,20 +2,19 @@
 ///
 /// `libinput` is the standard Linux library for handling input devices:
 /// keyboards, mice, touchpads, tablets, etc. It abstracts over the raw
-/// kernel evdev interface and provides higher-level events like key
-/// presses, pointer motion, and gestures.
+/// kernel evdev interface and provides higher-level events.
 ///
 /// In Phase 1, we handle compositor-level keybindings (like the kill chord)
 /// and log other events. Later phases will route input to the focused
 /// Wayland client via the seat protocol.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/libinput/index.html
-/// See: https://wayland.freedesktop.org/libinput/doc/latest/
 use smithay::backend::input::{InputEvent, KeyState, KeyboardKeyEvent};
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
-use smithay::backend::session::Session;
 use smithay::backend::session::libseat::LibSeatSession;
+use smithay::backend::session::Session;
 use smithay::reexports::calloop::LoopHandle;
+use smithay::reexports::input::Libinput;
 
 use crate::Sola;
 
@@ -87,7 +86,7 @@ pub fn check_binding(code: u32, pressed: bool, modifiers: &ModifierState) -> Act
 
 /// Set up libinput and register it as a calloop event source.
 ///
-/// This creates a libinput context bound to the session's seat, which
+/// Creates a libinput context bound to the session's seat, which
 /// automatically discovers all input devices attached to that seat.
 pub fn setup(
     loop_handle: &LoopHandle<'static, Sola>,
@@ -95,22 +94,17 @@ pub fn setup(
 ) -> anyhow::Result<()> {
     let seat_name = session.seat();
 
-    // Create a libinput context that uses the libseat session for device access.
-    // `LibinputSessionInterface` adapts our session to libinput's interface.
+    // `LibinputSessionInterface` adapts our libseat session to libinput's interface.
     let mut libinput_context =
-        smithay::reexports::input::Libinput::new_with_udev(LibinputSessionInterface::from(
-            session.clone(),
-        ));
+        Libinput::new_with_udev(LibinputSessionInterface::from(session.clone()));
 
-    // Assign the libinput context to our seat — this triggers device discovery.
+    // Assign to seat — triggers device discovery.
     libinput_context
         .udev_assign_seat(&seat_name)
         .map_err(|_| anyhow::anyhow!("failed to assign libinput seat '{seat_name}'"))?;
 
     let libinput_backend = LibinputInputBackend::new(libinput_context);
 
-    // Track modifier state across events. This lives inside the closure
-    // because the event loop callback is the only consumer.
     let mut modifiers = ModifierState::default();
 
     loop_handle
@@ -220,7 +214,6 @@ mod tests {
         m.update(keycode::LEFT_SUPER, true);
         m.update(keycode::LEFT_SHIFT, true);
 
-        // Random key code 42 — not backspace.
         assert_eq!(check_binding(42, false, &m), Action::None);
     }
 }

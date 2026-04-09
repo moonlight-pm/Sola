@@ -4,11 +4,6 @@
 /// backend resources, and runtime bookkeeping. Smithay's event loop passes
 /// `&mut Sola` to every callback, so all mutable state lives here.
 ///
-/// Smithay's architecture requires a single "god struct" because Wayland
-/// protocol handlers need access to shared state (e.g., the seat handler
-/// needs to know about surfaces, the compositor handler needs the display).
-/// This is standard for Smithay compositors — see anvil's `State` struct.
-///
 /// Note: `Display<Sola>` is intentionally NOT stored here. Smithay's
 /// `dispatch_clients` needs `&mut Display` and `&mut State` simultaneously,
 /// which would violate Rust's borrowing rules if both lived in the same struct.
