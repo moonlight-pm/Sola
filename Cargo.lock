@@ -1015,6 +1015,7 @@ dependencies = [
  "drm-fourcc",
  "smithay",
  "smithay-drm-extras",
+ "tempfile",
  "tracing",
 ]
 

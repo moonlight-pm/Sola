@@ -78,17 +78,21 @@ pub fn render_node_for(node: DrmNode) -> DrmNode {
 ///
 /// Returns `true` if at least one connector reports "connected" status.
 pub fn has_connected_display(path: &Path) -> bool {
-    // path is like /dev/dri/card2 — extract "card2" and look in
-    // /sys/class/drm/card2-*/status for any "connected" connector.
-    let dev_name = match path.file_name().and_then(|n| n.to_str()) {
+    has_connected_display_in(path, Path::new("/sys/class/drm"))
+}
+
+/// Inner implementation that accepts a sysfs root for testability.
+fn has_connected_display_in(dev_path: &Path, sysfs_dir: &Path) -> bool {
+    // dev_path is like /dev/dri/card2 — extract "card2" and look in
+    // sysfs_dir/card2-*/status for any "connected" connector.
+    let dev_name = match dev_path.file_name().and_then(|n| n.to_str()) {
         Some(name) => name,
         None => return true, // Can't check, assume yes to be safe.
     };
 
-    let sysfs_dir = Path::new("/sys/class/drm");
     let entries = match std::fs::read_dir(sysfs_dir) {
         Ok(e) => e,
-        Err(_) => return true,
+        Err(_) => return true, // Can't read sysfs, assume yes to be safe.
     };
 
     // Look for directories named "card2-DP-10", "card2-HDMI-A-1", etc.
@@ -109,4 +113,86 @@ pub fn has_connected_display(path: &Path) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Create a mock sysfs tree in a temp directory.
+    /// Each entry is (connector_name, status).
+    fn mock_sysfs(entries: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, status) in entries {
+            let conn_dir = dir.path().join(name);
+            fs::create_dir_all(&conn_dir).unwrap();
+            fs::write(conn_dir.join("status"), status).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn detects_connected_display() {
+        let sysfs = mock_sysfs(&[
+            ("card2-DP-10", "connected"),
+            ("card2-DP-11", "disconnected"),
+        ]);
+        assert!(has_connected_display_in(
+            Path::new("/dev/dri/card2"),
+            sysfs.path()
+        ));
+    }
+
+    #[test]
+    fn detects_no_connected_display() {
+        let sysfs = mock_sysfs(&[
+            ("card1-DP-1", "disconnected"),
+            ("card1-DP-2", "disconnected"),
+        ]);
+        assert!(!has_connected_display_in(
+            Path::new("/dev/dri/card1"),
+            sysfs.path()
+        ));
+    }
+
+    #[test]
+    fn ignores_other_cards() {
+        let sysfs = mock_sysfs(&[
+            ("card1-DP-1", "connected"),
+            ("card2-DP-10", "disconnected"),
+        ]);
+        // card2 has no connected displays, even though card1 does.
+        assert!(!has_connected_display_in(
+            Path::new("/dev/dri/card2"),
+            sysfs.path()
+        ));
+    }
+
+    #[test]
+    fn empty_sysfs_returns_false() {
+        let sysfs = mock_sysfs(&[]);
+        assert!(!has_connected_display_in(
+            Path::new("/dev/dri/card0"),
+            sysfs.path()
+        ));
+    }
+
+    #[test]
+    fn missing_sysfs_assumes_connected() {
+        // If sysfs doesn't exist, assume yes to be safe.
+        assert!(has_connected_display_in(
+            Path::new("/dev/dri/card0"),
+            Path::new("/nonexistent/sysfs/path")
+        ));
+    }
+
+    #[test]
+    fn handles_status_with_trailing_newline() {
+        let sysfs = mock_sysfs(&[("card0-HDMI-A-1", "connected\n")]);
+        assert!(has_connected_display_in(
+            Path::new("/dev/dri/card0"),
+            sysfs.path()
+        ));
+    }
 }

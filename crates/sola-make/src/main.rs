@@ -9,14 +9,14 @@ use std::process::{Command, exit};
 
 use clap::Parser;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(name = "sola-make", about = "Sola build system")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
-#[derive(clap::Subcommand)]
+#[derive(clap::Subcommand, Debug)]
 enum Commands {
     /// Build the project (or a specific crate).
     Build {
@@ -44,20 +44,28 @@ fn main() {
     }
 }
 
+/// Construct the `cargo build` arguments for the given options.
+///
+/// Separated from execution so it can be tested without running cargo.
+fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
+    let mut args = vec!["build".to_string()];
+    if let Some(t) = target {
+        args.push("-p".to_string());
+        args.push(t.to_string());
+    }
+    if release {
+        args.push("--release".to_string());
+    }
+    args
+}
+
 /// Run `cargo build` with optional crate targeting and release mode.
 fn build(target: Option<String>, release: bool) {
-    let mut cmd = Command::new("cargo");
-    cmd.arg("build");
-
-    if let Some(ref target) = target {
-        cmd.args(["-p", target]);
-    }
-
-    if release {
-        cmd.arg("--release");
-    }
-
-    let status = cmd.status().expect("failed to run cargo build");
+    let args = build_args(target.as_deref(), release);
+    let status = Command::new("cargo")
+        .args(&args)
+        .status()
+        .expect("failed to run cargo build");
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
@@ -85,7 +93,7 @@ fn deploy_canto() {
     build(None, true);
 
     println!("Preparing canto...");
-    run_or_exit("ssh", &["canto", "mkdir -p /opt/sola/bin"]);
+    run_or_exit("ssh", &["canto", "mkdir -p /opt/sola/bin /opt/sola/log"]);
 
     println!("Deploying sola to canto...");
     run_or_exit(
@@ -108,5 +116,72 @@ fn run_or_exit(program: &str, args: &[&str]) {
     if !status.success() {
         eprintln!("{program} failed with exit code {}", status.code().unwrap_or(1));
         exit(status.code().unwrap_or(1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_args_default() {
+        assert_eq!(build_args(None, false), vec!["build"]);
+    }
+
+    #[test]
+    fn build_args_with_target() {
+        assert_eq!(
+            build_args(Some("sola-compositor"), false),
+            vec!["build", "-p", "sola-compositor"]
+        );
+    }
+
+    #[test]
+    fn build_args_release() {
+        assert_eq!(build_args(None, true), vec!["build", "--release"]);
+    }
+
+    #[test]
+    fn build_args_target_and_release() {
+        assert_eq!(
+            build_args(Some("sola"), true),
+            vec!["build", "-p", "sola", "--release"]
+        );
+    }
+
+    #[test]
+    fn cli_parses_build() {
+        let cli = Cli::try_parse_from(["sola-make", "build"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Build { target: None, release: false }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_build_with_target() {
+        let cli = Cli::try_parse_from(["sola-make", "build", "sola"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Build { target: Some(ref t), release: false } if t == "sola"
+        ));
+    }
+
+    #[test]
+    fn cli_parses_build_release() {
+        let cli = Cli::try_parse_from(["sola-make", "build", "--release"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Build { target: None, release: true }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_deploy() {
+        let cli = Cli::try_parse_from(["sola-make", "deploy", "canto"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Deploy { target: ref t } if t == "canto"
+        ));
     }
 }

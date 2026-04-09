@@ -23,20 +23,66 @@ use crate::Sola;
 ///
 /// These are evdev codes offset by +8 from the raw Linux input codes
 /// (libinput/XKB convention). Discovered empirically via key logging.
-mod keycode {
+pub mod keycode {
     pub const BACKSPACE: u32 = 22;
     pub const LEFT_SHIFT: u32 = 50;
     // pub const RIGHT_SHIFT: u32 = 62;
-    pub const LEFT_SUPER: u32 = 133;  // Command (⌘) on Mac keyboard
+    pub const LEFT_SUPER: u32 = 133; // Command (⌘) on Mac keyboard
     // pub const RIGHT_SUPER: u32 = 134;
 }
 
 /// Tracks which modifier keys are currently held down.
 /// Updated on every key press/release event.
-#[derive(Default)]
-struct ModifierState {
-    super_held: bool,
-    shift_held: bool,
+#[derive(Default, Debug, Clone)]
+pub struct ModifierState {
+    pub super_held: bool,
+    pub shift_held: bool,
+}
+
+impl ModifierState {
+    /// Update modifier tracking for a key event.
+    /// Returns `true` if the key was a modifier (and was consumed).
+    pub fn update(&mut self, code: u32, pressed: bool) -> bool {
+        match code {
+            keycode::LEFT_SUPER => {
+                self.super_held = pressed;
+                true
+            }
+            keycode::LEFT_SHIFT => {
+                self.shift_held = pressed;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Compositor-level action triggered by a keybinding.
+#[derive(Debug, PartialEq)]
+pub enum Action {
+    /// No compositor action — pass the event through to clients.
+    None,
+    /// Shut down the compositor.
+    Quit,
+}
+
+/// Check if a key event triggers a compositor-level action.
+///
+/// Keybindings are checked after modifiers are updated, so `modifiers`
+/// reflects the current state including this key event.
+pub fn check_binding(code: u32, pressed: bool, modifiers: &ModifierState) -> Action {
+    // Super + Shift + Backspace → kill compositor.
+    // Triggers on Backspace RELEASE while Super and Shift are held.
+    // Release-based so you can't accidentally fire it mid-combo.
+    if !pressed
+        && code == keycode::BACKSPACE
+        && modifiers.super_held
+        && modifiers.shift_held
+    {
+        return Action::Quit;
+    }
+
+    Action::None
 }
 
 /// Set up libinput and register it as a calloop event source.
@@ -73,12 +119,7 @@ pub fn setup(
                 let code = event.key_code().raw();
                 let pressed = event.state() == KeyState::Pressed;
 
-                // Update modifier tracking before logging.
-                match code {
-                    keycode::LEFT_SUPER => modifiers.super_held = pressed,
-                    keycode::LEFT_SHIFT => modifiers.shift_held = pressed,
-                    _ => {}
-                }
+                modifiers.update(code, pressed);
 
                 tracing::debug!(
                     code,
@@ -88,16 +129,14 @@ pub fn setup(
                     "key event"
                 );
 
-                // Super + Shift + Backspace → kill compositor.
-                // Triggers on Backspace RELEASE while Super and Shift are held.
-                // Release-based so you can't accidentally fire it mid-combo.
-                if !pressed
-                    && code == keycode::BACKSPACE
-                    && modifiers.super_held
-                    && modifiers.shift_held
-                {
-                    tracing::info!("kill chord (Super+Shift+Backspace released), shutting down");
-                    sola.running = false;
+                match check_binding(code, pressed, &modifiers) {
+                    Action::Quit => {
+                        tracing::info!(
+                            "kill chord (Super+Shift+Backspace released), shutting down"
+                        );
+                        sola.running = false;
+                    }
+                    Action::None => {}
                 }
             }
         })
@@ -105,4 +144,83 @@ pub fn setup(
 
     tracing::info!("libinput initialized for seat '{seat_name}'");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modifier_tracks_super() {
+        let mut m = ModifierState::default();
+        assert!(!m.super_held);
+
+        m.update(keycode::LEFT_SUPER, true);
+        assert!(m.super_held);
+
+        m.update(keycode::LEFT_SUPER, false);
+        assert!(!m.super_held);
+    }
+
+    #[test]
+    fn modifier_tracks_shift() {
+        let mut m = ModifierState::default();
+        assert!(!m.shift_held);
+
+        m.update(keycode::LEFT_SHIFT, true);
+        assert!(m.shift_held);
+
+        m.update(keycode::LEFT_SHIFT, false);
+        assert!(!m.shift_held);
+    }
+
+    #[test]
+    fn modifier_ignores_other_keys() {
+        let mut m = ModifierState::default();
+        let consumed = m.update(keycode::BACKSPACE, true);
+        assert!(!consumed);
+        assert!(!m.super_held);
+        assert!(!m.shift_held);
+    }
+
+    #[test]
+    fn kill_chord_triggers_on_backspace_release_with_modifiers() {
+        let mut m = ModifierState::default();
+        m.update(keycode::LEFT_SUPER, true);
+        m.update(keycode::LEFT_SHIFT, true);
+
+        // Backspace press — should NOT trigger (we want release).
+        assert_eq!(check_binding(keycode::BACKSPACE, true, &m), Action::None);
+
+        // Backspace release — should trigger.
+        assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::Quit);
+    }
+
+    #[test]
+    fn kill_chord_requires_both_modifiers() {
+        let mut m = ModifierState::default();
+
+        // Only super held.
+        m.update(keycode::LEFT_SUPER, true);
+        assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::None);
+
+        // Only shift held.
+        m = ModifierState::default();
+        m.update(keycode::LEFT_SHIFT, true);
+        assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::None);
+
+        // Neither held.
+        m = ModifierState::default();
+        assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::None);
+    }
+
+    #[test]
+    fn non_backspace_with_modifiers_does_nothing() {
+        let mut m = ModifierState::default();
+        m.update(keycode::LEFT_SUPER, true);
+        m.update(keycode::LEFT_SHIFT, true);
+
+        // Random key code 42 — not backspace.
+        assert_eq!(check_binding(42, false, &m), Action::None);
+    }
 }
