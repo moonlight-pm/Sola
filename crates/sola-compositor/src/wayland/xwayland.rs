@@ -16,7 +16,62 @@ use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState}
 use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 use smithay::xwayland::X11Surface;
 
+use crate::error::CompositorError;
 use crate::state::Sola;
+
+/// Spawn XWayland and register its event source with the event loop.
+///
+/// XWayland connects as a Wayland client and provides an X11 display
+/// for legacy apps (Steam, etc.). Pinned to `:0` for a stable `$DISPLAY`.
+pub fn setup(sola: &mut Sola, event_loop: &smithay::reexports::calloop::EventLoop<'static, Sola>) -> Result<(), CompositorError> {
+    use smithay::wayland::xwayland_shell::XWaylandShellState;
+    use smithay::xwayland::XWayland;
+
+    sola.xwayland_shell_state = Some(XWaylandShellState::new::<Sola>(&sola.display_handle));
+
+    let (xwayland, xwayland_client) = XWayland::spawn(
+        &sola.display_handle,
+        Some(0),
+        std::iter::empty::<(String, String)>(),
+        true,
+        std::process::Stdio::null(),
+        std::process::Stdio::null(),
+        |_| {},
+    )
+    .map_err(|e| CompositorError::EventLoop(format!("XWayland spawn: {e}")))?;
+
+    event_loop
+        .handle()
+        .insert_source(xwayland, move |event, _, sola| match event {
+            smithay::xwayland::XWaylandEvent::Ready {
+                x11_socket,
+                display_number,
+            } => {
+                tracing::info!(display_number, "XWayland ready");
+                unsafe { std::env::set_var("DISPLAY", format!(":{display_number}")) };
+
+                match smithay::xwayland::X11Wm::start_wm(
+                    sola.loop_handle.clone(),
+                    x11_socket,
+                    xwayland_client.clone(),
+                ) {
+                    Ok(wm) => {
+                        sola.xwm = Some(wm);
+                        tracing::info!("X11 window manager started");
+                    }
+                    Err(err) => {
+                        tracing::error!(?err, "failed to start X11 window manager");
+                    }
+                }
+            }
+            smithay::xwayland::XWaylandEvent::Error => {
+                tracing::error!("XWayland failed to start");
+            }
+        })
+        .map_err(|e| CompositorError::EventLoop(format!("XWayland source: {e}")))?;
+
+    Ok(())
+}
 
 impl XwmHandler for Sola {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut smithay::xwayland::X11Wm {
