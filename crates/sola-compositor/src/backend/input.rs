@@ -6,14 +6,15 @@
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/libinput/index.html
 use smithay::backend::input::{
-    AbsolutePositionEvent, Event, InputEvent, KeyState, KeyboardKeyEvent,
-    PointerButtonEvent, PointerMotionEvent,
+    AbsolutePositionEvent, Axis, AxisSource, Event, InputEvent, KeyState, KeyboardKeyEvent,
+    PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
 };
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::Session;
+use smithay::desktop::WindowSurfaceType;
 use smithay::input::keyboard::FilterResult;
-use smithay::input::pointer::{ButtonEvent, MotionEvent};
+use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::input::Libinput;
 use smithay::utils::SERIAL_COUNTER;
@@ -106,6 +107,54 @@ pub fn setup(
                             state: event.state(),
                         },
                     );
+                    pointer.frame(sola);
+                }
+
+                InputEvent::PointerAxis { event } => {
+                    let source = event.source();
+                    let mut frame = AxisFrame::new(event.time_msec()).source(source);
+
+                    // Horizontal axis.
+                    let h_amount = event.amount(Axis::Horizontal)
+                        .or_else(|| event.amount_v120(Axis::Horizontal).map(|v| v * 3.0 / 120.0));
+                    if let Some(h) = h_amount {
+                        frame = frame.value(Axis::Horizontal, h);
+                        if let Some(v120) = event.amount_v120(Axis::Horizontal) {
+                            frame = frame.v120(Axis::Horizontal, v120 as i32);
+                        }
+                        frame = frame.relative_direction(
+                            Axis::Horizontal,
+                            event.relative_direction(Axis::Horizontal),
+                        );
+                    }
+
+                    // Vertical axis.
+                    let v_amount = event.amount(Axis::Vertical)
+                        .or_else(|| event.amount_v120(Axis::Vertical).map(|v| v * 3.0 / 120.0));
+                    if let Some(v) = v_amount {
+                        frame = frame.value(Axis::Vertical, -v);
+                        if let Some(v120) = event.amount_v120(Axis::Vertical) {
+                            frame = frame.v120(Axis::Vertical, -(v120 as i32));
+                        }
+                        frame = frame.relative_direction(
+                            Axis::Vertical,
+                            event.relative_direction(Axis::Vertical),
+                        );
+                    }
+
+                    // Finger source sends a stop event when the finger lifts.
+                    if source == AxisSource::Finger {
+                        if event.amount(Axis::Horizontal) == Some(0.0) {
+                            frame = frame.stop(Axis::Horizontal);
+                        }
+                        if event.amount(Axis::Vertical) == Some(0.0) {
+                            frame = frame.stop(Axis::Vertical);
+                        }
+                    }
+
+                    let pointer = sola.seat.get_pointer().unwrap();
+                    pointer.axis(sola, frame);
+                    pointer.frame(sola);
                 }
 
                 _ => {}
@@ -119,14 +168,16 @@ pub fn setup(
 
 /// Forward the current pointer position through the seat to the client.
 fn forward_pointer_motion(sola: &mut Sola) {
-    use smithay::wayland::seat::WaylandFocus;
-
     let (x, y) = sola.pointer_location;
     let serial = SERIAL_COUNTER.next_serial();
 
     let under = sola.space.element_under((x, y)).and_then(|(window, loc)| {
-        let surface = window.wl_surface()?.into_owned();
-        Some((surface, loc.to_f64()))
+        window
+            .surface_under(
+                (x - loc.x as f64, y - loc.y as f64),
+                WindowSurfaceType::ALL,
+            )
+            .map(|(surface, offset)| (surface, (loc + offset).to_f64()))
     });
 
     let pointer = sola.seat.get_pointer().unwrap();
@@ -139,6 +190,7 @@ fn forward_pointer_motion(sola: &mut Sola) {
             time: 0,
         },
     );
+    pointer.frame(sola);
 }
 
 /// Get the output size for clamping pointer position.
