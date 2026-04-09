@@ -23,6 +23,8 @@ use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
+use smithay::wayland::xwayland_shell::XWaylandShellState;
+use smithay::xwayland::X11Wm;
 
 use crate::backend::device::Device;
 use crate::backend::gpu::SolaGpuManager;
@@ -92,6 +94,14 @@ pub struct Sola {
     /// Current pointer position in compositor-space coordinates.
     pub pointer_location: (f64, f64),
 
+    // -- XWayland state --
+
+    /// The X11 window manager instance. `None` until XWayland is ready.
+    pub xwm: Option<X11Wm>,
+
+    /// XWayland shell protocol state for surface pairing. `None` until init.
+    pub xwayland_shell_state: Option<XWaylandShellState>,
+
     /// The cursor image loaded from the xcursor theme. `None` if loading failed.
     pub cursor_buffer: Option<MemoryRenderBuffer>,
 
@@ -141,6 +151,8 @@ impl Sola {
             pointer_location: (0.0, 0.0),
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
+            xwm: None,
+            xwayland_shell_state: None,
         }
     }
 }

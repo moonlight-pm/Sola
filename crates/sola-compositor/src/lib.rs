@@ -109,6 +109,57 @@ pub fn run() -> Result<(), CompositorError> {
     // and no other thread is reading environment variables concurrently.
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &socket_name) };
 
+    // -- XWayland --
+    // Spawn XWayland so X11 apps (Steam, etc.) can run.
+    // XWayland connects as a Wayland client and provides an X11 display.
+    {
+        use smithay::wayland::xwayland_shell::XWaylandShellState;
+        use smithay::xwayland::XWayland;
+
+        sola.xwayland_shell_state = Some(XWaylandShellState::new::<Sola>(&sola.display_handle));
+
+        let (xwayland, xwayland_client) = XWayland::spawn(
+            &sola.display_handle,
+            Some(0),         // Pin to :0 for stable $DISPLAY
+            std::iter::empty::<(String, String)>(),
+            true,            // abstract socket
+            std::process::Stdio::null(),
+            std::process::Stdio::null(),
+            |_| {},
+        )
+        .map_err(|e| CompositorError::EventLoop(format!("XWayland spawn: {e}")))?;
+
+        let handle = event_loop.handle();
+        handle
+            .insert_source(xwayland, move |event, _, sola| match event {
+                smithay::xwayland::XWaylandEvent::Ready {
+                    x11_socket,
+                    display_number,
+                } => {
+                    tracing::info!(display_number, "XWayland ready");
+                    unsafe { std::env::set_var("DISPLAY", format!(":{display_number}")) };
+
+                    match smithay::xwayland::X11Wm::start_wm(
+                        sola.loop_handle.clone(),
+                        x11_socket,
+                        xwayland_client.clone(),
+                    ) {
+                        Ok(wm) => {
+                            sola.xwm = Some(wm);
+                            tracing::info!("X11 window manager started");
+                        }
+                        Err(err) => {
+                            tracing::error!(?err, "failed to start X11 window manager");
+                        }
+                    }
+                }
+                smithay::xwayland::XWaylandEvent::Error => {
+                    tracing::error!("XWayland failed to start");
+                }
+            })
+            .map_err(|e| CompositorError::EventLoop(format!("XWayland source: {e}")))?;
+    }
+
     // Listen for GPU hotplug events.
     event_loop
         .handle()

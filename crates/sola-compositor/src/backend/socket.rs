@@ -18,8 +18,10 @@ use crate::wayland::new_client_state;
 /// Returns the socket name (e.g., "wayland-0") so the caller can set
 /// `$WAYLAND_DISPLAY` for child processes.
 pub fn listen(loop_handle: &LoopHandle<'static, Sola>) -> Result<String, SocketError> {
-    let listener =
-        ListeningSocketSource::new_auto().map_err(|e| SocketError::Bind(e.to_string()))?;
+    // Pin to "wayland-0" so clients can rely on a stable WAYLAND_DISPLAY.
+    let listener = ListeningSocketSource::with_name("wayland-0")
+        .or_else(|_| ListeningSocketSource::new_auto())
+        .map_err(|e| SocketError::Bind(e.to_string()))?;
     let socket_name = listener.socket_name().to_string_lossy().into_owned();
 
     loop_handle

@@ -109,16 +109,24 @@ pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
 
     // Collect space elements (window surfaces).
     let output = sola.space.outputs().next().cloned();
-    let mut elements: Vec<OutputElement> = if let Some(ref output) = output {
+    let space_elements = if let Some(ref output) = output {
         sola.space
             .render_elements_for_output(&mut renderer, output, 1.0)
             .unwrap_or_default()
-            .into_iter()
-            .map(OutputElement::Space)
-            .collect()
     } else {
         vec![]
     };
+
+    let window_count = sola.space.elements().count();
+    let element_count = space_elements.len();
+    if window_count > 0 && element_count == 0 {
+        tracing::warn!(window_count, "windows in space but no render elements produced");
+    }
+
+    let mut elements: Vec<OutputElement> = space_elements
+        .into_iter()
+        .map(OutputElement::Space)
+        .collect();
 
     // Add cursor element at the pointer position.
     if let Some(ref cursor_buffer) = sola.cursor_buffer {

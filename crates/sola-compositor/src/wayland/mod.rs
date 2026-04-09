@@ -12,6 +12,7 @@ mod output;
 mod seat;
 mod shell;
 mod shm;
+mod xwayland;
 
 use std::sync::Arc;
 

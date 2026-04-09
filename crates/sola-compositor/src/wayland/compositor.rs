@@ -1,8 +1,5 @@
 /// Wayland compositor protocol handler.
 ///
-/// The `wl_compositor` global lets clients create surfaces — rectangular
-/// regions of pixels that form the building blocks of all visible content.
-///
 /// See: https://docs.rs/smithay/0.7.0/smithay/wayland/compositor/trait.CompositorHandler.html
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::reexports::wayland_server::Client;
@@ -12,29 +9,43 @@ use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, Com
 use crate::state::Sola;
 use super::ClientState;
 
+// Fallback CompositorClientState for clients not created through our
+// socket listener (e.g., XWayland's internal client). XWayland connects
+// with its own ClientData type, so `get_data::<ClientState>()` returns
+// None. This thread-local provides a stable reference for those clients.
+thread_local! {
+    static XWAYLAND_CLIENT_STATE: CompositorClientState = CompositorClientState::default();
+}
+
 impl CompositorHandler for Sola {
     fn compositor_state(&mut self) -> &mut CompositorState {
         &mut self.compositor_state
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        &client.get_data::<ClientState>().unwrap().compositor_state
+        if let Some(state) = client.get_data::<ClientState>() {
+            &state.compositor_state
+        } else {
+            // XWayland or other internally-created clients.
+            // Safety: thread_local with 'static lifetime, returned reference
+            // is valid for 'a since the thread_local outlives the client.
+            XWAYLAND_CLIENT_STATE.with(|s| unsafe {
+                &*(s as *const CompositorClientState)
+            })
+        }
     }
 
-    /// Called when a client commits new state to a surface.
-    ///
-    /// `on_commit_buffer_handler` processes the buffer attachment (extracts
-    /// dimensions, scale, damage) and stores it in the surface's data map
-    /// for the renderer to pick up later.
-    ///
-    /// We also notify any `Window` wrapping this surface so it can update
-    /// its bounding box.
     fn commit(&mut self, surface: &WlSurface) {
+        use smithay::wayland::seat::WaylandFocus;
+
         on_commit_buffer_handler::<Self>(surface);
 
+        // Update geometry for the window that owns this surface.
+        // Uses WaylandFocus::wl_surface() which works for both Wayland
+        // toplevels and X11 windows.
         if let Some(window) = self.space.elements().find(|w| {
-            w.toplevel()
-                .is_some_and(|t| t.wl_surface() == surface)
+            w.wl_surface()
+                .is_some_and(|s| s.as_ref() == surface)
         }) {
             window.on_commit();
         }

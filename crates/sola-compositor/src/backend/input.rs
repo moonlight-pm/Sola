@@ -175,9 +175,12 @@ fn forward_pointer_motion(sola: &mut Sola) {
     let serial = SERIAL_COUNTER.next_serial();
 
     // Find what's under the pointer in the Space.
-    let under = sola.space.element_under((x, y)).map(|(window, loc)| {
-        let surface = window.toplevel().unwrap().wl_surface().clone();
-        (surface, loc.to_f64())
+    // Use WaylandFocus::wl_surface() which works for both Wayland
+    // toplevels and X11 windows (via XWayland).
+    let under = sola.space.element_under((x, y)).and_then(|(window, loc)| {
+        use smithay::wayland::seat::WaylandFocus;
+        let surface = window.wl_surface()?.into_owned();
+        Some((surface, loc.to_f64()))
     });
 
     let pointer = sola.seat.get_pointer().unwrap();

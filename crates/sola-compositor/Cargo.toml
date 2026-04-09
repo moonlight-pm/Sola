@@ -18,6 +18,7 @@ smithay = { version = "0.7.0", default-features = false, features = [
     "renderer_multi",           # Multi-GPU renderer support
     "wayland_frontend",         # Wayland protocol server implementation
     "desktop",                  # Desktop helpers (Space, window management)
+    "xwayland",                 # XWayland support for X11 apps (Steam, etc.)
 ] }
 
 # Connector scanning helpers for Smithay's DRM backend.
