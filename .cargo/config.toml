@@ -1,0 +1,2 @@
+[alias]
+make = "run -q -p sola-make --"
