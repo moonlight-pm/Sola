@@ -6,9 +6,11 @@
 pub mod backend;
 pub mod cursor;
 pub mod error;
+pub mod input;
 mod lifecycle;
 pub mod output;
 pub mod state;
+pub mod types;
 pub mod wayland;
 
 use smithay::backend::session::Session;

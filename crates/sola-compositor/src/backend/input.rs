@@ -1,8 +1,8 @@
-/// Input device handling via libinput.
+/// Input device plumbing via libinput.
 ///
-/// Sets up libinput, tracks modifier state, checks compositor keybindings,
-/// and forwards keyboard/pointer events through the Wayland seat so
-/// focused clients receive them.
+/// Sets up libinput, forwards keyboard/pointer events through the Wayland
+/// seat. Keybinding logic (what actions keys trigger) lives in
+/// `input::binding`.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/libinput/index.html
 use smithay::backend::input::{
@@ -20,55 +20,7 @@ use smithay::utils::SERIAL_COUNTER;
 
 use crate::Sola;
 use crate::error::InputError;
-
-/// Key codes (evdev + 8 offset, XKB convention).
-pub mod keycode {
-    pub const BACKSPACE: u32 = 22;
-    pub const LEFT_SHIFT: u32 = 50;
-    pub const LEFT_SUPER: u32 = 133;
-}
-
-/// Tracks which modifier keys are currently held down.
-#[derive(Default, Debug, Clone)]
-pub struct ModifierState {
-    pub super_held: bool,
-    pub shift_held: bool,
-}
-
-impl ModifierState {
-    pub fn update(&mut self, code: u32, pressed: bool) -> bool {
-        match code {
-            keycode::LEFT_SUPER => {
-                self.super_held = pressed;
-                true
-            }
-            keycode::LEFT_SHIFT => {
-                self.shift_held = pressed;
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
-/// Compositor-level action triggered by a keybinding.
-#[derive(Debug, PartialEq)]
-pub enum Action {
-    None,
-    Quit,
-}
-
-/// Check if a key event triggers a compositor-level action.
-pub fn check_binding(code: u32, pressed: bool, modifiers: &ModifierState) -> Action {
-    if !pressed
-        && code == keycode::BACKSPACE
-        && modifiers.super_held
-        && modifiers.shift_held
-    {
-        return Action::Quit;
-    }
-    Action::None
-}
+use crate::input::binding::{self, Action, ModifierState};
 
 /// Set up libinput and register it as a calloop event source.
 pub fn setup(
@@ -100,7 +52,7 @@ pub fn setup(
 
                     tracing::debug!(code, pressed, "key event");
 
-                    match check_binding(code, pressed, &modifiers) {
+                    match binding::check(code, pressed, &modifiers) {
                         Action::Quit => {
                             tracing::info!("kill chord, shutting down");
                             sola.running = false;
@@ -109,7 +61,7 @@ pub fn setup(
                         Action::None => {}
                     }
 
-                    // Forward keyboard event through the seat to the focused client.
+                    // Forward to focused client.
                     let serial = SERIAL_COUNTER.next_serial();
                     let time = event.time_msec();
                     {
@@ -126,23 +78,19 @@ pub fn setup(
                 }
 
                 InputEvent::PointerMotion { event } => {
-                    // Relative motion (mouse). Accumulate into pointer position.
                     let delta = event.delta();
                     let (max_x, max_y) = output_size(sola);
                     sola.pointer_location.0 = (sola.pointer_location.0 + delta.x).clamp(0.0, max_x);
                     sola.pointer_location.1 = (sola.pointer_location.1 + delta.y).clamp(0.0, max_y);
-
                     forward_pointer_motion(sola);
                 }
 
                 InputEvent::PointerMotionAbsolute { event } => {
-                    // Absolute motion (touchpad or tablet).
                     let (max_x, max_y) = output_size(sola);
                     sola.pointer_location = (
                         event.x_transformed(max_x as i32) as f64,
                         event.y_transformed(max_y as i32) as f64,
                     );
-
                     forward_pointer_motion(sola);
                 }
 
@@ -171,14 +119,12 @@ pub fn setup(
 
 /// Forward the current pointer position through the seat to the client.
 fn forward_pointer_motion(sola: &mut Sola) {
+    use smithay::wayland::seat::WaylandFocus;
+
     let (x, y) = sola.pointer_location;
     let serial = SERIAL_COUNTER.next_serial();
 
-    // Find what's under the pointer in the Space.
-    // Use WaylandFocus::wl_surface() which works for both Wayland
-    // toplevels and X11 windows (via XWayland).
     let under = sola.space.element_under((x, y)).and_then(|(window, loc)| {
-        use smithay::wayland::seat::WaylandFocus;
         let surface = window.wl_surface()?.into_owned();
         Some((surface, loc.to_f64()))
     });
@@ -203,69 +149,4 @@ fn output_size(sola: &Sola) -> (f64, f64) {
         .and_then(|o| o.current_mode())
         .map(|m| (m.size.w as f64, m.size.h as f64))
         .unwrap_or((1920.0, 1080.0))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn modifier_tracks_super() {
-        let mut m = ModifierState::default();
-        assert!(!m.super_held);
-        m.update(keycode::LEFT_SUPER, true);
-        assert!(m.super_held);
-        m.update(keycode::LEFT_SUPER, false);
-        assert!(!m.super_held);
-    }
-
-    #[test]
-    fn modifier_tracks_shift() {
-        let mut m = ModifierState::default();
-        assert!(!m.shift_held);
-        m.update(keycode::LEFT_SHIFT, true);
-        assert!(m.shift_held);
-        m.update(keycode::LEFT_SHIFT, false);
-        assert!(!m.shift_held);
-    }
-
-    #[test]
-    fn modifier_ignores_other_keys() {
-        let mut m = ModifierState::default();
-        let consumed = m.update(keycode::BACKSPACE, true);
-        assert!(!consumed);
-        assert!(!m.super_held);
-        assert!(!m.shift_held);
-    }
-
-    #[test]
-    fn kill_chord_triggers_on_backspace_release_with_modifiers() {
-        let mut m = ModifierState::default();
-        m.update(keycode::LEFT_SUPER, true);
-        m.update(keycode::LEFT_SHIFT, true);
-        assert_eq!(check_binding(keycode::BACKSPACE, true, &m), Action::None);
-        assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::Quit);
-    }
-
-    #[test]
-    fn kill_chord_requires_both_modifiers() {
-        let mut m = ModifierState::default();
-        m.update(keycode::LEFT_SUPER, true);
-        assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::None);
-
-        m = ModifierState::default();
-        m.update(keycode::LEFT_SHIFT, true);
-        assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::None);
-
-        m = ModifierState::default();
-        assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::None);
-    }
-
-    #[test]
-    fn non_backspace_with_modifiers_does_nothing() {
-        let mut m = ModifierState::default();
-        m.update(keycode::LEFT_SUPER, true);
-        m.update(keycode::LEFT_SHIFT, true);
-        assert_eq!(check_binding(42, false, &m), Action::None);
-    }
 }

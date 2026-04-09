@@ -18,8 +18,9 @@ use smithay::reexports::calloop::EventLoop;
 use smithay::utils::Transform;
 
 use crate::error::{CompositorError, DeviceError};
-use crate::output::render::{self, Element, SolaRenderer, CLEAR_COLOR};
+use crate::output::render::{self, CLEAR_COLOR};
 use crate::state::Sola;
+use crate::types::{Element, SolaOutputManager, SolaRenderer};
 
 /// Enumerate GPUs and initialize devices.
 ///
@@ -137,7 +138,7 @@ pub fn init_device(
         GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
     );
     let exporter = GbmFramebufferExporter::new(gbm.clone(), None);
-    let mut output_manager = render::SolaOutputManager::new(
+    let mut output_manager = SolaOutputManager::new(
         drm,
         allocator,
         exporter,

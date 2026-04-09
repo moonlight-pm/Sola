@@ -1,4 +1,4 @@
-/// Frame rendering and DRM output management types.
+/// Frame rendering and DRM output management.
 ///
 /// ## Render loop design
 ///
@@ -15,40 +15,21 @@
 /// VBlank) to avoid a deadlock: XWayland clients wait for a frame callback
 /// before committing their first buffer, but VBlanks only fire after a
 /// successful queue_frame, which requires damage from a committed buffer.
-///
-/// See: https://docs.rs/smithay/0.7.0/smithay/backend/drm/output/index.html
-use smithay::backend::allocator::gbm::GbmAllocator;
 use smithay::backend::drm::compositor::FrameFlags;
-use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
-use smithay::backend::drm::output::{DrmOutput, DrmOutputManager};
-use smithay::backend::drm::{DrmDeviceFd, DrmNode};
+use smithay::backend::drm::DrmNode;
 use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
-use smithay::backend::renderer::element::texture::TextureRenderElement;
 use smithay::backend::renderer::element::Kind;
-use smithay::backend::renderer::gles::GlesRenderer;
-use smithay::backend::renderer::multigpu::gbm::GbmGlesBackend;
-use smithay::backend::renderer::multigpu::{MultiRenderer, MultiTexture};
 use smithay::backend::renderer::Color32F;
 use smithay::desktop::space::SpaceRenderElements;
 use smithay::reexports::drm::control::crtc;
 use smithay::utils::IsAlive;
 
 use crate::Sola;
+use crate::types::SolaRenderer;
 
 /// Background color — dark blue-gray.
 pub const CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.2, 1.0);
-
-// -- Type aliases --
-
-type GlesBackend = GbmGlesBackend<GlesRenderer, DrmDeviceFd>;
-pub type SolaRenderer<'a> = MultiRenderer<'a, 'a, GlesBackend, GlesBackend>;
-pub type Element = TextureRenderElement<MultiTexture>;
-
-pub type SolaOutputManager =
-    DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
-pub type SolaOutput =
-    DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
 
 // Combined render element enum.
 smithay::backend::renderer::element::render_elements! {
@@ -77,12 +58,7 @@ pub fn on_vblank(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
 }
 
 /// Send frame callbacks to all windows and render all outputs.
-///
-/// Called from the main event loop every tick. Frame callbacks are sent
-/// here (not just on VBlank) to break the deadlock where XWayland clients
-/// wait for a frame callback before committing their first buffer.
 pub fn render_all(sola: &mut Sola) {
-    // Send frame callbacks to all windows on every tick.
     let time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -95,7 +71,6 @@ pub fn render_all(sola: &mut Sola) {
         }
     }
 
-    // Render outputs that don't have a pending page flip.
     let targets: Vec<(DrmNode, crtc::Handle)> = sola
         .devices
         .iter()
@@ -123,7 +98,6 @@ fn do_render(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
         }
     };
 
-    // Collect space elements (window surfaces).
     let output = sola.space.outputs().next().cloned();
     let space_elements = if let Some(ref output) = output {
         sola.space
@@ -138,7 +112,6 @@ fn do_render(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
         .map(OutputElement::Space)
         .collect();
 
-    // Add cursor element at the pointer position.
     if let Some(ref cursor_buffer) = sola.cursor_buffer {
         let (hx, hy) = sola.cursor_hotspot;
         let (px, py) = sola.pointer_location;

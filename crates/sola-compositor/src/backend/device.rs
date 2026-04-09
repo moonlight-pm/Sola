@@ -19,7 +19,7 @@ use smithay::utils::DeviceFd;
 use smithay_drm_extras::drm_scanner::DrmScanner;
 
 use crate::error::DeviceError;
-use crate::output::render::{SolaOutput, SolaOutputManager};
+use crate::types::{SolaOutput, SolaOutputManager};
 
 /// Per-GPU device state, stored in `Sola::devices` after full initialization.
 pub struct Device {
