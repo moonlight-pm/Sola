@@ -1,12 +1,8 @@
 /// Input device handling via libinput.
 ///
-/// `libinput` is the standard Linux library for handling input devices:
-/// keyboards, mice, touchpads, tablets, etc. It abstracts over the raw
-/// kernel evdev interface and provides higher-level events.
-///
-/// In Phase 1, we handle compositor-level keybindings (like the kill chord)
-/// and log other events. Later phases will route input to the focused
-/// Wayland client via the seat protocol.
+/// Sets up libinput, tracks modifier state, and dispatches raw key events.
+/// Keybinding logic (what actions keys trigger) lives here temporarily
+/// but will move to a shell layer as the compositor grows.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/libinput/index.html
 use smithay::backend::input::{InputEvent, KeyState, KeyboardKeyEvent};
@@ -17,21 +13,19 @@ use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::input::Libinput;
 
 use crate::Sola;
+use crate::error::InputError;
 
 /// Key codes as reported by libinput on canto's Mac keyboard.
 ///
-/// These are evdev codes offset by +8 from the raw Linux input codes
-/// (libinput/XKB convention). Discovered empirically via key logging.
+/// Evdev codes offset by +8 from raw Linux input codes (XKB convention).
+/// Discovered empirically via key logging.
 pub mod keycode {
     pub const BACKSPACE: u32 = 22;
     pub const LEFT_SHIFT: u32 = 50;
-    // pub const RIGHT_SHIFT: u32 = 62;
-    pub const LEFT_SUPER: u32 = 133; // Command (⌘) on Mac keyboard
-    // pub const RIGHT_SUPER: u32 = 134;
+    pub const LEFT_SUPER: u32 = 133;
 }
 
 /// Tracks which modifier keys are currently held down.
-/// Updated on every key press/release event.
 #[derive(Default, Debug, Clone)]
 pub struct ModifierState {
     pub super_held: bool,
@@ -59,20 +53,13 @@ impl ModifierState {
 /// Compositor-level action triggered by a keybinding.
 #[derive(Debug, PartialEq)]
 pub enum Action {
-    /// No compositor action — pass the event through to clients.
     None,
-    /// Shut down the compositor.
     Quit,
 }
 
 /// Check if a key event triggers a compositor-level action.
-///
-/// Keybindings are checked after modifiers are updated, so `modifiers`
-/// reflects the current state including this key event.
 pub fn check_binding(code: u32, pressed: bool, modifiers: &ModifierState) -> Action {
-    // Super + Shift + Backspace → kill compositor.
-    // Triggers on Backspace RELEASE while Super and Shift are held.
-    // Release-based so you can't accidentally fire it mid-combo.
+    // Super + Shift + Backspace → quit (on release).
     if !pressed
         && code == keycode::BACKSPACE
         && modifiers.super_held
@@ -80,31 +67,26 @@ pub fn check_binding(code: u32, pressed: bool, modifiers: &ModifierState) -> Act
     {
         return Action::Quit;
     }
-
     Action::None
 }
 
 /// Set up libinput and register it as a calloop event source.
-///
-/// Creates a libinput context bound to the session's seat, which
-/// automatically discovers all input devices attached to that seat.
 pub fn setup(
     loop_handle: &LoopHandle<'static, Sola>,
     session: &LibSeatSession,
-) -> anyhow::Result<()> {
+) -> Result<(), InputError> {
     let seat_name = session.seat();
 
-    // `LibinputSessionInterface` adapts our libseat session to libinput's interface.
     let mut libinput_context =
         Libinput::new_with_udev(LibinputSessionInterface::from(session.clone()));
 
-    // Assign to seat — triggers device discovery.
     libinput_context
         .udev_assign_seat(&seat_name)
-        .map_err(|_| anyhow::anyhow!("failed to assign libinput seat '{seat_name}'"))?;
+        .map_err(|_| InputError::SeatAssign {
+            seat: seat_name.clone(),
+        })?;
 
     let libinput_backend = LibinputInputBackend::new(libinput_context);
-
     let mut modifiers = ModifierState::default();
 
     loop_handle
@@ -134,7 +116,7 @@ pub fn setup(
                 }
             }
         })
-        .map_err(|e| anyhow::anyhow!("failed to insert libinput source: {e}"))?;
+        .map_err(|e| InputError::EventSource(e.to_string()))?;
 
     tracing::info!("libinput initialized for seat '{seat_name}'");
     Ok(())
@@ -148,10 +130,8 @@ mod tests {
     fn modifier_tracks_super() {
         let mut m = ModifierState::default();
         assert!(!m.super_held);
-
         m.update(keycode::LEFT_SUPER, true);
         assert!(m.super_held);
-
         m.update(keycode::LEFT_SUPER, false);
         assert!(!m.super_held);
     }
@@ -160,10 +140,8 @@ mod tests {
     fn modifier_tracks_shift() {
         let mut m = ModifierState::default();
         assert!(!m.shift_held);
-
         m.update(keycode::LEFT_SHIFT, true);
         assert!(m.shift_held);
-
         m.update(keycode::LEFT_SHIFT, false);
         assert!(!m.shift_held);
     }
@@ -182,28 +160,20 @@ mod tests {
         let mut m = ModifierState::default();
         m.update(keycode::LEFT_SUPER, true);
         m.update(keycode::LEFT_SHIFT, true);
-
-        // Backspace press — should NOT trigger (we want release).
         assert_eq!(check_binding(keycode::BACKSPACE, true, &m), Action::None);
-
-        // Backspace release — should trigger.
         assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::Quit);
     }
 
     #[test]
     fn kill_chord_requires_both_modifiers() {
         let mut m = ModifierState::default();
-
-        // Only super held.
         m.update(keycode::LEFT_SUPER, true);
         assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::None);
 
-        // Only shift held.
         m = ModifierState::default();
         m.update(keycode::LEFT_SHIFT, true);
         assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::None);
 
-        // Neither held.
         m = ModifierState::default();
         assert_eq!(check_binding(keycode::BACKSPACE, false, &m), Action::None);
     }
@@ -213,7 +183,6 @@ mod tests {
         let mut m = ModifierState::default();
         m.update(keycode::LEFT_SUPER, true);
         m.update(keycode::LEFT_SHIFT, true);
-
         assert_eq!(check_binding(42, false, &m), Action::None);
     }
 }

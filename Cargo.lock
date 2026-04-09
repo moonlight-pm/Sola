@@ -999,7 +999,6 @@ dependencies = [
 name = "sola"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clap",
  "sola-compositor",
  "tracing",
@@ -1011,11 +1010,11 @@ dependencies = [
 name = "sola-compositor"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "drm-fourcc",
  "smithay",
  "smithay-drm-extras",
  "tempfile",
+ "thiserror",
  "tracing",
 ]
 

@@ -29,7 +29,7 @@ smithay-drm-extras = { version = "0.1.0", default-features = false }
 drm-fourcc = "2.2"
 
 tracing = "0.1"
-anyhow = "1"
+thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -4,6 +4,7 @@
 /// Wayland protocol handling, output management, and rendering.
 
 pub mod backend;
+pub mod error;
 pub mod output;
 pub mod state;
 mod wayland;
@@ -24,6 +25,7 @@ use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
 use smithay::utils::Transform;
 
+use error::{CompositorError, DeviceError};
 use output::render::{self, Element, SolaRenderer, CLEAR_COLOR};
 
 pub use state::Sola;
@@ -40,15 +42,14 @@ pub use state::Sola;
 /// 5. Enter the dispatch loop
 ///
 /// See: https://docs.rs/calloop/0.14
-pub fn run() -> anyhow::Result<()> {
+pub fn run() -> Result<(), CompositorError> {
     tracing::info!("sola compositor starting");
 
-    let mut event_loop: EventLoop<Sola> = EventLoop::try_new()?;
+    let mut event_loop: EventLoop<Sola> =
+        EventLoop::try_new().map_err(|e| CompositorError::EventLoop(e.to_string()))?;
 
-    // The Wayland display server — manages client connections and protocol
-    // dispatch. Kept separate from `Sola` because `dispatch_clients` needs
-    // `&mut Display` and `&mut Sola` simultaneously.
-    let mut display: Display<Sola> = Display::new()?;
+    let mut display: Display<Sola> =
+        Display::new().map_err(|e| CompositorError::Display(e.to_string()))?;
     let dh = display.handle();
 
     // -- Session --
@@ -61,17 +62,12 @@ pub fn run() -> anyhow::Result<()> {
 
     let mut sola = Sola::new(dh, event_loop.handle(), session, gpu_manager, primary_gpu);
 
-    // Register the session notifier so we get VT switch events.
     event_loop
         .handle()
         .insert_source(session_notifier, |_, _, _| {})
-        .map_err(|e| anyhow::anyhow!("failed to insert session source: {e}"))?;
+        .map_err(|e| CompositorError::EventLoop(format!("session source: {e}")))?;
 
     // -- Device initialization --
-    // Enumerate GPUs and initialize only those with connected displays.
-    // We check sysfs first to avoid opening devices we don't need — opening
-    // a DRM device acquires master and Smithay's drop logs errors if we
-    // never used it.
     let udev_backend = UdevBackend::new(&seat_name)?;
     for (device_id, path) in udev_backend.device_list() {
         if let Ok(node) = DrmNode::from_dev_id(device_id) {
@@ -100,56 +96,46 @@ pub fn run() -> anyhow::Result<()> {
                 }
             }
         })
-        .map_err(|e| anyhow::anyhow!("failed to insert udev source: {e}"))?;
+        .map_err(|e| CompositorError::EventLoop(format!("udev source: {e}")))?;
 
     tracing::info!("entering event loop");
     while sola.running {
-        display.dispatch_clients(&mut sola)?;
-        display.flush_clients()?;
-        event_loop.dispatch(Some(std::time::Duration::from_millis(16)), &mut sola)?;
+        display
+            .dispatch_clients(&mut sola)
+            .map_err(|e| CompositorError::Display(e.to_string()))?;
+        display
+            .flush_clients()
+            .map_err(|e| CompositorError::Display(e.to_string()))?;
+        event_loop
+            .dispatch(Some(std::time::Duration::from_millis(16)), &mut sola)
+            .map_err(|e| CompositorError::EventLoop(e.to_string()))?;
     }
 
     tracing::info!("sola compositor shutting down");
 
     // Drop DRM devices while we still hold the session and event loop.
-    // Order matters: DrmDevice's drop impl tries to restore the previous
-    // display state (mode, connectors), which requires DRM master. If the
-    // libseat session drops first, we lose master and the restore fails
-    // with "Permission denied".
-    //
-    // Note: on modern kernels with libseat, Smithay's DrmDeviceFd may
-    // report `privileged: false` even though master WAS granted (because
-    // libseat grants master via the fd, and Smithay's redundant
-    // SET_MASTER ioctl fails). This means Smithay skips DROP_MASTER on
-    // cleanup, but still tries to restore state — which may fail if the
-    // kernel has already revoked master. This is a known Smithay quirk
-    // on libseat systems and the error is cosmetic.
+    // See comment in error.rs about the Smithay/libseat DRM master quirk.
     sola.devices.clear();
 
     Ok(())
 }
 
 /// Initialize a single DRM GPU device end-to-end.
-///
-/// This is the full pipeline: open device → register GPU renderer →
-/// scan connectors → create output manager → initialize outputs →
-/// kick off render loop → store device.
-fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> anyhow::Result<()> {
-    // Step 1: Open the DRM + GBM devices.
-    // The caller already verified this GPU has connected displays via sysfs.
+fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> Result<(), DeviceError> {
     let (drm, drm_notifier, gbm, render_node) =
         backend::device::open(&mut sola.session, path, node)?;
 
-    // Step 2: Scan connectors to get the details (modes, crtcs).
     let mut scanner = smithay_drm_extras::drm_scanner::DrmScanner::new();
     let connected_outputs = output::scan::find_connected_outputs(&mut scanner, &drm);
 
-    // Step 3: Register the GPU with the renderer manager.
     sola.gpu_manager
         .as_mut()
-        .add_node(render_node, gbm.clone())?;
+        .add_node(render_node, gbm.clone())
+        .map_err(|e| DeviceError::Open {
+            path: path.to_owned(),
+            reason: format!("GPU registration: {e:?}"),
+        })?;
 
-    // Step 4: Register DRM event source (VBlank, errors).
     let token = sola
         .loop_handle
         .insert_source(drm_notifier, move |event, _metadata, sola| match event {
@@ -160,17 +146,21 @@ fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> anyhow
                 tracing::error!(?err, "DRM device error");
             }
         })
-        .map_err(|e| anyhow::anyhow!("failed to insert DRM source: {e}"))?;
+        .map_err(|e| DeviceError::EventSource {
+            node,
+            reason: e.to_string(),
+        })?;
 
-    // Step 5: Get renderer formats for the output manager.
     let renderer_formats = {
-        let renderer = sola.gpu_manager.single_renderer(&render_node)?;
+        let renderer = sola.gpu_manager.single_renderer(&render_node).map_err(|e| {
+            DeviceError::OutputInit {
+                node,
+                reason: format!("renderer: {e:?}"),
+            }
+        })?;
         renderer.dmabuf_formats().into_iter().collect::<Vec<_>>()
     };
 
-    // Step 6: Create the DRM output manager (takes ownership of DRM device).
-    // RENDERING | SCANOUT — buffers must be renderable (for GLES composition)
-    // AND scanout-capable (for DRM page flip).
     let allocator = GbmAllocator::new(
         gbm.clone(),
         GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
@@ -181,15 +171,12 @@ fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> anyhow
         allocator,
         exporter,
         Some(gbm.clone()),
-        // Xrgb8888 first — most GPUs prefer opaque scanout (no alpha channel).
         [DrmFourcc::Xrgb8888, DrmFourcc::Argb8888],
         renderer_formats,
     );
 
-    // Step 7: Initialize each connected display and kick off the render loop.
     let mut outputs = HashMap::new();
     for (connector, crtc, mode, name) in connected_outputs {
-        // Create Wayland output.
         let wl_output = Output::new(
             name,
             PhysicalProperties {
@@ -211,14 +198,18 @@ fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> anyhow
         wl_output.set_preferred(wl_mode);
         wl_output.create_global::<Sola>(&sola.display_handle);
 
-        // Prepare render elements for DrmOutputManager initialization.
         let mut render_elements =
             DrmOutputRenderElements::<SolaRenderer, Element>::new();
         render_elements.add_output(&crtc, CLEAR_COLOR, std::iter::empty());
 
-        // Initialize the DRM output — creates the DRM compositor internally,
-        // does a synchronous mode-set commit to validate the pipeline.
-        let mut renderer = sola.gpu_manager.single_renderer(&render_node)?;
+        let mut renderer =
+            sola.gpu_manager
+                .single_renderer(&render_node)
+                .map_err(|e| DeviceError::OutputInit {
+                    node,
+                    reason: format!("renderer: {e:?}"),
+                })?;
+
         let mut drm_output = output_manager
             .initialize_output(
                 crtc,
@@ -229,15 +220,21 @@ fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> anyhow
                 &mut renderer,
                 &render_elements,
             )
-            .map_err(|e| anyhow::anyhow!("failed to initialize DRM output: {e:?}"))?;
+            .map_err(|e| DeviceError::OutputInit {
+                node,
+                reason: format!("{e:?}"),
+            })?;
 
         tracing::info!(?crtc, "DRM output initialized, starting render loop");
 
         // Kick off the render loop with an explicit page-flip.
-        // initialize_output does a synchronous commit_frame (mode-set) but we
-        // need a page-flip (queue_frame) to start receiving VBlank events.
-        // VBlank events drive the continuous render loop in on_vblank().
-        let mut renderer = sola.gpu_manager.single_renderer(&render_node)?;
+        let mut renderer =
+            sola.gpu_manager
+                .single_renderer(&render_node)
+                .map_err(|e| DeviceError::OutputInit {
+                    node,
+                    reason: format!("renderer: {e:?}"),
+                })?;
         let elements: Vec<Element> = vec![];
         match drm_output.render_frame::<_, Element>(
             &mut renderer, &elements, CLEAR_COLOR, FrameFlags::empty(),
@@ -261,7 +258,6 @@ fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> anyhow
         outputs.insert(crtc, drm_output);
     }
 
-    // Step 8: Store the device.
     sola.devices.insert(
         node,
         backend::device::Device {
