@@ -31,6 +31,10 @@ pub struct Device {
     pub gbm: GbmDevice<DrmDeviceFd>,
     /// The render node for this GPU (used to get a renderer from GpuManager).
     pub render_node: DrmNode,
+    /// Whether a page flip is pending (waiting for VBlank).
+    /// When true, `render_all` skips this device to avoid competing with
+    /// the VBlank-driven render loop.
+    pub frame_pending: bool,
     /// Tracks connector hotplug events.
     pub scanner: DrmScanner,
     /// Calloop token for the DRM event source (VBlank events).

@@ -77,12 +77,21 @@ pub fn run() -> Result<(), CompositorError> {
         .map_err(|e| CompositorError::EventLoop(format!("session source: {e}")))?;
 
     // -- Device initialization --
+    // Register ALL GPUs with the GpuManager (for cross-GPU buffer import),
+    // but only create DRM outputs on GPUs that have connected displays.
     let udev_backend = UdevBackend::new(&seat_name)?;
     for (device_id, path) in udev_backend.device_list() {
         if let Ok(node) = DrmNode::from_dev_id(device_id) {
             if node.node_with_type(NodeType::Primary).is_some() {
                 if !backend::gpu::has_connected_display(&path) {
-                    tracing::info!(?node, ?path, "GPU has no connected displays, skipping");
+                    // No display, but still register with GpuManager so we
+                    // can import buffers from clients that render on this GPU
+                    // (e.g., Steam choosing the "wrong" GPU in a multi-GPU system).
+                    if let Err(err) = register_gpu(&mut sola, &path, node) {
+                        tracing::warn!(?err, ?node, "failed to register non-display GPU");
+                    } else {
+                        tracing::info!(?node, ?path, "registered non-display GPU for buffer import");
+                    }
                     continue;
                 }
                 if let Err(err) = init_device(&mut sola, node, &path) {
@@ -200,6 +209,26 @@ pub fn run() -> Result<(), CompositorError> {
     // Drop DRM devices while we still hold the session and event loop.
     // See comment in error.rs about the Smithay/libseat DRM master quirk.
     sola.devices.clear();
+
+    Ok(())
+}
+
+/// Register a GPU with the GpuManager without creating DRM outputs.
+///
+/// Used for GPUs that have no connected displays but may be used by
+/// clients for rendering (e.g., Steam in a multi-GPU system). The
+/// GpuManager needs to know about these GPUs to import their buffers.
+fn register_gpu(sola: &mut Sola, path: &std::path::Path, node: DrmNode) -> Result<(), DeviceError> {
+    let (_drm, _notifier, gbm, render_node) =
+        backend::device::open(&mut sola.session, path, node)?;
+
+    sola.gpu_manager
+        .as_mut()
+        .add_node(render_node, gbm)
+        .map_err(|e| DeviceError::Open {
+            path: path.to_owned(),
+            reason: format!("GPU registration: {e:?}"),
+        })?;
 
     Ok(())
 }
@@ -353,6 +382,7 @@ fn init_device(sola: &mut Sola, node: DrmNode, path: &std::path::Path) -> Result
             outputs,
             gbm,
             render_node,
+            frame_pending: false,
             scanner,
             token,
         },

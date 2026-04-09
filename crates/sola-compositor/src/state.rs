@@ -8,7 +8,7 @@
 /// `dispatch_clients` needs `&mut Display` and `&mut State` simultaneously,
 /// which would violate Rust's borrowing rules if both lived in the same struct.
 /// The `Display` is kept as a separate local in `run()`.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use smithay::backend::drm::DrmNode;
 use smithay::backend::renderer::element::memory::MemoryRenderBuffer;
@@ -102,6 +102,11 @@ pub struct Sola {
     /// XWayland shell protocol state for surface pairing. `None` until init.
     pub xwayland_shell_state: Option<XWaylandShellState>,
 
+    /// X11 window IDs that have requested mapping but may not have a
+    /// wl_surface yet. Used to defer Space insertion until both
+    /// `map_window_request` and `surface_associated` have fired.
+    pub xwayland_mapped: HashSet<smithay::xwayland::xwm::X11Window>,
+
     /// The cursor image loaded from the xcursor theme. `None` if loading failed.
     pub cursor_buffer: Option<MemoryRenderBuffer>,
 
@@ -153,6 +158,7 @@ impl Sola {
             cursor_hotspot: (0, 0),
             xwm: None,
             xwayland_shell_state: None,
+            xwayland_mapped: HashSet::new(),
         }
     }
 }

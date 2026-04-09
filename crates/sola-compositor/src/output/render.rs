@@ -1,5 +1,21 @@
 /// Frame rendering and DRM output management types.
 ///
+/// ## Render loop design
+///
+/// Two paths trigger rendering:
+///
+/// 1. **VBlank-driven** (`on_vblank`): After a page flip completes, render
+///    and queue the next frame. Steady-state path at display refresh rate.
+///
+/// 2. **Poll-driven** (`render_all`): Called from the main event loop every
+///    tick. Only renders if no page flip is pending. Catches new windows
+///    and late-arriving content.
+///
+/// Frame callbacks are sent every tick from the main loop (not just on
+/// VBlank) to avoid a deadlock: XWayland clients wait for a frame callback
+/// before committing their first buffer, but VBlanks only fire after a
+/// successful queue_frame, which requires damage from a committed buffer.
+///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/drm/output/index.html
 use smithay::backend::allocator::gbm::GbmAllocator;
 use smithay::backend::drm::compositor::FrameFlags;
@@ -26,23 +42,15 @@ pub const CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.2, 1.0);
 // -- Type aliases --
 
 type GlesBackend = GbmGlesBackend<GlesRenderer, DrmDeviceFd>;
-
-/// The multi-GPU renderer type.
 pub type SolaRenderer<'a> = MultiRenderer<'a, 'a, GlesBackend, GlesBackend>;
-
-/// Simple texture element type — used for initialization.
 pub type Element = TextureRenderElement<MultiTexture>;
 
 pub type SolaOutputManager =
     DrmOutputManager<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
-
 pub type SolaOutput =
     DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
 
-// Combined render element enum — holds both window surfaces and cursor.
-// Pinned to our concrete SolaRenderer rather than being generic, because
-// SpaceRenderElements requires ImportAll (ImportMemWl + ImportDmaWl) which
-// is hard to express in the render_elements! macro's `where` clause.
+// Combined render element enum.
 smithay::backend::renderer::element::render_elements! {
     pub OutputElement<='a, SolaRenderer<'a>>;
     Space=SpaceRenderElements<SolaRenderer<'a>, WaylandSurfaceRenderElement<SolaRenderer<'a>>>,
@@ -63,7 +71,18 @@ pub fn on_vblank(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
         return;
     }
 
-    // Send frame callbacks to clients.
+    device.frame_pending = false;
+
+    do_render(sola, node, crtc);
+}
+
+/// Send frame callbacks to all windows and render all outputs.
+///
+/// Called from the main event loop every tick. Frame callbacks are sent
+/// here (not just on VBlank) to break the deadlock where XWayland clients
+/// wait for a frame callback before committing their first buffer.
+pub fn render_all(sola: &mut Sola) {
+    // Send frame callbacks to all windows on every tick.
     let time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -76,26 +95,23 @@ pub fn on_vblank(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
         }
     }
 
-    render_output(sola, node, crtc);
-}
-
-/// Render all outputs across all devices.
-pub fn render_all(sola: &mut Sola) {
+    // Render outputs that don't have a pending page flip.
     let targets: Vec<(DrmNode, crtc::Handle)> = sola
         .devices
         .iter()
+        .filter(|(_, device)| !device.frame_pending)
         .flat_map(|(node, device)| {
             device.outputs.keys().map(move |crtc| (*node, *crtc))
         })
         .collect();
 
     for (node, crtc) in targets {
-        render_output(sola, node, crtc);
+        do_render(sola, node, crtc);
     }
 }
 
-/// Render a frame for a specific output and submit it for scanout.
-pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
+/// Render a frame and submit for scanout.
+fn do_render(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
     let device = sola.devices.get_mut(&node).unwrap();
     let render_node = device.render_node;
 
@@ -117,12 +133,6 @@ pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
         vec![]
     };
 
-    let window_count = sola.space.elements().count();
-    let element_count = space_elements.len();
-    if window_count > 0 && element_count == 0 {
-        tracing::warn!(window_count, "windows in space but no render elements produced");
-    }
-
     let mut elements: Vec<OutputElement> = space_elements
         .into_iter()
         .map(OutputElement::Space)
@@ -132,7 +142,6 @@ pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
     if let Some(ref cursor_buffer) = sola.cursor_buffer {
         let (hx, hy) = sola.cursor_hotspot;
         let (px, py) = sola.pointer_location;
-        // Position the cursor image so the hotspot aligns with the pointer.
         let cursor_pos = (px as i32 - hx, py as i32 - hy);
 
         match MemoryRenderBufferRenderElement::from_buffer(
@@ -145,8 +154,6 @@ pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
             Kind::Cursor,
         ) {
             Ok(cursor_element) => {
-                // Insert at front — render_frame composites front-to-back,
-                // so the cursor must be first to appear on top of windows.
                 elements.insert(0, OutputElement::Cursor(cursor_element));
             }
             Err(err) => {
@@ -160,8 +167,13 @@ pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
     match drm_output.render_frame(&mut renderer, &elements, CLEAR_COLOR, FrameFlags::empty()) {
         Ok(result) => {
             if !result.is_empty {
-                if let Err(err) = drm_output.queue_frame(()) {
-                    tracing::error!(?err, ?crtc, "queue_frame failed");
+                match drm_output.queue_frame(()) {
+                    Ok(()) => {
+                        sola.devices.get_mut(&node).unwrap().frame_pending = true;
+                    }
+                    Err(err) => {
+                        tracing::error!(?err, ?crtc, "queue_frame failed");
+                    }
                 }
             }
         }
