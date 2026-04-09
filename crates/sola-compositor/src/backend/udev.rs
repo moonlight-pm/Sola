@@ -133,6 +133,38 @@ pub fn init_device(
         renderer.dmabuf_formats().into_iter().collect::<Vec<_>>()
     };
 
+    // Initialize linux-dmabuf protocol if not already done.
+    // Advertises supported GPU buffer formats to clients so they can
+    // share buffers directly instead of falling back to SHM.
+    // Store the render node for dmabuf import lookups.
+    sola.primary_render_node = render_node;
+
+    // Initialize linux-dmabuf v4 protocol if not already done.
+    // v4 is required by XWayland/Mesa (v3 alone causes create_immed failures).
+    // Uses the render node's dev_id for device feedback.
+    if sola.dmabuf_state.is_none() {
+        use smithay::wayland::dmabuf::{DmabufFeedbackBuilder, DmabufState};
+
+        let mut dmabuf_state = DmabufState::new();
+        let feedback =
+            DmabufFeedbackBuilder::new(render_node.dev_id(), renderer_formats.clone())
+                .build()
+                .map_err(|e| DeviceError::OutputInit {
+                    node,
+                    reason: format!("dmabuf feedback: {e}"),
+                })?;
+        dmabuf_state.create_global_with_default_feedback::<crate::Sola>(
+            &sola.display_handle,
+            &feedback,
+        );
+        sola.dmabuf_state = Some(dmabuf_state);
+        tracing::info!(
+            format_count = renderer_formats.len(),
+            ?render_node,
+            "linux-dmabuf v4 protocol initialized"
+        );
+    }
+
     let allocator = GbmAllocator::new(
         gbm.clone(),
         GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,

@@ -24,6 +24,7 @@ use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
+use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::xwayland_shell::XWaylandShellState;
 use smithay::xwayland::X11Wm;
@@ -58,6 +59,11 @@ pub struct Sola {
 
     /// The primary GPU node (the one connected to displays).
     pub primary_gpu: DrmNode,
+
+    /// The render node for the primary GPU. Used for GpuManager lookups
+    /// and dmabuf import. Distinct from `primary_gpu` which is the
+    /// primary/display node.
+    pub primary_render_node: DrmNode,
 
     /// Per-GPU device state, keyed by DRM node.
     pub devices: HashMap<DrmNode, Device>,
@@ -101,6 +107,9 @@ pub struct Sola {
     pub pointer_location: (f64, f64),
 
     // -- XWayland state --
+
+    /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
+    pub dmabuf_state: Option<DmabufState>,
 
     /// The X11 window manager instance. `None` until XWayland is ready.
     pub xwm: Option<X11Wm>,
@@ -149,6 +158,7 @@ impl Sola {
             session,
             gpu_manager,
             primary_gpu,
+            primary_render_node: primary_gpu, // Updated in udev::init_device
             devices: HashMap::new(),
             compositor_state,
             shm_state,
@@ -163,6 +173,7 @@ impl Sola {
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             restart_requested: Arc::new(AtomicBool::new(false)),
+            dmabuf_state: None,
             xwm: None,
             xwayland_shell_state: None,
             xwayland_mapped: HashSet::new(),

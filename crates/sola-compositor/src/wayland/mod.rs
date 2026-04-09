@@ -8,6 +8,7 @@
 mod compositor;
 mod data;
 mod decoration;
+mod dmabuf;
 mod output;
 mod seat;
 mod shell;
