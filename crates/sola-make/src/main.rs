@@ -95,9 +95,9 @@ fn deploy_canto() {
     println!("Preparing canto...");
     run_or_exit("ssh", &["canto", "mkdir -p /opt/sola/bin /opt/sola/log"]);
 
-    // Deploy all binaries from target/release that start with "sola".
+    // Discover and deploy all workspace binaries.
     println!("Deploying binaries to canto...");
-    for name in &["sola", "sola-xtest"] {
+    for name in discover_binaries() {
         let src = format!("target/release/{name}");
         if std::path::Path::new(&src).exists() {
             run_or_exit(
@@ -109,6 +109,46 @@ fn deploy_canto() {
     }
 
     println!("Deployed to canto:/opt/sola/bin/");
+}
+
+/// Discover deployable binary names by scanning workspace member directories.
+///
+/// Looks for `Cargo.toml` files in `crates/` and `apps/` that contain a
+/// `src/main.rs` (i.e. are binary crates), and extracts the package name.
+/// Skips sola-make itself since it's the build tool.
+fn discover_binaries() -> Vec<String> {
+    let mut binaries = Vec::new();
+    for dir in &["crates", "apps"] {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.join("src/main.rs").exists() {
+                continue;
+            }
+            let toml_path = path.join("Cargo.toml");
+            let contents = match std::fs::read_to_string(&toml_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            // Extract package name from `name = "..."` line.
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.starts_with("name") {
+                    if let Some(name) = line.split('"').nth(1) {
+                        if name != "sola-make" {
+                            binaries.push(name.to_string());
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    binaries.sort();
+    binaries
 }
 
 /// Run an external command, exiting on failure.

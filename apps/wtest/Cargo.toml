@@ -1,0 +1,9 @@
+[package]
+name = "sola-wtest"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+libc = "0.2"

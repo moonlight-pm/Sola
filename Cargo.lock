@@ -1232,6 +1232,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-wtest"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "wayland-client",
+ "wayland-protocols",
+]
+
+[[package]]
 name = "sola-xtest"
 version = "0.1.0"
 dependencies = [
@@ -1532,6 +1541,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wayland-client"
+version = "0.31.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "645c7c96bb74690c3189b5c9cb4ca1627062bb23693a4fad9d8c3de958260144"
+dependencies = [
+ "bitflags 2.11.0",
+ "rustix 1.1.4",
+ "wayland-backend",
+ "wayland-scanner",
+]
+
+[[package]]
 name = "wayland-protocols"
 version = "0.32.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1539,6 +1560,7 @@ checksum = "563a85523cade2429938e790815fd7319062103b9f4a2dc806e9b53b95982d8f"
 dependencies = [
  "bitflags 2.11.0",
  "wayland-backend",
+ "wayland-client",
  "wayland-scanner",
  "wayland-server",
 ]
