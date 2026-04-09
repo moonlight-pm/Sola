@@ -91,7 +91,16 @@ impl Sola {
     ) -> Self {
         let compositor_state = CompositorState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
-        let seat_state = SeatState::new();
+        let mut seat_state = SeatState::new();
+
+        // Add a seat named "seat-0" with keyboard and pointer capabilities.
+        // This advertises the wl_seat global to clients — without it,
+        // clients like foot refuse to start ("no seats available").
+        let mut seat = seat_state.new_wl_seat(&dh, "seat-0");
+        seat.add_keyboard(Default::default(), 200, 25)
+            .expect("failed to add keyboard to seat");
+        seat.add_pointer();
+
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);

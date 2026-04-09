@@ -26,8 +26,14 @@ impl XdgShellHandler for Sola {
     /// rendering. In later phases this is where zone-based positioning and
     /// size negotiation will happen.
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        tracing::info!("new toplevel window from client");
+
+        // Send an initial configure event — the client won't render until
+        // it receives this. An empty configure lets the client choose its
+        // own size.
+        surface.send_configure();
+
         let window = Window::new_wayland_window(surface);
-        // Map at origin for now — positioning is a shell-layer concern.
         self.space.map_element(window, (0, 0), false);
     }
 

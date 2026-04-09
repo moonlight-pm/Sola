@@ -82,6 +82,27 @@ pub fn on_vblank(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
     render_output(sola, node, crtc);
 }
 
+/// Render all outputs across all devices.
+///
+/// Called from the main event loop to ensure any new damage (new windows,
+/// surface commits) gets rendered. If the frame has no damage,
+/// `render_frame` returns `is_empty = true` and we skip the queue — no
+/// wasted page flips.
+pub fn render_all(sola: &mut Sola) {
+    // Collect (node, crtc) pairs to avoid borrow conflicts.
+    let targets: Vec<(DrmNode, crtc::Handle)> = sola
+        .devices
+        .iter()
+        .flat_map(|(node, device)| {
+            device.outputs.keys().map(move |crtc| (*node, *crtc))
+        })
+        .collect();
+
+    for (node, crtc) in targets {
+        render_output(sola, node, crtc);
+    }
+}
+
 /// Render a frame for a specific output and submit it for scanout.
 ///
 /// Collects window surfaces from the Space, composites them with the

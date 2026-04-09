@@ -86,6 +86,11 @@ pub fn run() -> Result<(), CompositorError> {
     // -- Input --
     backend::input::setup(&event_loop.handle(), &sola.session)?;
 
+    // -- Binary watcher --
+    // Restart the compositor when the binary is replaced on disk (deploy).
+    // Runs in a separate thread, independent of the event loop.
+    backend::watcher::watch_binary();
+
     // -- Wayland socket --
     // Create the socket that clients connect to. Set WAYLAND_DISPLAY so
     // child processes (and clients launched from the same session) can
@@ -119,6 +124,12 @@ pub fn run() -> Result<(), CompositorError> {
         display
             .flush_clients()
             .map_err(|e| CompositorError::Display(e.to_string()))?;
+
+        // Render all outputs. If new damage exists (window mapped, surface
+        // committed), this will composite and page-flip. If no damage,
+        // render_frame returns is_empty and we skip the flip — no waste.
+        render::render_all(&mut sola);
+
         event_loop
             .dispatch(Some(std::time::Duration::from_millis(16)), &mut sola)
             .map_err(|e| CompositorError::EventLoop(e.to_string()))?;

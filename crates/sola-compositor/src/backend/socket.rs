@@ -24,11 +24,12 @@ pub fn listen(loop_handle: &LoopHandle<'static, Sola>) -> Result<String, SocketE
 
     loop_handle
         .insert_source(listener, |client_stream, _, sola| {
-            if let Err(err) = sola
+            match sola
                 .display_handle
                 .insert_client(client_stream, new_client_state())
             {
-                tracing::error!(?err, "failed to accept Wayland client");
+                Ok(_) => tracing::info!("new Wayland client connected"),
+                Err(err) => tracing::error!(?err, "failed to accept Wayland client"),
             }
         })
         .map_err(|e| SocketError::EventSource(e.to_string()))?;

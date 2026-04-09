@@ -8,3 +8,4 @@ pub mod gpu;
 pub mod input;
 pub mod session;
 pub mod socket;
+pub mod watcher;
