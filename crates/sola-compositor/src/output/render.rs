@@ -137,7 +137,9 @@ pub fn render_output(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
             Kind::Cursor,
         ) {
             Ok(cursor_element) => {
-                elements.push(OutputElement::Cursor(cursor_element));
+                // Insert at front — render_frame composites front-to-back,
+                // so the cursor must be first to appear on top of windows.
+                elements.insert(0, OutputElement::Cursor(cursor_element));
             }
             Err(err) => {
                 tracing::warn!(?err, "failed to create cursor render element");
