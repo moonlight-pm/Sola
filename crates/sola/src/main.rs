@@ -1,6 +1,7 @@
 mod watcher;
 
 use std::collections::HashMap;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::sync::mpsc;
 use std::thread;
@@ -70,13 +71,25 @@ fn main() {
             }
         }
 
-        // Check for Shutdown on bus
+        // Check for bus messages
         if let Some(ref client) = bus {
             while let Some(msg) = client.try_recv() {
-                if let Some(Topic::Shutdown) = Topic::parse(&msg) {
-                    info!("shutdown requested via bus");
-                    shutdown_all(&mut managed);
-                    std::process::exit(0);
+                let Some(topic) = Topic::parse(&msg) else { continue };
+                match topic {
+                    Topic::Shutdown => {
+                        info!("shutdown requested via bus");
+                        shutdown_all(&mut managed);
+                        std::process::exit(0);
+                    }
+                    Topic::Key(key) => {
+                        // Super+Shift+Backspace → shutdown
+                        if !key.pressed && key.code == 22 && key.super_held && key.shift_held {
+                            info!("kill chord received, shutting down");
+                            shutdown_all(&mut managed);
+                            std::process::exit(0);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -131,7 +144,18 @@ fn launch<'a>(
     managed: &mut HashMap<&'a str, ManagedProcess>,
 ) {
     let bin = bin_dir.join(name);
-    match Command::new(&bin).spawn() {
+    // SAFETY: pre_exec runs in the child after fork, before exec.
+    // PR_SET_PDEATHSIG asks the kernel to send SIGTERM to this child
+    // when the parent process (sola) dies, preventing orphaned processes.
+    let result = unsafe {
+        Command::new(&bin)
+            .pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            })
+            .spawn()
+    };
+    match result {
         Ok(child) => {
             info!(process = name, pid = child.id(), "launched");
             managed.insert(name, ManagedProcess {
