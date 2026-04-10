@@ -12,9 +12,9 @@ use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
 };
 
-use crate::state::Sola;
+use crate::state::State;
 
-impl XdgShellHandler for Sola {
+impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state
     }
@@ -42,4 +42,4 @@ impl XdgShellHandler for Sola {
     fn reposition_request(&mut self, _surface: PopupSurface, _positioner: PositionerState, _token: u32) {}
 }
 
-smithay::delegate_xdg_shell!(Sola);
+smithay::delegate_xdg_shell!(State);

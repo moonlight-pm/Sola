@@ -1,10 +1,10 @@
 /// Core compositor state.
 ///
-/// `Sola` is the central state struct — it owns all Wayland protocol state,
+/// `State` is the central state struct — it owns all Wayland protocol state,
 /// backend resources, and runtime bookkeeping. Smithay's event loop passes
-/// `&mut Sola` to every callback, so all mutable state lives here.
+/// `&mut State` to every callback, so all mutable state lives here.
 ///
-/// Note: `Display<Sola>` is intentionally NOT stored here. Smithay's
+/// Note: `Display<State>` is intentionally NOT stored here. Smithay's
 /// `dispatch_clients` needs `&mut Display` and `&mut State` simultaneously,
 /// which would violate Rust's borrowing rules if both lived in the same struct.
 /// The `Display` is kept as a separate local in `run()`.
@@ -30,9 +30,12 @@ use smithay::xwayland::X11Wm;
 use crate::backend::device::Device;
 use crate::backend::gpu::SolaGpuManager;
 
-pub struct Sola {
+pub struct State {
     /// Controls the main event loop. Set to `false` to trigger shutdown.
     pub running: bool,
+
+    /// Connection to the Sola Bus. `None` if the bus isn't available yet.
+    pub bus: Option<sola_bus::BusClient>,
 
     /// Handle for creating Wayland globals and accessing the display.
     /// Unlike `Display`, a `DisplayHandle` can be freely cloned and used
@@ -127,7 +130,7 @@ pub struct Sola {
     pub cursor_hotspot: (i32, i32),
 }
 
-impl Sola {
+impl State {
     pub fn new(
         dh: DisplayHandle,
         loop_handle: LoopHandle<'static, Self>,
@@ -150,6 +153,7 @@ impl Sola {
 
         Self {
             running: true,
+            bus: None,
             display_handle: dh,
             loop_handle,
             session,

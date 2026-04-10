@@ -25,7 +25,7 @@ use smithay::desktop::space::SpaceRenderElements;
 use smithay::reexports::drm::control::crtc;
 use smithay::utils::IsAlive;
 
-use crate::Sola;
+use crate::State;
 use crate::types::SolaRenderer;
 
 /// Background color — dark blue-gray.
@@ -39,8 +39,8 @@ smithay::backend::renderer::element::render_elements! {
 }
 
 /// Handle a VBlank event (page flip complete) for a CRTC.
-pub fn on_vblank(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
-    let Some(device) = sola.devices.get_mut(&node) else {
+pub fn on_vblank(state: &mut State, node: DrmNode, crtc: crtc::Handle) {
+    let Some(device) = state.devices.get_mut(&node) else {
         return;
     };
     let Some(output) = device.outputs.get_mut(&crtc) else {
@@ -54,24 +54,24 @@ pub fn on_vblank(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
 
     device.frame_pending = false;
 
-    do_render(sola, node, crtc);
+    do_render(state, node, crtc);
 }
 
 /// Send frame callbacks to all windows and render all outputs.
-pub fn render_all(sola: &mut Sola) {
+pub fn render_all(state: &mut State) {
     let time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
 
-    if let Some(output) = sola.space.outputs().next().cloned() {
-        for window in sola.space.elements() {
+    if let Some(output) = state.space.outputs().next().cloned() {
+        for window in state.space.elements() {
             if window.alive() {
                 window.send_frame(&output, time, Some(std::time::Duration::ZERO), |_, _| None);
             }
         }
     }
 
-    let targets: Vec<(DrmNode, crtc::Handle)> = sola
+    let targets: Vec<(DrmNode, crtc::Handle)> = state
         .devices
         .iter()
         .filter(|(_, device)| !device.frame_pending)
@@ -81,16 +81,16 @@ pub fn render_all(sola: &mut Sola) {
         .collect();
 
     for (node, crtc) in targets {
-        do_render(sola, node, crtc);
+        do_render(state, node, crtc);
     }
 }
 
 /// Render a frame and submit for scanout.
-fn do_render(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
-    let device = sola.devices.get_mut(&node).unwrap();
+fn do_render(state: &mut State, node: DrmNode, crtc: crtc::Handle) {
+    let device = state.devices.get_mut(&node).unwrap();
     let render_node = device.render_node;
 
-    let mut renderer = match sola.gpu_manager.single_renderer(&render_node) {
+    let mut renderer = match state.gpu_manager.single_renderer(&render_node) {
         Ok(r) => r,
         Err(err) => {
             tracing::error!(?err, "failed to get renderer");
@@ -98,9 +98,9 @@ fn do_render(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
         }
     };
 
-    let output = sola.space.outputs().next().cloned();
+    let output = state.space.outputs().next().cloned();
     let space_elements = if let Some(ref output) = output {
-        sola.space
+        state.space
             .render_elements_for_output(&mut renderer, output, 1.0)
             .unwrap_or_default()
     } else {
@@ -112,9 +112,9 @@ fn do_render(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
         .map(OutputElement::Space)
         .collect();
 
-    if let Some(ref cursor_buffer) = sola.cursor_buffer {
-        let (hx, hy) = sola.cursor_hotspot;
-        let (px, py) = sola.pointer_location;
+    if let Some(ref cursor_buffer) = state.cursor_buffer {
+        let (hx, hy) = state.cursor_hotspot;
+        let (px, py) = state.pointer_location;
         let cursor_pos = (px as i32 - hx, py as i32 - hy);
 
         match MemoryRenderBufferRenderElement::from_buffer(
@@ -142,7 +142,7 @@ fn do_render(sola: &mut Sola, node: DrmNode, crtc: crtc::Handle) {
             if !result.is_empty {
                 match drm_output.queue_frame(()) {
                     Ok(()) => {
-                        sola.devices.get_mut(&node).unwrap().frame_pending = true;
+                        state.devices.get_mut(&node).unwrap().frame_pending = true;
                     }
                     Err(err) => {
                         tracing::error!(?err, ?crtc, "queue_frame failed");

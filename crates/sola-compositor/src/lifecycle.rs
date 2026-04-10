@@ -4,30 +4,30 @@ use smithay::reexports::wayland_server::Display;
 
 use crate::error::CompositorError;
 use crate::output::render;
-use crate::state::Sola;
+use crate::state::State;
 
-/// Run the main event loop until `sola.running` becomes false.
+/// Run the main event loop until `state.running` becomes false.
 pub fn run_loop(
-    sola: &mut Sola,
-    display: &mut Display<Sola>,
-    event_loop: &mut EventLoop<'static, Sola>,
+    state: &mut State,
+    display: &mut Display<State>,
+    event_loop: &mut EventLoop<'static, State>,
 ) -> Result<(), CompositorError> {
     tracing::info!("entering event loop");
 
-    while sola.running {
-        sola.space.refresh();
+    while state.running {
+        state.space.refresh();
 
         display
-            .dispatch_clients(sola)
+            .dispatch_clients(state)
             .map_err(|e| CompositorError::Display(e.to_string()))?;
         display
             .flush_clients()
             .map_err(|e| CompositorError::Display(e.to_string()))?;
 
-        render::render_all(sola);
+        render::render_all(state);
 
         event_loop
-            .dispatch(Some(std::time::Duration::from_millis(16)), sola)
+            .dispatch(Some(std::time::Duration::from_millis(16)), state)
             .map_err(|e| CompositorError::EventLoop(e.to_string()))?;
     }
 
@@ -35,10 +35,10 @@ pub fn run_loop(
 }
 
 /// Graceful shutdown — clean up all resources.
-pub fn shutdown(mut sola: Sola, display: Display<Sola>, event_loop: EventLoop<'static, Sola>) {
+pub fn shutdown(mut state: State, display: Display<State>, event_loop: EventLoop<'static, State>) {
     tracing::info!("sola compositor shutting down");
-    sola.xwm = None;
-    sola.devices.clear();
+    state.xwm = None;
+    state.devices.clear();
     drop(display);
     drop(event_loop);
 }

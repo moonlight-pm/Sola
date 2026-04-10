@@ -6,7 +6,7 @@ use smithay::reexports::wayland_server::Client;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
 
-use crate::state::Sola;
+use crate::state::State;
 use super::ClientState;
 
 // Fallback CompositorClientState for clients not created through our
@@ -15,7 +15,7 @@ thread_local! {
     static XWAYLAND_CLIENT_STATE: CompositorClientState = CompositorClientState::default();
 }
 
-impl CompositorHandler for Sola {
+impl CompositorHandler for State {
     fn compositor_state(&mut self) -> &mut CompositorState {
         &mut self.compositor_state
     }
@@ -53,4 +53,4 @@ impl CompositorHandler for Sola {
     }
 }
 
-smithay::delegate_compositor!(Sola);
+smithay::delegate_compositor!(State);

@@ -17,7 +17,7 @@ use smithay::reexports::calloop::{
     EventSource, Interest, LoopHandle, Mode, Poll, PostAction, Readiness, Token, TokenFactory,
 };
 
-use crate::Sola;
+use crate::State;
 use crate::error::SocketError;
 use crate::wayland::new_client_state;
 
@@ -28,7 +28,7 @@ use crate::wayland::new_client_state;
 ///
 /// Returns the socket name and the raw FD (for preserving across future restarts).
 pub fn listen(
-    loop_handle: &LoopHandle<'static, Sola>,
+    loop_handle: &LoopHandle<'static, State>,
     inherited_fd: Option<RawFd>,
 ) -> Result<(String, RawFd), SocketError> {
     let listener = if let Some(fd) = inherited_fd {
@@ -63,8 +63,8 @@ pub fn listen(
     };
 
     loop_handle
-        .insert_source(source, |client_stream, _, sola| {
-            match sola
+        .insert_source(source, |client_stream, _, state| {
+            match state
                 .display_handle
                 .insert_client(client_stream, new_client_state())
             {

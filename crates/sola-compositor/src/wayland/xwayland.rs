@@ -17,20 +17,20 @@ use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 use smithay::xwayland::X11Surface;
 
 use crate::error::CompositorError;
-use crate::state::Sola;
+use crate::state::State;
 
 /// Spawn XWayland and register its event source with the event loop.
 ///
 /// XWayland connects as a Wayland client and provides an X11 display
 /// for legacy apps (Steam, etc.). Pinned to `:0` for a stable `$DISPLAY`.
-pub fn setup(sola: &mut Sola, event_loop: &smithay::reexports::calloop::EventLoop<'static, Sola>) -> Result<(), CompositorError> {
+pub fn setup(state: &mut State, event_loop: &smithay::reexports::calloop::EventLoop<'static, State>) -> Result<(), CompositorError> {
     use smithay::wayland::xwayland_shell::XWaylandShellState;
     use smithay::xwayland::XWayland;
 
-    sola.xwayland_shell_state = Some(XWaylandShellState::new::<Sola>(&sola.display_handle));
+    state.xwayland_shell_state = Some(XWaylandShellState::new::<State>(&state.display_handle));
 
     let (xwayland, xwayland_client) = XWayland::spawn(
-        &sola.display_handle,
+        &state.display_handle,
         Some(0),
         std::iter::empty::<(String, String)>(),
         true,
@@ -42,7 +42,7 @@ pub fn setup(sola: &mut Sola, event_loop: &smithay::reexports::calloop::EventLoo
 
     event_loop
         .handle()
-        .insert_source(xwayland, move |event, _, sola| match event {
+        .insert_source(xwayland, move |event, _, state| match event {
             smithay::xwayland::XWaylandEvent::Ready {
                 x11_socket,
                 display_number,
@@ -51,12 +51,12 @@ pub fn setup(sola: &mut Sola, event_loop: &smithay::reexports::calloop::EventLoo
                 unsafe { std::env::set_var("DISPLAY", format!(":{display_number}")) };
 
                 match smithay::xwayland::X11Wm::start_wm(
-                    sola.loop_handle.clone(),
+                    state.loop_handle.clone(),
                     x11_socket,
                     xwayland_client.clone(),
                 ) {
                     Ok(wm) => {
-                        sola.xwm = Some(wm);
+                        state.xwm = Some(wm);
                         tracing::info!("X11 window manager started");
                     }
                     Err(err) => {
@@ -73,7 +73,7 @@ pub fn setup(sola: &mut Sola, event_loop: &smithay::reexports::calloop::EventLoo
     Ok(())
 }
 
-impl XwmHandler for Sola {
+impl XwmHandler for State {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut smithay::xwayland::X11Wm {
         self.xwm.as_mut().expect("xwm not initialized")
     }
@@ -171,7 +171,7 @@ impl XwmHandler for Sola {
     fn move_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32) {}
 }
 
-impl XWaylandShellHandler for Sola {
+impl XWaylandShellHandler for State {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
         self.xwayland_shell_state
             .as_mut()
@@ -195,7 +195,7 @@ impl XWaylandShellHandler for Sola {
 
 /// Add an X11 window to the Space and give it keyboard focus.
 /// Called when both mapping and surface association have occurred.
-fn add_x11_to_space(sola: &mut Sola, surface: X11Surface) {
+fn add_x11_to_space(state: &mut State, surface: X11Surface) {
     tracing::info!(
         title = %surface.title(),
         class = %surface.class(),
@@ -206,13 +206,13 @@ fn add_x11_to_space(sola: &mut Sola, surface: X11Surface) {
     let geo = surface.geometry();
     let wl_surface = surface.wl_surface();
     let window = Window::new_x11_window(surface);
-    sola.space.map_element(window, geo.loc, true);
+    state.space.map_element(window, geo.loc, true);
 
     // Reset all DRM output buffers so the compositor has no cached frame
     // state. This forces a full re-render on the next frame, ensuring the
     // new window's content is picked up even if the damage tracker would
     // otherwise consider the frame unchanged.
-    for device in sola.devices.values() {
+    for device in state.devices.values() {
         for output in device.outputs.values() {
             output.reset_buffers();
         }
@@ -220,9 +220,9 @@ fn add_x11_to_space(sola: &mut Sola, surface: X11Surface) {
 
     if let Some(surface) = wl_surface {
         let serial = SERIAL_COUNTER.next_serial();
-        let keyboard = sola.seat.get_keyboard().unwrap();
-        keyboard.set_focus(sola, Some(surface), serial);
+        let keyboard = state.seat.get_keyboard().unwrap();
+        keyboard.set_focus(state, Some(surface), serial);
     }
 }
 
-smithay::delegate_xwayland_shell!(Sola);
+smithay::delegate_xwayland_shell!(State);

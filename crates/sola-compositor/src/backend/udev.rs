@@ -19,7 +19,7 @@ use smithay::utils::Transform;
 
 use crate::error::{CompositorError, DeviceError};
 use crate::output::render::{self, CLEAR_COLOR};
-use crate::state::Sola;
+use crate::state::State;
 use crate::types::{Element, SolaOutputManager, SolaRenderer};
 
 /// Enumerate GPUs and initialize devices.
@@ -28,24 +28,24 @@ use crate::types::{Element, SolaOutputManager, SolaRenderer};
 /// but only creates DRM outputs on GPUs with connected displays. Also
 /// registers a udev hotplug listener for runtime device changes.
 pub fn setup(
-    sola: &mut Sola,
-    event_loop: &EventLoop<'static, Sola>,
+    state: &mut State,
+    event_loop: &EventLoop<'static, State>,
 ) -> Result<(), CompositorError> {
-    let seat_name = sola.session.seat();
+    let seat_name = state.session.seat();
     let udev_backend = UdevBackend::new(&seat_name)?;
 
     for (device_id, path) in udev_backend.device_list() {
         if let Ok(node) = DrmNode::from_dev_id(device_id) {
             if node.node_with_type(NodeType::Primary).is_some() {
                 if !super::gpu::has_connected_display(&path) {
-                    if let Err(err) = register_gpu(sola, &path, node) {
+                    if let Err(err) = register_gpu(state, &path, node) {
                         tracing::warn!(?err, ?node, "failed to register non-display GPU");
                     } else {
                         tracing::info!(?node, ?path, "registered non-display GPU for buffer import");
                     }
                     continue;
                 }
-                if let Err(err) = init_device(sola, node, &path) {
+                if let Err(err) = init_device(state, node, &path) {
                     tracing::error!(?err, ?node, "failed to initialize GPU");
                 }
             }
@@ -55,10 +55,10 @@ pub fn setup(
     // Listen for GPU hotplug events.
     event_loop
         .handle()
-        .insert_source(udev_backend, |event, _, sola| {
+        .insert_source(udev_backend, |event, _, state| {
             if let UdevEvent::Added { device_id, path } = event {
                 if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                    let _ = init_device(sola, node, &path);
+                    let _ = init_device(state, node, &path);
                 }
             }
         })
@@ -69,14 +69,14 @@ pub fn setup(
 
 /// Register a GPU with the GpuManager without creating DRM outputs.
 fn register_gpu(
-    sola: &mut Sola,
+    state: &mut State,
     path: &std::path::Path,
     node: DrmNode,
 ) -> Result<(), DeviceError> {
     let (_drm, _notifier, gbm, render_node) =
-        super::device::open(&mut sola.session, path, node)?;
+        super::device::open(&mut state.session, path, node)?;
 
-    sola.gpu_manager
+    state.gpu_manager
         .as_mut()
         .add_node(render_node, gbm)
         .map_err(|e| DeviceError::Open {
@@ -89,17 +89,17 @@ fn register_gpu(
 
 /// Initialize a single DRM GPU device end-to-end.
 pub fn init_device(
-    sola: &mut Sola,
+    state: &mut State,
     node: DrmNode,
     path: &std::path::Path,
 ) -> Result<(), DeviceError> {
     let (drm, drm_notifier, gbm, render_node) =
-        super::device::open(&mut sola.session, path, node)?;
+        super::device::open(&mut state.session, path, node)?;
 
     let mut scanner = smithay_drm_extras::drm_scanner::DrmScanner::new();
     let connected_outputs = crate::output::scan::find_connected_outputs(&mut scanner, &drm);
 
-    sola.gpu_manager
+    state.gpu_manager
         .as_mut()
         .add_node(render_node, gbm.clone())
         .map_err(|e| DeviceError::Open {
@@ -107,11 +107,11 @@ pub fn init_device(
             reason: format!("GPU registration: {e:?}"),
         })?;
 
-    let token = sola
+    let token = state
         .loop_handle
-        .insert_source(drm_notifier, move |event, _metadata, sola| match event {
+        .insert_source(drm_notifier, move |event, _metadata, state| match event {
             DrmEvent::VBlank(crtc) => {
-                render::on_vblank(sola, node, crtc);
+                render::on_vblank(state, node, crtc);
             }
             DrmEvent::Error(err) => {
                 tracing::error!(?err, "DRM device error");
@@ -123,7 +123,7 @@ pub fn init_device(
         })?;
 
     let renderer_formats = {
-        let renderer = sola
+        let renderer = state
             .gpu_manager
             .single_renderer(&render_node)
             .map_err(|e| DeviceError::OutputInit {
@@ -137,12 +137,12 @@ pub fn init_device(
     // Advertises supported GPU buffer formats to clients so they can
     // share buffers directly instead of falling back to SHM.
     // Store the render node for dmabuf import lookups.
-    sola.primary_render_node = render_node;
+    state.primary_render_node = render_node;
 
     // Initialize linux-dmabuf v4 protocol if not already done.
     // v4 is required by XWayland/Mesa (v3 alone causes create_immed failures).
     // Uses the render node's dev_id for device feedback.
-    if sola.dmabuf_state.is_none() {
+    if state.dmabuf_state.is_none() {
         use smithay::wayland::dmabuf::{DmabufFeedbackBuilder, DmabufState};
 
         let mut dmabuf_state = DmabufState::new();
@@ -153,11 +153,11 @@ pub fn init_device(
                     node,
                     reason: format!("dmabuf feedback: {e}"),
                 })?;
-        dmabuf_state.create_global_with_default_feedback::<crate::Sola>(
-            &sola.display_handle,
+        dmabuf_state.create_global_with_default_feedback::<crate::State>(
+            &state.display_handle,
             &feedback,
         );
-        sola.dmabuf_state = Some(dmabuf_state);
+        state.dmabuf_state = Some(dmabuf_state);
         tracing::info!(
             format_count = renderer_formats.len(),
             ?render_node,
@@ -200,15 +200,15 @@ pub fn init_device(
         };
         wl_output.change_current_state(Some(wl_mode), Some(Transform::Normal), None, None);
         wl_output.set_preferred(wl_mode);
-        wl_output.create_global::<Sola>(&sola.display_handle);
+        wl_output.create_global::<State>(&state.display_handle);
 
-        sola.space.map_output(&wl_output, (0, 0));
+        state.space.map_output(&wl_output, (0, 0));
 
         let mut render_elements = DrmOutputRenderElements::<SolaRenderer, Element>::new();
         render_elements.add_output(&crtc, CLEAR_COLOR, std::iter::empty());
 
         let mut renderer =
-            sola.gpu_manager
+            state.gpu_manager
                 .single_renderer(&render_node)
                 .map_err(|e| DeviceError::OutputInit {
                     node,
@@ -233,7 +233,7 @@ pub fn init_device(
         tracing::info!(?crtc, "DRM output initialized, starting render loop");
 
         let mut renderer =
-            sola.gpu_manager
+            state.gpu_manager
                 .single_renderer(&render_node)
                 .map_err(|e| DeviceError::OutputInit {
                     node,
@@ -268,7 +268,7 @@ pub fn init_device(
         outputs.insert(crtc, drm_output);
     }
 
-    sola.devices.insert(
+    state.devices.insert(
         node,
         super::device::Device {
             output_manager,

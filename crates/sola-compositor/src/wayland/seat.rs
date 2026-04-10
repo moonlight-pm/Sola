@@ -8,9 +8,9 @@ use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::input::pointer::CursorImageStatus;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
-use crate::state::Sola;
+use crate::state::State;
 
-impl SeatHandler for Sola {
+impl SeatHandler for State {
     type KeyboardFocus = WlSurface;
     type PointerFocus = WlSurface;
     type TouchFocus = WlSurface;
@@ -24,4 +24,4 @@ impl SeatHandler for Sola {
     fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&Self::KeyboardFocus>) {}
 }
 
-smithay::delegate_seat!(Sola);
+smithay::delegate_seat!(State);

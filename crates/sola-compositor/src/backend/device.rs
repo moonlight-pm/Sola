@@ -21,7 +21,7 @@ use smithay_drm_extras::drm_scanner::DrmScanner;
 use crate::error::DeviceError;
 use crate::types::{SolaOutput, SolaOutputManager};
 
-/// Per-GPU device state, stored in `Sola::devices` after full initialization.
+/// Per-GPU device state, stored in `State::devices` after full initialization.
 pub struct Device {
     /// Manages all DRM outputs (compositors) for this GPU.
     pub output_manager: SolaOutputManager,

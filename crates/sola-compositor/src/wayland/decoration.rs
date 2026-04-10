@@ -2,7 +2,7 @@
 ///
 /// Controls whether window decorations (title bar, borders) are drawn by
 /// the client (CSD) or the compositor (SSD). We always request SSD so
-/// Sola controls all chrome. Clients that support this protocol will
+/// State controls all chrome. Clients that support this protocol will
 /// stop drawing their own title bars.
 ///
 /// Note: we don't actually render server-side decorations yet — clients
@@ -14,9 +14,9 @@ use smithay::wayland::shell::xdg::ToplevelSurface;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationHandler;
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode;
 
-use crate::state::Sola;
+use crate::state::State;
 
-impl XdgDecorationHandler for Sola {
+impl XdgDecorationHandler for State {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
         // Tell the client we want server-side decorations.
         toplevel.with_pending_state(|state| {
@@ -41,4 +41,4 @@ impl XdgDecorationHandler for Sola {
     }
 }
 
-smithay::delegate_xdg_decoration!(Sola);
+smithay::delegate_xdg_decoration!(State);

@@ -9,12 +9,12 @@
 /// See: https://docs.rs/smithay/0.7.0/smithay/wayland/shm/trait.ShmHandler.html
 use smithay::wayland::shm::{ShmHandler, ShmState};
 
-use crate::state::Sola;
+use crate::state::State;
 
-impl ShmHandler for Sola {
+impl ShmHandler for State {
     fn shm_state(&self) -> &ShmState {
         &self.shm_state
     }
 }
 
-smithay::delegate_shm!(Sola);
+smithay::delegate_shm!(State);

@@ -1,6 +1,6 @@
 /// Wayland protocol handlers.
 ///
-/// Each submodule implements a Wayland protocol handler trait for `Sola`.
+/// Each submodule implements a Wayland protocol handler trait for `State`.
 /// Smithay uses a "delegate" pattern: each protocol has a handler trait
 /// plus a `delegate_*!` macro that wires up message dispatch.
 ///
@@ -26,7 +26,7 @@ mod client {
     use smithay::wayland::buffer::BufferHandler;
     use smithay::wayland::compositor::CompositorClientState;
 
-    use crate::state::Sola;
+    use crate::state::State;
 
     /// Per-client data stored by the Wayland server.
     ///
@@ -44,7 +44,7 @@ mod client {
     }
 
     /// Buffer lifecycle — called when a client destroys a pixel buffer.
-    impl BufferHandler for Sola {
+    impl BufferHandler for State {
         fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
     }
 }

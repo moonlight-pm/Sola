@@ -9,9 +9,9 @@ use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::ImportDma;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
 
-use crate::state::Sola;
+use crate::state::State;
 
-impl DmabufHandler for Sola {
+impl DmabufHandler for State {
     fn dmabuf_state(&mut self) -> &mut DmabufState {
         self.dmabuf_state
             .as_mut()
@@ -33,7 +33,7 @@ impl DmabufHandler for Sola {
                 Ok(_texture) => {
                     // Tell GpuManager which GPU owns this buffer.
                     dmabuf.set_node(render_node);
-                    let _ = notifier.successful::<Sola>();
+                    let _ = notifier.successful::<State>();
                 }
                 Err(err) => {
                     tracing::debug!(?err, "dmabuf import failed");
@@ -50,4 +50,4 @@ impl DmabufHandler for Sola {
     }
 }
 
-smithay::delegate_dmabuf!(Sola);
+smithay::delegate_dmabuf!(State);

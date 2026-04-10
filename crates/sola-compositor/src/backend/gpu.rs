@@ -15,7 +15,7 @@ use smithay::backend::udev;
 
 use crate::error::GpuError;
 
-/// The concrete GpuManager type used throughout Sola.
+/// The concrete GpuManager type used throughout State.
 pub type SolaGpuManager = GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>;
 
 /// Find the primary GPU for the given seat name.

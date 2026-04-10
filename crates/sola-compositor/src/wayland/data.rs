@@ -8,19 +8,19 @@ use smithay::wayland::selection::data_device::{
 };
 use smithay::wayland::selection::SelectionHandler;
 
-use crate::state::Sola;
+use crate::state::State;
 
-impl SelectionHandler for Sola {
+impl SelectionHandler for State {
     type SelectionUserData = ();
 }
 
-impl DataDeviceHandler for Sola {
+impl DataDeviceHandler for State {
     fn data_device_state(&self) -> &DataDeviceState {
         &self.data_device_state
     }
 }
 
-impl ClientDndGrabHandler for Sola {}
-impl ServerDndGrabHandler for Sola {}
+impl ClientDndGrabHandler for State {}
+impl ServerDndGrabHandler for State {}
 
-smithay::delegate_data_device!(Sola);
+smithay::delegate_data_device!(State);
