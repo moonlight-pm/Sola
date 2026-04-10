@@ -35,26 +35,23 @@ Windows are grouped into apps by `app_id` (Wayland xdg_toplevel) or `WM_CLASS` (
 ```
 1. User presses Super+Tab
 
-2. Compositor intercepts (Super+Tab never reaches other clients)
-   → emits on bus: { topic: "shell:show-switcher" }
+2. Compositor sees Super held → sends key event to bus (not to any client)
 
-3. Switcher hears show-switcher
-   → emits on bus: { topic: "shell:list-apps" }
+3. Switcher hears Super+Tab on bus
+   → emits shell::GrabInput("sola-switcher")
 
-4. Compositor hears list-apps
-   → emits on bus: { topic: "shell:apps", payload: [...] }
+4. Compositor hears GrabInput
+   → shows switcher surface above all windows
+   → routes all keyboard/pointer input to switcher's Wayland surface
 
-5. Switcher receives apps, updates DOM, highlights position 1
+5. User tabs through apps (Tab/Arrow/mouse go to switcher via normal Wayland focus)
 
-6. Compositor also hears its own show-switcher event — makes switcher
-   surface visible, routes input exclusively to the switcher
+6. User releases Super — switcher gets key-up via Wayland
+   → emits shell::RaiseApp("zen-browser")
+   → emits shell::ReleaseInput
 
-7. User tabs through apps, then releases Super
-
-8. Switcher emits: { topic: "shell:raise-app", payload: { app_id: "zen-browser" } }
-   Switcher emits: { topic: "shell:hide-switcher" }
-
-9. Compositor raises zen-browser windows, hides switcher surface, releases input
+7. Compositor hears ReleaseInput → hides switcher surface, restores normal focus
+   Compositor hears RaiseApp → raises all windows of that app
 ```
 
 ## Architecture
@@ -72,32 +69,23 @@ apps/
 
 **sola-compositor** (separate process, bus client):
 
-- Intercepts Super+Tab, emits `shell:show-switcher` on bus
+- Sends all Super+key events to the bus (never forwards to Wayland clients)
+- Handles `shell::GrabInput` — shows target surface, routes all input to it
+- Handles `shell::ReleaseInput` — hides surface, restores normal focus
+- Handles `shell::RaiseApp` — raises all windows of the specified app
 - Maintains MRU-ordered app list (grouped by `app_id` / `WM_CLASS`)
-- Responds to `shell:list-apps` with `shell:apps`
-- Handles `shell:raise-app` — raises all windows of the specified app
-- Handles `shell:show-switcher` / `shell:hide-switcher` — controls switcher surface visibility
-- Controls input routing: while switcher is visible, input goes exclusively to the switcher
+- Responds to `shell::ListApps` with `shell::Apps`
+- No knowledge of what the switcher is — just responds to generic topics
 
 **sola-switcher** (separate process, bus client + Wayland client):
 
 - WebView-based Wayland client
 - Connects to the bus over Unix socket
-- WebView surface stays hot — always mapped, compositor controls visibility
-- Listens for `shell:show-switcher`, requests app list, updates UI
-- Renders horizontal strip of app icons with names
-- Handles input while visible: Tab (cycle), Left/Right (move selection), mouse hover (select)
-- On Super release: emits `shell:raise-app` and `shell:hide-switcher`
+- Listens for Super+Tab key events on the bus
+- On Super+Tab: requests app list, grabs input, updates UI
+- Handles input while grabbed: Tab (cycle), Left/Right (move selection), mouse hover (select)
+- On Super release: emits RaiseApp and ReleaseInput
 - Resilient to compositor and bus restarts
-
-## Input Handling
-
-The compositor owns all input. Key behaviors:
-
-- **Super+Tab** is intercepted by the compositor and never forwarded to clients. The compositor emits `shell:show-switcher` on the bus.
-- **While switcher is visible:** all keyboard and mouse input is routed exclusively to the switcher's Wayland surface. No other client receives input.
-- **Super release** is detected by the switcher (it receives key events while it has input). The switcher emits raise-app and hide-switcher.
-- **Escape** while switcher is visible: hides without changing focus (emits `shell:hide-switcher` only).
 
 ## Hot WebView
 
@@ -106,12 +94,12 @@ The switcher WebView process runs at all times. Its Wayland surface is mapped bu
 - No WebView startup cost when Super+Tab is pressed — the DOM is loaded, event listeners are active.
 - The compositor needs to identify the switcher's surface. When the switcher connects to the bus, it can announce its Wayland surface identity so the compositor can tag it.
 - When hidden: the compositor skips the surface in its render pass. The WebView process is idle but alive.
-- When shown: the compositor composites the surface above all other windows and routes input to it.
+- When shown (via GrabInput): the compositor composites the surface above all other windows and routes input to it.
 
 ## Open Questions
 
 - **Icon system:** how apps register their icons. Lucide for Sola apps, generic for others, but the full registration system is out of scope.
-- **Surface identity:** exact mechanism for the switcher to tell the compositor which Wayland surface is its overlay. Could be a bus event with the Wayland client ID, or a custom Wayland protocol just for surface tagging.
+- **Surface identity:** exact mechanism for the switcher to tell the compositor which Wayland surface is its overlay. Could be a bus message with the Wayland client ID, or a custom Wayland protocol just for surface tagging.
 - **Multi-monitor:** which monitor shows the switcher? Likely the focused monitor.
 - **Animations:** fade in/out, selection slide — nice to have, not in scope for v1.
 - **Theme system:** the primary color, background opacity, etc. are hardcoded for now.

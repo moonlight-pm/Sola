@@ -15,6 +15,9 @@ pub fn run_loop(
     tracing::info!("entering event loop");
 
     while state.running {
+        // Process bus messages.
+        process_bus(state);
+
         state.space.refresh();
 
         display
@@ -32,6 +35,27 @@ pub fn run_loop(
     }
 
     Ok(())
+}
+
+/// Process any pending bus messages.
+fn process_bus(state: &mut State) {
+    use sola_bus::topics::Topic;
+
+    let Some(bus) = &state.bus else { return };
+
+    while let Some(msg) = bus.try_recv() {
+        let Some(topic) = Topic::parse(&msg) else {
+            tracing::debug!(topic = %msg.topic, "unknown bus topic");
+            continue;
+        };
+
+        match topic {
+            // TODO: handle GrabInput, ReleaseInput, RaiseApp, etc.
+            _ => {
+                tracing::debug!(topic = %msg.topic, "unhandled bus topic");
+            }
+        }
+    }
 }
 
 /// Graceful shutdown — clean up all resources.

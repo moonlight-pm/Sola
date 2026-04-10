@@ -10,36 +10,44 @@ pub struct App {
     pub window_count: u32,
 }
 
+/// A key event forwarded over the bus (Super+key combos).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyEvent {
+    pub code: u32,
+    pub pressed: bool,
+    pub super_held: bool,
+    pub shift_held: bool,
+}
+
 define_topics! {
-    shell {
-        ShowSwitcher,
-        HideSwitcher,
-        ListApps,
-        Apps(Vec<App>),
-        RaiseApp(String),
-    }
+    // Input routing
+    Key(KeyEvent),
+    GrabInput(String),
+    ReleaseInput,
+
+    // App management
+    ListApps,
+    Apps(Vec<App>),
+    RaiseApp(String),
+    FocusChanged(String),
+    LaunchApp(String),
+
+    // Lifecycle
+    Shutdown,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::topic::Topic;
-
-    #[test]
-    fn unit_topic_name() {
-        assert_eq!(shell::ShowSwitcher::TOPIC, "shell::ShowSwitcher");
-    }
-
-    #[test]
-    fn payload_topic_name() {
-        assert_eq!(shell::Apps::TOPIC, "shell::Apps");
-    }
 
     #[test]
     fn unit_topic_roundtrip() {
-        let msg = shell::ShowSwitcher.to_message();
-        assert_eq!(msg.topic, "shell::ShowSwitcher");
+        let msg = Topic::ReleaseInput.to_message();
+        assert_eq!(msg.topic, "ReleaseInput");
         assert!(msg.payload.is_none());
+
+        let parsed = Topic::parse(&msg).unwrap();
+        assert!(matches!(parsed, Topic::ReleaseInput));
     }
 
     #[test]
@@ -50,26 +58,55 @@ mod tests {
             icon: "globe".into(),
             window_count: 2,
         }];
-        let msg = shell::Apps(apps).to_message();
-        assert_eq!(msg.topic, "shell::Apps");
+        let msg = Topic::Apps(apps).to_message();
+        assert_eq!(msg.topic, "Apps");
 
-        let decoded = shell::Apps::decode(&msg).unwrap();
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].id, "zen");
-        assert_eq!(decoded[0].window_count, 2);
+        let parsed = Topic::parse(&msg).unwrap();
+        match parsed {
+            Topic::Apps(decoded) => {
+                assert_eq!(decoded.len(), 1);
+                assert_eq!(decoded[0].id, "zen");
+                assert_eq!(decoded[0].window_count, 2);
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 
     #[test]
-    fn raise_app_roundtrip() {
-        let msg = shell::RaiseApp("ghostty".into()).to_message();
+    fn key_event_roundtrip() {
+        let msg = Topic::Key(KeyEvent {
+            code: 23,
+            pressed: true,
+            super_held: true,
+            shift_held: false,
+        })
+        .to_message();
+        assert_eq!(msg.topic, "Key");
 
-        match msg.topic.as_str() {
-            shell::ShowSwitcher::TOPIC => panic!("wrong topic"),
-            shell::RaiseApp::TOPIC => {
-                let decoded = shell::RaiseApp::decode(&msg).unwrap();
-                assert_eq!(decoded, "ghostty");
+        match Topic::parse(&msg).unwrap() {
+            Topic::Key(k) => {
+                assert_eq!(k.code, 23);
+                assert!(k.pressed);
+                assert!(k.super_held);
+                assert!(!k.shift_held);
             }
-            _ => panic!("unmatched topic"),
+            _ => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn grab_input_roundtrip() {
+        let msg = Topic::GrabInput("sola-switcher".into()).to_message();
+
+        match Topic::parse(&msg).unwrap() {
+            Topic::GrabInput(target) => assert_eq!(target, "sola-switcher"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn unknown_topic_returns_none() {
+        let msg = crate::Message::new("SomeUnknownTopic");
+        assert!(Topic::parse(&msg).is_none());
     }
 }

@@ -1,8 +1,7 @@
 /// Input device plumbing via libinput.
 ///
 /// Sets up libinput, forwards keyboard/pointer events through the Wayland
-/// seat. Keybinding logic (what actions keys trigger) lives in
-/// `input::binding`.
+/// seat. Super+key events are sent to the bus instead of the focused client.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/libinput/index.html
 use smithay::backend::input::{
@@ -21,7 +20,7 @@ use smithay::utils::SERIAL_COUNTER;
 
 use crate::State;
 use crate::error::InputError;
-use crate::input::binding::{self, Action, ModifierState};
+use crate::input::binding::ModifierState;
 
 /// Set up libinput and register it as a calloop event source.
 pub fn setup(
@@ -51,24 +50,23 @@ pub fn setup(
 
                     modifiers.update(code, pressed);
 
-                    tracing::debug!(code, pressed, "key event");
+                    tracing::debug!(code, pressed, super_held = modifiers.super_held, "key event");
 
-                    match binding::check(code, pressed, &modifiers) {
-                        Action::Quit => {
-                            tracing::info!("kill chord, shutting down");
-                            state.running = false;
-                            return;
-                        }
-                        Action::ShowSwitcher => {
-                            tracing::info!("Super+Tab, showing switcher");
-                            if let Some(bus) = &mut state.bus {
-                                if let Err(e) = bus.emit(sola_bus::topics::shell::ShowSwitcher) {
-                                    tracing::warn!("failed to emit ShowSwitcher: {e}");
-                                }
+                    // Super held → send to bus, don't forward to client.
+                    if modifiers.super_held {
+                        if let Some(bus) = &mut state.bus {
+                            use sola_bus::topics::{Topic, KeyEvent};
+                            let key = KeyEvent {
+                                code,
+                                pressed,
+                                super_held: modifiers.super_held,
+                                shift_held: modifiers.shift_held,
+                            };
+                            if let Err(e) = bus.emit(Topic::Key(key)) {
+                                tracing::warn!("failed to emit key to bus: {e}");
                             }
-                            return; // Don't forward Super+Tab to clients
                         }
-                        Action::None => {}
+                        return;
                     }
 
                     // Forward to focused client.

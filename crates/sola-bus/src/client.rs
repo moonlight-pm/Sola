@@ -6,7 +6,6 @@ use std::io;
 use tracing::{info, warn};
 
 use crate::{Message, transport};
-use crate::topic::Topic;
 
 /// A connection to the Sola Bus.
 ///
@@ -45,7 +44,7 @@ impl BusClient {
     }
 
     /// Emit a typed topic to the bus.
-    pub fn emit(&mut self, topic: impl Topic) -> io::Result<()> {
+    pub fn emit(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
         let message = topic.to_message();
         self.send(&message)
     }

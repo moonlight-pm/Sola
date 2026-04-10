@@ -1324,6 +1324,7 @@ dependencies = [
  "libc",
  "nix",
  "notify",
+ "sola-bus",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

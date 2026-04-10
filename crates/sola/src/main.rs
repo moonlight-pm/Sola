@@ -4,13 +4,20 @@ use std::collections::HashMap;
 use std::process::{Child, Command};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tracing::{error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+use sola_bus::topics::Topic;
+
 const MANAGED: &[&str] = &["sola-bus", "sola-compositor"];
+
+/// Minimum uptime before a restart is considered immediate (triggers backoff).
+const MIN_UPTIME: Duration = Duration::from_secs(5);
+/// Delay before restarting a process that crashed quickly.
+const BACKOFF_DELAY: Duration = Duration::from_secs(2);
 
 fn main() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -45,41 +52,66 @@ fn main() {
     watcher::watch_binaries(&bin_dir, &all_watched, change_tx);
 
     // Launch managed processes
-    let mut managed: HashMap<&str, Child> = HashMap::new();
+    let mut managed: HashMap<&str, ManagedProcess> = HashMap::new();
     for name in MANAGED {
         launch(&bin_dir, name, &mut managed);
     }
 
+    // Connect to bus (retry until available)
+    let mut bus: Option<sola_bus::BusClient> = None;
+
     // Supervise
     loop {
+        // Try to connect to bus if not connected
+        if bus.is_none() {
+            if let Ok(client) = sola_bus::BusClient::connect() {
+                info!("connected to bus");
+                bus = Some(client);
+            }
+        }
+
+        // Check for Shutdown on bus
+        if let Some(ref client) = bus {
+            while let Some(msg) = client.try_recv() {
+                if let Some(Topic::Shutdown) = Topic::parse(&msg) {
+                    info!("shutdown requested via bus");
+                    shutdown_all(&mut managed);
+                    std::process::exit(0);
+                }
+            }
+        }
+
         // Check for binary changes
         while let Ok(changed) = change_rx.try_recv() {
             if changed == "sola" {
                 info!("sola binary changed, restarting self");
-                // Kill all children before execv — they'll be relaunched by the new sola
-                for (name, mut child) in managed.drain() {
-                    info!(process = name, "stopping for sola restart");
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+                shutdown_all(&mut managed);
                 watcher::exec_self();
-            } else if let Some(child) = managed.get_mut(changed.as_str()) {
+            } else if let Some(proc) = managed.get_mut(changed.as_str()) {
                 info!(process = %changed, "binary changed, restarting");
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = proc.child.kill();
+                let _ = proc.child.wait();
                 launch(&bin_dir, leak_str(&changed), &mut managed);
             }
         }
 
-        // Check for crashed processes
+        // Check for exited processes
         for name in MANAGED {
             let needs_restart = managed
                 .get_mut(name)
-                .and_then(|child| child.try_wait().ok().flatten())
+                .and_then(|proc| proc.child.try_wait().ok().flatten().map(|s| (s, proc.started_at)))
                 .is_some();
 
             if needs_restart {
-                warn!(process = name, "exited, restarting");
+                let started_at = managed[name].started_at;
+                let uptime = started_at.elapsed();
+
+                if uptime < MIN_UPTIME {
+                    warn!(process = name, ?uptime, "crashed quickly, waiting before restart");
+                    thread::sleep(BACKOFF_DELAY);
+                } else {
+                    warn!(process = name, ?uptime, "exited, restarting");
+                }
                 launch(&bin_dir, name, &mut managed);
             }
         }
@@ -88,20 +120,36 @@ fn main() {
     }
 }
 
+struct ManagedProcess {
+    child: Child,
+    started_at: Instant,
+}
+
 fn launch<'a>(
     bin_dir: &std::path::Path,
     name: &'a str,
-    managed: &mut HashMap<&'a str, Child>,
+    managed: &mut HashMap<&'a str, ManagedProcess>,
 ) {
     let bin = bin_dir.join(name);
     match Command::new(&bin).spawn() {
         Ok(child) => {
             info!(process = name, pid = child.id(), "launched");
-            managed.insert(name, child);
+            managed.insert(name, ManagedProcess {
+                child,
+                started_at: Instant::now(),
+            });
         }
         Err(e) => {
             error!(process = name, path = %bin.display(), "failed to launch: {e}");
         }
+    }
+}
+
+fn shutdown_all(managed: &mut HashMap<&str, ManagedProcess>) {
+    for (name, mut proc) in managed.drain() {
+        info!(process = name, "stopping");
+        let _ = proc.child.kill();
+        let _ = proc.child.wait();
     }
 }
 
