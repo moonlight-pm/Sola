@@ -11,6 +11,9 @@ use wayland_client::protocol::{
     wl_shm_pool, wl_surface,
 };
 use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, QueueHandle, WEnum};
+use wayland_protocols::wp::linux_dmabuf::zv1::client::{
+    zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
+};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 /// Holds the Wayland client connection to sola-compositor.
@@ -29,6 +32,7 @@ pub struct ClientApp {
     pub xdg_wm_base: Option<xdg_wm_base::XdgWmBase>,
     pub seat: Option<wl_seat::WlSeat>,
     pub shm: Option<wl_shm::WlShm>,
+    pub dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
 
     /// Proxy surfaces in sola-compositor, keyed by X11 window ID.
     pub proxies: HashMap<u32, ProxySurface>,
@@ -55,6 +59,7 @@ impl ClientConnection {
             xdg_wm_base: None,
             seat: None,
             shm: None,
+            dmabuf: None,
             proxies: HashMap::new(),
         };
 
@@ -165,6 +170,16 @@ impl Dispatch<wl_registry::WlRegistry, ()> for ClientApp {
                         registry.bind::<wl_shm::WlShm, _, _>(name, version.min(1), qh, ()),
                     );
                 }
+                "zwp_linux_dmabuf_v1" => {
+                    state.dmabuf = Some(
+                        registry.bind::<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, _, _>(
+                            name,
+                            version.min(4),
+                            qh,
+                            (),
+                        ),
+                    );
+                }
                 _ => {}
             }
         }
@@ -178,6 +193,8 @@ delegate_noop!(ClientApp: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(ClientApp: ignore wl_buffer::WlBuffer);
 delegate_noop!(ClientApp: ignore wl_callback::WlCallback);
 delegate_noop!(ClientApp: ignore wl_seat::WlSeat);
+delegate_noop!(ClientApp: ignore zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1);
+delegate_noop!(ClientApp: ignore zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1);
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for ClientApp {
     fn event(

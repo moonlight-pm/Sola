@@ -40,8 +40,16 @@ impl CompositorHandler for State {
         }
     }
 
-    fn commit(&mut self, _surface: &WlSurface) {
-        // TODO: Phase 3 — forward buffer to sola via the bridge.
+    fn commit(&mut self, surface: &WlSurface) {
+        // Look up which X11 window this surface belongs to.
+        let Some(&x11_id) = self.surface_to_x11.get(surface) else {
+            return;
+        };
+
+        // Forward the buffer to the proxy surface in sola-compositor.
+        if let Some(client) = &mut self.client {
+            crate::bridge::forward_buffer(surface, x11_id, client);
+        }
     }
 }
 

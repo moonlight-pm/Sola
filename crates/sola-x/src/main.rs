@@ -6,6 +6,7 @@
 ///
 /// When sola-compositor restarts, sola-x reconnects and re-creates
 /// proxy surfaces. XWayland and X11 apps are unaffected.
+mod bridge;
 mod client;
 mod error;
 mod server;

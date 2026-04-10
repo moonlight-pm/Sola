@@ -3,7 +3,8 @@
 /// Holds both the server side (Wayland compositor for XWayland) and
 /// the client side (Wayland client connecting to sola). The server
 /// side is long-lived; the client side is rebuilt on each reconnection.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::LoopHandle;
@@ -34,6 +35,12 @@ pub struct State {
 
     /// Connection to the Sola Bus for lifecycle coordination.
     pub bus: Option<sola_bus::BusClient>,
+
+    // -- Bridge state --
+
+    /// Maps server-side WlSurface (from XWayland) to X11 window ID.
+    /// Populated when `surface_associated` fires.
+    pub surface_to_x11: HashMap<WlSurface, u32>,
 
     // -- Client side --
 
@@ -75,6 +82,7 @@ impl State {
             xwayland_shell_state: None,
             xwayland_mapped: HashSet::new(),
             bus: None,
+            surface_to_x11: HashMap::new(),
             client: None,
             running: true,
         }

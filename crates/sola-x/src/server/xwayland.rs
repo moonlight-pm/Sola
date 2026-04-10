@@ -162,12 +162,15 @@ impl XWaylandShellHandler for State {
             .expect("xwayland_shell_state not initialized")
     }
 
-    fn surface_associated(&mut self, _xwm: XwmId, _wl_surface: WlSurface, surface: X11Surface) {
+    fn surface_associated(&mut self, _xwm: XwmId, wl_surface: WlSurface, surface: X11Surface) {
         tracing::info!(
             title = %surface.title(),
             class = %surface.class(),
             "X11 surface associated"
         );
+
+        // Record the surface→X11 mapping for buffer forwarding in commit().
+        self.surface_to_x11.insert(wl_surface, surface.window_id());
 
         if self.xwayland_mapped.contains(&surface.window_id()) {
             track_x11_window(self, surface);
