@@ -3,7 +3,7 @@
 /// sola-x connects as a regular Wayland client, creating proxy
 /// xdg_toplevel surfaces for each X11 window. Uses a dedicated
 /// `ClientApp` type for wayland-client dispatch (separate from
-/// the server-side Smithay types on SolaX).
+/// the server-side Smithay types on State).
 use std::collections::HashMap;
 
 use wayland_client::protocol::{

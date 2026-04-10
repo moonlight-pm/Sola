@@ -1,6 +1,6 @@
 /// Error types for sola-x.
 #[derive(Debug, thiserror::Error)]
-pub enum SolaXError {
+pub enum Error {
     #[error("event loop: {0}")]
     EventLoop(String),
 

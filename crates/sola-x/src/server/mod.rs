@@ -13,28 +13,28 @@ use smithay::wayland::selection::data_device::{
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::shell::xdg::{XdgShellHandler, XdgShellState};
 
-use crate::state::SolaX;
+use crate::state::State;
 
 // -- Data device (clipboard/DnD) --
 
-impl SelectionHandler for SolaX {
+impl SelectionHandler for State {
     type SelectionUserData = ();
 }
 
-impl DataDeviceHandler for SolaX {
+impl DataDeviceHandler for State {
     fn data_device_state(&self) -> &DataDeviceState {
         &self.data_device_state
     }
 }
 
-impl ClientDndGrabHandler for SolaX {}
-impl ServerDndGrabHandler for SolaX {}
+impl ClientDndGrabHandler for State {}
+impl ServerDndGrabHandler for State {}
 
-smithay::delegate_data_device!(SolaX);
+smithay::delegate_data_device!(State);
 
 // -- XDG shell (needed for XWayland surface management) --
 
-impl XdgShellHandler for SolaX {
+impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state
     }
@@ -69,4 +69,4 @@ impl XdgShellHandler for SolaX {
     }
 }
 
-smithay::delegate_xdg_shell!(SolaX);
+smithay::delegate_xdg_shell!(State);

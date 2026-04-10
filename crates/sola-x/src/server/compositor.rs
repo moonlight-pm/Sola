@@ -6,7 +6,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
 
-use crate::state::SolaX;
+use crate::state::State;
 
 // Thread-local fallback for XWayland's internal client which doesn't
 // go through our socket listener (so it has no ClientState).
@@ -27,7 +27,7 @@ impl ClientData for ClientState {
     }
 }
 
-impl CompositorHandler for SolaX {
+impl CompositorHandler for State {
     fn compositor_state(&mut self) -> &mut CompositorState {
         &mut self.compositor_state
     }
@@ -45,8 +45,8 @@ impl CompositorHandler for SolaX {
     }
 }
 
-impl BufferHandler for SolaX {
+impl BufferHandler for State {
     fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
 }
 
-smithay::delegate_compositor!(SolaX);
+smithay::delegate_compositor!(State);

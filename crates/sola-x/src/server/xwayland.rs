@@ -9,17 +9,17 @@ use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState}
 use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 use smithay::xwayland::X11Surface;
 
-use crate::state::SolaX;
+use crate::state::State;
 
 /// Spawn XWayland and register its event source with the event loop.
 pub fn setup(
-    state: &mut SolaX,
-    event_loop: &smithay::reexports::calloop::EventLoop<'static, SolaX>,
-) -> Result<(), crate::error::SolaXError> {
+    state: &mut State,
+    event_loop: &smithay::reexports::calloop::EventLoop<'static, State>,
+) -> Result<(), crate::error::Error> {
     use smithay::wayland::xwayland_shell::XWaylandShellState;
     use smithay::xwayland::XWayland;
 
-    state.xwayland_shell_state = Some(XWaylandShellState::new::<SolaX>(&state.display_handle));
+    state.xwayland_shell_state = Some(XWaylandShellState::new::<State>(&state.display_handle));
 
     let (xwayland, xwayland_client) = XWayland::spawn(
         &state.display_handle,
@@ -30,7 +30,7 @@ pub fn setup(
         std::process::Stdio::null(),
         |_| {},
     )
-    .map_err(|e| crate::error::SolaXError::XWayland(e.to_string()))?;
+    .map_err(|e| crate::error::Error::XWayland(e.to_string()))?;
 
     event_loop
         .handle()
@@ -60,12 +60,12 @@ pub fn setup(
                 tracing::error!("XWayland failed to start");
             }
         })
-        .map_err(|e| crate::error::SolaXError::EventLoop(e.to_string()))?;
+        .map_err(|e| crate::error::Error::EventLoop(e.to_string()))?;
 
     Ok(())
 }
 
-impl XwmHandler for SolaX {
+impl XwmHandler for State {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut smithay::xwayland::X11Wm {
         self.xwm.as_mut().expect("xwm not initialized")
     }
@@ -155,7 +155,7 @@ impl XwmHandler for SolaX {
     fn move_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32) {}
 }
 
-impl XWaylandShellHandler for SolaX {
+impl XWaylandShellHandler for State {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
         self.xwayland_shell_state
             .as_mut()
@@ -177,7 +177,7 @@ impl XWaylandShellHandler for SolaX {
 
 /// Create a proxy surface in sola-compositor for an X11 window.
 /// Called when both mapping and surface association have occurred.
-fn track_x11_window(state: &mut SolaX, surface: X11Surface) {
+fn track_x11_window(state: &mut State, surface: X11Surface) {
     let id = surface.window_id();
     let title = surface.title();
     let class = surface.class();
@@ -189,4 +189,4 @@ fn track_x11_window(state: &mut SolaX, surface: X11Surface) {
     }
 }
 
-smithay::delegate_xwayland_shell!(SolaX);
+smithay::delegate_xwayland_shell!(State);

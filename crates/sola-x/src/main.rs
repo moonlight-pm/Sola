@@ -11,12 +11,11 @@ mod error;
 mod server;
 mod state;
 
-use sola_bus::topics::Topic;
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
 
-use error::SolaXError;
-use state::SolaX;
+use error::Error;
+use state::State;
 
 fn main() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -48,13 +47,13 @@ fn main() {
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-fn run() -> Result<(), SolaXError> {
-    let mut event_loop: EventLoop<SolaX> =
-        EventLoop::try_new().map_err(|e| SolaXError::EventLoop(e.to_string()))?;
-    let mut display: Display<SolaX> =
-        Display::new().map_err(|e| SolaXError::Display(e.to_string()))?;
+fn run() -> Result<(), Error> {
+    let mut event_loop: EventLoop<State> =
+        EventLoop::try_new().map_err(|e| Error::EventLoop(e.to_string()))?;
+    let mut display: Display<State> =
+        Display::new().map_err(|e| Error::Display(e.to_string()))?;
 
-    let mut state = SolaX::new(display.handle(), event_loop.handle());
+    let mut state = State::new(display.handle(), event_loop.handle());
 
     // -- Bus --
     match sola_bus::BusClient::connect() {
@@ -86,10 +85,10 @@ fn run() -> Result<(), SolaXError> {
         // Server side: dispatch XWayland's Wayland messages.
         display
             .dispatch_clients(&mut state)
-            .map_err(|e| SolaXError::Display(e.to_string()))?;
+            .map_err(|e| Error::Display(e.to_string()))?;
         display
             .flush_clients()
-            .map_err(|e| SolaXError::Display(e.to_string()))?;
+            .map_err(|e| Error::Display(e.to_string()))?;
 
         // Client side: dispatch sola-compositor's events.
         if let Some(client) = &mut state.client {
@@ -104,14 +103,14 @@ fn run() -> Result<(), SolaXError> {
 
         event_loop
             .dispatch(Some(std::time::Duration::from_millis(16)), &mut state)
-            .map_err(|e| SolaXError::EventLoop(e.to_string()))?;
+            .map_err(|e| Error::EventLoop(e.to_string()))?;
     }
 
     Ok(())
 }
 
 /// Try to connect to sola-compositor as a Wayland client.
-fn connect_to_compositor(state: &mut SolaX) {
+fn connect_to_compositor(state: &mut State) {
     if state.client.is_some() {
         return;
     }
@@ -121,36 +120,24 @@ fn connect_to_compositor(state: &mut SolaX) {
 }
 
 /// Process pending bus messages.
-fn process_bus(state: &mut SolaX) {
+fn process_bus(state: &mut State) {
     let Some(bus) = &state.bus else { return };
-    let mut messages = Vec::new();
-    while let Some(msg) = bus.try_recv() {
-        messages.push(msg);
-    }
-
-    for msg in &messages {
-        let Some(topic) = Topic::parse(msg) else { continue };
-        match topic {
-            Topic::Shutdown => {
-                tracing::info!("shutdown requested via bus");
-                state.running = false;
-            }
-            _ => {}
-        }
+    while let Some(_msg) = bus.try_recv() {
+        // Bus messages processed here as needed.
     }
 }
 
 /// Create a Wayland socket for XWayland to connect to.
 /// Uses a distinct name (wayland-x0) to avoid conflicting with sola-compositor's socket.
 fn setup_wayland_socket(
-    event_loop: &EventLoop<'static, SolaX>,
-    _state: &mut SolaX,
-) -> Result<String, SolaXError> {
+    event_loop: &EventLoop<'static, State>,
+    _state: &mut State,
+) -> Result<String, Error> {
     use smithay::wayland::socket::ListeningSocketSource;
 
     let listener = ListeningSocketSource::with_name("wayland-x0")
         .or_else(|_| ListeningSocketSource::new_auto())
-        .map_err(|e| SolaXError::Socket(e.to_string()))?;
+        .map_err(|e| Error::Socket(e.to_string()))?;
     let socket_name = listener.socket_name().to_string_lossy().into_owned();
 
     event_loop
@@ -162,7 +149,7 @@ fn setup_wayland_socket(
                 Err(err) => tracing::error!(?err, "failed to accept XWayland client"),
             }
         })
-        .map_err(|e| SolaXError::EventLoop(e.to_string()))?;
+        .map_err(|e| Error::EventLoop(e.to_string()))?;
 
     tracing::info!(%socket_name, "Wayland socket for XWayland");
     Ok(socket_name)

@@ -15,7 +15,7 @@ use smithay::wayland::shm::ShmState;
 use smithay::wayland::xwayland_shell::XWaylandShellState;
 use smithay::xwayland::X11Wm;
 
-pub struct SolaX {
+pub struct State {
     // -- Server side (Wayland compositor for XWayland) --
 
     pub display_handle: DisplayHandle,
@@ -46,7 +46,7 @@ pub struct SolaX {
 }
 
 
-impl SolaX {
+impl State {
     pub fn new(
         dh: DisplayHandle,
         loop_handle: LoopHandle<'static, Self>,

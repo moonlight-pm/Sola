@@ -1,12 +1,12 @@
 /// Shared memory buffer handler for XWayland.
 use smithay::wayland::shm::ShmHandler;
 
-use crate::state::SolaX;
+use crate::state::State;
 
-impl ShmHandler for SolaX {
+impl ShmHandler for State {
     fn shm_state(&self) -> &smithay::wayland::shm::ShmState {
         &self.shm_state
     }
 }
 
-smithay::delegate_shm!(SolaX);
+smithay::delegate_shm!(State);

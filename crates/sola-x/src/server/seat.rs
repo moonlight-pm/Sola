@@ -3,9 +3,9 @@ use smithay::input::pointer::CursorImageStatus;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
-use crate::state::SolaX;
+use crate::state::State;
 
-impl SeatHandler for SolaX {
+impl SeatHandler for State {
     type KeyboardFocus = WlSurface;
     type PointerFocus = WlSurface;
     type TouchFocus = WlSurface;
@@ -19,4 +19,4 @@ impl SeatHandler for SolaX {
     fn cursor_image(&mut self, _seat: &Seat<Self>, _image: CursorImageStatus) {}
 }
 
-smithay::delegate_seat!(SolaX);
+smithay::delegate_seat!(State);
