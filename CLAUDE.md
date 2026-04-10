@@ -4,12 +4,16 @@ Sola is a Wayland desktop shell — a full compositor and desktop environment bu
 
 ## Architecture
 
-- **Compositor:** Smithay (pure Rust) — DRM/KMS backend, input handling, Wayland protocol, surface management
+- **Process manager (`sola`):** Launches and supervises all components. No desktop or bus logic — pure process management.
+- **Bus (`sola-bus`):** General-purpose IPC bus. Separate process. All Sola components communicate via bus events over a Unix socket.
+- **Compositor (`sola-compositor`):** Smithay (pure Rust) — DRM/KMS backend, input handling, Wayland protocol, surface management. Separate process, bus client.
 - **Renderer:** Smithay GlesRenderer (OpenGL ES) — composites Wayland client surfaces
-- **Shell UI:** WebKit6 WebViews as privileged Wayland clients — all Sola chrome and apps
+- **Shell apps:** WebKit6 WebViews as Wayland clients + bus clients. Each is a separate process (switcher, launcher, panel, etc.).
 - **Web frontends:** Framework-agnostic. Any app or component can use any web framework (Svelte, React, vanilla, etc.)
-- **IPC:** Wayland protocols + app-level socket/messages
+- **IPC:** Sola Bus (events over Unix socket) + Wayland protocols for surfaces/input
 - **Build system:** `cargo make` (xtask pattern via `sola-make` crate)
+
+All components are independently restartable. Sola apps are resilient to bus and compositor restarts.
 
 Reference codebase: `../Cogsworth` — Sola is a deliberate rebuild of Cogsworth, moving from X11 to Wayland.
 
@@ -17,12 +21,12 @@ Reference codebase: `../Cogsworth` — Sola is a deliberate rebuild of Cogsworth
 
 ```
 crates/
-  sola/                # Binary entry point (clap CLI)
-  sola-compositor/     # Smithay compositor
-  sola-protocol/       # Shared types, wire format
+  sola/                # Process manager (binary entry point)
+  sola-bus/            # Bus host process + protocol definitions
+  sola-compositor/     # Smithay compositor (bus client)
   sola-make/           # Build/deploy orchestration (xtask)
 apps/
-  desktop/             # Shell UI (web tech, framework-agnostic)
+  switcher/            # App switcher (WebView, bus client)
 docs/
   manual/              # Architecture docs, references
   specs/               # Design specs and implementation plans

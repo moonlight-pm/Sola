@@ -1,0 +1,9 @@
+[package]
+name = "sola-bus"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+postcard = { version = "1", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v7", "serde"] }
