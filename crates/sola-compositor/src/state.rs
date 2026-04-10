@@ -108,6 +108,10 @@ pub struct State {
     /// are excluded. The grabbed surface is shown above all others.
     pub input_grab: Option<String>,
 
+    /// Most-recently-used app list, ordered by last focus time.
+    /// The app that most recently had keyboard focus is at index 0.
+    pub mru_apps: Vec<String>,
+
     // -- XWayland state --
 
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
@@ -174,6 +178,7 @@ impl State {
             space: Space::default(),
             pointer_location: (0.0, 0.0),
             input_grab: None,
+            mru_apps: Vec::new(),
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             dmabuf_state: None,
