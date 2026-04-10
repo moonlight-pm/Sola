@@ -136,6 +136,8 @@ impl XwmHandler for State {
         if let Err(err) = window.configure(Some(new_geo)) {
             tracing::error!(?err, "failed to configure X11 window");
         }
+
+        emit_geometry(self, &window.class(), new_geo);
     }
 
     fn configure_notify(
@@ -188,8 +190,9 @@ fn track_x11_window(state: &mut State, surface: X11Surface) {
     let id = surface.window_id();
     let title = surface.title();
     let class = surface.class();
+    let geo = surface.geometry();
 
-    tracing::info!(id, title = %title, class = %class, "tracking X11 window");
+    tracing::info!(id, title = %title, class = %class, x = geo.loc.x, y = geo.loc.y, "tracking X11 window");
 
     state.x11_windows.insert(id, X11WindowInfo {
         title: title.clone(),
@@ -198,6 +201,23 @@ fn track_x11_window(state: &mut State, surface: X11Surface) {
 
     if let Some(client) = &mut state.client {
         client.create_proxy(id, &title, &class);
+    }
+
+    // Tell the compositor where to position this window.
+    emit_geometry(state, &class, geo);
+}
+
+/// Send window geometry to the compositor via the bus.
+fn emit_geometry(state: &mut State, app_id: &str, geo: Rectangle<i32, Logical>) {
+    use sola_bus::topics::{Topic, WindowGeometry};
+    if let Some(bus) = &mut state.bus {
+        let _ = bus.emit(Topic::SetWindowGeometry(WindowGeometry {
+            app_id: app_id.to_string(),
+            x: geo.loc.x,
+            y: geo.loc.y,
+            width: geo.size.w,
+            height: geo.size.h,
+        }));
     }
 }
 

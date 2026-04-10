@@ -4,7 +4,7 @@ use smithay::reexports::wayland_server::backend::{ClientData, ClientId, Disconne
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::buffer::BufferHandler;
-use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
+use smithay::wayland::compositor::{self, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes};
 
 use crate::state::State;
 
@@ -50,6 +50,19 @@ impl CompositorHandler for State {
         if let Some(client) = &mut self.client {
             crate::bridge::forward_buffer(surface, x11_id, client);
         }
+
+        // Fire frame callbacks so XWayland knows to send the next frame.
+        compositor::with_states(surface, |data| {
+            let mut guard = data.cached_state.get::<SurfaceAttributes>();
+            let attrs = guard.current();
+            let time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u32;
+            for callback in attrs.frame_callbacks.drain(..) {
+                callback.done(time);
+            }
+        });
     }
 }
 

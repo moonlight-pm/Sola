@@ -4,11 +4,15 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# Smithay — minimal features for XWayland hosting (no GPU/DRM/input backends).
+# Smithay — XWayland hosting with GPU format query for dmabuf.
 smithay = { version = "0.7.0", default-features = false, features = [
     "wayland_frontend",
     "desktop",
     "xwayland",
+    "backend_gbm",
+    "backend_egl",
+    "backend_udev",
+    "renderer_gl",
 ] }
 
 # Wayland client for connecting to sola-compositor.

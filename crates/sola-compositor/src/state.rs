@@ -106,6 +106,10 @@ pub struct State {
     /// are excluded. The grabbed surface is shown above all others.
     pub input_grab: Option<String>,
 
+    /// Window positions received from sola-x before the window appeared.
+    /// Applied in `new_toplevel` when the window is first mapped.
+    pub pending_geometries: HashMap<String, (i32, i32)>,
+
     // -- Protocol state --
 
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
@@ -161,6 +165,7 @@ impl State {
             space: Space::default(),
             pointer_location: (0.0, 0.0),
             input_grab: None,
+            pending_geometries: HashMap::new(),
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             dmabuf_state: None,

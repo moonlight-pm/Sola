@@ -3,6 +3,7 @@
 /// sola-x acts as a minimal Wayland compositor that XWayland connects to.
 /// Only the protocols XWayland needs are implemented here.
 pub mod compositor;
+pub mod dmabuf;
 pub mod seat;
 pub mod shm;
 pub mod xwayland;

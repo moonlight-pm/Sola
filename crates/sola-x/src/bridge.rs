@@ -75,6 +75,8 @@ fn forward_dmabuf(
     // Create buffer params and add each plane.
     let params = dmabuf_manager.create_params(&client.qh, ());
 
+    let modifier_raw = u64::from(format.modifier);
+
     for (i, ((fd, offset), stride)) in dmabuf
         .handles()
         .zip(dmabuf.offsets())
@@ -88,8 +90,8 @@ fn forward_dmabuf(
             i as u32,
             offset,
             stride,
-            (u64::from(format.modifier) >> 32) as u32,
-            u64::from(format.modifier) as u32,
+            (modifier_raw >> 32) as u32,
+            modifier_raw as u32,
         );
     }
 
@@ -176,7 +178,7 @@ fn forward_shm(
             proxy.surface.commit();
         }
         Err(e) => {
-            tracing::debug!(?e, "failed to read SHM buffer for X11 window {x11_window_id}");
+            tracing::warn!(?e, x11_window_id, "failed to read SHM buffer");
         }
     }
 }

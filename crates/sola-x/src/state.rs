@@ -12,6 +12,7 @@ use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_server::DisplayHandle;
 use smithay::utils::Transform;
 use smithay::wayland::compositor::CompositorState;
+use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
@@ -32,6 +33,7 @@ pub struct State {
     #[allow(dead_code)]
     pub output_manager_state: OutputManagerState,
     pub xdg_shell_state: XdgShellState,
+    pub dmabuf_state: Option<DmabufState>,
     pub xwm: Option<X11Wm>,
     pub xwayland_shell_state: Option<XWaylandShellState>,
     pub xwayland_mapped: HashSet<smithay::xwayland::xwm::X11Window>,
@@ -61,6 +63,95 @@ pub struct State {
     pub running: bool,
 }
 
+
+/// Initialize dmabuf v4 by opening the primary GPU render node and querying
+/// its supported formats. Returns None if no GPU is available.
+fn init_dmabuf(dh: &DisplayHandle) -> Option<DmabufState> {
+    use smithay::backend::allocator::gbm::GbmDevice;
+    use smithay::backend::drm::{DrmNode, NodeType};
+    use smithay::backend::egl::{EGLDisplay, EGLContext};
+    use smithay::backend::renderer::gles::GlesRenderer;
+    use smithay::backend::renderer::ImportDma;
+    use smithay::backend::udev;
+    use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
+
+    // Use the same GPU discovery as sola-compositor: find the primary
+    // GPU for the default seat, then get its render node.
+    let gpu_path = match udev::primary_gpu("seat0") {
+        Ok(Some(path)) => path,
+        _ => {
+            tracing::warn!("no primary GPU found, dmabuf disabled");
+            return None;
+        }
+    };
+    let drm_node = match DrmNode::from_path(&gpu_path) {
+        Ok(node) => node,
+        Err(e) => {
+            tracing::warn!(?e, "failed to resolve DRM node, dmabuf disabled");
+            return None;
+        }
+    };
+    let primary = drm_node
+        .node_with_type(NodeType::Render)
+        .and_then(|n| n.ok())
+        .unwrap_or(drm_node);
+
+    // Open GBM device.
+    let gbm_fd = match std::fs::File::options().read(true).write(true).open(primary.dev_path()?) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(?e, "failed to open render node, dmabuf disabled");
+            return None;
+        }
+    };
+    let gbm = match GbmDevice::new(gbm_fd) {
+        Ok(g) => g,
+        Err(e) => {
+            tracing::warn!(?e, "failed to create GBM device, dmabuf disabled");
+            return None;
+        }
+    };
+
+    // Create EGL display + context + renderer to query formats.
+    let egl_display = match unsafe { EGLDisplay::new(gbm) } {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(?e, "failed to create EGL display, dmabuf disabled");
+            return None;
+        }
+    };
+    let egl_context = match EGLContext::new(&egl_display) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(?e, "failed to create EGL context, dmabuf disabled");
+            return None;
+        }
+    };
+    let renderer = match unsafe { GlesRenderer::new(egl_context) } {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(?e, "failed to create renderer, dmabuf disabled");
+            return None;
+        }
+    };
+
+    let formats: Vec<_> = renderer.dmabuf_formats().into_iter().collect();
+    let format_count = formats.len();
+
+    let feedback = match DmabufFeedbackBuilder::new(primary.dev_id(), formats).build() {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!(?e, "failed to build dmabuf feedback");
+            return None;
+        }
+    };
+
+    let mut dmabuf_state = DmabufState::new();
+    dmabuf_state.create_global_with_default_feedback::<State>(dh, &feedback);
+
+    tracing::info!(format_count, ?primary, "dmabuf v4 initialized from GPU");
+    Some(dmabuf_state)
+}
 
 /// Metadata about an X11 window, retained for proxy re-creation on reconnect.
 pub struct X11WindowInfo {
@@ -103,6 +194,10 @@ impl State {
         output.set_preferred(mode);
         output.create_global::<Self>(&dh);
 
+        // Dmabuf v4 support — query the real GPU for supported formats so
+        // XWayland/Mesa can use GPU buffers instead of falling back to SHM.
+        let dmabuf_state = init_dmabuf(&dh);
+
         Self {
             display_handle: dh,
             loop_handle,
@@ -113,6 +208,7 @@ impl State {
             data_device_state,
             output_manager_state,
             xdg_shell_state,
+            dmabuf_state,
             xwm: None,
             xwayland_shell_state: None,
             xwayland_mapped: HashSet::new(),
