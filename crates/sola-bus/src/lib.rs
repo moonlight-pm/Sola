@@ -1,11 +1,13 @@
-mod event;
+mod message;
 mod client;
+pub mod topic;
+pub mod topics;
 pub mod transport;
 
 use std::env;
 
 pub use client::BusClient;
-pub use event::Event;
+pub use message::Message;
 
 /// Returns the bus socket path from `$SOLA_BUS_PATH` or the default
 /// `$XDG_RUNTIME_DIR/sola-bus`.

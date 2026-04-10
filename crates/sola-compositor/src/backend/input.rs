@@ -19,13 +19,13 @@ use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::input::Libinput;
 use smithay::utils::SERIAL_COUNTER;
 
-use crate::Sola;
+use crate::State;
 use crate::error::InputError;
 use crate::input::binding::{self, Action, ModifierState};
 
 /// Set up libinput and register it as a calloop event source.
 pub fn setup(
-    loop_handle: &LoopHandle<'static, Sola>,
+    loop_handle: &LoopHandle<'static, State>,
     session: &LibSeatSession,
 ) -> Result<(), InputError> {
     let seat_name = session.seat();
@@ -43,7 +43,7 @@ pub fn setup(
     let mut modifiers = ModifierState::default();
 
     loop_handle
-        .insert_source(libinput_backend, move |event, _, sola| {
+        .insert_source(libinput_backend, move |event, _, state| {
             match event {
                 InputEvent::Keyboard { event } => {
                     let code = event.key_code().raw();
@@ -56,8 +56,17 @@ pub fn setup(
                     match binding::check(code, pressed, &modifiers) {
                         Action::Quit => {
                             tracing::info!("kill chord, shutting down");
-                            sola.running = false;
+                            state.running = false;
                             return;
+                        }
+                        Action::ShowSwitcher => {
+                            tracing::info!("Super+Tab, showing switcher");
+                            if let Some(bus) = &mut state.bus {
+                                if let Err(e) = bus.emit(sola_bus::topics::shell::ShowSwitcher) {
+                                    tracing::warn!("failed to emit ShowSwitcher: {e}");
+                                }
+                            }
+                            return; // Don't forward Super+Tab to clients
                         }
                         Action::None => {}
                     }
@@ -66,9 +75,9 @@ pub fn setup(
                     let serial = SERIAL_COUNTER.next_serial();
                     let time = event.time_msec();
                     {
-                        let keyboard = sola.seat.get_keyboard().unwrap();
+                        let keyboard = state.seat.get_keyboard().unwrap();
                         keyboard.input::<(), _>(
-                            sola,
+                            state,
                             event.key_code(),
                             event.state(),
                             serial,
@@ -80,26 +89,26 @@ pub fn setup(
 
                 InputEvent::PointerMotion { event } => {
                     let delta = event.delta();
-                    let (max_x, max_y) = output_size(sola);
-                    sola.pointer_location.0 = (sola.pointer_location.0 + delta.x).clamp(0.0, max_x);
-                    sola.pointer_location.1 = (sola.pointer_location.1 + delta.y).clamp(0.0, max_y);
-                    forward_pointer_motion(sola);
+                    let (max_x, max_y) = output_size(state);
+                    state.pointer_location.0 = (state.pointer_location.0 + delta.x).clamp(0.0, max_x);
+                    state.pointer_location.1 = (state.pointer_location.1 + delta.y).clamp(0.0, max_y);
+                    forward_pointer_motion(state);
                 }
 
                 InputEvent::PointerMotionAbsolute { event } => {
-                    let (max_x, max_y) = output_size(sola);
-                    sola.pointer_location = (
+                    let (max_x, max_y) = output_size(state);
+                    state.pointer_location = (
                         event.x_transformed(max_x as i32) as f64,
                         event.y_transformed(max_y as i32) as f64,
                     );
-                    forward_pointer_motion(sola);
+                    forward_pointer_motion(state);
                 }
 
                 InputEvent::PointerButton { event } => {
                     let serial = SERIAL_COUNTER.next_serial();
-                    let pointer = sola.seat.get_pointer().unwrap();
+                    let pointer = state.seat.get_pointer().unwrap();
                     pointer.button(
-                        sola,
+                        state,
                         &ButtonEvent {
                             serial,
                             time: event.time_msec(),
@@ -107,7 +116,7 @@ pub fn setup(
                             state: event.state(),
                         },
                     );
-                    pointer.frame(sola);
+                    pointer.frame(state);
                 }
 
                 InputEvent::PointerAxis { event } => {
@@ -152,9 +161,9 @@ pub fn setup(
                         }
                     }
 
-                    let pointer = sola.seat.get_pointer().unwrap();
-                    pointer.axis(sola, frame);
-                    pointer.frame(sola);
+                    let pointer = state.seat.get_pointer().unwrap();
+                    pointer.axis(state, frame);
+                    pointer.frame(state);
                 }
 
                 _ => {}
@@ -167,11 +176,11 @@ pub fn setup(
 }
 
 /// Forward the current pointer position through the seat to the client.
-fn forward_pointer_motion(sola: &mut Sola) {
-    let (x, y) = sola.pointer_location;
+fn forward_pointer_motion(state: &mut State) {
+    let (x, y) = state.pointer_location;
     let serial = SERIAL_COUNTER.next_serial();
 
-    let under = sola.space.element_under((x, y)).and_then(|(window, loc)| {
+    let under = state.space.element_under((x, y)).and_then(|(window, loc)| {
         window
             .surface_under(
                 (x - loc.x as f64, y - loc.y as f64),
@@ -180,9 +189,9 @@ fn forward_pointer_motion(sola: &mut Sola) {
             .map(|(surface, offset)| (surface, (loc + offset).to_f64()))
     });
 
-    let pointer = sola.seat.get_pointer().unwrap();
+    let pointer = state.seat.get_pointer().unwrap();
     pointer.motion(
-        sola,
+        state,
         under,
         &MotionEvent {
             location: (x, y).into(),
@@ -190,12 +199,12 @@ fn forward_pointer_motion(sola: &mut Sola) {
             time: 0,
         },
     );
-    pointer.frame(sola);
+    pointer.frame(state);
 }
 
 /// Get the output size for clamping pointer position.
-fn output_size(sola: &Sola) -> (f64, f64) {
-    sola.space
+fn output_size(state: &State) -> (f64, f64) {
+    state.space
         .outputs()
         .next()
         .and_then(|o| o.current_mode())

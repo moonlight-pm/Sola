@@ -6,6 +6,7 @@
 /// Key codes (evdev + 8 offset, XKB convention).
 /// Discovered empirically on canto's Mac keyboard.
 pub mod keycode {
+    pub const TAB: u32 = 23;
     pub const BACKSPACE: u32 = 22;
     pub const LEFT_SHIFT: u32 = 50;
     pub const LEFT_SUPER: u32 = 133;
@@ -41,6 +42,7 @@ impl ModifierState {
 pub enum Action {
     None,
     Quit,
+    ShowSwitcher,
 }
 
 /// Check if a key event triggers a compositor-level action.
@@ -53,6 +55,12 @@ pub fn check(code: u32, pressed: bool, modifiers: &ModifierState) -> Action {
     {
         return Action::Quit;
     }
+
+    // Super + Tab → show switcher (on press).
+    if pressed && code == keycode::TAB && modifiers.super_held {
+        return Action::ShowSwitcher;
+    }
+
     Action::None
 }
 
@@ -118,5 +126,25 @@ mod tests {
         m.update(keycode::LEFT_SUPER, true);
         m.update(keycode::LEFT_SHIFT, true);
         assert_eq!(check(42, false, &m), Action::None);
+    }
+
+    #[test]
+    fn super_tab_triggers_show_switcher_on_press() {
+        let mut m = ModifierState::default();
+        m.update(keycode::LEFT_SUPER, true);
+        assert_eq!(check(keycode::TAB, true, &m), Action::ShowSwitcher);
+    }
+
+    #[test]
+    fn super_tab_does_not_trigger_on_release() {
+        let mut m = ModifierState::default();
+        m.update(keycode::LEFT_SUPER, true);
+        assert_eq!(check(keycode::TAB, false, &m), Action::None);
+    }
+
+    #[test]
+    fn tab_without_super_does_nothing() {
+        let m = ModifierState::default();
+        assert_eq!(check(keycode::TAB, true, &m), Action::None);
     }
 }

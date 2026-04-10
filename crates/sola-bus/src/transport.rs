@@ -1,9 +1,9 @@
 use std::io::{self, Read, Write};
 
-use crate::Event;
+use crate::Message;
 
 /// Write a length-prefixed, postcard-serialized event to a stream.
-pub fn write_event(stream: &mut impl Write, event: &Event) -> io::Result<()> {
+pub fn write_event(stream: &mut impl Write, event: &Message) -> io::Result<()> {
     let bytes =
         postcard::to_allocvec(event).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let len = bytes.len() as u32;
@@ -15,7 +15,7 @@ pub fn write_event(stream: &mut impl Write, event: &Event) -> io::Result<()> {
 /// Read a length-prefixed, postcard-serialized event from a stream.
 ///
 /// Returns `None` on clean EOF (0 bytes read for the length prefix).
-pub fn read_event(stream: &mut impl Read) -> io::Result<Option<Event>> {
+pub fn read_event(stream: &mut impl Read) -> io::Result<Option<Message>> {
     let mut len_buf = [0u8; 4];
     match stream.read_exact(&mut len_buf) {
         Ok(()) => {}
@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn roundtrip_no_payload() {
-        let event = Event::new("shell:test");
+        let event = Message::new("shell:test");
         let mut buf = Vec::new();
         write_event(&mut buf, &event).unwrap();
 
@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn roundtrip_with_payload() {
-        let event = Event::with_payload("shell:apps", vec![10, 20, 30]);
+        let event = Message::with_payload("shell:apps", vec![10, 20, 30]);
         let mut buf = Vec::new();
         write_event(&mut buf, &event).unwrap();
 
@@ -65,9 +65,9 @@ mod tests {
 
     #[test]
     fn multiple_events_in_stream() {
-        let e1 = Event::new("shell:a");
-        let e2 = Event::with_payload("shell:b", vec![42]);
-        let e3 = Event::new("shell:c");
+        let e1 = Message::new("shell:a");
+        let e2 = Message::with_payload("shell:b", vec![42]);
+        let e3 = Message::new("shell:c");
 
         let mut buf = Vec::new();
         write_event(&mut buf, &e1).unwrap();

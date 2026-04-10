@@ -87,7 +87,7 @@ fn handle_client(id: ClientId, mut reader: UnixStream, clients: &Clients) {
     clients.lock().unwrap().remove(&id);
 }
 
-fn broadcast(sender: ClientId, event: &sola_bus::Event, clients: &Clients) {
+fn broadcast(sender: ClientId, event: &sola_bus::Message, clients: &Clients) {
     let mut dead: Vec<ClientId> = Vec::new();
 
     let mut clients = clients.lock().unwrap();
