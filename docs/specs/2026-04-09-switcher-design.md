@@ -96,10 +96,30 @@ The switcher WebView process runs at all times. Its Wayland surface is mapped bu
 - When hidden: the compositor skips the surface in its render pass. The WebView process is idle but alive.
 - When shown (via GrabInput): the compositor composites the surface above all other windows and routes input to it.
 
+## Surface Identity
+
+The compositor identifies the switcher's surface via the `app_id` field on its xdg_toplevel. The switcher sets `app_id = "sola-switcher"` on its Wayland surface. When `GrabInput("sola-switcher")` arrives on the bus, the compositor looks up the window by app_id using `state.window_by_app_id()`. No custom protocol or bus announcement needed.
+
+## What's Implemented (on master)
+
+The following infrastructure is already in place:
+
+- **Bus:** `sola-bus` crate with `Message` wire format, `Topic` enum via `define_topics!` macro, `BusClient` with `emit()`/`try_recv()`/`recv()`
+- **Topics:** `Key(KeyEvent)`, `GrabInput(String)`, `ReleaseInput`, `ListApps`, `Apps(Vec<App>)`, `RaiseApp(String)`, `FocusChanged(String)`, `LaunchApp(String)`, `Shutdown`
+- **Compositor input:** Super+key events sent to bus as `Topic::Key`, never forwarded to clients
+- **Compositor handlers:** `GrabInput` (find window by app_id, raise, focus), `ReleaseInput` (clear grab), `RaiseApp` (raise all windows of an app, focus topmost)
+- **Process manager:** sola launches sola-bus + sola-compositor, handles kill chord from bus, restart backoff, PR_SET_PDEATHSIG
+
+## What Needs Building
+
+- The `apps/switcher/` crate itself (Rust WebView host + bus client + web frontend)
+- Compositor `ListApps` handler (build MRU app list from Space, respond with `Topic::Apps`)
+- Compositor `FocusChanged` emission on window focus changes
+- Surface hide/show in render pass (currently GrabInput raises but ReleaseInput doesn't hide)
+
 ## Open Questions
 
 - **Icon system:** how apps register their icons. Lucide for Sola apps, generic for others, but the full registration system is out of scope.
-- **Surface identity:** exact mechanism for the switcher to tell the compositor which Wayland surface is its overlay. Could be a bus message with the Wayland client ID, or a custom Wayland protocol just for surface tagging.
 - **Multi-monitor:** which monitor shows the switcher? Likely the focused monitor.
 - **Animations:** fade in/out, selection slide — nice to have, not in scope for v1.
 - **Theme system:** the primary color, background opacity, etc. are hardcoded for now.
