@@ -62,9 +62,14 @@ pub struct ProxySurface {
 }
 
 impl ClientConnection {
-    /// Connect to sola-compositor's Wayland display.
+    /// Connect to sola-compositor's Wayland display (wayland-0).
+    /// Connects explicitly by path rather than using WAYLAND_DISPLAY,
+    /// since sola-x sets that to its own socket (wayland-x0) for XWayland.
     pub fn connect() -> Option<Self> {
-        let conn = Connection::connect_to_env().ok()?;
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok()?;
+        let path = format!("{runtime_dir}/wayland-0");
+        let stream = std::os::unix::net::UnixStream::connect(&path).ok()?;
+        let conn = Connection::from_socket(stream).ok()?;
         let mut queue = conn.new_event_queue::<ClientApp>();
         let qh = queue.handle();
 
