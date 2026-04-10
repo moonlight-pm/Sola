@@ -10,7 +10,7 @@ use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
     wl_shm_pool, wl_surface,
 };
-use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, QueueHandle, WEnum};
+use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
 };
@@ -36,6 +36,22 @@ pub struct ClientApp {
 
     /// Proxy surfaces in sola-compositor, keyed by X11 window ID.
     pub proxies: HashMap<u32, ProxySurface>,
+
+    /// Reverse map: client-side wl_surface ID → X11 window ID.
+    pub surface_to_x11: HashMap<u32, u32>,
+
+    /// Input events queued by Dispatch callbacks for the main loop to inject.
+    pub pending_input: Vec<InputEvent>,
+}
+
+/// An input event received on a proxy surface, to be injected into XWayland's seat.
+pub enum InputEvent {
+    PointerEnter { x11_id: u32, x: f64, y: f64 },
+    PointerLeave,
+    PointerMotion { x: f64, y: f64, time: u32 },
+    PointerButton { button: u32, pressed: bool, time: u32 },
+    PointerAxis { axis: u32, value: f64, time: u32 },
+    Key { key: u32, pressed: bool, time: u32 },
 }
 
 /// A proxy surface in sola-compositor representing an X11 window.
@@ -61,6 +77,8 @@ impl ClientConnection {
             shm: None,
             dmabuf: None,
             proxies: HashMap::new(),
+            surface_to_x11: HashMap::new(),
+            pending_input: Vec::new(),
         };
 
         // Roundtrip to bind globals.
@@ -95,8 +113,10 @@ impl ClientConnection {
         toplevel.set_app_id(class.to_string());
         surface.commit();
 
-        tracing::info!(x11_id, title, class, "created proxy surface");
+        let surface_id = surface.id().protocol_id();
+        tracing::info!(x11_id, title, class, surface_id, "created proxy surface");
 
+        self.app.surface_to_x11.insert(surface_id, x11_id);
         self.app.proxies.insert(x11_id, ProxySurface {
             surface,
             xdg_surface,
@@ -112,6 +132,11 @@ impl ClientConnection {
             proxy.surface.destroy();
             tracing::info!(x11_id, "destroyed proxy surface");
         }
+    }
+
+    /// Drain queued input events (collected during dispatch).
+    pub fn drain_input(&mut self) -> Vec<InputEvent> {
+        std::mem::take(&mut self.app.pending_input)
     }
 
     /// Dispatch pending events and flush. Returns Err on connection loss.
@@ -240,26 +265,95 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for ClientApp {
 
 impl Dispatch<wl_pointer::WlPointer, ()> for ClientApp {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &wl_pointer::WlPointer,
-        _event: wl_pointer::Event,
+        event: wl_pointer::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // TODO: Phase 4 — forward input to server-side XWayland seat.
+        match event {
+            wl_pointer::Event::Enter {
+                surface,
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                let surface_id = surface.id().protocol_id();
+                if let Some(&x11_id) = state.surface_to_x11.get(&surface_id) {
+                    state.pending_input.push(InputEvent::PointerEnter {
+                        x11_id,
+                        x: surface_x,
+                        y: surface_y,
+                    });
+                }
+            }
+            wl_pointer::Event::Leave { .. } => {
+                state.pending_input.push(InputEvent::PointerLeave);
+            }
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                time,
+                ..
+            } => {
+                state.pending_input.push(InputEvent::PointerMotion {
+                    x: surface_x,
+                    y: surface_y,
+                    time,
+                });
+            }
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                time,
+                ..
+            } => {
+                let pressed = matches!(btn_state, WEnum::Value(wl_pointer::ButtonState::Pressed));
+                state.pending_input.push(InputEvent::PointerButton {
+                    button,
+                    pressed,
+                    time,
+                });
+            }
+            wl_pointer::Event::Axis {
+                axis, value, time, ..
+            } => {
+                if let WEnum::Value(a) = axis {
+                    state.pending_input.push(InputEvent::PointerAxis {
+                        axis: a as u32,
+                        value,
+                        time,
+                    });
+                }
+            }
+            _ => {}
+        }
     }
 }
 
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for ClientApp {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &wl_keyboard::WlKeyboard,
-        _event: wl_keyboard::Event,
+        event: wl_keyboard::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        // TODO: Phase 4 — forward input to server-side XWayland seat.
+        match event {
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                time,
+                ..
+            } => {
+                let pressed = matches!(key_state, WEnum::Value(wl_keyboard::KeyState::Pressed));
+                state
+                    .pending_input
+                    .push(InputEvent::Key { key, pressed, time });
+            }
+            _ => {}
+        }
     }
 }

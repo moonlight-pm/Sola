@@ -91,11 +91,13 @@ fn run() -> Result<(), Error> {
             .flush_clients()
             .map_err(|e| Error::Display(e.to_string()))?;
 
-        // Client side: dispatch sola-compositor's events.
+        // Client side: dispatch sola-compositor's events and forward input.
         if let Some(client) = &mut state.client {
             if client.dispatch().is_err() {
                 tracing::warn!("compositor connection lost, will reconnect");
                 state.client = None;
+            } else {
+                inject_input(&mut state);
             }
         } else {
             // Try to reconnect periodically.
@@ -117,6 +119,108 @@ fn connect_to_compositor(state: &mut State) {
     }
     if let Some(conn) = client::ClientConnection::connect() {
         state.client = Some(conn);
+    }
+}
+
+/// Inject input events received from sola-compositor into XWayland's seat.
+fn inject_input(state: &mut State) {
+    use smithay::input::keyboard::FilterResult;
+    use smithay::input::pointer::{ButtonEvent, MotionEvent, AxisFrame};
+    use smithay::utils::SERIAL_COUNTER;
+
+    let events = match &mut state.client {
+        Some(client) => client.drain_input(),
+        None => return,
+    };
+
+    if events.is_empty() {
+        return;
+    }
+
+    let pointer = state.seat.get_pointer().unwrap();
+    let keyboard = state.seat.get_keyboard().unwrap();
+
+    for event in events {
+        match event {
+            client::InputEvent::PointerEnter { x11_id: _, x, y } => {
+                // Find the server-side surface for this X11 window and set focus.
+                // For now, just update position — surface focus is handled by motion.
+                let serial = SERIAL_COUNTER.next_serial();
+                pointer.motion(
+                    state,
+                    None, // TODO: look up server-side surface for focus
+                    &MotionEvent {
+                        location: (x, y).into(),
+                        serial,
+                        time: 0,
+                    },
+                );
+                pointer.frame(state);
+            }
+            client::InputEvent::PointerLeave => {
+                let serial = SERIAL_COUNTER.next_serial();
+                pointer.motion(
+                    state,
+                    None,
+                    &MotionEvent {
+                        location: (0.0, 0.0).into(),
+                        serial,
+                        time: 0,
+                    },
+                );
+                pointer.frame(state);
+            }
+            client::InputEvent::PointerMotion { x, y, time } => {
+                let serial = SERIAL_COUNTER.next_serial();
+                pointer.motion(
+                    state,
+                    None, // TODO: set proper focus surface
+                    &MotionEvent {
+                        location: (x, y).into(),
+                        serial,
+                        time,
+                    },
+                );
+                pointer.frame(state);
+            }
+            client::InputEvent::PointerButton { button, pressed, time } => {
+                use smithay::backend::input::ButtonState;
+                let serial = SERIAL_COUNTER.next_serial();
+                pointer.button(
+                    state,
+                    &ButtonEvent {
+                        serial,
+                        time,
+                        button,
+                        state: if pressed {
+                            ButtonState::Pressed
+                        } else {
+                            ButtonState::Released
+                        },
+                    },
+                );
+                pointer.frame(state);
+            }
+            client::InputEvent::PointerAxis { axis: _, value, time } => {
+                let frame = AxisFrame::new(time)
+                    .value(smithay::backend::input::Axis::Vertical, value);
+                pointer.axis(state, frame);
+                pointer.frame(state);
+            }
+            client::InputEvent::Key { key, pressed, time } => {
+                use smithay::backend::input::KeyState;
+                use smithay::input::keyboard::Keycode;
+                let serial = SERIAL_COUNTER.next_serial();
+                keyboard.input::<(), _>(
+                    state,
+                    Keycode::new(key + 8), // evdev → xkb offset
+                    if pressed { KeyState::Pressed } else { KeyState::Released },
+                    serial,
+                    time,
+                    |_, _, _| FilterResult::Forward,
+                );
+            }
+        }
     }
 }
 
