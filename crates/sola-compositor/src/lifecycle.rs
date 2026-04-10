@@ -62,6 +62,7 @@ fn process_bus(state: &mut State) {
             Topic::ReleaseInput => handle_release_input(state),
             Topic::RaiseApp(app_id) => handle_raise_app(state, &app_id),
             Topic::SetWindowGeometry(geo) => handle_set_window_geometry(state, &geo),
+            Topic::ListApps => handle_list_apps(state),
             _ => {
                 tracing::debug!(topic = %msg.topic, "unhandled bus topic");
             }
@@ -91,16 +92,12 @@ fn handle_grab_input(state: &mut State, target: &str) {
     state.input_grab = Some(target.to_string());
 }
 
-/// Release the input grab and restore normal focus.
+/// Release the input grab. The client hides its own surface.
 fn handle_release_input(state: &mut State) {
     let Some(target) = state.input_grab.take() else {
         return;
     };
-
     tracing::info!(target = %target, "releasing input");
-
-    // TODO: hide the grabbed surface (skip in render pass)
-    // TODO: restore focus to the previously focused window
 }
 
 /// Raise all windows belonging to the given app_id.
@@ -160,6 +157,29 @@ fn handle_set_window_geometry(state: &mut State, geo: &sola_bus::topics::WindowG
     }
     // Always store — the window might appear later via new_toplevel.
     state.pending_geometries.insert(geo.app_id.clone(), (geo.x, geo.y));
+}
+
+/// Respond to a ListApps request with the MRU-ordered app list.
+fn handle_list_apps(state: &mut State) {
+    use sola_bus::topics::App;
+
+    let apps: Vec<App> = state.mru_apps.iter().filter_map(|app_id| {
+        let window_count = state.windows_by_app_id(app_id).len() as u32;
+        if window_count == 0 { return None; }
+        Some(App {
+            app_id: app_id.clone(),
+            name: app_id.clone(),
+            icon: "app".into(),
+            window_count,
+        })
+    }).collect();
+
+    tracing::debug!(count = apps.len(), "responding to ListApps");
+
+    if let Some(bus) = &mut state.bus {
+        use sola_bus::topics::Topic;
+        let _ = bus.emit(Topic::Apps(apps));
+    }
 }
 
 /// Graceful shutdown — clean up all resources.

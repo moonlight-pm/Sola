@@ -53,7 +53,9 @@ pub fn setup(
                     tracing::debug!(code, pressed, super_held = modifiers.super_held, "key event");
 
                     // Super held → send to bus, don't forward to client.
-                    if modifiers.super_held {
+                    // Exception: during input grab, ALL keys go to the grabbed
+                    // surface via normal Wayland focus (including Super+key combos).
+                    if modifiers.super_held && state.input_grab.is_none() {
                         if let Some(bus) = &mut state.bus {
                             use sola_bus::topics::{Topic, KeyEvent};
                             let key = KeyEvent {
