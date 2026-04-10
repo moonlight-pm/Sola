@@ -8,6 +8,6 @@ sola-bus = { path = "../sola-bus" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-notify = "7"
-nix = { version = "0.29", features = ["process"] }
+notify = "8"
+nix = { version = "0.31", features = ["process"] }
 libc = "0.2"
