@@ -7,9 +7,12 @@ use std::collections::{HashMap, HashSet};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 use smithay::input::{Seat, SeatState};
+use smithay::output::{Mode as WlMode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_server::DisplayHandle;
+use smithay::utils::Transform;
 use smithay::wayland::compositor::CompositorState;
+use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shm::ShmState;
@@ -26,6 +29,7 @@ pub struct State {
     pub seat_state: SeatState<Self>,
     pub seat: Seat<Self>,
     pub data_device_state: DataDeviceState,
+    pub output_manager_state: OutputManagerState,
     pub xdg_shell_state: XdgShellState,
     pub xwm: Option<X11Wm>,
     pub xwayland_shell_state: Option<XWaylandShellState>,
@@ -77,7 +81,26 @@ impl State {
         seat.add_pointer();
 
         let data_device_state = DataDeviceState::new::<Self>(&dh);
+        let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
+
+        // Virtual output so XWayland initializes its input handling.
+        let output = Output::new(
+            "sola-x-virtual".to_string(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "sola-x".into(),
+                model: "virtual".into(),
+            },
+        );
+        let mode = WlMode {
+            size: (1920, 1080).into(),
+            refresh: 60000,
+        };
+        output.change_current_state(Some(mode), Some(Transform::Normal), None, None);
+        output.set_preferred(mode);
+        output.create_global::<Self>(&dh);
 
         Self {
             display_handle: dh,
@@ -87,6 +110,7 @@ impl State {
             seat_state,
             seat,
             data_device_state,
+            output_manager_state,
             xdg_shell_state,
             xwm: None,
             xwayland_shell_state: None,

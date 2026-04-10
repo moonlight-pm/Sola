@@ -32,6 +32,11 @@ impl ServerDndGrabHandler for State {}
 
 smithay::delegate_data_device!(State);
 
+// -- Output --
+
+impl smithay::wayland::output::OutputHandler for State {}
+smithay::delegate_output!(State);
+
 // -- XDG shell (needed for XWayland surface management) --
 
 impl XdgShellHandler for State {

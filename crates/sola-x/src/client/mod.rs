@@ -163,8 +163,18 @@ impl ClientConnection {
         std::mem::take(&mut self.app.pending_input)
     }
 
-    /// Dispatch pending events and flush. Returns Err on connection loss.
+    /// Read new events from the connection and dispatch them.
+    /// Returns Err on connection loss.
     pub fn dispatch(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Read any new data from the socket into the event queue buffer.
+        if let Some(guard) = self.queue.prepare_read() {
+            match guard.read() {
+                Ok(_) => {}
+                Err(wayland_client::backend::WaylandError::Io(e))
+                    if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
         self.queue.dispatch_pending(&mut self.app)?;
         self.conn.flush()?;
         Ok(())
@@ -304,6 +314,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for ClientApp {
                 ..
             } => {
                 let surface_id = surface.id().protocol_id();
+                tracing::debug!(surface_id, surface_x, surface_y, "pointer enter on proxy");
                 if let Some(&x11_id) = state.surface_to_x11.get(&surface_id) {
                     state.pending_input.push(InputEvent::PointerEnter {
                         x11_id,
@@ -321,6 +332,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for ClientApp {
                 time,
                 ..
             } => {
+                tracing::debug!(surface_x, surface_y, "pointer motion on proxy");
                 state.pending_input.push(InputEvent::PointerMotion {
                     x: surface_x,
                     y: surface_y,

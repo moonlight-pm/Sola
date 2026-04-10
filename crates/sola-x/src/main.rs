@@ -98,6 +98,8 @@ fn run() -> Result<(), Error> {
                 state.client = None;
             } else {
                 inject_input(&mut state);
+                // Flush injected input events to XWayland immediately.
+                let _ = display.flush_clients();
             }
         } else {
             // Try to reconnect periodically.
@@ -131,6 +133,13 @@ fn connect_to_compositor(state: &mut State) {
     }
 }
 
+/// Find the server-side WlSurface for an X11 window ID.
+fn server_surface_for_x11(state: &State, x11_id: u32) -> Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> {
+    state.surface_to_x11.iter()
+        .find(|&(_, &id)| id == x11_id)
+        .map(|(surface, _)| surface.clone())
+}
+
 /// Inject input events received from sola-compositor into XWayland's seat.
 fn inject_input(state: &mut State) {
     use smithay::input::keyboard::FilterResult;
@@ -151,13 +160,14 @@ fn inject_input(state: &mut State) {
 
     for event in events {
         match event {
-            client::InputEvent::PointerEnter { x11_id: _, x, y } => {
-                // Find the server-side surface for this X11 window and set focus.
-                // For now, just update position — surface focus is handled by motion.
+            client::InputEvent::PointerEnter { x11_id, x, y } => {
+                let focus = server_surface_for_x11(state, x11_id)
+                    .map(|s| (s, (0.0, 0.0).into()));
+                tracing::debug!(x11_id, focus_found = focus.is_some(), x, y, "injecting pointer enter");
                 let serial = SERIAL_COUNTER.next_serial();
                 pointer.motion(
                     state,
-                    None, // TODO: look up server-side surface for focus
+                    focus,
                     &MotionEvent {
                         location: (x, y).into(),
                         serial,
@@ -165,6 +175,8 @@ fn inject_input(state: &mut State) {
                     },
                 );
                 pointer.frame(state);
+                let cf = pointer.current_focus();
+                tracing::debug!(has_focus = cf.is_some(), "after enter, pointer focus state");
             }
             client::InputEvent::PointerLeave => {
                 let serial = SERIAL_COUNTER.next_serial();
@@ -180,10 +192,12 @@ fn inject_input(state: &mut State) {
                 pointer.frame(state);
             }
             client::InputEvent::PointerMotion { x, y, time } => {
+                // Keep current focus, just update position.
                 let serial = SERIAL_COUNTER.next_serial();
+                let current_focus = pointer.current_focus().map(|s| (s, (0.0, 0.0).into()));
                 pointer.motion(
                     state,
-                    None, // TODO: set proper focus surface
+                    current_focus,
                     &MotionEvent {
                         location: (x, y).into(),
                         serial,
