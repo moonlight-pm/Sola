@@ -103,6 +103,11 @@ pub struct State {
     /// Current pointer position in compositor-space coordinates.
     pub pointer_location: (f64, f64),
 
+    /// The app_id that currently has exclusive input grab, if any.
+    /// While set, all input goes to this app's surface and other clients
+    /// are excluded. The grabbed surface is shown above all others.
+    pub input_grab: Option<String>,
+
     // -- XWayland state --
 
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
@@ -118,9 +123,6 @@ pub struct State {
     /// wl_surface yet. Used to defer Space insertion until both
     /// `map_window_request` and `surface_associated` have fired.
     pub xwayland_mapped: HashSet<smithay::xwayland::xwm::X11Window>,
-
-    /// Raw FD of the Wayland listening socket. Stored so the restart path
-    /// can preserve it across execv by clearing FD_CLOEXEC.
 
     /// The cursor image loaded from the xcursor theme. `None` if loading failed.
     pub cursor_buffer: Option<MemoryRenderBuffer>,
@@ -171,6 +173,7 @@ impl State {
             seat,
             space: Space::default(),
             pointer_location: (0.0, 0.0),
+            input_grab: None,
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             dmabuf_state: None,
@@ -179,4 +182,39 @@ impl State {
             xwayland_mapped: HashSet::new(),
         }
     }
+
+    /// Get the app_id of a window, if set.
+    pub fn app_id(window: &Window) -> Option<String> {
+        window_app_id(window)
+    }
+
+    /// Find the first window with the given app_id.
+    pub fn window_by_app_id(&self, target: &str) -> Option<Window> {
+        self.space.elements().find(|window| {
+            window_app_id(window).is_some_and(|id| id == target)
+        }).cloned()
+    }
+
+    /// Find all windows with the given app_id.
+    pub fn windows_by_app_id(&self, target: &str) -> Vec<Window> {
+        self.space.elements().filter(|window| {
+            window_app_id(window).is_some_and(|id| id == target)
+        }).cloned().collect()
+    }
+}
+
+/// Extract the app_id from a Window's xdg_toplevel surface data.
+fn window_app_id(window: &Window) -> Option<String> {
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+
+    window.toplevel().and_then(|toplevel| {
+        with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok())
+                .and_then(|attrs| attrs.app_id.clone())
+        })
+    })
 }

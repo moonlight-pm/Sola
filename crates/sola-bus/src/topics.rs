@@ -4,7 +4,7 @@ use crate::define_topics;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct App {
-    pub id: String,
+    pub app_id: String,
     pub name: String,
     pub icon: String,
     pub window_count: u32,
@@ -53,7 +53,7 @@ mod tests {
     #[test]
     fn payload_topic_roundtrip() {
         let apps = vec![App {
-            id: "zen".into(),
+            app_id: "zen".into(),
             name: "Browser".into(),
             icon: "globe".into(),
             window_count: 2,
@@ -65,7 +65,7 @@ mod tests {
         match parsed {
             Topic::Apps(decoded) => {
                 assert_eq!(decoded.len(), 1);
-                assert_eq!(decoded[0].id, "zen");
+                assert_eq!(decoded[0].app_id, "zen");
                 assert_eq!(decoded[0].window_count, 2);
             }
             _ => panic!("wrong variant"),
