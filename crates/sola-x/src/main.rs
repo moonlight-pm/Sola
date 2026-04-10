@@ -113,11 +113,20 @@ fn run() -> Result<(), Error> {
 }
 
 /// Try to connect to sola-compositor as a Wayland client.
+/// On reconnection, re-creates proxy surfaces for all existing X11 windows.
 fn connect_to_compositor(state: &mut State) {
     if state.client.is_some() {
         return;
     }
-    if let Some(conn) = client::ClientConnection::connect() {
+    if let Some(mut conn) = client::ClientConnection::connect() {
+        // Gather existing X11 windows to re-create proxies.
+        let windows: Vec<(u32, String, String)> = state
+            .x11_windows
+            .iter()
+            .map(|(&id, info)| (id, info.title.clone(), info.class.clone()))
+            .collect();
+
+        conn.recreate_proxies(&windows);
         state.client = Some(conn);
     }
 }

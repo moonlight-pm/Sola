@@ -128,7 +128,6 @@ fn handle_raise_app(state: &mut State, app_id: &str) {
 /// Graceful shutdown — clean up all resources.
 pub fn shutdown(mut state: State, display: Display<State>, event_loop: EventLoop<'static, State>) {
     tracing::info!("sola compositor shutting down");
-    state.xwm = None;
     state.devices.clear();
     drop(display);
     drop(event_loop);

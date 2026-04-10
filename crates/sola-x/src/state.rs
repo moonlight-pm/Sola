@@ -42,6 +42,10 @@ pub struct State {
     /// Populated when `surface_associated` fires.
     pub surface_to_x11: HashMap<WlSurface, u32>,
 
+    /// X11 window metadata, keyed by window ID. Used to re-create proxy
+    /// surfaces after compositor reconnection.
+    pub x11_windows: HashMap<u32, X11WindowInfo>,
+
     // -- Client side --
 
     /// Wayland client connection to sola-compositor.
@@ -52,6 +56,12 @@ pub struct State {
     pub running: bool,
 }
 
+
+/// Metadata about an X11 window, retained for proxy re-creation on reconnect.
+pub struct X11WindowInfo {
+    pub title: String,
+    pub class: String,
+}
 
 impl State {
     pub fn new(
@@ -83,6 +93,7 @@ impl State {
             xwayland_mapped: HashSet::new(),
             bus: None,
             surface_to_x11: HashMap::new(),
+            x11_windows: HashMap::new(),
             client: None,
             running: true,
         }

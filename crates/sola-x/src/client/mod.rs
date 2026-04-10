@@ -90,6 +90,12 @@ impl ClientConnection {
             return None;
         }
 
+        // Request pointer and keyboard so we receive input on proxy surfaces.
+        if let Some(seat) = &app.seat {
+            seat.get_pointer(&qh, ());
+            seat.get_keyboard(&qh, ());
+        }
+
         tracing::info!("connected to sola-compositor as Wayland client");
 
         Some(Self { conn, queue, qh, app })
@@ -131,6 +137,19 @@ impl ClientConnection {
             proxy.xdg_surface.destroy();
             proxy.surface.destroy();
             tracing::info!(x11_id, "destroyed proxy surface");
+        }
+    }
+
+    /// Re-create proxy surfaces for all currently tracked X11 windows.
+    /// Called after reconnecting to sola-compositor.
+    pub fn recreate_proxies(&mut self, windows: &[(u32, String, String)]) {
+        for (x11_id, title, class) in windows {
+            self.create_proxy(*x11_id, title, class);
+        }
+        if !windows.is_empty() {
+            // Roundtrip to ensure surfaces are created before we start forwarding.
+            let _ = self.queue.roundtrip(&mut self.app);
+            tracing::info!(count = windows.len(), "re-created proxy surfaces after reconnect");
         }
     }
 

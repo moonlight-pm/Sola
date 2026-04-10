@@ -8,7 +8,7 @@
 /// `dispatch_clients` needs `&mut Display` and `&mut State` simultaneously,
 /// which would violate Rust's borrowing rules if both lived in the same struct.
 /// The `Display` is kept as a separate local in `run()`.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use smithay::backend::drm::DrmNode;
 use smithay::backend::renderer::element::memory::MemoryRenderBuffer;
@@ -24,8 +24,6 @@ use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::shm::ShmState;
-use smithay::wayland::xwayland_shell::XWaylandShellState;
-use smithay::xwayland::X11Wm;
 
 use crate::backend::device::Device;
 use crate::backend::gpu::SolaGpuManager;
@@ -108,21 +106,10 @@ pub struct State {
     /// are excluded. The grabbed surface is shown above all others.
     pub input_grab: Option<String>,
 
-    // -- XWayland state --
+    // -- Protocol state --
 
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
     pub dmabuf_state: Option<DmabufState>,
-
-    /// The X11 window manager instance. `None` until XWayland is ready.
-    pub xwm: Option<X11Wm>,
-
-    /// XWayland shell protocol state for surface pairing. `None` until init.
-    pub xwayland_shell_state: Option<XWaylandShellState>,
-
-    /// X11 window IDs that have requested mapping but may not have a
-    /// wl_surface yet. Used to defer Space insertion until both
-    /// `map_window_request` and `surface_associated` have fired.
-    pub xwayland_mapped: HashSet<smithay::xwayland::xwm::X11Window>,
 
     /// The cursor image loaded from the xcursor theme. `None` if loading failed.
     pub cursor_buffer: Option<MemoryRenderBuffer>,
@@ -177,9 +164,6 @@ impl State {
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             dmabuf_state: None,
-            xwm: None,
-            xwayland_shell_state: None,
-            xwayland_mapped: HashSet::new(),
         }
     }
 

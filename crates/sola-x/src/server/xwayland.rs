@@ -9,7 +9,7 @@ use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState}
 use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 use smithay::xwayland::X11Surface;
 
-use crate::state::State;
+use crate::state::{State, X11WindowInfo};
 
 /// Spawn XWayland and register its event source with the event loop.
 pub fn setup(
@@ -97,16 +97,20 @@ impl XwmHandler for State {
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
         tracing::info!(title = %window.title(), "X11 window unmapped");
-        self.xwayland_mapped.remove(&window.window_id());
+        let id = window.window_id();
+        self.xwayland_mapped.remove(&id);
+        self.x11_windows.remove(&id);
         if let Some(client) = &mut self.client {
-            client.destroy_proxy(window.window_id());
+            client.destroy_proxy(id);
         }
     }
 
     fn destroyed_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        self.xwayland_mapped.remove(&window.window_id());
+        let id = window.window_id();
+        self.xwayland_mapped.remove(&id);
+        self.x11_windows.remove(&id);
         if let Some(client) = &mut self.client {
-            client.destroy_proxy(window.window_id());
+            client.destroy_proxy(id);
         }
     }
 
@@ -186,6 +190,11 @@ fn track_x11_window(state: &mut State, surface: X11Surface) {
     let class = surface.class();
 
     tracing::info!(id, title = %title, class = %class, "tracking X11 window");
+
+    state.x11_windows.insert(id, X11WindowInfo {
+        title: title.clone(),
+        class: class.clone(),
+    });
 
     if let Some(client) = &mut state.client {
         client.create_proxy(id, &title, &class);
