@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::{env, fs, io};
+use std::{fs, io};
 
 use tracing::{error, info, warn};
 
@@ -19,7 +19,7 @@ fn main() {
         )
         .init();
 
-    let socket_path = bus_socket_path();
+    let socket_path = sola_bus::socket_path();
 
     // Remove stale socket if it exists
     let _ = fs::remove_file(&socket_path);
@@ -106,10 +106,3 @@ fn broadcast(sender: ClientId, event: &sola_bus::Event, clients: &Clients) {
     }
 }
 
-fn bus_socket_path() -> String {
-    if let Ok(path) = env::var("SOLA_BUS_PATH") {
-        return path;
-    }
-    let runtime_dir = env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    format!("{runtime_dir}/sola-bus")
-}
