@@ -29,6 +29,7 @@ pub struct State {
     pub seat_state: SeatState<Self>,
     pub seat: Seat<Self>,
     pub data_device_state: DataDeviceState,
+    #[allow(dead_code)]
     pub output_manager_state: OutputManagerState,
     pub xdg_shell_state: XdgShellState,
     pub xwm: Option<X11Wm>,

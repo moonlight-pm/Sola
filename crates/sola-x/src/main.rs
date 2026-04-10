@@ -163,7 +163,6 @@ fn inject_input(state: &mut State) {
             client::InputEvent::PointerEnter { x11_id, x, y } => {
                 let focus = server_surface_for_x11(state, x11_id)
                     .map(|s| (s, (0.0, 0.0).into()));
-                tracing::debug!(x11_id, focus_found = focus.is_some(), x, y, "injecting pointer enter");
                 let serial = SERIAL_COUNTER.next_serial();
                 pointer.motion(
                     state,
@@ -175,8 +174,6 @@ fn inject_input(state: &mut State) {
                     },
                 );
                 pointer.frame(state);
-                let cf = pointer.current_focus();
-                tracing::debug!(has_focus = cf.is_some(), "after enter, pointer focus state");
             }
             client::InputEvent::PointerLeave => {
                 let serial = SERIAL_COUNTER.next_serial();
@@ -224,7 +221,7 @@ fn inject_input(state: &mut State) {
                 );
                 pointer.frame(state);
             }
-            client::InputEvent::PointerAxis { axis: _, value, time } => {
+            client::InputEvent::PointerAxis { value, time } => {
                 let frame = AxisFrame::new(time)
                     .value(smithay::backend::input::Axis::Vertical, value);
                 pointer.axis(state, frame);

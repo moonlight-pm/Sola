@@ -50,7 +50,7 @@ pub enum InputEvent {
     PointerLeave,
     PointerMotion { x: f64, y: f64, time: u32 },
     PointerButton { button: u32, pressed: bool, time: u32 },
-    PointerAxis { axis: u32, value: f64, time: u32 },
+    PointerAxis { value: f64, time: u32 },
     Key { key: u32, pressed: bool, time: u32 },
 }
 
@@ -314,7 +314,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for ClientApp {
                 ..
             } => {
                 let surface_id = surface.id().protocol_id();
-                tracing::debug!(surface_id, surface_x, surface_y, "pointer enter on proxy");
                 if let Some(&x11_id) = state.surface_to_x11.get(&surface_id) {
                     state.pending_input.push(InputEvent::PointerEnter {
                         x11_id,
@@ -332,7 +331,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for ClientApp {
                 time,
                 ..
             } => {
-                tracing::debug!(surface_x, surface_y, "pointer motion on proxy");
                 state.pending_input.push(InputEvent::PointerMotion {
                     x: surface_x,
                     y: surface_y,
@@ -355,9 +353,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for ClientApp {
             wl_pointer::Event::Axis {
                 axis, value, time, ..
             } => {
-                if let WEnum::Value(a) = axis {
+                if let WEnum::Value(_) = axis {
                     state.pending_input.push(InputEvent::PointerAxis {
-                        axis: a as u32,
                         value,
                         time,
                     });
