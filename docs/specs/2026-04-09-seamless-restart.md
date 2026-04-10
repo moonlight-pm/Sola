@@ -1,7 +1,8 @@
 # Seamless Compositor Restart
 
 **Date:** 2026-04-09
-**Status:** Proposed
+**Updated:** 2026-04-10
+**Status:** Phase 1 complete, Phase 2 implemented via sola-x
 
 ## Goal
 
@@ -40,30 +41,28 @@ Sola already has a binary watcher (`backend/watcher.rs`) that detects when the d
 
 **What to test:** Run `sola-wtest`, trigger a restart via binary watcher, confirm the wtest window survives and continues receiving events.
 
-### Phase 2: XWayland Decoupling
+### Phase 2: XWayland Decoupling (Implemented)
 
-**Goal:** X11 clients (Steam, etc.) survive restart.
+**Goal:** X11 clients (Steam, etc.) survive compositor restart.
 
-**Problem:** XWayland is currently spawned as a child process of the compositor. When the compositor exits (even via `execv()`), XWayland terminates and takes all X11 clients with it.
+**Solution:** `sola-x` — a separate process that owns XWayland's lifecycle.
 
-**Approach:** Decouple XWayland's lifecycle from the compositor.
+sola-x is both a Wayland compositor (for XWayland) and a Wayland client (of sola-compositor). It bridges X11 windows to the compositor as proxy xdg_toplevel surfaces with zero-copy dmabuf forwarding.
 
-Two options:
+```
+X11 apps ──X11──→ XWayland ──Wayland──→ sola-x ──Wayland──→ sola-compositor
+```
 
-**Option A: External XWayland process.**
-- Run XWayland as a separate process (systemd user service or launched by a session wrapper)
-- Compositor connects to the existing XWayland instance on startup
-- Compositor disconnecting doesn't kill XWayland
-- KWin uses this pattern ("Survive Xwayland crashes")
+**Architecture:**
+- **Server side:** Minimal Wayland compositor implementing only what XWayland needs (wl_compositor, wl_shm, wl_seat, xdg_shell, xwayland_shell)
+- **Client side:** Connects to sola-compositor, creates proxy xdg_toplevel per X11 window
+- **Buffer bridge:** Extracts dmabuf FDs from XWayland's surfaces, re-creates matching buffers in sola-compositor (zero-copy, same GPU memory)
+- **Input bridge:** Receives pointer/keyboard events from sola-compositor on proxy surfaces, injects into XWayland's seat
+- **Reconnection:** When sola-compositor restarts, sola-x reconnects and re-creates all proxy surfaces. XWayland and X11 apps are unaffected.
 
-**Option B: Reparent XWayland before exec.**
-- Before `execv()`, reparent the XWayland child process (e.g. to PID 1) so it isn't killed
-- New compositor reconnects to the existing XWayland
-- Simpler than Option A but more fragile
+**Process management:** sola-x is launched and supervised by the sola process manager alongside sola-bus and sola-compositor.
 
-**Recommendation:** Option A. It's the proven pattern and also makes Sola resilient to XWayland crashes (not just restarts).
-
-**What to test:** Run `sola-xtest` via XWayland, trigger a restart, confirm the xtest window survives.
+**What to test:** Run X11 apps via XWayland, restart sola-compositor, confirm X11 apps survive and reappear.
 
 ### Phase 3: State Serialization
 
