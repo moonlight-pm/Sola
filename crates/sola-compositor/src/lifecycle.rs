@@ -48,6 +48,9 @@ fn process_bus(state: &mut State) {
         messages.push(msg);
     }
 
+    // Apply any pending geometries that now have matching windows.
+    apply_pending_geometries(state);
+
     for msg in &messages {
         let Some(topic) = Topic::parse(msg) else {
             tracing::debug!(topic = %msg.topic, "unknown bus topic");
@@ -58,6 +61,7 @@ fn process_bus(state: &mut State) {
             Topic::GrabInput(target) => handle_grab_input(state, &target),
             Topic::ReleaseInput => handle_release_input(state),
             Topic::RaiseApp(app_id) => handle_raise_app(state, &app_id),
+            Topic::SetWindowGeometry(geo) => handle_set_window_geometry(state, &geo),
             _ => {
                 tracing::debug!(topic = %msg.topic, "unhandled bus topic");
             }
@@ -125,10 +129,42 @@ fn handle_raise_app(state: &mut State, app_id: &str) {
     }
 }
 
+/// Apply any pending geometries whose windows now exist in the Space.
+fn apply_pending_geometries(state: &mut State) {
+    // Collect matches first to avoid borrow conflict.
+    let matches: Vec<(String, i32, i32)> = state
+        .pending_geometries
+        .iter()
+        .filter_map(|(app_id, &(x, y))| {
+            if state.window_by_app_id(app_id).is_some() {
+                Some((app_id.clone(), x, y))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (app_id, x, y) in matches {
+        if let Some(window) = state.window_by_app_id(&app_id) {
+            state.space.map_element(window, (x, y), false);
+        }
+        state.pending_geometries.remove(&app_id);
+    }
+}
+
+/// Reposition a window based on geometry from sola-x.
+/// If the window doesn't exist yet, store the geometry for later.
+fn handle_set_window_geometry(state: &mut State, geo: &sola_bus::topics::WindowGeometry) {
+    if let Some(window) = state.window_by_app_id(&geo.app_id) {
+        state.space.map_element(window, (geo.x, geo.y), false);
+    }
+    // Always store — the window might appear later via new_toplevel.
+    state.pending_geometries.insert(geo.app_id.clone(), (geo.x, geo.y));
+}
+
 /// Graceful shutdown — clean up all resources.
 pub fn shutdown(mut state: State, display: Display<State>, event_loop: EventLoop<'static, State>) {
     tracing::info!("sola compositor shutting down");
-    state.xwm = None;
     state.devices.clear();
     drop(display);
     drop(event_loop);

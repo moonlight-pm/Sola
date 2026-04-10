@@ -26,10 +26,8 @@ impl XdgShellHandler for State {
         // Send initial configure so the client knows it can start rendering.
         surface.send_configure();
 
-        // Give this window keyboard focus so it receives input immediately.
         let wl_surface = surface.wl_surface().clone();
         let window = Window::new_wayland_window(surface);
-        // `true` = activate (bring to top of z-order).
         self.space.map_element(window, (0, 0), true);
 
         let serial = SERIAL_COUNTER.next_serial();

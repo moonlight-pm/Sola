@@ -19,6 +19,16 @@ pub struct KeyEvent {
     pub shift_held: bool,
 }
 
+/// Window geometry from sola-x for X11 window positioning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowGeometry {
+    pub app_id: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 define_topics! {
     // Input routing
     Key(KeyEvent),
@@ -31,6 +41,9 @@ define_topics! {
     RaiseApp(String),
     FocusChanged(String),
     LaunchApp(String),
+
+    // Window management
+    SetWindowGeometry(WindowGeometry),
 
     // Lifecycle
     Shutdown,

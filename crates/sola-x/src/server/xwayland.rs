@@ -1,29 +1,21 @@
-/// XWayland integration — runs X11 apps inside the Wayland compositor.
+/// XWayland integration — spawns and manages XWayland.
 ///
-/// The lifecycle of an X11 window has two independent events:
-/// 1. `map_window_request` — the X11 client wants the window visible
-/// 2. `surface_associated` — XWayland pairs the X11 window with a wl_surface
-///
-/// These can happen in EITHER order. We only add the window to the Space
-/// when BOTH have occurred — the window is mapped AND has a surface.
-/// This prevents surfaceless windows from occupying space in the compositor.
-///
-/// See: https://docs.rs/smithay/0.7.0/smithay/xwayland/index.html
-use smithay::desktop::Window;
+/// Moved from sola-compositor. The key difference: instead of adding X11
+/// windows to a compositor Space, we track them in WindowBridge for
+/// forwarding to sola as proxy Wayland surfaces.
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::{Logical, Rectangle, SERIAL_COUNTER};
+use smithay::utils::{Logical, Rectangle};
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
 use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 use smithay::xwayland::X11Surface;
 
-use crate::error::CompositorError;
-use crate::state::State;
+use crate::state::{State, X11WindowInfo};
 
 /// Spawn XWayland and register its event source with the event loop.
-///
-/// XWayland connects as a Wayland client and provides an X11 display
-/// for legacy apps (Steam, etc.). Pinned to `:0` for a stable `$DISPLAY`.
-pub fn setup(state: &mut State, event_loop: &smithay::reexports::calloop::EventLoop<'static, State>) -> Result<(), CompositorError> {
+pub fn setup(
+    state: &mut State,
+    event_loop: &smithay::reexports::calloop::EventLoop<'static, State>,
+) -> Result<(), crate::error::Error> {
     use smithay::wayland::xwayland_shell::XWaylandShellState;
     use smithay::xwayland::XWayland;
 
@@ -38,7 +30,7 @@ pub fn setup(state: &mut State, event_loop: &smithay::reexports::calloop::EventL
         std::process::Stdio::null(),
         |_| {},
     )
-    .map_err(|e| CompositorError::EventLoop(format!("XWayland spawn: {e}")))?;
+    .map_err(|e| crate::error::Error::XWayland(e.to_string()))?;
 
     event_loop
         .handle()
@@ -68,7 +60,7 @@ pub fn setup(state: &mut State, event_loop: &smithay::reexports::calloop::EventL
                 tracing::error!("XWayland failed to start");
             }
         })
-        .map_err(|e| CompositorError::EventLoop(format!("XWayland source: {e}")))?;
+        .map_err(|e| crate::error::Error::EventLoop(e.to_string()))?;
 
     Ok(())
 }
@@ -82,9 +74,6 @@ impl XwmHandler for State {
 
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
-    /// X11 window wants to be visible. Allow it, and if the surface is
-    /// already associated, add to Space now. Otherwise, `surface_associated`
-    /// will add it later.
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
         tracing::info!(
             title = %window.title(),
@@ -97,12 +86,10 @@ impl XwmHandler for State {
             return;
         }
 
-        // Track that this window wants to be mapped.
         self.xwayland_mapped.insert(window.window_id());
 
-        // If surface is already associated, add to Space immediately.
         if window.wl_surface().is_some() {
-            add_x11_to_space(self, window);
+            track_x11_window(self, window);
         }
     }
 
@@ -110,20 +97,21 @@ impl XwmHandler for State {
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
         tracing::info!(title = %window.title(), "X11 window unmapped");
-        self.xwayland_mapped.remove(&window.window_id());
         let id = window.window_id();
-        let elem = self
-            .space
-            .elements()
-            .find(|w| w.x11_surface().is_some_and(|s| s.window_id() == id))
-            .cloned();
-        if let Some(elem) = elem {
-            self.space.unmap_elem(&elem);
+        self.xwayland_mapped.remove(&id);
+        self.x11_windows.remove(&id);
+        if let Some(client) = &mut self.client {
+            client.destroy_proxy(id);
         }
     }
 
     fn destroyed_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        self.xwayland_mapped.remove(&window.window_id());
+        let id = window.window_id();
+        self.xwayland_mapped.remove(&id);
+        self.x11_windows.remove(&id);
+        if let Some(client) = &mut self.client {
+            client.destroy_proxy(id);
+        }
     }
 
     fn configure_request(
@@ -148,6 +136,8 @@ impl XwmHandler for State {
         if let Err(err) = window.configure(Some(new_geo)) {
             tracing::error!(?err, "failed to configure X11 window");
         }
+
+        emit_geometry(self, &window.class(), new_geo);
     }
 
     fn configure_notify(
@@ -178,50 +168,56 @@ impl XWaylandShellHandler for State {
             .expect("xwayland_shell_state not initialized")
     }
 
-    /// XWayland paired an X11 window with a Wayland surface.
-    /// If the window already requested mapping, add to Space now.
-    fn surface_associated(&mut self, _xwm: XwmId, _wl_surface: WlSurface, surface: X11Surface) {
+    fn surface_associated(&mut self, _xwm: XwmId, wl_surface: WlSurface, surface: X11Surface) {
         tracing::info!(
             title = %surface.title(),
             class = %surface.class(),
             "X11 surface associated"
         );
 
+        // Record the surface→X11 mapping for buffer forwarding in commit().
+        self.surface_to_x11.insert(wl_surface, surface.window_id());
+
         if self.xwayland_mapped.contains(&surface.window_id()) {
-            add_x11_to_space(self, surface);
+            track_x11_window(self, surface);
         }
     }
 }
 
-/// Add an X11 window to the Space and give it keyboard focus.
+/// Create a proxy surface in sola-compositor for an X11 window.
 /// Called when both mapping and surface association have occurred.
-fn add_x11_to_space(state: &mut State, surface: X11Surface) {
-    tracing::info!(
-        title = %surface.title(),
-        class = %surface.class(),
-        "adding X11 window to space"
-    );
-
-    // Use the X11 window's requested geometry for positioning.
+fn track_x11_window(state: &mut State, surface: X11Surface) {
+    let id = surface.window_id();
+    let title = surface.title();
+    let class = surface.class();
     let geo = surface.geometry();
-    let wl_surface = surface.wl_surface();
-    let window = Window::new_x11_window(surface);
-    state.space.map_element(window, geo.loc, true);
 
-    // Reset all DRM output buffers so the compositor has no cached frame
-    // state. This forces a full re-render on the next frame, ensuring the
-    // new window's content is picked up even if the damage tracker would
-    // otherwise consider the frame unchanged.
-    for device in state.devices.values() {
-        for output in device.outputs.values() {
-            output.reset_buffers();
-        }
+    tracing::info!(id, title = %title, class = %class, x = geo.loc.x, y = geo.loc.y, "tracking X11 window");
+
+    state.x11_windows.insert(id, X11WindowInfo {
+        title: title.clone(),
+        class: class.clone(),
+    });
+
+    if let Some(client) = &mut state.client {
+        client.create_proxy(id, &title, &class);
     }
 
-    if let Some(surface) = wl_surface {
-        let serial = SERIAL_COUNTER.next_serial();
-        let keyboard = state.seat.get_keyboard().unwrap();
-        keyboard.set_focus(state, Some(surface), serial);
+    // Tell the compositor where to position this window.
+    emit_geometry(state, &class, geo);
+}
+
+/// Send window geometry to the compositor via the bus.
+fn emit_geometry(state: &mut State, app_id: &str, geo: Rectangle<i32, Logical>) {
+    use sola_bus::topics::{Topic, WindowGeometry};
+    if let Some(bus) = &mut state.bus {
+        let _ = bus.emit(Topic::SetWindowGeometry(WindowGeometry {
+            app_id: app_id.to_string(),
+            x: geo.loc.x,
+            y: geo.loc.y,
+            width: geo.size.w,
+            height: geo.size.h,
+        }));
     }
 }
 

@@ -1326,6 +1326,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-x"
+version = "0.1.0"
+dependencies = [
+ "calloop",
+ "libc",
+ "smithay",
+ "sola-bus",
+ "thiserror",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "wayland-client",
+ "wayland-protocols",
+]
+
+[[package]]
 name = "sola-xtest"
 version = "0.1.0"
 dependencies = [
