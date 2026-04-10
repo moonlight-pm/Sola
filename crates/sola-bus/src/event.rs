@@ -17,7 +17,6 @@ pub struct Event {
 
     /// Arbitrary binary payload, deserialized by the consumer.
     /// The bus does not inspect this — it's opaque bytes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<Vec<u8>>,
 }
 
@@ -50,5 +49,54 @@ impl Event {
             | ((bytes[4] as u64) << 8)
             | (bytes[5] as u64);
         ms
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_event_without_payload() {
+        let event = Event::new("shell:test");
+        assert_eq!(event.topic, "shell:test");
+        assert!(event.payload.is_none());
+    }
+
+    #[test]
+    fn with_payload_creates_event_with_payload() {
+        let data = vec![1, 2, 3];
+        let event = Event::with_payload("shell:test", data.clone());
+        assert_eq!(event.topic, "shell:test");
+        assert_eq!(event.payload.unwrap(), data);
+    }
+
+    #[test]
+    fn timestamp_is_recent() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let event = Event::new("shell:test");
+        let after = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let ts = event.timestamp_ms();
+        assert!(ts >= before && ts <= after, "timestamp {ts} not in [{before}, {after}]");
+    }
+
+    #[test]
+    fn ids_are_unique() {
+        let a = Event::new("shell:test");
+        let b = Event::new("shell:test");
+        assert_ne!(a.id, b.id);
+    }
+
+    #[test]
+    fn ids_are_monotonic() {
+        let a = Event::new("shell:test");
+        let b = Event::new("shell:test");
+        assert!(b.id > a.id);
     }
 }

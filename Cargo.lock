@@ -1321,8 +1321,9 @@ dependencies = [
 name = "sola"
 version = "0.1.0"
 dependencies = [
- "clap",
- "sola-compositor",
+ "libc",
+ "nix",
+ "notify",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -1334,6 +1335,8 @@ version = "0.1.0"
 dependencies = [
  "postcard",
  "serde",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -1342,14 +1345,13 @@ name = "sola-compositor"
 version = "0.1.0"
 dependencies = [
  "drm-fourcc",
- "libc",
- "nix",
- "notify",
  "smithay",
  "smithay-drm-extras",
  "tempfile",
  "thiserror",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "xcursor",
 ]
 

@@ -9,9 +9,6 @@
 /// which would violate Rust's borrowing rules if both lived in the same struct.
 /// The `Display` is kept as a separate local in `run()`.
 use std::collections::{HashMap, HashSet};
-use std::os::unix::io::RawFd;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use smithay::backend::drm::DrmNode;
 use smithay::backend::renderer::element::memory::MemoryRenderBuffer;
@@ -36,10 +33,6 @@ use crate::backend::gpu::SolaGpuManager;
 pub struct Sola {
     /// Controls the main event loop. Set to `false` to trigger shutdown.
     pub running: bool,
-
-    /// Set by the binary watcher thread when a new binary is detected.
-    /// The main loop checks this after shutdown to decide whether to execv.
-    pub restart_requested: Arc<AtomicBool>,
 
     /// Handle for creating Wayland globals and accessing the display.
     /// Unlike `Display`, a `DisplayHandle` can be freely cloned and used
@@ -125,7 +118,6 @@ pub struct Sola {
 
     /// Raw FD of the Wayland listening socket. Stored so the restart path
     /// can preserve it across execv by clearing FD_CLOEXEC.
-    pub wayland_socket_fd: Option<RawFd>,
 
     /// The cursor image loaded from the xcursor theme. `None` if loading failed.
     pub cursor_buffer: Option<MemoryRenderBuffer>,
@@ -177,8 +169,6 @@ impl Sola {
             pointer_location: (0.0, 0.0),
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
-            restart_requested: Arc::new(AtomicBool::new(false)),
-            wayland_socket_fd: None,
             dmabuf_state: None,
             xwm: None,
             xwayland_shell_state: None,
