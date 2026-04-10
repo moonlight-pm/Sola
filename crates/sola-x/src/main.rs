@@ -74,11 +74,16 @@ fn run() -> Result<(), SolaXError> {
     // -- XWayland --
     server::xwayland::setup(&mut state, &event_loop)?;
 
+    // -- Client connection to sola-compositor --
+    // Retry until available (compositor may not be ready yet).
+    connect_to_compositor(&mut state);
+
     // -- Main loop --
     tracing::info!("entering event loop");
     while state.running {
         process_bus(&mut state);
 
+        // Server side: dispatch XWayland's Wayland messages.
         display
             .dispatch_clients(&mut state)
             .map_err(|e| SolaXError::Display(e.to_string()))?;
@@ -86,12 +91,33 @@ fn run() -> Result<(), SolaXError> {
             .flush_clients()
             .map_err(|e| SolaXError::Display(e.to_string()))?;
 
+        // Client side: dispatch sola-compositor's events.
+        if let Some(client) = &mut state.client {
+            if client.dispatch().is_err() {
+                tracing::warn!("compositor connection lost, will reconnect");
+                state.client = None;
+            }
+        } else {
+            // Try to reconnect periodically.
+            connect_to_compositor(&mut state);
+        }
+
         event_loop
             .dispatch(Some(std::time::Duration::from_millis(16)), &mut state)
             .map_err(|e| SolaXError::EventLoop(e.to_string()))?;
     }
 
     Ok(())
+}
+
+/// Try to connect to sola-compositor as a Wayland client.
+fn connect_to_compositor(state: &mut SolaX) {
+    if state.client.is_some() {
+        return;
+    }
+    if let Some(conn) = client::ClientConnection::connect() {
+        state.client = Some(conn);
+    }
 }
 
 /// Process pending bus messages.

@@ -9,7 +9,7 @@ use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState}
 use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 use smithay::xwayland::X11Surface;
 
-use crate::state::{SolaX, WindowBridge};
+use crate::state::SolaX;
 
 /// Spawn XWayland and register its event source with the event loop.
 pub fn setup(
@@ -98,12 +98,16 @@ impl XwmHandler for SolaX {
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
         tracing::info!(title = %window.title(), "X11 window unmapped");
         self.xwayland_mapped.remove(&window.window_id());
-        self.windows.remove(&window.window_id());
+        if let Some(client) = &mut self.client {
+            client.destroy_proxy(window.window_id());
+        }
     }
 
     fn destroyed_window(&mut self, _xwm: XwmId, window: X11Surface) {
         self.xwayland_mapped.remove(&window.window_id());
-        self.windows.remove(&window.window_id());
+        if let Some(client) = &mut self.client {
+            client.destroy_proxy(window.window_id());
+        }
     }
 
     fn configure_request(
@@ -171,23 +175,18 @@ impl XWaylandShellHandler for SolaX {
     }
 }
 
-/// Track an X11 window for later forwarding to sola.
+/// Create a proxy surface in sola-compositor for an X11 window.
 /// Called when both mapping and surface association have occurred.
 fn track_x11_window(state: &mut SolaX, surface: X11Surface) {
     let id = surface.window_id();
-    tracing::info!(
-        id,
-        title = %surface.title(),
-        class = %surface.class(),
-        "tracking X11 window"
-    );
+    let title = surface.title();
+    let class = surface.class();
 
-    state.windows.insert(id, WindowBridge {
-        title: surface.title(),
-        class: surface.class(),
-    });
+    tracing::info!(id, title = %title, class = %class, "tracking X11 window");
 
-    // TODO: Phase 2 — create proxy surface in sola for this window.
+    if let Some(client) = &mut state.client {
+        client.create_proxy(id, &title, &class);
+    }
 }
 
 smithay::delegate_xwayland_shell!(SolaX);

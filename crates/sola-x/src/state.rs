@@ -3,7 +3,7 @@
 /// Holds both the server side (Wayland compositor for XWayland) and
 /// the client side (Wayland client connecting to sola). The server
 /// side is long-lived; the client side is rebuilt on each reconnection.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::LoopHandle;
@@ -35,22 +35,16 @@ pub struct SolaX {
     /// Connection to the Sola Bus for lifecycle coordination.
     pub bus: Option<sola_bus::BusClient>,
 
-    // -- Bridge state --
+    // -- Client side --
 
-    /// Tracks X11 windows and their proxy surfaces in sola.
-    pub windows: HashMap<u32, WindowBridge>,
+    /// Wayland client connection to sola-compositor.
+    /// None when disconnected; rebuilt on reconnection.
+    pub client: Option<crate::client::ClientConnection>,
 
     /// Whether the main loop should keep running.
     pub running: bool,
 }
 
-/// Per-X11-window state linking the server-side X11 surface to
-/// the client-side proxy surface in sola.
-pub struct WindowBridge {
-    pub title: String,
-    pub class: String,
-    // Client-side proxy objects will be added in Phase 2.
-}
 
 impl SolaX {
     pub fn new(
@@ -81,7 +75,7 @@ impl SolaX {
             xwayland_shell_state: None,
             xwayland_mapped: HashSet::new(),
             bus: None,
-            windows: HashMap::new(),
+            client: None,
             running: true,
         }
     }
