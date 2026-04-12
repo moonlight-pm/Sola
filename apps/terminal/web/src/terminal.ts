@@ -55,7 +55,11 @@ export class TerminalPane {
     (this.terminal as any).parser.registerOscHandler(7, (data: string) => {
       try {
         const url = new URL(data);
-        this.options.onCwdChange(decodeURIComponent(url.pathname));
+        const cwd = decodeURIComponent(url.pathname);
+        this.options.onCwdChange(cwd);
+        if (this.ptyId) {
+          invoke('update_cwd', { pty_id: this.ptyId, cwd });
+        }
       } catch {
         // Ignore malformed OSC 7
       }

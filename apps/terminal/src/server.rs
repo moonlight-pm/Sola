@@ -225,6 +225,7 @@ async fn dispatch(
         "close_pty" => cmd_close_pty(state, args).await,
         "reconnect_pty" => cmd_reconnect_pty(state, args).await,
         "rename_tab" => cmd_rename_tab(state, args).await,
+        "update_cwd" => cmd_update_cwd(state, args).await,
         "reorder_tabs" => cmd_reorder_tabs(state, args).await,
         _ => json!({ "error": format!("unknown command: {cmd}") }),
     }
@@ -401,6 +402,28 @@ async fn cmd_rename_tab(state: &Arc<TerminalState>, args: &Value) -> Value {
         .write()
         .await
         .insert(tmux_session.to_string(), title);
+
+    state.persist_to_disk().await;
+
+    json!("ok")
+}
+
+async fn cmd_update_cwd(state: &Arc<TerminalState>, args: &Value) -> Value {
+    let pty_id = match args.get("pty_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return json!({ "error": "missing pty_id" }),
+    };
+    let cwd = match args.get("cwd").and_then(|v| v.as_str()) {
+        Some(c) => c.to_string(),
+        None => return json!({ "error": "missing cwd" }),
+    };
+
+    {
+        let mut tabs = state.tabs.write().await;
+        if let Some(tab) = tabs.iter_mut().find(|t| t.pty_id == pty_id) {
+            tab.cwd = Some(cwd);
+        }
+    }
 
     state.persist_to_disk().await;
 
