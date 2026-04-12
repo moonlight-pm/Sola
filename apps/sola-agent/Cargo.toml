@@ -1,0 +1,43 @@
+[package]
+name = "sola-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Claurst agent engine
+claurst-core = { git = "https://github.com/Kuberwastaken/claurst" }
+claurst-api = { git = "https://github.com/Kuberwastaken/claurst" }
+claurst-query = { git = "https://github.com/Kuberwastaken/claurst" }
+claurst-tools = { git = "https://github.com/Kuberwastaken/claurst" }
+claurst-mcp = { git = "https://github.com/Kuberwastaken/claurst" }
+
+# Sola
+sola-bus = { path = "../../crates/sola-bus" }
+
+# GTK/WebView
+gtk4 = "0.9"
+gdk4 = "0.9"
+glib = "0.20"
+webkit6 = "0.4"
+
+# Async
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio-util = "0.7"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP (token refresh)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# Other
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+async-trait = "0.1"
+parking_lot = "0.12"
