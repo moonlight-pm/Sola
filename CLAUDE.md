@@ -26,12 +26,15 @@ crates/
   sola-bus/            # Bus host process + protocol definitions
   sola-compositor/     # Smithay compositor (bus client)
   sola-x/              # XWayland host (bus client, Wayland bridge)
+  sola-app/            # WebView app framework (Rust host + JS platform lib)
   sola-make/           # Build/deploy orchestration (xtask)
 apps/
   switcher/            # App switcher (WebView, bus client)
+  terminal/            # Terminal emulator (tmux-backed, xterm.js, bus client)
 docs/
   manual/              # Architecture docs, references
   specs/               # Design specs and implementation plans
+  vault/               # Obsidian vault — architecture docs
 ```
 
 ## Development Rules
