@@ -3793,21 +3793,16 @@ dependencies = [
  "claurst-mcp",
  "claurst-query",
  "claurst-tools",
- "gdk4",
- "glib",
- "gtk4",
  "parking_lot",
  "reqwest",
  "serde",
  "serde_json",
+ "sola-app",
  "sola-bus",
  "tokio",
  "tokio-util",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "uuid",
- "webkit6",
 ]
 
 [[package]]

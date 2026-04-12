@@ -1,10 +1,10 @@
 use crate::auth::AuthManager;
-use crate::bridge::Event;
 use crate::session::{SessionManager, SessionStatus};
 use anyhow::Result;
+use serde_json::json;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub async fn run_session_message(
@@ -13,38 +13,28 @@ pub async fn run_session_message(
     working_dir: PathBuf,
     auth: Arc<RwLock<AuthManager>>,
     session_mgr: Arc<SessionManager>,
-    event_tx: Arc<std::sync::mpsc::Sender<Event>>,
+    event_tx: std::sync::mpsc::Sender<String>,
     bus_tools: Vec<Box<dyn claurst_tools::Tool>>,
     cancel_token: tokio_util::sync::CancellationToken,
 ) {
     session_mgr
         .set_status(&session_id, SessionStatus::Running)
         .await;
-    let _ = event_tx.send(Event::SessionState {
-        session_id: session_id.clone(),
-        status: "running".into(),
-    });
+    send_event(&event_tx, json!({
+        "event": "session_state", "session_id": session_id, "status": "running"
+    }));
 
     match run_agent_loop(
-        &session_id,
-        &text,
-        &working_dir,
-        auth,
-        &session_mgr,
-        &event_tx,
-        bus_tools,
-        cancel_token,
+        &session_id, &text, &working_dir, auth, &session_mgr, &event_tx,
+        bus_tools, cancel_token,
     )
     .await
     {
         Ok(()) => {
-            session_mgr
-                .set_status(&session_id, SessionStatus::Idle)
-                .await;
-            let _ = event_tx.send(Event::SessionState {
-                session_id,
-                status: "idle".into(),
-            });
+            session_mgr.set_status(&session_id, SessionStatus::Idle).await;
+            send_event(&event_tx, json!({
+                "event": "session_state", "session_id": session_id, "status": "idle"
+            }));
         }
         Err(e) => {
             let msg = format!("{:#}", e);
@@ -52,12 +42,15 @@ pub async fn run_session_message(
             session_mgr
                 .set_status(&session_id, SessionStatus::Error(msg.clone()))
                 .await;
-            let _ = event_tx.send(Event::Error {
-                session_id: Some(session_id),
-                message: msg,
-            });
+            send_event(&event_tx, json!({
+                "event": "error", "session_id": session_id, "message": msg
+            }));
         }
     }
+}
+
+fn send_event(tx: &std::sync::mpsc::Sender<String>, value: serde_json::Value) {
+    let _ = tx.send(value.to_string());
 }
 
 async fn run_agent_loop(
@@ -66,14 +59,12 @@ async fn run_agent_loop(
     working_dir: &PathBuf,
     auth: Arc<RwLock<AuthManager>>,
     session_mgr: &SessionManager,
-    event_tx: &Arc<std::sync::mpsc::Sender<Event>>,
+    event_tx: &std::sync::mpsc::Sender<String>,
     bus_tools: Vec<Box<dyn claurst_tools::Tool>>,
     cancel_token: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    // Ensure token is valid
     auth.write().await.ensure_valid().await?;
 
-    // Create API client with current token
     let token = auth.read().await.access_token().to_string();
     let client_config = claurst_api::client::ClientConfig {
         api_key: token,
@@ -82,14 +73,11 @@ async fn run_agent_loop(
     };
     let client = claurst_api::AnthropicClient::new(client_config)?;
 
-    // Get tools: claurst built-in + bus tools
     let mut tools: Vec<Box<dyn claurst_tools::Tool>> = claurst_tools::all_tools();
     tools.extend(bus_tools);
 
-    // CostTracker::new() returns Arc<CostTracker>
     let cost_tracker = claurst_core::cost::CostTracker::new();
 
-    // Build tool context
     let tool_ctx = claurst_tools::ToolContext {
         working_dir: working_dir.clone(),
         permission_mode: claurst_core::config::PermissionMode::BypassPermissions,
@@ -109,7 +97,6 @@ async fn run_agent_loop(
         completion_notifier: None,
     };
 
-    // Build query config
     let config = claurst_query::QueryConfig {
         model: "claude-sonnet-4-6-20250514".into(),
         max_tokens: 16384,
@@ -118,7 +105,6 @@ async fn run_agent_loop(
         ..Default::default()
     };
 
-    // Build messages
     let user_msg = claurst_core::types::Message::user(text);
     let mut messages = {
         let sessions = session_mgr.sessions.read().await;
@@ -128,38 +114,27 @@ async fn run_agent_loop(
         msgs
     };
 
-    // Set up event channel for streaming
     let (query_event_tx, mut query_event_rx) =
         tokio::sync::mpsc::unbounded_channel::<claurst_query::QueryEvent>();
 
-    // Forward query events to bridge events
     let event_tx_clone = event_tx.clone();
     let sid = session_id.to_string();
     let event_forwarder = tokio::spawn(async move {
         while let Some(qe) = query_event_rx.recv().await {
             for evt in translate_query_event(&sid, qe) {
-                let _ = event_tx_clone.send(evt);
+                let _ = event_tx_clone.send(evt.to_string());
             }
         }
     });
 
-    // Run the agent loop
     let outcome = claurst_query::run_query_loop(
-        &client,
-        &mut messages,
-        &tools,
-        &tool_ctx,
-        &config,
-        cost_tracker,
-        Some(query_event_tx),
-        cancel_token,
-        None,
+        &client, &mut messages, &tools, &tool_ctx, &config,
+        cost_tracker, Some(query_event_tx), cancel_token, None,
     )
     .await;
 
     let _ = event_forwarder.await;
 
-    // Save messages back to session
     {
         let mut sessions = session_mgr.sessions.write().await;
         if let Some(session) = sessions.get_mut(session_id) {
@@ -172,71 +147,48 @@ async fn run_agent_loop(
         claurst_query::QueryOutcome::Cancelled => Ok(()),
         claurst_query::QueryOutcome::Error(e) => Err(anyhow::anyhow!("{}", e)),
         claurst_query::QueryOutcome::MaxTokens { .. } => Ok(()),
-        claurst_query::QueryOutcome::BudgetExceeded {
-            cost_usd,
-            limit_usd,
-        } => Err(anyhow::anyhow!(
-            "Budget exceeded: ${:.2} / ${:.2}",
-            cost_usd,
-            limit_usd
-        )),
+        claurst_query::QueryOutcome::BudgetExceeded { cost_usd, limit_usd } => {
+            Err(anyhow::anyhow!("Budget exceeded: ${:.2} / ${:.2}", cost_usd, limit_usd))
+        }
     }
 }
 
-fn translate_query_event(session_id: &str, event: claurst_query::QueryEvent) -> Vec<Event> {
+fn translate_query_event(session_id: &str, event: claurst_query::QueryEvent) -> Vec<serde_json::Value> {
     match event {
         claurst_query::QueryEvent::Stream(stream_event) => {
             translate_stream_event(session_id, stream_event)
         }
-        claurst_query::QueryEvent::ToolStart {
-            tool_name,
-            input_json,
-            ..
-        } => vec![Event::ToolStart {
-            session_id: session_id.into(),
-            tool_name,
-            tool_input: input_json,
-        }],
-        claurst_query::QueryEvent::ToolEnd {
-            tool_name,
-            result,
-            is_error,
-            ..
-        } => vec![Event::ToolEnd {
-            session_id: session_id.into(),
-            tool_name,
-            result,
-            is_error,
-        }],
+        claurst_query::QueryEvent::ToolStart { tool_name, input_json, .. } => {
+            vec![json!({
+                "event": "tool_start", "session_id": session_id,
+                "tool_name": tool_name, "tool_input": input_json
+            })]
+        }
+        claurst_query::QueryEvent::ToolEnd { tool_name, result, is_error, .. } => {
+            vec![json!({
+                "event": "tool_end", "session_id": session_id,
+                "tool_name": tool_name, "result": result, "is_error": is_error
+            })]
+        }
         _ => vec![],
     }
 }
 
-fn translate_stream_event(
-    session_id: &str,
-    event: claurst_api::streaming::AnthropicStreamEvent,
-) -> Vec<Event> {
+fn translate_stream_event(session_id: &str, event: claurst_api::streaming::AnthropicStreamEvent) -> Vec<serde_json::Value> {
     match event {
         claurst_api::streaming::AnthropicStreamEvent::MessageStart { .. } => {
-            vec![Event::MessageStart {
-                session_id: session_id.into(),
-            }]
+            vec![json!({"event": "message_start", "session_id": session_id})]
         }
         claurst_api::streaming::AnthropicStreamEvent::ContentBlockDelta { delta, .. } => {
             match delta {
                 claurst_api::streaming::ContentDelta::TextDelta { text } => {
-                    vec![Event::MessageDelta {
-                        session_id: session_id.into(),
-                        text,
-                    }]
+                    vec![json!({"event": "message_delta", "session_id": session_id, "text": text})]
                 }
                 _ => vec![],
             }
         }
         claurst_api::streaming::AnthropicStreamEvent::MessageStop => {
-            vec![Event::MessageEnd {
-                session_id: session_id.into(),
-            }]
+            vec![json!({"event": "message_end", "session_id": session_id})]
         }
         _ => vec![],
     }
