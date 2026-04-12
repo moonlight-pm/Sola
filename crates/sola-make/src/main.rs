@@ -60,7 +60,10 @@ fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
 }
 
 /// Run `cargo build` with optional crate targeting and release mode.
+/// Builds web frontends first if any apps have a `web/` directory.
 fn build(target: Option<String>, release: bool) {
+    build_web_frontends();
+
     let args = build_args(target.as_deref(), release);
     let status = Command::new("cargo")
         .args(&args)
@@ -68,6 +71,33 @@ fn build(target: Option<String>, release: bool) {
         .expect("failed to run cargo build");
     if !status.success() {
         exit(status.code().unwrap_or(1));
+    }
+}
+
+/// Build web frontends for any app that has a `web/package.json`.
+/// Apps using vendored dependencies + on-demand TS stripping (like terminal)
+/// don't need a build step — their web/ sources are embedded directly.
+fn build_web_frontends() {
+    let entries = match std::fs::read_dir("apps") {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let web_dir = entry.path().join("web");
+        if !web_dir.join("package.json").exists() {
+            continue;
+        }
+        let app_name = entry.file_name();
+        let app_name = app_name.to_string_lossy();
+
+        // Install deps if needed
+        if !web_dir.join("node_modules").exists() {
+            println!("Installing web deps for {app_name}...");
+            run_or_exit("bun", &["install", "--cwd", &web_dir.to_string_lossy()]);
+        }
+
+        println!("Building web frontend for {app_name}...");
+        run_or_exit("bun", &["run", "--cwd", &web_dir.to_string_lossy(), "build"]);
     }
 }
 
