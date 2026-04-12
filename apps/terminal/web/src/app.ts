@@ -1,3 +1,4 @@
+import { reactive, html } from '@arrow-js/core';
 import { connect, invoke, on } from './ws';
 import { TerminalPane } from './terminal';
 import { createSidebar, type TerminalTab } from './sidebar';
@@ -8,64 +9,58 @@ interface RestoredTab {
   cwd?: string;
 }
 
-// --- State ---
-let tabs: TerminalTab[] = [];
-let activeTabId: string | null = null;
-let nextTabNum = 1;
-let sidebarCollapsed = localStorage.getItem('terminal-sidebar-collapsed') === 'true';
-let sidebarWidth = parseInt(localStorage.getItem('terminal-sidebar-width') || '160', 10);
+// --- Reactive state ---
+const state = reactive({
+  tabs: [] as TerminalTab[],
+  activeTabId: null as string | null,
+  sidebarCollapsed: localStorage.getItem('terminal-sidebar-collapsed') === 'true',
+  sidebarWidth: parseInt(localStorage.getItem('terminal-sidebar-width') || '160', 10),
+});
 
-// --- Terminal pane tracking ---
+let nextTabNum = 1;
+
+// --- Terminal pane tracking (imperative — xterm.js needs real DOM) ---
 const panes = new Map<string, TerminalPane>();
 const paneContainers = new Map<string, HTMLElement>();
-
-// References set during createApp
 let terminalArea: HTMLElement;
-let rerenderSidebar: () => void;
-let unsubscribers: (() => void)[] = [];
 
 // --- Tab management ---
 
 function createTab(tmuxSession?: string, customTitle?: string, cwd?: string): string {
   const tabId = `tab-${nextTabNum}`;
   nextTabNum++;
-  tabs = [...tabs, { id: tabId, title: '', cwd: cwd || '', tmuxSession, customTitle }];
-  activeTabId = tabId;
+
+  state.tabs = [...state.tabs, { id: tabId, title: '', cwd: cwd || '', tmuxSession, customTitle }];
+  state.activeTabId = tabId;
 
   // Create DOM container for this terminal pane
   const container = document.createElement('div');
   container.className = 'terminal-pane active';
-  container.dataset.tabId = tabId;
   terminalArea.appendChild(container);
   paneContainers.set(tabId, container);
-
-  // Hide all other panes
   updatePaneVisibility();
 
-  // Create and init the terminal pane
+  // Create and init the terminal
   const pane = new TerminalPane(container, {
     tabId,
     tmuxSession,
     initialCwd: cwd,
     onExit: () => removeTab(tabId),
     onTitleChange: (title) => {
-      tabs = tabs.map(t => t.id === tabId ? { ...t, title } : t);
-      rerenderSidebar();
+      state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, title } : t);
     },
-    onCwdChange: (cwd) => {
-      tabs = tabs.map(t => t.id === tabId ? { ...t, cwd } : t);
-      rerenderSidebar();
+    onCwdChange: (newCwd) => {
+      state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, cwd: newCwd } : t);
     },
     onPtyReady: (ptyId) => {
-      tabs = tabs.map(t => t.id === tabId ? { ...t, ptyId } : t);
+      state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, ptyId } : t);
     },
   });
   panes.set(tabId, pane);
   pane.init().then(() => {
-    if (activeTabId === tabId) pane.focus();
+    if (state.activeTabId === tabId) pane.focus();
   });
 
-  rerenderSidebar();
   return tabId;
 }
 
@@ -75,153 +70,128 @@ function closeTab(tabId: string) {
 }
 
 function removeTab(tabId: string) {
-  const idx = tabs.findIndex(t => t.id === tabId);
+  const idx = state.tabs.findIndex(t => t.id === tabId);
   if (idx === -1) return;
 
-  // Destroy pane and remove container
   panes.get(tabId)?.destroy();
   panes.delete(tabId);
   paneContainers.get(tabId)?.remove();
   paneContainers.delete(tabId);
 
-  const newTabs = tabs.filter(t => t.id !== tabId);
-  tabs = newTabs;
+  const newTabs = state.tabs.filter(t => t.id !== tabId);
+  state.tabs = newTabs;
 
   if (newTabs.length === 0) {
-    activeTabId = null;
-    rerenderSidebar();
+    state.activeTabId = null;
     return;
   }
 
-  if (activeTabId === tabId) {
+  if (state.activeTabId === tabId) {
     const newIdx = Math.min(idx, newTabs.length - 1);
-    activeTabId = newTabs[newIdx].id;
+    state.activeTabId = newTabs[newIdx].id;
     updatePaneVisibility();
     requestAnimationFrame(() => {
-      panes.get(activeTabId!)?.refit();
-      panes.get(activeTabId!)?.focus();
+      panes.get(state.activeTabId!)?.refit();
+      panes.get(state.activeTabId!)?.focus();
     });
   }
-
-  rerenderSidebar();
 }
 
 function switchTab(tabId: string) {
-  if (activeTabId === tabId) return;
-  activeTabId = tabId;
+  if (state.activeTabId === tabId) return;
+  state.activeTabId = tabId;
   updatePaneVisibility();
-  rerenderSidebar();
   requestAnimationFrame(() => {
     panes.get(tabId)?.refit();
     panes.get(tabId)?.focus();
   });
 }
 
-function switchTabByIndex(index: number) {
-  if (index >= 0 && index < tabs.length) {
-    switchTab(tabs[index].id);
-  }
-}
-
 function updatePaneVisibility() {
   for (const [id, container] of paneContainers) {
-    if (id === activeTabId) {
-      container.classList.add('active');
-    } else {
-      container.classList.remove('active');
-    }
+    container.classList.toggle('active', id === state.activeTabId);
   }
 }
 
 function handleReorder(fromIndex: number, toIndex: number) {
-  const reordered = [...tabs];
+  const reordered = [...state.tabs];
   const [moved] = reordered.splice(fromIndex, 1);
   reordered.splice(toIndex, 0, moved);
-  tabs = reordered;
-  rerenderSidebar();
+  state.tabs = reordered;
   invoke('reorder_tabs', {
     pty_ids: reordered.filter(t => t.ptyId).map(t => t.ptyId),
   });
 }
 
 function handleRename(tabId: string, title: string) {
-  const tab = tabs.find(t => t.id === tabId);
+  const tab = state.tabs.find(t => t.id === tabId);
   const customTitle = title || undefined;
-  tabs = tabs.map(t => t.id === tabId ? { ...t, customTitle } : t);
-  rerenderSidebar();
+  state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, customTitle } : t);
   if (tab?.tmuxSession) {
-    invoke('rename_tab', {
-      tmux_session: tab.tmuxSession,
-      title,
-    });
+    invoke('rename_tab', { tmux_session: tab.tmuxSession, title });
   }
 }
 
 function handleToggleCollapse() {
-  sidebarCollapsed = !sidebarCollapsed;
-  localStorage.setItem('terminal-sidebar-collapsed', String(sidebarCollapsed));
-  rerenderSidebar();
+  state.sidebarCollapsed = !state.sidebarCollapsed;
+  localStorage.setItem('terminal-sidebar-collapsed', String(state.sidebarCollapsed));
   requestAnimationFrame(() => {
-    if (activeTabId) panes.get(activeTabId)?.refit();
+    if (state.activeTabId) panes.get(state.activeTabId)?.refit();
   });
 }
 
 function handleSidebarResize(width: number) {
-  sidebarWidth = width;
+  state.sidebarWidth = width;
   localStorage.setItem('terminal-sidebar-width', String(width));
-  rerenderSidebar();
   requestAnimationFrame(() => {
-    if (activeTabId) panes.get(activeTabId)?.refit();
+    if (state.activeTabId) panes.get(state.activeTabId)?.refit();
   });
-}
-
-function handleKeyDown(e: KeyboardEvent) {
-  if (e.metaKey && e.key >= '1' && e.key <= '9') {
-    e.preventDefault();
-    switchTabByIndex(parseInt(e.key) - 1);
-  }
 }
 
 // --- App entry point ---
 
 export async function createApp(root: HTMLElement) {
-  // Build layout
-  const windowEl = document.createElement('div');
-  windowEl.className = 'terminal-window';
-  root.appendChild(windowEl);
-
-  // Sidebar target
-  const sidebarTarget = document.createElement('div');
-  sidebarTarget.style.display = 'contents';
-  windowEl.appendChild(sidebarTarget);
-
-  // Terminal area
+  // Terminal area (imperative — xterm panes are managed as DOM elements)
   terminalArea = document.createElement('div');
   terminalArea.className = 'terminal-area';
-  windowEl.appendChild(terminalArea);
 
-  // Create sidebar
-  rerenderSidebar = createSidebar({
-    tabs: () => tabs,
-    activeTabId: () => activeTabId,
-    collapsed: () => sidebarCollapsed,
-    width: () => sidebarWidth,
+  // Mount the app shell with Arrow.js
+  html`
+    <div class="terminal-window">
+      <div id="sidebar-mount"></div>
+      ${terminalArea}
+    </div>
+  `(root);
+
+  // Mount sidebar into its slot
+  const sidebarMount = root.querySelector('#sidebar-mount')!;
+  createSidebar({
+    tabs: () => state.tabs,
+    activeTabId: () => state.activeTabId,
+    collapsed: () => state.sidebarCollapsed,
+    width: () => state.sidebarWidth,
     onSelect: switchTab,
     onClose: closeTab,
     onCreate: () => {
-      const activeCwd = tabs.find(t => t.id === activeTabId)?.cwd;
+      const activeCwd = state.tabs.find(t => t.id === state.activeTabId)?.cwd;
       createTab(undefined, undefined, activeCwd || undefined);
     },
     onToggleCollapse: handleToggleCollapse,
     onResize: handleSidebarResize,
     onReorder: handleReorder,
     onRename: handleRename,
-  }, sidebarTarget);
+  }, sidebarMount as HTMLElement);
 
-  // Key handler
-  window.addEventListener('keydown', handleKeyDown);
+  // Key handler: Super+1-9 for tab switching
+  window.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.metaKey && e.key >= '1' && e.key <= '9') {
+      e.preventDefault();
+      const idx = parseInt(e.key) - 1;
+      if (idx < state.tabs.length) switchTab(state.tabs[idx].id);
+    }
+  });
 
-  // Connect and init
+  // Connect WebSocket and init
   const port = (window as any).WS_PORT as number;
   const restoredTabs = ((window as any).RESTORED_TABS || []) as RestoredTab[];
 
@@ -235,9 +205,9 @@ export async function createApp(root: HTMLElement) {
     createTab();
   }
 
-  // Listen for new_tab events from the bus
-  unsubscribers.push(on('new_tab', () => {
-    const activeCwd = tabs.find(t => t.id === activeTabId)?.cwd;
+  // Listen for new_tab from bus (Super+T)
+  on('new_tab', () => {
+    const activeCwd = state.tabs.find(t => t.id === state.activeTabId)?.cwd;
     createTab(undefined, undefined, activeCwd || undefined);
-  }));
+  });
 }
