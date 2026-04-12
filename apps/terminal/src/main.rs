@@ -1,3 +1,4 @@
+mod pty;
 mod tmux;
 
 fn main() {
