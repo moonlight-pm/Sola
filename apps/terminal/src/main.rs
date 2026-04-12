@@ -1,4 +1,5 @@
 mod pty;
+mod state;
 mod tmux;
 
 fn main() {
