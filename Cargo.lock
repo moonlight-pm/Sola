@@ -130,6 +130,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-trait"
+version = "0.1.89"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "atomic-polyfill"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2285,6 +2296,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-app"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "gdk4",
+ "gio",
+ "glib",
+ "gtk4",
+ "serde_json",
+ "sola-bus",
+ "swc_common",
+ "swc_ts_fast_strip",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "webkit6",
+]
+
+[[package]]
 name = "sola-bus"
 version = "0.1.0"
 dependencies = [
@@ -2339,24 +2370,17 @@ dependencies = [
 name = "sola-terminal"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64",
- "gdk4",
- "gio",
- "glib",
- "gtk4",
  "libc",
  "nix 0.30.1",
  "serde",
  "serde_json",
+ "sola-app",
  "sola-bus",
- "swc_common",
- "swc_ts_fast_strip",
  "tokio",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "uuid",
- "webkit6",
 ]
 
 [[package]]

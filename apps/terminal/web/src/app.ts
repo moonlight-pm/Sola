@@ -1,6 +1,6 @@
 import { html } from '@arrow-js/core';
-import { invoke, on } from './lib/ipc.js';
-import { createStore, persist, save } from './lib/store.js';
+import { invoke, on } from '@sola/ipc';
+import { createStore, persist, save } from '@sola/store';
 import { TerminalPane } from './terminal-pane.js';
 import { createSidebar, type TabItem } from './components/sidebar.js';
 

@@ -1,7 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { invoke, on } from './lib/ipc.js';
+import { invoke, on } from '@sola/ipc';
 
 interface TerminalPaneOptions {
   tabId: string;
