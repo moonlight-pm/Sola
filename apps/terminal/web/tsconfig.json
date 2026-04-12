@@ -6,10 +6,10 @@
     "strict": true,
     "noEmit": true,
     "paths": {
-      "@arrow-js/core": ["../../crates/sola-app/web/vendor/arrow/index.d.ts"],
-      "@sola/ipc": ["../../crates/sola-app/web/lib/ipc.ts"],
-      "@sola/store": ["../../crates/sola-app/web/lib/store.ts"],
-      "@sola/theme": ["../../crates/sola-app/web/lib/theme.ts"],
+      "@arrow-js/core": ["../../../crates/sola-app/web/vendor/arrow/index.d.ts"],
+      "@sola/ipc": ["../../../crates/sola-app/web/lib/ipc.ts"],
+      "@sola/store": ["../../../crates/sola-app/web/lib/store.ts"],
+      "@sola/theme": ["../../../crates/sola-app/web/lib/theme.ts"],
       "@xterm/xterm": ["./vendor/xterm.d.ts"],
       "@xterm/addon-fit": ["./vendor/addon-fit.d.ts"],
       "@xterm/addon-web-links": ["./vendor/addon-web-links.d.ts"]
