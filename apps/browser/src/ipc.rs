@@ -1,99 +1,55 @@
 use crate::AppState;
 use std::rc::Rc;
-use webkit6::prelude::*;
 
-const INIT_SCRIPT: &str = r#"
-(function() {
-    window.sola = {
-        _handlers: {},
-        _nextId: 0,
-
-        invoke(command, args = {}) {
-            const callbackId = String(this._nextId++);
-            return window.webkit.messageHandlers.sola
-                .postMessage(JSON.stringify({ command, args, callbackId }))
-                .then(raw => {
-                    try { return JSON.parse(raw); } catch { return raw; }
-                });
-        },
-
-        on(event, callback) {
-            if (!this._handlers[event]) this._handlers[event] = new Set();
-            this._handlers[event].add(callback);
-            return () => this._handlers[event]?.delete(callback);
-        },
-
-        _emit(event, data) {
-            const handlers = this._handlers[event];
-            if (handlers) {
-                for (const cb of handlers) {
-                    try { cb(typeof data === 'string' ? JSON.parse(data) : data); }
-                    catch (e) { console.error('sola event error:', e); }
-                }
-            }
-        }
-    };
-})();
-"#;
-
-pub fn inject_init_script(manager: &webkit6::UserContentManager) {
-    let script = webkit6::UserScript::new(
-        INIT_SCRIPT,
-        webkit6::UserContentInjectedFrames::AllFrames,
-        webkit6::UserScriptInjectionTime::Start,
-        &[],
-        &[],
-    );
-    manager.add_script(&script);
+/// Send an event to the JS frontend via the @sola/ipc protocol.
+/// Events are delivered as `{ event: "name", ...data }` through `window.__solaRecv`.
+pub fn emit_event(webview: &webkit6::WebView, event: &str, data: &serde_json::Value) {
+    let mut msg = data.clone();
+    if let Some(obj) = msg.as_object_mut() {
+        obj.insert("event".to_string(), serde_json::json!(event));
+    }
+    sola_app::bridge::send_to_js(webview, &msg.to_string());
 }
 
-pub fn emit_event_json(webview: &webkit6::WebView, event: &str, data: &serde_json::Value) {
-    let json_str = serde_json::to_string(data).unwrap_or_default();
-    // Escape for JS string literal
-    let escaped = json_str.replace('\\', "\\\\").replace('\'', "\\'");
-    let js = format!("window.sola?._emit('{event}', '{escaped}')");
-    webview.evaluate_javascript(&js, None, None, None::<&gio::Cancellable>, |_| {});
+/// Send a command response to the JS frontend via the @sola/ipc protocol.
+/// Responses are delivered as `{ id, result }` through `window.__solaRecv`.
+fn send_response(webview: &webkit6::WebView, id: u64, result: &serde_json::Value) {
+    let msg = serde_json::json!({ "id": id, "result": result });
+    sola_app::bridge::send_to_js(webview, &msg.to_string());
 }
 
 pub fn setup(manager: &webkit6::UserContentManager, app_state: &Rc<AppState>) {
-    inject_init_script(manager);
-
-    manager.register_script_message_handler_with_reply("sola", None);
+    manager.register_script_message_handler("sola", None::<&str>);
 
     let state = app_state.clone();
-    manager.connect_script_message_with_reply_received(
-        Some("sola"),
-        move |_mgr, js_value, reply| {
-            let msg_str = js_value.to_str().to_string();
+    manager.connect_script_message_received(Some("sola"), move |_mgr, js_value| {
+        let msg_str: String = js_value.to_string().into();
 
-            let msg: serde_json::Value = match serde_json::from_str(&msg_str) {
-                Ok(v) => v,
-                Err(_) => {
-                    reply.return_error_message("invalid json");
-                    return true;
-                }
-            };
+        let msg: serde_json::Value = match serde_json::from_str(&msg_str) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("invalid IPC json: {e}");
+                return;
+            }
+        };
 
-            let command = msg["command"].as_str().unwrap_or("");
-            let args = &msg["args"];
+        let id = msg.get("id").and_then(|v| v.as_u64());
+        let cmd = msg.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
+        let args = msg.get("args").cloned().unwrap_or(serde_json::json!({}));
 
-            let result = handle_command(&state, command, args);
+        let result = handle_command(&state, cmd, &args);
 
-            let response_str = match &result {
-                Ok(val) => serde_json::to_string(val).unwrap_or_else(|_| "null".into()),
+        if let Some(id) = id {
+            let response = match &result {
+                Ok(val) => val.clone(),
                 Err(e) => {
-                    tracing::warn!("ipc command '{command}' failed: {e}");
-                    format!(r#"{{"error":"{e}"}}"#)
+                    tracing::warn!("ipc command '{cmd}' failed: {e}");
+                    serde_json::json!({ "error": e })
                 }
             };
-
-            let ctx = js_value.context().expect("js value must have context");
-            let js_result =
-                webkit6::javascriptcore::Value::new_string(&ctx, Some(&response_str));
-            reply.return_value(&js_result);
-            true
-        },
-    );
+            send_response(&state.chrome_webview, id, &response);
+        }
+    });
 }
 
 fn handle_command(

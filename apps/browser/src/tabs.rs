@@ -111,7 +111,7 @@ pub fn create_tab_webview(
     webview.connect_notify_local(Some("title"), move |wv, _| {
         if let Some(title) = wv.title() {
             let data = serde_json::json!({ "tabId": tid, "title": title.to_string() });
-            ipc::emit_event_json(&chrome_wv, "tab_title_changed", &data);
+            ipc::emit_event(&chrome_wv, "tab_title_changed", &data);
         }
     });
 
@@ -123,7 +123,7 @@ pub fn create_tab_webview(
         if let Some(uri) = wv.uri() {
             let url_str = uri.to_string();
             let data = serde_json::json!({ "tabId": tid, "url": url_str });
-            ipc::emit_event_json(&chrome_wv, "tab_url_changed", &data);
+            ipc::emit_event(&chrome_wv, "tab_url_changed", &data);
 
             // Record in history
             let title = wv.title().map(|t| t.to_string()).unwrap_or_default();
@@ -141,7 +141,7 @@ pub fn create_tab_webview(
     webview.connect_notify_local(Some("is-loading"), move |wv, _| {
         let loading = wv.is_loading();
         let data = serde_json::json!({ "tabId": tid, "loading": loading });
-        ipc::emit_event_json(&chrome_wv, "tab_load_changed", &data);
+        ipc::emit_event(&chrome_wv, "tab_load_changed", &data);
     });
 
     // Handle target="_blank" -- open as new tab
@@ -161,7 +161,7 @@ pub fn create_tab_webview(
                                 "url": url,
                                 "activate": true,
                             });
-                            ipc::emit_event_json(
+                            ipc::emit_event(
                                 &state_ref.chrome_webview,
                                 "bus_new_tab",
                                 &data,

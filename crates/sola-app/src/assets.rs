@@ -63,7 +63,7 @@ impl AssetBundle {
 }
 
 /// Platform assets embedded from sola-app's own web/ directory.
-pub(crate) fn platform_assets() -> AssetBundle {
+pub fn platform_assets() -> AssetBundle {
     AssetBundle {
         assets: &[
             Asset {

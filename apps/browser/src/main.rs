@@ -4,7 +4,7 @@ mod state;
 mod tabs;
 
 use gtk4::prelude::*;
-use include_dir::{include_dir, Dir};
+use sola_app::asset_bundle;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -21,7 +21,13 @@ mod keycode {
     pub const L: u32 = 46;
 }
 
-static WEB_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web");
+static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
+    "/index.html" => (include_str!("../web/index.html"), Html),
+    "/src/app.ts" => (include_str!("../web/src/app.ts"), TypeScript),
+    "/src/tabs.ts" => (include_str!("../web/src/tabs.ts"), TypeScript),
+    "/src/address.ts" => (include_str!("../web/src/address.ts"), TypeScript),
+    "/src/theme.css" => (include_str!("../web/src/theme.css"), Css),
+};
 
 fn config_dir() -> PathBuf {
     let dir = glib::user_config_dir().join("sola");
@@ -29,56 +35,33 @@ fn config_dir() -> PathBuf {
     dir
 }
 
-fn mime_from_extension(path: &str) -> &'static str {
-    match path.rsplit('.').next() {
-        Some("html") => "text/html",
-        Some("css") => "text/css",
-        Some("js") => "application/javascript",
-        Some("json") => "application/json",
-        Some("svg") => "image/svg+xml",
-        Some("png") => "image/png",
-        _ => "application/octet-stream",
-    }
-}
-
 fn setup_logging() {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
     let log_dir = "/opt/sola/log";
+    let _ = std::fs::create_dir_all(log_dir);
+    let file_appender = tracing_appender::rolling::never(log_dir, "sola-browser.log");
+
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| "sola_browser=info".into());
 
     let stderr_layer = fmt::layer().with_writer(std::io::stderr);
+    let file_layer = fmt::layer()
+        .with_ansi(false)
+        .with_writer(file_appender);
 
-    if let Ok(file_appender) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(format!("{log_dir}/sola-browser.log"))
-    {
-        let file_layer = fmt::layer()
-            .with_writer(std::sync::Mutex::new(file_appender))
-            .with_ansi(false);
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(stderr_layer)
-            .with(file_layer)
-            .init();
-    } else {
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(stderr_layer)
-            .init();
-    }
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(stderr_layer)
+        .with(file_layer)
+        .init();
 }
 
 fn wait_for_wayland_socket() -> bool {
-    let display = match std::env::var("WAYLAND_DISPLAY") {
-        Ok(d) => d,
-        Err(_) => {
-            tracing::error!("WAYLAND_DISPLAY not set");
-            return false;
-        }
-    };
+    if std::env::var("WAYLAND_DISPLAY").is_err() {
+        unsafe { std::env::set_var("WAYLAND_DISPLAY", "wayland-0") };
+    }
+    let display = std::env::var("WAYLAND_DISPLAY").unwrap();
     let runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
         Ok(d) => d,
         Err(_) => {
@@ -89,13 +72,16 @@ fn wait_for_wayland_socket() -> bool {
     let socket_path = PathBuf::from(&runtime_dir).join(&display);
     for attempt in 1..=20 {
         if socket_path.exists() {
-            tracing::info!("wayland socket ready (attempt {attempt})");
+            tracing::info!(path = %socket_path.display(), "wayland socket ready");
             return true;
         }
-        tracing::debug!("waiting for wayland socket (attempt {attempt}/20)");
+        if attempt == 20 {
+            tracing::error!(path = %socket_path.display(), "wayland socket not found after 10s");
+            return false;
+        }
+        tracing::debug!(attempt, path = %socket_path.display(), "waiting for wayland socket");
         std::thread::sleep(Duration::from_millis(500));
     }
-    tracing::error!("wayland socket not found after 10s");
     false
 }
 
@@ -138,28 +124,14 @@ fn build_ui(app: &gtk4::Application) {
     let container = gtk4::Fixed::new();
     window.set_child(Some(&container));
 
-    // WebKit setup
-    let web_context = webkit6::WebContext::new();
-    web_context.register_uri_scheme("sola-browser", |request| {
-        let path = request.path().unwrap_or_default().to_string();
-        let path = path.strip_prefix('/').unwrap_or(&path);
-        let path = if path.is_empty() { "index.html" } else { path };
-        match WEB_DIST.get_file(path) {
-            Some(file) => {
-                let data = file.contents();
-                let mime = mime_from_extension(path);
-                let bytes = glib::Bytes::from(data);
-                let stream = gio::MemoryInputStream::from_bytes(&bytes);
-                request.finish(&stream, data.len() as i64, Some(mime));
-            }
-            None => {
-                tracing::warn!("embedded file not found: {path}");
-                let bytes = glib::Bytes::from(b"Not Found" as &[u8]);
-                let stream = gio::MemoryInputStream::from_bytes(&bytes);
-                request.finish(&stream, 9, Some("text/plain"));
-            }
-        }
-    });
+    // WebContext with app:/// URI scheme (serves app + platform assets)
+    let platform = Box::leak(Box::new(sola_app::assets::platform_assets()));
+    let html = APP_ASSETS
+        .find("/index.html")
+        .map(|a| a.content.to_string())
+        .unwrap_or_else(|| "<html><body>No index.html</body></html>".to_string());
+    let html = inject_import_map(&html);
+    let web_context = sola_app::webview::create_web_context(APP_ASSETS, platform, html);
 
     // Network session for tab WebViews (cookies, cache)
     let data_dir = glib::user_data_dir().join("sola").join("browser");
@@ -178,7 +150,7 @@ fn build_ui(app: &gtk4::Application) {
         );
     }
 
-    // Chrome WebView
+    // Chrome WebView with IPC handler
     let chrome_manager = webkit6::UserContentManager::new();
     let chrome_webview = webkit6::WebView::builder()
         .web_context(&web_context)
@@ -191,7 +163,7 @@ fn build_ui(app: &gtk4::Application) {
 
     container.put(&chrome_webview, 0.0, 0.0);
     chrome_webview.set_size_request(1920, 1080);
-    chrome_webview.load_uri("sola-browser://index.html");
+    chrome_webview.load_uri("app:///index.html");
 
     // Shared state
     let app_state = Rc::new(AppState {
@@ -260,7 +232,7 @@ fn build_ui(app: &gtk4::Application) {
                                             "url": "",
                                             "activate": true,
                                         });
-                                        ipc::emit_event_json(
+                                        ipc::emit_event(
                                             &app_state.chrome_webview,
                                             "bus_new_tab",
                                             &data,
@@ -272,7 +244,7 @@ fn build_ui(app: &gtk4::Application) {
                                             app_state.active_tab_id.borrow().clone();
                                         if let Some(id) = active_id {
                                             tabs::close_tab(&app_state, &id);
-                                            ipc::emit_event_json(
+                                            ipc::emit_event(
                                                 &app_state.chrome_webview,
                                                 "tab_closed",
                                                 &serde_json::json!({ "tabId": id }),
@@ -281,7 +253,7 @@ fn build_ui(app: &gtk4::Application) {
                                         }
                                     }
                                     keycode::L => {
-                                        ipc::emit_event_json(
+                                        ipc::emit_event(
                                             &app_state.chrome_webview,
                                             "bus_focus_address",
                                             &serde_json::json!({}),
@@ -324,7 +296,7 @@ fn build_ui(app: &gtk4::Application) {
                                 "url": req.url,
                                 "activate": req.activate,
                             });
-                            ipc::emit_event_json(
+                            ipc::emit_event(
                                 &app_state.chrome_webview,
                                 "bus_new_tab",
                                 &data,
@@ -360,6 +332,52 @@ fn build_ui(app: &gtk4::Application) {
     });
 
     window.present();
+    tracing::info!("sola-browser ready");
+}
+
+/// Inject the platform import map into HTML.
+fn inject_import_map(html: &str) -> String {
+    let platform_imports = r#""@arrow-js/core": "/vendor/arrow/index.mjs",
+      "@sola/ipc": "/lib/ipc.js",
+      "@sola/store": "/lib/store.js",
+      "@sola/theme": "/lib/theme.js""#;
+
+    // If there's an existing import map, merge into it
+    if let Some(pos) = html.find("\"imports\"") {
+        if let Some(brace) = html[pos..].find('{') {
+            let insert_pos = pos + brace + 1;
+            let mut result = String::with_capacity(html.len() + 100);
+            result.push_str(&html[..insert_pos]);
+            result.push('\n');
+            result.push_str("      ");
+            result.push_str(platform_imports);
+            result.push(',');
+            result.push_str(&html[insert_pos..]);
+            return result;
+        }
+    }
+
+    // No import map found -- inject one before first <script>
+    let import_map = format!(
+        r#"  <script type="importmap">
+  {{
+    "imports": {{
+      {platform_imports}
+    }}
+  }}
+  </script>
+"#
+    );
+
+    if let Some(pos) = html.find("<script") {
+        let mut result = String::with_capacity(html.len() + import_map.len());
+        result.push_str(&html[..pos]);
+        result.push_str(&import_map);
+        result.push_str(&html[pos..]);
+        result
+    } else {
+        html.to_string()
+    }
 }
 
 fn resize_views(app_state: &AppState, width: i32, height: i32) {
