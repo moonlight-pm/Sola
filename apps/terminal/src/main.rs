@@ -23,16 +23,29 @@ const KEY_T: u32 = 28;
 
 // Embedded source files (TypeScript stripped on-demand, CSS served as-is).
 mod assets {
+    // App source (TypeScript, stripped on-demand)
     pub const MAIN_TS: &str = include_str!("../web/src/main.ts");
     pub const APP_TS: &str = include_str!("../web/src/app.ts");
-    pub const TERMINAL_TS: &str = include_str!("../web/src/terminal.ts");
-    pub const SIDEBAR_TS: &str = include_str!("../web/src/sidebar.ts");
-    pub const IPC_TS: &str = include_str!("../web/src/ipc.ts");
+    pub const TERMINAL_PANE_TS: &str = include_str!("../web/src/terminal-pane.ts");
+
+    // Lib (extractable to sola-app)
+    pub const LIB_IPC_TS: &str = include_str!("../web/src/lib/ipc.ts");
+    pub const LIB_STORE_TS: &str = include_str!("../web/src/lib/store.ts");
+    pub const LIB_THEME_TS: &str = include_str!("../web/src/lib/theme.ts");
+
+    // Components (extractable to sola-app)
+    pub const SIDEBAR_TS: &str = include_str!("../web/src/components/sidebar.ts");
+
+    // CSS
     pub const THEME_CSS: &str = include_str!("../web/src/theme.css");
+
+    // Vendored JS
     pub const XTERM_MJS: &str = include_str!("../web/vendor/xterm.mjs");
     pub const XTERM_CSS: &str = include_str!("../web/vendor/xterm.css");
     pub const ADDON_FIT_MJS: &str = include_str!("../web/vendor/addon-fit.mjs");
     pub const ADDON_WEB_LINKS_MJS: &str = include_str!("../web/vendor/addon-web-links.mjs");
+    pub const ARROW_INDEX_MJS: &str = include_str!("../web/vendor/arrow/index.mjs");
+    pub const ARROW_INTERNAL_MJS: &str = include_str!("../web/vendor/arrow/chunks/internal-DchK7S7v.mjs");
 }
 
 /// Strip TypeScript type annotations, returning JavaScript.
@@ -178,16 +191,25 @@ fn main() {
             // Map both /src/x.ts and /src/x.js to the same TypeScript source.
             let (body, content_type) = match path {
                 "/" | "/index.html" => (html_clone.clone(), "text/html; charset=utf-8"),
+                // App source
                 "/src/main.ts" | "/src/main.js" => (strip_ts(assets::MAIN_TS), "application/javascript"),
                 "/src/app.ts" | "/src/app.js" => (strip_ts(assets::APP_TS), "application/javascript"),
-                "/src/terminal.ts" | "/src/terminal.js" => (strip_ts(assets::TERMINAL_TS), "application/javascript"),
-                "/src/sidebar.ts" | "/src/sidebar.js" => (strip_ts(assets::SIDEBAR_TS), "application/javascript"),
-                "/src/ipc.ts" | "/src/ipc.js" => (strip_ts(assets::IPC_TS), "application/javascript"),
+                "/src/terminal-pane.ts" | "/src/terminal-pane.js" => (strip_ts(assets::TERMINAL_PANE_TS), "application/javascript"),
+                // Lib
+                "/src/lib/ipc.ts" | "/src/lib/ipc.js" => (strip_ts(assets::LIB_IPC_TS), "application/javascript"),
+                "/src/lib/store.ts" | "/src/lib/store.js" => (strip_ts(assets::LIB_STORE_TS), "application/javascript"),
+                "/src/lib/theme.ts" | "/src/lib/theme.js" => (strip_ts(assets::LIB_THEME_TS), "application/javascript"),
+                // Components
+                "/src/components/sidebar.ts" | "/src/components/sidebar.js" => (strip_ts(assets::SIDEBAR_TS), "application/javascript"),
+                // CSS
                 "/src/theme.css" => (assets::THEME_CSS.to_string(), "text/css"),
+                // Vendored JS
                 "/vendor/xterm.mjs" => (assets::XTERM_MJS.to_string(), "application/javascript"),
                 "/vendor/xterm.css" => (assets::XTERM_CSS.to_string(), "text/css"),
                 "/vendor/addon-fit.mjs" => (assets::ADDON_FIT_MJS.to_string(), "application/javascript"),
                 "/vendor/addon-web-links.mjs" => (assets::ADDON_WEB_LINKS_MJS.to_string(), "application/javascript"),
+                "/vendor/arrow/index.mjs" => (assets::ARROW_INDEX_MJS.to_string(), "application/javascript"),
+                "/vendor/arrow/chunks/internal-DchK7S7v.mjs" => (assets::ARROW_INTERNAL_MJS.to_string(), "application/javascript"),
                 _ => {
                     tracing::warn!("404: {path}");
                     let body = "Not Found".to_string();

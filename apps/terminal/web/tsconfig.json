@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "paths": {
+      "@arrow-js/core": ["./vendor/arrow/index.mjs"],
+      "@xterm/xterm": ["./vendor/xterm.mjs"],
+      "@xterm/addon-fit": ["./vendor/addon-fit.mjs"],
+      "@xterm/addon-web-links": ["./vendor/addon-web-links.mjs"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}
