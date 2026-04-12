@@ -1,0 +1,22 @@
+{
+  "name": "sola-terminal-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "svelte": "^5.45.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "vite-plugin-singlefile": "^2.3.2"
+  },
+  "dependencies": {
+    "@xterm/addon-canvas": "^0.7.0",
+    "@xterm/addon-fit": "^0.12.0-beta.195",
+    "@xterm/addon-web-links": "^0.13.0-beta.195",
+    "@xterm/xterm": "^6.1.0-beta.195"
+  }
+}

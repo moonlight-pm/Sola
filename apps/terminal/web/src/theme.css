@@ -1,0 +1,25 @@
+:root {
+  --bg-primary: #0a0b0d;
+  --bg-secondary: #101216;
+  --bg-tertiary: #181b21;
+  --text-primary: #f0f2f5;
+  --text-secondary: #a0a8b4;
+  --text-muted: #5a6270;
+  --border-subtle: #1e2228;
+  --cyan: #00a8ff;
+  --cyan-dim: rgba(0, 168, 255, 0.15);
+  --red: #ff3d5a;
+  --green: #00ff88;
+  --font-mono: 'Fira Code', 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
