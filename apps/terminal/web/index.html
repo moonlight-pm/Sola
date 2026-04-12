@@ -4,11 +4,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>sola-terminal</title>
-  <script>window.WS_PORT = __WS_PORT__; window.RESTORED_TABS = __RESTORED_TABS__;</script>
-  <link rel="stylesheet" href="/app.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "@xterm/xterm": "/vendor/xterm.mjs",
+      "@xterm/addon-fit": "/vendor/addon-fit.mjs",
+      "@xterm/addon-web-links": "/vendor/addon-web-links.mjs"
+    }
+  }
+  </script>
+  <script>window.RESTORED_TABS = __RESTORED_TABS__;</script>
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/src/theme.css">
 </head>
 <body>
   <div id="app"></div>
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

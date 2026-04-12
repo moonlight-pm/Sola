@@ -14,9 +14,9 @@ gdk4 = "0.9"
 glib = "0.20"
 gio = "0.20"
 webkit6 = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "io-util", "macros"] }
-tokio-tungstenite = "0.26"
-futures-util = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "macros"] }
+swc_ts_fast_strip = "48"
+swc_common = "21"
 nix = { version = "0.30", features = ["process", "term", "signal"] }
 libc = "0.2"
 base64 = "0.22"

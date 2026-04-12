@@ -1,8 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { CanvasAddon } from '@xterm/addon-canvas';
-import { invoke, on } from './ws';
+import { invoke, on } from './ipc.js';
 
 interface TerminalPaneOptions {
   tabId: string;
@@ -72,11 +71,6 @@ export class TerminalPane {
     if (this.destroyed) return;
 
     this.terminal.open(this.container);
-    try {
-      this.terminal.loadAddon(new CanvasAddon());
-    } catch (e) {
-      console.warn('Canvas renderer unavailable, using DOM fallback:', e);
-    }
     this.fitAddon.fit();
 
     if (!await this.spawnPty()) return;

@@ -1,6 +1,6 @@
-import { connect, invoke, on } from './ws';
-import { TerminalPane } from './terminal';
-import { createSidebar, type TerminalTab } from './sidebar';
+import { invoke, on } from './ipc.js';
+import { TerminalPane } from './terminal.js';
+import { createSidebar, type TerminalTab } from './sidebar.js';
 
 interface RestoredTab {
   tmuxSession: string;
@@ -221,11 +221,8 @@ export async function createApp(root: HTMLElement) {
   // Key handler
   window.addEventListener('keydown', handleKeyDown);
 
-  // Connect and init
-  const port = (window as any).WS_PORT as number;
+  // Init from restored state
   const restoredTabs = ((window as any).RESTORED_TABS || []) as RestoredTab[];
-
-  await connect(port);
 
   if (restoredTabs.length > 0) {
     for (const rt of restoredTabs) {

@@ -75,7 +75,8 @@ fn build(target: Option<String>, release: bool) {
 }
 
 /// Build web frontends for any app that has a `web/package.json`.
-/// Runs `bun install` (if node_modules is missing) and `bun run build`.
+/// Apps using vendored dependencies + on-demand TS stripping (like terminal)
+/// don't need a build step — their web/ sources are embedded directly.
 fn build_web_frontends() {
     let entries = match std::fs::read_dir("apps") {
         Ok(e) => e,

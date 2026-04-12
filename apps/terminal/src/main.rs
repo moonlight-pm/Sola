@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use gio::prelude::*;
 use gtk4::prelude::*;
 use webkit6::prelude::*;
 
@@ -14,11 +15,63 @@ mod server;
 mod state;
 mod tmux;
 
-/// HTML template with __WS_PORT__ and __RESTORED_TABS__ placeholders.
+/// HTML template with __RESTORED_TABS__ placeholder.
 const HTML_TEMPLATE: &str = include_str!("../web/index.html");
 
 /// XKB keycode for T (evdev 20 + 8 = 28).
 const KEY_T: u32 = 28;
+
+// Embedded source files (TypeScript stripped on-demand, CSS served as-is).
+mod assets {
+    pub const MAIN_TS: &str = include_str!("../web/src/main.ts");
+    pub const APP_TS: &str = include_str!("../web/src/app.ts");
+    pub const TERMINAL_TS: &str = include_str!("../web/src/terminal.ts");
+    pub const SIDEBAR_TS: &str = include_str!("../web/src/sidebar.ts");
+    pub const IPC_TS: &str = include_str!("../web/src/ipc.ts");
+    pub const THEME_CSS: &str = include_str!("../web/src/theme.css");
+    pub const XTERM_MJS: &str = include_str!("../web/vendor/xterm.mjs");
+    pub const XTERM_CSS: &str = include_str!("../web/vendor/xterm.css");
+    pub const ADDON_FIT_MJS: &str = include_str!("../web/vendor/addon-fit.mjs");
+    pub const ADDON_WEB_LINKS_MJS: &str = include_str!("../web/vendor/addon-web-links.mjs");
+}
+
+/// Strip TypeScript type annotations, returning JavaScript.
+fn strip_ts(source: &str) -> String {
+    use swc_common::errors::Handler;
+    use swc_common::sync::Lrc;
+    use swc_common::SourceMap;
+    use swc_ts_fast_strip::{operate, Mode, Options};
+
+    let cm: Lrc<SourceMap> = Default::default();
+    let handler = Handler::with_emitter_writer(Box::new(std::io::sink()), Some(cm.clone()));
+
+    match operate(
+        &cm,
+        &handler,
+        source.to_string(),
+        Options {
+            mode: Mode::StripOnly,
+            ..Default::default()
+        },
+    ) {
+        Ok(output) => output.code,
+        Err(e) => {
+            tracing::error!("TS strip failed: {e:?}");
+            source.to_string()
+        }
+    }
+}
+
+/// Send a JSON message to the JS frontend via evaluate_javascript.
+fn send_to_js(webview: &webkit6::WebView, msg: &str) {
+    let js_str = serde_json::to_string(msg).unwrap_or_default();
+    let script = format!("window.__solaRecv({js_str})");
+    webview.evaluate_javascript(&script, None::<&str>, None::<&str>, None::<&gio::Cancellable>, |result| {
+        if let Err(e) = result {
+            tracing::debug!("JS eval error: {e}");
+        }
+    });
+}
 
 fn main() {
     // Logging: stderr + file at /opt/sola/log/sola-terminal.log
@@ -91,7 +144,6 @@ fn main() {
         let terminal_state = Arc::new(state::TerminalState::new());
 
         // Populate custom_titles from restored data.
-        // Safe: no tokio runtime yet, no contention.
         {
             let mut titles = terminal_state.custom_titles.try_write().unwrap();
             for tab in &restored_tabs {
@@ -102,46 +154,109 @@ fn main() {
         }
 
         // Build the HTML template with restored tabs.
-        // __WS_PORT__ is replaced by the server after it knows its port.
-        // JS and CSS are served as separate HTTP responses by the server.
         let html = HTML_TEMPLATE.replace("__RESTORED_TABS__", &restored_json);
 
-        // Channel for glib -> tokio bus events
-        let (bus_tx, bus_rx) = tokio::sync::mpsc::unbounded_channel::<server::BusEvent>();
+        // --- WebContext with app:/// URI scheme ---
+        let web_context = webkit6::WebContext::new();
+        let html_clone = html.clone();
+        web_context.register_uri_scheme("app", move |request| {
+            let uri = request.uri().unwrap_or_default().to_string();
+            // Extract path, stripping query/fragment
+            let path = uri
+                .strip_prefix("app://")
+                .unwrap_or(&uri)
+                .split('?')
+                .next()
+                .unwrap_or("/")
+                .split('#')
+                .next()
+                .unwrap_or("/");
+            // Normalize: app:///path gives "/path", app:// gives ""
+            let path = if path.is_empty() { "/" } else { path };
 
-        // Spawn tokio runtime on a background thread, get the WS port back
-        let (port_tx, port_rx) = std::sync::mpsc::channel::<u16>();
+            // Browser requests .js (from import extensions), but sources are .ts.
+            // Map both /src/x.ts and /src/x.js to the same TypeScript source.
+            let (body, content_type) = match path {
+                "/" | "/index.html" => (html_clone.clone(), "text/html; charset=utf-8"),
+                "/src/main.ts" | "/src/main.js" => (strip_ts(assets::MAIN_TS), "application/javascript"),
+                "/src/app.ts" | "/src/app.js" => (strip_ts(assets::APP_TS), "application/javascript"),
+                "/src/terminal.ts" | "/src/terminal.js" => (strip_ts(assets::TERMINAL_TS), "application/javascript"),
+                "/src/sidebar.ts" | "/src/sidebar.js" => (strip_ts(assets::SIDEBAR_TS), "application/javascript"),
+                "/src/ipc.ts" | "/src/ipc.js" => (strip_ts(assets::IPC_TS), "application/javascript"),
+                "/src/theme.css" => (assets::THEME_CSS.to_string(), "text/css"),
+                "/vendor/xterm.mjs" => (assets::XTERM_MJS.to_string(), "application/javascript"),
+                "/vendor/xterm.css" => (assets::XTERM_CSS.to_string(), "text/css"),
+                "/vendor/addon-fit.mjs" => (assets::ADDON_FIT_MJS.to_string(), "application/javascript"),
+                "/vendor/addon-web-links.mjs" => (assets::ADDON_WEB_LINKS_MJS.to_string(), "application/javascript"),
+                _ => {
+                    tracing::warn!("404: {path}");
+                    let body = "Not Found".to_string();
+                    let bytes = body.into_bytes();
+                    let gbytes = glib::Bytes::from(&bytes);
+                    let stream = gio::MemoryInputStream::from_bytes(&gbytes);
+                    request.finish(&stream, bytes.len() as i64, Some("text/plain"));
+                    return;
+                }
+            };
+
+            let bytes = body.into_bytes();
+            let len = bytes.len() as i64;
+            let gbytes = glib::Bytes::from(&bytes);
+            let stream = gio::MemoryInputStream::from_bytes(&gbytes);
+            request.finish(&stream, len, Some(content_type));
+        });
+
+        // --- UserContentManager for JS <-> Rust IPC ---
+        let ucm = webkit6::UserContentManager::new();
+        ucm.register_script_message_handler("sola", None::<&str>);
+
+        // Channel: glib -> tokio (commands from JS)
+        let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+        // Channel: tokio -> glib (responses + PTY events)
+        let (event_tx, event_rx) = std::sync::mpsc::channel::<String>();
+
+        // Handle JS -> Rust messages
+        let cmd_tx_clone = cmd_tx.clone();
+        ucm.connect_script_message_received(Some("sola"), move |_ucm, js_value| {
+            let msg: String = js_value.to_string().into();
+            let _ = cmd_tx_clone.send(msg);
+        });
+
+        // Spawn tokio runtime for PTY management + command dispatch
         let server_state = terminal_state.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-            rt.block_on(async {
-                let port = server::start(server_state, html, bus_rx).await;
-                let _ = port_tx.send(port);
-                // Keep the runtime alive forever
-                futures_util::future::pending::<()>().await;
-            });
+            rt.block_on(server::command_loop(server_state, cmd_rx, event_tx));
         });
-
-        let port = port_rx.recv().expect("failed to receive WS port from server thread");
-        tracing::info!(port, "server ready");
 
         // Window: undecorated, 1920x1080
         let window = gtk4::ApplicationWindow::new(app);
         window.set_decorated(false);
         window.set_default_size(1920, 1080);
 
-        // WebView with developer extras and console logging to stdout
-        let webview = webkit6::WebView::new();
+        // WebView with custom context, UCM, and developer extras
+        let webview = webkit6::WebView::builder()
+            .web_context(&web_context)
+            .user_content_manager(&ucm)
+            .build();
         if let Some(settings) = webkit6::prelude::WebViewExt::settings(&webview) {
             settings.set_enable_developer_extras(true);
             settings.set_enable_write_console_messages_to_stdout(true);
         }
         window.set_child(Some(&webview));
 
-        // Load the frontend from our local HTTP server.
-        // This gives the page a real origin so WebSocket connections work.
-        let uri = format!("http://127.0.0.1:{port}/");
-        webview.load_uri(&uri);
+        // Poll tokio -> glib messages and forward to JS
+        let webview_for_events = webview.clone();
+        glib::timeout_add_local(Duration::from_millis(2), move || {
+            while let Ok(msg) = event_rx.try_recv() {
+                send_to_js(&webview_for_events, &msg);
+            }
+            glib::ControlFlow::Continue
+        });
+
+        // Load frontend from custom URI scheme (no network)
+        webview.load_uri("app:///index.html");
 
         // Bus connection
         let bus: Rc<RefCell<Option<BusClient>>> = Rc::new(RefCell::new(None));
@@ -154,33 +269,30 @@ fn main() {
         }
 
         // Bus polling: listen for Super+T to create new tab
-        let bus_tx = Rc::new(bus_tx);
-        glib::timeout_add_local(Duration::from_millis(50), {
-            let bus = bus.clone();
-            let bus_tx = bus_tx.clone();
-            move || {
-                let mut bus_ref = bus.borrow_mut();
-                if let Some(ref mut client) = *bus_ref {
-                    while let Some(msg) = client.try_recv() {
-                        let Some(topic) = Topic::parse(&msg) else {
-                            continue;
-                        };
-                        match topic {
-                            Topic::Key(KeyEvent {
-                                code: KEY_T,
-                                pressed: true,
-                                super_held: true,
-                                ..
-                            }) => {
-                                tracing::info!("Super+T: requesting new tab");
-                                let _ = bus_tx.send(server::BusEvent::NewTab);
-                            }
-                            _ => {}
+        let webview_for_bus = webview.clone();
+        glib::timeout_add_local(Duration::from_millis(50), move || {
+            let mut bus_ref = bus.borrow_mut();
+            if let Some(ref mut client) = *bus_ref {
+                while let Some(msg) = client.try_recv() {
+                    let Some(topic) = Topic::parse(&msg) else {
+                        continue;
+                    };
+                    match topic {
+                        Topic::Key(KeyEvent {
+                            code: KEY_T,
+                            pressed: true,
+                            super_held: true,
+                            ..
+                        }) => {
+                            tracing::info!("Super+T: requesting new tab");
+                            let msg = serde_json::json!({"event": "new_tab"}).to_string();
+                            send_to_js(&webview_for_bus, &msg);
                         }
+                        _ => {}
                     }
                 }
-                glib::ControlFlow::Continue
             }
+            glib::ControlFlow::Continue
         });
 
         window.present();

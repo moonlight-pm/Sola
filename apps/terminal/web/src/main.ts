@@ -1,6 +1,4 @@
-import './theme.css';
-import '@xterm/xterm/css/xterm.css';
-import { createApp } from './app';
+import { createApp } from './app.js';
 
 createApp(document.getElementById('app')!).catch((e) => {
   document.title = 'app-error:' + String(e);

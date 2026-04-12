@@ -1,197 +1,26 @@
 use std::sync::Arc;
 
 use base64::Engine;
-use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use tokio::net::TcpListener;
-use tokio::sync::{broadcast, mpsc};
-use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, info, warn};
+use tokio::sync::mpsc;
+use tracing::warn;
 
 use crate::pty::PtyEvent;
 use crate::state::{TabEntry, TerminalState};
 
-/// Events forwarded from the glib bus polling to the WS server.
-pub enum BusEvent {
-    NewTab,
-}
-
-/// Embedded frontend assets (built by vite, included at compile time).
-struct Assets {
-    html: String,
-    js: &'static str,
-    css: &'static str,
-}
-
-/// Start the HTTP + WebSocket server. Binds to 127.0.0.1:0 (ephemeral port).
-/// Serves frontend assets on GET and handles WebSocket upgrades.
-/// Returns the bound port.
-pub async fn start(
+/// Process commands from the frontend via WebKit message handler.
+/// Runs on the tokio runtime. Responses and events are sent back
+/// through `event_tx`, which bridges to the glib main loop.
+pub async fn command_loop(
     state: Arc<TerminalState>,
-    html_template: String,
-    mut bus_rx: mpsc::UnboundedReceiver<BusEvent>,
-) -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("failed to bind server");
-    let port = listener.local_addr().unwrap().port();
-    info!("server listening on 127.0.0.1:{port}");
-
-    let (bus_tx, _) = broadcast::channel::<String>(64);
-    let bus_broadcast = bus_tx.clone();
-
-    tokio::spawn(async move {
-        while let Some(event) = bus_rx.recv().await {
-            let msg = match event {
-                BusEvent::NewTab => json!({ "event": "new_tab" }).to_string(),
-            };
-            let _ = bus_broadcast.send(msg);
-        }
-    });
-
-    let assets = Arc::new(Assets {
-        html: html_template.replace("__WS_PORT__", &port.to_string()),
-        js: include_str!("../web/dist/app.js"),
-        css: include_str!("../web/dist/app.css"),
-    });
-
-    tokio::spawn(async move {
-        loop {
-            let (stream, addr) = match listener.accept().await {
-                Ok(conn) => conn,
-                Err(e) => {
-                    warn!("TCP accept failed: {e}");
-                    continue;
-                }
-            };
-
-            let state = state.clone();
-            let bus_rx = bus_tx.subscribe();
-            let assets = assets.clone();
-
-            tokio::spawn(async move {
-                let mut buf = [0u8; 512];
-                let n = match stream.peek(&mut buf).await {
-                    Ok(n) => n,
-                    Err(e) => {
-                        debug!("peek failed from {addr}: {e}");
-                        return;
-                    }
-                };
-                let req = String::from_utf8_lossy(&buf[..n]);
-
-                if req.to_ascii_lowercase().contains("upgrade: websocket") {
-                    handle_connection(state, stream, bus_rx).await;
-                } else if req.starts_with("GET /app.js") {
-                    serve_asset(stream, "application/javascript", assets.js).await;
-                } else if req.starts_with("GET /app.css") {
-                    serve_asset(stream, "text/css", assets.css).await;
-                } else if req.starts_with("GET") {
-                    serve_asset(stream, "text/html; charset=utf-8", &assets.html).await;
-                } else {
-                    handle_connection(state, stream, bus_rx).await;
-                }
-            });
-        }
-    });
-
-    port
-}
-
-/// Serve a static asset as an HTTP response.
-/// Reads and discards the full HTTP request before responding.
-async fn serve_asset(mut stream: tokio::net::TcpStream, content_type: &str, body: &str) {
-    info!("serving {content_type} ({} bytes)", body.len());
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    // Read and discard the HTTP request (the peek didn't consume it).
-    // Read until we see \r\n\r\n (end of headers).
-    let mut req_buf = vec![0u8; 4096];
-    let _ = stream.read(&mut req_buf).await;
-
-    let header = format!(
-        "HTTP/1.1 200 OK\r\n\
-         Content-Type: {content_type}\r\n\
-         Content-Length: {}\r\n\
-         Connection: close\r\n\
-         \r\n",
-        body.len(),
-    );
-    if stream.write_all(header.as_bytes()).await.is_err() {
-        return;
-    }
-    if stream.write_all(body.as_bytes()).await.is_err() {
-        return;
-    }
-    let _ = stream.flush().await;
-    let _ = stream.shutdown().await;
-}
-
-async fn handle_connection(
-    state: Arc<TerminalState>,
-    stream: tokio::net::TcpStream,
-    mut bus_rx: broadcast::Receiver<String>,
+    mut cmd_rx: mpsc::UnboundedReceiver<String>,
+    event_tx: std::sync::mpsc::Sender<String>,
 ) {
-    let ws = match tokio_tungstenite::accept_async(stream).await {
-        Ok(ws) => ws,
-        Err(e) => {
-            warn!("WebSocket handshake failed: {e}");
-            return;
-        }
-    };
-
-    let (mut ws_sink, mut ws_stream) = ws.split();
-
-    // Per-client channel for responses and PTY events
-    let (client_tx, mut client_rx) = mpsc::unbounded_channel::<String>();
-
-    // Send task: multiplex client_rx and bus broadcast
-    let send_task = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                msg = client_rx.recv() => {
-                    match msg {
-                        Some(text) => {
-                            if ws_sink.send(Message::Text(text.into())).await.is_err() {
-                                break;
-                            }
-                        }
-                        None => break,
-                    }
-                }
-                msg = bus_rx.recv() => {
-                    match msg {
-                        Ok(text) => {
-                            if ws_sink.send(Message::Text(text.into())).await.is_err() {
-                                break;
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(n)) => {
-                            warn!("Bus broadcast lagged, dropped {n} messages");
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-            }
-        }
-    });
-
-    // Recv loop: parse commands and dispatch
-    while let Some(msg) = ws_stream.next().await {
-        let msg = match msg {
-            Ok(Message::Text(text)) => text.to_string(),
-            Ok(Message::Close(_)) => break,
-            Ok(_) => continue,
-            Err(e) => {
-                debug!("WebSocket recv error: {e}");
-                break;
-            }
-        };
-
+    while let Some(msg) = cmd_rx.recv().await {
         let parsed: Value = match serde_json::from_str(&msg) {
             Ok(v) => v,
             Err(e) => {
-                warn!("Invalid JSON from client: {e}");
+                warn!("Invalid command JSON: {e}");
                 continue;
             }
         };
@@ -200,26 +29,23 @@ async fn handle_connection(
         let cmd = parsed.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
         let args = parsed.get("args").cloned().unwrap_or(json!({}));
 
-        let result = dispatch(&state, cmd, &args, &client_tx).await;
+        let result = dispatch(&state, cmd, &args, &event_tx).await;
 
         if let Some(id) = id {
             let response = json!({ "id": id, "result": result });
-            let _ = client_tx.send(response.to_string());
+            let _ = event_tx.send(response.to_string());
         }
     }
-
-    send_task.abort();
-    debug!("WebSocket connection closed");
 }
 
 async fn dispatch(
     state: &Arc<TerminalState>,
     cmd: &str,
     args: &Value,
-    client_tx: &mpsc::UnboundedSender<String>,
+    event_tx: &std::sync::mpsc::Sender<String>,
 ) -> Value {
     match cmd {
-        "spawn_pty" => cmd_spawn_pty(state, args, client_tx).await,
+        "spawn_pty" => cmd_spawn_pty(state, args, event_tx).await,
         "write_pty" => cmd_write_pty(state, args).await,
         "resize_pty" => cmd_resize_pty(state, args).await,
         "close_pty" => cmd_close_pty(state, args).await,
@@ -234,7 +60,7 @@ async fn dispatch(
 async fn cmd_spawn_pty(
     state: &Arc<TerminalState>,
     args: &Value,
-    client_tx: &mpsc::UnboundedSender<String>,
+    event_tx: &std::sync::mpsc::Sender<String>,
 ) -> Value {
     let cols = args.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
     let rows = args.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
@@ -248,7 +74,7 @@ async fn cmd_spawn_pty(
         .map(String::from);
 
     let pty_id = uuid::Uuid::new_v4().to_string();
-    let (event_tx, event_rx) = mpsc::unbounded_channel::<PtyEvent>();
+    let (pty_event_tx, pty_event_rx) = mpsc::unbounded_channel::<PtyEvent>();
 
     let tmux_session_name = {
         let mut mgr = state.pty_manager.lock().await;
@@ -258,7 +84,7 @@ async fn cmd_spawn_pty(
             rows,
             tmux_session,
             cwd.clone(),
-            event_tx,
+            pty_event_tx,
         ) {
             Ok(name) => name,
             Err(e) => return json!({ "error": e }),
@@ -284,9 +110,9 @@ async fn cmd_spawn_pty(
         });
     }
 
-    // Start PTY event forwarding for this client
-    let tx = client_tx.clone();
-    tokio::spawn(forward_pty_events(pty_id.clone(), event_rx, tx));
+    // Forward PTY events to the glib main loop
+    let tx = event_tx.clone();
+    tokio::spawn(forward_pty_events(pty_id.clone(), pty_event_rx, tx));
 
     state.persist_to_disk().await;
 
@@ -458,7 +284,7 @@ async fn cmd_reorder_tabs(state: &Arc<TerminalState>, args: &Value) -> Value {
 async fn forward_pty_events(
     _pty_id: String,
     mut event_rx: mpsc::UnboundedReceiver<PtyEvent>,
-    tx: mpsc::UnboundedSender<String>,
+    tx: std::sync::mpsc::Sender<String>,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
 
