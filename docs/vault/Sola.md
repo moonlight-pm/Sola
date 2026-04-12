@@ -33,7 +33,9 @@ All components are independently restartable. Shell apps are resilient to bus an
 | [[sola-bus]]        | IPC bus + protocol definitions | Separate    |
 | [[sola-compositor]] | Wayland compositor             | Separate    |
 | [[sola-x]]          | XWayland host / bridge         | Separate    |
+| [[sola-app]]        | WebView app framework          | Library     |
 | [[sola-switcher]]   | App switcher (Super+Tab)       | Separate    |
+| [[sola-terminal]]   | Terminal emulator              | Separate    |
 | [[sola-make]]       | Build/deploy orchestration     | Dev tool    |
 
 ## Communication
@@ -60,10 +62,12 @@ crates/
   sola/                # Process manager
   sola-bus/            # Bus host + protocol
   sola-compositor/     # Smithay compositor
-  sola-x/              # XWayland host (in progress)
+  sola-x/              # XWayland host
+  sola-app/            # WebView app framework (Rust + JS platform)
   sola-make/           # Build system
 apps/
   switcher/            # App switcher
+  terminal/            # Terminal emulator (tmux-backed, xterm.js)
   wtest/               # Wayland test client
   xtest/               # X11 test client
 docs/
