@@ -1,0 +1,211 @@
+{
+  "main": {
+    "id": "c8e5a0dc226104d9",
+    "type": "split",
+    "children": [
+      {
+        "id": "db3b82e6dc7ee335",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "ab3581b4f6f74470",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "sola-bus.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "sola-bus"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "5c8a26691dc0e597",
+    "type": "split",
+    "children": [
+      {
+        "id": "8c30416a21121b37",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "957c14939711b8f7",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "890e8c8c8c8edd09",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "ad4b88147fad5f85",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "004f30a25ac96947",
+    "type": "split",
+    "children": [
+      {
+        "id": "8f481050f168ef27",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "8c2c838353923008",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "sola-bus.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for sola-bus"
+            }
+          },
+          {
+            "id": "f16d49bcd32f621a",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "sola-bus.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from sola-bus"
+            }
+          },
+          {
+            "id": "e0f79251ffac952f",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "269320c51380a149",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "f76c18e53d3c2a27",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "sola-bus.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of sola-bus"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "ab3581b4f6f74470",
+  "lastOpenFiles": [
+    "Sola.md",
+    "Sola.md.tmp.90435.1775959692365",
+    "Sola.md.tmp.90435.1775959688193",
+    "Topics.md",
+    "sola-make.md",
+    "sola-make.md.tmp.26205.1775954367048",
+    "sola-switcher.md",
+    "sola-switcher.md.tmp.26205.1775954356602",
+    "sola-x.md",
+    "sola-x.md.tmp.26205.1775954334893",
+    "sola-compositor.md",
+    "sola-compositor.md.tmp.26205.1775954318804",
+    "Process Model.md",
+    "Process Model.md.tmp.26205.1775954290978",
+    "Input Routing.md",
+    "Input Routing.md.tmp.26205.1775954275444",
+    "Topics.md.tmp.26205.1775954259794",
+    "Wire Format.md",
+    "Wire Format.md.tmp.26205.1775954245644",
+    "Sola Bus.md",
+    "sola-bus.md",
+    "sola.md"
+  ]
+}
