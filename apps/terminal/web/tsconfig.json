@@ -6,7 +6,7 @@
     "strict": true,
     "noEmit": true,
     "paths": {
-      "@arrow-js/core": ["./vendor/arrow/index.mjs"],
+      "@arrow-js/core": ["./vendor/arrow/index.d.ts"],
       "@xterm/xterm": ["./vendor/xterm.mjs"],
       "@xterm/addon-fit": ["./vendor/addon-fit.mjs"],
       "@xterm/addon-web-links": ["./vendor/addon-web-links.mjs"]
