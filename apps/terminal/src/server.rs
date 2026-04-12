@@ -199,12 +199,12 @@ async fn cmd_spawn_pty(
         }
     };
 
-    // Look up custom title if reattaching
+    // Look up custom title if reattaching (keyed by tmux session name)
     let title = state
         .custom_titles
         .read()
         .await
-        .get(&pty_id)
+        .get(&tmux_session_name)
         .cloned();
 
     // Add tab entry
@@ -268,6 +268,10 @@ async fn cmd_resize_pty(state: &Arc<TerminalState>, args: &Value) -> Value {
 
     let mgr = state.pty_manager.lock().await;
     match mgr.resize_pty(pty_id, cols, rows) {
+        Ok(()) => {}
+        Err(e) => return json!({ "error": e }),
+    }
+    match mgr.sigwinch_pty(pty_id) {
         Ok(()) => json!("ok"),
         Err(e) => json!({ "error": e }),
     }
@@ -319,24 +323,19 @@ async fn cmd_rename_tab(state: &Arc<TerminalState>, args: &Value) -> Value {
         None => return json!({ "error": "missing title" }),
     };
 
-    // Find the pty_id for this tmux session
-    let pty_id = {
+    // Verify the session exists
+    {
         let tabs = state.tabs.read().await;
-        tabs.iter()
-            .find(|t| t.tmux_session == tmux_session)
-            .map(|t| t.pty_id.clone())
-    };
-
-    let pty_id = match pty_id {
-        Some(id) => id,
-        None => return json!({ "error": format!("no tab for session: {tmux_session}") }),
-    };
+        if !tabs.iter().any(|t| t.tmux_session == tmux_session) {
+            return json!({ "error": format!("no tab for session: {tmux_session}") });
+        }
+    }
 
     state
         .custom_titles
         .write()
         .await
-        .insert(pty_id, title);
+        .insert(tmux_session.to_string(), title);
 
     state.persist_to_disk().await;
 

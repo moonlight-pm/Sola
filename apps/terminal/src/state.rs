@@ -29,7 +29,6 @@ pub struct RestoredTab {
 pub struct TerminalState {
     pub tabs: RwLock<Vec<TabEntry>>,
     pub custom_titles: RwLock<HashMap<String, String>>,
-    pub tab_cwds: RwLock<HashMap<String, String>>,
     pub pty_manager: Mutex<PtyManager>,
 }
 
@@ -38,7 +37,6 @@ impl TerminalState {
         Self {
             tabs: RwLock::new(Vec::new()),
             custom_titles: RwLock::new(HashMap::new()),
-            tab_cwds: RwLock::new(HashMap::new()),
             pty_manager: Mutex::new(PtyManager::new()),
         }
     }
@@ -46,7 +44,6 @@ impl TerminalState {
     pub async fn persist_to_disk(&self) {
         let tabs = self.tabs.read().await;
         let titles = self.custom_titles.read().await;
-        let cwds = self.tab_cwds.read().await;
 
         // Query live CWDs from tmux
         let live_paths: HashMap<String, String> =
@@ -59,11 +56,10 @@ impl TerminalState {
                 let cwd = live_paths
                     .get(&tab.tmux_session)
                     .cloned()
-                    .or_else(|| cwds.get(&tab.pty_id).cloned())
                     .or_else(|| tab.cwd.clone());
 
                 let custom_title = titles
-                    .get(&tab.pty_id)
+                    .get(&tab.tmux_session)
                     .cloned()
                     .or_else(|| tab.custom_title.clone());
 

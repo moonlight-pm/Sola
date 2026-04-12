@@ -90,6 +90,17 @@ fn main() {
 
         let terminal_state = Arc::new(state::TerminalState::new());
 
+        // Populate custom_titles from restored data.
+        // Safe: no tokio runtime yet, no contention.
+        {
+            let mut titles = terminal_state.custom_titles.try_write().unwrap();
+            for tab in &restored_tabs {
+                if let Some(ref title) = tab.custom_title {
+                    titles.insert(tab.tmux_session.clone(), title.clone());
+                }
+            }
+        }
+
         // Channel for glib -> tokio bus events
         let (bus_tx, bus_rx) = tokio::sync::mpsc::unbounded_channel::<server::BusEvent>();
 
