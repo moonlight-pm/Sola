@@ -23,6 +23,11 @@ pub fn run_loop(
         display
             .dispatch_clients(state)
             .map_err(|e| CompositorError::Display(e.to_string()))?;
+
+        // Sync MRU after dispatch — set_app_id may have arrived after
+        // the set_focus that triggered focus_changed, so retry now.
+        sync_mru(state);
+
         display
             .flush_clients()
             .map_err(|e| CompositorError::Display(e.to_string()))?;
@@ -35,6 +40,34 @@ pub fn run_loop(
     }
 
     Ok(())
+}
+
+/// Ensure the MRU list reflects the current keyboard focus.
+///
+/// `focus_changed` can miss updates because `set_app_id` arrives after
+/// `set_focus` in the Wayland protocol stream. This runs after
+/// `dispatch_clients` when all protocol state is settled.
+fn sync_mru(state: &mut State) {
+    use smithay::wayland::seat::WaylandFocus;
+
+    if state.input_grab.is_some() { return; }
+
+    let keyboard = state.seat.get_keyboard().unwrap();
+    let Some(focused) = keyboard.current_focus() else { return };
+
+    let app_id = state.space.elements().find_map(|window| {
+        window.wl_surface()
+            .filter(|s| s.as_ref() == &focused)
+            .and_then(|_| State::app_id(window))
+    });
+
+    let Some(app_id) = app_id else { return };
+
+    // Already at the front — nothing to do.
+    if state.mru_apps.first().is_some_and(|f| f == &app_id) { return; }
+
+    state.mru_apps.retain(|id| id != &app_id);
+    state.mru_apps.insert(0, app_id);
 }
 
 /// Process any pending bus messages.
@@ -66,29 +99,33 @@ fn process_bus(state: &mut State) {
     }
 }
 
-/// Show the target app's surface above everything and give it exclusive input.
+/// Set exclusive input grab for the target app.
+///
+/// Always sets the grab immediately so key routing switches away from the bus.
+/// If the target window exists, raise and focus it. If not (race with window
+/// mapping), `new_toplevel` will handle raise+focus when the window appears.
 fn handle_grab_input(state: &mut State, target: &str) {
-    let Some(window) = state.window_by_app_id(target) else {
-        tracing::warn!(target, "GrabInput: no window found");
-        return;
-    };
-
     tracing::info!(target, "grabbing input");
-
-    // Raise to top of z-order.
-    state.space.raise_element(&window, true);
-
-    // Give keyboard focus to the grabbed surface.
-    let serial = SERIAL_COUNTER.next_serial();
-    if let Some(toplevel) = window.toplevel() {
-        let keyboard = state.seat.get_keyboard().unwrap();
-        keyboard.set_focus(state, Some(toplevel.wl_surface().clone()), serial);
-    }
-
     state.input_grab = Some(target.to_string());
+
+    if let Some(window) = state.window_by_app_id(target) {
+        use smithay::wayland::seat::WaylandFocus;
+        state.space.raise_element(&window, true);
+        if let Some(surface) = window.wl_surface() {
+            let serial = SERIAL_COUNTER.next_serial();
+            let keyboard = state.seat.get_keyboard().unwrap();
+            keyboard.set_focus(state, Some(surface.into_owned()), serial);
+        }
+    } else {
+        tracing::debug!(target, "window not yet mapped, will focus on arrival");
+    }
 }
 
-/// Release the input grab. The client hides its own surface.
+/// Release the input grab.
+///
+/// Callers must emit RaiseApp before ReleaseInput so that a window has
+/// focus when the grab clears. The grabbed surface stays mapped — the
+/// raised app covers it, and the shell app clears its own UI.
 fn handle_release_input(state: &mut State) {
     let Some(target) = state.input_grab.take() else {
         return;
@@ -113,28 +150,51 @@ fn handle_raise_app(state: &mut State, app_id: &str) {
     }
 
     // Focus the topmost window of the raised app.
+    use smithay::wayland::seat::WaylandFocus;
     if let Some(window) = windows.last() {
-        if let Some(toplevel) = window.toplevel() {
+        if let Some(surface) = window.wl_surface() {
             let serial = SERIAL_COUNTER.next_serial();
             let keyboard = state.seat.get_keyboard().unwrap();
-            keyboard.set_focus(state, Some(toplevel.wl_surface().clone()), serial);
+            keyboard.set_focus(state, Some(surface.into_owned()), serial);
         }
     }
 }
 
-/// Respond to a ListApps request with the MRU-ordered app list.
+/// Respond to a ListApps request.
+///
+/// Scans all mapped windows for app_ids, deduplicates, and orders by MRU.
+/// Excludes the current input grab target (e.g., the switcher itself).
 fn handle_list_apps(state: &mut State) {
     use sola_bus::topics::App;
+    use std::collections::HashMap;
 
-    let apps: Vec<App> = state.mru_apps.iter().filter_map(|app_id| {
-        let window_count = state.windows_by_app_id(app_id).len() as u32;
-        if window_count == 0 { return None; }
-        Some(App {
-            app_id: app_id.clone(),
+    // Count windows per app_id from the Space.
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    for window in state.space.elements() {
+        if let Some(app_id) = State::app_id(window) {
+            *counts.entry(app_id).or_default() += 1;
+        }
+    }
+
+    // Exclude the grab target (e.g., the switcher).
+    if let Some(ref target) = state.input_grab {
+        counts.remove(target);
+    }
+
+    // Order by MRU position (known apps first), then alphabetical for unknown.
+    let mut app_ids: Vec<String> = counts.keys().cloned().collect();
+    app_ids.sort_by_key(|id| {
+        state.mru_apps.iter().position(|m| m == id).unwrap_or(usize::MAX)
+    });
+
+    let apps: Vec<App> = app_ids.into_iter().map(|app_id| {
+        let window_count = counts[&app_id];
+        App {
             name: app_id.clone(),
             icon: "app".into(),
             window_count,
-        })
+            app_id,
+        }
     }).collect();
 
     tracing::debug!(count = apps.len(), "responding to ListApps");

@@ -35,7 +35,7 @@ pub const CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.2, 1.0);
 smithay::backend::renderer::element::render_elements! {
     pub OutputElement<='a, SolaRenderer<'a>>;
     Space=SpaceRenderElements<SolaRenderer<'a>, WaylandSurfaceRenderElement<SolaRenderer<'a>>>,
-    Cursor=MemoryRenderBufferRenderElement<SolaRenderer<'a>>,
+    Memory=MemoryRenderBufferRenderElement<SolaRenderer<'a>>,
 }
 
 /// Handle a VBlank event (page flip complete) for a CRTC.
@@ -112,6 +112,26 @@ fn do_render(state: &mut State, node: DrmNode, crtc: crtc::Handle) {
         .map(OutputElement::Space)
         .collect();
 
+    // Wallpaper — behind everything (push to end of element list).
+    if let Some(ref wallpaper_buffer) = state.wallpaper_buffer {
+        match MemoryRenderBufferRenderElement::from_buffer(
+            &mut renderer,
+            (0.0, 0.0),
+            wallpaper_buffer,
+            None,
+            None,
+            None,
+            Kind::Unspecified,
+        ) {
+            Ok(wallpaper_element) => {
+                elements.push(OutputElement::Memory(wallpaper_element));
+            }
+            Err(err) => {
+                tracing::warn!(?err, "failed to create wallpaper render element");
+            }
+        }
+    }
+
     if let Some(ref cursor_buffer) = state.cursor_buffer {
         let (hx, hy) = state.cursor_hotspot;
         let (px, py) = state.pointer_location;
@@ -127,7 +147,7 @@ fn do_render(state: &mut State, node: DrmNode, crtc: crtc::Handle) {
             Kind::Cursor,
         ) {
             Ok(cursor_element) => {
-                elements.insert(0, OutputElement::Cursor(cursor_element));
+                elements.insert(0, OutputElement::Memory(cursor_element));
             }
             Err(err) => {
                 tracing::warn!(?err, "failed to create cursor render element");
