@@ -12,6 +12,14 @@ use std::time::Duration;
 use webkit6::prelude::*;
 
 use sola_bus::BusClient;
+use sola_bus::topics::Topic;
+
+/// XKB keycodes (evdev + 8) -- same values the compositor puts on the bus.
+mod keycode {
+    pub const T: u32 = 28;
+    pub const W: u32 = 25;
+    pub const L: u32 = 46;
+}
 
 static WEB_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/web");
 
@@ -217,7 +225,119 @@ fn build_ui(app: &gtk4::Application) {
         Err(e) => tracing::warn!("bus not available: {e}"),
     }
 
-    // Bus poll loop (Task 9 will add keyboard shortcuts and OpenUrl handling)
+    // Bus poll loop: keyboard shortcuts and OpenUrl handling
+    glib::timeout_add_local(Duration::from_millis(50), {
+        let app_state = app_state.clone();
+        let bus = bus.clone();
+        move || {
+            let mut bus_ref = bus.borrow_mut();
+            if let Some(ref mut client) = *bus_ref {
+                while let Some(msg) = client.try_recv() {
+                    let Some(topic) = Topic::parse(&msg) else { continue };
+                    match topic {
+                        Topic::Key(key) => {
+                            if key.pressed && key.super_held && *app_state.focused.borrow() {
+                                match key.code {
+                                    keycode::T => {
+                                        let tab_id = uuid::Uuid::new_v4().to_string();
+                                        tabs::create_tab_webview(
+                                            &app_state, &tab_id, None, None,
+                                        );
+                                        tabs::switch_tab(&app_state, &tab_id);
+
+                                        // Persist new tab
+                                        let mut store = app_state.tab_store.borrow_mut();
+                                        store.tabs.push(state::PersistedTab {
+                                            url: String::new(),
+                                            title: String::new(),
+                                            session_state: None,
+                                        });
+                                        drop(store);
+                                        app_state.persist_tabs();
+
+                                        let data = serde_json::json!({
+                                            "tabId": tab_id,
+                                            "url": "",
+                                            "activate": true,
+                                        });
+                                        ipc::emit_event_json(
+                                            &app_state.chrome_webview,
+                                            "bus_new_tab",
+                                            &data,
+                                        );
+                                        tracing::debug!("Super+T: new tab {tab_id}");
+                                    }
+                                    keycode::W => {
+                                        let active_id =
+                                            app_state.active_tab_id.borrow().clone();
+                                        if let Some(id) = active_id {
+                                            tabs::close_tab(&app_state, &id);
+                                            ipc::emit_event_json(
+                                                &app_state.chrome_webview,
+                                                "tab_closed",
+                                                &serde_json::json!({ "tabId": id }),
+                                            );
+                                            tracing::debug!("Super+W: closed tab {id}");
+                                        }
+                                    }
+                                    keycode::L => {
+                                        ipc::emit_event_json(
+                                            &app_state.chrome_webview,
+                                            "bus_focus_address",
+                                            &serde_json::json!({}),
+                                        );
+                                        tracing::debug!("Super+L: focus address bar");
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        Topic::FocusChanged(app_id) => {
+                            let is_focused = app_id == "sola-browser";
+                            *app_state.focused.borrow_mut() = is_focused;
+                            tracing::debug!(app_id, is_focused, "focus changed");
+                        }
+                        Topic::OpenUrl(req) => {
+                            let tab_id = uuid::Uuid::new_v4().to_string();
+                            tabs::create_tab_webview(
+                                &app_state,
+                                &tab_id,
+                                Some(&req.url),
+                                None,
+                            );
+                            if req.activate {
+                                tabs::switch_tab(&app_state, &tab_id);
+                            }
+
+                            // Persist new tab
+                            let mut store = app_state.tab_store.borrow_mut();
+                            store.tabs.push(state::PersistedTab {
+                                url: req.url.clone(),
+                                title: String::new(),
+                                session_state: None,
+                            });
+                            drop(store);
+                            app_state.persist_tabs();
+
+                            let data = serde_json::json!({
+                                "tabId": tab_id,
+                                "url": req.url,
+                                "activate": req.activate,
+                            });
+                            ipc::emit_event_json(
+                                &app_state.chrome_webview,
+                                "bus_new_tab",
+                                &data,
+                            );
+                            tracing::info!(url = %req.url, "OpenUrl: created tab {tab_id}");
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            glib::ControlFlow::Continue
+        }
+    });
 
     // Handle window resize
     window.connect_default_width_notify({
