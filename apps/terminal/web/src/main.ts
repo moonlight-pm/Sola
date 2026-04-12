@@ -1,6 +1,5 @@
 import './theme.css';
-import { mount } from 'svelte';
-import App from './App.svelte';
+import '@xterm/xterm/css/xterm.css';
+import { createApp } from './app';
 
-const app = mount(App, { target: document.getElementById('app')! });
-export default app;
+createApp(document.getElementById('app')!);
