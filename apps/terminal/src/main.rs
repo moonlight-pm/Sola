@@ -1,4 +1,5 @@
 mod pty;
+mod server;
 mod state;
 mod tmux;
 
