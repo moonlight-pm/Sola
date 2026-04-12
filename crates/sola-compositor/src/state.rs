@@ -201,35 +201,18 @@ impl State {
     }
 }
 
-/// Extract the app_id from a Window.
-///
-/// For Wayland windows: uses the xdg_toplevel app_id.
-/// For X11 windows: uses WM_CLASS.
+/// Extract the app_id from a Window's xdg_toplevel surface data.
 fn window_app_id(window: &Window) -> Option<String> {
-    // Try Wayland xdg_toplevel app_id first.
-    if let Some(toplevel) = window.toplevel() {
-        use smithay::wayland::compositor::with_states;
-        use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
 
-        let app_id = with_states(toplevel.wl_surface(), |states| {
+    window.toplevel().and_then(|toplevel| {
+        with_states(toplevel.wl_surface(), |states| {
             states
                 .data_map
                 .get::<XdgToplevelSurfaceData>()
                 .and_then(|data| data.lock().ok())
                 .and_then(|attrs| attrs.app_id.clone())
-        });
-        if app_id.is_some() {
-            return app_id;
-        }
-    }
-
-    // Fall back to X11 WM_CLASS.
-    if let Some(x11) = window.x11_surface() {
-        let class = x11.class();
-        if !class.is_empty() {
-            return Some(class);
-        }
-    }
-
-    None
+        })
+    })
 }
