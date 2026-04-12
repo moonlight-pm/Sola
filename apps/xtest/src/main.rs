@@ -46,6 +46,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         b"X11 Test",
     )?;
 
+    // WM_CLASS: "instance\0class" — used as app_id by the compositor.
+    conn.change_property8(
+        PropMode::REPLACE,
+        win_id,
+        AtomEnum::WM_CLASS,
+        AtomEnum::STRING,
+        b"sola-xtest\0sola-xtest",
+    )?;
+
     conn.map_window(win_id)?;
     conn.flush()?;
 
