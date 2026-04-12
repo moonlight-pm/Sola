@@ -16,21 +16,30 @@ pub enum BusEvent {
     NewTab,
 }
 
-/// Start the WebSocket server. Binds to 127.0.0.1:0 (ephemeral port). Returns the bound port.
+/// Embedded frontend assets (built by vite, included at compile time).
+struct Assets {
+    html: String,
+    js: &'static str,
+    css: &'static str,
+}
+
+/// Start the HTTP + WebSocket server. Binds to 127.0.0.1:0 (ephemeral port).
+/// Serves frontend assets on GET and handles WebSocket upgrades.
+/// Returns the bound port.
 pub async fn start(
     state: Arc<TerminalState>,
+    html_template: String,
     mut bus_rx: mpsc::UnboundedReceiver<BusEvent>,
 ) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .expect("failed to bind WebSocket listener");
+        .expect("failed to bind server");
     let port = listener.local_addr().unwrap().port();
-    info!("WebSocket server listening on 127.0.0.1:{port}");
+    info!("server listening on 127.0.0.1:{port}");
 
     let (bus_tx, _) = broadcast::channel::<String>(64);
     let bus_broadcast = bus_tx.clone();
 
-    // Forward bus events to the broadcast channel
     tokio::spawn(async move {
         while let Some(event) = bus_rx.recv().await {
             let msg = match event {
@@ -40,7 +49,12 @@ pub async fn start(
         }
     });
 
-    // Accept loop
+    let assets = Arc::new(Assets {
+        html: html_template.replace("__WS_PORT__", &port.to_string()),
+        js: include_str!("../web/dist/app.js"),
+        css: include_str!("../web/dist/app.css"),
+    });
+
     tokio::spawn(async move {
         loop {
             let (stream, addr) = match listener.accept().await {
@@ -50,16 +64,67 @@ pub async fn start(
                     continue;
                 }
             };
-            debug!("New WebSocket connection from {addr}");
 
             let state = state.clone();
             let bus_rx = bus_tx.subscribe();
+            let assets = assets.clone();
 
-            tokio::spawn(handle_connection(state, stream, bus_rx));
+            tokio::spawn(async move {
+                let mut buf = [0u8; 512];
+                let n = match stream.peek(&mut buf).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        debug!("peek failed from {addr}: {e}");
+                        return;
+                    }
+                };
+                let req = String::from_utf8_lossy(&buf[..n]);
+
+                if req.to_ascii_lowercase().contains("upgrade: websocket") {
+                    handle_connection(state, stream, bus_rx).await;
+                } else if req.starts_with("GET /app.js") {
+                    serve_asset(stream, "application/javascript", assets.js).await;
+                } else if req.starts_with("GET /app.css") {
+                    serve_asset(stream, "text/css", assets.css).await;
+                } else if req.starts_with("GET") {
+                    serve_asset(stream, "text/html; charset=utf-8", &assets.html).await;
+                } else {
+                    handle_connection(state, stream, bus_rx).await;
+                }
+            });
         }
     });
 
     port
+}
+
+/// Serve a static asset as an HTTP response.
+/// Reads and discards the full HTTP request before responding.
+async fn serve_asset(mut stream: tokio::net::TcpStream, content_type: &str, body: &str) {
+    info!("serving {content_type} ({} bytes)", body.len());
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Read and discard the HTTP request (the peek didn't consume it).
+    // Read until we see \r\n\r\n (end of headers).
+    let mut req_buf = vec![0u8; 4096];
+    let _ = stream.read(&mut req_buf).await;
+
+    let header = format!(
+        "HTTP/1.1 200 OK\r\n\
+         Content-Type: {content_type}\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n",
+        body.len(),
+    );
+    if stream.write_all(header.as_bytes()).await.is_err() {
+        return;
+    }
+    if stream.write_all(body.as_bytes()).await.is_err() {
+        return;
+    }
+    let _ = stream.flush().await;
+    let _ = stream.shutdown().await;
 }
 
 async fn handle_connection(

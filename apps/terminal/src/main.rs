@@ -14,8 +14,8 @@ mod server;
 mod state;
 mod tmux;
 
-/// Embedded HTML with placeholders replaced at runtime.
-const HTML: &str = include_str!("../web/dist/index.html");
+/// HTML template with __WS_PORT__ and __RESTORED_TABS__ placeholders.
+const HTML_TEMPLATE: &str = include_str!("../web/index.html");
 
 /// XKB keycode for T (evdev 20 + 8 = 28).
 const KEY_T: u32 = 28;
@@ -101,6 +101,11 @@ fn main() {
             }
         }
 
+        // Build the HTML template with restored tabs.
+        // __WS_PORT__ is replaced by the server after it knows its port.
+        // JS and CSS are served as separate HTTP responses by the server.
+        let html = HTML_TEMPLATE.replace("__RESTORED_TABS__", &restored_json);
+
         // Channel for glib -> tokio bus events
         let (bus_tx, bus_rx) = tokio::sync::mpsc::unbounded_channel::<server::BusEvent>();
 
@@ -110,7 +115,7 @@ fn main() {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
             rt.block_on(async {
-                let port = server::start(server_state, bus_rx).await;
+                let port = server::start(server_state, html, bus_rx).await;
                 let _ = port_tx.send(port);
                 // Keep the runtime alive forever
                 futures_util::future::pending::<()>().await;
@@ -118,25 +123,25 @@ fn main() {
         });
 
         let port = port_rx.recv().expect("failed to receive WS port from server thread");
-        tracing::info!(port, "WebSocket server ready");
+        tracing::info!(port, "server ready");
 
         // Window: undecorated, 1920x1080
         let window = gtk4::ApplicationWindow::new(app);
         window.set_decorated(false);
         window.set_default_size(1920, 1080);
 
-        // WebView with developer extras
+        // WebView with developer extras and console logging to stdout
         let webview = webkit6::WebView::new();
         if let Some(settings) = webkit6::prelude::WebViewExt::settings(&webview) {
             settings.set_enable_developer_extras(true);
+            settings.set_enable_write_console_messages_to_stdout(true);
         }
         window.set_child(Some(&webview));
 
-        // Load HTML with placeholders replaced
-        let html = HTML
-            .replace("__WS_PORT__", &port.to_string())
-            .replace("__RESTORED_TABS__", &restored_json);
-        webview.load_html(&html, None);
+        // Load the frontend from our local HTTP server.
+        // This gives the page a real origin so WebSocket connections work.
+        let uri = format!("http://127.0.0.1:{port}/");
+        webview.load_uri(&uri);
 
         // Bus connection
         let bus: Rc<RefCell<Option<BusClient>>> = Rc::new(RefCell::new(None));

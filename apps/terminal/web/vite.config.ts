@@ -1,7 +1,18 @@
 import { defineConfig } from 'vite';
-import { viteSingleFile } from 'vite-plugin-singlefile';
 
 export default defineConfig({
-  plugins: [viteSingleFile()],
-  build: { outDir: 'dist' },
+  build: {
+    outDir: 'dist',
+    lib: {
+      entry: 'src/main.ts',
+      formats: ['es'],
+      fileName: () => 'app.js',
+    },
+    cssCodeSplit: false,
+    rollupOptions: {
+      output: {
+        assetFileNames: 'app.[ext]',
+      },
+    },
+  },
 });
