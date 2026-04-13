@@ -1,17 +1,14 @@
-use crate::auth::AuthManager;
 use crate::session::{SessionManager, SessionStatus};
 use anyhow::Result;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 pub async fn run_session_message(
     session_id: String,
     text: String,
     working_dir: PathBuf,
-    auth: Arc<RwLock<AuthManager>>,
     session_mgr: Arc<SessionManager>,
     event_tx: std::sync::mpsc::Sender<String>,
     bus_tools: Vec<Box<dyn claurst_tools::Tool>>,
@@ -25,7 +22,7 @@ pub async fn run_session_message(
     }));
 
     match run_agent_loop(
-        &session_id, &text, &working_dir, auth, &session_mgr, &event_tx,
+        &session_id, &text, &working_dir, &session_mgr, &event_tx,
         bus_tools, cancel_token,
     )
     .await
@@ -57,19 +54,20 @@ async fn run_agent_loop(
     session_id: &str,
     text: &str,
     working_dir: &PathBuf,
-    auth: Arc<RwLock<AuthManager>>,
     session_mgr: &SessionManager,
     event_tx: &std::sync::mpsc::Sender<String>,
     bus_tools: Vec<Box<dyn claurst_tools::Tool>>,
     cancel_token: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    auth.write().await.ensure_valid().await?;
+    // Route through Junction proxy (handles OAuth attestation)
+    let api_key = std::env::var("JUNCTION_API_KEY")
+        .unwrap_or_else(|_| "a626d79941d9c85a4f7015b3b69805f0df659406f1701ccd3aa07bb7123f50a3".into());
+    let api_base = std::env::var("JUNCTION_URL")
+        .unwrap_or_else(|_| "https://junction.moonlight.pm".into());
 
-    let token = auth.read().await.access_token().to_string();
     let client_config = claurst_api::client::ClientConfig {
-        api_key: token,
-        api_base: "https://api.claude.ai".to_string(),
-        use_bearer_auth: true,
+        api_key,
+        api_base,
         ..Default::default()
     };
     let client = claurst_api::AnthropicClient::new(client_config)?;
@@ -99,7 +97,7 @@ async fn run_agent_loop(
     };
 
     let config = claurst_query::QueryConfig {
-        model: "claude-sonnet-4-6-20250514".into(),
+        model: "claude-opus-4-6".into(),
         max_tokens: 16384,
         max_turns: 30,
         system_prompt: Some(build_system_prompt(working_dir)),

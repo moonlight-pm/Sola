@@ -2,15 +2,12 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use sola_bus::BusClient;
-use tokio::sync::RwLock;
 
 use crate::agent;
-use crate::auth::AuthManager;
 use crate::bus_tools;
 use crate::session::SessionManager;
 
 pub struct AgentHandler {
-    pub auth: Arc<RwLock<AuthManager>>,
     pub session_mgr: Arc<SessionManager>,
     pub event_tx: std::sync::mpsc::Sender<String>,
     pub bus_client: Option<Arc<std::sync::Mutex<BusClient>>>,
@@ -97,7 +94,6 @@ impl AgentHandler {
 
         let session_id = session_id.to_string();
         let text = text.to_string();
-        let auth = self.auth.clone();
         let session_mgr = self.session_mgr.clone();
         let event_tx = self.event_tx.clone();
 
@@ -106,7 +102,6 @@ impl AgentHandler {
                 session_id,
                 text,
                 working_dir,
-                auth,
                 session_mgr,
                 event_tx,
                 bus_tools,
