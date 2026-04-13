@@ -5,6 +5,8 @@
 /// Makefiles and shell scripts with type-safe, maintainable build logic.
 ///
 /// See: https://github.com/matklad/cargo-xtask
+mod watch;
+
 use std::process::{Command, exit};
 
 use clap::Parser;
@@ -31,8 +33,17 @@ enum Commands {
 
     /// Deploy to a target machine.
     Deploy {
-        /// Target machine name (e.g. "canto").
-        target: String,
+        /// Specific app to deploy (e.g. "terminal").
+        /// Omit to deploy all binaries.
+        app: Option<String>,
+
+        /// Deploy to canto.
+        #[arg(long)]
+        canto: bool,
+
+        /// Watch for changes and redeploy automatically.
+        #[arg(long)]
+        watch: bool,
     },
 }
 
@@ -40,7 +51,21 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Commands::Build { target, release } => build(target, release),
-        Commands::Deploy { target } => deploy(&target),
+        Commands::Deploy { app, canto, watch } => {
+            if !canto {
+                eprintln!("error: specify a deploy target (e.g. --canto)");
+                exit(1);
+            }
+            if watch && app.is_none() {
+                eprintln!("error: --watch requires an app name");
+                exit(1);
+            }
+            if watch {
+                watch::watch_and_deploy(&app.unwrap());
+            } else {
+                deploy_canto(app.as_deref());
+            }
+        }
     }
 }
 
@@ -101,33 +126,26 @@ fn build_web_frontends() {
     }
 }
 
-/// Route deploy to the appropriate target handler.
-fn deploy(target: &str) {
-    match target {
-        "canto" => deploy_canto(),
-        other => {
-            eprintln!("unknown deploy target: {other}");
-            exit(1);
-        }
-    }
-}
-
-/// Deploy the sola binary to canto via rsync over SSH.
+/// Deploy binaries to canto via rsync over SSH.
 ///
-/// Steps:
-/// 1. Build the workspace in release mode
-/// 2. Ensure /opt/sola/bin/ exists on canto
-/// 3. rsync the sola binary
-fn deploy_canto() {
+/// If `app` is provided, builds and deploys only that app.
+/// Otherwise builds and deploys all workspace binaries.
+fn deploy_canto(app: Option<&str>) {
     println!("Building release...");
-    build(None, true);
+    let build_target = app.map(|name| resolve_crate_name(name));
+    build(build_target, true);
 
     println!("Preparing canto...");
     run_or_exit("ssh", &["canto", "mkdir -p /opt/sola/bin /opt/sola/log"]);
 
-    // Discover and deploy all workspace binaries.
+    let binaries: Vec<String> = if let Some(name) = app {
+        vec![resolve_crate_name(name)]
+    } else {
+        discover_binaries()
+    };
+
     println!("Deploying binaries to canto...");
-    for name in discover_binaries() {
+    for name in &binaries {
         let src = format!("target/release/{name}");
         if std::path::Path::new(&src).exists() {
             run_or_exit(
@@ -135,10 +153,32 @@ fn deploy_canto() {
                 &["-az", "--progress", &src, "canto:/opt/sola/bin/"],
             );
             println!("  deployed {name}");
+        } else {
+            eprintln!("  warning: binary not found: {src}");
         }
     }
 
     println!("Deployed to canto:/opt/sola/bin/");
+}
+
+/// Resolve a short app name (e.g. "terminal") to the crate's package name
+/// (e.g. "sola-terminal"). Checks both `apps/<name>/Cargo.toml` and
+/// `crates/<name>/Cargo.toml`. Falls back to "sola-<name>" if not found.
+pub(crate) fn resolve_crate_name(name: &str) -> String {
+    for prefix in &["apps", "crates"] {
+        let toml_path = format!("{prefix}/{name}/Cargo.toml");
+        if let Ok(contents) = std::fs::read_to_string(&toml_path) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.starts_with("name") {
+                    if let Some(pkg_name) = line.split('"').nth(1) {
+                        return pkg_name.to_string();
+                    }
+                }
+            }
+        }
+    }
+    format!("sola-{name}")
 }
 
 /// Discover deployable binary names by scanning workspace member directories.
@@ -254,11 +294,29 @@ mod tests {
     }
 
     #[test]
-    fn cli_parses_deploy() {
-        let cli = Cli::try_parse_from(["sola-make", "deploy", "canto"]).unwrap();
+    fn cli_parses_deploy_canto() {
+        let cli = Cli::try_parse_from(["sola-make", "deploy", "--canto"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Deploy { target: ref t } if t == "canto"
+            Commands::Deploy { app: None, canto: true, watch: false }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_deploy_app_canto() {
+        let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal", "--canto"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Deploy { app: Some(ref a), canto: true, watch: false } if a == "terminal"
+        ));
+    }
+
+    #[test]
+    fn cli_parses_deploy_watch() {
+        let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal", "--canto", "--watch"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Deploy { app: Some(ref a), canto: true, watch: true } if a == "terminal"
         ));
     }
 }

@@ -2304,6 +2304,8 @@ dependencies = [
  "gio",
  "glib",
  "gtk4",
+ "nix 0.31.2",
+ "notify",
  "serde_json",
  "sola-bus",
  "swc_common",
@@ -2368,6 +2370,7 @@ name = "sola-make"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "notify",
 ]
 
 [[package]]
