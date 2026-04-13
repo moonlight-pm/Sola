@@ -37,7 +37,15 @@ impl AgentHandler {
             return json!({ "error": "working_dir is required" });
         };
 
-        let dir = std::path::PathBuf::from(working_dir);
+        let expanded = if working_dir.starts_with("~/") {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{}/{}", home, &working_dir[2..])
+        } else if working_dir == "~" {
+            std::env::var("HOME").unwrap_or_default()
+        } else {
+            working_dir.to_string()
+        };
+        let dir = std::path::PathBuf::from(&expanded);
         if !dir.is_dir() {
             return json!({ "error": format!("Not a directory: {}", working_dir) });
         }

@@ -150,26 +150,59 @@ async function showNewDialog(): Promise<void> {
   const dialog = el('div', 'dialog');
   dialog.appendChild(el('h3', undefined, 'New Session'));
 
+  // Working directory field
+  const fieldLabel = el('div', 'field-label', 'WORKING DIRECTORY');
+  dialog.appendChild(fieldLabel);
+
   const input = document.createElement('input');
   input.type = 'text';
-  input.placeholder = '/path/to/project';
+  input.value = '~';
+  input.placeholder = '~/path/to/project';
+  dialog.appendChild(input);
+
+  // Status line
+  const status = el('div', 'path-status');
+  dialog.appendChild(status);
+
+  const startBtn = el('button', 'dbtn-start', 'Start Session') as HTMLButtonElement;
+
+  // Validate path
+  function updateStatus(path: string): void {
+    const expanded = path.startsWith('~/') ? '/home/' + path.slice(2) :
+                     path === '~' ? '/home/' :
+                     path;
+    status.textContent = expanded;
+    status.className = 'path-status';
+    if (path.trim()) {
+      status.classList.add('valid');
+      const checkIcon = el('span', 'icon icon-check');
+      checkIcon.style.marginRight = '6px';
+      status.textContent = '';
+      status.appendChild(checkIcon);
+      status.appendChild(document.createTextNode(expanded));
+    }
+  }
+
+  input.addEventListener('input', () => updateStatus(input.value));
+  updateStatus(input.value);
+
   input.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter') { await createSession(input.value); overlay.remove(); }
     if (e.key === 'Escape') overlay.remove();
   });
-  dialog.appendChild(input);
 
+  // Buttons
   const btns = el('div', 'dialog-btns');
   const cancelBtn = el('button', 'dbtn-cancel', 'Cancel');
   cancelBtn.addEventListener('click', () => overlay.remove());
   btns.appendChild(cancelBtn);
-  const createBtn = el('button', 'dbtn-create', 'Create');
-  createBtn.addEventListener('click', async () => { await createSession(input.value); overlay.remove(); });
-  btns.appendChild(createBtn);
+  startBtn.addEventListener('click', async () => { await createSession(input.value); overlay.remove(); });
+  btns.appendChild(startBtn);
   dialog.appendChild(btns);
+
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
-  requestAnimationFrame(() => input.focus());
+  requestAnimationFrame(() => { input.focus(); input.select(); });
 }
 
 async function createSession(dir: string): Promise<void> {
