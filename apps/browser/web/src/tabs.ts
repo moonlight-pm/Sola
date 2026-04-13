@@ -1,24 +1,53 @@
 import { html } from '@arrow-js/core';
-import { state, createTab, closeTab, switchTab } from './app.js';
 
-export function renderTabs(): any {
-  return html`
+export interface TabItem {
+  id: string;
+  url: string;
+  title: string;
+  loading: boolean;
+}
+
+export interface TabSidebarConfig {
+  tabs: () => TabItem[];
+  activeTabId: () => string | null;
+  onSelect: (id: string) => void;
+  onClose: (id: string) => void;
+  onCreate: () => void;
+}
+
+function displayTitle(tab: TabItem): string {
+  if (tab.title) return tab.title;
+  if (tab.url && tab.url !== 'about:blank') {
+    try { return new URL(tab.url).hostname; } catch { return tab.url; }
+  }
+  return 'New Tab';
+}
+
+export function createTabSidebar(config: TabSidebarConfig, target: HTMLElement): void {
+  function tabClass(tab: TabItem): string {
+    return tab.id === config.activeTabId() ? 'tab-item active' : 'tab-item';
+  }
+
+  html`
     <div class="tab-sidebar">
       <div class="tab-sidebar-header">
         <span style="font-weight: 600; font-size: 12px;">Tabs</span>
-        <button class="new-tab-btn" @click="${() => createTab('about:blank')}" title="New Tab">+</button>
+        <button class="new-tab-btn" @click="${config.onCreate}" title="New Tab">+</button>
       </div>
       <div class="tab-list">
-        ${() => state.tabs.map(tab =>
-          html`<div
-            class="${() => `tab-item ${tab.id === state.activeTabId ? 'active' : ''}`}"
-            @click="${() => switchTab(tab.id)}"
+        ${() => config.tabs().map(tab => html`
+          <div class="${() => tabClass(tab)}"
+            @click="${() => config.onSelect(tab.id)}"
           >
-            <span class="tab-item-title">${() => tab.title || tab.url || 'New Tab'}</span>
-            <button class="tab-item-close" @click="${(e: Event) => { e.stopPropagation(); closeTab(tab.id); }}" title="Close tab">&times;</button>
-          </div>`
-        )}
+            <span class="tab-item-title">${() => displayTitle(tab)}</span>
+            <button class="tab-item-close"
+              @click="${(e: MouseEvent) => { e.stopPropagation(); config.onClose(tab.id); }}"
+              @mousedown="${(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}"
+              title="Close tab"
+            >&times;</button>
+          </div>
+        `)}
       </div>
     </div>
-  `;
+  `(target);
 }

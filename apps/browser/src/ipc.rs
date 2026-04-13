@@ -122,12 +122,12 @@ fn cmd_create_tab(
     state: &Rc<AppState>,
     args: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    let tab_id = args["tabId"].as_str().ok_or("missing tabId")?;
     let url = args["url"].as_str();
     let activate = args["activate"].as_bool().unwrap_or(true);
-    let tab_id = uuid::Uuid::new_v4().to_string();
-    crate::tabs::create_tab_webview(state, &tab_id, url, None);
+    crate::tabs::create_tab_webview(state, tab_id, url, None);
     if activate {
-        crate::tabs::switch_tab(state, &tab_id);
+        crate::tabs::switch_tab(state, tab_id);
     }
 
     // Persist
@@ -140,7 +140,7 @@ fn cmd_create_tab(
     drop(store);
     state.persist_tabs();
 
-    Ok(serde_json::json!({ "tabId": tab_id }))
+    Ok(serde_json::json!("ok"))
 }
 
 fn cmd_close_tab(

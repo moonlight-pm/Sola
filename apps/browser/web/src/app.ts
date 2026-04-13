@@ -1,69 +1,89 @@
-import { reactive, html } from '@arrow-js/core';
+import { html } from '@arrow-js/core';
 import { invoke, on } from '@sola/ipc';
-import { renderTabs } from './tabs.js';
-import { renderAddressBar } from './address.js';
+import { createStore } from '@sola/store';
+import { createTabSidebar, type TabItem } from './tabs.js';
+import { createAddressBar } from './address.js';
 
-// --- App State ---
-export const state = reactive({
-  tabs: [] as Array<{ id: string; url: string; title: string; loading: boolean }>,
+// --- Reactive state ---
+
+const state = createStore({
+  tabs: [] as TabItem[],
   activeTabId: null as string | null,
   addressValue: '',
-  addressFocused: false,
   suggestions: [] as Array<{ url: string; title: string; visits: number }>,
   downloads: [] as Array<{ id: string; filename: string; progress: number }>,
 });
 
-// --- Actions ---
-export async function createTab(url?: string, activate: boolean = true): Promise<void> {
-  const result = await invoke('create_tab', { url, activate });
+// --- Tab management (synchronous, fire-and-forget IPC) ---
+
+let nextTabNum = 1;
+
+function createTab(url?: string, activate: boolean = true): string {
+  const tabId = `tab-${nextTabNum++}`;
   state.tabs = [...state.tabs, {
-    id: result.tabId,
+    id: tabId,
     url: url || '',
-    title: 'New Tab',
-    loading: false,
+    title: '',
+    loading: true,
   }];
   if (activate) {
-    state.activeTabId = result.tabId;
+    state.activeTabId = tabId;
     state.addressValue = url || '';
   }
+  // Fire-and-forget: tell Rust to create the WebView
+  invoke('create_tab', { tabId, url, activate });
+  return tabId;
 }
 
-export async function closeTab(tabId: string): Promise<void> {
-  await invoke('close_tab', { tabId });
+function closeTab(tabId: string): void {
+  const idx = state.tabs.findIndex(t => t.id === tabId);
+  if (idx === -1) return;
+
   state.tabs = state.tabs.filter(t => t.id !== tabId);
+
   if (state.activeTabId === tabId) {
-    const remaining = state.tabs;
-    if (remaining.length > 0) {
-      await switchTab(remaining[remaining.length - 1].id);
+    if (state.tabs.length > 0) {
+      const newIdx = Math.min(idx, state.tabs.length - 1);
+      switchTab(state.tabs[newIdx].id);
+    } else {
+      state.activeTabId = null;
+      state.addressValue = '';
     }
   }
+  // Fire-and-forget
+  invoke('close_tab', { tabId });
 }
 
-export async function switchTab(tabId: string): Promise<void> {
-  await invoke('switch_tab', { tabId });
+function switchTab(tabId: string): void {
+  if (state.activeTabId === tabId) return;
   state.activeTabId = tabId;
   const tab = state.tabs.find(t => t.id === tabId);
   if (tab) state.addressValue = tab.url;
+  // Fire-and-forget
+  invoke('switch_tab', { tabId });
 }
 
-export async function navigate(input: string): Promise<void> {
+function navigate(input: string): void {
   const url = looksLikeUrl(input)
     ? (input.startsWith('http') ? input : `https://${input}`)
     : `https://kagi.com/search?q=${encodeURIComponent(input)}`;
-  await invoke('navigate', { url });
+  state.addressValue = url;
+  state.suggestions = [];
+  invoke('navigate', { url });
 }
 
-export async function goBack(): Promise<void> { await invoke('go_back'); }
-export async function goForward(): Promise<void> { await invoke('go_forward'); }
-export async function reload(): Promise<void> { await invoke('reload'); }
+function goBack(): void { invoke('go_back'); }
+function goForward(): void { invoke('go_forward'); }
+function doReload(): void { invoke('reload'); }
 
-export async function searchHistory(query: string): Promise<void> {
-  if (!query || query.length < 2) {
+function searchHistory(value: string): void {
+  if (!value || value.length < 2) {
     state.suggestions = [];
     return;
   }
-  const results = await invoke('history_search', { query });
-  state.suggestions = results || [];
+  invoke('history_search', { query: value }).then((results: any) => {
+    state.suggestions = results || [];
+  });
 }
 
 function looksLikeUrl(input: string): boolean {
@@ -73,6 +93,7 @@ function looksLikeUrl(input: string): boolean {
 }
 
 // --- Events from Rust ---
+
 on('tab_title_changed', ({ tabId, title }: any) => {
   state.tabs = state.tabs.map(t =>
     t.id === tabId ? { ...t, title } : t
@@ -95,16 +116,24 @@ on('tab_load_changed', ({ tabId, loading }: any) => {
 });
 
 on('bus_new_tab', ({ tabId, url, activate }: any) => {
-  // Tab WebView already created by Rust -- just update frontend state
+  // Bus-initiated tab — Rust already created the WebView
   state.tabs = [...state.tabs, {
     id: tabId,
     url: url || '',
-    title: 'New Tab',
+    title: '',
     loading: true,
   }];
   if (activate !== false) {
     state.activeTabId = tabId;
     state.addressValue = url || '';
+  }
+});
+
+on('tab_closed', ({ tabId }: any) => {
+  // Bus-initiated close (Super+W)
+  state.tabs = state.tabs.filter(t => t.id !== tabId);
+  if (state.activeTabId === tabId && state.tabs.length > 0) {
+    state.activeTabId = state.tabs[state.tabs.length - 1].id;
   }
 });
 
@@ -132,21 +161,53 @@ on('download_finished', ({ id }: any) => {
   }, 3000);
 });
 
-// --- App entry ---
+// --- App entry point ---
+
 export async function createApp(root: HTMLElement): Promise<void> {
-  // Mount UI
+  // Create mount targets
+  const sidebarTarget = document.createElement('div');
+  sidebarTarget.style.display = 'contents';
+  const topbarTarget = document.createElement('div');
+  topbarTarget.style.display = 'contents';
+
+  // Layout shell
   html`
-    ${() => renderTabs()}
     <div class="top-bar">
       <button class="nav-btn" @click="${goBack}">&#9664;</button>
       <button class="nav-btn" @click="${goForward}">&#9654;</button>
-      <button class="nav-btn" @click="${reload}">&#8635;</button>
-      ${() => renderAddressBar()}
+      <button class="nav-btn" @click="${doReload}">&#8635;</button>
     </div>
     ${() => state.downloads.map(d =>
       html`<div class="download-toast">${() => d.filename} — ${() => Math.round(d.progress * 100)}%</div>`
     )}
   `(root);
+
+  // Insert component mount targets
+  root.prepend(sidebarTarget);
+  const topBar = root.querySelector('.top-bar')!;
+  topbarTarget.style.flex = '1';
+  topBar.appendChild(topbarTarget);
+
+  // Mount components
+  createTabSidebar({
+    tabs: () => state.tabs,
+    activeTabId: () => state.activeTabId,
+    onSelect: switchTab,
+    onClose: closeTab,
+    onCreate: () => createTab(),
+  }, sidebarTarget);
+
+  createAddressBar({
+    value: () => state.addressValue,
+    suggestions: () => state.suggestions,
+    onNavigate: navigate,
+    onInput: (value) => {
+      state.addressValue = value;
+      searchHistory(value);
+    },
+    onFocus: () => {},
+    onBlur: () => { state.suggestions = []; },
+  }, topbarTarget);
 
   // Restore session
   const session = await invoke('ready');
@@ -156,6 +217,6 @@ export async function createApp(root: HTMLElement): Promise<void> {
     state.addressValue = state.tabs.find(t => t.id === state.activeTabId)?.url || '';
   }
   if (state.tabs.length === 0) {
-    await createTab('about:blank');
+    createTab('about:blank');
   }
 }
