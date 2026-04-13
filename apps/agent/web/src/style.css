@@ -462,6 +462,13 @@ html, body {
 
 @keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
 
+.cancelled-label {
+  font-size: 11px;
+  color: var(--text-ghost);
+  font-style: italic;
+  margin-left: 4px;
+}
+
 /* ── Input Area ─────────────────────────────────────────────────────────── */
 .input-area {
   padding: 10px 20px 14px;

@@ -253,7 +253,10 @@ async fn run_claude(
     let (acc_text, acc_blocks, result_metrics) = read_task.await
         .unwrap_or_else(|_| (String::new(), Vec::new(), None));
 
-    send_event(event_tx, json!({"event": "message_end", "session_id": session_id}));
+    send_event(event_tx, json!({
+        "event": "message_end", "session_id": session_id,
+        "cancelled": was_cancelled
+    }));
 
     // Send metrics
     if let Some(ref result) = result_metrics {
@@ -293,10 +296,12 @@ async fn run_claude(
         send_event(event_tx, metrics);
     }
 
-    // Save conversation history
-    // On cancel: save the user message but discard partial assistant response
-    // On completion: save everything
-    if !was_cancelled && (!acc_text.is_empty() || !acc_blocks.is_empty()) {
+    // On cancel: discard everything (user message + partial response)
+    // On completion: save user message + assistant response
+    if was_cancelled {
+        // Remove the user message we appended to history
+        history.pop();
+    } else if !acc_text.is_empty() || !acc_blocks.is_empty() {
         let content = if acc_blocks.is_empty() {
             json!([{"type": "text", "text": acc_text}])
         } else {

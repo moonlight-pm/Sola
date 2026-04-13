@@ -23,6 +23,7 @@ interface Message {
   role: string;
   content: string;
   streaming: boolean;
+  cancelled?: boolean;
   tools: ToolCall[];
 }
 
@@ -95,7 +96,11 @@ on('message_end', (ev: any) => {
   const m = state.messages[ev.session_id];
   if (!m) return;
   const last = m[m.length - 1];
-  if (last) { last.streaming = false; renderMessages(); }
+  if (last) {
+    last.streaming = false;
+    if (ev.cancelled) { last.cancelled = true; }
+    renderMessages();
+  }
 });
 
 on('tool_start', (ev: any) => {
@@ -486,6 +491,7 @@ function renderMessages(): void {
       div.id = 'assistant-msg-' + i;
       div.appendChild(document.createTextNode(msg.content));
       if (msg.streaming) div.appendChild(el('span', 'cursor'));
+      if (msg.cancelled) div.appendChild(el('span', 'cancelled-label', ' Cancelled'));
       appendToolCalls(div, msg);
       msgLog.appendChild(div);
     }
