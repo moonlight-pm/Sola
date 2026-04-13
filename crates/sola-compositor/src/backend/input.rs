@@ -56,17 +56,15 @@ pub fn setup(
                     // Exception: during input grab, ALL keys go to the grabbed
                     // surface via normal Wayland focus (including Super+key combos).
                     if modifiers.super_held && state.input_grab.is_none() {
-                        if let Some(bus) = &mut state.bus {
-                            use sola_bus::topics::{Topic, KeyEvent};
-                            let key = KeyEvent {
-                                code,
-                                pressed,
-                                super_held: modifiers.super_held,
-                                shift_held: modifiers.shift_held,
-                            };
-                            if let Err(e) = bus.emit(Topic::Key(key)) {
-                                tracing::warn!("failed to emit key to bus: {e}");
-                            }
+                        use sola_bus::topics::{Topic, KeyEvent};
+                        let key = KeyEvent {
+                            code,
+                            pressed,
+                            super_held: modifiers.super_held,
+                            shift_held: modifiers.shift_held,
+                        };
+                        if let Err(e) = state.bus.emit(Topic::Key(key)) {
+                            tracing::warn!("failed to emit key to bus: {e}");
                         }
                         return;
                     }

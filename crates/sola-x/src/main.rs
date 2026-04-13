@@ -24,7 +24,7 @@ fn main() {
 
     let log_dir = "/opt/sola/log";
     let _ = std::fs::create_dir_all(log_dir);
-    let file_appender = tracing_appender::rolling::never(log_dir, "sola-x.log");
+    let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
 
     let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
     let file_layer = tracing_subscriber::fmt::layer()
@@ -37,7 +37,7 @@ fn main() {
         .with(file_layer)
         .init();
 
-    tracing::info!("sola-x starting (logs → stderr + {log_dir}/sola-x.log)");
+    tracing::info!("sola-x starting");
 
     if let Err(err) = run() {
         tracing::error!(%err, "sola-x exited with error");
@@ -57,14 +57,8 @@ fn run() -> Result<(), Error> {
     let mut state = State::new(display.handle(), event_loop.handle());
 
     // -- Bus --
-    match sola_bus::BusClient::connect() {
-        Ok(client) => {
-            tracing::info!("connected to sola bus");
-            state.bus = Some(client);
-        }
-        Err(e) => {
-            tracing::warn!("bus not available, running without: {e}");
-        }
+    if let Err(e) = state.bus.connect() {
+        tracing::warn!("bus not available, running without: {e}");
     }
 
     // -- Wayland socket for XWayland --
@@ -246,8 +240,7 @@ fn inject_input(state: &mut State) {
 
 /// Process pending bus messages.
 fn process_bus(state: &mut State) {
-    let Some(bus) = &state.bus else { return };
-    while let Some(_msg) = bus.try_recv() {
+    while let Some(_msg) = state.bus.try_recv() {
         // Bus messages processed here as needed.
     }
 }

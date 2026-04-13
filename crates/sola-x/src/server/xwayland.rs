@@ -210,15 +210,13 @@ fn track_x11_window(state: &mut State, surface: X11Surface) {
 /// Send window geometry to the compositor via the bus.
 fn emit_geometry(state: &mut State, app_id: &str, geo: Rectangle<i32, Logical>) {
     use sola_bus::topics::{Topic, WindowGeometry};
-    if let Some(bus) = &mut state.bus {
-        let _ = bus.emit(Topic::SetWindowGeometry(WindowGeometry {
-            app_id: app_id.to_string(),
-            x: geo.loc.x,
-            y: geo.loc.y,
-            width: geo.size.w,
-            height: geo.size.h,
-        }));
-    }
+    let _ = state.bus.emit(Topic::SetWindowGeometry(WindowGeometry {
+        app_id: app_id.to_string(),
+        x: geo.loc.x,
+        y: geo.loc.y,
+        width: geo.size.w,
+        height: geo.size.h,
+    }));
 }
 
 smithay::delegate_xwayland_shell!(State);

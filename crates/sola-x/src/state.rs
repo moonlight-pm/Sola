@@ -41,7 +41,7 @@ pub struct State {
     // -- Bus --
 
     /// Connection to the Sola Bus for lifecycle coordination.
-    pub bus: Option<sola_bus::BusClient>,
+    pub bus: sola_bus::BusClient,
 
     // -- Bridge state --
 
@@ -212,7 +212,7 @@ impl State {
             xwm: None,
             xwayland_shell_state: None,
             xwayland_mapped: HashSet::new(),
-            bus: None,
+            bus: sola_bus::BusClient::new(),
             surface_to_x11: HashMap::new(),
             x11_windows: HashMap::new(),
             client: None,

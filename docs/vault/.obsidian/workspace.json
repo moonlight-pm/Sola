@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "sola-bus.md",
+                "file": "sola-app.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "sola-bus"
+              "title": "sola-app"
             }
           }
         ]
@@ -94,7 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "sola-bus.md",
+                "file": "sola-app.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Backlinks for sola-bus"
+              "title": "Backlinks for sola-app"
             }
           },
           {
@@ -113,12 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "sola-bus.md",
+                "file": "sola-app.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Outgoing links from sola-bus"
+              "title": "Outgoing links from sola-app"
             }
           },
           {
@@ -156,13 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "sola-bus.md",
+                "file": "sola-app.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Outline of sola-bus"
+              "title": "Outline of sola-app"
             }
           }
         ]
@@ -186,6 +186,9 @@
   "active": "ab3581b4f6f74470",
   "lastOpenFiles": [
     "Sola.md",
+    "sola-app.md",
+    "Input Routing.md",
+    "sola-bus.md",
     "Sola.md.tmp.90435.1775959692365",
     "Sola.md.tmp.90435.1775959688193",
     "Topics.md",
@@ -199,13 +202,11 @@
     "sola-compositor.md.tmp.26205.1775954318804",
     "Process Model.md",
     "Process Model.md.tmp.26205.1775954290978",
-    "Input Routing.md",
     "Input Routing.md.tmp.26205.1775954275444",
     "Topics.md.tmp.26205.1775954259794",
     "Wire Format.md",
     "Wire Format.md.tmp.26205.1775954245644",
     "Sola Bus.md",
-    "sola-bus.md",
     "sola.md"
   ]
 }

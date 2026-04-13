@@ -32,8 +32,9 @@ pub struct State {
     /// Controls the main event loop. Set to `false` to trigger shutdown.
     pub running: bool,
 
-    /// Connection to the Sola Bus. `None` if the bus isn't available yet.
-    pub bus: Option<sola_bus::BusClient>,
+    /// Connection to the Sola Bus. Always available — queues messages if
+    /// not yet connected.
+    pub bus: sola_bus::BusClient,
 
     /// Handle for creating Wayland globals and accessing the display.
     /// Unlike `Display`, a `DisplayHandle` can be freely cloned and used
@@ -110,9 +111,10 @@ pub struct State {
     /// The app that most recently had keyboard focus is at index 0.
     pub mru_apps: Vec<String>,
 
-    /// Window positions received from sola-x before the window appeared.
-    /// Applied in `new_toplevel` when the window is first mapped.
-    pub pending_geometries: HashMap<String, (i32, i32)>,
+    /// Window geometries received before the window appeared.
+    /// Applied in `apply_pending_geometries` when the window is first mapped.
+    pub pending_geometries: HashMap<String, sola_bus::topics::WindowGeometry>,
+
 
     // -- Protocol state --
 
@@ -153,7 +155,7 @@ impl State {
 
         Self {
             running: true,
-            bus: None,
+            bus: sola_bus::BusClient::new(),
             display_handle: dh,
             loop_handle,
             session,

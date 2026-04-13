@@ -35,6 +35,37 @@ pub struct WindowGeometry {
     pub height: i32,
 }
 
+/// Output resolution, emitted by compositor on startup and hotplug.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputGeometry {
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Zone {
+    Left,
+    Right,
+    TopMiddle,
+    BottomMiddle,
+    FullMiddle,
+    Fullscreen,
+}
+
+impl Zone {
+    /// Returns (x%, y%, width%, height%) as fractions of the output.
+    pub fn rect(&self) -> (f64, f64, f64, f64) {
+        match self {
+            Zone::Left => (0.0, 0.0, 0.28, 1.0),
+            Zone::Right => (0.72, 0.0, 0.28, 1.0),
+            Zone::TopMiddle => (0.28, 0.0, 0.44, 0.7),
+            Zone::BottomMiddle => (0.28, 0.7, 0.44, 0.3),
+            Zone::FullMiddle => (0.28, 0.0, 0.44, 1.0),
+            Zone::Fullscreen => (0.0, 0.0, 1.0, 1.0),
+        }
+    }
+}
+
 define_topics! {
     // Input routing
     Key(KeyEvent),
@@ -50,6 +81,7 @@ define_topics! {
 
     // Window management
     SetWindowGeometry(WindowGeometry),
+    OutputGeometry(OutputGeometry),
 
     // Browser
     OpenUrl(OpenUrlRequest),

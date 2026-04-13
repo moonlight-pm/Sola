@@ -39,7 +39,7 @@ impl CompositorHandler for State {
 
         // Import the buffer into the primary GPU's renderer early.
         // See: https://docs.rs/smithay/latest/smithay/backend/renderer/multigpu/struct.GpuManager.html#method.early_import
-        if let Err(err) = self.gpu_manager.early_import(self.primary_gpu, surface) {
+        if let Err(err) = self.gpu_manager.early_import(self.primary_render_node, surface) {
             tracing::warn!(?err, "early_import failed");
         }
 

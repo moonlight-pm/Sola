@@ -281,6 +281,18 @@ pub fn init_device(
         },
     );
 
+    // Emit output geometry as sticky so any bus client (including
+    // those connecting later) receives the display size.
+    if let Some(mode) = state.space.outputs().next().and_then(|o| o.current_mode()) {
+        use sola_bus::topics::{OutputGeometry, Topic};
+        let geo = OutputGeometry {
+            width: mode.size.w,
+            height: mode.size.h,
+        };
+        tracing::info!(width = geo.width, height = geo.height, "emitting OutputGeometry (sticky)");
+        let _ = state.bus.emit_sticky(Topic::OutputGeometry(geo));
+    }
+
     tracing::info!(?node, "GPU device fully initialized");
     Ok(())
 }

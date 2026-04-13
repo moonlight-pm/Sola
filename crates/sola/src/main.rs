@@ -1,4 +1,5 @@
 mod watcher;
+mod zoning;
 
 use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
@@ -59,38 +60,64 @@ fn main() {
     }
 
     // Connect to bus (retry until available)
-    let mut bus: Option<sola_bus::BusClient> = None;
+    let mut bus = sola_bus::BusClient::new();
+    let mut zoning = zoning::ZoningState::new();
 
-    // Supervise
+    // Supervise — block on bus messages, fall through every 500ms
+    // to check process health and binary changes.
+    let poll_interval = Duration::from_millis(500);
+
     loop {
         // Try to connect to bus if not connected
-        if bus.is_none() {
-            if let Ok(client) = sola_bus::BusClient::connect() {
-                info!("connected to bus");
-                bus = Some(client);
+        if !bus.is_connected() {
+            let _ = bus.connect();
+        }
+
+        // Block until a bus message arrives or the supervision interval expires.
+        // This replaces the old poll+sleep pattern — key events are now instant.
+        let mut messages = Vec::new();
+        if let Some(msg) = bus.recv_timeout(poll_interval) {
+            messages.push(msg);
+            // Drain any additional messages that arrived.
+            while let Some(msg) = bus.try_recv() {
+                messages.push(msg);
             }
         }
 
-        // Check for bus messages
-        if let Some(ref client) = bus {
-            while let Some(msg) = client.try_recv() {
-                let Some(topic) = Topic::parse(&msg) else { continue };
-                match topic {
-                    Topic::Shutdown => {
-                        info!("shutdown requested via bus");
+        for msg in &messages {
+            tracing::debug!(topic = %msg.topic, "bus message received");
+            let Some(topic) = Topic::parse(msg) else { continue };
+            match topic {
+                Topic::Shutdown => {
+                    info!("shutdown requested via bus");
+                    shutdown_all(&mut managed);
+                    std::process::exit(0);
+                }
+                Topic::Key(key) => {
+                    // Super+Shift+Backspace → shutdown
+                    if !key.pressed && key.code == 22 && key.super_held && key.shift_held {
+                        info!("kill chord received, shutting down");
                         shutdown_all(&mut managed);
                         std::process::exit(0);
                     }
-                    Topic::Key(key) => {
-                        // Super+Shift+Backspace → shutdown
-                        if !key.pressed && key.code == 22 && key.super_held && key.shift_held {
-                            info!("kill chord received, shutting down");
-                            shutdown_all(&mut managed);
-                            std::process::exit(0);
-                        }
+
+                    // Zone snapping
+                    if let Some(geo) = zoning.handle_key(&key) {
+                        let _ = bus.emit(Topic::SetWindowGeometry(geo));
                     }
-                    _ => {}
                 }
+                Topic::FocusChanged(app_id) => {
+                    zoning.set_focused(app_id);
+                }
+                Topic::OutputGeometry(geo) => {
+                    zoning.set_output_size(&geo);
+
+                    // Restore saved zones on first OutputGeometry.
+                    for geo in zoning.restore() {
+                        let _ = bus.emit(Topic::SetWindowGeometry(geo));
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -128,8 +155,6 @@ fn main() {
                 launch(&bin_dir, name, &mut managed);
             }
         }
-
-        thread::sleep(Duration::from_millis(500));
     }
 }
 
