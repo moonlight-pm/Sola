@@ -223,7 +223,7 @@ impl SolaApp {
             if let Some(bus_handler) = bus_handler.borrow_mut().take() {
                 let webview_for_bus = webview.clone();
                 glib::timeout_add_local(Duration::from_millis(50), move || {
-                    let mut client = bus.borrow_mut();
+                    let client = bus.borrow_mut();
                     while let Some(msg) = client.try_recv() {
                         let Some(topic) = Topic::parse(&msg) else { continue };
                         let send = |value: serde_json::Value| {

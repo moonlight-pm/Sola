@@ -209,7 +209,7 @@ fn build_ui(app: &gtk4::Application) {
         let app_state = app_state.clone();
         let bus = bus.clone();
         move || {
-            let mut client = bus.borrow_mut();
+            let client = bus.borrow_mut();
             while let Some(msg) = client.try_recv() {
                 let Some(topic) = Topic::parse(&msg) else { continue };
                 match topic {
