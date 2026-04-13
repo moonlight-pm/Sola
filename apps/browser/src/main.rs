@@ -23,6 +23,7 @@ mod keycode {
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
+    "/src/main.ts" => (include_str!("../web/src/main.ts"), TypeScript),
     "/src/app.ts" => (include_str!("../web/src/app.ts"), TypeScript),
     "/src/tabs.ts" => (include_str!("../web/src/tabs.ts"), TypeScript),
     "/src/address.ts" => (include_str!("../web/src/address.ts"), TypeScript),

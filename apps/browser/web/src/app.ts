@@ -132,9 +132,9 @@ on('download_finished', ({ id }: any) => {
   }, 3000);
 });
 
-// --- Render ---
-function render(): void {
-  const app = document.getElementById('app')!;
+// --- App entry ---
+export async function createApp(root: HTMLElement): Promise<void> {
+  // Mount UI
   html`
     ${() => renderTabs()}
     <div class="top-bar">
@@ -146,21 +146,16 @@ function render(): void {
     ${() => state.downloads.map(d =>
       html`<div class="download-toast">${() => d.filename} — ${() => Math.round(d.progress * 100)}%</div>`
     )}
-  `(app);
-}
+  `(root);
 
-// --- Init ---
-async function init(): Promise<void> {
+  // Restore session
   const session = await invoke('ready');
   if (session.tabs && session.tabs.length > 0) {
     state.tabs = session.tabs;
     state.activeTabId = session.activeTabId || session.tabs[0].id;
     state.addressValue = state.tabs.find(t => t.id === state.activeTabId)?.url || '';
   }
-  render();
   if (state.tabs.length === 0) {
     await createTab('about:blank');
   }
 }
-
-init();
