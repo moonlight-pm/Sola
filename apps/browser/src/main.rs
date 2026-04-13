@@ -219,10 +219,11 @@ fn build_ui(app: &gtk4::Application) {
                     let Some(topic) = Topic::parse(&msg) else { continue };
                     match topic {
                         Topic::Key(key) => {
+                            // TODO: re-enable focus check once compositor emits FocusChanged
+                            // for normal app focus transitions (not just input grabs).
+                            // Currently FocusChanged is never emitted, so we match the
+                            // terminal's behavior: process Super+key unconditionally.
                             if key.pressed && key.super_held {
-                                let focused = *app_state.focused.borrow();
-                                tracing::info!(code = key.code, focused, "super+key received");
-                                if !focused { continue; }
                                 match key.code {
                                     keycode::T => {
                                         let tab_id = uuid::Uuid::new_v4().to_string();
