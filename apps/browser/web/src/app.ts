@@ -133,7 +133,11 @@ on('download_finished', ({ id }: any) => {
 });
 
 // --- Render ---
+let rendered = false;
 function render(): void {
+  if (rendered) return;
+  rendered = true;
+
   const app = document.getElementById('app')!;
 
   // Create container elements for each section
