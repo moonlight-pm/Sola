@@ -133,24 +133,20 @@ on('download_finished', ({ id }: any) => {
 });
 
 // --- Render ---
-function renderDownloads(): any {
-  return html`${() => state.downloads.map(d =>
-    html`<div class="download-toast">${() => d.filename} — ${() => Math.round(d.progress * 100)}%</div>`
-  )}`;
-}
-
 function render(): void {
   const app = document.getElementById('app')!;
-  app.append(
-    renderTabs(),
-    html`<div class="top-bar">
+  html`
+    ${renderTabs()}
+    <div class="top-bar">
       <button class="nav-btn" @click="${goBack}">&#9664;</button>
       <button class="nav-btn" @click="${goForward}">&#9654;</button>
       <button class="nav-btn" @click="${reload}">&#8635;</button>
       ${renderAddressBar()}
-    </div>`,
-    renderDownloads(),
-  );
+    </div>
+    ${() => state.downloads.map(d =>
+      html`<div class="download-toast">${() => d.filename} — ${() => Math.round(d.progress * 100)}%</div>`
+    )}
+  `(app);
 }
 
 // --- Init ---
