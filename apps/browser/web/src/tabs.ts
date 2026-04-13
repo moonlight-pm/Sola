@@ -1,4 +1,5 @@
 import { html } from '@arrow-js/core';
+import { Plus, X } from './icons.js';
 
 export interface TabItem {
   id: string;
@@ -31,8 +32,8 @@ export function createTabSidebar(config: TabSidebarConfig, target: HTMLElement):
   html`
     <div class="tab-sidebar">
       <div class="tab-sidebar-header">
-        <span style="font-weight: 600; font-size: 12px;">Tabs</span>
-        <button class="new-tab-btn" @click="${config.onCreate}" title="New Tab">+</button>
+        <span>Tabs</span>
+        <button class="new-tab-btn-header" @click="${config.onCreate}" title="New Tab">${Plus}</button>
       </div>
       <div class="tab-list">
         ${() => config.tabs().map(tab => html`
@@ -44,10 +45,13 @@ export function createTabSidebar(config: TabSidebarConfig, target: HTMLElement):
               @click="${(e: MouseEvent) => { e.stopPropagation(); config.onClose(tab.id); }}"
               @mousedown="${(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}"
               title="Close tab"
-            >&times;</button>
+            >${X}</button>
           </div>
         `)}
       </div>
+      <button class="new-tab-btn" @click="${config.onCreate}">
+        ${Plus} <span>New Tab</span>
+      </button>
     </div>
   `(target);
 }

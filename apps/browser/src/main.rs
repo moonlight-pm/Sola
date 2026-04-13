@@ -27,6 +27,7 @@ static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/src/app.ts" => (include_str!("../web/src/app.ts"), TypeScript),
     "/src/tabs.ts" => (include_str!("../web/src/tabs.ts"), TypeScript),
     "/src/address.ts" => (include_str!("../web/src/address.ts"), TypeScript),
+    "/src/icons.ts" => (include_str!("../web/src/icons.ts"), TypeScript),
     "/src/theme.css" => (include_str!("../web/src/theme.css"), Css),
 };
 

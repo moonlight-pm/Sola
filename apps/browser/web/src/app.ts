@@ -3,6 +3,7 @@ import { invoke, on } from '@sola/ipc';
 import { createStore } from '@sola/store';
 import { createTabSidebar, type TabItem } from './tabs.js';
 import { createAddressBar } from './address.js';
+import { ArrowLeft, ArrowRight, RotateCw } from './icons.js';
 
 // --- Reactive state ---
 
@@ -173,9 +174,9 @@ export async function createApp(root: HTMLElement): Promise<void> {
   // Layout shell
   html`
     <div class="top-bar">
-      <button class="nav-btn" @click="${goBack}">&#9664;</button>
-      <button class="nav-btn" @click="${goForward}">&#9654;</button>
-      <button class="nav-btn" @click="${doReload}">&#8635;</button>
+      <button class="nav-btn" @click="${goBack}">${ArrowLeft}</button>
+      <button class="nav-btn" @click="${goForward}">${ArrowRight}</button>
+      <button class="nav-btn" @click="${doReload}">${RotateCw}</button>
     </div>
     ${() => state.downloads.map(d =>
       html`<div class="download-toast">${() => d.filename} — ${() => Math.round(d.progress * 100)}%</div>`
@@ -205,7 +206,6 @@ export async function createApp(root: HTMLElement): Promise<void> {
       state.addressValue = value;
       searchHistory(value);
     },
-    onFocus: () => {},
     onBlur: () => { state.suggestions = []; },
   }, topbarTarget);
 

@@ -5,18 +5,12 @@ export interface AddressBarConfig {
   suggestions: () => Array<{ url: string; title: string; visits: number }>;
   onNavigate: (input: string) => void;
   onInput: (value: string) => void;
-  onFocus: () => void;
   onBlur: () => void;
 }
 
 export function createAddressBar(config: AddressBarConfig, target: HTMLElement): void {
-  let debounceTimer: number | null = null;
-
   function onInput(e: Event): void {
-    const value = (e.target as HTMLInputElement).value;
-    config.onInput(value);
-    if (debounceTimer !== null) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => config.onInput(value), 150) as unknown as number;
+    config.onInput((e.target as HTMLInputElement).value);
   }
 
   function onKeyDown(e: KeyboardEvent): void {
@@ -29,13 +23,8 @@ export function createAddressBar(config: AddressBarConfig, target: HTMLElement):
     }
   }
 
-  function selectSuggestion(url: string): void {
-    config.onNavigate(url);
-  }
-
   function onFocus(e: Event): void {
     (e.target as HTMLInputElement).select();
-    config.onFocus();
   }
 
   function onBlur(): void {
@@ -57,7 +46,7 @@ export function createAddressBar(config: AddressBarConfig, target: HTMLElement):
       ${() => config.suggestions().length > 0 ? html`
         <div class="autocomplete-list">
           ${() => config.suggestions().map(s =>
-            html`<div class="autocomplete-item" @mousedown="${() => selectSuggestion(s.url)}">
+            html`<div class="autocomplete-item" @mousedown="${() => config.onNavigate(s.url)}">
               <span class="autocomplete-item-title">${() => s.title}</span>
               <span class="autocomplete-item-url">${() => s.url}</span>
             </div>`

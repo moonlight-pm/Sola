@@ -1,5 +1,5 @@
-pub const SIDEBAR_WIDTH: i32 = 200;
-pub const TOPBAR_HEIGHT: i32 = 40;
+pub const SIDEBAR_WIDTH: i32 = 220;
+pub const TOPBAR_HEIGHT: i32 = 32;
 
 pub struct ContentArea {
     pub x: i32,
@@ -24,10 +24,10 @@ mod tests {
     #[test]
     fn content_area_calculation() {
         let area = content_area(1920, 1080);
-        assert_eq!(area.x, 200);
-        assert_eq!(area.y, 40);
-        assert_eq!(area.width, 1720);
-        assert_eq!(area.height, 1040);
+        assert_eq!(area.x, 220);
+        assert_eq!(area.y, 32);
+        assert_eq!(area.width, 1700);
+        assert_eq!(area.height, 1048);
     }
 
     #[test]
