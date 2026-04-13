@@ -56,13 +56,16 @@ pub fn watch_and_deploy(app: &str) {
     println!("[watch] waiting for changes...");
 
     loop {
-        // Wait for first event
-        let event = match event_rx.recv() {
-            Ok(ev) => ev,
-            Err(_) => return,
+        // Wait for a meaningful event (create, modify, or remove)
+        let changed_file = loop {
+            let event = match event_rx.recv() {
+                Ok(ev) => ev,
+                Err(_) => return,
+            };
+            if let Some(path) = meaningful_change(&event) {
+                break path;
+            }
         };
-
-        let changed_file = describe_change(&event);
 
         // Debounce: drain events for DEBOUNCE_MS
         let deadline = Instant::now() + Duration::from_millis(DEBOUNCE_MS);
@@ -148,11 +151,20 @@ fn build_and_deploy(crate_name: &str) -> bool {
     }
 }
 
-/// Extract a human-readable path from a file watcher event.
-fn describe_change(event: &notify::Event) -> String {
-    event
-        .paths
-        .first()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "(unknown)".to_string())
+/// If the event is a meaningful file change (create, modify, remove),
+/// return a human-readable path. Returns None for access, metadata, and
+/// other events that shouldn't trigger a rebuild.
+fn meaningful_change(event: &notify::Event) -> Option<String> {
+    use notify::EventKind;
+    match &event.kind {
+        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {}
+        _ => return None,
+    }
+    Some(
+        event
+            .paths
+            .first()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "(unknown)".to_string()),
+    )
 }
