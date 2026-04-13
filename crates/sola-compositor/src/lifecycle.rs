@@ -67,7 +67,12 @@ fn sync_mru(state: &mut State) {
     if state.mru_apps.first().is_some_and(|f| f == &app_id) { return; }
 
     state.mru_apps.retain(|id| id != &app_id);
-    state.mru_apps.insert(0, app_id);
+    state.mru_apps.insert(0, app_id.clone());
+
+    // Emit FocusChanged that seat::focus_changed missed due to the
+    // set_app_id / set_focus race.
+    use sola_bus::topics::Topic;
+    let _ = state.bus.emit_sticky(Topic::FocusChanged(app_id));
 }
 
 /// Process any pending bus messages.

@@ -52,10 +52,31 @@ impl ZoningState {
             return None;
         }
 
-        let zone = zone_for_keycode(key.code)?;
-        let (w, h) = self.output_size?;
-        let app_id = self.focused_app_id.clone()?;
+        let zone = match zone_for_keycode(key.code) {
+            Some(z) => z,
+            None => {
+                tracing::debug!(code = key.code, "no zone for keycode");
+                return None;
+            }
+        };
 
+        let (w, h) = match self.output_size {
+            Some(s) => s,
+            None => {
+                warn!("zone key pressed but no output geometry cached");
+                return None;
+            }
+        };
+
+        let app_id = match self.focused_app_id.clone() {
+            Some(id) => id,
+            None => {
+                warn!("zone key pressed but no focused app");
+                return None;
+            }
+        };
+
+        info!(app_id = %app_id, ?zone, "snapping to zone");
         let geo = compute_geometry(zone, &app_id, w, h);
 
         self.zone_assignments.insert(app_id, zone);

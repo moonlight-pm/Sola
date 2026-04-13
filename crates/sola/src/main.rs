@@ -74,6 +74,7 @@ fn main() {
         let messages: Vec<_> = std::iter::from_fn(|| bus.try_recv()).collect();
 
         for msg in &messages {
+            tracing::debug!(topic = %msg.topic, "bus message received");
             let Some(topic) = Topic::parse(msg) else { continue };
             match topic {
                 Topic::Shutdown => {
