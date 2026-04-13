@@ -70,14 +70,8 @@ pub fn run() -> Result<(), CompositorError> {
     backend::input::setup(&event_loop.handle(), &state.session)?;
 
     // -- Bus --
-    match sola_bus::BusClient::connect() {
-        Ok(client) => {
-            tracing::info!("connected to sola bus");
-            state.bus = Some(client);
-        }
-        Err(e) => {
-            tracing::warn!("bus not available, running without: {e}");
-        }
+    if let Err(e) = state.bus.connect() {
+        tracing::warn!("bus not available, running without: {e}");
     }
 
     // -- Wayland socket --

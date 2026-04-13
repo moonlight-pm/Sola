@@ -199,13 +199,9 @@ fn build_ui(app: &gtk4::Application) {
     ipc::setup(&chrome_manager, &app_state);
 
     // Bus connection
-    let bus: Rc<RefCell<Option<BusClient>>> = Rc::new(RefCell::new(None));
-    match BusClient::connect() {
-        Ok(client) => {
-            tracing::info!("connected to bus");
-            *bus.borrow_mut() = Some(client);
-        }
-        Err(e) => tracing::warn!("bus not available: {e}"),
+    let bus: Rc<RefCell<BusClient>> = Rc::new(RefCell::new(BusClient::new()));
+    if let Err(e) = bus.borrow_mut().connect() {
+        tracing::warn!("bus not available: {e}");
     }
 
     // Bus poll loop: keyboard shortcuts and OpenUrl handling
@@ -213,11 +209,10 @@ fn build_ui(app: &gtk4::Application) {
         let app_state = app_state.clone();
         let bus = bus.clone();
         move || {
-            let mut bus_ref = bus.borrow_mut();
-            if let Some(ref mut client) = *bus_ref {
-                while let Some(msg) = client.try_recv() {
-                    let Some(topic) = Topic::parse(&msg) else { continue };
-                    match topic {
+            let mut client = bus.borrow_mut();
+            while let Some(msg) = client.try_recv() {
+                let Some(topic) = Topic::parse(&msg) else { continue };
+                match topic {
                         Topic::Key(key) => {
                             // TODO: re-enable focus check once compositor emits FocusChanged
                             // for normal app focus transitions (not just input grabs).
@@ -334,8 +329,7 @@ fn build_ui(app: &gtk4::Application) {
                             );
                             tracing::info!(url = %req.url, "OpenUrl: created tab {tab_id}");
                         }
-                        _ => {}
-                    }
+                    _ => {}
                 }
             }
             glib::ControlFlow::Continue

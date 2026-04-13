@@ -214,28 +214,22 @@ impl SolaApp {
             webview.load_uri("app:///index.html");
 
             // Bus connection
-            let bus: Rc<RefCell<Option<BusClient>>> = Rc::new(RefCell::new(None));
-            match BusClient::connect() {
-                Ok(client) => {
-                    tracing::info!("connected to bus");
-                    *bus.borrow_mut() = Some(client);
-                }
-                Err(e) => tracing::warn!("bus not available: {e}"),
+            let bus: Rc<RefCell<BusClient>> = Rc::new(RefCell::new(BusClient::new()));
+            if let Err(e) = bus.borrow_mut().connect() {
+                tracing::warn!("bus not available: {e}");
             }
 
             // Bus polling
             if let Some(bus_handler) = bus_handler.borrow_mut().take() {
                 let webview_for_bus = webview.clone();
                 glib::timeout_add_local(Duration::from_millis(50), move || {
-                    let mut bus_ref = bus.borrow_mut();
-                    if let Some(ref mut client) = *bus_ref {
-                        while let Some(msg) = client.try_recv() {
-                            let Some(topic) = Topic::parse(&msg) else { continue };
-                            let send = |value: serde_json::Value| {
-                                bridge::send_to_js(&webview_for_bus, &value.to_string());
-                            };
-                            bus_handler(&topic, &send);
-                        }
+                    let mut client = bus.borrow_mut();
+                    while let Some(msg) = client.try_recv() {
+                        let Some(topic) = Topic::parse(&msg) else { continue };
+                        let send = |value: serde_json::Value| {
+                            bridge::send_to_js(&webview_for_bus, &value.to_string());
+                        };
+                        bus_handler(&topic, &send);
                     }
                     glib::ControlFlow::Continue
                 });

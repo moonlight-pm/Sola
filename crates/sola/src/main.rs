@@ -60,23 +60,18 @@ fn main() {
     }
 
     // Connect to bus (retry until available)
-    let mut bus: Option<sola_bus::BusClient> = None;
+    let mut bus = sola_bus::BusClient::new();
     let mut zoning = zoning::ZoningState::new();
 
     // Supervise
     loop {
         // Try to connect to bus if not connected
-        if bus.is_none() {
-            if let Ok(client) = sola_bus::BusClient::connect() {
-                info!("connected to bus");
-                bus = Some(client);
-            }
+        if !bus.is_connected() {
+            let _ = bus.connect();
         }
 
         // Check for bus messages — collect first to release the borrow.
-        let messages: Vec<_> = bus.as_ref()
-            .map(|c| std::iter::from_fn(|| c.try_recv()).collect())
-            .unwrap_or_default();
+        let messages: Vec<_> = std::iter::from_fn(|| bus.try_recv()).collect();
 
         for msg in &messages {
             let Some(topic) = Topic::parse(msg) else { continue };
@@ -96,9 +91,7 @@ fn main() {
 
                     // Zone snapping
                     if let Some(geo) = zoning.handle_key(&key) {
-                        if let Some(ref mut bus) = bus {
-                            let _ = bus.emit(Topic::SetWindowGeometry(geo));
-                        }
+                        let _ = bus.emit(Topic::SetWindowGeometry(geo));
                     }
                 }
                 Topic::FocusChanged(app_id) => {
@@ -109,9 +102,7 @@ fn main() {
 
                     // Restore saved zones on first OutputGeometry.
                     for geo in zoning.restore() {
-                        if let Some(ref mut bus) = bus {
-                            let _ = bus.emit(Topic::SetWindowGeometry(geo));
-                        }
+                        let _ = bus.emit(Topic::SetWindowGeometry(geo));
                     }
                 }
                 _ => {}

@@ -9,7 +9,14 @@ use tracing::{error, info, warn};
 use sola_bus::transport;
 
 type ClientId = u64;
-type Clients = Arc<Mutex<HashMap<ClientId, UnixStream>>>;
+
+struct BusState {
+    clients: HashMap<ClientId, UnixStream>,
+    /// Latest sticky message per topic, replayed to newly connected clients.
+    sticky: HashMap<String, sola_bus::Message>,
+}
+
+type SharedState = Arc<Mutex<BusState>>;
 
 fn main() {
     let log_dir = "/opt/sola/log";
@@ -42,7 +49,10 @@ fn main() {
 
     info!(path = %socket_path, "bus listening");
 
-    let clients: Clients = Arc::new(Mutex::new(HashMap::new()));
+    let state: SharedState = Arc::new(Mutex::new(BusState {
+        clients: HashMap::new(),
+        sticky: HashMap::new(),
+    }));
     let mut next_id: ClientId = 0;
 
     for stream in listener.incoming() {
@@ -59,12 +69,18 @@ fn main() {
                     }
                 };
 
-                clients.lock().unwrap().insert(id, writer);
-                info!(client = id, "connected");
+                let mut bus = state.lock().unwrap();
 
-                let clients = Arc::clone(&clients);
+                // Replay sticky messages to the new client.
+                replay_sticky(id, &mut bus, &writer);
+
+                bus.clients.insert(id, writer);
+                info!(client = id, "connected");
+                drop(bus);
+
+                let state = Arc::clone(&state);
                 thread::spawn(move || {
-                    handle_client(id, stream, &clients);
+                    handle_client(id, stream, &state);
                 });
             }
             Err(e) => {
@@ -74,12 +90,39 @@ fn main() {
     }
 }
 
-fn handle_client(id: ClientId, mut reader: UnixStream, clients: &Clients) {
+/// Send all sticky messages to a newly connected client.
+fn replay_sticky(id: ClientId, bus: &mut BusState, writer: &UnixStream) {
+    let mut writer = match writer.try_clone() {
+        Ok(w) => w,
+        Err(e) => {
+            warn!(client = id, "failed to clone writer for sticky replay: {e}");
+            return;
+        }
+    };
+
+    for (topic, msg) in &bus.sticky {
+        if let Err(e) = transport::write_event(&mut writer, msg) {
+            warn!(client = id, topic = %topic, "failed to replay sticky message: {e}");
+        } else {
+            tracing::debug!(client = id, topic = %topic, "replayed sticky message");
+        }
+    }
+}
+
+fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
     loop {
         match transport::read_event(&mut reader) {
             Ok(Some(event)) => {
-                tracing::debug!(client = id, topic = %event.topic, "received");
-                broadcast(id, &event, clients);
+                tracing::debug!(client = id, topic = %event.topic, sticky = event.sticky, "received");
+
+                let mut bus = state.lock().unwrap();
+
+                // Store sticky messages (latest per topic wins).
+                if event.sticky {
+                    bus.sticky.insert(event.topic.clone(), event.clone());
+                }
+
+                broadcast(id, &event, &mut bus);
             }
             Ok(None) => {
                 info!(client = id, "disconnected");
@@ -96,14 +139,13 @@ fn handle_client(id: ClientId, mut reader: UnixStream, clients: &Clients) {
         }
     }
 
-    clients.lock().unwrap().remove(&id);
+    state.lock().unwrap().clients.remove(&id);
 }
 
-fn broadcast(sender: ClientId, event: &sola_bus::Message, clients: &Clients) {
+fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
     let mut dead: Vec<ClientId> = Vec::new();
 
-    let mut clients = clients.lock().unwrap();
-    for (&id, stream) in clients.iter_mut() {
+    for (&id, stream) in bus.clients.iter_mut() {
         if id == sender {
             continue;
         }
@@ -114,7 +156,6 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, clients: &Clients) {
     }
 
     for id in dead {
-        clients.remove(&id);
+        bus.clients.remove(&id);
     }
 }
-

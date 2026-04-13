@@ -45,9 +45,7 @@ impl SeatHandler for State {
         self.mru_apps.insert(0, app_id.clone());
 
         // Emit FocusChanged on the bus.
-        if let Some(bus) = &mut self.bus {
-            let _ = bus.emit(Topic::FocusChanged(app_id));
-        }
+        let _ = self.bus.emit(Topic::FocusChanged(app_id));
     }
 }
 

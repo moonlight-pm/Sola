@@ -98,7 +98,7 @@ fn main() {
 
     app.connect_activate(|app| {
         let state = Rc::new(RefCell::new(State::default()));
-        let bus: Rc<RefCell<Option<BusClient>>> = Rc::new(RefCell::new(None));
+        let bus: Rc<RefCell<BusClient>> = Rc::new(RefCell::new(BusClient::new()));
 
         // --- Transparent window background via CSS ---
         let css = gtk4::CssProvider::new();
@@ -133,12 +133,8 @@ fn main() {
         });
 
         // --- Bus connection ---
-        match BusClient::connect() {
-            Ok(client) => {
-                tracing::info!("connected to bus");
-                *bus.borrow_mut() = Some(client);
-            }
-            Err(e) => tracing::warn!("bus not available: {e}"),
+        if let Err(e) = bus.borrow_mut().connect() {
+            tracing::warn!("bus not available: {e}");
         }
 
         // --- Bus polling ---
@@ -148,44 +144,42 @@ fn main() {
             let webview = webview.clone();
             let window = window.clone();
             move || {
-                let mut bus_ref = bus.borrow_mut();
-                if let Some(ref mut client) = *bus_ref {
-                    while let Some(msg) = client.try_recv() {
-                        let Some(topic) = Topic::parse(&msg) else { continue };
-                        match topic {
-                            Topic::Key(key) => {
-                                if !state.borrow().active
-                                    && key.pressed
-                                    && key.code == keycode::TAB
-                                    && key.super_held
-                                {
-                                    tracing::info!("activating switcher (Super+Tab)");
-                                    state.borrow_mut().active = true;
-                                    window.present();
-                                    let _ = client.emit(
-                                        Topic::GrabInput("sola-switcher".into()),
-                                    );
-                                    let _ = client.emit(Topic::ListApps);
-                                }
-                            }
-                            Topic::Apps(apps) => {
-                                let mut s = state.borrow_mut();
-                                if !s.active { continue; }
-                                tracing::info!(count = apps.len(), "received app list");
-                                s.apps = apps;
-                                s.selected = if s.apps.len() > 1 { 1 } else { 0 };
-                                let json =
-                                    serde_json::to_string(&s.apps).unwrap_or_default();
-                                let script =
-                                    format!("render({json}, {})", s.selected);
-                                webview.evaluate_javascript(
-                                    &script, None, None,
-                                    None::<&gio::Cancellable>,
-                                    |_| {},
+                let mut client = bus.borrow_mut();
+                while let Some(msg) = client.try_recv() {
+                    let Some(topic) = Topic::parse(&msg) else { continue };
+                    match topic {
+                        Topic::Key(key) => {
+                            if !state.borrow().active
+                                && key.pressed
+                                && key.code == keycode::TAB
+                                && key.super_held
+                            {
+                                tracing::info!("activating switcher (Super+Tab)");
+                                state.borrow_mut().active = true;
+                                window.present();
+                                let _ = client.emit(
+                                    Topic::GrabInput("sola-switcher".into()),
                                 );
+                                let _ = client.emit(Topic::ListApps);
                             }
-                            _ => {}
                         }
+                        Topic::Apps(apps) => {
+                            let mut s = state.borrow_mut();
+                            if !s.active { continue; }
+                            tracing::info!(count = apps.len(), "received app list");
+                            s.apps = apps;
+                            s.selected = if s.apps.len() > 1 { 1 } else { 0 };
+                            let json =
+                                serde_json::to_string(&s.apps).unwrap_or_default();
+                            let script =
+                                format!("render({json}, {})", s.selected);
+                            webview.evaluate_javascript(
+                                &script, None, None,
+                                None::<&gio::Cancellable>,
+                                |_| {},
+                            );
+                        }
+                        _ => {}
                     }
                 }
                 glib::ControlFlow::Continue
@@ -250,12 +244,11 @@ fn main() {
                     None::<&gio::Cancellable>, |_| {},
                 );
 
-                if let Some(ref mut client) = *bus.borrow_mut() {
-                    if let Some(app_id) = app_id {
-                        let _ = client.emit(Topic::RaiseApp(app_id));
-                    }
-                    let _ = client.emit(Topic::ReleaseInput);
+                let mut client = bus.borrow_mut();
+                if let Some(app_id) = app_id {
+                    let _ = client.emit(Topic::RaiseApp(app_id));
                 }
+                let _ = client.emit(Topic::ReleaseInput);
             }
         });
 

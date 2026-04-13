@@ -18,6 +18,11 @@ pub struct Message {
     /// Arbitrary binary payload, deserialized by the consumer.
     /// The bus does not inspect this — it's opaque bytes.
     pub payload: Option<Vec<u8>>,
+
+    /// If true, the bus retains this message (keyed by topic, latest wins)
+    /// and replays it to every newly connected client.
+    #[serde(default)]
+    pub sticky: bool,
 }
 
 impl Message {
@@ -27,6 +32,7 @@ impl Message {
             id: Uuid::now_v7(),
             topic: topic.into(),
             payload: None,
+            sticky: false,
         }
     }
 
@@ -36,6 +42,7 @@ impl Message {
             id: Uuid::now_v7(),
             topic: topic.into(),
             payload: Some(payload),
+            sticky: false,
         }
     }
 
