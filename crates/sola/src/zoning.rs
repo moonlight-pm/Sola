@@ -121,12 +121,12 @@ impl ZoningState {
 
 fn zone_for_keycode(code: u32) -> Option<Zone> {
     match code {
-        72 => Some(Zone::TopMiddle),    // KP_8
-        75 => Some(Zone::Left),         // KP_4
-        76 => Some(Zone::FullMiddle),   // KP_5
-        77 => Some(Zone::Right),        // KP_6
-        80 => Some(Zone::BottomMiddle), // KP_2
-        82 => Some(Zone::Fullscreen),   // KP_0
+        80 => Some(Zone::TopMiddle),    // KP_8
+        83 => Some(Zone::Left),         // KP_4
+        84 => Some(Zone::FullMiddle),   // KP_5
+        85 => Some(Zone::Right),        // KP_6
+        88 => Some(Zone::BottomMiddle), // KP_2
+        90 => Some(Zone::Fullscreen),   // KP_0
         _ => None,
     }
 }
