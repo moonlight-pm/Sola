@@ -23,20 +23,9 @@
   background: var(--bg);
 }
 
-.sidebar-mount {
+.tab-sidebar {
   grid-column: 1;
   grid-row: 1 / -1;
-  overflow: hidden;
-}
-
-.topbar-mount {
-  grid-column: 2;
-  grid-row: 1;
-  height: 100%;
-}
-
-.tab-sidebar {
-  height: 100%;
   background: var(--bg);
   border-right: 1px solid var(--border);
   display: flex;
@@ -107,7 +96,8 @@
 }
 
 .top-bar {
-  height: 100%;
+  grid-column: 2;
+  grid-row: 1;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   display: flex;
