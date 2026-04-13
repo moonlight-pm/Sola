@@ -12,6 +12,7 @@ use sola_bus::topics::Topic;
 pub mod assets;
 pub mod bridge;
 pub mod strip;
+pub mod watcher;
 pub mod webview;
 
 // Re-export for macro use
@@ -115,6 +116,9 @@ impl SolaApp {
             .init();
 
         tracing::info!("{} starting", self.app_id);
+
+        // Watch own binary for updates (auto-restart on deploy)
+        watcher::watch_own_binary();
 
         // Wayland socket wait
         if std::env::var("WAYLAND_DISPLAY").is_err() {
