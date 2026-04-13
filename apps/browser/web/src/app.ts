@@ -29,7 +29,21 @@ function createTab(url?: string, activate: boolean = true): string {
   console.log('[browser] createTab', tabId, 'total tabs:', state.tabs.length);
   // Fire-and-forget: tell Rust to create the WebView
   invoke('create_tab', { tabId, url, activate });
+  // Focus address bar for new blank tabs
+  if (!url && activate) {
+    focusAddressBar();
+  }
   return tabId;
+}
+
+function focusAddressBar(): void {
+  requestAnimationFrame(() => {
+    const input = document.querySelector('.address-input') as HTMLInputElement | null;
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  });
 }
 
 function closeTab(tabId: string): void {
@@ -124,6 +138,10 @@ on('bus_new_tab', ({ tabId, url, activate }: any) => {
     state.activeTabId = tabId;
     state.addressValue = url || '';
   }
+  // Focus address bar for new blank tabs (e.g. Super+T)
+  if (!url && activate !== false) {
+    focusAddressBar();
+  }
 });
 
 on('tab_closed', ({ tabId, nextTabId }: any) => {
@@ -137,11 +155,7 @@ on('tab_closed', ({ tabId, nextTabId }: any) => {
 });
 
 on('bus_focus_address', () => {
-  const input = document.querySelector('.address-input') as HTMLInputElement | null;
-  if (input) {
-    input.focus();
-    input.select();
-  }
+  focusAddressBar();
 });
 
 on('download_started', ({ id, filename }: any) => {
