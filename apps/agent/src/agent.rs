@@ -68,6 +68,7 @@ async fn run_agent_loop(
     let token = auth.read().await.access_token().to_string();
     let client_config = claurst_api::client::ClientConfig {
         api_key: token,
+        api_base: "https://api.claude.ai".to_string(),
         use_bearer_auth: true,
         ..Default::default()
     };
