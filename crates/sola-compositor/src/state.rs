@@ -110,9 +110,9 @@ pub struct State {
     /// The app that most recently had keyboard focus is at index 0.
     pub mru_apps: Vec<String>,
 
-    /// Window positions received from sola-x before the window appeared.
-    /// Applied in `new_toplevel` when the window is first mapped.
-    pub pending_geometries: HashMap<String, (i32, i32)>,
+    /// Window geometries received before the window appeared.
+    /// Applied in `apply_pending_geometries` when the window is first mapped.
+    pub pending_geometries: HashMap<String, sola_bus::topics::WindowGeometry>,
 
     // -- Protocol state --
 
