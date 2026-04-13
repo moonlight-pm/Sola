@@ -633,6 +633,9 @@ textarea.rows = 1;
 textarea.placeholder = 'Send a message...';
 textarea.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  if (e.key === 'Escape' && isRunning() && state.activeId) {
+    invoke('cancel', { session_id: state.activeId });
+  }
 });
 textarea.addEventListener('input', () => {
   textarea.style.height = 'auto';
