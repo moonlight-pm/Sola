@@ -81,6 +81,12 @@ fn process_bus(state: &mut State) {
         messages.push(msg);
     }
 
+    // Broadcast output geometry once — deferred from init so bus clients
+    // have time to connect before we send it.
+    if !state.output_geometry_sent {
+        emit_output_geometry(state);
+    }
+
     // Apply any pending geometries that now have matching windows.
     apply_pending_geometries(state);
 
@@ -256,6 +262,30 @@ fn handle_list_apps(state: &mut State) {
         use sola_bus::topics::Topic;
         let _ = bus.emit(Topic::Apps(apps));
     }
+}
+
+/// Emit output geometry on the bus so clients know the display size.
+fn emit_output_geometry(state: &mut State) {
+    use sola_bus::topics::{OutputGeometry, Topic};
+
+    let Some(mode) = state.space.outputs().next().and_then(|o| o.current_mode()) else {
+        return;
+    };
+
+    let geo = OutputGeometry {
+        width: mode.size.w,
+        height: mode.size.h,
+    };
+
+    if let Some(bus) = &mut state.bus {
+        tracing::info!(width = geo.width, height = geo.height, "emitting OutputGeometry");
+        if let Err(e) = bus.emit(Topic::OutputGeometry(geo)) {
+            tracing::warn!("failed to emit OutputGeometry: {e}");
+            return; // Retry next tick.
+        }
+    }
+
+    state.output_geometry_sent = true;
 }
 
 /// Graceful shutdown — clean up all resources.

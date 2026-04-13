@@ -114,6 +114,10 @@ pub struct State {
     /// Applied in `apply_pending_geometries` when the window is first mapped.
     pub pending_geometries: HashMap<String, sola_bus::topics::WindowGeometry>,
 
+    /// Whether OutputGeometry has been broadcast on the bus.
+    /// Set false initially; the main loop emits it once bus clients have had time to connect.
+    pub output_geometry_sent: bool,
+
     // -- Protocol state --
 
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
@@ -174,6 +178,7 @@ impl State {
             input_grab: None,
             mru_apps: Vec::new(),
             pending_geometries: HashMap::new(),
+            output_geometry_sent: false,
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             wallpaper_buffer: None,
