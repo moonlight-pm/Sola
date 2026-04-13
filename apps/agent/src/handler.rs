@@ -168,14 +168,19 @@ impl AgentHandler {
                     })
                     .unwrap_or_default();
                 json!({
-                    "session_id": s.session_id,
-                    "name": s.name,
+                    "session_id": &s.session_id,
+                    "name": &s.name,
                     "first_prompt": first_prompt,
-                    "working_dir": s.working_dir,
+                    "working_dir": &s.working_dir,
                     "updated_at": s.updated_at,
                 })
             })
             .collect();
+        // Send as event so the frontend's on('conversations_list') handler picks it up
+        self.send_event(json!({
+            "event": "conversations_list",
+            "conversations": &conversations
+        }));
         json!({ "conversations": conversations })
     }
 
