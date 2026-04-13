@@ -55,7 +55,7 @@ impl ZoningState {
         let zone = match zone_for_keycode(key.code) {
             Some(z) => z,
             None => {
-                tracing::debug!(code = key.code, "no zone for keycode");
+                info!(code = key.code, "no zone for keycode");
                 return None;
             }
         };
