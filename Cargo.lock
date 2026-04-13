@@ -2344,6 +2344,7 @@ dependencies = [
  "postcard",
  "serde",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
  "uuid",
 ]

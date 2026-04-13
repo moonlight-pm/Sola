@@ -8,7 +8,7 @@ fn main() {
 
     let log_dir = "/opt/sola/log";
     let _ = std::fs::create_dir_all(log_dir);
-    let file_appender = tracing_appender::rolling::never(log_dir, "sola-compositor.log");
+    let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
 
     let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
     let file_layer = tracing_subscriber::fmt::layer()
@@ -21,7 +21,7 @@ fn main() {
         .with(file_layer)
         .init();
 
-    tracing::info!("sola-compositor starting (logs → stderr + {log_dir}/sola-compositor.log)");
+    tracing::info!("sola-compositor starting");
 
     if let Err(err) = sola_compositor::run() {
         tracing::error!(%err, "compositor exited with error");
