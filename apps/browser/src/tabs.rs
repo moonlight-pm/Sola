@@ -75,6 +75,9 @@ pub fn create_tab_webview(
         .user_content_manager(&manager)
         .build();
 
+    // Dark background so about:blank isn't a white flash
+    webview.set_background_color(&gdk4::RGBA::new(0.039, 0.043, 0.051, 1.0)); // #0a0b0d
+
     if let Some(settings) = webkit6::prelude::WebViewExt::settings(&webview) {
         settings.set_enable_developer_extras(true);
         settings.set_media_playback_requires_user_gesture(false);
