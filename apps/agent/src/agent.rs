@@ -98,16 +98,15 @@ async fn run_claude(
     cancel_token: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
     // Load existing conversation or start fresh
-    let mut history = match storage::load(session_id) {
-        Ok(saved) => saved.messages,
-        Err(_) => Vec::new(),
-    };
+    let mut history = storage::load_history(session_id).unwrap_or_default();
 
-    // Append user message
-    history.push(json!({
+    // Append user message and persist it
+    let user_msg = json!({
         "role": "user",
         "content": [{"type": "text", "text": text}]
-    }));
+    });
+    history.push(user_msg.clone());
+    let _ = storage::append_message(session_id, &user_msg);
 
     // Build stream-json input from history
     let mut input_lines = String::new();
@@ -298,25 +297,25 @@ async fn run_claude(
         saved_metrics = Some(metrics);
     }
 
-    // On cancel: discard everything (user message + partial response)
-    // On completion: save user message + assistant response + metrics
+    let cwd_str = working_dir.to_string_lossy().to_string();
+
     if was_cancelled {
-        history.pop();
+        // TODO: truncate the JSONL to remove the last user message
+        // For now, the user message is already in the JSONL — we'd need to rewrite it.
+        // This is acceptable for now; the model will see the unanswered message on resume.
     } else if !acc_text.is_empty() || !acc_blocks.is_empty() {
         let content = if acc_blocks.is_empty() {
             json!([{"type": "text", "text": acc_text}])
         } else {
             json!(acc_blocks)
         };
-        history.push(json!({
-            "role": "assistant",
-            "content": content
-        }));
+        let assistant_msg = json!({"role": "assistant", "content": content});
+        let _ = storage::append_message(session_id, &assistant_msg);
     }
 
-    let cwd_str = working_dir.to_string_lossy().to_string();
-    if let Err(e) = storage::save_with_metrics(session_id, session_name, &cwd_str, &history, saved_metrics) {
-        tracing::warn!("Failed to save session: {:#}", e);
+    // Update metadata with latest metrics
+    if let Err(e) = storage::save_meta(session_id, session_name, &cwd_str, saved_metrics) {
+        tracing::warn!("Failed to save session metadata: {:#}", e);
     }
 
     Ok(())

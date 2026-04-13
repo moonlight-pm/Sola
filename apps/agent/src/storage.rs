@@ -1,22 +1,22 @@
-//! Session persistence — saves conversation history to disk.
+//! Session persistence.
 //!
 //! Storage layout:
-//!   ~/.config/sola/agent/sessions/{session_id}.json
+//!   ~/.config/sola/agent/sessions/{session_id}.json   — metadata
+//!   ~/.config/sola/agent/sessions/{session_id}.jsonl  — conversation history
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SavedSession {
+pub struct SessionMeta {
     pub session_id: String,
     pub name: Option<String>,
     pub working_dir: String,
     pub created_at: u64,
     pub updated_at: u64,
-    pub messages: Vec<Value>,
-    /// Last known metrics from the most recent API response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<Value>,
 }
@@ -26,8 +26,12 @@ fn sessions_dir() -> PathBuf {
     PathBuf::from(home).join(".config/sola/agent/sessions")
 }
 
-fn session_path(session_id: &str) -> PathBuf {
+fn meta_path(session_id: &str) -> PathBuf {
     sessions_dir().join(format!("{}.json", session_id))
+}
+
+fn history_path(session_id: &str) -> PathBuf {
+    sessions_dir().join(format!("{}.jsonl", session_id))
 }
 
 fn now_ms() -> u64 {
@@ -37,67 +41,88 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Save a session with raw JSON messages.
-pub fn save_raw(
+/// Save or update session metadata.
+pub fn save_meta(
     session_id: &str,
     name: Option<&str>,
     working_dir: &str,
-    messages: &[Value],
-) -> Result<()> {
-    save_with_metrics(session_id, name, working_dir, messages, None)
-}
-
-/// Save a session with raw JSON messages and optional metrics.
-pub fn save_with_metrics(
-    session_id: &str,
-    name: Option<&str>,
-    working_dir: &str,
-    messages: &[Value],
     metrics: Option<Value>,
 ) -> Result<()> {
     let dir = sessions_dir();
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create {}", dir.display()))?;
 
-    let path = session_path(session_id);
-
-    // Preserve created_at and metrics from existing file
-    let existing = load(session_id).ok();
+    let existing = load_meta(session_id).ok();
     let created_at = existing.as_ref().map(|e| e.created_at).unwrap_or_else(now_ms);
     let metrics = metrics.or_else(|| existing.and_then(|e| e.metrics));
 
-    let session = SavedSession {
+    let meta = SessionMeta {
         session_id: session_id.to_string(),
         name: name.map(String::from),
         working_dir: working_dir.to_string(),
         created_at,
         updated_at: now_ms(),
-        messages: messages.to_vec(),
         metrics,
     };
 
-    let json = serde_json::to_string_pretty(&session)?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("Failed to write {}", path.display()))?;
-
-    tracing::debug!(session_id, "Session saved ({} messages)", messages.len());
+    let json = serde_json::to_string_pretty(&meta)?;
+    std::fs::write(meta_path(session_id), json)?;
     Ok(())
 }
 
-/// Load a session from disk.
-pub fn load(session_id: &str) -> Result<SavedSession> {
-    let path = session_path(session_id);
+/// Append a message to the session's JSONL history.
+pub fn append_message(session_id: &str, message: &Value) -> Result<()> {
+    let dir = sessions_dir();
+    std::fs::create_dir_all(&dir)?;
+
+    let path = history_path(session_id);
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("Failed to open {}", path.display()))?;
+
+    let line = serde_json::to_string(message)?;
+    writeln!(file, "{}", line)?;
+
+    // Update metadata timestamp
+    if let Ok(mut meta) = load_meta(session_id) {
+        meta.updated_at = now_ms();
+        let json = serde_json::to_string_pretty(&meta)?;
+        std::fs::write(meta_path(session_id), json)?;
+    }
+
+    Ok(())
+}
+
+/// Load session metadata.
+pub fn load_meta(session_id: &str) -> Result<SessionMeta> {
+    let path = meta_path(session_id);
     let json = std::fs::read_to_string(&path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
-    let session: SavedSession = serde_json::from_str(&json)
-        .with_context(|| format!("Failed to parse {}", path.display()))?;
-    Ok(session)
+    serde_json::from_str(&json).with_context(|| format!("Failed to parse {}", path.display()))
+}
+
+/// Load conversation history from JSONL.
+pub fn load_history(session_id: &str) -> Result<Vec<Value>> {
+    let path = history_path(session_id);
+    let file = std::fs::File::open(&path)
+        .with_context(|| format!("Failed to open {}", path.display()))?;
+    let reader = std::io::BufReader::new(file);
+    let mut messages = Vec::new();
+    for line in reader.lines() {
+        let line = line?;
+        if line.is_empty() { continue; }
+        let msg: Value = serde_json::from_str(&line)?;
+        messages.push(msg);
+    }
+    Ok(messages)
 }
 
 /// List all saved sessions, sorted by most recently updated.
-pub fn list_all() -> Vec<SavedSession> {
+pub fn list_all() -> Vec<SessionMeta> {
     let dir = sessions_dir();
-    let mut sessions: Vec<SavedSession> = Vec::new();
+    let mut sessions: Vec<SessionMeta> = Vec::new();
 
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
@@ -106,12 +131,13 @@ pub fn list_all() -> Vec<SavedSession> {
 
     for entry in entries.flatten() {
         let path = entry.path();
+        // Only look at .json metadata files (not .jsonl)
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
         if let Ok(json) = std::fs::read_to_string(&path) {
-            if let Ok(session) = serde_json::from_str::<SavedSession>(&json) {
-                sessions.push(session);
+            if let Ok(meta) = serde_json::from_str::<SessionMeta>(&json) {
+                sessions.push(meta);
             }
         }
     }

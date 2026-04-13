@@ -56,7 +56,7 @@ impl AgentHandler {
             .await;
 
         // Persist immediately so the session survives app restart
-        if let Err(e) = storage::save_raw(&session_id, Some(&folder_name), &expanded, &[]) {
+        if let Err(e) = storage::save_meta(&session_id, Some(&folder_name), &expanded, None) {
             tracing::warn!("Failed to save new session: {:#}", e);
         }
 
@@ -152,44 +152,36 @@ impl AgentHandler {
             .rename_session(session_id, name.to_string())
             .await;
 
-        // Update saved file with new name
-        if let Ok(mut saved) = storage::load(session_id) {
-            saved.name = Some(name.to_string());
-            let _ = storage::save_raw(session_id, Some(name), &saved.working_dir, &saved.messages);
+        // Update saved metadata with new name
+        if let Ok(meta) = storage::load_meta(session_id) {
+            let _ = storage::save_meta(session_id, Some(name), &meta.working_dir, meta.metrics);
         }
 
         json!({ "ok": true })
     }
 
     async fn cmd_list_conversations(&self) -> Value {
-        let saved = storage::list_all();
-        let conversations: Vec<Value> = saved
+        let metas = storage::list_all();
+        let conversations: Vec<Value> = metas
             .iter()
-            .map(|s| {
-                let first_prompt = s.messages.iter()
-                    .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
-                    .and_then(|m| {
-                        m.get("content").and_then(|c| {
-                            if let Some(text) = c.as_str() { return Some(text.to_string()); }
-                            c.as_array().and_then(|blocks| {
-                                blocks.iter()
-                                    .find(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))
-                                    .and_then(|b| b.get("text").and_then(|v| v.as_str()))
-                                    .map(String::from)
-                            })
-                        })
+            .map(|m| {
+                // Peek at first user message from JSONL for the preview
+                let first_prompt = storage::load_history(&m.session_id).ok()
+                    .and_then(|msgs| {
+                        msgs.iter()
+                            .find(|msg| msg.get("role").and_then(|v| v.as_str()) == Some("user"))
+                            .and_then(|msg| extract_text_content(msg).into())
                     })
                     .unwrap_or_default();
                 json!({
-                    "session_id": &s.session_id,
-                    "name": &s.name,
+                    "session_id": &m.session_id,
+                    "name": &m.name,
                     "first_prompt": first_prompt,
-                    "working_dir": &s.working_dir,
-                    "updated_at": s.updated_at,
+                    "working_dir": &m.working_dir,
+                    "updated_at": m.updated_at,
                 })
             })
             .collect();
-        // Send as event so the frontend's on('conversations_list') handler picks it up
         self.send_event(json!({
             "event": "conversations_list",
             "conversations": &conversations
@@ -202,17 +194,17 @@ impl AgentHandler {
             return json!({ "error": "session_id is required" });
         };
 
-        let saved = match storage::load(session_id) {
-            Ok(s) => s,
+        let meta = match storage::load_meta(session_id) {
+            Ok(m) => m,
             Err(e) => return json!({ "error": format!("Failed to load session: {:#}", e) }),
         };
 
-        let dir = std::path::PathBuf::from(&saved.working_dir);
+        let dir = std::path::PathBuf::from(&meta.working_dir);
         self.session_mgr.sessions.write().await.insert(
             session_id.to_string(),
             crate::session::Session::new(dir),
         );
-        if let Some(ref name) = saved.name {
+        if let Some(ref name) = meta.name {
             self.session_mgr.rename_session(session_id, name.clone()).await;
         }
 
@@ -220,12 +212,13 @@ impl AgentHandler {
             "event": "session_state",
             "session_id": session_id,
             "status": "idle",
-            "name": saved.name,
-            "working_dir": saved.working_dir,
+            "name": meta.name,
+            "working_dir": meta.working_dir,
         }));
 
-        // Extract displayable content from each message
-        let messages: Vec<Value> = saved.messages.iter().map(|m| {
+        // Load and forward conversation history
+        let history = storage::load_history(session_id).unwrap_or_default();
+        let messages: Vec<Value> = history.iter().map(|m: &Value| {
             let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("user");
             let content = extract_text_content(m);
             json!({ "role": role, "content": content })
