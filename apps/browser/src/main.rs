@@ -89,6 +89,12 @@ fn main() {
     setup_logging();
     tracing::info!("sola-browser starting");
 
+    // Enable remote Web Inspector if not already set (connect from any browser)
+    if std::env::var("WEBKIT_INSPECTOR_HTTP_SERVER").is_err() {
+        unsafe { std::env::set_var("WEBKIT_INSPECTOR_HTTP_SERVER", "0.0.0.0:9224") };
+        tracing::info!("remote inspector enabled at http://0.0.0.0:9224");
+    }
+
     if !wait_for_wayland_socket() {
         std::process::exit(1);
     }
@@ -159,6 +165,7 @@ fn build_ui(app: &gtk4::Application) {
     chrome_webview.set_background_color(&gdk4::RGBA::new(0.0, 0.0, 0.0, 0.0));
     if let Some(settings) = webkit6::prelude::WebViewExt::settings(&chrome_webview) {
         settings.set_enable_developer_extras(true);
+        settings.set_enable_write_console_messages_to_stdout(true);
     }
 
     container.put(&chrome_webview, 0.0, 0.0);
