@@ -258,7 +258,8 @@ async fn run_claude(
         "cancelled": was_cancelled
     }));
 
-    // Send metrics
+    // Send metrics and save for persistence
+    let mut saved_metrics: Option<serde_json::Value> = None;
     if let Some(ref result) = result_metrics {
         let mut metrics = json!({"event": "metrics", "session_id": session_id});
 
@@ -293,13 +294,13 @@ async fn run_claude(
         let context_window = metrics["context_window"].as_u64().unwrap_or(1);
         metrics["context_used_pct"] = json!((total_input as f64 / context_window as f64 * 100.0).round() as u64);
 
-        send_event(event_tx, metrics);
+        send_event(event_tx, metrics.clone());
+        saved_metrics = Some(metrics);
     }
 
     // On cancel: discard everything (user message + partial response)
-    // On completion: save user message + assistant response
+    // On completion: save user message + assistant response + metrics
     if was_cancelled {
-        // Remove the user message we appended to history
         history.pop();
     } else if !acc_text.is_empty() || !acc_blocks.is_empty() {
         let content = if acc_blocks.is_empty() {
@@ -314,7 +315,7 @@ async fn run_claude(
     }
 
     let cwd_str = working_dir.to_string_lossy().to_string();
-    if let Err(e) = storage::save_raw(session_id, session_name, &cwd_str, &history) {
+    if let Err(e) = storage::save_with_metrics(session_id, session_name, &cwd_str, &history, saved_metrics) {
         tracing::warn!("Failed to save session: {:#}", e);
     }
 

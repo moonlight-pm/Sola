@@ -16,6 +16,9 @@ pub struct SavedSession {
     pub created_at: u64,
     pub updated_at: u64,
     pub messages: Vec<Value>,
+    /// Last known metrics from the most recent API response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<Value>,
 }
 
 fn sessions_dir() -> PathBuf {
@@ -41,17 +44,27 @@ pub fn save_raw(
     working_dir: &str,
     messages: &[Value],
 ) -> Result<()> {
+    save_with_metrics(session_id, name, working_dir, messages, None)
+}
+
+/// Save a session with raw JSON messages and optional metrics.
+pub fn save_with_metrics(
+    session_id: &str,
+    name: Option<&str>,
+    working_dir: &str,
+    messages: &[Value],
+    metrics: Option<Value>,
+) -> Result<()> {
     let dir = sessions_dir();
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create {}", dir.display()))?;
 
     let path = session_path(session_id);
 
-    let created_at = if let Ok(existing) = load(session_id) {
-        existing.created_at
-    } else {
-        now_ms()
-    };
+    // Preserve created_at and metrics from existing file
+    let existing = load(session_id).ok();
+    let created_at = existing.as_ref().map(|e| e.created_at).unwrap_or_else(now_ms);
+    let metrics = metrics.or_else(|| existing.and_then(|e| e.metrics));
 
     let session = SavedSession {
         session_id: session_id.to_string(),
@@ -60,6 +73,7 @@ pub fn save_raw(
         created_at,
         updated_at: now_ms(),
         messages: messages.to_vec(),
+        metrics,
     };
 
     let json = serde_json::to_string_pretty(&session)?;

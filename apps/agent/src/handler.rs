@@ -54,6 +54,12 @@ impl AgentHandler {
         self.session_mgr
             .rename_session(&session_id, folder_name.clone())
             .await;
+
+        // Persist immediately so the session survives app restart
+        if let Err(e) = storage::save_raw(&session_id, Some(&folder_name), &expanded, &[]) {
+            tracing::warn!("Failed to save new session: {:#}", e);
+        }
+
         self.send_event(json!({
             "event": "session_state",
             "session_id": session_id,
@@ -145,6 +151,13 @@ impl AgentHandler {
         self.session_mgr
             .rename_session(session_id, name.to_string())
             .await;
+
+        // Update saved file with new name
+        if let Ok(mut saved) = storage::load(session_id) {
+            saved.name = Some(name.to_string());
+            let _ = storage::save_raw(session_id, Some(name), &saved.working_dir, &saved.messages);
+        }
+
         json!({ "ok": true })
     }
 
