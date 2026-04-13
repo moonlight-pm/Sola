@@ -310,6 +310,37 @@ html, body {
 .header-bar:hover .header-edit-btn { opacity: 1; }
 .header-edit-btn:hover { background: var(--bg-tertiary); color: var(--text-secondary); }
 
+.header-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.context-bar-wrap {
+  width: 80px;
+  height: 4px;
+  background: var(--bg-primary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.context-bar {
+  height: 100%;
+  background: var(--cyan);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.context-bar.warning { background: var(--amber); }
+.context-bar.danger { background: var(--red); }
+
+.header-stats {
+  font: 11px var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .header-cwd {
   font: 12px var(--font-mono);
   color: var(--text-muted);

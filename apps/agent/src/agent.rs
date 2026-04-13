@@ -1,14 +1,16 @@
-//! Agent loop: send message → stream response → execute tools → repeat.
+//! Agent: spawns `claude -p` as a one-shot subprocess per message.
 //!
-//! Modeled after Pi's event-driven agent loop pattern.
-//! Persists conversation history to disk after each turn.
+//! Full conversation history is managed by us and sent on stdin.
+//! Claude Code handles OAuth, tools, system prompt, and MCP.
+//! We parse the stream-json output for text, tool events, and metrics.
 
-use crate::api::{ApiClient, ContentBlock, Message, MessageContent, StreamEvent};
 use crate::session::{SessionManager, SessionStatus};
-use crate::{storage, tools};
+use crate::storage;
+use anyhow::{Context, Result};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 pub async fn run_session_message(
     session_id: String,
@@ -25,22 +27,12 @@ pub async fn run_session_message(
         "event": "session_state", "session_id": session_id, "status": "running"
     }));
 
-    // Get session name for storage
     let session_name = {
         let sessions = session_mgr.sessions.read().await;
         sessions.get(&session_id).and_then(|s| s.name.clone())
     };
 
-    match run_agent_loop(
-        &session_id,
-        &text,
-        &working_dir,
-        session_name.as_deref(),
-        &event_tx,
-        cancel_token,
-    )
-    .await
-    {
+    match run_claude(&session_id, &text, &working_dir, session_name.as_deref(), &event_tx, cancel_token).await {
         Ok(()) => {
             session_mgr.set_status(&session_id, SessionStatus::Idle).await;
             send_event(&event_tx, json!({
@@ -64,144 +56,227 @@ fn send_event(tx: &std::sync::mpsc::Sender<String>, value: serde_json::Value) {
     let _ = tx.send(value.to_string());
 }
 
-async fn run_agent_loop(
+async fn run_claude(
     session_id: &str,
     text: &str,
     working_dir: &PathBuf,
     session_name: Option<&str>,
     event_tx: &std::sync::mpsc::Sender<String>,
     cancel_token: tokio_util::sync::CancellationToken,
-) -> anyhow::Result<()> {
-    let client = ApiClient::from_env();
-    let tool_defs = tools::tool_definitions();
-
-    let system_prompt = format!(
-        "You are a coding assistant running inside Sola, a Wayland desktop environment. \
-         Your working directory is: {}\n\n\
-         You have access to tools for bash execution, file operations, search, and web search. \
-         Be concise and direct. When editing code, show the changes clearly.",
-        working_dir.display()
-    );
-
-    // Load existing conversation history or start fresh
-    let mut messages: Vec<Message> = match storage::load(session_id) {
+) -> Result<()> {
+    // Load existing conversation or start fresh
+    let mut history = match storage::load(session_id) {
         Ok(saved) => saved.messages,
         Err(_) => Vec::new(),
     };
 
-    // Append the new user message
-    messages.push(Message {
-        role: "user".into(),
-        content: MessageContent::Text(text.to_string()),
+    // Append user message
+    history.push(json!({
+        "role": "user",
+        "content": [{"type": "text", "text": text}]
+    }));
+
+    // Build the stream-json input: one user message per history entry
+    let mut input_lines = String::new();
+    for msg in &history {
+        let stream_msg = json!({
+            "type": if msg["role"] == "user" { "user" } else { "assistant" },
+            "message": {
+                "role": msg["role"],
+                "content": msg["content"]
+            }
+        });
+        input_lines.push_str(&stream_msg.to_string());
+        input_lines.push('\n');
+    }
+
+    // Spawn claude subprocess
+    let mut child = tokio::process::Command::new("claude")
+        .arg("-p")
+        .arg("--verbose")
+        .arg("--no-session-persistence")
+        .arg("--output-format").arg("stream-json")
+        .arg("--input-format").arg("stream-json")
+        .arg("--include-partial-messages")
+        .arg("--dangerously-skip-permissions")
+        .current_dir(working_dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("Failed to spawn claude CLI")?;
+
+    // Write conversation history to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input_lines.as_bytes()).await?;
+        stdin.shutdown().await?;
+    }
+
+    // Read and process stdout
+    let stdout = child.stdout.take().context("No stdout")?;
+    let reader = BufReader::new(stdout);
+    let mut lines = reader.lines();
+
+    let sid = session_id.to_string();
+    let tx = event_tx.clone();
+
+    send_event(event_tx, json!({"event": "message_start", "session_id": session_id}));
+
+    let mut assistant_text = String::new();
+    let mut assistant_blocks: Vec<serde_json::Value> = Vec::new();
+
+    let read_task = tokio::spawn(async move {
+        let mut text_acc = String::new();
+        let mut blocks: Vec<serde_json::Value> = Vec::new();
+        let mut result_metrics: Option<serde_json::Value> = None;
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.is_empty() { continue; }
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+
+            let msg_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+            match msg_type {
+                "stream_event" => {
+                    if let Some(event) = parsed.get("event") {
+                        let etype = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        match etype {
+                            "content_block_delta" => {
+                                if let Some(delta) = event.get("delta") {
+                                    if delta.get("type").and_then(|v| v.as_str()) == Some("text_delta") {
+                                        if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                            text_acc.push_str(text);
+                                            send_event(&tx, json!({
+                                                "event": "message_delta", "session_id": sid, "text": text
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                "assistant" => {
+                    // Complete assistant message — extract tool_use blocks
+                    if let Some(content) = parsed.get("message")
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_array())
+                    {
+                        for block in content {
+                            let btype = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                            if btype == "tool_use" {
+                                let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                let input = block.get("input").map(|v| v.to_string()).unwrap_or_default();
+                                send_event(&tx, json!({
+                                    "event": "tool_start", "session_id": sid,
+                                    "tool_name": name, "tool_input": input
+                                }));
+                            }
+                            blocks.push(block.clone());
+                        }
+                    }
+                }
+
+                "tool_use_summary" => {
+                    let name = parsed.get("tool_name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let output = parsed.get("output").and_then(|v| v.as_str())
+                        .or_else(|| parsed.get("result").and_then(|v| v.as_str()))
+                        .unwrap_or("").to_string();
+                    let is_error = parsed.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                    send_event(&tx, json!({
+                        "event": "tool_end", "session_id": sid,
+                        "tool_name": name, "result": &output[..output.len().min(2000)],
+                        "is_error": is_error
+                    }));
+                }
+
+                "result" => {
+                    result_metrics = Some(parsed.clone());
+                }
+
+                _ => {}
+            }
+        }
+
+        (text_acc, blocks, result_metrics)
     });
 
+    // Wait for completion or cancellation
+    tokio::select! {
+        _ = cancel_token.cancelled() => {
+            let _ = child.kill().await;
+            tracing::info!("Session {} cancelled", session_id);
+        }
+        _ = child.wait() => {}
+    }
+
+    let (acc_text, acc_blocks, result_metrics) = read_task.await
+        .unwrap_or_else(|_| (String::new(), Vec::new(), None));
+
+    assistant_text = acc_text;
+    assistant_blocks = acc_blocks;
+
+    send_event(event_tx, json!({"event": "message_end", "session_id": session_id}));
+
+    // Send metrics if available
+    if let Some(ref result) = result_metrics {
+        let mut metrics = json!({"event": "metrics", "session_id": session_id});
+
+        if let Some(usage) = result.get("usage") {
+            metrics["input_tokens"] = usage.get("input_tokens").cloned().unwrap_or(json!(0));
+            metrics["output_tokens"] = usage.get("output_tokens").cloned().unwrap_or(json!(0));
+            metrics["cache_read_tokens"] = usage.get("cache_read_input_tokens").cloned().unwrap_or(json!(0));
+            metrics["cache_creation_tokens"] = usage.get("cache_creation_input_tokens").cloned().unwrap_or(json!(0));
+        }
+
+        if let Some(model_usage) = result.get("modelUsage") {
+            if let Some(model_data) = model_usage.as_object().and_then(|m| m.values().next()) {
+                metrics["context_window"] = model_data.get("contextWindow").cloned().unwrap_or(json!(0));
+                metrics["max_output_tokens"] = model_data.get("maxOutputTokens").cloned().unwrap_or(json!(0));
+            }
+        }
+
+        metrics["total_cost_usd"] = result.get("total_cost_usd").cloned().unwrap_or(json!(0.0));
+        metrics["duration_ms"] = result.get("duration_ms").cloned().unwrap_or(json!(0));
+        metrics["duration_api_ms"] = result.get("duration_api_ms").cloned().unwrap_or(json!(0));
+        metrics["num_turns"] = result.get("num_turns").cloned().unwrap_or(json!(0));
+        metrics["model"] = result.get("modelUsage")
+            .and_then(|m| m.as_object())
+            .and_then(|m| m.keys().next())
+            .map(|k| json!(k))
+            .unwrap_or(json!("unknown"));
+
+        // Compute context usage percentage
+        let total_input = metrics["input_tokens"].as_u64().unwrap_or(0)
+            + metrics["cache_read_tokens"].as_u64().unwrap_or(0)
+            + metrics["cache_creation_tokens"].as_u64().unwrap_or(0)
+            + metrics["output_tokens"].as_u64().unwrap_or(0);
+        let context_window = metrics["context_window"].as_u64().unwrap_or(1);
+        metrics["context_used_pct"] = json!((total_input as f64 / context_window as f64 * 100.0).round() as u64);
+
+        send_event(event_tx, metrics);
+    }
+
+    // Build assistant message for history
+    if !assistant_text.is_empty() || !assistant_blocks.is_empty() {
+        let content = if assistant_blocks.is_empty() {
+            json!([{"type": "text", "text": assistant_text}])
+        } else {
+            json!(assistant_blocks)
+        };
+        history.push(json!({
+            "role": "assistant",
+            "content": content
+        }));
+    }
+
+    // Save conversation
     let cwd_str = working_dir.to_string_lossy().to_string();
-    let max_turns = 30;
-
-    for turn in 0..max_turns {
-        if cancel_token.is_cancelled() {
-            tracing::info!("Session {} cancelled at turn {}", session_id, turn);
-            save_quietly(session_id, session_name, &cwd_str, &messages);
-            return Ok(());
-        }
-
-        tracing::info!(session_id, turn, "Sending API request");
-
-        send_event(event_tx, json!({"event": "message_start", "session_id": session_id}));
-
-        // Stream the response
-        let (stream_tx, mut stream_rx) =
-            tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
-
-        let sid = session_id.to_string();
-        let bridge_tx = event_tx.clone();
-
-        let forwarder = tokio::spawn(async move {
-            while let Some(event) = stream_rx.recv().await {
-                match &event {
-                    StreamEvent::TextDelta(text) => {
-                        send_event(&bridge_tx, json!({
-                            "event": "message_delta", "session_id": sid, "text": text
-                        }));
-                    }
-                    StreamEvent::ToolUseStart { name, .. } => {
-                        send_event(&bridge_tx, json!({
-                            "event": "tool_start", "session_id": sid,
-                            "tool_name": name, "tool_input": ""
-                        }));
-                    }
-                    _ => {}
-                }
-            }
-        });
-
-        let content_blocks = client
-            .stream_message(&messages, Some(&system_prompt), &tool_defs, &stream_tx)
-            .await?;
-
-        drop(stream_tx);
-        let _ = forwarder.await;
-
-        send_event(event_tx, json!({"event": "message_end", "session_id": session_id}));
-
-        // Add assistant message to history
-        messages.push(Message {
-            role: "assistant".into(),
-            content: MessageContent::Blocks(content_blocks.clone()),
-        });
-
-        // Save after each assistant response
-        save_quietly(session_id, session_name, &cwd_str, &messages);
-
-        // Check for tool calls
-        let tool_uses: Vec<&ContentBlock> = content_blocks
-            .iter()
-            .filter(|b| matches!(b, ContentBlock::ToolUse { .. }))
-            .collect();
-
-        if tool_uses.is_empty() {
-            tracing::info!(session_id, turn, "Agent completed (no tool calls)");
-            return Ok(());
-        }
-
-        // Execute tools
-        let mut tool_results: Vec<ContentBlock> = Vec::new();
-        for block in &tool_uses {
-            if let ContentBlock::ToolUse { id, name, input } = block {
-                tracing::info!(session_id, tool = %name, "Executing tool");
-
-                let (output, is_error) = tools::execute_tool(name, input, working_dir).await;
-
-                send_event(event_tx, json!({
-                    "event": "tool_end", "session_id": session_id,
-                    "tool_name": name, "result": &output[..output.len().min(2000)],
-                    "is_error": is_error
-                }));
-
-                tool_results.push(ContentBlock::ToolResult {
-                    tool_use_id: id.clone(),
-                    content: output,
-                    is_error: if is_error { Some(true) } else { None },
-                });
-            }
-        }
-
-        // Add tool results as user message
-        messages.push(Message {
-            role: "user".into(),
-            content: MessageContent::Blocks(tool_results),
-        });
-
-        // Save after tool results too
-        save_quietly(session_id, session_name, &cwd_str, &messages);
+    if let Err(e) = storage::save_raw(session_id, session_name, &cwd_str, &history) {
+        tracing::warn!("Failed to save session: {:#}", e);
     }
 
-    tracing::warn!(session_id, "Reached max turns ({})", max_turns);
     Ok(())
-}
-
-fn save_quietly(session_id: &str, name: Option<&str>, working_dir: &str, messages: &[Message]) {
-    if let Err(e) = storage::save(session_id, name, working_dir, messages) {
-        tracing::warn!(session_id, "Failed to save session: {:#}", e);
-    }
 }

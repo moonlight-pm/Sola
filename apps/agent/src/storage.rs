@@ -2,14 +2,11 @@
 //!
 //! Storage layout:
 //!   ~/.config/sola/agent/sessions/{session_id}.json
-//!
-//! Each file contains a JSON object with metadata + messages array.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::PathBuf;
-
-use crate::api::Message;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedSession {
@@ -18,7 +15,7 @@ pub struct SavedSession {
     pub working_dir: String,
     pub created_at: u64,
     pub updated_at: u64,
-    pub messages: Vec<Message>,
+    pub messages: Vec<Value>,
 }
 
 fn sessions_dir() -> PathBuf {
@@ -37,12 +34,12 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Save a session to disk.
-pub fn save(
+/// Save a session with raw JSON messages.
+pub fn save_raw(
     session_id: &str,
     name: Option<&str>,
     working_dir: &str,
-    messages: &[Message],
+    messages: &[Value],
 ) -> Result<()> {
     let dir = sessions_dir();
     std::fs::create_dir_all(&dir)
@@ -50,7 +47,6 @@ pub fn save(
 
     let path = session_path(session_id);
 
-    // Preserve created_at if file exists
     let created_at = if let Ok(existing) = load(session_id) {
         existing.created_at
     } else {
@@ -108,13 +104,4 @@ pub fn list_all() -> Vec<SavedSession> {
 
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
-}
-
-/// Delete a saved session.
-pub fn delete(session_id: &str) -> Result<()> {
-    let path = session_path(session_id);
-    if path.exists() {
-        std::fs::remove_file(&path)?;
-    }
-    Ok(())
 }

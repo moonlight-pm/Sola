@@ -26,9 +26,23 @@ interface Message {
   tools: ToolCall[];
 }
 
+interface Metrics {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  context_window: number;
+  context_used_pct: number;
+  total_cost_usd: number;
+  duration_ms: number;
+  model: string;
+  num_turns: number;
+}
+
 const state = reactive({
   sessions: [] as Session[],
   messages: {} as Record<string, Message[]>,
+  metrics: {} as Record<string, Metrics>,
   activeId: null as string | null,
   editingId: null as string | null,
   editingTitle: false,
@@ -102,6 +116,22 @@ on('tool_end', (ev: any) => {
     const t = last.tools.find((t: ToolCall) => t.name === ev.tool_name && t.output === null);
     if (t) { t.output = ev.result; t.isError = ev.is_error; renderMessages(); }
   }
+});
+
+on('metrics', (ev: any) => {
+  state.metrics[ev.session_id] = {
+    input_tokens: ev.input_tokens || 0,
+    output_tokens: ev.output_tokens || 0,
+    cache_read_tokens: ev.cache_read_tokens || 0,
+    cache_creation_tokens: ev.cache_creation_tokens || 0,
+    context_window: ev.context_window || 0,
+    context_used_pct: ev.context_used_pct || 0,
+    total_cost_usd: ev.total_cost_usd || 0,
+    duration_ms: ev.duration_ms || 0,
+    model: ev.model || 'unknown',
+    num_turns: ev.num_turns || 0,
+  };
+  renderHeader();
 });
 
 on('conversations_list', (ev: any) => {
@@ -385,6 +415,29 @@ function renderHeader(): void {
     left.appendChild(editBtn);
   }
   headerBar.appendChild(left);
+
+  // Center: metrics (if available)
+  const m = state.activeId ? state.metrics[state.activeId] : null;
+  if (m && m.context_window > 0) {
+    const metricsDiv = el('div', 'header-metrics');
+
+    // Context bar
+    const barWrap = el('div', 'context-bar-wrap');
+    const bar = el('div', 'context-bar');
+    const pct = Math.min(m.context_used_pct, 100);
+    bar.style.width = pct + '%';
+    if (pct > 90) bar.classList.add('danger');
+    else if (pct > 70) bar.classList.add('warning');
+    barWrap.appendChild(bar);
+    metricsDiv.appendChild(barWrap);
+
+    // Stats text
+    const totalTokens = m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_creation_tokens;
+    const statsText = `${(totalTokens / 1000).toFixed(1)}k / ${(m.context_window / 1000).toFixed(0)}k  (${pct}%)`;
+    metricsDiv.appendChild(el('span', 'header-stats', statsText));
+
+    headerBar.appendChild(metricsDiv);
+  }
 
   // Right: cwd
   if (s.workingDir) {

@@ -3,11 +3,9 @@ use std::sync::Arc;
 use sola_app::{asset_bundle, SolaApp};
 
 mod agent;
-mod api;
 mod handler;
 mod session;
 mod storage;
-mod tools;
 
 fn main() {
     let session_mgr = Arc::new(session::SessionManager::new());

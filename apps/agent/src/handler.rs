@@ -143,10 +143,17 @@ impl AgentHandler {
             .iter()
             .map(|s| {
                 let first_prompt = s.messages.iter()
-                    .find(|m| m.role == "user")
-                    .map(|m| match &m.content {
-                        crate::api::MessageContent::Text(t) => t.clone(),
-                        crate::api::MessageContent::Blocks(_) => String::new(),
+                    .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+                    .and_then(|m| {
+                        m.get("content").and_then(|c| {
+                            if let Some(text) = c.as_str() { return Some(text.to_string()); }
+                            c.as_array().and_then(|blocks| {
+                                blocks.iter()
+                                    .find(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))
+                                    .and_then(|b| b.get("text").and_then(|v| v.as_str()))
+                                    .map(String::from)
+                            })
+                        })
                     })
                     .unwrap_or_default();
                 json!({
@@ -171,7 +178,6 @@ impl AgentHandler {
             Err(e) => return json!({ "error": format!("Failed to load session: {:#}", e) }),
         };
 
-        // Create an in-memory session
         let dir = std::path::PathBuf::from(&saved.working_dir);
         self.session_mgr.sessions.write().await.insert(
             session_id.to_string(),
@@ -181,7 +187,6 @@ impl AgentHandler {
             self.session_mgr.rename_session(session_id, name.clone()).await;
         }
 
-        // Notify frontend
         self.send_event(json!({
             "event": "session_state",
             "session_id": session_id,
@@ -190,9 +195,11 @@ impl AgentHandler {
             "working_dir": saved.working_dir,
         }));
 
-        // Send the conversation history to frontend
+        // Extract displayable content from each message
         let messages: Vec<Value> = saved.messages.iter().map(|m| {
-            json!({ "role": m.role, "content": format_content(&m.content) })
+            let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+            let content = extract_text_content(m);
+            json!({ "role": role, "content": content })
         }).collect();
 
         self.send_event(json!({
@@ -209,14 +216,23 @@ impl AgentHandler {
     }
 }
 
-fn format_content(content: &crate::api::MessageContent) -> String {
-    match content {
-        crate::api::MessageContent::Text(t) => t.clone(),
-        crate::api::MessageContent::Blocks(blocks) => {
-            blocks.iter().filter_map(|b| match b {
-                crate::api::ContentBlock::Text { text } => Some(text.clone()),
-                _ => None,
-            }).collect::<Vec<_>>().join("\n")
+fn extract_text_content(msg: &Value) -> String {
+    if let Some(content) = msg.get("content") {
+        if let Some(text) = content.as_str() {
+            return text.to_string();
+        }
+        if let Some(blocks) = content.as_array() {
+            return blocks.iter()
+                .filter_map(|b| {
+                    if b.get("type").and_then(|v| v.as_str()) == Some("text") {
+                        b.get("text").and_then(|v| v.as_str()).map(String::from)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
         }
     }
+    String::new()
 }
