@@ -1,16 +1,13 @@
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use sola_bus::BusClient;
 
 use crate::agent;
-use crate::bus_tools;
 use crate::session::SessionManager;
 
 pub struct AgentHandler {
     pub session_mgr: Arc<SessionManager>,
     pub event_tx: std::sync::mpsc::Sender<String>,
-    pub bus_client: Option<Arc<std::sync::Mutex<BusClient>>>,
 }
 
 #[async_trait::async_trait]
@@ -83,13 +80,10 @@ impl AgentHandler {
         };
 
         let cancel_token = {
-            let sessions = self.session_mgr.sessions.read().await;
-            sessions.get(session_id).unwrap().cancel_token.clone()
-        };
-
-        let bus_tools: Vec<Box<dyn claurst_tools::Tool>> = match &self.bus_client {
-            Some(b) => bus_tools::create_bus_tools(b.clone()),
-            None => Vec::new(),
+            let mut sessions = self.session_mgr.sessions.write().await;
+            let session = sessions.get_mut(session_id).unwrap();
+            session.cancel_token = tokio_util::sync::CancellationToken::new();
+            session.cancel_token.clone()
         };
 
         let session_id = session_id.to_string();
@@ -104,7 +98,6 @@ impl AgentHandler {
                 working_dir,
                 session_mgr,
                 event_tx,
-                bus_tools,
                 cancel_token,
             )
             .await;
@@ -143,7 +136,6 @@ impl AgentHandler {
     }
 
     async fn cmd_list_conversations(&self) -> Value {
-        // TODO: scan claurst session storage
         json!({ "conversations": [] })
     }
 

@@ -10,21 +10,17 @@ pub enum SessionStatus {
 }
 
 pub struct Session {
-    pub session_id: String,
     pub name: Option<String>,
     pub working_dir: PathBuf,
-    pub messages: Vec<claurst_core::types::Message>,
     pub cancel_token: CancellationToken,
     pub status: SessionStatus,
 }
 
 impl Session {
-    pub fn new(session_id: String, working_dir: PathBuf) -> Self {
+    pub fn new(working_dir: PathBuf) -> Self {
         Self {
-            session_id,
             name: None,
             working_dir,
-            messages: Vec::new(),
             cancel_token: CancellationToken::new(),
             status: SessionStatus::Idle,
         }
@@ -44,7 +40,7 @@ impl SessionManager {
 
     pub async fn create_session(&self, working_dir: PathBuf) -> String {
         let session_id = uuid::Uuid::new_v4().to_string();
-        let session = Session::new(session_id.clone(), working_dir);
+        let session = Session::new(working_dir);
         self.sessions.write().await.insert(session_id.clone(), session);
         session_id
     }

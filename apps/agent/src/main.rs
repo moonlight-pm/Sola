@@ -3,10 +3,10 @@ use std::sync::Arc;
 use sola_app::{asset_bundle, SolaApp};
 
 mod agent;
-mod bus_tools;
+mod api;
 mod handler;
-mod mcp_config;
 mod session;
+mod tools;
 
 fn main() {
     let session_mgr = Arc::new(session::SessionManager::new());
@@ -27,7 +27,6 @@ fn main() {
         .handler(move |event_tx| handler::AgentHandler {
             session_mgr: session_mgr_for_handler.clone(),
             event_tx,
-            bus_client: None,
         })
         .run();
 }

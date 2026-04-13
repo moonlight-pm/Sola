@@ -1,8 +1,12 @@
+//! Agent loop: send message → stream response → execute tools → repeat.
+//!
+//! Modeled after Pi's event-driven agent loop pattern.
+
+use crate::api::{ApiClient, ContentBlock, Message, MessageContent, StreamEvent};
 use crate::session::{SessionManager, SessionStatus};
-use anyhow::Result;
+use crate::tools;
 use serde_json::json;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 pub async fn run_session_message(
@@ -11,7 +15,6 @@ pub async fn run_session_message(
     working_dir: PathBuf,
     session_mgr: Arc<SessionManager>,
     event_tx: std::sync::mpsc::Sender<String>,
-    bus_tools: Vec<Box<dyn claurst_tools::Tool>>,
     cancel_token: tokio_util::sync::CancellationToken,
 ) {
     session_mgr
@@ -21,12 +24,7 @@ pub async fn run_session_message(
         "event": "session_state", "session_id": session_id, "status": "running"
     }));
 
-    match run_agent_loop(
-        &session_id, &text, &working_dir, &session_mgr, &event_tx,
-        bus_tools, cancel_token,
-    )
-    .await
-    {
+    match run_agent_loop(&session_id, &text, &working_dir, &event_tx, cancel_token).await {
         Ok(()) => {
             session_mgr.set_status(&session_id, SessionStatus::Idle).await;
             send_event(&event_tx, json!({
@@ -54,152 +52,124 @@ async fn run_agent_loop(
     session_id: &str,
     text: &str,
     working_dir: &PathBuf,
-    session_mgr: &SessionManager,
     event_tx: &std::sync::mpsc::Sender<String>,
-    bus_tools: Vec<Box<dyn claurst_tools::Tool>>,
     cancel_token: tokio_util::sync::CancellationToken,
-) -> Result<()> {
-    // Route through Junction proxy (handles OAuth attestation)
-    let api_key = std::env::var("JUNCTION_API_KEY")
-        .unwrap_or_else(|_| "a626d79941d9c85a4f7015b3b69805f0df659406f1701ccd3aa07bb7123f50a3".into());
-    let api_base = std::env::var("JUNCTION_URL")
-        .unwrap_or_else(|_| "https://junction.moonlight.pm".into());
+) -> anyhow::Result<()> {
+    let client = ApiClient::from_env();
+    let tool_defs = tools::tool_definitions();
 
-    let client_config = claurst_api::client::ClientConfig {
-        api_key,
-        api_base,
-        ..Default::default()
-    };
-    let client = claurst_api::AnthropicClient::new(client_config)?;
-
-    let mut tools: Vec<Box<dyn claurst_tools::Tool>> = claurst_tools::all_tools();
-    tools.extend(bus_tools);
-
-    let cost_tracker = claurst_core::cost::CostTracker::new();
-
-    let tool_ctx = claurst_tools::ToolContext {
-        working_dir: working_dir.clone(),
-        permission_mode: claurst_core::config::PermissionMode::BypassPermissions,
-        permission_handler: Arc::new(claurst_core::permissions::AutoPermissionHandler {
-            mode: claurst_core::config::PermissionMode::BypassPermissions,
-        }),
-        cost_tracker: cost_tracker.clone(),
-        session_id: session_id.to_string(),
-        file_history: Arc::new(parking_lot::Mutex::new(
-            claurst_core::file_history::FileHistory::new(),
-        )),
-        current_turn: Arc::new(AtomicUsize::new(0)),
-        non_interactive: true,
-        mcp_manager: None,
-        config: claurst_core::config::Config::default(),
-        managed_agent_config: None,
-        completion_notifier: None,
-    };
-
-    let config = claurst_query::QueryConfig {
-        model: "claude-opus-4-6".into(),
-        max_tokens: 16384,
-        max_turns: 30,
-        system_prompt: Some(build_system_prompt(working_dir)),
-        ..Default::default()
-    };
-
-    let user_msg = claurst_core::types::Message::user(text);
-    let mut messages = {
-        let sessions = session_mgr.sessions.read().await;
-        let session = sessions.get(session_id).unwrap();
-        let mut msgs = session.messages.clone();
-        msgs.push(user_msg);
-        msgs
-    };
-
-    let (query_event_tx, mut query_event_rx) =
-        tokio::sync::mpsc::unbounded_channel::<claurst_query::QueryEvent>();
-
-    let event_tx_clone = event_tx.clone();
-    let sid = session_id.to_string();
-    let event_forwarder = tokio::spawn(async move {
-        while let Some(qe) = query_event_rx.recv().await {
-            for evt in translate_query_event(&sid, qe) {
-                let _ = event_tx_clone.send(evt.to_string());
-            }
-        }
-    });
-
-    let outcome = claurst_query::run_query_loop(
-        &client, &mut messages, &tools, &tool_ctx, &config,
-        cost_tracker, Some(query_event_tx), cancel_token, None,
-    )
-    .await;
-
-    let _ = event_forwarder.await;
-
-    {
-        let mut sessions = session_mgr.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
-            session.messages = messages;
-        }
-    }
-
-    match outcome {
-        claurst_query::QueryOutcome::EndTurn { .. } => Ok(()),
-        claurst_query::QueryOutcome::Cancelled => Ok(()),
-        claurst_query::QueryOutcome::Error(e) => Err(anyhow::anyhow!("{}", e)),
-        claurst_query::QueryOutcome::MaxTokens { .. } => Ok(()),
-        claurst_query::QueryOutcome::BudgetExceeded { cost_usd, limit_usd } => {
-            Err(anyhow::anyhow!("Budget exceeded: ${:.2} / ${:.2}", cost_usd, limit_usd))
-        }
-    }
-}
-
-fn translate_query_event(session_id: &str, event: claurst_query::QueryEvent) -> Vec<serde_json::Value> {
-    match event {
-        claurst_query::QueryEvent::Stream(stream_event) => {
-            translate_stream_event(session_id, stream_event)
-        }
-        claurst_query::QueryEvent::ToolStart { tool_name, input_json, .. } => {
-            vec![json!({
-                "event": "tool_start", "session_id": session_id,
-                "tool_name": tool_name, "tool_input": input_json
-            })]
-        }
-        claurst_query::QueryEvent::ToolEnd { tool_name, result, is_error, .. } => {
-            vec![json!({
-                "event": "tool_end", "session_id": session_id,
-                "tool_name": tool_name, "result": result, "is_error": is_error
-            })]
-        }
-        _ => vec![],
-    }
-}
-
-fn translate_stream_event(session_id: &str, event: claurst_api::streaming::AnthropicStreamEvent) -> Vec<serde_json::Value> {
-    match event {
-        claurst_api::streaming::AnthropicStreamEvent::MessageStart { .. } => {
-            vec![json!({"event": "message_start", "session_id": session_id})]
-        }
-        claurst_api::streaming::AnthropicStreamEvent::ContentBlockDelta { delta, .. } => {
-            match delta {
-                claurst_api::streaming::ContentDelta::TextDelta { text } => {
-                    vec![json!({"event": "message_delta", "session_id": session_id, "text": text})]
-                }
-                _ => vec![],
-            }
-        }
-        claurst_api::streaming::AnthropicStreamEvent::MessageStop => {
-            vec![json!({"event": "message_end", "session_id": session_id})]
-        }
-        _ => vec![],
-    }
-}
-
-fn build_system_prompt(working_dir: &PathBuf) -> String {
-    format!(
+    let system_prompt = format!(
         "You are a coding assistant running inside Sola, a Wayland desktop environment. \
          Your working directory is: {}\n\n\
-         You have access to standard coding tools (bash, file read/write/edit, grep, glob, web search) \
-         plus Sola-specific tools (raise_app, launch_app, list_apps) for interacting with the desktop.\n\n\
+         You have access to tools for bash execution, file operations, search, and web search. \
          Be concise and direct. When editing code, show the changes clearly.",
         working_dir.display()
-    )
+    );
+
+    let mut messages: Vec<Message> = Vec::new();
+    messages.push(Message {
+        role: "user".into(),
+        content: MessageContent::Text(text.to_string()),
+    });
+
+    let max_turns = 30;
+
+    for turn in 0..max_turns {
+        if cancel_token.is_cancelled() {
+            tracing::info!("Session {} cancelled at turn {}", session_id, turn);
+            return Ok(());
+        }
+
+        tracing::info!(session_id, turn, "Sending API request");
+
+        send_event(event_tx, json!({"event": "message_start", "session_id": session_id}));
+
+        // Stream the response via channel
+        let (stream_tx, mut stream_rx) =
+            tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
+
+        let sid = session_id.to_string();
+        let bridge_tx = event_tx.clone();
+
+        // Forward stream events to bridge
+        let forwarder = tokio::spawn(async move {
+            while let Some(event) = stream_rx.recv().await {
+                match &event {
+                    StreamEvent::TextDelta(text) => {
+                        send_event(&bridge_tx, json!({
+                            "event": "message_delta", "session_id": sid, "text": text
+                        }));
+                    }
+                    StreamEvent::ToolUseStart { name, .. } => {
+                        send_event(&bridge_tx, json!({
+                            "event": "tool_start", "session_id": sid,
+                            "tool_name": name, "tool_input": ""
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let content_blocks = client
+            .stream_message(&messages, Some(&system_prompt), &tool_defs, &stream_tx)
+            .await?;
+
+        drop(stream_tx);
+        let _ = forwarder.await;
+
+        send_event(event_tx, json!({"event": "message_end", "session_id": session_id}));
+
+        // Add assistant message to history
+        messages.push(Message {
+            role: "assistant".into(),
+            content: MessageContent::Blocks(content_blocks.clone()),
+        });
+
+        // Check for tool calls
+        let tool_uses: Vec<&ContentBlock> = content_blocks
+            .iter()
+            .filter(|b| matches!(b, ContentBlock::ToolUse { .. }))
+            .collect();
+
+        if tool_uses.is_empty() {
+            // No tool calls — agent is done
+            tracing::info!(session_id, turn, "Agent completed (no tool calls)");
+            return Ok(());
+        }
+
+        // Execute tools and build results
+        let mut tool_results: Vec<ContentBlock> = Vec::new();
+        for block in &tool_uses {
+            if let ContentBlock::ToolUse { id, name, input } = block {
+                tracing::info!(session_id, tool = %name, "Executing tool");
+
+                let (output, is_error) = tools::execute_tool(name, input, working_dir).await;
+
+                // Send tool_end event
+                send_event(event_tx, json!({
+                    "event": "tool_end", "session_id": session_id,
+                    "tool_name": name, "result": &output[..output.len().min(2000)],
+                    "is_error": is_error
+                }));
+
+                tool_results.push(ContentBlock::ToolResult {
+                    tool_use_id: id.clone(),
+                    content: output,
+                    is_error: if is_error { Some(true) } else { None },
+                });
+            }
+        }
+
+        // Add tool results as user message
+        messages.push(Message {
+            role: "user".into(),
+            content: MessageContent::Blocks(tool_results),
+        });
+
+        // Continue the loop — next iteration will send the tool results to the API
+    }
+
+    tracing::warn!(session_id, "Reached max turns ({})", max_turns);
+    Ok(())
 }

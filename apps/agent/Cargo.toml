@@ -8,16 +8,12 @@ edition.workspace = true
 sola-app = { path = "../../crates/sola-app" }
 sola-bus = { path = "../../crates/sola-bus" }
 
-# Claurst agent engine
-claurst-core = { git = "https://github.com/Kuberwastaken/claurst" }
-claurst-api = { git = "https://github.com/Kuberwastaken/claurst" }
-claurst-query = { git = "https://github.com/Kuberwastaken/claurst" }
-claurst-tools = { git = "https://github.com/Kuberwastaken/claurst" }
-claurst-mcp = { git = "https://github.com/Kuberwastaken/claurst" }
-
 # Async
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "io-util"] }
 tokio-util = "0.7"
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -30,4 +26,4 @@ tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
 async-trait = "0.1"
-parking_lot = "0.12"
+futures = "0.3"
