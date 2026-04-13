@@ -159,7 +159,7 @@ async function sendMessage(): Promise<void> {
   const ta = document.getElementById('msg-input') as HTMLTextAreaElement | null;
   if (!ta) return;
   const text = ta.value.trim();
-  if (!text || !state.activeId || isRunning()) return;
+  if (!text || !state.activeId) return;
 
   if (!state.messages[state.activeId]) state.messages[state.activeId] = [];
   state.messages[state.activeId].push({ role: 'user', content: text, streaming: false, tools: [] });
@@ -172,6 +172,7 @@ async function sendMessage(): Promise<void> {
   ta.style.height = 'auto';
   renderMessages();
   updateInputState();
+  ta.focus();
 }
 
 async function showNewDialog(): Promise<void> {
@@ -454,9 +455,10 @@ function updateInputState(): void {
   if (!ta) return;
   const hasSession = !!state.activeId;
   const running = isRunning();
-  ta.disabled = !hasSession || running;
+  // Keep enabled during running — allows mid-response messages
+  ta.disabled = !hasSession;
   ta.placeholder = !hasSession ? 'Create a session to start...' :
-                   running ? 'Agent is working...' : 'Send a message...';
+                   running ? 'Send a follow-up...' : 'Send a message...';
   ta.classList.toggle('running', running);
 
   // Update button
