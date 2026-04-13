@@ -73,6 +73,17 @@ impl AgentHandler {
             return json!({ "error": "text is required" });
         };
 
+        // If subprocess is already running, inject as follow-up
+        if self.session_mgr.is_running(session_id).await {
+            match agent::send_followup(session_id, text, &self.session_mgr).await {
+                Ok(()) => return json!({ "ok": true, "followup": true }),
+                Err(e) => {
+                    tracing::warn!("Follow-up injection failed: {:#}", e);
+                    // Fall through to spawn new subprocess
+                }
+            }
+        }
+
         let working_dir = {
             let sessions = self.session_mgr.sessions.read().await;
             match sessions.get(session_id) {

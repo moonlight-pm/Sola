@@ -1,8 +1,7 @@
-//! Agent: spawns `claude -p` as a one-shot subprocess per message.
+//! Agent: spawns `claude -p` subprocess with stream-json I/O.
 //!
-//! Full conversation history is managed by us and sent on stdin.
-//! Claude Code handles OAuth, tools, system prompt, and MCP.
-//! We parse the stream-json output for text, tool events, and metrics.
+//! Stdin stays open so follow-up messages can be injected mid-response.
+//! Full conversation history is managed by us.
 
 use crate::session::{SessionManager, SessionStatus};
 use crate::storage;
@@ -11,7 +10,9 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::Mutex;
 
+/// Start a new agent subprocess and send the first message.
 pub async fn run_session_message(
     session_id: String,
     text: String,
@@ -32,8 +33,12 @@ pub async fn run_session_message(
         sessions.get(&session_id).and_then(|s| s.name.clone())
     };
 
-    match run_claude(&session_id, &text, &working_dir, session_name.as_deref(), &event_tx, cancel_token).await {
+    match run_claude(
+        &session_id, &text, &working_dir, session_name.as_deref(),
+        &session_mgr, &event_tx, cancel_token,
+    ).await {
         Ok(()) => {
+            session_mgr.set_stdin(&session_id, None).await;
             session_mgr.set_status(&session_id, SessionStatus::Idle).await;
             send_event(&event_tx, json!({
                 "event": "session_state", "session_id": session_id, "status": "idle"
@@ -42,6 +47,7 @@ pub async fn run_session_message(
         Err(e) => {
             let msg = format!("{:#}", e);
             tracing::error!("Agent error for session {}: {}", session_id, msg);
+            session_mgr.set_stdin(&session_id, None).await;
             session_mgr
                 .set_status(&session_id, SessionStatus::Error(msg.clone()))
                 .await;
@@ -50,6 +56,32 @@ pub async fn run_session_message(
             }));
         }
     }
+}
+
+/// Send a follow-up message to an already-running subprocess.
+pub async fn send_followup(
+    session_id: &str,
+    text: &str,
+    session_mgr: &SessionManager,
+) -> Result<()> {
+    let stdin = session_mgr.get_stdin(session_id).await
+        .context("No running subprocess for this session")?;
+
+    let msg = json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": text}]
+        }
+    });
+
+    let mut stdin_guard = stdin.lock().await;
+    stdin_guard.write_all(msg.to_string().as_bytes()).await?;
+    stdin_guard.write_all(b"\n").await?;
+    stdin_guard.flush().await?;
+
+    tracing::info!(session_id, "Injected follow-up message");
+    Ok(())
 }
 
 fn send_event(tx: &std::sync::mpsc::Sender<String>, value: serde_json::Value) {
@@ -61,6 +93,7 @@ async fn run_claude(
     text: &str,
     working_dir: &PathBuf,
     session_name: Option<&str>,
+    session_mgr: &SessionManager,
     event_tx: &std::sync::mpsc::Sender<String>,
     cancel_token: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
@@ -76,7 +109,7 @@ async fn run_claude(
         "content": [{"type": "text", "text": text}]
     }));
 
-    // Build the stream-json input: one user message per history entry
+    // Build stream-json input from history
     let mut input_lines = String::new();
     for msg in &history {
         let stream_msg = json!({
@@ -106,11 +139,18 @@ async fn run_claude(
         .spawn()
         .context("Failed to spawn claude CLI")?;
 
-    // Write conversation history to stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input_lines.as_bytes()).await?;
-        stdin.shutdown().await?;
+    // Write history to stdin but keep it open for follow-ups
+    let stdin = child.stdin.take().context("No stdin")?;
+    let stdin = Arc::new(Mutex::new(stdin));
+
+    {
+        let mut stdin_guard = stdin.lock().await;
+        stdin_guard.write_all(input_lines.as_bytes()).await?;
+        stdin_guard.flush().await?;
     }
+
+    // Store stdin handle in session so handler can inject follow-ups
+    session_mgr.set_stdin(session_id, Some(stdin.clone())).await;
 
     // Read and process stdout
     let stdout = child.stdout.take().context("No stdout")?;
@@ -121,9 +161,6 @@ async fn run_claude(
     let tx = event_tx.clone();
 
     send_event(event_tx, json!({"event": "message_start", "session_id": session_id}));
-
-    let mut assistant_text = String::new();
-    let mut assistant_blocks: Vec<serde_json::Value> = Vec::new();
 
     let read_task = tokio::spawn(async move {
         let mut text_acc = String::new();
@@ -140,26 +177,22 @@ async fn run_claude(
                 "stream_event" => {
                     if let Some(event) = parsed.get("event") {
                         let etype = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        match etype {
-                            "content_block_delta" => {
-                                if let Some(delta) = event.get("delta") {
-                                    if delta.get("type").and_then(|v| v.as_str()) == Some("text_delta") {
-                                        if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
-                                            text_acc.push_str(text);
-                                            send_event(&tx, json!({
-                                                "event": "message_delta", "session_id": sid, "text": text
-                                            }));
-                                        }
+                        if etype == "content_block_delta" {
+                            if let Some(delta) = event.get("delta") {
+                                if delta.get("type").and_then(|v| v.as_str()) == Some("text_delta") {
+                                    if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                        text_acc.push_str(text);
+                                        send_event(&tx, json!({
+                                            "event": "message_delta", "session_id": sid, "text": text
+                                        }));
                                     }
                                 }
                             }
-                            _ => {}
                         }
                     }
                 }
 
                 "assistant" => {
-                    // Complete assistant message — extract tool_use blocks
                     if let Some(content) = parsed.get("message")
                         .and_then(|m| m.get("content"))
                         .and_then(|c| c.as_array())
@@ -204,23 +237,25 @@ async fn run_claude(
     });
 
     // Wait for completion or cancellation
-    tokio::select! {
+    let was_cancelled = tokio::select! {
         _ = cancel_token.cancelled() => {
+            {
+                let mut stdin_guard = stdin.lock().await;
+                let _ = stdin_guard.shutdown().await;
+            }
             let _ = child.kill().await;
             tracing::info!("Session {} cancelled", session_id);
+            true
         }
-        _ = child.wait() => {}
-    }
+        _ = child.wait() => false,
+    };
 
     let (acc_text, acc_blocks, result_metrics) = read_task.await
         .unwrap_or_else(|_| (String::new(), Vec::new(), None));
 
-    assistant_text = acc_text;
-    assistant_blocks = acc_blocks;
-
     send_event(event_tx, json!({"event": "message_end", "session_id": session_id}));
 
-    // Send metrics if available
+    // Send metrics
     if let Some(ref result) = result_metrics {
         let mut metrics = json!({"event": "metrics", "session_id": session_id});
 
@@ -248,7 +283,6 @@ async fn run_claude(
             .map(|k| json!(k))
             .unwrap_or(json!("unknown"));
 
-        // Compute context usage percentage
         let total_input = metrics["input_tokens"].as_u64().unwrap_or(0)
             + metrics["cache_read_tokens"].as_u64().unwrap_or(0)
             + metrics["cache_creation_tokens"].as_u64().unwrap_or(0)
@@ -259,12 +293,14 @@ async fn run_claude(
         send_event(event_tx, metrics);
     }
 
-    // Build assistant message for history
-    if !assistant_text.is_empty() || !assistant_blocks.is_empty() {
-        let content = if assistant_blocks.is_empty() {
-            json!([{"type": "text", "text": assistant_text}])
+    // Save conversation history
+    // On cancel: save the user message but discard partial assistant response
+    // On completion: save everything
+    if !was_cancelled && (!acc_text.is_empty() || !acc_blocks.is_empty()) {
+        let content = if acc_blocks.is_empty() {
+            json!([{"type": "text", "text": acc_text}])
         } else {
-            json!(assistant_blocks)
+            json!(acc_blocks)
         };
         history.push(json!({
             "role": "assistant",
@@ -272,7 +308,6 @@ async fn run_claude(
         }));
     }
 
-    // Save conversation
     let cwd_str = working_dir.to_string_lossy().to_string();
     if let Err(e) = storage::save_raw(session_id, session_name, &cwd_str, &history) {
         tracing::warn!("Failed to save session: {:#}", e);

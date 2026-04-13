@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::process::ChildStdin;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -14,6 +17,9 @@ pub struct Session {
     pub working_dir: PathBuf,
     pub cancel_token: CancellationToken,
     pub status: SessionStatus,
+    /// Stdin handle for the running claude subprocess.
+    /// Present only while a subprocess is active.
+    pub stdin: Option<Arc<Mutex<ChildStdin>>>,
 }
 
 impl Session {
@@ -23,6 +29,7 @@ impl Session {
             working_dir,
             cancel_token: CancellationToken::new(),
             status: SessionStatus::Idle,
+            stdin: None,
         }
     }
 }
@@ -63,9 +70,28 @@ impl SessionManager {
         }
     }
 
+    pub async fn set_stdin(&self, session_id: &str, stdin: Option<Arc<Mutex<ChildStdin>>>) {
+        if let Some(session) = self.sessions.write().await.get_mut(session_id) {
+            session.stdin = stdin;
+        }
+    }
+
     pub async fn cancel_session(&self, session_id: &str) {
         if let Some(session) = self.sessions.read().await.get(session_id) {
             session.cancel_token.cancel();
         }
+    }
+
+    pub async fn is_running(&self, session_id: &str) -> bool {
+        self.sessions.read().await
+            .get(session_id)
+            .map(|s| s.status == SessionStatus::Running)
+            .unwrap_or(false)
+    }
+
+    pub async fn get_stdin(&self, session_id: &str) -> Option<Arc<Mutex<ChildStdin>>> {
+        self.sessions.read().await
+            .get(session_id)
+            .and_then(|s| s.stdin.clone())
     }
 }
