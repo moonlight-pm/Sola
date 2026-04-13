@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sola_bus::topics::{KeyEvent, OutputGeometry, WindowGeometry, Zone};
 use tracing::{info, warn};
 
-const GAP: f64 = 5.0;
+const GAP: f64 = 0.0;
 
 pub struct ZoningState {
     pub output_size: Option<(i32, i32)>,
