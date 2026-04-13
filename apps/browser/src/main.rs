@@ -219,7 +219,10 @@ fn build_ui(app: &gtk4::Application) {
                     let Some(topic) = Topic::parse(&msg) else { continue };
                     match topic {
                         Topic::Key(key) => {
-                            if key.pressed && key.super_held && *app_state.focused.borrow() {
+                            if key.pressed && key.super_held {
+                                let focused = *app_state.focused.borrow();
+                                tracing::info!(code = key.code, focused, "super+key received");
+                                if !focused { continue; }
                                 match key.code {
                                     keycode::T => {
                                         let tab_id = uuid::Uuid::new_v4().to_string();
@@ -290,7 +293,7 @@ fn build_ui(app: &gtk4::Application) {
                         Topic::FocusChanged(app_id) => {
                             let is_focused = app_id == "sola-browser";
                             *app_state.focused.borrow_mut() = is_focused;
-                            tracing::debug!(app_id, is_focused, "focus changed");
+                            tracing::info!(%app_id, is_focused, "focus changed");
                         }
                         Topic::OpenUrl(req) => {
                             let tab_id = uuid::Uuid::new_v4().to_string();
