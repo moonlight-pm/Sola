@@ -37,8 +37,10 @@ function createTab(url?: string, activate: boolean = true): string {
 }
 
 function focusAddressBar(): void {
+  console.log('[browser] focusAddressBar called');
   requestAnimationFrame(() => {
     const input = document.querySelector('.address-input') as HTMLInputElement | null;
+    console.log('[browser] focusAddressBar rAF, input found:', !!input);
     if (input) {
       input.focus();
       input.select();
@@ -126,7 +128,9 @@ on('tab_load_changed', ({ tabId, loading }: any) => {
   );
 });
 
-on('bus_new_tab', ({ tabId, url, activate }: any) => {
+on('bus_new_tab', (data: any) => {
+  console.log('[browser] bus_new_tab received', JSON.stringify(data));
+  const { tabId, url, activate } = data;
   // Bus-initiated tab — Rust already created the WebView
   state.tabs = [...state.tabs, {
     id: tabId,
@@ -155,6 +159,7 @@ on('tab_closed', ({ tabId, nextTabId }: any) => {
 });
 
 on('bus_focus_address', () => {
+  console.log('[browser] bus_focus_address received');
   focusAddressBar();
 });
 
