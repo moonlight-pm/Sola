@@ -50,11 +50,20 @@ impl AgentHandler {
             return json!({ "error": format!("Not a directory: {}", working_dir) });
         }
 
+        let folder_name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| expanded.clone());
         let session_id = self.session_mgr.create_session(dir).await;
+        self.session_mgr
+            .rename_session(&session_id, folder_name.clone())
+            .await;
         self.send_event(json!({
             "event": "session_state",
             "session_id": session_id,
-            "status": "idle"
+            "status": "idle",
+            "name": folder_name,
+            "working_dir": expanded
         }));
 
         json!({ "session_id": session_id })

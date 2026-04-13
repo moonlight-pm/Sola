@@ -8,6 +8,7 @@ interface Session {
   name: string | null;
   status: string;
   firstPrompt: string | null;
+  workingDir: string | null;
 }
 
 interface ToolCall {
@@ -30,39 +31,57 @@ const state = reactive({
   messages: {} as Record<string, Message[]>,
   activeId: null as string | null,
   editingId: null as string | null,
+  editingTitle: false,
   searchQuery: '',
 });
+
+// Track what's rendered to avoid unnecessary DOM rebuilds
+let renderedMsgCount = -1;
+let renderedActiveId: string | null = null;
+let renderedLastContent = '';
+let renderedLastToolCount = -1;
 
 // ── Events from Rust ─────────────────────────────────────────────────────────
 
 on('session_state', (ev: any) => {
   let s = state.sessions.find((x: Session) => x.id === ev.session_id);
   if (!s) {
-    state.sessions.push({ id: ev.session_id, name: null, status: ev.status, firstPrompt: null });
+    s = {
+      id: ev.session_id,
+      name: ev.name || null,
+      status: ev.status,
+      firstPrompt: null,
+      workingDir: ev.working_dir || null,
+    };
+    state.sessions.push(s);
     state.messages[ev.session_id] = [];
-    if (!state.activeId) state.activeId = ev.session_id;
+    state.activeId = ev.session_id;
+    focusInput();
   } else {
     s.status = ev.status;
+    if (ev.name) s.name = ev.name;
+    if (ev.working_dir) s.workingDir = ev.working_dir;
   }
+  updateInputState();
 });
 
 on('message_start', (ev: any) => {
   const m = state.messages[ev.session_id];
-  if (m) m.push({ role: 'assistant', content: '', streaming: true, tools: [] });
+  if (m) { m.push({ role: 'assistant', content: '', streaming: true, tools: [] }); renderMessages(); }
 });
 
 on('message_delta', (ev: any) => {
   const m = state.messages[ev.session_id];
   if (!m) return;
   const last = m[m.length - 1];
-  if (last && last.role === 'assistant') last.content += ev.text;
+  if (last && last.role === 'assistant') { last.content += ev.text; renderMessages(); }
 });
 
 on('message_end', (ev: any) => {
   const m = state.messages[ev.session_id];
   if (!m) return;
   const last = m[m.length - 1];
-  if (last) last.streaming = false;
+  if (last) { last.streaming = false; renderMessages(); }
 });
 
 on('tool_start', (ev: any) => {
@@ -71,6 +90,7 @@ on('tool_start', (ev: any) => {
   const last = m[m.length - 1];
   if (last && last.role === 'assistant') {
     last.tools.push({ name: ev.tool_name, input: ev.tool_input, output: null, isError: false, expanded: false });
+    renderMessages();
   }
 });
 
@@ -80,7 +100,7 @@ on('tool_end', (ev: any) => {
   const last = m[m.length - 1];
   if (last) {
     const t = last.tools.find((t: ToolCall) => t.name === ev.tool_name && t.output === null);
-    if (t) { t.output = ev.result; t.isError = ev.is_error; }
+    if (t) { t.output = ev.result; t.isError = ev.is_error; renderMessages(); }
   }
 });
 
@@ -89,6 +109,7 @@ on('error', (ev: any) => {
   if (sid) {
     if (!state.messages[sid]) state.messages[sid] = [];
     state.messages[sid].push({ role: 'error', content: ev.message, streaming: false, tools: [] });
+    renderMessages();
   }
 });
 
@@ -102,6 +123,10 @@ function truncate(s: string | null, n: number): string {
 function isRunning(): boolean {
   const s = state.sessions.find((x: Session) => x.id === state.activeId);
   return !!(s && s.status === 'running');
+}
+
+function activeSession(): Session | undefined {
+  return state.sessions.find((x: Session) => x.id === state.activeId);
 }
 
 function scrollToBottom(): void {
@@ -121,6 +146,13 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
   return e;
 }
 
+function focusInput(): void {
+  requestAnimationFrame(() => {
+    const ta = document.getElementById('msg-input') as HTMLTextAreaElement | null;
+    if (ta && !ta.disabled) ta.focus();
+  });
+}
+
 // ── Actions ──────────────────────────────────────────────────────────────────
 
 async function sendMessage(): Promise<void> {
@@ -138,6 +170,8 @@ async function sendMessage(): Promise<void> {
   await invoke('send_message', { session_id: state.activeId, text });
   ta.value = '';
   ta.style.height = 'auto';
+  renderMessages();
+  updateInputState();
 }
 
 async function showNewDialog(): Promise<void> {
@@ -150,7 +184,6 @@ async function showNewDialog(): Promise<void> {
   const dialog = el('div', 'dialog');
   dialog.appendChild(el('h3', undefined, 'New Session'));
 
-  // Working directory field
   const fieldLabel = el('div', 'field-label', 'WORKING DIRECTORY');
   dialog.appendChild(fieldLabel);
 
@@ -160,26 +193,18 @@ async function showNewDialog(): Promise<void> {
   input.placeholder = '~/path/to/project';
   dialog.appendChild(input);
 
-  // Status line
   const status = el('div', 'path-status');
   dialog.appendChild(status);
 
-  const startBtn = el('button', 'dbtn-start', 'Start Session') as HTMLButtonElement;
-
-  // Validate path
   function updateStatus(path: string): void {
-    const expanded = path.startsWith('~/') ? '/home/' + path.slice(2) :
-                     path === '~' ? '/home/' :
-                     path;
-    status.textContent = expanded;
+    status.textContent = '';
     status.className = 'path-status';
     if (path.trim()) {
       status.classList.add('valid');
       const checkIcon = el('span', 'icon icon-check');
       checkIcon.style.marginRight = '6px';
-      status.textContent = '';
       status.appendChild(checkIcon);
-      status.appendChild(document.createTextNode(expanded));
+      status.appendChild(document.createTextNode(path));
     }
   }
 
@@ -191,11 +216,11 @@ async function showNewDialog(): Promise<void> {
     if (e.key === 'Escape') overlay.remove();
   });
 
-  // Buttons
   const btns = el('div', 'dialog-btns');
   const cancelBtn = el('button', 'dbtn-cancel', 'Cancel');
   cancelBtn.addEventListener('click', () => overlay.remove());
   btns.appendChild(cancelBtn);
+  const startBtn = el('button', 'dbtn-start', 'Start Session');
   startBtn.addEventListener('click', async () => { await createSession(input.value); overlay.remove(); });
   btns.appendChild(startBtn);
   dialog.appendChild(btns);
@@ -221,11 +246,28 @@ async function finishRename(id: string, name: string): Promise<void> {
     if (s) s.name = name.trim();
     await invoke('rename_conversation', { session_id: id, name: name.trim() });
   }
+  renderHeader();
 }
 
-// ── Render ────────────────────────────────────────────────────────────────────
+function startTitleEdit(): void {
+  state.editingTitle = true;
+  renderHeader();
+}
 
-function renderSidebar(list: HTMLElement): void {
+async function finishTitleEdit(name: string): Promise<void> {
+  state.editingTitle = false;
+  if (name.trim() && state.activeId) {
+    const s = activeSession();
+    if (s) s.name = name.trim();
+    await invoke('rename_conversation', { session_id: state.activeId, name: name.trim() });
+  }
+  renderHeader();
+}
+
+// ── Render: Sidebar ──────────────────────────────────────────────────────────
+
+function renderSidebar(): void {
+  const list = convoList;
   list.textContent = '';
   const query = state.searchQuery.toLowerCase();
   const filtered = state.sessions.filter((s: Session) => {
@@ -241,7 +283,11 @@ function renderSidebar(list: HTMLElement): void {
     list.appendChild(el('div', 'group-label', label));
     for (const s of items) {
       const item = el('div', 'convo-item' + (s.id === state.activeId ? ' active' : ''));
-      item.addEventListener('click', () => { state.activeId = s.id; });
+      item.addEventListener('click', () => {
+        state.activeId = s.id;
+        invalidateRender();
+        focusInput();
+      });
       item.addEventListener('dblclick', () => startRename(s.id));
       item.appendChild(el('span', 'dot ' + s.status));
 
@@ -266,108 +312,186 @@ function renderSidebar(list: HTMLElement): void {
   addGroup('Sessions', other);
 }
 
-function renderMain(area: HTMLElement): void {
-  area.textContent = '';
+// ── Render: Header ───────────────────────────────────────────────────────────
 
-  if (!state.activeId || !state.messages[state.activeId]) {
-    area.appendChild(el('div', 'empty-state', 'Create or select a conversation'));
+function renderHeader(): void {
+  headerBar.textContent = '';
+  const s = activeSession();
+  if (!s) { headerBar.style.display = 'none'; return; }
+  headerBar.style.display = '';
+
+  // Left: title + edit button
+  const left = el('div', 'header-left');
+  if (state.editingTitle) {
+    const inp = document.createElement('input');
+    inp.className = 'header-title-input';
+    inp.value = s.name || '';
+    inp.addEventListener('blur', (e) => finishTitleEdit((e.target as HTMLInputElement).value));
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') finishTitleEdit((e.target as HTMLInputElement).value);
+      if (e.key === 'Escape') { state.editingTitle = false; renderHeader(); }
+    });
+    left.appendChild(inp);
+    requestAnimationFrame(() => { inp.focus(); inp.select(); });
+  } else {
+    left.appendChild(el('span', 'header-title', s.name || 'Untitled'));
+    const editBtn = el('button', 'header-edit-btn');
+    editBtn.appendChild(el('span', 'icon icon-pencil'));
+    editBtn.addEventListener('click', startTitleEdit);
+    left.appendChild(editBtn);
+  }
+  headerBar.appendChild(left);
+
+  // Right: cwd
+  if (s.workingDir) {
+    headerBar.appendChild(el('span', 'header-cwd', s.workingDir));
+  }
+}
+
+// ── Render: Messages ─────────────────────────────────────────────────────────
+
+function renderMessages(): void {
+  // If session changed, full rebuild
+  if (state.activeId !== renderedActiveId) {
+    invalidateRender();
+  }
+
+  const msgs = state.activeId ? (state.messages[state.activeId] || []) : [];
+
+  if (!state.activeId) {
+    msgLog.textContent = '';
+    emptyState.style.display = '';
+    msgLog.style.display = 'none';
     return;
   }
 
-  const log = el('div', 'messages');
-  log.id = 'msg-log';
-  const msgs = state.messages[state.activeId] || [];
+  emptyState.style.display = 'none';
+  msgLog.style.display = '';
 
-  for (const msg of msgs) {
+  // Full rebuild if session changed
+  if (state.activeId !== renderedActiveId) {
+    msgLog.textContent = '';
+    renderedMsgCount = 0;
+    renderedActiveId = state.activeId;
+    renderedLastContent = '';
+    renderedLastToolCount = -1;
+  }
+
+  // Append new messages
+  for (let i = renderedMsgCount; i < msgs.length; i++) {
+    const msg = msgs[i];
     if (msg.role === 'user') {
-      log.appendChild(el('div', 'msg user', msg.content));
+      msgLog.appendChild(el('div', 'msg user', msg.content));
     } else if (msg.role === 'error') {
-      log.appendChild(el('div', 'msg error-msg', msg.content));
+      msgLog.appendChild(el('div', 'msg error-msg', msg.content));
     } else {
       const div = el('div', 'msg assistant');
+      div.id = 'assistant-msg-' + i;
       div.appendChild(document.createTextNode(msg.content));
       if (msg.streaming) div.appendChild(el('span', 'cursor'));
-
-      for (const tool of msg.tools) {
-        const tc = el('div', 'tool-call' + (tool.expanded ? ' expanded' : ''));
-        const arrow = el('span', 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : ''));
-        const hdr = el('div', 'tool-hdr');
-        hdr.appendChild(arrow);
-        hdr.appendChild(el('span', 'tname', tool.name));
-        const statusCls = tool.output === null ? '' : (tool.isError ? ' error' : ' done');
-        const statusText = tool.output === null ? 'running...' : (tool.isError ? 'error' : 'done');
-        hdr.appendChild(el('span', 'tstatus' + statusCls, statusText));
-
-        const body = el('div', 'tool-body' + (tool.expanded ? ' open' : ''));
-        body.appendChild(el('div', 'tool-label', 'Input'));
-        const inp = el('pre'); inp.textContent = truncate(tool.input, 2000); body.appendChild(inp);
-        if (tool.output !== null) {
-          body.appendChild(el('div', 'tool-label', 'Output'));
-          const outp = el('pre', tool.isError ? 'terr' : '');
-          outp.textContent = truncate(tool.output, 2000);
-          body.appendChild(outp);
-        }
-
-        hdr.addEventListener('click', () => {
-          tool.expanded = !tool.expanded;
-          arrow.className = 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '');
-          body.className = 'tool-body' + (tool.expanded ? ' open' : '');
-          tc.className = 'tool-call' + (tool.expanded ? ' expanded' : '');
-        });
-        tc.appendChild(hdr);
-        tc.appendChild(body);
-        div.appendChild(tc);
-      }
-      log.appendChild(div);
+      appendToolCalls(div, msg);
+      msgLog.appendChild(div);
     }
   }
-  area.appendChild(log);
+  renderedMsgCount = msgs.length;
 
-  const inputArea = el('div', 'input-area');
-  const textarea = document.createElement('textarea') as HTMLTextAreaElement;
-  textarea.id = 'msg-input';
-  textarea.rows = 1;
-  textarea.placeholder = isRunning() ? 'Agent is working...' : 'Send a message...';
-  if (isRunning()) textarea.disabled = true;
-  textarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  });
-  textarea.addEventListener('input', (e) => {
-    const t = e.target as HTMLTextAreaElement;
-    t.style.height = 'auto';
-    t.style.height = Math.min(t.scrollHeight, 200) + 'px';
-  });
-  inputArea.appendChild(textarea);
-
-  if (isRunning()) {
-    textarea.classList.add('running');
-    const btn = el('button', 'btn-cancel');
-    btn.appendChild(el('span', 'icon icon-square'));
-    btn.addEventListener('click', () => invoke('cancel', { session_id: state.activeId }));
-    inputArea.appendChild(btn);
-  } else {
-    const btn = el('button', 'btn-send');
-    btn.appendChild(el('span', 'icon icon-send'));
-    btn.addEventListener('click', () => sendMessage());
-    inputArea.appendChild(btn);
+  // Update last assistant message (streaming content + tools)
+  if (msgs.length > 0) {
+    const lastMsg = msgs[msgs.length - 1];
+    if (lastMsg.role === 'assistant') {
+      const lastDiv = document.getElementById('assistant-msg-' + (msgs.length - 1));
+      if (lastDiv && (lastMsg.content !== renderedLastContent || lastMsg.tools.length !== renderedLastToolCount)) {
+        lastDiv.textContent = '';
+        lastDiv.appendChild(document.createTextNode(lastMsg.content));
+        if (lastMsg.streaming) lastDiv.appendChild(el('span', 'cursor'));
+        appendToolCalls(lastDiv, lastMsg);
+        renderedLastContent = lastMsg.content;
+        renderedLastToolCount = lastMsg.tools.length;
+      }
+    }
   }
-  area.appendChild(inputArea);
+
   scrollToBottom();
+}
+
+function appendToolCalls(div: HTMLElement, msg: Message): void {
+  for (const tool of msg.tools) {
+    const tc = el('div', 'tool-call' + (tool.expanded ? ' expanded' : ''));
+    const arrow = el('span', 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : ''));
+    const hdr = el('div', 'tool-hdr');
+    hdr.appendChild(arrow);
+    hdr.appendChild(el('span', 'tname', tool.name));
+    const statusCls = tool.output === null ? '' : (tool.isError ? ' error' : ' done');
+    const statusText = tool.output === null ? 'running...' : (tool.isError ? 'error' : 'done');
+    hdr.appendChild(el('span', 'tstatus' + statusCls, statusText));
+
+    const body = el('div', 'tool-body' + (tool.expanded ? ' open' : ''));
+    body.appendChild(el('div', 'tool-label', 'Input'));
+    const inp = el('pre'); inp.textContent = truncate(tool.input, 2000); body.appendChild(inp);
+    if (tool.output !== null) {
+      body.appendChild(el('div', 'tool-label', 'Output'));
+      const outp = el('pre', tool.isError ? 'terr' : '');
+      outp.textContent = truncate(tool.output, 2000);
+      body.appendChild(outp);
+    }
+
+    hdr.addEventListener('click', () => {
+      tool.expanded = !tool.expanded;
+      arrow.className = 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '');
+      body.className = 'tool-body' + (tool.expanded ? ' open' : '');
+      tc.className = 'tool-call' + (tool.expanded ? ' expanded' : '');
+    });
+    tc.appendChild(hdr);
+    tc.appendChild(body);
+    div.appendChild(tc);
+  }
+}
+
+// ── Render: Input State ──────────────────────────────────────────────────────
+
+function updateInputState(): void {
+  const ta = document.getElementById('msg-input') as HTMLTextAreaElement | null;
+  if (!ta) return;
+  const running = isRunning();
+  ta.disabled = running;
+  ta.placeholder = running ? 'Agent is working...' : 'Send a message...';
+  ta.classList.toggle('running', running);
+
+  // Update button
+  const btnArea = document.getElementById('input-btn-area');
+  if (btnArea) {
+    btnArea.textContent = '';
+    if (running) {
+      const btn = el('button', 'btn-cancel');
+      btn.appendChild(el('span', 'icon icon-square'));
+      btn.addEventListener('click', () => invoke('cancel', { session_id: state.activeId }));
+      btnArea.appendChild(btn);
+    } else {
+      const btn = el('button', 'btn-send');
+      btn.appendChild(el('span', 'icon icon-send'));
+      btn.addEventListener('click', () => sendMessage());
+      btnArea.appendChild(btn);
+    }
+  }
+}
+
+function invalidateRender(): void {
+  renderedActiveId = null;
+  renderedMsgCount = -1;
+  renderedLastContent = '';
+  renderedLastToolCount = -1;
 }
 
 // ── Mount ────────────────────────────────────────────────────────────────────
 
-const app = document.getElementById('app')!;
+const appEl = document.getElementById('app')!;
 const container = el('div', 'app');
 
 // Sidebar
 const sidebar = el('div', 'sidebar');
-
-// Toolbar: search + new button on same row
 const toolbar = el('div', 'sidebar-toolbar');
 const searchWrap = el('div', 'search-wrap');
-const searchIcon = el('span', 'icon icon-search search-icon');
-searchWrap.appendChild(searchIcon);
+searchWrap.appendChild(el('span', 'icon icon-search search-icon'));
 const searchBox = document.createElement('input');
 searchBox.type = 'text';
 searchBox.placeholder = 'Search...';
@@ -379,19 +503,57 @@ newBtn.appendChild(el('span', 'icon icon-plus'));
 newBtn.addEventListener('click', () => showNewDialog());
 toolbar.appendChild(newBtn);
 sidebar.appendChild(toolbar);
-
 const convoList = el('div', 'convo-list');
 sidebar.appendChild(convoList);
 container.appendChild(sidebar);
 
-// Main area
+// Main area — persistent structure
 const mainArea = el('div', 'main');
-container.appendChild(mainArea);
-app.appendChild(container);
 
-// Reactive re-render when state changes
-// We use a simple polling approach since Arrow.js reactive doesn't deep-watch arrays
+// Header bar
+const headerBar = el('div', 'header-bar');
+headerBar.style.display = 'none';
+mainArea.appendChild(headerBar);
+
+// Empty state
+const emptyState = el('div', 'empty-state', 'Create or select a conversation');
+mainArea.appendChild(emptyState);
+
+// Message log (persistent, content updated incrementally)
+const msgLog = el('div', 'messages');
+msgLog.id = 'msg-log';
+msgLog.style.display = 'none';
+mainArea.appendChild(msgLog);
+
+// Input area (persistent, never recreated)
+const inputArea = el('div', 'input-area');
+const textarea = document.createElement('textarea') as HTMLTextAreaElement;
+textarea.id = 'msg-input';
+textarea.rows = 1;
+textarea.placeholder = 'Send a message...';
+textarea.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+textarea.addEventListener('input', () => {
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+});
+inputArea.appendChild(textarea);
+const btnArea = el('div');
+btnArea.id = 'input-btn-area';
+const sendBtn = el('button', 'btn-send');
+sendBtn.appendChild(el('span', 'icon icon-send'));
+sendBtn.addEventListener('click', () => sendMessage());
+btnArea.appendChild(sendBtn);
+inputArea.appendChild(btnArea);
+mainArea.appendChild(inputArea);
+
+container.appendChild(mainArea);
+appEl.appendChild(container);
+
+// Sidebar re-render on interval (lightweight — only sidebar list)
 setInterval(() => {
-  renderSidebar(convoList);
-  renderMain(mainArea);
+  renderSidebar();
+  renderHeader();
+  updateInputState();
 }, 100);
