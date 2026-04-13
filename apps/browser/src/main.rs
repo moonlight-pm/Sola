@@ -252,6 +252,8 @@ fn build_ui(app: &gtk4::Application) {
                                             "bus_new_tab",
                                             &data,
                                         );
+                                        // Give chrome WebView GTK focus so address bar can receive input
+                                        app_state.chrome_webview.grab_focus();
                                         tracing::debug!("Super+T: new tab {tab_id}");
                                     }
                                     keycode::W => {
@@ -285,6 +287,8 @@ fn build_ui(app: &gtk4::Application) {
                                             "bus_focus_address",
                                             &serde_json::json!({}),
                                         );
+                                        // Give chrome WebView GTK focus so address bar can receive input
+                                        app_state.chrome_webview.grab_focus();
                                         tracing::debug!("Super+L: focus address bar");
                                     }
                                     _ => {}
