@@ -61,6 +61,7 @@ fn main() {
 
     // Connect to bus (retry until available)
     let mut bus: Option<sola_bus::BusClient> = None;
+    let mut zoning = zoning::ZoningState::new();
 
     // Supervise
     loop {
@@ -72,26 +73,48 @@ fn main() {
             }
         }
 
-        // Check for bus messages
-        if let Some(ref client) = bus {
-            while let Some(msg) = client.try_recv() {
-                let Some(topic) = Topic::parse(&msg) else { continue };
-                match topic {
-                    Topic::Shutdown => {
-                        info!("shutdown requested via bus");
+        // Check for bus messages — collect first to release the borrow.
+        let messages: Vec<_> = bus.as_ref()
+            .map(|c| std::iter::from_fn(|| c.try_recv()).collect())
+            .unwrap_or_default();
+
+        for msg in &messages {
+            let Some(topic) = Topic::parse(msg) else { continue };
+            match topic {
+                Topic::Shutdown => {
+                    info!("shutdown requested via bus");
+                    shutdown_all(&mut managed);
+                    std::process::exit(0);
+                }
+                Topic::Key(key) => {
+                    // Super+Shift+Backspace → shutdown
+                    if !key.pressed && key.code == 22 && key.super_held && key.shift_held {
+                        info!("kill chord received, shutting down");
                         shutdown_all(&mut managed);
                         std::process::exit(0);
                     }
-                    Topic::Key(key) => {
-                        // Super+Shift+Backspace → shutdown
-                        if !key.pressed && key.code == 22 && key.super_held && key.shift_held {
-                            info!("kill chord received, shutting down");
-                            shutdown_all(&mut managed);
-                            std::process::exit(0);
+
+                    // Zone snapping
+                    if let Some(geo) = zoning.handle_key(&key) {
+                        if let Some(ref mut bus) = bus {
+                            let _ = bus.emit(Topic::SetWindowGeometry(geo));
                         }
                     }
-                    _ => {}
                 }
+                Topic::FocusChanged(app_id) => {
+                    zoning.set_focused(app_id);
+                }
+                Topic::OutputGeometry(geo) => {
+                    zoning.set_output_size(&geo);
+
+                    // Restore saved zones on first OutputGeometry.
+                    for geo in zoning.restore() {
+                        if let Some(ref mut bus) = bus {
+                            let _ = bus.emit(Topic::SetWindowGeometry(geo));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
