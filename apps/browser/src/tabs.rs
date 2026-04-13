@@ -156,6 +156,17 @@ pub fn create_tab_webview(
                             let tab_id = uuid::Uuid::new_v4().to_string();
                             create_tab_webview(&state_ref, &tab_id, Some(&url), None);
                             switch_tab(&state_ref, &tab_id);
+
+                            // Persist new tab (keep tab_store in sync with tabs vec)
+                            let mut store = state_ref.tab_store.borrow_mut();
+                            store.tabs.push(crate::state::PersistedTab {
+                                url: url.clone(),
+                                title: String::new(),
+                                session_state: None,
+                            });
+                            drop(store);
+                            state_ref.persist_tabs();
+
                             let data = serde_json::json!({
                                 "tabId": tab_id,
                                 "url": url,

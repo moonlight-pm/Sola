@@ -3,7 +3,6 @@ import { invoke, on } from '@sola/ipc';
 import { createStore } from '@sola/store';
 import { createTabSidebar, type TabItem } from './tabs.js';
 import { createAddressBar } from './address.js';
-import { ArrowLeft, ArrowRight, RotateCw } from './icons.js';
 
 // --- Reactive state ---
 
@@ -130,11 +129,13 @@ on('bus_new_tab', ({ tabId, url, activate }: any) => {
   }
 });
 
-on('tab_closed', ({ tabId }: any) => {
-  // Bus-initiated close (Super+W)
+on('tab_closed', ({ tabId, nextTabId }: any) => {
+  // Bus-initiated close (Super+W) — Rust already switched the WebView
   state.tabs = state.tabs.filter(t => t.id !== tabId);
-  if (state.activeTabId === tabId && state.tabs.length > 0) {
-    state.activeTabId = state.tabs[state.tabs.length - 1].id;
+  if (state.activeTabId === tabId) {
+    state.activeTabId = nextTabId || (state.tabs.length > 0 ? state.tabs[state.tabs.length - 1].id : null);
+    const tab = state.tabs.find(t => t.id === state.activeTabId);
+    if (tab) state.addressValue = tab.url;
   }
 });
 
@@ -174,9 +175,9 @@ export async function createApp(root: HTMLElement): Promise<void> {
   // Layout shell
   html`
     <div class="top-bar">
-      <button class="nav-btn" @click="${goBack}">${ArrowLeft}</button>
-      <button class="nav-btn" @click="${goForward}">${ArrowRight}</button>
-      <button class="nav-btn" @click="${doReload}">${RotateCw}</button>
+      <button class="nav-btn" @click="${goBack}"><span class="icon icon-arrow-left"></span></button>
+      <button class="nav-btn" @click="${goForward}"><span class="icon icon-arrow-right"></span></button>
+      <button class="nav-btn" @click="${doReload}"><span class="icon icon-rotate-cw"></span></button>
     </div>
     ${() => state.downloads.map(d =>
       html`<div class="download-toast">${() => d.filename} — ${() => Math.round(d.progress * 100)}%</div>`

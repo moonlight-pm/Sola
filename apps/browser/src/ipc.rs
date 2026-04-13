@@ -73,6 +73,7 @@ fn handle_command(
 
 fn cmd_ready(state: &Rc<AppState>) -> Result<serde_json::Value, String> {
     let store = state.tab_store.borrow();
+    let tab_count = store.tabs.len();
     let tabs: Vec<serde_json::Value> = store
         .tabs
         .iter()
@@ -86,7 +87,6 @@ fn cmd_ready(state: &Rc<AppState>) -> Result<serde_json::Value, String> {
             })
         })
         .collect();
-    let active = store.active_tab_id.clone();
     drop(store);
 
     // Create actual WebViews for restored tabs
@@ -100,17 +100,14 @@ fn cmd_ready(state: &Rc<AppState>) -> Result<serde_json::Value, String> {
         );
     }
 
-    // Activate first restored tab
-    let active_id = active.unwrap_or_else(|| {
-        if !tabs.is_empty() {
-            tabs[0]["id"].as_str().unwrap_or("").to_string()
-        } else {
-            String::new()
-        }
-    });
-    if !active_id.is_empty() {
-        crate::tabs::switch_tab(state, &active_id);
-    }
+    // Activate first restored tab (use index 0, ignore stale active_tab_id from previous session)
+    let active_id = if tab_count > 0 {
+        let id = "restored-0".to_string();
+        crate::tabs::switch_tab(state, &id);
+        id
+    } else {
+        String::new()
+    };
 
     Ok(serde_json::json!({
         "tabs": tabs,

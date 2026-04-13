@@ -27,7 +27,6 @@ static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/src/app.ts" => (include_str!("../web/src/app.ts"), TypeScript),
     "/src/tabs.ts" => (include_str!("../web/src/tabs.ts"), TypeScript),
     "/src/address.ts" => (include_str!("../web/src/address.ts"), TypeScript),
-    "/src/icons.ts" => (include_str!("../web/src/icons.ts"), TypeScript),
     "/src/theme.css" => (include_str!("../web/src/theme.css"), Css),
 };
 
@@ -253,10 +252,22 @@ fn build_ui(app: &gtk4::Application) {
                                             app_state.active_tab_id.borrow().clone();
                                         if let Some(id) = active_id {
                                             tabs::close_tab(&app_state, &id);
+
+                                            // Switch to next tab on Rust side
+                                            let tabs = app_state.tabs.borrow();
+                                            let next_id = tabs.last().map(|t| t.id.clone());
+                                            drop(tabs);
+                                            if let Some(next) = &next_id {
+                                                tabs::switch_tab(&app_state, next);
+                                            }
+
                                             ipc::emit_event(
                                                 &app_state.chrome_webview,
                                                 "tab_closed",
-                                                &serde_json::json!({ "tabId": id }),
+                                                &serde_json::json!({
+                                                    "tabId": id,
+                                                    "nextTabId": next_id,
+                                                }),
                                             );
                                             tracing::debug!("Super+W: closed tab {id}");
                                         }
