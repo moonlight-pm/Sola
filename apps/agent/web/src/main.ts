@@ -256,18 +256,20 @@ function renderMain(area: HTMLElement): void {
       if (msg.streaming) div.appendChild(el('span', 'cursor'));
 
       for (const tool of msg.tools) {
-        const tc = el('div', 'tool-call');
-        const arrow = el('span', 'arrow' + (tool.expanded ? ' open' : ''), '\u25B6');
+        const tc = el('div', 'tool-call' + (tool.expanded ? ' expanded' : ''));
+        const arrow = el('span', 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : ''));
         const hdr = el('div', 'tool-hdr');
         hdr.appendChild(arrow);
         hdr.appendChild(el('span', 'tname', tool.name));
-        hdr.appendChild(el('span', undefined, tool.output === null ? 'running...' : (tool.isError ? 'error' : 'done')));
+        const statusCls = tool.output === null ? '' : (tool.isError ? ' error' : ' done');
+        const statusText = tool.output === null ? 'running...' : (tool.isError ? 'error' : 'done');
+        hdr.appendChild(el('span', 'tstatus' + statusCls, statusText));
 
         const body = el('div', 'tool-body' + (tool.expanded ? ' open' : ''));
-        body.appendChild(el('div', undefined, 'Input:'));
+        body.appendChild(el('div', 'tool-label', 'Input'));
         const inp = el('pre'); inp.textContent = truncate(tool.input, 2000); body.appendChild(inp);
         if (tool.output !== null) {
-          body.appendChild(el('div', undefined, 'Output:'));
+          body.appendChild(el('div', 'tool-label', 'Output'));
           const outp = el('pre', tool.isError ? 'terr' : '');
           outp.textContent = truncate(tool.output, 2000);
           body.appendChild(outp);
@@ -275,8 +277,9 @@ function renderMain(area: HTMLElement): void {
 
         hdr.addEventListener('click', () => {
           tool.expanded = !tool.expanded;
-          arrow.className = 'arrow' + (tool.expanded ? ' open' : '');
+          arrow.className = 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '');
           body.className = 'tool-body' + (tool.expanded ? ' open' : '');
+          tc.className = 'tool-call' + (tool.expanded ? ' expanded' : '');
         });
         tc.appendChild(hdr);
         tc.appendChild(body);
@@ -304,11 +307,14 @@ function renderMain(area: HTMLElement): void {
   inputArea.appendChild(textarea);
 
   if (isRunning()) {
-    const btn = el('button', 'cancel-btn', 'Cancel');
+    textarea.classList.add('running');
+    const btn = el('button', 'btn-cancel');
+    btn.appendChild(el('span', 'icon icon-square'));
     btn.addEventListener('click', () => invoke('cancel', { session_id: state.activeId }));
     inputArea.appendChild(btn);
   } else {
-    const btn = el('button', undefined, 'Send');
+    const btn = el('button', 'btn-send');
+    btn.appendChild(el('span', 'icon icon-send'));
     btn.addEventListener('click', () => sendMessage());
     inputArea.appendChild(btn);
   }
@@ -323,18 +329,23 @@ const container = el('div', 'app');
 
 // Sidebar
 const sidebar = el('div', 'sidebar');
-const sidebarHeader = el('div', 'sidebar-header');
-const newBtn = el('button', undefined, '+ New') as HTMLButtonElement;
-newBtn.addEventListener('click', () => showNewDialog());
-sidebarHeader.appendChild(newBtn);
-sidebar.appendChild(sidebarHeader);
 
+// Toolbar: search + new button on same row
+const toolbar = el('div', 'sidebar-toolbar');
+const searchWrap = el('div', 'search-wrap');
+const searchIcon = el('span', 'icon icon-search search-icon');
+searchWrap.appendChild(searchIcon);
 const searchBox = document.createElement('input');
-searchBox.className = 'search-box';
 searchBox.type = 'text';
 searchBox.placeholder = 'Search...';
 searchBox.addEventListener('input', () => { state.searchQuery = searchBox.value; });
-sidebar.appendChild(searchBox);
+searchWrap.appendChild(searchBox);
+toolbar.appendChild(searchWrap);
+const newBtn = el('button', 'btn-new');
+newBtn.appendChild(el('span', 'icon icon-plus'));
+newBtn.addEventListener('click', () => showNewDialog());
+toolbar.appendChild(newBtn);
+sidebar.appendChild(toolbar);
 
 const convoList = el('div', 'convo-list');
 sidebar.appendChild(convoList);
