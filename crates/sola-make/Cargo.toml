@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+notify = "8"

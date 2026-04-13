@@ -47,11 +47,13 @@ docs/
 ### Deploying
 - Only deploy when you have explicit user permission.
 - Deploy target is **canto** (a separate physical machine accessible via SSH).
-- `cargo make deploy canto` — builds release, rsync's binary to `/opt/sola/bin/` on canto.
+- `cargo make deploy --canto` — builds release, rsync's all binaries to `/opt/sola/bin/` on canto.
+- `cargo make deploy <app> --canto` — builds and deploys a single app.
+- `cargo make deploy <app> --canto --watch` — watches for changes, rebuilds, and redeploys automatically.
 - The user launches `sola` manually from a physical TTY on canto. Do not configure auto-start.
 
 ### Building
-- Always use `cargo make build` and `cargo make deploy canto` — never raw `cargo build` or `rsync`.
+- Always use `cargo make build` and `cargo make deploy --canto` — never raw `cargo build` or `rsync`.
 - This ensures our build system stays tested and current.
 
 ### Debugging
@@ -69,9 +71,11 @@ docs/
 Uses the xtask pattern with a `sola-make` crate:
 
 ```
-cargo make build              # Build everything
-cargo make build <target>     # Build a specific target
-cargo make deploy canto       # Deploy to canto
+cargo make build                                  # Build everything
+cargo make build <target>                         # Build a specific target
+cargo make deploy --canto                         # Deploy all to canto
+cargo make deploy <app> --canto                   # Deploy one app to canto
+cargo make deploy <app> --canto --watch           # Watch + redeploy on change
 ```
 
 Alias configured in `.cargo/config.toml`:

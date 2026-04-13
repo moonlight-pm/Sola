@@ -19,6 +19,12 @@ pub struct KeyEvent {
     pub shift_held: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenUrlRequest {
+    pub url: String,
+    pub activate: bool,
+}
+
 /// Window geometry from sola-x for X11 window positioning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowGeometry {
@@ -44,6 +50,9 @@ define_topics! {
 
     // Window management
     SetWindowGeometry(WindowGeometry),
+
+    // Browser
+    OpenUrl(OpenUrlRequest),
 
     // Lifecycle
     Shutdown,

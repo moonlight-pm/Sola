@@ -2921,9 +2921,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pkg-config"
-version = "0.3.32"
+version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "polling"
@@ -3814,6 +3814,8 @@ dependencies = [
  "gio",
  "glib",
  "gtk4",
+ "nix 0.31.2",
+ "notify",
  "serde_json",
  "sola-bus",
  "swc_common",
@@ -3822,6 +3824,26 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "webkit6",
+]
+
+[[package]]
+name = "sola-browser"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "gdk4",
+ "gio",
+ "glib",
+ "gtk4",
+ "serde",
+ "serde_json",
+ "sola-app",
+ "sola-bus",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
  "webkit6",
 ]
 
@@ -3858,6 +3880,7 @@ name = "sola-make"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "notify",
 ]
 
 [[package]]
