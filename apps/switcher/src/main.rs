@@ -49,7 +49,7 @@ fn main() {
     // Logging: stderr + file at /opt/sola/log/sola-switcher.log
     let log_dir = "/opt/sola/log";
     let _ = std::fs::create_dir_all(log_dir);
-    let file_appender = tracing_appender::rolling::never(log_dir, "sola-switcher.log");
+    let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "sola_switcher=info".into());

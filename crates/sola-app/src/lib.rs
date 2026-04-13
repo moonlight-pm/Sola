@@ -98,7 +98,7 @@ impl SolaApp {
         // Logging
         let log_dir = "/opt/sola/log";
         let _ = std::fs::create_dir_all(log_dir);
-        let file_appender = tracing_appender::rolling::never(log_dir, format!("{}.log", self.app_id));
+        let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
 
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| format!("{}=info", self.app_id.replace('-', "_")).into());

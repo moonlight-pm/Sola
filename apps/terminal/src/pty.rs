@@ -282,10 +282,6 @@ impl PtyManager {
         }
     }
 
-    /// Get the tmux session name for a PTY, if it has one.
-    pub fn tmux_session(&self, id: &str) -> Option<String> {
-        self.ptys.get(id).and_then(|inst| inst.tmux_session.clone())
-    }
 
     /// Close a PTY: close the master fd and kill the child process.
     pub fn close_pty(&mut self, id: &str) -> Result<(), String> {

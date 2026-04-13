@@ -161,38 +161,6 @@ pub fn list_sessions() -> Vec<String> {
     }
 }
 
-/// Scroll the tmux pane scrollback.
-///
-/// Enters copy-mode (with `-e` so it auto-exits when scrolled to bottom)
-/// and sends scroll-up or scroll-down commands. Uses `\;` to chain both
-/// into a single tmux process invocation, and `-N` for the repeat count.
-pub fn scroll_pane(session: &str, direction: &str, lines: u16) {
-    let cmd = if direction == "up" {
-        "scroll-up"
-    } else {
-        "scroll-down"
-    };
-    let count = lines.to_string();
-    let _ = tmux_cmd()
-        .args([
-            "copy-mode",
-            "-t",
-            session,
-            "-e",
-            ";",
-            "send-keys",
-            "-t",
-            session,
-            "-N",
-            &count,
-            "-X",
-            cmd,
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-}
-
 /// Return all sola session names with their pane's current working directory.
 pub fn list_session_paths() -> Vec<(String, String)> {
     let output = tmux_cmd_raw()
