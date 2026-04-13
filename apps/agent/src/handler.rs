@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 
 use crate::agent;
 use crate::session::SessionManager;
+use crate::storage;
 
 pub struct AgentHandler {
     pub session_mgr: Arc<SessionManager>,
@@ -20,6 +21,7 @@ impl sola_app::AppHandler for AgentHandler {
             "close_session" => self.cmd_close_session(args).await,
             "rename_conversation" => self.cmd_rename(args).await,
             "list_conversations" => self.cmd_list_conversations().await,
+            "resume_session" => self.cmd_resume_session(args).await,
             _ => json!({ "error": format!("unknown command: {cmd}") }),
         }
     }
@@ -136,10 +138,85 @@ impl AgentHandler {
     }
 
     async fn cmd_list_conversations(&self) -> Value {
-        json!({ "conversations": [] })
+        let saved = storage::list_all();
+        let conversations: Vec<Value> = saved
+            .iter()
+            .map(|s| {
+                let first_prompt = s.messages.iter()
+                    .find(|m| m.role == "user")
+                    .map(|m| match &m.content {
+                        crate::api::MessageContent::Text(t) => t.clone(),
+                        crate::api::MessageContent::Blocks(_) => String::new(),
+                    })
+                    .unwrap_or_default();
+                json!({
+                    "session_id": s.session_id,
+                    "name": s.name,
+                    "first_prompt": first_prompt,
+                    "working_dir": s.working_dir,
+                    "updated_at": s.updated_at,
+                })
+            })
+            .collect();
+        json!({ "conversations": conversations })
+    }
+
+    async fn cmd_resume_session(&self, args: &Value) -> Value {
+        let Some(session_id) = args.get("session_id").and_then(|v| v.as_str()) else {
+            return json!({ "error": "session_id is required" });
+        };
+
+        let saved = match storage::load(session_id) {
+            Ok(s) => s,
+            Err(e) => return json!({ "error": format!("Failed to load session: {:#}", e) }),
+        };
+
+        // Create an in-memory session
+        let dir = std::path::PathBuf::from(&saved.working_dir);
+        self.session_mgr.sessions.write().await.insert(
+            session_id.to_string(),
+            crate::session::Session::new(dir),
+        );
+        if let Some(ref name) = saved.name {
+            self.session_mgr.rename_session(session_id, name.clone()).await;
+        }
+
+        // Notify frontend
+        self.send_event(json!({
+            "event": "session_state",
+            "session_id": session_id,
+            "status": "idle",
+            "name": saved.name,
+            "working_dir": saved.working_dir,
+        }));
+
+        // Send the conversation history to frontend
+        let messages: Vec<Value> = saved.messages.iter().map(|m| {
+            json!({ "role": m.role, "content": format_content(&m.content) })
+        }).collect();
+
+        self.send_event(json!({
+            "event": "session_loaded",
+            "session_id": session_id,
+            "messages": messages,
+        }));
+
+        json!({ "ok": true })
     }
 
     fn send_event(&self, value: Value) {
         let _ = self.event_tx.send(value.to_string());
+    }
+}
+
+fn format_content(content: &crate::api::MessageContent) -> String {
+    match content {
+        crate::api::MessageContent::Text(t) => t.clone(),
+        crate::api::MessageContent::Blocks(blocks) => {
+            blocks.iter().filter_map(|b| match b {
+                crate::api::ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            }).collect::<Vec<_>>().join("\n")
+        }
     }
 }

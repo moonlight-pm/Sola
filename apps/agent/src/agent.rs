@@ -1,10 +1,11 @@
 //! Agent loop: send message → stream response → execute tools → repeat.
 //!
 //! Modeled after Pi's event-driven agent loop pattern.
+//! Persists conversation history to disk after each turn.
 
 use crate::api::{ApiClient, ContentBlock, Message, MessageContent, StreamEvent};
 use crate::session::{SessionManager, SessionStatus};
-use crate::tools;
+use crate::{storage, tools};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,7 +25,22 @@ pub async fn run_session_message(
         "event": "session_state", "session_id": session_id, "status": "running"
     }));
 
-    match run_agent_loop(&session_id, &text, &working_dir, &event_tx, cancel_token).await {
+    // Get session name for storage
+    let session_name = {
+        let sessions = session_mgr.sessions.read().await;
+        sessions.get(&session_id).and_then(|s| s.name.clone())
+    };
+
+    match run_agent_loop(
+        &session_id,
+        &text,
+        &working_dir,
+        session_name.as_deref(),
+        &event_tx,
+        cancel_token,
+    )
+    .await
+    {
         Ok(()) => {
             session_mgr.set_status(&session_id, SessionStatus::Idle).await;
             send_event(&event_tx, json!({
@@ -52,6 +68,7 @@ async fn run_agent_loop(
     session_id: &str,
     text: &str,
     working_dir: &PathBuf,
+    session_name: Option<&str>,
     event_tx: &std::sync::mpsc::Sender<String>,
     cancel_token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
@@ -66,17 +83,25 @@ async fn run_agent_loop(
         working_dir.display()
     );
 
-    let mut messages: Vec<Message> = Vec::new();
+    // Load existing conversation history or start fresh
+    let mut messages: Vec<Message> = match storage::load(session_id) {
+        Ok(saved) => saved.messages,
+        Err(_) => Vec::new(),
+    };
+
+    // Append the new user message
     messages.push(Message {
         role: "user".into(),
         content: MessageContent::Text(text.to_string()),
     });
 
+    let cwd_str = working_dir.to_string_lossy().to_string();
     let max_turns = 30;
 
     for turn in 0..max_turns {
         if cancel_token.is_cancelled() {
             tracing::info!("Session {} cancelled at turn {}", session_id, turn);
+            save_quietly(session_id, session_name, &cwd_str, &messages);
             return Ok(());
         }
 
@@ -84,14 +109,13 @@ async fn run_agent_loop(
 
         send_event(event_tx, json!({"event": "message_start", "session_id": session_id}));
 
-        // Stream the response via channel
+        // Stream the response
         let (stream_tx, mut stream_rx) =
             tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
 
         let sid = session_id.to_string();
         let bridge_tx = event_tx.clone();
 
-        // Forward stream events to bridge
         let forwarder = tokio::spawn(async move {
             while let Some(event) = stream_rx.recv().await {
                 match &event {
@@ -126,6 +150,9 @@ async fn run_agent_loop(
             content: MessageContent::Blocks(content_blocks.clone()),
         });
 
+        // Save after each assistant response
+        save_quietly(session_id, session_name, &cwd_str, &messages);
+
         // Check for tool calls
         let tool_uses: Vec<&ContentBlock> = content_blocks
             .iter()
@@ -133,12 +160,11 @@ async fn run_agent_loop(
             .collect();
 
         if tool_uses.is_empty() {
-            // No tool calls — agent is done
             tracing::info!(session_id, turn, "Agent completed (no tool calls)");
             return Ok(());
         }
 
-        // Execute tools and build results
+        // Execute tools
         let mut tool_results: Vec<ContentBlock> = Vec::new();
         for block in &tool_uses {
             if let ContentBlock::ToolUse { id, name, input } = block {
@@ -146,7 +172,6 @@ async fn run_agent_loop(
 
                 let (output, is_error) = tools::execute_tool(name, input, working_dir).await;
 
-                // Send tool_end event
                 send_event(event_tx, json!({
                     "event": "tool_end", "session_id": session_id,
                     "tool_name": name, "result": &output[..output.len().min(2000)],
@@ -167,9 +192,16 @@ async fn run_agent_loop(
             content: MessageContent::Blocks(tool_results),
         });
 
-        // Continue the loop — next iteration will send the tool results to the API
+        // Save after tool results too
+        save_quietly(session_id, session_name, &cwd_str, &messages);
     }
 
     tracing::warn!(session_id, "Reached max turns ({})", max_turns);
     Ok(())
+}
+
+fn save_quietly(session_id: &str, name: Option<&str>, working_dir: &str, messages: &[Message]) {
+    if let Err(e) = storage::save(session_id, name, working_dir, messages) {
+        tracing::warn!(session_id, "Failed to save session: {:#}", e);
+    }
 }

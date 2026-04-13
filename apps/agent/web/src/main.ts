@@ -104,6 +104,40 @@ on('tool_end', (ev: any) => {
   }
 });
 
+on('conversations_list', (ev: any) => {
+  // Merge saved conversations into sidebar (don't overwrite running sessions)
+  for (const c of ev.conversations) {
+    if (!state.sessions.find((s: Session) => s.id === c.session_id)) {
+      state.sessions.push({
+        id: c.session_id,
+        name: c.name || null,
+        status: 'saved',
+        firstPrompt: c.first_prompt || null,
+        workingDir: c.working_dir || null,
+      });
+    }
+  }
+  renderSidebar();
+});
+
+on('session_loaded', (ev: any) => {
+  if (!state.messages[ev.session_id]) state.messages[ev.session_id] = [];
+  for (const msg of ev.messages) {
+    state.messages[ev.session_id].push({
+      role: msg.role,
+      content: msg.content,
+      streaming: false,
+      tools: [],
+    });
+  }
+  state.activeId = ev.session_id;
+  invalidateRender();
+  renderMessages();
+  renderSidebar();
+  renderHeader();
+  focusInput();
+});
+
 on('error', (ev: any) => {
   const sid = ev.session_id || state.activeId;
   if (sid) {
@@ -277,7 +311,8 @@ function renderSidebar(): void {
            (s.firstPrompt || '').toLowerCase().includes(query);
   });
   const running = filtered.filter((s: Session) => s.status === 'running');
-  const other = filtered.filter((s: Session) => s.status !== 'running');
+  const active = filtered.filter((s: Session) => s.status === 'idle' || s.status === 'error');
+  const saved = filtered.filter((s: Session) => s.status === 'saved');
 
   function addGroup(label: string, items: Session[]): void {
     if (!items.length) return;
@@ -285,9 +320,16 @@ function renderSidebar(): void {
     for (const s of items) {
       const item = el('div', 'convo-item' + (s.id === state.activeId ? ' active' : ''));
       item.addEventListener('click', () => {
-        state.activeId = s.id;
-        invalidateRender();
-        focusInput();
+        if (s.status === 'saved' && !state.messages[s.id]) {
+          // Resume saved session from disk
+          invoke('resume_session', { session_id: s.id });
+        } else {
+          state.activeId = s.id;
+          invalidateRender();
+          renderMessages();
+          renderHeader();
+          focusInput();
+        }
       });
       item.addEventListener('dblclick', () => startRename(s.id));
       item.appendChild(el('span', 'dot ' + s.status));
@@ -310,7 +352,8 @@ function renderSidebar(): void {
     }
   }
   addGroup('Running', running);
-  addGroup('Sessions', other);
+  addGroup('Sessions', active);
+  addGroup('Saved', saved);
 }
 
 // ── Render: Header ───────────────────────────────────────────────────────────
@@ -561,3 +604,6 @@ setInterval(() => {
   renderHeader();
   updateInputState();
 }, 100);
+
+// Load saved conversations on startup
+invoke('list_conversations', {});

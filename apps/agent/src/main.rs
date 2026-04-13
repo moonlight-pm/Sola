@@ -6,6 +6,7 @@ mod agent;
 mod api;
 mod handler;
 mod session;
+mod storage;
 mod tools;
 
 fn main() {
