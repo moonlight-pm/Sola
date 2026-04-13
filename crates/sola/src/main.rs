@@ -1,4 +1,5 @@
 mod watcher;
+mod zoning;
 
 use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
