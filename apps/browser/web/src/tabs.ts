@@ -30,10 +30,7 @@ export function createTabSidebar(config: TabSidebarConfig, target: HTMLElement):
 
   html`
     <div class="tab-sidebar">
-      <div class="tab-sidebar-header">
-        <span>Tabs</span>
-        <button class="new-tab-btn-header" @click="${config.onCreate}" title="New Tab"><span class="icon icon-plus"></span></button>
-      </div>
+      <div class="tab-sidebar-header"></div>
       <div class="tab-list">
         ${() => config.tabs().map(tab => html`
           <div class="${() => tabClass(tab)}"

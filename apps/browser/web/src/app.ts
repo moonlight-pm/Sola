@@ -20,16 +20,13 @@ let nextTabNum = 1;
 
 function createTab(url?: string, activate: boolean = true): string {
   const tabId = `tab-${nextTabNum++}`;
-  state.tabs = [...state.tabs, {
-    id: tabId,
-    url: url || '',
-    title: '',
-    loading: true,
-  }];
+  const newTab = { id: tabId, url: url || '', title: '', loading: true };
+  state.tabs = [...state.tabs, newTab];
   if (activate) {
     state.activeTabId = tabId;
     state.addressValue = url || '';
   }
+  console.log('[browser] createTab', tabId, 'total tabs:', state.tabs.length);
   // Fire-and-forget: tell Rust to create the WebView
   invoke('create_tab', { tabId, url, activate });
   return tabId;

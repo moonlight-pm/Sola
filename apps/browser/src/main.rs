@@ -96,6 +96,9 @@ fn main() {
         tracing::info!("remote inspector enabled at http://0.0.0.0:9224");
     }
 
+    // Watch own binary for hot-reload during development
+    sola_app::watcher::watch_own_binary();
+
     if !wait_for_wayland_socket() {
         std::process::exit(1);
     }
