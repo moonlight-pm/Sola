@@ -281,6 +281,21 @@ pub fn init_device(
         },
     );
 
+    // Emit output geometry so bus clients know the display size.
+    if let Some(bus) = &mut state.bus {
+        use sola_bus::topics::{Topic, OutputGeometry};
+        if let Some(mode) = state.space.outputs().next().and_then(|o| o.current_mode()) {
+            let geo = OutputGeometry {
+                width: mode.size.w,
+                height: mode.size.h,
+            };
+            tracing::info!(width = geo.width, height = geo.height, "emitting OutputGeometry");
+            if let Err(e) = bus.emit(Topic::OutputGeometry(geo)) {
+                tracing::warn!("failed to emit OutputGeometry: {e}");
+            }
+        }
+    }
+
     tracing::info!(?node, "GPU device fully initialized");
     Ok(())
 }
