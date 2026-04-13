@@ -110,6 +110,12 @@ impl BusClient {
         self.rx.as_ref()?.recv().ok()
     }
 
+    /// Block until a message arrives or the timeout expires.
+    /// Returns `None` on timeout, disconnect, or if not connected.
+    pub fn recv_timeout(&self, timeout: std::time::Duration) -> Option<Message> {
+        self.rx.as_ref()?.recv_timeout(timeout).ok()
+    }
+
     /// Flush queued messages after a successful connection.
     fn flush_queue(&mut self) {
         let writer = self.writer.as_mut().unwrap();

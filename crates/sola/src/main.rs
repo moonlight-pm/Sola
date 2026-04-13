@@ -63,15 +63,26 @@ fn main() {
     let mut bus = sola_bus::BusClient::new();
     let mut zoning = zoning::ZoningState::new();
 
-    // Supervise
+    // Supervise — block on bus messages, fall through every 500ms
+    // to check process health and binary changes.
+    let poll_interval = Duration::from_millis(500);
+
     loop {
         // Try to connect to bus if not connected
         if !bus.is_connected() {
             let _ = bus.connect();
         }
 
-        // Check for bus messages — collect first to release the borrow.
-        let messages: Vec<_> = std::iter::from_fn(|| bus.try_recv()).collect();
+        // Block until a bus message arrives or the supervision interval expires.
+        // This replaces the old poll+sleep pattern — key events are now instant.
+        let mut messages = Vec::new();
+        if let Some(msg) = bus.recv_timeout(poll_interval) {
+            messages.push(msg);
+            // Drain any additional messages that arrived.
+            while let Some(msg) = bus.try_recv() {
+                messages.push(msg);
+            }
+        }
 
         for msg in &messages {
             tracing::debug!(topic = %msg.topic, "bus message received");
@@ -144,8 +155,6 @@ fn main() {
                 launch(&bin_dir, name, &mut managed);
             }
         }
-
-        thread::sleep(Duration::from_millis(16));
     }
 }
 
