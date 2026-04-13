@@ -227,7 +227,13 @@ impl SolaApp {
                     glib::unix_fd_add_local(fd, glib::IOCondition::IN, move |_fd, _cond| {
                         let client = bus.borrow();
                         client.drain_notify();
+                        let mut messages = Vec::new();
                         while let Some(msg) = client.try_recv() {
+                            messages.push(msg);
+                        }
+                        drop(client);
+
+                        for msg in messages {
                             let Some(topic) = Topic::parse(&msg) else { continue };
                             let send = |value: serde_json::Value| {
                                 bridge::send_to_js(&webview_for_bus, &value.to_string());
