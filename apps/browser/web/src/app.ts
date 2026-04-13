@@ -135,18 +135,27 @@ on('download_finished', ({ id }: any) => {
 // --- Render ---
 function render(): void {
   const app = document.getElementById('app')!;
+
+  // Create container elements for each section
+  const sidebarEl = document.createElement('div');
+  sidebarEl.className = 'sidebar-mount';
+  const topbarEl = document.createElement('div');
+  topbarEl.className = 'topbar-mount';
+
+  app.appendChild(sidebarEl);
+  app.appendChild(topbarEl);
+
+  // Mount Arrow templates into their containers
+  renderTabs()(sidebarEl);
+
   html`
-    ${renderTabs()}
     <div class="top-bar">
       <button class="nav-btn" @click="${goBack}">&#9664;</button>
       <button class="nav-btn" @click="${goForward}">&#9654;</button>
       <button class="nav-btn" @click="${reload}">&#8635;</button>
       ${renderAddressBar()}
     </div>
-    ${() => state.downloads.map(d =>
-      html`<div class="download-toast">${() => d.filename} — ${() => Math.round(d.progress * 100)}%</div>`
-    )}
-  `(app);
+  `(topbarEl);
 }
 
 // --- Init ---
