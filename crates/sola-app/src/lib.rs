@@ -219,20 +219,24 @@ impl SolaApp {
                 tracing::warn!("bus not available: {e}");
             }
 
-            // Bus polling
+            // Bus event source — fires when bus messages arrive on the socket
             if let Some(bus_handler) = bus_handler.borrow_mut().take() {
                 let webview_for_bus = webview.clone();
-                glib::timeout_add_local(Duration::from_millis(50), move || {
-                    let client = bus.borrow_mut();
-                    while let Some(msg) = client.try_recv() {
-                        let Some(topic) = Topic::parse(&msg) else { continue };
-                        let send = |value: serde_json::Value| {
-                            bridge::send_to_js(&webview_for_bus, &value.to_string());
-                        };
-                        bus_handler(&topic, &send);
-                    }
-                    glib::ControlFlow::Continue
-                });
+                let notify_fd = bus.borrow().notify_fd();
+                if let Some(fd) = notify_fd {
+                    glib::unix_fd_add_local(fd, glib::IOCondition::IN, move |_fd, _cond| {
+                        let client = bus.borrow();
+                        client.drain_notify();
+                        while let Some(msg) = client.try_recv() {
+                            let Some(topic) = Topic::parse(&msg) else { continue };
+                            let send = |value: serde_json::Value| {
+                                bridge::send_to_js(&webview_for_bus, &value.to_string());
+                            };
+                            bus_handler(&topic, &send);
+                        }
+                        glib::ControlFlow::Continue
+                    });
+                }
             }
 
             window.present();

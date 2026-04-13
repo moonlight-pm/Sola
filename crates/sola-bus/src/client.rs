@@ -1,8 +1,9 @@
 use std::collections::VecDeque;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::thread;
-use std::io;
+use std::io::{self, Read, Write};
 
 use tracing::{info, warn};
 
@@ -16,6 +17,10 @@ use crate::{Message, transport};
 pub struct BusClient {
     writer: Option<UnixStream>,
     rx: Option<mpsc::Receiver<Message>>,
+    /// Read end of a notification pipe. Becomes readable when the reader
+    /// thread delivers a message to `rx`. Event-loop callers watch this fd
+    /// instead of polling `try_recv()`.
+    notify_read: Option<UnixStream>,
     queue: VecDeque<Message>,
 }
 
@@ -27,6 +32,7 @@ impl BusClient {
         Self {
             writer: None,
             rx: None,
+            notify_read: None,
             queue: VecDeque::new(),
         }
     }
@@ -52,15 +58,21 @@ impl BusClient {
         let stream = UnixStream::connect(path)?;
         let reader = stream.try_clone()?;
 
+        // Notification pipe: reader thread writes a byte after each message,
+        // so event-loop callers can watch notify_read instead of polling.
+        let (notify_read, notify_write) = UnixStream::pair()?;
+        notify_read.set_nonblocking(true)?;
+
         info!(path = %path, "connected to bus");
 
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            read_loop(reader, tx);
+            read_loop(reader, tx, notify_write);
         });
 
         self.writer = Some(stream);
         self.rx = Some(rx);
+        self.notify_read = Some(notify_read);
 
         self.flush_queue();
 
@@ -98,6 +110,42 @@ impl BusClient {
         self.send(&message)
     }
 
+    /// Returns a raw fd that becomes readable when bus messages arrive.
+    ///
+    /// Event-loop callers (glib, calloop) watch this fd instead of polling
+    /// `try_recv()`. After the fd signals readable, call `drain_notify()`
+    /// then `try_recv()` in a loop.
+    ///
+    /// Returns `None` if not connected.
+    pub fn notify_fd(&self) -> Option<RawFd> {
+        self.notify_read.as_ref().map(|s| s.as_raw_fd())
+    }
+
+    /// Drain pending notification bytes after `notify_fd()` signals readable.
+    ///
+    /// Must be called before `try_recv()` to clear the notification pipe,
+    /// otherwise the event loop will keep waking.
+    pub fn drain_notify(&self) {
+        let Some(stream) = self.notify_read.as_ref() else { return };
+        let mut buf = [0u8; 64];
+        let mut r: &UnixStream = stream;
+        loop {
+            match r.read(&mut buf) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(_) => break, // WouldBlock or error
+            }
+        }
+    }
+
+    /// Clone the notification fd as an owned stream, for calloop registration.
+    ///
+    /// The caller takes ownership of the clone; the original is retained.
+    /// Returns `None` if not connected.
+    pub fn try_clone_notify(&self) -> Option<io::Result<UnixStream>> {
+        self.notify_read.as_ref().map(|s| s.try_clone())
+    }
+
     /// Try to receive the next message without blocking.
     /// Returns `None` if no message is available or not connected.
     pub fn try_recv(&self) -> Option<Message> {
@@ -128,13 +176,14 @@ impl BusClient {
     }
 }
 
-fn read_loop(mut reader: UnixStream, tx: mpsc::Sender<Message>) {
+fn read_loop(mut reader: UnixStream, tx: mpsc::Sender<Message>, mut notify: UnixStream) {
     loop {
         match transport::read_event(&mut reader) {
             Ok(Some(msg)) => {
                 if tx.send(msg).is_err() {
                     break; // receiver dropped
                 }
+                let _ = notify.write_all(&[1u8]);
             }
             Ok(None) => {
                 info!("bus connection closed");

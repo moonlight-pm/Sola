@@ -137,15 +137,25 @@ fn main() {
             tracing::warn!("bus not available: {e}");
         }
 
-        // --- Bus polling ---
-        glib::timeout_add_local(Duration::from_millis(50), {
+        // --- Bus event source ---
+        let notify_fd = bus.borrow().notify_fd();
+        if let Some(fd) = notify_fd {
             let state = state.clone();
             let bus = bus.clone();
             let webview = webview.clone();
             let window = window.clone();
-            move || {
-                let mut client = bus.borrow_mut();
+            glib::unix_fd_add_local(fd, glib::IOCondition::IN, move |_fd, _cond| {
+                // Drain notify and collect messages before processing,
+                // so we can release the shared borrow before emit().
+                let client = bus.borrow();
+                client.drain_notify();
+                let mut messages = Vec::new();
                 while let Some(msg) = client.try_recv() {
+                    messages.push(msg);
+                }
+                drop(client);
+
+                for msg in messages {
                     let Some(topic) = Topic::parse(&msg) else { continue };
                     match topic {
                         Topic::Key(key) => {
@@ -157,6 +167,7 @@ fn main() {
                                 tracing::info!("activating switcher (Super+Tab)");
                                 state.borrow_mut().active = true;
                                 window.present();
+                                let mut client = bus.borrow_mut();
                                 let _ = client.emit(
                                     Topic::GrabInput("sola-switcher".into()),
                                 );
@@ -183,8 +194,8 @@ fn main() {
                     }
                 }
                 glib::ControlFlow::Continue
-            }
-        });
+            });
+        }
 
         // --- Keyboard: Tab/Arrow cycle, Super release completes ---
         // Capture phase so we see events before the WebView consumes them.
