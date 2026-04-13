@@ -24,7 +24,7 @@ fn main() {
 
     let log_dir = "/opt/sola/log";
     let _ = std::fs::create_dir_all(log_dir);
-    let file_appender = tracing_appender::rolling::never(log_dir, "sola-x.log");
+    let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
 
     let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
     let file_layer = tracing_subscriber::fmt::layer()
@@ -37,7 +37,7 @@ fn main() {
         .with(file_layer)
         .init();
 
-    tracing::info!("sola-x starting (logs → stderr + {log_dir}/sola-x.log)");
+    tracing::info!("sola-x starting");
 
     if let Err(err) = run() {
         tracing::error!(%err, "sola-x exited with error");
