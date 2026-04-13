@@ -452,9 +452,11 @@ function appendToolCalls(div: HTMLElement, msg: Message): void {
 function updateInputState(): void {
   const ta = document.getElementById('msg-input') as HTMLTextAreaElement | null;
   if (!ta) return;
+  const hasSession = !!state.activeId;
   const running = isRunning();
-  ta.disabled = running;
-  ta.placeholder = running ? 'Agent is working...' : 'Send a message...';
+  ta.disabled = !hasSession || running;
+  ta.placeholder = !hasSession ? 'Create a session to start...' :
+                   running ? 'Agent is working...' : 'Send a message...';
   ta.classList.toggle('running', running);
 
   // Update button
