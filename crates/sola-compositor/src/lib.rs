@@ -15,7 +15,8 @@ pub mod wallpaper;
 pub mod wayland;
 
 use smithay::backend::session::Session;
-use smithay::reexports::calloop::EventLoop;
+use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction};
 use smithay::reexports::wayland_server::Display;
 
 use error::CompositorError;
@@ -72,6 +73,19 @@ pub fn run() -> Result<(), CompositorError> {
     // -- Bus --
     if let Err(e) = state.bus.connect() {
         tracing::warn!("bus not available, running without: {e}");
+    }
+
+    // Register bus as a calloop event source so messages are dispatched
+    // through the event loop instead of polled each frame.
+    if let Some(Ok(notify)) = state.bus.try_clone_notify() {
+        let source = Generic::new(notify, Interest::READ, Mode::Level);
+        event_loop
+            .handle()
+            .insert_source(source, |_, _, state: &mut State| {
+                lifecycle::dispatch_bus(state);
+                Ok(PostAction::Continue)
+            })
+            .map_err(|e| CompositorError::EventLoop(format!("bus source: {e}")))?;
     }
 
     // -- Wayland socket --

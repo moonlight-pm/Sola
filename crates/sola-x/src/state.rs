@@ -18,7 +18,7 @@ use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shm::ShmState;
 use smithay::wayland::xwayland_shell::XWaylandShellState;
-use smithay::xwayland::X11Wm;
+use smithay::xwayland::{X11Surface, X11Wm};
 
 pub struct State {
     // -- Server side (Wayland compositor for XWayland) --
@@ -38,6 +38,10 @@ pub struct State {
     pub xwayland_shell_state: Option<XWaylandShellState>,
     pub xwayland_mapped: HashSet<smithay::xwayland::xwm::X11Window>,
 
+    /// Virtual output advertised to XWayland. Mode is updated from
+    /// Topic::OutputGeometry so X11 clients see the real screen size.
+    pub output: Output,
+
     // -- Bus --
 
     /// Connection to the Sola Bus for lifecycle coordination.
@@ -52,6 +56,18 @@ pub struct State {
     /// X11 window metadata, keyed by window ID. Used to re-create proxy
     /// surfaces after compositor reconnection.
     pub x11_windows: HashMap<u32, X11WindowInfo>,
+
+    /// App IDs (X11 classes) whose size has been explicitly set by the user
+    /// (via a zone action, i.e. a bus-originated SetWindowGeometry), mapped
+    /// to the last user-commanded (width, height).
+    ///
+    /// Used to:
+    ///   - reject client-initiated X11 ConfigureRequests that would change size
+    ///   - reject compositor-initiated xdg_toplevel configures whose size
+    ///     doesn't match the user's zone (e.g. after a reconnect when the
+    ///     compositor's new_toplevel default resets to fullscreen)
+    ///   - re-sync the compositor by re-emitting the locked size on reconnect
+    pub user_locked_sizes: HashMap<String, (i32, i32)>,
 
     // -- Client side --
 
@@ -153,10 +169,12 @@ fn init_dmabuf(dh: &DisplayHandle) -> Option<DmabufState> {
     Some(dmabuf_state)
 }
 
-/// Metadata about an X11 window, retained for proxy re-creation on reconnect.
+/// Metadata about an X11 window, retained for proxy re-creation on reconnect
+/// and for forwarding configure events from the compositor back to X11.
 pub struct X11WindowInfo {
     pub title: String,
     pub class: String,
+    pub surface: X11Surface,
 }
 
 impl State {
@@ -212,9 +230,11 @@ impl State {
             xwm: None,
             xwayland_shell_state: None,
             xwayland_mapped: HashSet::new(),
+            output,
             bus: sola_bus::BusClient::new(),
             surface_to_x11: HashMap::new(),
             x11_windows: HashMap::new(),
+            user_locked_sizes: HashMap::new(),
             client: None,
             running: true,
         }

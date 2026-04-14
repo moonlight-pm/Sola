@@ -206,137 +206,145 @@ fn build_ui(app: &gtk4::Application) {
         tracing::warn!("bus not available: {e}");
     }
 
-    // Bus poll loop: keyboard shortcuts and OpenUrl handling
-    glib::timeout_add_local(Duration::from_millis(50), {
+    // Bus event source: keyboard shortcuts and OpenUrl handling
+    let notify_fd = bus.borrow().notify_fd();
+    if let Some(fd) = notify_fd {
         let app_state = app_state.clone();
         let bus = bus.clone();
-        move || {
-            let client = bus.borrow_mut();
+        glib::unix_fd_add_local(fd, glib::IOCondition::IN, move |_fd, _cond| {
+            let client = bus.borrow();
+            client.drain_notify();
+            let mut messages = Vec::new();
             while let Some(msg) = client.try_recv() {
+                messages.push(msg);
+            }
+            drop(client);
+
+            for msg in messages {
                 let Some(topic) = Topic::parse(&msg) else { continue };
                 match topic {
-                        Topic::Key(key) => {
-                            // TODO: re-enable focus check once compositor emits FocusChanged
-                            // for normal app focus transitions (not just input grabs).
-                            // Currently FocusChanged is never emitted, so we match the
-                            // terminal's behavior: process Super+key unconditionally.
-                            if key.pressed && key.super_held {
-                                match key.code {
-                                    keycode::T => {
-                                        let tab_id = uuid::Uuid::new_v4().to_string();
-                                        tabs::create_tab_webview(
-                                            &app_state, &tab_id, None, None,
-                                        );
-                                        tabs::switch_tab(&app_state, &tab_id);
+                    Topic::Key(key) => {
+                        // TODO: re-enable focus check once compositor emits FocusChanged
+                        // for normal app focus transitions (not just input grabs).
+                        // Currently FocusChanged is never emitted, so we match the
+                        // terminal's behavior: process Super+key unconditionally.
+                        if key.pressed && key.super_held {
+                            match key.code {
+                                keycode::T => {
+                                    let tab_id = uuid::Uuid::new_v4().to_string();
+                                    tabs::create_tab_webview(
+                                        &app_state, &tab_id, None, None,
+                                    );
+                                    tabs::switch_tab(&app_state, &tab_id);
 
-                                        // Persist new tab
-                                        let mut store = app_state.tab_store.borrow_mut();
-                                        store.tabs.push(state::PersistedTab {
-                                            url: String::new(),
-                                            title: String::new(),
-                                            session_state: None,
-                                        });
-                                        drop(store);
-                                        app_state.persist_tabs();
+                                    // Persist new tab
+                                    let mut store = app_state.tab_store.borrow_mut();
+                                    store.tabs.push(state::PersistedTab {
+                                        url: String::new(),
+                                        title: String::new(),
+                                        session_state: None,
+                                    });
+                                    drop(store);
+                                    app_state.persist_tabs();
 
-                                        let data = serde_json::json!({
-                                            "tabId": tab_id,
-                                            "url": "",
-                                            "activate": true,
-                                        });
-                                        ipc::emit_event(
-                                            &app_state.chrome_webview,
-                                            "bus_new_tab",
-                                            &data,
-                                        );
-                                        // Give chrome WebView GTK focus so address bar can receive input
-                                        app_state.chrome_webview.grab_focus();
-                                        tracing::debug!("Super+T: new tab {tab_id}");
-                                    }
-                                    keycode::W => {
-                                        let active_id =
-                                            app_state.active_tab_id.borrow().clone();
-                                        if let Some(id) = active_id {
-                                            tabs::close_tab(&app_state, &id);
-
-                                            // Switch to next tab on Rust side
-                                            let tabs = app_state.tabs.borrow();
-                                            let next_id = tabs.last().map(|t| t.id.clone());
-                                            drop(tabs);
-                                            if let Some(next) = &next_id {
-                                                tabs::switch_tab(&app_state, next);
-                                            }
-
-                                            ipc::emit_event(
-                                                &app_state.chrome_webview,
-                                                "tab_closed",
-                                                &serde_json::json!({
-                                                    "tabId": id,
-                                                    "nextTabId": next_id,
-                                                }),
-                                            );
-                                            tracing::debug!("Super+W: closed tab {id}");
-                                        }
-                                    }
-                                    keycode::L => {
-                                        ipc::emit_event(
-                                            &app_state.chrome_webview,
-                                            "bus_focus_address",
-                                            &serde_json::json!({}),
-                                        );
-                                        // Give chrome WebView GTK focus so address bar can receive input
-                                        app_state.chrome_webview.grab_focus();
-                                        tracing::debug!("Super+L: focus address bar");
-                                    }
-                                    _ => {}
+                                    let data = serde_json::json!({
+                                        "tabId": tab_id,
+                                        "url": "",
+                                        "activate": true,
+                                    });
+                                    ipc::emit_event(
+                                        &app_state.chrome_webview,
+                                        "bus_new_tab",
+                                        &data,
+                                    );
+                                    // Give chrome WebView GTK focus so address bar can receive input
+                                    app_state.chrome_webview.grab_focus();
+                                    tracing::debug!("Super+T: new tab {tab_id}");
                                 }
+                                keycode::W => {
+                                    let active_id =
+                                        app_state.active_tab_id.borrow().clone();
+                                    if let Some(id) = active_id {
+                                        tabs::close_tab(&app_state, &id);
+
+                                        // Switch to next tab on Rust side
+                                        let tabs = app_state.tabs.borrow();
+                                        let next_id = tabs.last().map(|t| t.id.clone());
+                                        drop(tabs);
+                                        if let Some(next) = &next_id {
+                                            tabs::switch_tab(&app_state, next);
+                                        }
+
+                                        ipc::emit_event(
+                                            &app_state.chrome_webview,
+                                            "tab_closed",
+                                            &serde_json::json!({
+                                                "tabId": id,
+                                                "nextTabId": next_id,
+                                            }),
+                                        );
+                                        tracing::debug!("Super+W: closed tab {id}");
+                                    }
+                                }
+                                keycode::L => {
+                                    ipc::emit_event(
+                                        &app_state.chrome_webview,
+                                        "bus_focus_address",
+                                        &serde_json::json!({}),
+                                    );
+                                    // Give chrome WebView GTK focus so address bar can receive input
+                                    app_state.chrome_webview.grab_focus();
+                                    tracing::debug!("Super+L: focus address bar");
+                                }
+                                _ => {}
                             }
                         }
-                        Topic::FocusChanged(app_id) => {
-                            let is_focused = app_id == "sola-browser";
-                            *app_state.focused.borrow_mut() = is_focused;
-                            tracing::info!(%app_id, is_focused, "focus changed");
+                    }
+                    Topic::FocusChanged(app_id) => {
+                        let is_focused = app_id == "sola-browser";
+                        *app_state.focused.borrow_mut() = is_focused;
+                        tracing::info!(%app_id, is_focused, "focus changed");
+                    }
+                    Topic::OpenUrl(req) => {
+                        let tab_id = uuid::Uuid::new_v4().to_string();
+                        tabs::create_tab_webview(
+                            &app_state,
+                            &tab_id,
+                            Some(&req.url),
+                            None,
+                        );
+                        if req.activate {
+                            tabs::switch_tab(&app_state, &tab_id);
                         }
-                        Topic::OpenUrl(req) => {
-                            let tab_id = uuid::Uuid::new_v4().to_string();
-                            tabs::create_tab_webview(
-                                &app_state,
-                                &tab_id,
-                                Some(&req.url),
-                                None,
-                            );
-                            if req.activate {
-                                tabs::switch_tab(&app_state, &tab_id);
-                            }
 
-                            // Persist new tab
-                            let mut store = app_state.tab_store.borrow_mut();
-                            store.tabs.push(state::PersistedTab {
-                                url: req.url.clone(),
-                                title: String::new(),
-                                session_state: None,
-                            });
-                            drop(store);
-                            app_state.persist_tabs();
+                        // Persist new tab
+                        let mut store = app_state.tab_store.borrow_mut();
+                        store.tabs.push(state::PersistedTab {
+                            url: req.url.clone(),
+                            title: String::new(),
+                            session_state: None,
+                        });
+                        drop(store);
+                        app_state.persist_tabs();
 
-                            let data = serde_json::json!({
-                                "tabId": tab_id,
-                                "url": req.url,
-                                "activate": req.activate,
-                            });
-                            ipc::emit_event(
-                                &app_state.chrome_webview,
-                                "bus_new_tab",
-                                &data,
-                            );
-                            tracing::info!(url = %req.url, "OpenUrl: created tab {tab_id}");
-                        }
+                        let data = serde_json::json!({
+                            "tabId": tab_id,
+                            "url": req.url,
+                            "activate": req.activate,
+                        });
+                        ipc::emit_event(
+                            &app_state.chrome_webview,
+                            "bus_new_tab",
+                            &data,
+                        );
+                        tracing::info!(url = %req.url, "OpenUrl: created tab {tab_id}");
+                    }
                     _ => {}
                 }
             }
             glib::ControlFlow::Continue
-        }
-    });
+        });
+    }
 
     // Handle window resize
     window.connect_default_width_notify({

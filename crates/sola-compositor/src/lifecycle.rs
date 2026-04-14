@@ -16,7 +16,9 @@ pub fn run_loop(
     tracing::info!("entering event loop");
 
     while state.running {
-        process_bus(state);
+        // Apply geometries stored from previous bus messages whose
+        // windows have since appeared via the Wayland protocol.
+        apply_pending_geometries(state);
 
         state.space.refresh();
 
@@ -75,18 +77,19 @@ fn sync_mru(state: &mut State) {
     let _ = state.bus.emit_sticky(Topic::FocusChanged(app_id));
 }
 
-/// Process any pending bus messages.
-fn process_bus(state: &mut State) {
+/// Drain and dispatch all pending bus messages.
+///
+/// Called from the calloop bus event source when the notification fd
+/// signals readable. Not called from the frame loop.
+pub(crate) fn dispatch_bus(state: &mut State) {
     use sola_bus::topics::Topic;
 
-    // Collect messages first to release the borrow on state.bus.
+    state.bus.drain_notify();
+
     let mut messages = Vec::new();
     while let Some(msg) = state.bus.try_recv() {
         messages.push(msg);
     }
-
-    // Apply any pending geometries that now have matching windows.
-    apply_pending_geometries(state);
 
     for msg in &messages {
         let Some(topic) = Topic::parse(msg) else {

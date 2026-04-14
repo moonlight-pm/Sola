@@ -13,7 +13,6 @@
 ///
 /// See: https://docs.rs/smithay-drm-extras/0.1.0/smithay_drm_extras/drm_scanner/index.html
 use smithay::backend::drm::DrmDevice;
-use smithay::reexports::drm::control::ModeTypeFlags;
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 
 /// Scan a DRM device's connectors for connected displays.
@@ -41,11 +40,15 @@ pub fn find_connected_outputs(
     for event in scan_result {
         if let DrmScanEvent::Connected { connector, crtc } = event {
             if let Some(crtc) = crtc {
+                // Pick the highest-resolution mode (largest pixel count),
+                // breaking ties by highest refresh rate.
                 let mode = connector
                     .modes()
                     .iter()
-                    .find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED))
-                    .or_else(|| connector.modes().first())
+                    .max_by_key(|m| {
+                        let (w, h) = m.size();
+                        (w as u64 * h as u64, m.vrefresh())
+                    })
                     .copied();
 
                 if let Some(mode) = mode {

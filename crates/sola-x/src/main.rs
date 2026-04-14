@@ -92,6 +92,7 @@ fn run() -> Result<(), Error> {
                 state.client = None;
             } else {
                 inject_input(&mut state);
+                apply_pending_configures(&mut state);
                 // Flush injected input events to XWayland immediately.
                 let _ = display.flush_clients();
             }
@@ -109,8 +110,12 @@ fn run() -> Result<(), Error> {
 }
 
 /// Try to connect to sola-compositor as a Wayland client.
-/// On reconnection, re-creates proxy surfaces for all existing X11 windows.
+/// On reconnection, re-creates proxy surfaces for all existing X11 windows
+/// and re-emits any user-locked geometries so the compositor's
+/// `new_toplevel` fullscreen default doesn't override the user's zones.
 fn connect_to_compositor(state: &mut State) {
+    use sola_bus::topics::{Topic, WindowGeometry};
+
     if state.client.is_some() {
         return;
     }
@@ -124,6 +129,28 @@ fn connect_to_compositor(state: &mut State) {
 
         conn.recreate_proxies(&windows);
         state.client = Some(conn);
+
+        // Re-emit locked sizes so the compositor re-syncs to the user's zone
+        // instead of leaving each newly-created proxy at its fullscreen default.
+        for info in state.x11_windows.values() {
+            let Some(&(w, h)) = state.user_locked_sizes.get(&info.class) else {
+                continue;
+            };
+            let geo = info.surface.geometry();
+            let _ = state.bus.emit(Topic::SetWindowGeometry(WindowGeometry {
+                app_id: info.class.clone(),
+                x: geo.loc.x,
+                y: geo.loc.y,
+                width: w,
+                height: h,
+            }));
+            tracing::info!(
+                app_id = %info.class,
+                width = w,
+                height = h,
+                "re-emitted locked geometry after reconnect"
+            );
+        }
     }
 }
 
@@ -240,8 +267,92 @@ fn inject_input(state: &mut State) {
 
 /// Process pending bus messages.
 fn process_bus(state: &mut State) {
-    while let Some(_msg) = state.bus.try_recv() {
-        // Bus messages processed here as needed.
+    use sola_bus::topics::Topic;
+
+    while let Some(msg) = state.bus.try_recv() {
+        let Some(topic) = Topic::parse(&msg) else { continue };
+        match topic {
+            Topic::OutputGeometry(geo) => {
+                update_output_mode(state, geo.width, geo.height);
+            }
+            // The bus doesn't echo messages to the sender, so any
+            // SetWindowGeometry we see came from another client — in
+            // practice, sola's zoning code. Record the commanded size
+            // so we can enforce it against X11 clients and against
+            // compositor configures on reconnect.
+            Topic::SetWindowGeometry(geo) => {
+                let size = (geo.width, geo.height);
+                let prev = state.user_locked_sizes.insert(geo.app_id.clone(), size);
+                if prev != Some(size) {
+                    tracing::info!(
+                        app_id = %geo.app_id,
+                        width = geo.width,
+                        height = geo.height,
+                        "locking X11 window size (user zone)"
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Update the virtual output's mode so XWayland (via XRandR) exposes
+/// the real screen size to X11 clients.
+fn update_output_mode(state: &mut State, width: i32, height: i32) {
+    use smithay::output::Mode as WlMode;
+
+    let mode = WlMode {
+        size: (width, height).into(),
+        refresh: 60_000,
+    };
+    state.output.change_current_state(Some(mode), None, None, None);
+    state.output.set_preferred(mode);
+    tracing::info!(width, height, "updated virtual output mode from compositor");
+}
+
+/// Apply any queued resize requests (from proxy xdg_toplevel configures)
+/// to their matching X11 windows via xwm.
+///
+/// For user-locked apps, only configures whose size matches the user's
+/// zone are applied — others are ignored to prevent the compositor from
+/// overriding the zone (e.g. via new_toplevel's fullscreen default on
+/// reconnect).
+fn apply_pending_configures(state: &mut State) {
+    use smithay::utils::Rectangle;
+
+    let pending = match &mut state.client {
+        Some(client) => client.drain_configures(),
+        None => return,
+    };
+
+    for conf in pending {
+        let Some(info) = state.x11_windows.get(&conf.x11_id) else {
+            continue;
+        };
+
+        if let Some(&(lw, lh)) = state.user_locked_sizes.get(&info.class) {
+            if conf.width as i32 != lw || conf.height as i32 != lh {
+                tracing::info!(
+                    app_id = %info.class,
+                    configure_w = conf.width,
+                    configure_h = conf.height,
+                    locked_w = lw,
+                    locked_h = lh,
+                    "ignoring compositor configure for user-locked app"
+                );
+                continue;
+            }
+        }
+
+        let geo = info.surface.geometry();
+        let new_geo = Rectangle::new(
+            geo.loc,
+            (conf.width as i32, conf.height as i32).into(),
+        );
+        if let Err(err) = info.surface.configure(Some(new_geo)) {
+            tracing::warn!(x11_id = conf.x11_id, ?err, "failed to configure X11 window");
+        }
     }
 }
 

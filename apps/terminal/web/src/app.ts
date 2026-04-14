@@ -189,17 +189,6 @@ export async function createApp(root: HTMLElement) {
     onRename: handleRename,
   }, sidebarTarget);
 
-  // Keyboard shortcuts
-  window.addEventListener('keydown', (e) => {
-    if (e.metaKey && e.key >= '1' && e.key <= '9') {
-      e.preventDefault();
-      const index = parseInt(e.key) - 1;
-      if (index >= 0 && index < state.tabs.length) {
-        switchTab(state.tabs[index].id);
-      }
-    }
-  });
-
   // Restore tabs
   const restoredTabs = ((window as any).RESTORED_TABS || []) as RestoredTab[];
 
@@ -215,5 +204,11 @@ export async function createApp(root: HTMLElement) {
   on('new_tab', () => {
     const activeCwd = state.tabs.find(t => t.id === state.activeTabId)?.cwd;
     createTab(undefined, undefined, activeCwd || undefined);
+  });
+
+  on('select_tab', ({ index }: { index: number }) => {
+    if (index >= 0 && index < state.tabs.length) {
+      switchTab(state.tabs[index].id);
+    }
   });
 }
