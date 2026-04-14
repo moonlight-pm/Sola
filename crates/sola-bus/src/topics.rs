@@ -56,20 +56,14 @@ pub struct MenuDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
 pub enum MenuItem {
-    #[serde(rename = "action")]
     Action {
         id: String,
         label: String,
-        #[serde(default)]
         shortcut: Option<String>,
-        #[serde(default)]
         disabled: bool,
-        #[serde(default)]
         checked: bool,
     },
-    #[serde(rename = "divider")]
     Divider,
 }
 
@@ -229,5 +223,34 @@ mod tests {
     fn unknown_topic_returns_none() {
         let msg = crate::Message::new("SomeUnknownTopic");
         assert!(Topic::parse(&msg).is_none());
+    }
+
+    #[test]
+    fn app_menu_roundtrip() {
+        let payload = AppMenuPayload {
+            app_id: "test-app".into(),
+            menus: vec![MenuDefinition {
+                label: "File".into(),
+                items: vec![
+                    MenuItem::Action {
+                        id: "new".into(),
+                        label: "New".into(),
+                        shortcut: Some("Super+N".into()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Divider,
+                ],
+            }],
+        };
+        let msg = Topic::SetAppMenu(payload).to_message();
+        match Topic::parse(&msg) {
+            Some(Topic::SetAppMenu(p)) => {
+                assert_eq!(p.app_id, "test-app");
+                assert_eq!(p.menus.len(), 1);
+                assert_eq!(p.menus[0].items.len(), 2);
+            }
+            other => panic!("expected SetAppMenu, got {other:?}"),
+        }
     }
 }
