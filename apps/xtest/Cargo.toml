@@ -1,7 +1,0 @@
-[package]
-name = "sola-xtest"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
