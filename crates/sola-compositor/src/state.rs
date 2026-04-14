@@ -128,8 +128,6 @@ pub struct State {
     /// represents the actual click point.
     pub cursor_hotspot: (i32, i32),
 
-    /// Desktop wallpaper. Rendered behind all windows.
-    pub wallpaper_buffer: Option<MemoryRenderBuffer>,
 }
 
 impl State {
@@ -178,7 +176,6 @@ impl State {
             pending_geometries: HashMap::new(),
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
-            wallpaper_buffer: None,
             dmabuf_state: None,
         }
     }

@@ -11,7 +11,6 @@ mod lifecycle;
 pub mod output;
 pub mod state;
 pub mod types;
-pub mod wallpaper;
 pub mod wayland;
 
 use smithay::backend::session::Session;
@@ -51,11 +50,6 @@ pub fn run() -> Result<(), CompositorError> {
         state.cursor_hotspot = hotspot;
     } else {
         tracing::warn!("failed to load cursor from xcursor theme");
-    }
-
-    // -- Wallpaper --
-    if let Some(buffer) = wallpaper::load() {
-        state.wallpaper_buffer = Some(buffer);
     }
 
     // -- Session notifier --
