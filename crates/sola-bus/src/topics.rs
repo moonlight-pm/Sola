@@ -80,6 +80,30 @@ pub struct MenuActionPayload {
     pub action_id: String,
 }
 
+/// Declares how an app's windows should be managed by the compositor.
+/// Emitted as sticky by apps at startup, before mapping surfaces.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPolicyPayload {
+    pub app_id: String,
+    pub windows: Vec<WindowPolicy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPolicy {
+    /// Matches xdg_toplevel title for surface identification.
+    pub title: String,
+    /// If true, the shell manages position/size via zones.
+    pub zoned: bool,
+    /// If true, compositor gives keyboard focus on map.
+    pub auto_focus: bool,
+    /// Fixed size for unzoned windows (width, height).
+    #[serde(default)]
+    pub size: Option<(i32, i32)>,
+    /// Fixed position for unzoned windows (x, y).
+    #[serde(default)]
+    pub position: Option<(i32, i32)>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
     Left,
@@ -118,6 +142,7 @@ define_topics! {
     LaunchApp(String),
 
     // Window management
+    SetWindowPolicy(WindowPolicyPayload),
     SetWindowGeometry(WindowGeometry),
     OutputGeometry(OutputGeometry),
 

@@ -115,6 +115,11 @@ pub struct State {
     /// Applied in `apply_pending_geometries` when the window is first mapped.
     pub pending_geometries: HashMap<String, sola_bus::topics::WindowGeometry>,
 
+    /// Window policies declared by apps. Keyed by app_id.
+    pub window_policies: HashMap<String, Vec<sola_bus::topics::WindowPolicy>>,
+
+    /// Surfaces waiting for policy matching before being mapped and rendered.
+    pub pending_surfaces: Vec<Window>,
 
     // -- Protocol state --
 
@@ -174,6 +179,8 @@ impl State {
             input_grab: None,
             mru_apps: Vec::new(),
             pending_geometries: HashMap::new(),
+            window_policies: HashMap::new(),
+            pending_surfaces: Vec::new(),
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             dmabuf_state: None,
@@ -212,6 +219,22 @@ fn window_app_id(window: &Window) -> Option<String> {
                 .get::<XdgToplevelSurfaceData>()
                 .and_then(|data| data.lock().ok())
                 .and_then(|attrs| attrs.app_id.clone())
+        })
+    })
+}
+
+/// Extract the title from a Window's xdg_toplevel surface data.
+pub fn window_title(window: &Window) -> Option<String> {
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+
+    window.toplevel().and_then(|toplevel| {
+        with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok())
+                .and_then(|attrs| attrs.title.clone())
         })
     })
 }

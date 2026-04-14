@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use gtk4::prelude::*;
 use sola_app::{asset_bundle, SolaApp};
 use sola_bus::topics::{
     AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic,
+    WindowPolicy, WindowPolicyPayload,
 };
 
 mod commands;
@@ -91,9 +93,21 @@ fn main() {
                 }
             }
         })
-        .on_activate(|_window, _webview, bus| {
-            let _ = bus.borrow_mut().emit_sticky(Topic::SetAppMenu(terminal_menu()));
-            tracing::info!("advertised terminal menu");
+        .on_activate(|window, _webview, bus| {
+            window.set_title(Some("main"));
+            let mut client = bus.borrow_mut();
+            let _ = client.emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
+                app_id: "sola-terminal".into(),
+                windows: vec![WindowPolicy {
+                    title: "main".into(),
+                    zoned: true,
+                    auto_focus: true,
+                    size: None,
+                    position: None,
+                }],
+            }));
+            let _ = client.emit_sticky(Topic::SetAppMenu(terminal_menu()));
+            tracing::info!("advertised terminal policy and menu");
         })
         .run();
 }

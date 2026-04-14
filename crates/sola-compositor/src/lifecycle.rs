@@ -1,11 +1,11 @@
 /// Main event loop and shutdown logic.
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
-use smithay::utils::SERIAL_COUNTER;
+use smithay::utils::{Size, SERIAL_COUNTER};
 
 use crate::error::CompositorError;
 use crate::output::render;
-use crate::state::State;
+use crate::state::{self, State};
 
 /// Run the main event loop until `state.running` becomes false.
 pub fn run_loop(
@@ -16,6 +16,9 @@ pub fn run_loop(
     tracing::info!("entering event loop");
 
     while state.running {
+        // Match pending surfaces to window policies and map them.
+        apply_pending_surfaces(state);
+
         // Apply geometries stored from previous bus messages whose
         // windows have since appeared via the Wayland protocol.
         apply_pending_geometries(state);
@@ -98,6 +101,7 @@ pub(crate) fn dispatch_bus(state: &mut State) {
         };
 
         match topic {
+            Topic::SetWindowPolicy(payload) => handle_set_window_policy(state, payload),
             Topic::GrabInput(target) => handle_grab_input(state, &target),
             Topic::ReleaseInput => handle_release_input(state),
             Topic::RaiseApp(app_id) => handle_raise_app(state, &app_id),
@@ -261,6 +265,107 @@ fn handle_list_apps(state: &mut State) {
 
     use sola_bus::topics::Topic;
     let _ = state.bus.emit(Topic::Apps(apps));
+}
+
+fn handle_set_window_policy(
+    state: &mut State,
+    payload: sola_bus::topics::WindowPolicyPayload,
+) {
+    tracing::info!(
+        app_id = %payload.app_id,
+        windows = payload.windows.len(),
+        "registered window policy"
+    );
+    state
+        .window_policies
+        .insert(payload.app_id.clone(), payload.windows);
+}
+
+/// Map pending surfaces whose app_id is known and can be matched to a policy.
+///
+/// - Surfaces with a matching policy: apply the declared sizing and focus rules.
+/// - Surfaces with a known app_id but no policy: apply defaults (full size, auto-focus).
+/// - Surfaces with no app_id yet: keep pending (retry next frame).
+fn apply_pending_surfaces(state: &mut State) {
+    use smithay::wayland::seat::WaylandFocus;
+
+    let mut still_pending = Vec::new();
+    let mut to_map: Vec<(
+        smithay::desktop::Window,
+        String,
+        Option<sola_bus::topics::WindowPolicy>,
+    )> = Vec::new();
+
+    for window in state.pending_surfaces.drain(..) {
+        let app_id = State::app_id(&window);
+        let Some(app_id) = app_id else {
+            still_pending.push(window);
+            continue;
+        };
+
+        let title = state::window_title(&window);
+        let policy = state.window_policies.get(&app_id).and_then(|policies| {
+            title
+                .as_ref()
+                .and_then(|t| policies.iter().find(|p| p.title == *t))
+                .cloned()
+        });
+
+        tracing::info!(
+            app_id = %app_id,
+            title = ?title,
+            has_policy = policy.is_some(),
+            "mapping surface"
+        );
+
+        to_map.push((window, app_id, policy));
+    }
+
+    state.pending_surfaces = still_pending;
+
+    for (window, _app_id, policy) in to_map {
+        let should_focus = policy.as_ref().map_or(true, |p| p.auto_focus);
+
+        match policy {
+            Some(ref p) if !p.zoned => {
+                let pos = p.position.unwrap_or((0, 0));
+                state
+                    .space
+                    .map_element(window.clone(), pos, should_focus);
+
+                if let Some((w, h)) = p.size {
+                    if let Some(toplevel) = window.toplevel() {
+                        toplevel.with_pending_state(|s| {
+                            s.size = Some(Size::from((w, h)));
+                        });
+                        toplevel.send_pending_configure();
+                    }
+                }
+            }
+            _ => {
+                // Zoned or no policy: suggest full output size
+                if let Some(mode) =
+                    state.space.outputs().next().and_then(|o| o.current_mode())
+                {
+                    if let Some(toplevel) = window.toplevel() {
+                        toplevel.with_pending_state(|s| {
+                            s.size = Some(Size::from((mode.size.w, mode.size.h)));
+                        });
+                        toplevel.send_pending_configure();
+                    }
+                }
+                state.space.map_element(window.clone(), (0, 0), true);
+            }
+        }
+
+        if should_focus {
+            if let Some(surface) = window.wl_surface() {
+                let serial = SERIAL_COUNTER.next_serial();
+                let keyboard = state.seat.get_keyboard().unwrap();
+                keyboard.set_focus(state, Some(surface.into_owned()), serial);
+            }
+        }
+    }
 }
 
 /// Graceful shutdown — clean up all resources.

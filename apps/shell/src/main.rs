@@ -25,6 +25,7 @@ struct ShellState {
     zoning: zoning::ZoningState,
     switcher: switcher::SwitcherState,
     overlay_webview: Option<webkit6::WebView>,
+    overlay_window: Option<gtk4::ApplicationWindow>,
 }
 
 impl ShellState {
@@ -35,6 +36,7 @@ impl ShellState {
             zoning: zoning::ZoningState::new(),
             switcher: switcher::SwitcherState::default(),
             overlay_webview: None,
+            overlay_window: None,
         }
     }
 }
@@ -119,6 +121,31 @@ fn main() {
         .on_activate({
             let state = state.clone();
             move |window, _webview, bus| {
+                // Declare window policies before any surfaces map
+                use sola_bus::topics::{WindowPolicy, WindowPolicyPayload};
+                let _ = bus.borrow_mut().emit_sticky(Topic::SetWindowPolicy(
+                    WindowPolicyPayload {
+                        app_id: "sola-shell".into(),
+                        windows: vec![
+                            WindowPolicy {
+                                title: "menubar".into(),
+                                zoned: false,
+                                auto_focus: false,
+                                size: Some((1920, zoning::MENUBAR_HEIGHT)),
+                                position: Some((0, 0)),
+                            },
+                            WindowPolicy {
+                                title: "overlay".into(),
+                                zoned: false,
+                                auto_focus: false,
+                                size: None,
+                                position: None,
+                            },
+                        ],
+                    },
+                ));
+
+                window.set_title(Some("menubar"));
                 setup_overlay(window, &state, &bus);
                 tracing::info!("shell ready");
             }
@@ -143,6 +170,9 @@ fn handle_key(
     if key.pressed && key.code == keycode::TAB && key.super_held && !s.switcher.active {
         tracing::info!("activating switcher");
         s.switcher.active = true;
+        if let Some(ref w) = s.overlay_window {
+            w.present();
+        }
         emit(Topic::GrabInput("sola-shell".into()));
         emit(Topic::ListApps);
         return;
@@ -180,6 +210,7 @@ fn setup_overlay(
     let overlay_window = gtk4::ApplicationWindow::new(&app);
     overlay_window.set_decorated(false);
     overlay_window.set_default_size(1920, 1080);
+    overlay_window.set_title(Some("overlay"));
 
     // Transparent CSS for overlay
     let css = gtk4::CssProvider::new();
@@ -204,9 +235,14 @@ fn setup_overlay(
     overlay_webview.load_html(&html, None);
 
     overlay_window.set_child(Some(&overlay_webview));
-    overlay_window.present();
+    // Don't present yet — only shown when switcher/dropdown activates.
+    // This avoids covering other windows with a full-screen transparent surface.
 
-    state.borrow_mut().overlay_webview = Some(overlay_webview.clone());
+    {
+        let mut s = state.borrow_mut();
+        s.overlay_webview = Some(overlay_webview.clone());
+        s.overlay_window = Some(overlay_window.clone());
+    }
 
     // Overlay key controller for switcher navigation
     let key_ctrl = gtk4::EventControllerKey::new();
@@ -264,6 +300,11 @@ fn setup_overlay(
 
             tracing::info!(app_id = ?app_id, "deactivating switcher");
             push_overlay_js(&overlay_webview, "clear()");
+
+            // Hide overlay window
+            if let Some(ref w) = state.borrow().overlay_window {
+                w.set_visible(false);
+            }
 
             let mut client = bus.borrow_mut();
             if let Some(app_id) = app_id {

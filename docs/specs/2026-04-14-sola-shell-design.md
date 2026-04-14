@@ -108,10 +108,61 @@ When a menu label is clicked in the menubar:
 6. Rust emits `MenuAction { app_id, action_id }` on the bus and hides the overlay
 7. Clicking outside or pressing Escape dismisses the dropdown
 
+## Window Policy
+
+Apps are the authority on how their windows should be managed. Each app declares its window roster via a sticky `SetWindowPolicy` bus topic before mapping its surfaces.
+
+### Policy Declaration
+
+```
+SetWindowPolicy {
+    app_id: String,
+    windows: Vec<WindowPolicy>,
+}
+
+WindowPolicy {
+    title: String,       // matches xdg_toplevel title for surface identification
+    zoned: bool,         // true = shell manages position/size via zones
+    auto_focus: bool,    // true = compositor gives focus on map
+    size: Option<(i32, i32)>,     // fixed size for unzoned windows
+    position: Option<(i32, i32)>, // fixed position for unzoned windows
+}
+```
+
+### Compositor Behavior
+
+1. New surface maps → compositor holds it invisible (does not render, does not focus)
+2. Once app_id and title are known, compositor matches against declared policies
+3. **Zoned window**: compositor suggests full output size, auto-focuses, participates in zone management
+4. **Unzoned window**: compositor applies declared size/position, skips auto-focus, does not participate in MRU tracking
+5. **No matching policy** (legacy/X11 apps): falls back to current behavior — suggest full size, auto-focus. This keeps backward compatibility.
+
+### Surface Identification
+
+Apps set the xdg_toplevel `title` to their declared role name before mapping the surface. The compositor matches `(app_id, title)` pairs against the policy registry.
+
+### Examples
+
+**Terminal** (single zoned window):
+```
+SetWindowPolicy { app_id: "sola-terminal", windows: [
+    { title: "main", zoned: true, auto_focus: true },
+]}
+```
+
+**Shell** (two unzoned windows):
+```
+SetWindowPolicy { app_id: "sola-shell", windows: [
+    { title: "menubar", zoned: false, auto_focus: false, size: (1920, 28), position: (0, 0) },
+    { title: "overlay", zoned: false, auto_focus: false },
+]}
+```
+
 ## Bus Topics
 
 ### New Topics
 
+- `SetWindowPolicy(WindowPolicyPayload)` — sticky, emitted by apps at startup. Declares how each window should be managed by the compositor.
 - `SetAppMenu(AppMenuPayload)` — sticky, emitted by apps at startup. Payload: `{ app_id, menus: [{ label, items }] }`
 - `MenuAction(MenuActionPayload)` — emitted by shell when a shortcut or menu click maps to an action. Payload: `{ app_id, action_id }`
 
