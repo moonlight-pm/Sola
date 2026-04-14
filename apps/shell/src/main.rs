@@ -86,15 +86,18 @@ fn main() {
                         s.focused_app_id = Some(app_id.clone());
                         s.zoning.set_focused(app_id.clone());
 
-                        let menu_labels: Vec<String> = s
-                            .menus
-                            .get_menu(app_id)
+                        let menu = s.menus.get_menu(app_id);
+                        let app_name = menu
+                            .and_then(|m| m.menus.first())
+                            .map(|d| d.label.as_str())
+                            .unwrap_or(app_id);
+                        let menu_labels: Vec<String> = menu
                             .map(|m| m.menus.iter().map(|d| d.label.clone()).collect())
                             .unwrap_or_default();
 
                         send_to_js(serde_json::json!({
                             "event": "focus",
-                            "app_id": app_id,
+                            "app_name": app_name,
                             "menu_labels": menu_labels,
                         }));
                     }
@@ -146,6 +149,38 @@ fn main() {
                 ));
 
                 window.set_title(Some("menubar"));
+
+                // Menubar command bridge via title
+                let webview_ref = {
+                    // The webview is the window's child
+                    let child = window.child().unwrap();
+                    child.downcast::<webkit6::WebView>().unwrap()
+                };
+                webview_ref.connect_notify_local(Some("title"), {
+                    let bus = bus.clone();
+                    let state = state.clone();
+                    move |webview, _| {
+                        let Some(title) = webview.title() else { return };
+                        let title = title.to_string();
+                        match title.as_str() {
+                            "cmd:exit" => {
+                                tracing::info!("exit requested from system menu");
+                                let _ = bus.borrow_mut().emit(Topic::Shutdown);
+                            }
+                            "cmd:system_menu" => {
+                                let items = serde_json::json!([
+                                    {"type": "action", "id": "exit", "label": "Exit Sola"}
+                                ]);
+                                let script = format!("showDropdown({}, 0)", items);
+                                if let Some(ref ov) = state.borrow().overlay_webview {
+                                    push_overlay_js(ov, &script);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+
                 setup_overlay(window, &state, &bus);
                 tracing::info!("shell ready");
             }
@@ -170,9 +205,6 @@ fn handle_key(
     if key.pressed && key.code == keycode::TAB && key.super_held && !s.switcher.active {
         tracing::info!("activating switcher");
         s.switcher.active = true;
-        if let Some(ref w) = s.overlay_window {
-            w.present();
-        }
         emit(Topic::GrabInput("sola-shell".into()));
         emit(Topic::ListApps);
         return;
@@ -235,8 +267,9 @@ fn setup_overlay(
     overlay_webview.load_html(&html, None);
 
     overlay_window.set_child(Some(&overlay_webview));
-    // Don't present yet — only shown when switcher/dropdown activates.
-    // This avoids covering other windows with a full-screen transparent surface.
+    // Present now — the policy system prevents auto-focus and force-resize.
+    // Empty + transparent = invisible. Avoids map/unmap flicker on each activation.
+    overlay_window.present();
 
     {
         let mut s = state.borrow_mut();
@@ -301,11 +334,6 @@ fn setup_overlay(
             tracing::info!(app_id = ?app_id, "deactivating switcher");
             push_overlay_js(&overlay_webview, "clear()");
 
-            // Hide overlay window
-            if let Some(ref w) = state.borrow().overlay_window {
-                w.set_visible(false);
-            }
-
             let mut client = bus.borrow_mut();
             if let Some(app_id) = app_id {
                 let _ = client.emit(Topic::RaiseApp(app_id));
@@ -314,13 +342,18 @@ fn setup_overlay(
         }
     });
 
-    // Mouse hover in switcher → JS sets document.title → sync Rust state
     overlay_webview.connect_notify_local(Some("title"), {
         let state = state.clone();
+        let bus = bus.clone();
         move |webview, _| {
-            if let Some(title) = webview.title() {
-                if let Ok(index) = title.to_string().parse::<usize>() {
-                    state.borrow_mut().switcher.selected = index;
+            let Some(title) = webview.title() else { return };
+            let title = title.to_string();
+            if let Ok(index) = title.parse::<usize>() {
+                state.borrow_mut().switcher.selected = index;
+            } else if let Some(action) = title.strip_prefix("action:") {
+                tracing::info!(action, "overlay menu action");
+                if action == "exit" {
+                    let _ = bus.borrow_mut().emit(Topic::Shutdown);
                 }
             }
         }

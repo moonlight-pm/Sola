@@ -1,30 +1,36 @@
-import { on, invoke } from '@sola/ipc';
+import { on } from '@sola/ipc';
 
+const systemMenuEl = document.getElementById('system-menu')!;
 const appNameEl = document.getElementById('app-name')!;
 const menuLabelsEl = document.getElementById('menu-labels')!;
 const clockEl = document.getElementById('clock')!;
 
 let currentMenuLabels: string[] = [];
+let systemMenuOpen = false;
 
 on('focus', (msg: any) => {
-    appNameEl.textContent = msg.app_id || '';
+    appNameEl.textContent = msg.app_name || '';
     currentMenuLabels = msg.menu_labels || [];
     renderMenuLabels();
+});
+
+// System menu (eclipse icon)
+systemMenuEl.addEventListener('click', () => {
+    systemMenuOpen = !systemMenuOpen;
+    if (systemMenuOpen) {
+        document.title = 'cmd:system_menu';
+    }
 });
 
 function renderMenuLabels(): void {
     while (menuLabelsEl.firstChild) menuLabelsEl.removeChild(menuLabelsEl.firstChild);
 
     currentMenuLabels.forEach((label: string, index: number) => {
-        // Skip first label (app menu) in the label bar — it's shown via app-name
         if (index === 0) return;
 
         const el = document.createElement('div');
         el.className = 'menu-label';
         el.textContent = label;
-        el.addEventListener('click', () => {
-            invoke('menu_click', { menu_index: index });
-        });
         menuLabelsEl.appendChild(el);
     });
 }

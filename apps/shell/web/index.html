@@ -46,10 +46,26 @@
         background: rgba(255, 255, 255, 0.1);
     }
 
+    #system-menu {
+        padding: 0 12px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        cursor: default;
+    }
+
+    #system-menu:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    #system-menu svg {
+        width: 16px;
+        height: 16px;
+    }
+
     .menu-label.app-name {
         font-weight: 600;
         color: #fff;
-        padding-left: 16px;
     }
 
     #clock {
@@ -61,6 +77,9 @@
 </head>
 <body>
 <div id="left">
+    <div id="system-menu">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 1 0 10 10"/></svg>
+    </div>
     <div id="app-name" class="menu-label app-name"></div>
     <div id="menu-labels"></div>
 </div>
