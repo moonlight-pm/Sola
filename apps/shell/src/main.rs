@@ -103,6 +103,23 @@ fn main() {
                     }
                     Topic::SetAppMenu(payload) => {
                         s.menus.set_menu(payload.clone());
+
+                        // Re-send focus data if this menu is for the focused app
+                        // (handles out-of-order sticky replay on reconnect)
+                        if s.focused_app_id.as_deref() == Some(&payload.app_id) {
+                            let app_name = payload
+                                .menus
+                                .first()
+                                .map(|d| d.label.as_str())
+                                .unwrap_or(&payload.app_id);
+                            let menu_labels: Vec<String> =
+                                payload.menus.iter().map(|d| d.label.clone()).collect();
+                            send_to_js(serde_json::json!({
+                                "event": "focus",
+                                "app_name": app_name,
+                                "menu_labels": menu_labels,
+                            }));
+                        }
                     }
                     Topic::OutputGeometry(geo) => {
                         s.zoning.set_output_size(geo);
