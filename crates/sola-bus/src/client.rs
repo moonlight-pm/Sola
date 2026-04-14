@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::io::{self, Read, Write};
 
@@ -21,6 +22,10 @@ pub struct BusClient {
     /// thread delivers a message to `rx`. Event-loop callers watch this fd
     /// instead of polling `try_recv()`.
     notify_read: Option<UnixStream>,
+    /// Set to false by the reader thread when it exits. Lets `is_connected()`
+    /// distinguish a live connection from a half-open one (writer alive,
+    /// reader dead) so callers can reconnect.
+    reader_alive: Option<Arc<AtomicBool>>,
     queue: VecDeque<Message>,
 }
 
@@ -33,6 +38,7 @@ impl BusClient {
             writer: None,
             rx: None,
             notify_read: None,
+            reader_alive: None,
             queue: VecDeque::new(),
         }
     }
@@ -42,6 +48,7 @@ impl BusClient {
     /// On success, flushes any queued messages. Safe to call repeatedly —
     /// returns `Ok(())` immediately if already connected.
     pub fn connect(&mut self) -> io::Result<()> {
+        self.drop_if_reader_dead();
         if self.writer.is_some() {
             return Ok(());
         }
@@ -51,6 +58,9 @@ impl BusClient {
 
     /// Attempt to connect to the bus at a specific socket path.
     pub fn connect_to(&mut self, path: &str) -> io::Result<()> {
+        // If the previous reader thread died, drop the half-open state so
+        // we really re-open the socket instead of returning Ok.
+        self.drop_if_reader_dead();
         if self.writer.is_some() {
             return Ok(());
         }
@@ -66,13 +76,17 @@ impl BusClient {
         info!(path = %path, "connected to bus");
 
         let (tx, rx) = mpsc::channel();
+        let alive = Arc::new(AtomicBool::new(true));
+        let alive_for_thread = alive.clone();
         thread::spawn(move || {
             read_loop(reader, tx, notify_write);
+            alive_for_thread.store(false, Ordering::Release);
         });
 
         self.writer = Some(stream);
         self.rx = Some(rx);
         self.notify_read = Some(notify_read);
+        self.reader_alive = Some(alive);
 
         self.flush_queue();
 
@@ -80,8 +94,26 @@ impl BusClient {
     }
 
     /// Whether the client has an active bus connection.
+    ///
+    /// Returns false if the reader thread has exited, even if the writer
+    /// socket is still open — in that case no messages are being delivered,
+    /// so the caller should reconnect.
     pub fn is_connected(&self) -> bool {
         self.writer.is_some()
+            && self.reader_alive.as_ref().is_some_and(|a| a.load(Ordering::Acquire))
+    }
+
+    fn drop_if_reader_dead(&mut self) {
+        let dead = self
+            .reader_alive
+            .as_ref()
+            .is_some_and(|a| !a.load(Ordering::Acquire));
+        if dead {
+            self.writer = None;
+            self.rx = None;
+            self.notify_read = None;
+            self.reader_alive = None;
+        }
     }
 
     /// Send a raw message to the bus, or queue it if not connected.
