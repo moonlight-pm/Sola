@@ -124,20 +124,35 @@ impl XwmHandler for State {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
+        let class = window.class();
         let geo = window.geometry();
+        let locked = self.user_locked_sizes.contains_key(&class);
+
+        // For user-locked apps, discard the client's requested size —
+        // the compositor's zone is authoritative. Position is still
+        // honored so apps can reposition themselves internally.
+        let (req_w, req_h) = if locked {
+            (geo.size.w, geo.size.h)
+        } else {
+            (
+                w.map(|v| v as i32).unwrap_or(geo.size.w),
+                h.map(|v| v as i32).unwrap_or(geo.size.h),
+            )
+        };
         let new_geo = Rectangle::new(
             (x.unwrap_or(geo.loc.x), y.unwrap_or(geo.loc.y)).into(),
-            (
-                w.unwrap_or(geo.size.w as u32) as i32,
-                h.unwrap_or(geo.size.h as u32) as i32,
-            )
-                .into(),
+            (req_w, req_h).into(),
         );
+
         if let Err(err) = window.configure(Some(new_geo)) {
             tracing::error!(?err, "failed to configure X11 window");
         }
 
-        emit_geometry(self, &window.class(), new_geo);
+        // Only propagate geometry back to the compositor when we actually
+        // honored a size change; otherwise we'd overwrite the zone size.
+        if !locked {
+            emit_geometry(self, &class, new_geo);
+        }
     }
 
     fn configure_notify(
@@ -197,6 +212,7 @@ fn track_x11_window(state: &mut State, surface: X11Surface) {
     state.x11_windows.insert(id, X11WindowInfo {
         title: title.clone(),
         class: class.clone(),
+        surface: surface.clone(),
     });
 
     if let Some(client) = &mut state.client {

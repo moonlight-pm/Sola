@@ -42,6 +42,18 @@ pub struct ClientApp {
 
     /// Input events queued by Dispatch callbacks for the main loop to inject.
     pub pending_input: Vec<InputEvent>,
+
+    /// Size-change requests from sola-compositor (via xdg_toplevel configure),
+    /// queued for the main loop to forward to the matching X11 window.
+    pub pending_configures: Vec<PendingConfigure>,
+}
+
+/// A resize request for an X11 window, carried from a proxy xdg_toplevel
+/// configure event to the main loop where it can be applied via xwm.
+pub struct PendingConfigure {
+    pub x11_id: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// An input event received on a proxy surface, to be injected into XWayland's seat.
@@ -84,6 +96,7 @@ impl ClientConnection {
             proxies: HashMap::new(),
             surface_to_x11: HashMap::new(),
             pending_input: Vec::new(),
+            pending_configures: Vec::new(),
         };
 
         // Roundtrip to bind globals.
@@ -119,7 +132,7 @@ impl ClientConnection {
 
         let surface = compositor.create_surface(&self.qh, ());
         let xdg_surface = xdg_wm_base.get_xdg_surface(&surface, &self.qh, ());
-        let toplevel = xdg_surface.get_toplevel(&self.qh, ());
+        let toplevel = xdg_surface.get_toplevel(&self.qh, x11_id);
         toplevel.set_title(title.to_string());
         toplevel.set_app_id(class.to_string());
         surface.commit();
@@ -161,6 +174,11 @@ impl ClientConnection {
     /// Drain queued input events (collected during dispatch).
     pub fn drain_input(&mut self) -> Vec<InputEvent> {
         std::mem::take(&mut self.app.pending_input)
+    }
+
+    /// Drain queued resize requests for X11 windows (from proxy toplevel configures).
+    pub fn drain_configures(&mut self) -> Vec<PendingConfigure> {
+        std::mem::take(&mut self.app.pending_configures)
     }
 
     /// Read new events from the connection and dispatch them.
@@ -285,15 +303,26 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for ClientApp {
     }
 }
 
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for ClientApp {
+impl Dispatch<xdg_toplevel::XdgToplevel, u32> for ClientApp {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &xdg_toplevel::XdgToplevel,
-        _event: xdg_toplevel::Event,
-        _data: &(),
+        event: xdg_toplevel::Event,
+        data: &u32,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        // Configure carries the compositor's desired size. width/height
+        // of 0 means "you pick" — leave the window alone in that case.
+        if let xdg_toplevel::Event::Configure { width, height, .. } = event {
+            if width > 0 && height > 0 {
+                state.pending_configures.push(PendingConfigure {
+                    x11_id: *data,
+                    width: width as u32,
+                    height: height as u32,
+                });
+            }
+        }
     }
 }
 
