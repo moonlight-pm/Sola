@@ -29,7 +29,7 @@ impl DeployTarget for Local {
             .ok_or_else(|| format!("invalid binary path: {src}"))?
             .to_string_lossy();
         let dest = format!("{BIN_DIR}/{name}");
-        run("sudo", &["cp", src, &dest])?;
+        run("sudo", &["cp", "--remove-destination", src, &dest])?;
         run("sudo", &["chmod", "755", &dest])
     }
 
