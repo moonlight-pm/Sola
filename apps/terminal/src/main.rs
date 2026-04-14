@@ -10,6 +10,10 @@ mod tmux;
 
 /// XKB keycode for T (evdev 20 + 8 = 28).
 const KEY_T: u32 = 28;
+/// XKB keycode for C (evdev 46 + 8 = 54).
+const KEY_C: u32 = 54;
+/// XKB keycode for V (evdev 47 + 8 = 55).
+const KEY_V: u32 = 55;
 /// XKB keycodes for 1..9 (evdev 2..10 + 8).
 const KEY_1: u32 = 10;
 const KEY_9: u32 = 18;
@@ -72,6 +76,12 @@ fn main() {
                 if *code == KEY_T {
                     tracing::info!("Super+T: requesting new tab");
                     send_to_js(serde_json::json!({"event": "new_tab"}));
+                } else if *code == KEY_C {
+                    tracing::info!("Super+C: copy");
+                    send_to_js(serde_json::json!({"event": "copy"}));
+                } else if *code == KEY_V {
+                    tracing::info!("Super+V: paste");
+                    send_to_js(serde_json::json!({"event": "paste"}));
                 } else if (KEY_1..=KEY_9).contains(code) {
                     let index = (code - KEY_1) as usize;
                     tracing::info!(index, "Super+digit: selecting tab");

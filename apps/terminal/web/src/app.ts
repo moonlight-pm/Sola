@@ -211,4 +211,24 @@ export async function createApp(root: HTMLElement) {
       switchTab(state.tabs[index].id);
     }
   });
+
+  on('copy', () => {
+    if (!state.activeTabId) return;
+    const text = panes.get(state.activeTabId)?.getSelection();
+    if (!text) return;
+    navigator.clipboard.writeText(text).catch((e) => {
+      console.error('copy failed', e);
+    });
+  });
+
+  on('paste', () => {
+    if (!state.activeTabId) return;
+    const pane = panes.get(state.activeTabId);
+    if (!pane) return;
+    navigator.clipboard.readText().then((text) => {
+      if (text) pane.paste(text);
+    }).catch((e) => {
+      console.error('paste failed', e);
+    });
+  });
 }

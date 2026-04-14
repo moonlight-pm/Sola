@@ -207,6 +207,10 @@ impl SolaApp {
                 settings.set_enable_developer_extras(true);
                 settings.set_enable_write_console_messages_to_stdout(true);
             }
+            // Suppress WebKit's default right-click menu. In a Wayland session
+            // without xdg-desktop-portal it can hang opening the popup, which
+            // looks to the user as a frozen terminal on right-click.
+            webview.connect_context_menu(|_, _, _| true);
             window.set_child(Some(&webview));
 
             // Event poller (tokio → glib → JS)
