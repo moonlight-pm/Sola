@@ -42,34 +42,29 @@ interface Metrics {
 
 const state = reactive({
   sessions: [] as Session[],
-  messages: {} as Record<string, Message[]>,
-  metrics: {} as Record<string, Metrics>,
   activeId: null as string | null,
-  editingId: null as string | null,
-  editingTitle: false,
   searchQuery: '',
+  editingTitle: false,
+  msgVersion: 0,
+  metricsVersion: 0,
 });
 
-// Track what's rendered to avoid unnecessary DOM rebuilds
-let renderedMsgCount = -1;
-let renderedActiveId: string | null = null;
-let renderedLastContent = '';
-let renderedLastToolCount = -1;
+const messages: Record<string, Message[]> = {};
+const metrics: Record<string, Metrics> = {};
 
 // ── Events from Rust ─────────────────────────────────────────────────────────
 
 on('session_state', (ev: any) => {
   let s = state.sessions.find((x: Session) => x.id === ev.session_id);
   if (!s) {
-    s = {
+    state.sessions = [...state.sessions, {
       id: ev.session_id,
       name: ev.name || null,
       status: ev.status,
       firstPrompt: null,
       workingDir: ev.working_dir || null,
-    };
-    state.sessions.push(s);
-    state.messages[ev.session_id] = [];
+    }];
+    messages[ev.session_id] = [];
     state.activeId = ev.session_id;
     focusInput();
   } else {
@@ -77,64 +72,60 @@ on('session_state', (ev: any) => {
     s.status = ev.status;
     if (ev.name) s.name = ev.name;
     if (ev.working_dir) s.workingDir = ev.working_dir;
+    state.sessions = [...state.sessions];
     if (wasSaved) {
-      if (!state.messages[ev.session_id]) state.messages[ev.session_id] = [];
+      if (!messages[ev.session_id]) messages[ev.session_id] = [];
       state.activeId = ev.session_id;
-      invalidateRender();
       focusInput();
     }
   }
-  renderAll();
 });
 
 on('message_start', (ev: any) => {
-  const m = state.messages[ev.session_id];
-  if (m) {
-    m.push({ role: 'assistant', content: '', streaming: true, tools: [] });
-    renderMessages();
-  }
+  const m = messages[ev.session_id];
+  if (m) { m.push({ role: 'assistant', content: '', streaming: true, tools: [] }); state.msgVersion++; }
 });
 
 on('message_delta', (ev: any) => {
-  const m = state.messages[ev.session_id];
+  const m = messages[ev.session_id];
   if (!m) return;
   const last = m[m.length - 1];
-  if (last && last.role === 'assistant') { last.content += ev.text; renderMessages(); }
+  if (last && last.role === 'assistant') { last.content += ev.text; state.msgVersion++; }
 });
 
 on('message_end', (ev: any) => {
-  const m = state.messages[ev.session_id];
+  const m = messages[ev.session_id];
   if (!m) return;
   const last = m[m.length - 1];
   if (last) {
     last.streaming = false;
-    if (ev.cancelled) { last.cancelled = true; }
-    renderMessages();
+    if (ev.cancelled) last.cancelled = true;
+    state.msgVersion++;
   }
 });
 
 on('tool_start', (ev: any) => {
-  const m = state.messages[ev.session_id];
+  const m = messages[ev.session_id];
   if (!m) return;
   const last = m[m.length - 1];
   if (last && last.role === 'assistant') {
     last.tools.push({ name: ev.tool_name, input: ev.tool_input, output: null, isError: false, expanded: false });
-    renderMessages();
+    state.msgVersion++;
   }
 });
 
 on('tool_end', (ev: any) => {
-  const m = state.messages[ev.session_id];
+  const m = messages[ev.session_id];
   if (!m) return;
   const last = m[m.length - 1];
   if (last) {
     const t = last.tools.find((t: ToolCall) => t.name === ev.tool_name && t.output === null);
-    if (t) { t.output = ev.result; t.isError = ev.is_error; renderMessages(); }
+    if (t) { t.output = ev.result; t.isError = ev.is_error; state.msgVersion++; }
   }
 });
 
 on('metrics', (ev: any) => {
-  state.metrics[ev.session_id] = {
+  metrics[ev.session_id] = {
     input_tokens: ev.input_tokens || 0,
     output_tokens: ev.output_tokens || 0,
     cache_read_tokens: ev.cache_read_tokens || 0,
@@ -146,49 +137,41 @@ on('metrics', (ev: any) => {
     model: ev.model || 'unknown',
     num_turns: ev.num_turns || 0,
   };
-  renderHeader();
+  state.metricsVersion++;
 });
 
 on('conversations_list', (ev: any) => {
-  // Merge saved conversations into sidebar (don't overwrite running sessions)
   for (const c of ev.conversations) {
     if (!state.sessions.find((s: Session) => s.id === c.session_id)) {
-      state.sessions.push({
+      state.sessions = [...state.sessions, {
         id: c.session_id,
         name: c.name || null,
         status: 'saved',
         firstPrompt: c.first_prompt || null,
         workingDir: c.working_dir || null,
-      });
+      }];
     }
   }
-  renderSidebar();
 });
 
 on('session_loaded', (ev: any) => {
-  if (!state.messages[ev.session_id]) state.messages[ev.session_id] = [];
+  if (!messages[ev.session_id]) messages[ev.session_id] = [];
   for (const msg of ev.messages) {
-    state.messages[ev.session_id].push({
-      role: msg.role,
-      content: msg.content,
-      streaming: false,
-      tools: [],
+    messages[ev.session_id].push({
+      role: msg.role, content: msg.content, streaming: false, tools: [],
     });
   }
   state.activeId = ev.session_id;
-  invalidateRender();
-  renderMessages();
-  renderSidebar();
-  renderHeader();
+  state.msgVersion++;
   focusInput();
 });
 
 on('error', (ev: any) => {
   const sid = ev.session_id || state.activeId;
   if (sid) {
-    if (!state.messages[sid]) state.messages[sid] = [];
-    state.messages[sid].push({ role: 'error', content: ev.message, streaming: false, tools: [] });
-    renderAll();
+    if (!messages[sid]) messages[sid] = [];
+    messages[sid].push({ role: 'error', content: ev.message, streaming: false, tools: [] });
+    state.msgVersion++;
   }
 });
 
@@ -208,6 +191,13 @@ function activeSession(): Session | undefined {
   return state.sessions.find((x: Session) => x.id === state.activeId);
 }
 
+function focusInput(): void {
+  requestAnimationFrame(() => {
+    const ta = document.getElementById('msg-input') as HTMLTextAreaElement | null;
+    if (ta && !ta.disabled) ta.focus();
+  });
+}
+
 function scrollToBottom(): void {
   requestAnimationFrame(() => {
     const el = document.getElementById('msg-log');
@@ -215,27 +205,6 @@ function scrollToBottom(): void {
       const near = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
       if (near) el.scrollTop = el.scrollHeight;
     }
-  });
-}
-
-function el(tag: string, cls?: string, text?: string): HTMLElement {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-
-function renderAll(): void {
-  renderSidebar();
-  renderHeader();
-  renderMessages();
-  updateInputState();
-}
-
-function focusInput(): void {
-  requestAnimationFrame(() => {
-    const ta = document.getElementById('msg-input') as HTMLTextAreaElement | null;
-    if (ta && !ta.disabled) ta.focus();
   });
 }
 
@@ -247,73 +216,31 @@ async function sendMessage(): Promise<void> {
   const text = ta.value.trim();
   if (!text || !state.activeId) return;
 
-  if (!state.messages[state.activeId]) state.messages[state.activeId] = [];
-  state.messages[state.activeId].push({ role: 'user', content: text, streaming: false, tools: [] });
+  if (!messages[state.activeId]) messages[state.activeId] = [];
+  messages[state.activeId].push({ role: 'user', content: text, streaming: false, tools: [] });
 
   const s = state.sessions.find((x: Session) => x.id === state.activeId);
-  if (s && !s.firstPrompt) s.firstPrompt = text;
+  if (s && !s.firstPrompt) {
+    s.firstPrompt = text;
+    state.sessions = [...state.sessions];
+  }
 
+  state.msgVersion++;
   await invoke('send_message', { session_id: state.activeId, text });
   ta.value = '';
   ta.style.height = 'auto';
-  renderAll();
   ta.focus();
 }
 
-async function showNewDialog(): Promise<void> {
-  const existing = document.querySelector('.overlay');
-  if (existing) existing.remove();
-
-  const overlay = el('div', 'overlay');
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-
-  const dialog = el('div', 'dialog');
-  dialog.appendChild(el('h3', undefined, 'New Session'));
-
-  const fieldLabel = el('div', 'field-label', 'WORKING DIRECTORY');
-  dialog.appendChild(fieldLabel);
-
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = '~';
-  input.placeholder = '~/path/to/project';
-  dialog.appendChild(input);
-
-  const status = el('div', 'path-status');
-  dialog.appendChild(status);
-
-  function updateStatus(path: string): void {
-    status.textContent = '';
-    status.className = 'path-status';
-    if (path.trim()) {
-      status.classList.add('valid');
-      const checkIcon = el('span', 'icon icon-check');
-      checkIcon.style.marginRight = '6px';
-      status.appendChild(checkIcon);
-      status.appendChild(document.createTextNode(path));
-    }
+async function selectSession(id: string): Promise<void> {
+  const s = state.sessions.find((x: Session) => x.id === id);
+  if (s && s.status === 'saved' && !messages[id]) {
+    await invoke('resume_session', { session_id: id });
+  } else {
+    state.activeId = id;
+    state.msgVersion++;
+    focusInput();
   }
-
-  input.addEventListener('input', () => updateStatus(input.value));
-  updateStatus(input.value);
-
-  input.addEventListener('keydown', async (e) => {
-    if (e.key === 'Enter') { await createSession(input.value); overlay.remove(); }
-    if (e.key === 'Escape') overlay.remove();
-  });
-
-  const btns = el('div', 'dialog-btns');
-  const cancelBtn = el('button', 'dbtn-cancel', 'Cancel');
-  cancelBtn.addEventListener('click', () => overlay.remove());
-  btns.appendChild(cancelBtn);
-  const startBtn = el('button', 'dbtn-start', 'Start Session');
-  startBtn.addEventListener('click', async () => { await createSession(input.value); overlay.remove(); });
-  btns.appendChild(startBtn);
-  dialog.appendChild(btns);
-
-  overlay.appendChild(dialog);
-  document.body.appendChild(overlay);
-  requestAnimationFrame(() => { input.focus(); input.select(); });
 }
 
 async function createSession(dir: string): Promise<void> {
@@ -321,362 +248,274 @@ async function createSession(dir: string): Promise<void> {
   await invoke('new_session', { working_dir: dir.trim() });
 }
 
-function startRename(id: string): void {
-  state.editingId = id;
-}
+function showNewDialog(): void {
+  const existing = document.querySelector('.overlay');
+  if (existing) existing.remove();
 
-async function finishRename(id: string, name: string): Promise<void> {
-  state.editingId = null;
-  if (name.trim()) {
-    const s = state.sessions.find((x: Session) => x.id === id);
-    if (s) s.name = name.trim();
-    await invoke('rename_conversation', { session_id: id, name: name.trim() });
-  }
-  renderSidebar();
-  renderHeader();
-}
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
-function startTitleEdit(): void {
-  state.editingTitle = true;
-  renderHeader();
-}
+  const d = document.createElement('div');
+  d.className = 'dialog';
 
-async function finishTitleEdit(name: string): Promise<void> {
-  state.editingTitle = false;
-  if (name.trim() && state.activeId) {
-    const s = activeSession();
-    if (s) s.name = name.trim();
-    await invoke('rename_conversation', { session_id: state.activeId, name: name.trim() });
-  }
-  renderHeader();
-}
+  const title = document.createElement('h3');
+  title.textContent = 'New Session';
+  d.appendChild(title);
 
-// ── Render: Sidebar ──────────────────────────────────────────────────────────
+  const label = document.createElement('div');
+  label.className = 'field-label';
+  label.textContent = 'WORKING DIRECTORY';
+  d.appendChild(label);
 
-function renderSidebar(): void {
-  const list = convoList;
-  list.textContent = '';
-  const query = state.searchQuery.toLowerCase();
-  const filtered = state.sessions.filter((s: Session) => {
-    if (!query) return true;
-    return (s.name || '').toLowerCase().includes(query) ||
-           (s.firstPrompt || '').toLowerCase().includes(query);
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = '~';
+  input.placeholder = '~/path/to/project';
+  input.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') { await createSession(input.value); overlay.remove(); }
+    if (e.key === 'Escape') overlay.remove();
   });
-  const running = filtered.filter((s: Session) => s.status === 'running');
-  const active = filtered.filter((s: Session) => s.status === 'idle' || s.status === 'error');
-  const saved = filtered.filter((s: Session) => s.status === 'saved');
+  d.appendChild(input);
 
-  function addGroup(label: string, items: Session[]): void {
-    if (!items.length) return;
-    list.appendChild(el('div', 'group-label', label));
-    for (const s of items) {
-      const item = el('div', 'convo-item' + (s.id === state.activeId ? ' active' : ''));
-      item.addEventListener('click', () => {
-        if (s.status === 'saved' && !state.messages[s.id]) {
-          // Resume saved session from disk
-          invoke('resume_session', { session_id: s.id });
-        } else {
-          state.activeId = s.id;
-          invalidateRender();
-          renderMessages();
-          renderHeader();
-          focusInput();
-        }
-      });
-      item.addEventListener('dblclick', () => startRename(s.id));
-      item.appendChild(el('span', 'dot ' + s.status));
+  const status = document.createElement('div');
+  status.className = 'path-status valid';
+  status.textContent = '~';
+  input.addEventListener('input', () => { status.textContent = input.value; });
+  d.appendChild(status);
 
-      if (state.editingId === s.id) {
-        const inp = document.createElement('input');
-        inp.className = 'convo-name-input';
-        inp.value = s.name || truncate(s.firstPrompt, 30) || 'New session';
-        inp.addEventListener('blur', (e) => finishRename(s.id, (e.target as HTMLInputElement).value));
-        inp.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') finishRename(s.id, (e.target as HTMLInputElement).value);
-          if (e.key === 'Escape') { state.editingId = null; }
+  const btns = document.createElement('div');
+  btns.className = 'dialog-btns';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'dbtn-cancel';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  btns.appendChild(cancelBtn);
+  const startBtn = document.createElement('button');
+  startBtn.className = 'dbtn-start';
+  startBtn.textContent = 'Start Session';
+  startBtn.addEventListener('click', async () => { await createSession(input.value); overlay.remove(); });
+  btns.appendChild(startBtn);
+  d.appendChild(btns);
+
+  overlay.appendChild(d);
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => { input.focus(); input.select(); });
+}
+
+async function renameSession(id: string, name: string): Promise<void> {
+  if (!name.trim()) return;
+  const s = state.sessions.find((x: Session) => x.id === id);
+  if (s) { s.name = name.trim(); state.sessions = [...state.sessions]; }
+  await invoke('rename_conversation', { session_id: id, name: name.trim() });
+}
+
+// ── Templates ────────────────────────────────────────────────────────────────
+
+function sidebarTemplate() {
+  return html`
+    <div class="sidebar">
+      <div class="sidebar-toolbar">
+        <div class="search-wrap">
+          <span class="icon icon-search search-icon"></span>
+          <input type="text" placeholder="Search..."
+            @input="${(e: Event) => { state.searchQuery = (e.target as HTMLInputElement).value; }}"
+          />
+        </div>
+        <button class="btn-new" @click="${showNewDialog}">
+          <span class="icon icon-plus"></span>
+        </button>
+      </div>
+      <div class="convo-list">
+        ${() => {
+          const query = state.searchQuery.toLowerCase();
+          const filtered = state.sessions.filter((s: Session) => {
+            if (!query) return true;
+            return (s.name || '').toLowerCase().includes(query) ||
+                   (s.firstPrompt || '').toLowerCase().includes(query);
+          });
+          const running = filtered.filter((s: Session) => s.status === 'running');
+          const active = filtered.filter((s: Session) => s.status === 'idle' || s.status === 'error');
+          const saved = filtered.filter((s: Session) => s.status === 'saved');
+          return html`
+            ${() => sessionGroup('Running', running)}
+            ${() => sessionGroup('Sessions', active)}
+            ${() => sessionGroup('Saved', saved)}
+          `;
+        }}
+      </div>
+    </div>
+  `;
+}
+
+function sessionGroup(label: string, items: Session[]) {
+  if (!items.length) return html``;
+  return html`
+    <div class="group-label">${label}</div>
+    ${items.map(s => html`
+      <div class="${() => 'convo-item' + (state.activeId === s.id ? ' active' : '')}"
+        @click="${() => selectSession(s.id)}"
+        @dblclick="${() => {
+          const newName = prompt('Rename session:', s.name || '');
+          if (newName) renameSession(s.id, newName);
+        }}"
+      >
+        <span class="${() => 'dot ' + s.status}"></span>
+        <span class="convo-name">${() => s.name || truncate(s.firstPrompt, 30) || 'New session'}</span>
+      </div>
+    `)}
+  `;
+}
+
+function headerTemplate() {
+  return html`
+    <div class="header-bar" style="${() => state.activeId ? '' : 'display:none'}">
+      <div class="header-left">
+        ${() => {
+          const s = activeSession();
+          if (!s) return html``;
+          if (state.editingTitle) {
+            return html`<input class="header-title-input"
+              value="${s.name || ''}"
+              @blur="${(e: Event) => {
+                state.editingTitle = false;
+                renameSession(s.id, (e.target as HTMLInputElement).value);
+              }}"
+              @keydown="${(e: KeyboardEvent) => {
+                if (e.key === 'Enter') { state.editingTitle = false; renameSession(s.id, (e.target as HTMLInputElement).value); }
+                if (e.key === 'Escape') state.editingTitle = false;
+              }}"
+            />`;
+          }
+          return html`
+            <span class="header-title">${() => s.name || 'Untitled'}</span>
+            <button class="header-edit-btn" @click="${() => { state.editingTitle = true; }}">
+              <span class="icon icon-pencil"></span>
+            </button>
+          `;
+        }}
+      </div>
+      ${() => {
+        void state.metricsVersion;
+        const m = state.activeId ? metrics[state.activeId] : null;
+        if (!m || m.context_window <= 0) return html``;
+        const pct = Math.min(m.context_used_pct, 100);
+        const totalTokens = m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_creation_tokens;
+        const barClass = pct > 90 ? 'context-bar danger' : pct > 70 ? 'context-bar warning' : 'context-bar';
+        return html`
+          <div class="header-metrics">
+            <div class="context-bar-wrap"><div class="${barClass}" style="width:${pct}%"></div></div>
+            <span class="header-stats">${(totalTokens / 1000).toFixed(1)}k / ${(m.context_window / 1000).toFixed(0)}k (${pct}%)</span>
+          </div>
+        `;
+      }}
+      <span class="header-cwd">${() => activeSession()?.workingDir || ''}</span>
+    </div>
+  `;
+}
+
+function messagesTemplate() {
+  return html`
+    <div class="messages" id="msg-log" style="${() => state.activeId ? '' : 'display:none'}">
+      ${() => {
+        void state.msgVersion;
+        const msgs = state.activeId ? (messages[state.activeId] || []) : [];
+        requestAnimationFrame(() => scrollToBottom());
+        return msgs.map(msg => {
+          if (msg.role === 'user') {
+            return html`<div class="msg user">${msg.content}</div>`;
+          }
+          if (msg.role === 'error') {
+            return html`<div class="msg error-msg">${msg.content}</div>`;
+          }
+          return html`<div class="msg assistant">${() => {
+            void state.msgVersion;
+            return msg.content;
+          }}${() => {
+            void state.msgVersion;
+            return msg.streaming ? html`<span class="cursor"></span>` :
+                   msg.cancelled ? html`<span class="cancelled-label"> Cancelled</span>` : html``;
+          }}${() => {
+            void state.msgVersion;
+            return msg.tools.map(tool => toolCallTemplate(tool));
+          }}</div>`;
         });
-        item.appendChild(inp);
-        requestAnimationFrame(() => { inp.focus(); inp.select(); });
-      } else {
-        item.appendChild(el('span', 'convo-name', s.name || truncate(s.firstPrompt, 30) || 'New session'));
-      }
-      list.appendChild(item);
-    }
-  }
-  addGroup('Running', running);
-  addGroup('Sessions', active);
-  addGroup('Saved', saved);
+      }}
+    </div>
+    <div class="empty-state" style="${() => state.activeId ? 'display:none' : ''}">
+      Create or select a conversation
+    </div>
+  `;
 }
 
-// ── Render: Header ───────────────────────────────────────────────────────────
-
-function renderHeader(): void {
-  headerBar.textContent = '';
-  const s = activeSession();
-  if (!s) { headerBar.style.display = 'none'; return; }
-  headerBar.style.display = '';
-
-  // Left: title + edit button
-  const left = el('div', 'header-left');
-  if (state.editingTitle) {
-    const inp = document.createElement('input');
-    inp.className = 'header-title-input';
-    inp.value = s.name || '';
-    inp.addEventListener('blur', (e) => finishTitleEdit((e.target as HTMLInputElement).value));
-    inp.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') finishTitleEdit((e.target as HTMLInputElement).value);
-      if (e.key === 'Escape') { state.editingTitle = false; renderHeader(); }
-    });
-    left.appendChild(inp);
-    requestAnimationFrame(() => { inp.focus(); inp.select(); });
-  } else {
-    left.appendChild(el('span', 'header-title', s.name || 'Untitled'));
-    const editBtn = el('button', 'header-edit-btn');
-    editBtn.appendChild(el('span', 'icon icon-pencil'));
-    editBtn.addEventListener('click', startTitleEdit);
-    left.appendChild(editBtn);
-  }
-  headerBar.appendChild(left);
-
-  // Center: metrics (if available)
-  const m = state.activeId ? state.metrics[state.activeId] : null;
-  if (m && m.context_window > 0) {
-    const metricsDiv = el('div', 'header-metrics');
-
-    // Context bar
-    const barWrap = el('div', 'context-bar-wrap');
-    const bar = el('div', 'context-bar');
-    const pct = Math.min(m.context_used_pct, 100);
-    bar.style.width = pct + '%';
-    if (pct > 90) bar.classList.add('danger');
-    else if (pct > 70) bar.classList.add('warning');
-    barWrap.appendChild(bar);
-    metricsDiv.appendChild(barWrap);
-
-    // Stats text
-    const totalTokens = m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_creation_tokens;
-    const statsText = `${(totalTokens / 1000).toFixed(1)}k / ${(m.context_window / 1000).toFixed(0)}k  (${pct}%)`;
-    metricsDiv.appendChild(el('span', 'header-stats', statsText));
-
-    headerBar.appendChild(metricsDiv);
-  }
-
-  // Right: cwd
-  if (s.workingDir) {
-    headerBar.appendChild(el('span', 'header-cwd', s.workingDir));
-  }
+function toolCallTemplate(tool: ToolCall) {
+  const ui = reactive({ expanded: tool.expanded });
+  return html`
+    <div class="${() => 'tool-call' + (ui.expanded ? ' expanded' : '')}">
+      <div class="tool-hdr" @click="${() => { ui.expanded = !ui.expanded; tool.expanded = ui.expanded; }}">
+        <span class="${() => 'icon icon-chevron-right arrow' + (ui.expanded ? ' open' : '')}"></span>
+        <span class="tname">${tool.name}</span>
+        <span class="${'tstatus' + (tool.output === null ? '' : tool.isError ? ' error' : ' done')}">
+          ${tool.output === null ? 'running...' : tool.isError ? 'error' : 'done'}
+        </span>
+      </div>
+      <div class="${() => 'tool-body' + (ui.expanded ? ' open' : '')}">
+        <div class="tool-label">Input</div>
+        <pre>${truncate(tool.input, 2000)}</pre>
+        ${tool.output !== null ? html`
+          <div class="tool-label">Output</div>
+          <pre class="${tool.isError ? 'terr' : ''}">${truncate(tool.output, 2000)}</pre>
+        ` : html``}
+      </div>
+    </div>
+  `;
 }
 
-// ── Render: Messages ─────────────────────────────────────────────────────────
-
-function renderMessages(): void {
-  // If session changed, full rebuild
-  if (state.activeId !== renderedActiveId) {
-    invalidateRender();
-  }
-
-  const msgs = state.activeId ? (state.messages[state.activeId] || []) : [];
-
-  if (!state.activeId) {
-    msgLog.textContent = '';
-    emptyState.style.display = '';
-    msgLog.style.display = 'none';
-    return;
-  }
-
-  emptyState.style.display = 'none';
-  msgLog.style.display = '';
-
-  // Full rebuild if session changed
-  if (state.activeId !== renderedActiveId) {
-    msgLog.textContent = '';
-    renderedMsgCount = 0;
-    renderedActiveId = state.activeId;
-    renderedLastContent = '';
-    renderedLastToolCount = -1;
-  }
-
-  // Append new messages
-  for (let i = renderedMsgCount; i < msgs.length; i++) {
-    const msg = msgs[i];
-    if (msg.role === 'user') {
-      msgLog.appendChild(el('div', 'msg user', msg.content));
-    } else if (msg.role === 'error') {
-      msgLog.appendChild(el('div', 'msg error-msg', msg.content));
-    } else {
-      const div = el('div', 'msg assistant');
-      div.id = 'assistant-msg-' + i;
-      div.appendChild(document.createTextNode(msg.content));
-      if (msg.streaming) div.appendChild(el('span', 'cursor'));
-      if (msg.cancelled) div.appendChild(el('span', 'cancelled-label', ' Cancelled'));
-      appendToolCalls(div, msg);
-      msgLog.appendChild(div);
-    }
-  }
-  renderedMsgCount = msgs.length;
-
-  // Update last assistant message (streaming content + tools)
-  if (msgs.length > 0) {
-    const lastMsg = msgs[msgs.length - 1];
-    if (lastMsg.role === 'assistant') {
-      const lastDiv = document.getElementById('assistant-msg-' + (msgs.length - 1));
-      if (lastDiv && (lastMsg.content !== renderedLastContent || lastMsg.tools.length !== renderedLastToolCount)) {
-        lastDiv.textContent = '';
-        lastDiv.appendChild(document.createTextNode(lastMsg.content));
-        if (lastMsg.streaming) lastDiv.appendChild(el('span', 'cursor'));
-        appendToolCalls(lastDiv, lastMsg);
-        renderedLastContent = lastMsg.content;
-        renderedLastToolCount = lastMsg.tools.length;
-      }
-    }
-  }
-
-  scrollToBottom();
-}
-
-function appendToolCalls(div: HTMLElement, msg: Message): void {
-  for (const tool of msg.tools) {
-    const tc = el('div', 'tool-call' + (tool.expanded ? ' expanded' : ''));
-    const arrow = el('span', 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : ''));
-    const hdr = el('div', 'tool-hdr');
-    hdr.appendChild(arrow);
-    hdr.appendChild(el('span', 'tname', tool.name));
-    const statusCls = tool.output === null ? '' : (tool.isError ? ' error' : ' done');
-    const statusText = tool.output === null ? 'running...' : (tool.isError ? 'error' : 'done');
-    hdr.appendChild(el('span', 'tstatus' + statusCls, statusText));
-
-    const body = el('div', 'tool-body' + (tool.expanded ? ' open' : ''));
-    body.appendChild(el('div', 'tool-label', 'Input'));
-    const inp = el('pre'); inp.textContent = truncate(tool.input, 2000); body.appendChild(inp);
-    if (tool.output !== null) {
-      body.appendChild(el('div', 'tool-label', 'Output'));
-      const outp = el('pre', tool.isError ? 'terr' : '');
-      outp.textContent = truncate(tool.output, 2000);
-      body.appendChild(outp);
-    }
-
-    hdr.addEventListener('click', () => {
-      tool.expanded = !tool.expanded;
-      arrow.className = 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '');
-      body.className = 'tool-body' + (tool.expanded ? ' open' : '');
-      tc.className = 'tool-call' + (tool.expanded ? ' expanded' : '');
-    });
-    tc.appendChild(hdr);
-    tc.appendChild(body);
-    div.appendChild(tc);
-  }
-}
-
-// ── Render: Input State ──────────────────────────────────────────────────────
-
-function updateInputState(): void {
-  const ta = document.getElementById('msg-input') as HTMLTextAreaElement | null;
-  if (!ta) return;
-  const hasSession = !!state.activeId;
-  const running = isRunning();
-  // Keep enabled during running — allows mid-response messages
-  ta.disabled = !hasSession;
-  ta.placeholder = !hasSession ? 'Create a session to start...' :
-                   running ? 'Send a follow-up...' : 'Send a message...';
-  ta.classList.toggle('running', running);
-
-  // Update button
-  const btnArea = document.getElementById('input-btn-area');
-  if (btnArea) {
-    btnArea.textContent = '';
-    if (running) {
-      const btn = el('button', 'btn-cancel');
-      btn.appendChild(el('span', 'icon icon-square'));
-      btn.addEventListener('click', () => invoke('cancel', { session_id: state.activeId }));
-      btnArea.appendChild(btn);
-    } else {
-      const btn = el('button', 'btn-send');
-      btn.appendChild(el('span', 'icon icon-send'));
-      btn.addEventListener('click', () => sendMessage());
-      btnArea.appendChild(btn);
-    }
-  }
-}
-
-function invalidateRender(): void {
-  renderedActiveId = null;
-  renderedMsgCount = -1;
-  renderedLastContent = '';
-  renderedLastToolCount = -1;
+function inputTemplate() {
+  return html`
+    <div class="input-area">
+      <textarea id="msg-input" rows="1"
+        placeholder="${() => !state.activeId ? 'Create a session to start...' :
+                           isRunning() ? 'Send a follow-up...' : 'Send a message...'}"
+        ?disabled="${() => !state.activeId}"
+        class="${() => isRunning() ? 'running' : ''}"
+        @keydown="${(e: KeyboardEvent) => {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+          if (e.key === 'Escape' && isRunning() && state.activeId) {
+            invoke('cancel', { session_id: state.activeId });
+          }
+        }}"
+        @input="${(e: Event) => {
+          const t = e.target as HTMLTextAreaElement;
+          t.style.height = 'auto';
+          t.style.height = Math.min(t.scrollHeight, 200) + 'px';
+        }}"
+      ></textarea>
+      <div>
+        ${() => isRunning()
+          ? html`<button class="btn-cancel" @click="${() => invoke('cancel', { session_id: state.activeId })}">
+              <span class="icon icon-square"></span>
+            </button>`
+          : html`<button class="btn-send" @click="${sendMessage}">
+              <span class="icon icon-send"></span>
+            </button>`
+        }
+      </div>
+    </div>
+  `;
 }
 
 // ── Mount ────────────────────────────────────────────────────────────────────
 
-const appEl = document.getElementById('app')!;
-const container = el('div', 'app');
+html`
+  <div class="app">
+    ${sidebarTemplate()}
+    <div class="main">
+      ${headerTemplate()}
+      ${messagesTemplate()}
+      ${inputTemplate()}
+    </div>
+  </div>
+`(document.getElementById('app')!);
 
-// Sidebar
-const sidebar = el('div', 'sidebar');
-const toolbar = el('div', 'sidebar-toolbar');
-const searchWrap = el('div', 'search-wrap');
-searchWrap.appendChild(el('span', 'icon icon-search search-icon'));
-const searchBox = document.createElement('input');
-searchBox.type = 'text';
-searchBox.placeholder = 'Search...';
-searchBox.addEventListener('input', () => { state.searchQuery = searchBox.value; });
-searchWrap.appendChild(searchBox);
-toolbar.appendChild(searchWrap);
-const newBtn = el('button', 'btn-new');
-newBtn.appendChild(el('span', 'icon icon-plus'));
-newBtn.addEventListener('click', () => showNewDialog());
-toolbar.appendChild(newBtn);
-sidebar.appendChild(toolbar);
-const convoList = el('div', 'convo-list');
-sidebar.appendChild(convoList);
-container.appendChild(sidebar);
-
-// Main area — persistent structure
-const mainArea = el('div', 'main');
-
-// Header bar
-const headerBar = el('div', 'header-bar');
-headerBar.style.display = 'none';
-mainArea.appendChild(headerBar);
-
-// Empty state
-const emptyState = el('div', 'empty-state', 'Create or select a conversation');
-mainArea.appendChild(emptyState);
-
-// Message log (persistent, content updated incrementally)
-const msgLog = el('div', 'messages');
-msgLog.id = 'msg-log';
-msgLog.style.display = 'none';
-mainArea.appendChild(msgLog);
-
-// Input area (persistent, never recreated)
-const inputArea = el('div', 'input-area');
-const textarea = document.createElement('textarea') as HTMLTextAreaElement;
-textarea.id = 'msg-input';
-textarea.rows = 1;
-textarea.placeholder = 'Send a message...';
-textarea.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  if (e.key === 'Escape' && isRunning() && state.activeId) {
-    invoke('cancel', { session_id: state.activeId });
-  }
-});
-textarea.addEventListener('input', () => {
-  textarea.style.height = 'auto';
-  textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
-});
-inputArea.appendChild(textarea);
-const btnArea = el('div');
-btnArea.id = 'input-btn-area';
-const sendBtn = el('button', 'btn-send');
-sendBtn.appendChild(el('span', 'icon icon-send'));
-sendBtn.addEventListener('click', () => sendMessage());
-btnArea.appendChild(sendBtn);
-inputArea.appendChild(btnArea);
-mainArea.appendChild(inputArea);
-
-container.appendChild(mainArea);
-appEl.appendChild(container);
-
-// Initial render and load saved conversations
-renderAll();
 invoke('list_conversations', {});
