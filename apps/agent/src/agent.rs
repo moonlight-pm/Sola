@@ -161,6 +161,7 @@ async fn run_claude(
 
     send_event(event_tx, json!({"event": "message_start", "session_id": session_id}));
 
+    let stdin_for_reader = stdin.clone();
     let read_task = tokio::spawn(async move {
         let mut text_acc = String::new();
         let mut blocks: Vec<serde_json::Value> = Vec::new();
@@ -226,6 +227,10 @@ async fn run_claude(
 
                 "result" => {
                     result_metrics = Some(parsed.clone());
+                    // Close stdin so the subprocess exits
+                    let mut guard = stdin_for_reader.lock().await;
+                    let _ = guard.shutdown().await;
+                    break;
                 }
 
                 _ => {}
