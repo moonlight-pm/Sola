@@ -107,12 +107,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "as-raw-xcb-connection"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175571dd1d178ced59193a6fc02dde1b972eb0bc56c892cde9beeceac5bf0f6b"
-
-[[package]]
 name = "ascii"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2343,15 +2337,13 @@ dependencies = [
 name = "sola-switcher"
 version = "0.1.0"
 dependencies = [
- "gdk4",
  "gio",
  "glib",
  "gtk4",
  "serde_json",
+ "sola-app",
  "sola-bus",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "webkit6",
 ]
 
@@ -2373,15 +2365,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sola-wtest"
-version = "0.1.0"
-dependencies = [
- "libc",
- "wayland-client",
- "wayland-protocols",
-]
-
-[[package]]
 name = "sola-x"
 version = "0.1.0"
 dependencies = [
@@ -2395,13 +2378,6 @@ dependencies = [
  "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
-]
-
-[[package]]
-name = "sola-xtest"
-version = "0.1.0"
-dependencies = [
- "x11rb",
 ]
 
 [[package]]
@@ -3785,9 +3761,7 @@ version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9993aa5be5a26815fe2c3eacfc1fde061fc1a1f094bf1ad2a18bf9c495dd7414"
 dependencies = [
- "as-raw-xcb-connection",
  "gethostname",
- "libc",
  "rustix 1.1.4",
  "x11rb-protocol",
 ]

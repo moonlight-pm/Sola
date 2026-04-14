@@ -64,59 +64,6 @@
 </head>
 <body>
 <div id="container"></div>
-<script>
-    var container = document.getElementById('container');
-    var apps = [];
-    var selectedIndex = 0;
-
-    // Called from Rust: render the full app list with initial selection.
-    function render(appList, selected) {
-        apps = appList;
-        selectedIndex = selected;
-
-        while (container.firstChild) {
-            container.removeChild(container.firstChild);
-        }
-
-        apps.forEach(function(app, i) {
-            var el = document.createElement('div');
-            el.className = 'app' + (i === selectedIndex ? ' selected' : '');
-            el.dataset.index = String(i);
-
-            var iconEl = document.createElement('div');
-            iconEl.className = 'icon';
-            iconEl.textContent = '\u2B21';
-            el.appendChild(iconEl);
-
-            var nameEl = document.createElement('div');
-            nameEl.className = 'name';
-            nameEl.textContent = app.name;
-            el.appendChild(nameEl);
-
-            el.addEventListener('mouseenter', function() {
-                setSelection(i);
-            });
-
-            container.appendChild(el);
-        });
-
-        document.title = String(selectedIndex);
-    }
-
-    // Called from Rust: update the visual selection.
-    function setSelection(index) {
-        if (index < 0 || index >= apps.length) return;
-        selectedIndex = index;
-        var children = container.children;
-        for (var i = 0; i < children.length; i++) {
-            if (i === index) {
-                children[i].classList.add('selected');
-            } else {
-                children[i].classList.remove('selected');
-            }
-        }
-        document.title = String(index);
-    }
-</script>
+<script type="module" src="/src/app.ts"></script>
 </body>
 </html>

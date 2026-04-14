@@ -65,7 +65,7 @@ fn main() {
             state: state_for_handler.clone(),
             event_tx,
         })
-        .on_bus_event(|topic, send_to_js| {
+        .on_bus_event(|topic, send_to_js, _emit| {
             if let Topic::Key(KeyEvent {
                 code,
                 pressed: true,

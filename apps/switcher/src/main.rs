@@ -1,17 +1,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use gtk4::prelude::*;
 use webkit6::prelude::*;
 
-use sola_bus::BusClient;
-use sola_bus::topics::{App, Topic};
+use sola_app::{asset_bundle, SolaApp};
+use sola_bus::topics::{App, KeyEvent, Topic};
 
-/// Switcher HTML/CSS/JS, embedded at compile time.
-const HTML: &str = include_str!("../web/index.html");
-
-/// XKB keycodes (evdev + 8) — same values the compositor puts on the bus.
 mod keycode {
     pub const TAB: u32 = 23;
     pub const LEFT: u32 = 113;
@@ -19,7 +14,6 @@ mod keycode {
     pub const SUPER_L: u32 = 133;
 }
 
-/// Switcher runtime state.
 #[derive(Default)]
 struct State {
     active: bool,
@@ -45,234 +39,134 @@ impl State {
     }
 }
 
+static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
+    "/index.html" => (include_str!("../web/index.html"), Html),
+    "/src/app.ts" => (include_str!("../web/src/app.ts"), TypeScript),
+};
+
 fn main() {
-    // Logging: stderr + file at /opt/sola/log/sola-switcher.log
-    let log_dir = "/opt/sola/log";
-    let _ = std::fs::create_dir_all(log_dir);
-    let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
+    let state: Rc<RefCell<State>> = Rc::new(RefCell::new(State::default()));
 
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "sola_switcher=info".into());
-
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
-    let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_ansi(false)
-        .with_writer(file_appender);
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(stderr_layer)
-        .with(file_layer)
-        .init();
-
-    tracing::info!("sola-switcher starting");
-
-    // Ensure WAYLAND_DISPLAY is set.
-    if std::env::var("WAYLAND_DISPLAY").is_err() {
-        unsafe { std::env::set_var("WAYLAND_DISPLAY", "wayland-0") };
-    }
-
-    // Wait for the Wayland socket to exist before starting GTK.
-    let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap();
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .expect("XDG_RUNTIME_DIR must be set");
-    let socket_path = std::path::PathBuf::from(&runtime_dir).join(&wayland_display);
-    for attempt in 1..=20 {
-        if socket_path.exists() {
-            tracing::info!(path = %socket_path.display(), "wayland socket ready");
-            break;
-        }
-        if attempt == 20 {
-            tracing::error!(path = %socket_path.display(), "wayland socket not found after 10s, exiting");
-            std::process::exit(1);
-        }
-        tracing::debug!(attempt, path = %socket_path.display(), "waiting for wayland socket");
-        std::thread::sleep(Duration::from_millis(500));
-    }
-
-    // GDK4 Wayland uses prgname as the xdg_toplevel app_id.
-    glib::set_prgname(Some("sola-switcher"));
-
-    let app = gtk4::Application::new(None::<&str>, Default::default());
-
-    app.connect_activate(|app| {
-        let state = Rc::new(RefCell::new(State::default()));
-        let bus: Rc<RefCell<BusClient>> = Rc::new(RefCell::new(BusClient::new()));
-
-        // --- Transparent window background via CSS ---
-        let css = gtk4::CssProvider::new();
-        css.load_from_data("window, window.background { background: transparent; }");
-        gtk4::style_context_add_provider_for_display(
-            &gdk4::Display::default().unwrap(),
-            &css,
-            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-
-        // --- Window: undecorated, full output size, NOT presented yet ---
-        let window = gtk4::ApplicationWindow::new(app);
-        window.set_decorated(false);
-        window.set_default_size(1920, 1080);
-
-        // --- WebView: transparent background, loads embedded HTML ---
-        let webview = webkit6::WebView::new();
-        webview.set_background_color(&gdk4::RGBA::new(0.0, 0.0, 0.0, 0.0));
-        webview.load_html(HTML, None);
-        window.set_child(Some(&webview));
-
-        // --- JS -> Rust bridge via document.title ---
-        webview.connect_notify_local(Some("title"), {
+    SolaApp::builder()
+        .app_id("sola-switcher")
+        .window_size(1920, 1080)
+        .decorated(false)
+        .transparent(true)
+        .web_assets(APP_ASSETS)
+        .on_bus_event({
             let state = state.clone();
-            move |webview, _| {
-                if let Some(title) = webview.title() {
-                    if let Ok(index) = title.to_string().parse::<usize>() {
-                        state.borrow_mut().selected = index;
-                    }
+            move |topic, send_to_js, emit| match topic {
+                Topic::Key(KeyEvent {
+                    code,
+                    pressed: true,
+                    super_held: true,
+                    ..
+                }) if *code == keycode::TAB && !state.borrow().active => {
+                    tracing::info!("activating switcher (Super+Tab)");
+                    state.borrow_mut().active = true;
+                    emit(Topic::GrabInput("sola-switcher".into()));
+                    emit(Topic::ListApps);
                 }
+                Topic::Apps(apps) if state.borrow().active => {
+                    let mut s = state.borrow_mut();
+                    tracing::info!(count = apps.len(), "received app list");
+                    s.apps = apps.clone();
+                    s.selected = if s.apps.len() > 1 { 1 } else { 0 };
+                    let json = serde_json::to_string(&s.apps).unwrap_or_default();
+                    send_to_js(serde_json::json!({
+                        "event": "render",
+                        "apps": json,
+                        "selected": s.selected,
+                    }));
+                }
+                _ => {}
             }
-        });
-
-        // --- Bus connection ---
-        if let Err(e) = bus.borrow_mut().connect() {
-            tracing::warn!("bus not available: {e}");
-        }
-
-        // --- Bus event source ---
-        let notify_fd = bus.borrow().notify_fd();
-        if let Some(fd) = notify_fd {
+        })
+        .on_activate({
             let state = state.clone();
-            let bus = bus.clone();
-            let webview = webview.clone();
-            let window = window.clone();
-            glib::unix_fd_add_local(fd, glib::IOCondition::IN, move |_fd, _cond| {
-                // Drain notify and collect messages before processing,
-                // so we can release the shared borrow before emit().
-                let client = bus.borrow();
-                client.drain_notify();
-                let mut messages = Vec::new();
-                while let Some(msg) = client.try_recv() {
-                    messages.push(msg);
-                }
-                drop(client);
+            move |window, webview, bus| {
+                let key_ctrl = gtk4::EventControllerKey::new();
+                key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
 
-                for msg in messages {
-                    let Some(topic) = Topic::parse(&msg) else { continue };
-                    match topic {
-                        Topic::Key(key) => {
-                            if !state.borrow().active
-                                && key.pressed
-                                && key.code == keycode::TAB
-                                && key.super_held
-                            {
-                                tracing::info!("activating switcher (Super+Tab)");
-                                state.borrow_mut().active = true;
-                                window.present();
-                                let mut client = bus.borrow_mut();
-                                let _ = client.emit(
-                                    Topic::GrabInput("sola-switcher".into()),
-                                );
-                                let _ = client.emit(Topic::ListApps);
+                key_ctrl.connect_key_pressed({
+                    let state = state.clone();
+                    let webview = webview.clone();
+                    move |_, _keyval, keycode, _modifiers| {
+                        if !state.borrow().active {
+                            return glib::Propagation::Proceed;
+                        }
+                        match keycode {
+                            keycode::TAB | keycode::RIGHT => {
+                                let mut s = state.borrow_mut();
+                                s.select_next();
+                                push_selection(&webview, s.selected);
+                                glib::Propagation::Stop
+                            }
+                            keycode::LEFT => {
+                                let mut s = state.borrow_mut();
+                                s.select_prev();
+                                push_selection(&webview, s.selected);
+                                glib::Propagation::Stop
+                            }
+                            _ => glib::Propagation::Proceed,
+                        }
+                    }
+                });
+
+                key_ctrl.connect_key_released({
+                    let state = state.clone();
+                    let webview = webview.clone();
+                    move |_, _keyval, keycode, _modifiers| {
+                        if keycode != keycode::SUPER_L {
+                            return;
+                        }
+
+                        let app_id = {
+                            let mut s = state.borrow_mut();
+                            if !s.active {
+                                return;
+                            }
+                            s.active = false;
+                            s.selected_app_id().map(String::from)
+                        };
+
+                        tracing::info!(app_id = ?app_id, "deactivating switcher");
+
+                        webview.evaluate_javascript(
+                            "clear()",
+                            None,
+                            None,
+                            None::<&gio::Cancellable>,
+                            |_| {},
+                        );
+
+                        let mut client = bus.borrow_mut();
+                        if let Some(app_id) = app_id {
+                            let _ = client.emit(Topic::RaiseApp(app_id));
+                        }
+                        let _ = client.emit(Topic::ReleaseInput);
+                    }
+                });
+
+                // Mouse hover → JS sets document.title → sync Rust state
+                webview.connect_notify_local(Some("title"), {
+                    let state = state.clone();
+                    move |webview, _| {
+                        if let Some(title) = webview.title() {
+                            if let Ok(index) = title.to_string().parse::<usize>() {
+                                state.borrow_mut().selected = index;
                             }
                         }
-                        Topic::Apps(apps) => {
-                            let mut s = state.borrow_mut();
-                            if !s.active { continue; }
-                            tracing::info!(count = apps.len(), "received app list");
-                            s.apps = apps;
-                            s.selected = if s.apps.len() > 1 { 1 } else { 0 };
-                            let json =
-                                serde_json::to_string(&s.apps).unwrap_or_default();
-                            let script =
-                                format!("render({json}, {})", s.selected);
-                            webview.evaluate_javascript(
-                                &script, None, None,
-                                None::<&gio::Cancellable>,
-                                |_| {},
-                            );
-                        }
-                        _ => {}
                     }
-                }
-                glib::ControlFlow::Continue
-            });
-        }
+                });
 
-        // --- Keyboard: Tab/Arrow cycle, Super release completes ---
-        // Capture phase so we see events before the WebView consumes them.
-        let key_controller = gtk4::EventControllerKey::new();
-        key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
-
-        key_controller.connect_key_pressed({
-            let state = state.clone();
-            let webview = webview.clone();
-            move |_, _keyval, keycode, _modifiers| {
-                let s = state.borrow();
-                if !s.active {
-                    return glib::Propagation::Proceed;
-                }
-                drop(s);
-                match keycode {
-                    keycode::TAB | keycode::RIGHT => {
-                        let mut s = state.borrow_mut();
-                        s.select_next();
-                        let sel = s.selected;
-                        drop(s);
-                        push_selection(&webview, sel);
-                        glib::Propagation::Stop
-                    }
-                    keycode::LEFT => {
-                        let mut s = state.borrow_mut();
-                        s.select_prev();
-                        let sel = s.selected;
-                        drop(s);
-                        push_selection(&webview, sel);
-                        glib::Propagation::Stop
-                    }
-                    _ => glib::Propagation::Proceed,
-                }
+                window.add_controller(key_ctrl);
+                tracing::info!("switcher ready, waiting for Super+Tab");
             }
-        });
-
-        key_controller.connect_key_released({
-            let state = state.clone();
-            let bus = bus.clone();
-            let webview = webview.clone();
-            move |_, _keyval, keycode, _modifiers| {
-                if keycode != keycode::SUPER_L { return; }
-
-                let app_id = {
-                    let mut s = state.borrow_mut();
-                    if !s.active { return; }
-                    s.active = false;
-                    s.selected_app_id().map(String::from)
-                };
-
-                tracing::info!(app_id = ?app_id, "deactivating switcher (Super released)");
-
-                // Clear the UI so the window becomes transparent.
-                webview.evaluate_javascript(
-                    "render([], 0)", None, None,
-                    None::<&gio::Cancellable>, |_| {},
-                );
-
-                let mut client = bus.borrow_mut();
-                if let Some(app_id) = app_id {
-                    let _ = client.emit(Topic::RaiseApp(app_id));
-                }
-                let _ = client.emit(Topic::ReleaseInput);
-            }
-        });
-
-        window.add_controller(key_controller);
-
-        tracing::info!("switcher ready, waiting for Super+Tab");
-        // Do NOT present the window — it stays hidden until Super+Tab.
-    });
-
-    app.run();
+        })
+        .run();
 }
 
-/// Push a selection update to the WebView.
 fn push_selection(webview: &webkit6::WebView, index: usize) {
     let script = format!("setSelection({index})");
     webview.evaluate_javascript(&script, None, None, None::<&gio::Cancellable>, |_| {});

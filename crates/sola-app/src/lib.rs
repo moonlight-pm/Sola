@@ -31,10 +31,18 @@ pub struct SolaApp {
     window_width: i32,
     window_height: i32,
     decorated: bool,
+    transparent: bool,
     app_assets: &'static AssetBundle,
     initial_state: Option<String>,
     handler_factory: Option<Box<dyn FnOnce(mpsc::Sender<String>) -> Box<dyn AppHandler>>>,
-    bus_handler: Option<Box<dyn Fn(&Topic, &dyn Fn(serde_json::Value)) + 'static>>,
+    bus_handler:
+        Option<Box<dyn Fn(&Topic, &dyn Fn(serde_json::Value), &dyn Fn(Topic)) + 'static>>,
+    on_activate_callback: Option<
+        Box<
+            dyn FnOnce(&gtk4::ApplicationWindow, &webkit6::WebView, Rc<RefCell<BusClient>>)
+                + 'static,
+        >,
+    >,
 }
 
 impl SolaApp {
@@ -44,10 +52,12 @@ impl SolaApp {
             window_width: 1920,
             window_height: 1080,
             decorated: false,
+            transparent: false,
             app_assets: &AssetBundle { assets: &[] },
             initial_state: None,
             handler_factory: None,
             bus_handler: None,
+            on_activate_callback: None,
         }
     }
 
@@ -64,6 +74,11 @@ impl SolaApp {
 
     pub fn decorated(mut self, decorated: bool) -> Self {
         self.decorated = decorated;
+        self
+    }
+
+    pub fn transparent(mut self, transparent: bool) -> Self {
+        self.transparent = transparent;
         self
     }
 
@@ -88,9 +103,17 @@ impl SolaApp {
 
     pub fn on_bus_event<F>(mut self, handler: F) -> Self
     where
-        F: Fn(&Topic, &dyn Fn(serde_json::Value)) + 'static,
+        F: Fn(&Topic, &dyn Fn(serde_json::Value), &dyn Fn(Topic)) + 'static,
     {
         self.bus_handler = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_activate<F>(mut self, callback: F) -> Self
+    where
+        F: FnOnce(&gtk4::ApplicationWindow, &webkit6::WebView, Rc<RefCell<BusClient>>) + 'static,
+    {
+        self.on_activate_callback = Some(Box::new(callback));
         self
     }
 
@@ -150,11 +173,13 @@ impl SolaApp {
         let window_width = self.window_width;
         let window_height = self.window_height;
         let decorated = self.decorated;
+        let transparent = self.transparent;
         let app_assets: &'static AssetBundle = self.app_assets;
         let initial_state = self.initial_state;
         // Wrap in RefCell since connect_activate requires Fn (not FnOnce)
         let handler_factory = RefCell::new(self.handler_factory);
         let bus_handler = RefCell::new(self.bus_handler);
+        let on_activate_callback = RefCell::new(self.on_activate_callback);
 
         app.connect_activate(move |app| {
             // Prepare HTML with initial state
@@ -193,6 +218,17 @@ impl SolaApp {
                 });
             }
 
+            // Transparent window background
+            if transparent {
+                let css = gtk4::CssProvider::new();
+                css.load_from_data("window, window.background { background: transparent; }");
+                gtk4::style_context_add_provider_for_display(
+                    &gdk4::Display::default().unwrap(),
+                    &css,
+                    gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
+            }
+
             // Window
             let window = gtk4::ApplicationWindow::new(app);
             window.set_decorated(decorated);
@@ -211,6 +247,9 @@ impl SolaApp {
             // without xdg-desktop-portal it can hang opening the popup, which
             // looks to the user as a frozen terminal on right-click.
             webview.connect_context_menu(|_, _, _| true);
+            if transparent {
+                webview.set_background_color(&gdk4::RGBA::new(0.0, 0.0, 0.0, 0.0));
+            }
             window.set_child(Some(&webview));
 
             // Event poller (tokio → glib → JS)
@@ -224,6 +263,9 @@ impl SolaApp {
             if let Err(e) = bus.borrow_mut().connect() {
                 tracing::warn!("bus not available: {e}");
             }
+
+            // Clone before bus_handler moves its copy into the fd callback
+            let bus_for_activate = bus.clone();
 
             // Bus event source — fires when bus messages arrive on the socket
             if let Some(bus_handler) = bus_handler.borrow_mut().take() {
@@ -244,11 +286,19 @@ impl SolaApp {
                             let send = |value: serde_json::Value| {
                                 bridge::send_to_js(&webview_for_bus, &value.to_string());
                             };
-                            bus_handler(&topic, &send);
+                            let emit = |topic: Topic| {
+                                let _ = bus.borrow_mut().emit(topic);
+                            };
+                            bus_handler(&topic, &send, &emit);
                         }
                         glib::ControlFlow::Continue
                     });
                 }
+            }
+
+            // App-specific post-setup
+            if let Some(callback) = on_activate_callback.borrow_mut().take() {
+                callback(&window, &webview, bus_for_activate);
             }
 
             window.present();
