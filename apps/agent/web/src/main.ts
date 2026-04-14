@@ -73,9 +73,18 @@ on('session_state', (ev: any) => {
     state.activeId = ev.session_id;
     focusInput();
   } else {
+    const wasSaved = s.status === 'saved';
     s.status = ev.status;
     if (ev.name) s.name = ev.name;
     if (ev.working_dir) s.workingDir = ev.working_dir;
+    if (wasSaved) {
+      if (!state.messages[ev.session_id]) state.messages[ev.session_id] = [];
+      state.activeId = ev.session_id;
+      invalidateRender();
+      renderMessages();
+      renderHeader();
+      focusInput();
+    }
   }
   updateInputState();
 });
