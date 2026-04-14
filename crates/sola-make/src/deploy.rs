@@ -9,7 +9,9 @@ pub trait DeployTarget {
     fn ensure_dirs(&self) -> Result<(), String>;
 
     /// Copy a binary from `src` to the target's bin directory.
-    fn deploy_binary(&self, src: &str) -> Result<(), String>;
+    /// Returns true if the destination was written, false if it was
+    /// already identical and skipped.
+    fn deploy_binary(&self, src: &str) -> Result<bool, String>;
 
     /// Human-readable label for log messages.
     fn label(&self) -> &str;
@@ -23,14 +25,22 @@ impl DeployTarget for Local {
         run("sudo", &["mkdir", "-p", BIN_DIR, LOG_DIR])
     }
 
-    fn deploy_binary(&self, src: &str) -> Result<(), String> {
+    fn deploy_binary(&self, src: &str) -> Result<bool, String> {
         let name = Path::new(src)
             .file_name()
             .ok_or_else(|| format!("invalid binary path: {src}"))?
             .to_string_lossy();
         let dest = format!("{BIN_DIR}/{name}");
+
+        // Skip if the destination already matches — otherwise cp would
+        // retouch the inode and trigger sola's restart watcher.
+        if Path::new(&dest).exists() && files_identical(src, &dest)? {
+            return Ok(false);
+        }
+
         run("sudo", &["cp", "--remove-destination", src, &dest])?;
-        run("sudo", &["chmod", "755", &dest])
+        run("sudo", &["chmod", "755", &dest])?;
+        Ok(true)
     }
 
     fn label(&self) -> &str {
@@ -49,13 +59,41 @@ impl DeployTarget for Remote {
         run("ssh", &[self.host, &cmd])
     }
 
-    fn deploy_binary(&self, src: &str) -> Result<(), String> {
+    fn deploy_binary(&self, src: &str) -> Result<bool, String> {
         let dest = format!("{}:{BIN_DIR}/", self.host);
-        run("rsync", &["-az", "--progress", src, &dest])
+        // --checksum: compare contents, not mtime, so freshly-rebuilt
+        //   binaries with identical contents aren't re-sent.
+        // --itemize-changes: one-line summary per file; empty when skipped.
+        let output = Command::new("rsync")
+            .args(["-az", "--checksum", "--itemize-changes", src, &dest])
+            .output()
+            .map_err(|e| format!("failed to run rsync: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "rsync failed with exit code {}: {}",
+                output.status.code().unwrap_or(1),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        // rsync prints an itemize line per changed file; empty stdout = skipped.
+        Ok(!output.stdout.trim_ascii().is_empty())
     }
 
     fn label(&self) -> &str {
         self.host
+    }
+}
+
+/// Compare two files byte-for-byte via `cmp -s`. Returns true on match.
+fn files_identical(a: &str, b: &str) -> Result<bool, String> {
+    let status = Command::new("cmp")
+        .args(["-s", a, b])
+        .status()
+        .map_err(|e| format!("failed to run cmp: {e}"))?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(format!("cmp failed comparing {a} and {b}")),
     }
 }
 
@@ -84,11 +122,14 @@ pub fn deploy(target: &dyn DeployTarget, app: Option<&str>) {
     for name in &binaries {
         let src = format!("target/release/{name}");
         if Path::new(&src).exists() {
-            if let Err(e) = target.deploy_binary(&src) {
-                eprintln!("  failed to deploy {name}: {e}");
-                std::process::exit(1);
+            match target.deploy_binary(&src) {
+                Ok(true) => println!("  deployed {name}"),
+                Ok(false) => println!("  unchanged {name}"),
+                Err(e) => {
+                    eprintln!("  failed to deploy {name}: {e}");
+                    std::process::exit(1);
+                }
             }
-            println!("  deployed {name}");
         } else {
             eprintln!("  warning: binary not found: {src}");
         }
