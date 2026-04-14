@@ -42,6 +42,44 @@ pub struct OutputGeometry {
     pub height: i32,
 }
 
+/// App menu definition, emitted as sticky by apps at startup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppMenuPayload {
+    pub app_id: String,
+    pub menus: Vec<MenuDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MenuDefinition {
+    pub label: String,
+    pub items: Vec<MenuItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum MenuItem {
+    #[serde(rename = "action")]
+    Action {
+        id: String,
+        label: String,
+        #[serde(default)]
+        shortcut: Option<String>,
+        #[serde(default)]
+        disabled: bool,
+        #[serde(default)]
+        checked: bool,
+    },
+    #[serde(rename = "divider")]
+    Divider,
+}
+
+/// Dispatched by the shell when a shortcut or menu click maps to an action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MenuActionPayload {
+    pub app_id: String,
+    pub action_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
     Left,
@@ -82,6 +120,10 @@ define_topics! {
     // Window management
     SetWindowGeometry(WindowGeometry),
     OutputGeometry(OutputGeometry),
+
+    // Menus
+    SetAppMenu(AppMenuPayload),
+    MenuAction(MenuActionPayload),
 
     // Browser
     OpenUrl(OpenUrlRequest),

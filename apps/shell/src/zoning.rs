@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sola_bus::topics::{KeyEvent, OutputGeometry, WindowGeometry, Zone};
 use tracing::{info, warn};
 
-const GAP: f64 = 0.0;
+pub const MENUBAR_HEIGHT: i32 = 28;
 
 pub struct ZoningState {
     pub output_size: Option<(i32, i32)>,
@@ -25,7 +25,6 @@ impl ZoningState {
             .join("sola");
 
         let session_path = config_dir.join("session.json");
-
         let zone_assignments = load_session(&session_path);
 
         Self {
@@ -45,20 +44,12 @@ impl ZoningState {
         self.focused_app_id = Some(app_id);
     }
 
-    /// Try to handle a key event as a zone snap.
-    /// Returns a `WindowGeometry` to send on the bus, or None if not a zone key.
     pub fn handle_key(&mut self, key: &KeyEvent) -> Option<WindowGeometry> {
         if !key.pressed || !key.super_held {
             return None;
         }
 
-        let zone = match zone_for_keycode(key.code) {
-            Some(z) => z,
-            None => {
-                info!(code = key.code, "no zone for keycode");
-                return None;
-            }
-        };
+        let zone = zone_for_keycode(key.code)?;
 
         let (w, h) = match self.output_size {
             Some(s) => s,
@@ -85,7 +76,6 @@ impl ZoningState {
         Some(geo)
     }
 
-    /// Restore all saved zone assignments as WindowGeometry messages.
     pub fn restore(&self) -> Vec<WindowGeometry> {
         let Some((w, h)) = self.output_size else {
             return vec![];
@@ -97,9 +87,23 @@ impl ZoningState {
             .collect()
     }
 
+    /// Compute the menubar's own geometry for a given output.
+    pub fn menubar_geometry(&self) -> Option<WindowGeometry> {
+        let (w, _h) = self.output_size?;
+        Some(WindowGeometry {
+            app_id: "sola-shell".into(),
+            x: 0,
+            y: 0,
+            width: w,
+            height: MENUBAR_HEIGHT,
+        })
+    }
+
     fn save_session(&self) {
         let session = Session {
-            zones: self.zone_assignments.iter()
+            zones: self
+                .zone_assignments
+                .iter()
                 .map(|(k, v)| (k.clone(), *v))
                 .collect(),
         };
@@ -121,24 +125,24 @@ impl ZoningState {
 
 fn zone_for_keycode(code: u32) -> Option<Zone> {
     match code {
-        80 => Some(Zone::TopMiddle),    // KP_8
-        83 => Some(Zone::Left),         // KP_4
-        84 => Some(Zone::FullMiddle),   // KP_5
-        85 => Some(Zone::Right),        // KP_6
-        88 => Some(Zone::BottomMiddle), // KP_2
-        90 => Some(Zone::Fullscreen),   // KP_0
+        80 => Some(Zone::TopMiddle),
+        83 => Some(Zone::Left),
+        84 => Some(Zone::FullMiddle),
+        85 => Some(Zone::Right),
+        88 => Some(Zone::BottomMiddle),
+        90 => Some(Zone::Fullscreen),
         _ => None,
     }
 }
 
 fn compute_geometry(zone: Zone, app_id: &str, output_w: i32, output_h: i32) -> WindowGeometry {
     let (xp, yp, wp, hp) = zone.rect();
-    let half = GAP / 2.0;
+    let usable_h = output_h - MENUBAR_HEIGHT;
 
-    let x = (xp * output_w as f64 + half).round() as i32;
-    let y = (yp * output_h as f64 + half).round() as i32;
-    let w = (wp * output_w as f64 - GAP).round() as i32;
-    let h = (hp * output_h as f64 - GAP).round() as i32;
+    let x = (xp * output_w as f64).round() as i32;
+    let y = MENUBAR_HEIGHT + (yp * usable_h as f64).round() as i32;
+    let w = (wp * output_w as f64).round() as i32;
+    let h = (hp * usable_h as f64).round() as i32;
 
     WindowGeometry {
         app_id: app_id.to_string(),

@@ -2247,8 +2247,6 @@ dependencies = [
  "libc",
  "nix 0.31.2",
  "notify",
- "serde",
- "serde_json",
  "sola-bus",
  "tracing",
  "tracing-appender",
@@ -2334,12 +2332,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "sola-switcher"
+name = "sola-shell"
 version = "0.1.0"
 dependencies = [
+ "gdk4",
  "gio",
  "glib",
  "gtk4",
+ "serde",
  "serde_json",
  "sola-app",
  "sola-bus",

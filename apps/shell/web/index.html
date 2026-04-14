@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+        width: 100vw;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 13px;
+        background: rgba(20, 22, 28, 0.95);
+        color: #ccc;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+    }
+
+    #left {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        flex: 1;
+        min-width: 0;
+    }
+
+    #right {
+        display: flex;
+        align-items: center;
+        padding-right: 16px;
+    }
+
+    .menu-label {
+        padding: 0 12px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        cursor: default;
+        white-space: nowrap;
+    }
+
+    .menu-label:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .menu-label.app-name {
+        font-weight: 600;
+        color: #fff;
+        padding-left: 16px;
+    }
+
+    #clock {
+        color: #999;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+    }
+</style>
+</head>
+<body>
+<div id="left">
+    <div id="app-name" class="menu-label app-name"></div>
+    <div id="menu-labels"></div>
+</div>
+<div id="right">
+    <div id="clock"></div>
+</div>
+<script type="module" src="/src/menubar.ts"></script>
+</body>
+</html>

@@ -1,5 +1,4 @@
 mod watcher;
-mod zoning;
 
 use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
@@ -18,7 +17,7 @@ const MANAGED: &[&str] = &[
     "sola-bus",
     "sola-compositor",
     "sola-x",
-    "sola-switcher",
+    "sola-shell",
     "sola-terminal",
 ];
 
@@ -67,7 +66,6 @@ fn main() {
 
     // Connect to bus (retry until available)
     let mut bus = sola_bus::BusClient::new();
-    let mut zoning = zoning::ZoningState::new();
 
     // Supervise — block on bus messages, fall through every 500ms
     // to check process health and binary changes.
@@ -80,11 +78,9 @@ fn main() {
         }
 
         // Block until a bus message arrives or the supervision interval expires.
-        // This replaces the old poll+sleep pattern — key events are now instant.
         let mut messages = Vec::new();
         if let Some(msg) = bus.recv_timeout(poll_interval) {
             messages.push(msg);
-            // Drain any additional messages that arrived.
             while let Some(msg) = bus.try_recv() {
                 messages.push(msg);
             }
@@ -98,30 +94,6 @@ fn main() {
                     info!("shutdown requested via bus");
                     shutdown_all(&mut managed);
                     std::process::exit(0);
-                }
-                Topic::Key(key) => {
-                    // Super+Shift+Backspace → shutdown
-                    if !key.pressed && key.code == 22 && key.super_held && key.shift_held {
-                        info!("kill chord received, shutting down");
-                        shutdown_all(&mut managed);
-                        std::process::exit(0);
-                    }
-
-                    // Zone snapping
-                    if let Some(geo) = zoning.handle_key(&key) {
-                        let _ = bus.emit(Topic::SetWindowGeometry(geo));
-                    }
-                }
-                Topic::FocusChanged(app_id) => {
-                    zoning.set_focused(app_id);
-                }
-                Topic::OutputGeometry(geo) => {
-                    zoning.set_output_size(&geo);
-
-                    // Restore saved zones on first OutputGeometry.
-                    for geo in zoning.restore() {
-                        let _ = bus.emit(Topic::SetWindowGeometry(geo));
-                    }
                 }
                 _ => {}
             }
