@@ -163,6 +163,7 @@ impl SolaApp {
             std::thread::sleep(Duration::from_millis(500));
         }
 
+        unsafe { std::env::set_var("GDK_BACKEND", "wayland") };
         unsafe { std::env::set_var("GTK_A11Y", "none") };
 
         glib::set_prgname(Some(&self.app_id));

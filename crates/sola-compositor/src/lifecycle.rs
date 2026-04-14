@@ -16,21 +16,15 @@ pub fn run_loop(
     tracing::info!("entering event loop");
 
     while state.running {
-        // Match pending surfaces to window policies and map them.
-        apply_pending_surfaces(state);
-
-        // Apply geometries stored from previous bus messages whose
-        // windows have since appeared via the Wayland protocol.
-        apply_pending_geometries(state);
-
         state.space.refresh();
 
         display
             .dispatch_clients(state)
             .map_err(|e| CompositorError::Display(e.to_string()))?;
 
-        // Sync MRU after dispatch — set_app_id may have arrived after
-        // the set_focus that triggered focus_changed, so retry now.
+        // After dispatch: app_id and title are now set on pending surfaces.
+        apply_pending_surfaces(state);
+        apply_pending_geometries(state);
         sync_mru(state);
 
         display
@@ -323,8 +317,13 @@ fn apply_pending_surfaces(state: &mut State) {
 
     state.pending_surfaces = still_pending;
 
-    for (window, _app_id, policy) in to_map {
-        let should_focus = policy.as_ref().map_or(true, |p| p.auto_focus);
+    for (window, ref app_id, policy) in to_map {
+        // Active input grab overrides auto_focus policy
+        let grab_active = state
+            .input_grab
+            .as_ref()
+            .is_some_and(|g| g == app_id);
+        let should_focus = grab_active || policy.as_ref().map_or(true, |p| p.auto_focus);
 
         match policy {
             Some(ref p) if !p.zoned => {
