@@ -10,6 +10,9 @@ mod tmux;
 
 /// XKB keycode for T (evdev 20 + 8 = 28).
 const KEY_T: u32 = 28;
+/// XKB keycodes for 1..9 (evdev 2..10 + 8).
+const KEY_1: u32 = 10;
+const KEY_9: u32 = 18;
 
 fn main() {
     // tmux cleanup
@@ -60,14 +63,20 @@ fn main() {
         })
         .on_bus_event(|topic, send_to_js| {
             if let Topic::Key(KeyEvent {
-                code: KEY_T,
+                code,
                 pressed: true,
                 super_held: true,
                 ..
             }) = topic
             {
-                tracing::info!("Super+T: requesting new tab");
-                send_to_js(serde_json::json!({"event": "new_tab"}));
+                if *code == KEY_T {
+                    tracing::info!("Super+T: requesting new tab");
+                    send_to_js(serde_json::json!({"event": "new_tab"}));
+                } else if (KEY_1..=KEY_9).contains(code) {
+                    let index = (code - KEY_1) as usize;
+                    tracing::info!(index, "Super+digit: selecting tab");
+                    send_to_js(serde_json::json!({"event": "select_tab", "index": index}));
+                }
             }
         })
         .run();
