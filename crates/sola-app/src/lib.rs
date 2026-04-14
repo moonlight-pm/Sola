@@ -261,8 +261,12 @@ impl SolaApp {
 
             // Bus connection
             let bus: Rc<RefCell<BusClient>> = Rc::new(RefCell::new(BusClient::new()));
-            if let Err(e) = bus.borrow_mut().connect() {
-                tracing::warn!("bus not available: {e}");
+            {
+                let mut client = bus.borrow_mut();
+                client.set_app_id(&app_id);
+                if let Err(e) = client.connect() {
+                    tracing::warn!("bus not available: {e}");
+                }
             }
 
             // Clone before bus_handler moves its copy into the fd callback

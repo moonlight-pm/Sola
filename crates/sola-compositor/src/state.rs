@@ -156,9 +156,12 @@ impl State {
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
 
+        let mut bus = sola_bus::BusClient::new();
+        bus.set_app_id("sola-compositor");
+
         Self {
             running: true,
-            bus: sola_bus::BusClient::new(),
+            bus,
             display_handle: dh,
             loop_handle,
             session,

@@ -16,6 +16,7 @@ use crate::{Message, transport};
 /// queued and flushed on successful `connect()`. Callers never need to
 /// wrap this in `Option` — just call `emit()` at any time.
 pub struct BusClient {
+    app_id: String,
     writer: Option<UnixStream>,
     rx: Option<mpsc::Receiver<Message>>,
     /// Read end of a notification pipe. Becomes readable when the reader
@@ -35,12 +36,18 @@ impl BusClient {
     /// Messages sent via `emit()` / `send()` are queued until `connect()` succeeds.
     pub fn new() -> Self {
         Self {
+            app_id: String::new(),
             writer: None,
             rx: None,
             notify_read: None,
             reader_alive: None,
             queue: VecDeque::new(),
         }
+    }
+
+    /// Set the app identity used to tag sticky messages.
+    pub fn set_app_id(&mut self, id: impl Into<String>) {
+        self.app_id = id.into();
     }
 
     /// Attempt to connect to the bus at the default socket path.
@@ -134,11 +141,13 @@ impl BusClient {
 
     /// Emit a typed topic as a sticky message.
     ///
-    /// The bus retains the latest sticky message per topic and replays
-    /// it to every newly connected client.
+    /// The bus retains the latest sticky per (topic, app_id) and replays
+    /// all stickies to every newly connected client. Multiple apps can
+    /// have independent stickies on the same topic.
     pub fn emit_sticky(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
         let mut message = topic.to_message();
         message.sticky = true;
+        message.sticky_tag = self.app_id.clone();
         self.send(&message)
     }
 

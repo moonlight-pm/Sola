@@ -66,6 +66,7 @@ fn main() {
 
     // Connect to bus (retry until available)
     let mut bus = sola_bus::BusClient::new();
+    bus.set_app_id("sola");
 
     // Supervise — block on bus messages, fall through every 500ms
     // to check process health and binary changes.
