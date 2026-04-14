@@ -477,7 +477,7 @@ function inputTemplate() {
       <textarea id="msg-input" rows="1"
         placeholder="${() => !state.activeId ? 'Create a session to start...' :
                            isRunning() ? 'Send a follow-up...' : 'Send a message...'}"
-        ?disabled="${() => !state.activeId}"
+        disabled="${() => !state.activeId ? 'disabled' : false}"
         class="${() => isRunning() ? 'running' : ''}"
         @keydown="${(e: KeyboardEvent) => {
           if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
