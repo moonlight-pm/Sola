@@ -55,8 +55,8 @@ const metrics: Record<string, Metrics> = {};
 // ── Events from Rust ─────────────────────────────────────────────────────────
 
 on('session_state', (ev: any) => {
-  let s = state.sessions.find((x: Session) => x.id === ev.session_id);
-  if (!s) {
+  const existing = state.sessions.find((x: Session) => x.id === ev.session_id);
+  if (!existing) {
     state.sessions = [...state.sessions, {
       id: ev.session_id,
       name: ev.name || null,
@@ -68,11 +68,16 @@ on('session_state', (ev: any) => {
     state.activeId = ev.session_id;
     focusInput();
   } else {
-    const wasSaved = s.status === 'saved';
-    s.status = ev.status;
-    if (ev.name) s.name = ev.name;
-    if (ev.working_dir) s.workingDir = ev.working_dir;
-    state.sessions = [...state.sessions];
+    const wasSaved = existing.status === 'saved';
+    // Replace the object entirely — Arrow.js needs new references
+    state.sessions = state.sessions.map(s =>
+      s.id === ev.session_id ? {
+        ...s,
+        status: ev.status,
+        name: ev.name || s.name,
+        workingDir: ev.working_dir || s.workingDir,
+      } : s
+    );
     if (wasSaved) {
       if (!messages[ev.session_id]) messages[ev.session_id] = [];
       state.activeId = ev.session_id;
@@ -221,8 +226,9 @@ async function sendMessage(): Promise<void> {
 
   const s = state.sessions.find((x: Session) => x.id === state.activeId);
   if (s && !s.firstPrompt) {
-    s.firstPrompt = text;
-    state.sessions = [...state.sessions];
+    state.sessions = state.sessions.map(x =>
+      x.id === state.activeId ? { ...x, firstPrompt: text } : x
+    );
   }
 
   state.msgVersion++;
@@ -305,8 +311,9 @@ function showNewDialog(): void {
 
 async function renameSession(id: string, name: string): Promise<void> {
   if (!name.trim()) return;
-  const s = state.sessions.find((x: Session) => x.id === id);
-  if (s) { s.name = name.trim(); state.sessions = [...state.sessions]; }
+  state.sessions = state.sessions.map(s =>
+    s.id === id ? { ...s, name: name.trim() } : s
+  );
   await invoke('rename_conversation', { session_id: id, name: name.trim() });
 }
 
