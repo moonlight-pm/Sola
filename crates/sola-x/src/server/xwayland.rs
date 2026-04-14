@@ -126,13 +126,14 @@ impl XwmHandler for State {
     ) {
         let class = window.class();
         let geo = window.geometry();
-        let locked = self.user_locked_sizes.contains_key(&class);
+        let locked_size = self.user_locked_sizes.get(&class).copied();
 
-        // For user-locked apps, discard the client's requested size —
-        // the compositor's zone is authoritative. Position is still
-        // honored so apps can reposition themselves internally.
-        let (req_w, req_h) = if locked {
-            (geo.size.w, geo.size.h)
+        // For user-locked apps, force the locked size — the compositor's
+        // zone is authoritative. Using geo.size.* here would fail for
+        // brand-new windows whose current geometry is 0×0, leaving the
+        // window invisible. Position is still honored.
+        let (req_w, req_h) = if let Some((lw, lh)) = locked_size {
+            (lw, lh)
         } else {
             (
                 w.map(|v| v as i32).unwrap_or(geo.size.w),
@@ -150,7 +151,7 @@ impl XwmHandler for State {
 
         // Only propagate geometry back to the compositor when we actually
         // honored a size change; otherwise we'd overwrite the zone size.
-        if !locked {
+        if locked_size.is_none() {
             emit_geometry(self, &class, new_geo);
         }
     }
@@ -219,8 +220,22 @@ fn track_x11_window(state: &mut State, surface: X11Surface) {
         client.create_proxy(id, &title, &class);
     }
 
-    // Tell the compositor where to position this window.
-    emit_geometry(state, &class, geo);
+    // If this app's class is already user-locked (e.g., zone state was
+    // restored before the window was mapped), apply the locked size to
+    // both the X11 window and the compositor's proxy. Otherwise brand-new
+    // windows get emitted with 0×0 current geometry and never receive a
+    // valid configure.
+    let emit_rect = if let Some(&(lw, lh)) = state.user_locked_sizes.get(&class) {
+        let locked_rect = Rectangle::new(geo.loc, (lw, lh).into());
+        if let Err(err) = surface.configure(Some(locked_rect)) {
+            tracing::warn!(?err, "failed to configure X11 window to locked size");
+        }
+        locked_rect
+    } else {
+        geo
+    };
+
+    emit_geometry(state, &class, emit_rect);
 }
 
 /// Send window geometry to the compositor via the bus.
