@@ -161,7 +161,8 @@ async fn run_claude(
 
     send_event(event_tx, json!({"event": "message_start", "session_id": session_id}));
 
-    let stdin_for_reader = stdin.clone();
+    let done_signal = Arc::new(tokio::sync::Notify::new());
+    let done_signal_reader = done_signal.clone();
     let read_task = tokio::spawn(async move {
         let mut text_acc = String::new();
         let mut blocks: Vec<serde_json::Value> = Vec::new();
@@ -172,6 +173,7 @@ async fn run_claude(
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
 
             let msg_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            tracing::debug!("stream-json: type={}", msg_type);
 
             match msg_type {
                 "stream_event" => {
@@ -227,9 +229,7 @@ async fn run_claude(
 
                 "result" => {
                     result_metrics = Some(parsed.clone());
-                    // Close stdin so the subprocess exits
-                    let mut guard = stdin_for_reader.lock().await;
-                    let _ = guard.shutdown().await;
+                    done_signal_reader.notify_one();
                     break;
                 }
 
@@ -240,19 +240,28 @@ async fn run_claude(
         (text_acc, blocks, result_metrics)
     });
 
-    // Wait for completion or cancellation
+    // Wait for completion, done signal, or cancellation
     let was_cancelled = tokio::select! {
         _ = cancel_token.cancelled() => {
-            {
-                let mut stdin_guard = stdin.lock().await;
-                let _ = stdin_guard.shutdown().await;
-            }
-            let _ = child.kill().await;
             tracing::info!("Session {} cancelled", session_id);
             true
         }
-        _ = child.wait() => false,
+        _ = done_signal.notified() => {
+            tracing::debug!("Session {} got result signal", session_id);
+            false
+        }
+        _ = child.wait() => {
+            tracing::debug!("Session {} subprocess exited", session_id);
+            false
+        }
     };
+
+    // Close stdin and wait for subprocess to exit
+    {
+        let mut stdin_guard = stdin.lock().await;
+        let _ = stdin_guard.shutdown().await;
+    }
+    let _ = child.wait().await;
 
     let (acc_text, acc_blocks, result_metrics) = read_task.await
         .unwrap_or_else(|_| (String::new(), Vec::new(), None));
