@@ -257,14 +257,19 @@ async fn run_claude(
     };
 
     // Close stdin and wait for subprocess to exit
+    tracing::debug!("Closing stdin...");
     {
         let mut stdin_guard = stdin.lock().await;
+        tracing::debug!("Got stdin lock, shutting down...");
         let _ = stdin_guard.shutdown().await;
     }
+    tracing::debug!("Stdin closed, waiting for child...");
     let _ = child.wait().await;
+    tracing::debug!("Child exited, waiting for read_task...");
 
     let (acc_text, acc_blocks, result_metrics) = read_task.await
         .unwrap_or_else(|_| (String::new(), Vec::new(), None));
+    tracing::debug!("Read task complete, acc_text len={}, blocks={}", acc_text.len(), acc_blocks.len());
 
     send_event(event_tx, json!({
         "event": "message_end", "session_id": session_id,
