@@ -104,6 +104,15 @@ export class TerminalPane {
     this.terminal.focus();
   }
 
+  getSelection(): string | null {
+    const sel = this.terminal.getSelection();
+    return sel && sel.length > 0 ? sel : null;
+  }
+
+  paste(text: string): void {
+    this.terminal.paste(text);
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.resizeObserver?.disconnect();
