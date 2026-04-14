@@ -113,23 +113,28 @@ fn main() {
             }
         }
 
-        // Check for exited processes
+        // Check for exited or missing processes
         for name in MANAGED {
-            let needs_restart = managed
-                .get_mut(name)
-                .and_then(|proc| proc.child.try_wait().ok().flatten().map(|s| (s, proc.started_at)))
-                .is_some();
+            if let Some(proc) = managed.get_mut(name) {
+                let exited = proc
+                    .child
+                    .try_wait()
+                    .ok()
+                    .flatten()
+                    .is_some();
 
-            if needs_restart {
-                let started_at = managed[name].started_at;
-                let uptime = started_at.elapsed();
-
-                if uptime < MIN_UPTIME {
-                    warn!(process = name, ?uptime, "crashed quickly, waiting before restart");
-                    thread::sleep(BACKOFF_DELAY);
-                } else {
-                    warn!(process = name, ?uptime, "exited, restarting");
+                if exited {
+                    let uptime = proc.started_at.elapsed();
+                    if uptime < MIN_UPTIME {
+                        warn!(process = name, ?uptime, "crashed quickly, waiting before restart");
+                        thread::sleep(BACKOFF_DELAY);
+                    } else {
+                        warn!(process = name, ?uptime, "exited, restarting");
+                    }
+                    launch(&bin_dir, name, &mut managed);
                 }
+            } else {
+                // Initial launch failed — retry
                 launch(&bin_dir, name, &mut managed);
             }
         }
