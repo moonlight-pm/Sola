@@ -81,17 +81,18 @@ on('session_state', (ev: any) => {
       if (!state.messages[ev.session_id]) state.messages[ev.session_id] = [];
       state.activeId = ev.session_id;
       invalidateRender();
-      renderMessages();
-      renderHeader();
       focusInput();
     }
   }
-  updateInputState();
+  renderAll();
 });
 
 on('message_start', (ev: any) => {
   const m = state.messages[ev.session_id];
-  if (m) { m.push({ role: 'assistant', content: '', streaming: true, tools: [] }); renderMessages(); }
+  if (m) {
+    m.push({ role: 'assistant', content: '', streaming: true, tools: [] });
+    renderMessages();
+  }
 });
 
 on('message_delta', (ev: any) => {
@@ -187,7 +188,7 @@ on('error', (ev: any) => {
   if (sid) {
     if (!state.messages[sid]) state.messages[sid] = [];
     state.messages[sid].push({ role: 'error', content: ev.message, streaming: false, tools: [] });
-    renderMessages();
+    renderAll();
   }
 });
 
@@ -224,6 +225,13 @@ function el(tag: string, cls?: string, text?: string): HTMLElement {
   return e;
 }
 
+function renderAll(): void {
+  renderSidebar();
+  renderHeader();
+  renderMessages();
+  updateInputState();
+}
+
 function focusInput(): void {
   requestAnimationFrame(() => {
     const ta = document.getElementById('msg-input') as HTMLTextAreaElement | null;
@@ -248,8 +256,7 @@ async function sendMessage(): Promise<void> {
   await invoke('send_message', { session_id: state.activeId, text });
   ta.value = '';
   ta.style.height = 'auto';
-  renderMessages();
-  updateInputState();
+  renderAll();
   ta.focus();
 }
 
@@ -325,6 +332,7 @@ async function finishRename(id: string, name: string): Promise<void> {
     if (s) s.name = name.trim();
     await invoke('rename_conversation', { session_id: id, name: name.trim() });
   }
+  renderSidebar();
   renderHeader();
 }
 
@@ -669,12 +677,6 @@ mainArea.appendChild(inputArea);
 container.appendChild(mainArea);
 appEl.appendChild(container);
 
-// Sidebar re-render on interval (lightweight — only sidebar list)
-setInterval(() => {
-  renderSidebar();
-  renderHeader();
-  updateInputState();
-}, 100);
-
-// Load saved conversations on startup
+// Initial render and load saved conversations
+renderAll();
 invoke('list_conversations', {});
