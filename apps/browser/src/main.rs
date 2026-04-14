@@ -96,6 +96,8 @@ fn main() {
         tracing::info!("remote inspector enabled at http://0.0.0.0:9224");
     }
 
+    unsafe { std::env::set_var("GTK_A11Y", "none") };
+
     // Watch own binary for hot-reload during development
     sola_app::watcher::watch_own_binary();
 

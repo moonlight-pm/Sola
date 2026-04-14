@@ -5,6 +5,7 @@
 /// Makefiles and shell scripts with type-safe, maintainable build logic.
 ///
 /// See: https://github.com/matklad/cargo-xtask
+mod deploy;
 mod watch;
 
 use std::process::{Command, exit};
@@ -32,12 +33,14 @@ enum Commands {
     },
 
     /// Deploy to a target machine.
+    ///
+    /// Deploys locally by default. Use --canto for remote deploy.
     Deploy {
         /// Specific app to deploy (e.g. "terminal").
         /// Omit to deploy all binaries.
         app: Option<String>,
 
-        /// Deploy to canto.
+        /// Deploy to canto (remote). Omit for local deploy.
         #[arg(long)]
         canto: bool,
 
@@ -52,18 +55,19 @@ fn main() {
     match cli.command {
         Commands::Build { target, release } => build(target, release),
         Commands::Deploy { app, canto, watch } => {
-            if !canto {
-                eprintln!("error: specify a deploy target (e.g. --canto)");
-                exit(1);
-            }
+            let target: Box<dyn deploy::DeployTarget> = if canto {
+                Box::new(deploy::Remote { host: "canto" })
+            } else {
+                Box::new(deploy::Local)
+            };
             if watch && app.is_none() {
                 eprintln!("error: --watch requires an app name");
                 exit(1);
             }
             if watch {
-                watch::watch_and_deploy(&app.unwrap());
+                watch::watch_and_deploy(&app.unwrap(), target.as_ref());
             } else {
-                deploy_canto(app.as_deref());
+                deploy::deploy(target.as_ref(), app.as_deref());
             }
         }
     }
@@ -124,41 +128,6 @@ fn build_web_frontends() {
         println!("Building web frontend for {app_name}...");
         run_or_exit("bun", &["run", "--cwd", &web_dir.to_string_lossy(), "build"]);
     }
-}
-
-/// Deploy binaries to canto via rsync over SSH.
-///
-/// If `app` is provided, builds and deploys only that app.
-/// Otherwise builds and deploys all workspace binaries.
-fn deploy_canto(app: Option<&str>) {
-    println!("Building release...");
-    let build_target = app.map(|name| resolve_crate_name(name));
-    build(build_target, true);
-
-    println!("Preparing canto...");
-    run_or_exit("ssh", &["canto", "mkdir -p /opt/sola/bin /opt/sola/log"]);
-
-    let binaries: Vec<String> = if let Some(name) = app {
-        vec![resolve_crate_name(name)]
-    } else {
-        discover_binaries()
-    };
-
-    println!("Deploying binaries to canto...");
-    for name in &binaries {
-        let src = format!("target/release/{name}");
-        if std::path::Path::new(&src).exists() {
-            run_or_exit(
-                "rsync",
-                &["-az", "--progress", &src, "canto:/opt/sola/bin/"],
-            );
-            println!("  deployed {name}");
-        } else {
-            eprintln!("  warning: binary not found: {src}");
-        }
-    }
-
-    println!("Deployed to canto:/opt/sola/bin/");
 }
 
 /// Resolve a short app name (e.g. "terminal") to the crate's package name
@@ -312,11 +281,38 @@ mod tests {
     }
 
     #[test]
+    fn cli_parses_deploy_local() {
+        let cli = Cli::try_parse_from(["sola-make", "deploy"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Deploy { app: None, canto: false, watch: false }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_deploy_app_local() {
+        let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Deploy { app: Some(ref a), canto: false, watch: false } if a == "terminal"
+        ));
+    }
+
+    #[test]
     fn cli_parses_deploy_watch() {
         let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal", "--canto", "--watch"]).unwrap();
         assert!(matches!(
             cli.command,
             Commands::Deploy { app: Some(ref a), canto: true, watch: true } if a == "terminal"
+        ));
+    }
+
+    #[test]
+    fn cli_parses_deploy_watch_local() {
+        let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal", "--watch"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Deploy { app: Some(ref a), canto: false, watch: true } if a == "terminal"
         ));
     }
 }

@@ -5,14 +5,16 @@ use std::time::{Duration, Instant};
 
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
+use crate::deploy::DeployTarget;
+
 const DEBOUNCE_MS: u64 = 500;
 
 /// Watch app source directories and rebuild+deploy on changes.
 ///
 /// Watches `apps/<app>/` and `crates/sola-app/` for file changes.
-/// On change: debounce, build the app in release mode, deploy to canto.
+/// On change: debounce, build the app in release mode, deploy to target.
 /// Errors don't kill the watcher — it continues watching.
-pub fn watch_and_deploy(app: &str) {
+pub fn watch_and_deploy(app: &str, target: &dyn DeployTarget) {
     let app_dir = format!("apps/{app}");
     let framework_dir = "crates/sola-app";
 
@@ -22,13 +24,14 @@ pub fn watch_and_deploy(app: &str) {
     }
 
     let crate_name = super::resolve_crate_name(app);
+    let label = target.label();
 
     println!("[watch] watching {app_dir}/, {framework_dir}/");
 
     // Initial build + deploy
     println!("[watch] initial build + deploy...");
-    if build_and_deploy(&crate_name) {
-        println!("[deploy] {crate_name} → canto ✓");
+    if build_and_deploy(&crate_name, target) {
+        println!("[deploy] {crate_name} → {label} ✓");
     }
 
     let (event_tx, event_rx) = mpsc::channel::<notify::Event>();
@@ -83,17 +86,17 @@ pub fn watch_and_deploy(app: &str) {
         println!("[watch] changed: {changed_file}");
         println!("[watch] building {crate_name}...");
 
-        if build_and_deploy(&crate_name) {
-            println!("[deploy] {crate_name} → canto ✓");
+        if build_and_deploy(&crate_name, target) {
+            println!("[deploy] {crate_name} → {label} ✓");
         }
 
         println!("[watch] waiting for changes...");
     }
 }
 
-/// Build a single crate in release mode and deploy to canto.
+/// Build a single crate in release mode and deploy to target.
 /// Returns true on success, false on failure (with error printed).
-fn build_and_deploy(crate_name: &str) -> bool {
+fn build_and_deploy(crate_name: &str, target: &dyn DeployTarget) -> bool {
     // Build
     let status = Command::new("cargo")
         .args(["build", "-p", crate_name, "--release"])
@@ -121,34 +124,17 @@ fn build_and_deploy(crate_name: &str) -> bool {
         return false;
     }
 
-    // Ensure target directory exists
-    let status = Command::new("ssh")
-        .args(["canto", "mkdir -p /opt/sola/bin"])
-        .status();
-
-    if let Err(err) = status {
-        eprintln!("[deploy] FAILED: ssh: {err}");
+    if let Err(e) = target.ensure_dirs() {
+        eprintln!("[deploy] FAILED: {e}");
         return false;
     }
 
-    let status = Command::new("rsync")
-        .args(["-az", "--progress", &src, "canto:/opt/sola/bin/"])
-        .status();
-
-    match status {
-        Ok(s) if s.success() => true,
-        Ok(s) => {
-            eprintln!(
-                "[deploy] FAILED (exit {})",
-                s.code().unwrap_or(1)
-            );
-            false
-        }
-        Err(err) => {
-            eprintln!("[deploy] FAILED: {err}");
-            false
-        }
+    if let Err(e) = target.deploy_binary(&src) {
+        eprintln!("[deploy] FAILED: {e}");
+        return false;
     }
+
+    true
 }
 
 /// If the event is a meaningful file change (create, modify, remove),
