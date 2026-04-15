@@ -417,7 +417,7 @@ impl ShellApp {
                     "id": id,
                     "app_id": app_id,
                     "label": label,
-                    "shortcut": shortcut.as_ref().map(format_shortcut),
+                    "shortcut": shortcut.as_ref().map(|c| c.display()),
                     "disabled": disabled,
                 }),
                 MenuItem::Divider => serde_json::json!({ "type": "divider" }),
@@ -458,75 +458,3 @@ impl ShellApp {
     }
 }
 
-fn format_shortcut(chord: &KeyChord) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-
-    if chord.meta {
-        parts.push("Meta");
-    }
-    if chord.ctrl {
-        parts.push("Ctrl");
-    }
-    if chord.alt {
-        parts.push("Alt");
-    }
-    if chord.shift {
-        parts.push("Shift");
-    }
-
-    parts.push(keycode_label(chord.keycode));
-    parts.join("+")
-}
-
-fn keycode_label(code: KeyCode) -> &'static str {
-    match code {
-        KeyCode::ESCAPE => "Escape",
-        KeyCode::KEY_1 => "1",
-        KeyCode::KEY_2 => "2",
-        KeyCode::KEY_3 => "3",
-        KeyCode::KEY_4 => "4",
-        KeyCode::KEY_5 => "5",
-        KeyCode::KEY_6 => "6",
-        KeyCode::KEY_7 => "7",
-        KeyCode::KEY_8 => "8",
-        KeyCode::KEY_9 => "9",
-        KeyCode::KEY_0 => "0",
-        KeyCode::KP_EQUAL => "KP_EQUAL",
-        KeyCode::BACKSPACE => "Backspace",
-        KeyCode::TAB => "Tab",
-        KeyCode::Q => "Q",
-        KeyCode::W => "W",
-        KeyCode::E => "E",
-        KeyCode::R => "R",
-        KeyCode::T => "T",
-        KeyCode::Y => "Y",
-        KeyCode::U => "U",
-        KeyCode::I => "I",
-        KeyCode::O => "O",
-        KeyCode::P => "P",
-        KeyCode::ENTER => "Enter",
-        KeyCode::A => "A",
-        KeyCode::S => "S",
-        KeyCode::D => "D",
-        KeyCode::F => "F",
-        KeyCode::G => "G",
-        KeyCode::H => "H",
-        KeyCode::J => "J",
-        KeyCode::K => "K",
-        KeyCode::L => "L",
-        KeyCode::Z => "Z",
-        KeyCode::X => "X",
-        KeyCode::C => "C",
-        KeyCode::V => "V",
-        KeyCode::B => "B",
-        KeyCode::N => "N",
-        KeyCode::M => "M",
-        KeyCode::KP_8 => "KP_8",
-        KeyCode::KP_4 => "KP_4",
-        KeyCode::KP_5 => "KP_5",
-        KeyCode::KP_6 => "KP_6",
-        KeyCode::KP_2 => "KP_2",
-        KeyCode::KP_0 => "KP_0",
-        _ => "Key",
-    }
-}

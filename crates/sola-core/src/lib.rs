@@ -125,6 +125,68 @@ impl KeyCode {
     pub const fn is_meta(self) -> bool {
         self.0 == Self::LEFT_META.0 || self.0 == Self::RIGHT_META.0
     }
+
+    /// Short human-readable label suitable for menu shortcuts.
+    /// Returns a Mac-style glyph for navigation keys and the character
+    /// itself for alphanumerics.
+    pub fn display(self) -> &'static str {
+        match self.0 {
+            9 => "Esc",
+            22 => "\u{232B}",  // ⌫
+            23 => "\u{21E5}",  // ⇥
+            36 => "\u{21A9}",  // ↩
+            113 => "\u{2190}", // ←
+            114 => "\u{2192}", // →
+            // Numbers
+            10 => "1",
+            11 => "2",
+            12 => "3",
+            13 => "4",
+            14 => "5",
+            15 => "6",
+            16 => "7",
+            17 => "8",
+            18 => "9",
+            19 => "0",
+            // Letters
+            38 => "A",
+            56 => "B",
+            54 => "C",
+            40 => "D",
+            26 => "E",
+            41 => "F",
+            42 => "G",
+            43 => "H",
+            31 => "I",
+            44 => "J",
+            45 => "K",
+            46 => "L",
+            58 => "M",
+            57 => "N",
+            32 => "O",
+            33 => "P",
+            24 => "Q",
+            27 => "R",
+            39 => "S",
+            28 => "T",
+            30 => "U",
+            55 => "V",
+            25 => "W",
+            53 => "X",
+            29 => "Y",
+            52 => "Z",
+            // Numpad
+            90 => "KP0",
+            88 => "KP2",
+            83 => "KP4",
+            84 => "KP5",
+            85 => "KP6",
+            80 => "KP8",
+            91 => "KP.",
+            125 => "KP=",
+            _ => "?",
+        }
+    }
 }
 
 impl From<u32> for KeyCode {
@@ -194,5 +256,24 @@ impl KeyChord {
     #[inline]
     pub const fn raw_keycode(self) -> u32 {
         self.keycode.raw()
+    }
+
+    /// Mac-style display string: ⌃⌥⇧⌘ prefixes followed by the key label.
+    pub fn display(&self) -> String {
+        let mut s = String::new();
+        if self.ctrl {
+            s.push('\u{2303}'); // ⌃
+        }
+        if self.alt {
+            s.push('\u{2325}'); // ⌥
+        }
+        if self.shift {
+            s.push('\u{21E7}'); // ⇧
+        }
+        if self.meta {
+            s.push('\u{2318}'); // ⌘
+        }
+        s.push_str(self.keycode.display());
+        s
     }
 }

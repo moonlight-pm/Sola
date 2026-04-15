@@ -8,6 +8,11 @@ document.addEventListener('click', (e: Event) => {
     }
 });
 
+// Dismiss the menu when the pointer leaves the dropdown area.
+menuEl.addEventListener('mouseleave', () => {
+    invoke('dismiss', {});
+});
+
 function showMenu(items: any[], anchorX: number): void {
     while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
     menuEl.style.left = (anchorX || 0) + 'px';
@@ -32,7 +37,9 @@ function showMenu(items: any[], anchorX: number): void {
         if (item.shortcut) {
             const sc = document.createElement('span');
             sc.className = 'shortcut';
-            sc.textContent = formatShortcut(item.shortcut);
+            // Rust produces the final Mac-style display string (e.g. "⌘T");
+            // we just render it.
+            sc.textContent = item.shortcut;
             el.appendChild(sc);
         }
 
@@ -49,14 +56,6 @@ function showMenu(items: any[], anchorX: number): void {
 function clearMenu(): void {
     menuEl.className = '';
     while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
-}
-
-function formatShortcut(s: string): string {
-    return s
-        .replace(/Super\+Shift\+/g, '\u21E7\u2318')
-        .replace(/Super\+/g, '\u2318')
-        .replace(/Shift\+/g, '\u21E7')
-        .replace('Backspace', '\u232B');
 }
 
 // Rust calls these via evaluate_javascript — must be global.

@@ -201,6 +201,30 @@ fn terminal_menu() -> AppMenuPayload {
                     },
                 ],
             },
+            MenuDefinition {
+                label: "Tabs".into(),
+                items: vec![
+                    tab_item(0, "Tab 1", KeyCode::KEY_1),
+                    tab_item(1, "Tab 2", KeyCode::KEY_2),
+                    tab_item(2, "Tab 3", KeyCode::KEY_3),
+                    tab_item(3, "Tab 4", KeyCode::KEY_4),
+                    tab_item(4, "Tab 5", KeyCode::KEY_5),
+                    tab_item(5, "Tab 6", KeyCode::KEY_6),
+                    tab_item(6, "Tab 7", KeyCode::KEY_7),
+                    tab_item(7, "Tab 8", KeyCode::KEY_8),
+                    tab_item(8, "Tab 9", KeyCode::KEY_9),
+                ],
+            },
         ],
+    }
+}
+
+fn tab_item(index: usize, label: &str, key: KeyCode) -> MenuItem {
+    MenuItem::Action {
+        id: format!("select_tab_{index}"),
+        label: label.into(),
+        shortcut: Some(key.meta()),
+        disabled: false,
+        checked: false,
     }
 }
