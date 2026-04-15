@@ -411,7 +411,7 @@ fn setup_menu_panel(
 
     let menu_window = gtk4::ApplicationWindow::new(&app);
     menu_window.set_decorated(false);
-    menu_window.set_default_size(220, 300);
+    menu_window.set_default_size(1920, 1052);
     menu_window.set_title(Some("menu"));
 
     let css = gtk4::CssProvider::new();
