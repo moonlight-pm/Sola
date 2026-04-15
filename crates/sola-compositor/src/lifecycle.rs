@@ -25,6 +25,7 @@ pub fn run_loop(
         // After dispatch: app_id and title are now set on pending surfaces.
         apply_pending_surfaces(state);
         apply_pending_geometries(state);
+        clear_stale_grab(state);
         sync_mru(state);
 
         display
@@ -259,6 +260,17 @@ fn handle_list_apps(state: &mut State) {
 
     use sola_bus::topics::Topic;
     let _ = state.bus.emit(Topic::Apps(apps));
+}
+
+/// Clear input grab if the grabbed app has no mapped surfaces.
+/// Handles the case where the grabbed app dies (e.g., shell restart
+/// during switcher activation).
+fn clear_stale_grab(state: &mut State) {
+    let Some(ref target) = state.input_grab else { return };
+    if state.window_by_app_id(target).is_none() {
+        tracing::warn!(target = %target, "clearing stale input grab (no surfaces)");
+        state.input_grab = None;
+    }
 }
 
 fn handle_set_window_policy(
