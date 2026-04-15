@@ -156,10 +156,25 @@ pub fn run<A: SolaApp>() {
         let app = A::new(&mut ctx);
 
         // --- Wrap runtime ---
-        let _runtime = Rc::new(RefCell::new(AppRuntime { app, ctx }));
+        let runtime = Rc::new(RefCell::new(AppRuntime { app, ctx }));
 
-        // (Remaining wiring — JS dispatchers, bus event loop, auto-emit
-        //  policy, after_runtime_ready — added in Tasks 5–7.)
+        // --- Install per-window JS dispatchers ---
+        let window_handles: Vec<WindowHandle> = runtime.borrow().ctx.windows.clone();
+        for source in window_handles {
+            let runtime_weak = Rc::downgrade(&runtime);
+            let source_for_dispatch = source.clone();
+            let dispatcher: window::JsDispatcher =
+                Box::new(move |cmd: &str, args: &serde_json::Value| {
+                    let Some(runtime) = runtime_weak.upgrade() else { return };
+                    let mut rt = runtime.borrow_mut();
+                    let AppRuntime { app, ctx } = &mut *rt;
+                    app.on_js_command(cmd, args, &source_for_dispatch, ctx);
+                });
+            *source.inner.dispatcher.borrow_mut() = Some(dispatcher);
+        }
+
+        // (Remaining wiring — bus event loop, auto-emit policy,
+        //  after_runtime_ready — added in Tasks 6–7.)
 
         tracing::info!("{app_id} ready");
     });
