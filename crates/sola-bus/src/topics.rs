@@ -119,6 +119,7 @@ pub struct ShellKeyBindingsPayload {
 pub enum Zone {
     Left,
     Right,
+    Top,
     TopMiddle,
     BottomMiddle,
     FullMiddle,
@@ -131,6 +132,7 @@ impl Zone {
         match self {
             Zone::Left => (0.0, 0.0, 0.28, 1.0),
             Zone::Right => (0.72, 0.0, 0.28, 1.0),
+            Zone::Top => (0.0, 0.0, 1.0, 0.7),
             Zone::TopMiddle => (0.28, 0.0, 0.44, 0.7),
             Zone::BottomMiddle => (0.28, 0.7, 0.44, 0.3),
             Zone::FullMiddle => (0.28, 0.0, 0.44, 1.0),

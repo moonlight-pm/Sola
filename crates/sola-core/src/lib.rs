@@ -82,6 +82,7 @@ impl KeyCode {
     pub const KEY_7: Self = Self(16);
     pub const KEY_8: Self = Self(17);
     pub const KEY_9: Self = Self(18);
+    pub const KP_EQUAL: Self = Self(125);
 
     pub const A: Self = Self(38);
     pub const B: Self = Self(56);

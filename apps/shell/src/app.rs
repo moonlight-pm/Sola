@@ -459,6 +459,7 @@ fn keycode_label(code: KeyCode) -> &'static str {
         KeyCode::KEY_8 => "8",
         KeyCode::KEY_9 => "9",
         KeyCode::KEY_0 => "0",
+        KeyCode::KP_EQUAL => "KP_EQUAL",
         KeyCode::BACKSPACE => "Backspace",
         KeyCode::TAB => "Tab",
         KeyCode::Q => "Q",

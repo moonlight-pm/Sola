@@ -67,6 +67,18 @@ pub fn setup(
                     let route_to_shell =
                         is_meta_release || state.shell_key_bindings.contains(&chord);
 
+                    tracing::debug!(
+                        keycode = keycode,
+                        state = ?event.state(),
+                        meta = modifiers.meta_held,
+                        alt = modifiers.alt_held,
+                        ctrl = modifiers.ctrl_held,
+                        shift = modifiers.shift_held,
+                        is_meta_release = is_meta_release,
+                        route_to_shell = route_to_shell,
+                        "keyboard event"
+                    );
+
                     if route_to_shell {
                         send_to_shell(state, event.key_code(), event.state(), event.time_msec());
                         return;

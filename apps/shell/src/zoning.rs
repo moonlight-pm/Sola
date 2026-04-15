@@ -124,6 +124,7 @@ pub const ZONING_KEYCODES: &[u32] = &[
     KeyCode::KP_6.raw(),
     KeyCode::KP_2.raw(),
     KeyCode::KP_0.raw(),
+    KeyCode::KP_EQUAL.raw(),
 ];
 
 fn zone_for_keycode(code: u32) -> Option<Zone> {
@@ -134,6 +135,7 @@ fn zone_for_keycode(code: u32) -> Option<Zone> {
         c if c == KeyCode::KP_6.raw() => Some(Zone::Right),
         c if c == KeyCode::KP_2.raw() => Some(Zone::BottomMiddle),
         c if c == KeyCode::KP_0.raw() => Some(Zone::Fullscreen),
+        c if c == KeyCode::KP_EQUAL.raw() => Some(Zone::Top),
         _ => None,
     }
 }
