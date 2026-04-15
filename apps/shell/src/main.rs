@@ -41,6 +41,12 @@ impl ShellState {
         }
     }
 
+    fn sort_switcher_apps(&mut self) {
+        self.switcher.apps.sort_by_key(|a| {
+            self.mru_apps.iter().position(|m| m == &a.app_id).unwrap_or(usize::MAX)
+        });
+    }
+
     /// Build the composition list (bottom to top) and emit it.
     fn emit_composition(&self, emit: &dyn Fn(Topic)) {
         let mut entries = Vec::new();
@@ -114,9 +120,13 @@ impl ShellState {
             .collect();
 
         self.known_apps = apps.clone();
-        self.switcher.apps = apps.into_iter()
+        let mut switcher_apps: Vec<App> = apps.into_iter()
             .filter(|a| a.app_id != "sola-shell")
             .collect();
+        switcher_apps.sort_by_key(|a| {
+            self.mru_apps.iter().position(|m| m == &a.app_id).unwrap_or(usize::MAX)
+        });
+        self.switcher.apps = switcher_apps;
 
         for id in &removed {
             self.mru_apps.retain(|m| m != id);
@@ -185,9 +195,10 @@ fn main() {
                         s.focused_app_id = Some(app_id.clone());
                         s.zoning.set_focused(app_id.clone());
 
-                        // Update MRU.
+                        // Update MRU and re-sort switcher.
                         s.mru_apps.retain(|m| m != app_id);
                         s.mru_apps.insert(0, app_id.clone());
+                        s.sort_switcher_apps();
 
                         s.emit_composition(emit);
 
