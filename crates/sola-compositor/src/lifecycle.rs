@@ -202,7 +202,7 @@ fn handle_set_window_geometry(state: &mut State, geo: &sola_bus::topics::WindowG
 ///
 /// Called whenever windows are mapped, unmapped, or MRU order changes.
 /// The shell caches this list and uses it immediately when the switcher activates.
-fn emit_apps_list(state: &mut State) {
+pub(crate) fn emit_apps_list(state: &mut State) {
     use sola_bus::topics::{App, Topic};
     use std::collections::HashMap;
 

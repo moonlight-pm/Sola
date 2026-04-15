@@ -40,9 +40,8 @@ impl SeatHandler for State {
         self.mru_apps.retain(|id| id != &app_id);
         self.mru_apps.insert(0, app_id.clone());
 
-        // Emit FocusChanged as sticky so late-connecting clients know
-        // which app has focus.
         let _ = self.bus.emit_sticky(Topic::FocusChanged(app_id));
+        crate::lifecycle::emit_apps_list(self);
     }
 }
 
