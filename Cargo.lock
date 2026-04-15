@@ -2289,6 +2289,7 @@ dependencies = [
  "serde_json",
  "sola-app",
  "sola-bus",
+ "sola-core",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -2302,6 +2303,7 @@ version = "0.1.0"
 dependencies = [
  "postcard",
  "serde",
+ "sola-core",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -2316,12 +2318,20 @@ dependencies = [
  "smithay",
  "smithay-drm-extras",
  "sola-bus",
+ "sola-core",
  "tempfile",
  "thiserror",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "xcursor",
+]
+
+[[package]]
+name = "sola-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -2344,6 +2354,7 @@ dependencies = [
  "serde_json",
  "sola-app",
  "sola-bus",
+ "sola-core",
  "tracing",
  "webkit6",
 ]
@@ -2361,6 +2372,7 @@ dependencies = [
  "serde_json",
  "sola-app",
  "sola-bus",
+ "sola-core",
  "tokio",
  "tracing",
  "uuid",

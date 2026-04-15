@@ -14,7 +14,6 @@ use webkit6::prelude::*;
 use sola_bus::BusClient;
 use sola_bus::topics::Topic;
 
-
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
     "/src/main.ts" => (include_str!("../web/src/main.ts"), TypeScript),
@@ -31,19 +30,16 @@ fn config_dir() -> PathBuf {
 }
 
 fn setup_logging() {
-    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
     let log_dir = "/opt/sola/log";
     let _ = std::fs::create_dir_all(log_dir);
     let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| "sola_browser=info".into());
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "sola_browser=info".into());
 
     let stderr_layer = fmt::layer().with_writer(std::io::stderr);
-    let file_layer = fmt::layer()
-        .with_ansi(false)
-        .with_writer(file_appender);
+    let file_layer = fmt::layer().with_ansi(false).with_writer(file_appender);
 
     tracing_subscriber::registry()
         .with(filter)
@@ -210,14 +206,14 @@ fn build_ui(app: &gtk4::Application) {
                         sola_bus::topics::MenuItem::Action {
                             id: "new_tab".into(),
                             label: "New Tab".into(),
-                            shortcut: Some("Super+T".into()),
+                            shortcut: Some(sola_core::KeyCode::T.meta()),
                             disabled: false,
                             checked: false,
                         },
                         sola_bus::topics::MenuItem::Action {
                             id: "close_tab".into(),
                             label: "Close Tab".into(),
-                            shortcut: Some("Super+W".into()),
+                            shortcut: Some(sola_core::KeyCode::W.meta()),
                             disabled: false,
                             checked: false,
                         },
@@ -225,7 +221,7 @@ fn build_ui(app: &gtk4::Application) {
                         sola_bus::topics::MenuItem::Action {
                             id: "quit".into(),
                             label: "Quit Browser".into(),
-                            shortcut: Some("Super+Q".into()),
+                            shortcut: Some(sola_core::KeyCode::Q.meta()),
                             disabled: false,
                             checked: false,
                         },
@@ -233,15 +229,13 @@ fn build_ui(app: &gtk4::Application) {
                 },
                 sola_bus::topics::MenuDefinition {
                     label: "Edit".into(),
-                    items: vec![
-                        sola_bus::topics::MenuItem::Action {
-                            id: "focus_address".into(),
-                            label: "Focus Address Bar".into(),
-                            shortcut: Some("Super+L".into()),
-                            disabled: false,
-                            checked: false,
-                        },
-                    ],
+                    items: vec![sola_bus::topics::MenuItem::Action {
+                        id: "focus_address".into(),
+                        label: "Focus Address Bar".into(),
+                        shortcut: Some(sola_core::KeyCode::L.meta()),
+                        disabled: false,
+                        checked: false,
+                    }],
                 },
             ],
         }));
@@ -262,15 +256,15 @@ fn build_ui(app: &gtk4::Application) {
             drop(client);
 
             for msg in messages {
-                let Some(topic) = Topic::parse(&msg) else { continue };
+                let Some(topic) = Topic::parse(&msg) else {
+                    continue;
+                };
                 match topic {
                     Topic::MenuAction(action) if action.app_id == "sola-browser" => {
                         match action.action_id.as_str() {
                             "new_tab" => {
                                 let tab_id = uuid::Uuid::new_v4().to_string();
-                                tabs::create_tab_webview(
-                                    &app_state, &tab_id, None, None,
-                                );
+                                tabs::create_tab_webview(&app_state, &tab_id, None, None);
                                 tabs::switch_tab(&app_state, &tab_id);
 
                                 let mut store = app_state.tab_store.borrow_mut();
@@ -287,17 +281,12 @@ fn build_ui(app: &gtk4::Application) {
                                     "url": "",
                                     "activate": true,
                                 });
-                                ipc::emit_event(
-                                    &app_state.chrome_webview,
-                                    "bus_new_tab",
-                                    &data,
-                                );
+                                ipc::emit_event(&app_state.chrome_webview, "bus_new_tab", &data);
                                 app_state.chrome_webview.grab_focus();
                                 tracing::debug!("new tab {tab_id}");
                             }
                             "close_tab" => {
-                                let active_id =
-                                    app_state.active_tab_id.borrow().clone();
+                                let active_id = app_state.active_tab_id.borrow().clone();
                                 if let Some(id) = active_id {
                                     tabs::close_tab(&app_state, &id);
 
@@ -333,12 +322,7 @@ fn build_ui(app: &gtk4::Application) {
                     }
                     Topic::OpenUrl(req) => {
                         let tab_id = uuid::Uuid::new_v4().to_string();
-                        tabs::create_tab_webview(
-                            &app_state,
-                            &tab_id,
-                            Some(&req.url),
-                            None,
-                        );
+                        tabs::create_tab_webview(&app_state, &tab_id, Some(&req.url), None);
                         if req.activate {
                             tabs::switch_tab(&app_state, &tab_id);
                         }
@@ -358,11 +342,7 @@ fn build_ui(app: &gtk4::Application) {
                             "url": req.url,
                             "activate": req.activate,
                         });
-                        ipc::emit_event(
-                            &app_state.chrome_webview,
-                            "bus_new_tab",
-                            &data,
-                        );
+                        ipc::emit_event(&app_state.chrome_webview, "bus_new_tab", &data);
                         tracing::info!(url = %req.url, "OpenUrl: created tab {tab_id}");
                     }
                     _ => {}
