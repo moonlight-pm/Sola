@@ -8,8 +8,15 @@ document.addEventListener('click', (e: Event) => {
     }
 });
 
-// Dismiss the menu when the pointer leaves the dropdown area.
-menuEl.addEventListener('mouseleave', () => {
+// Dismiss the menu when the pointer leaves the dropdown area —
+// except when it exited through the top edge, which means the user
+// is heading back up into the menubar. Keeping the menu open in
+// that case preserves macOS-style hover-to-switch between labels.
+menuEl.addEventListener('mouseleave', (e: MouseEvent) => {
+    const rect = menuEl.getBoundingClientRect();
+    if (e.clientY <= rect.top) {
+        return;
+    }
     invoke('dismiss', {});
 });
 
