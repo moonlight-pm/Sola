@@ -227,17 +227,21 @@ fn send_to_shell(
         KeyState::Released => wl_keyboard::KeyState::Released,
     };
 
+    // The current modifier state was set by prior keyboard events that
+    // went to the focused app (e.g. the Meta press itself is routed to
+    // the app, not shell). Shell never sees those, so its wl_keyboard
+    // view is stale. Sync the modifiers on every routed key before the
+    // key event so lookup_shortcut in shell sees the correct chord.
+    let _ = mods_changed;
     for kbd in keyboard.client_keyboards(&client) {
+        kbd.modifiers(
+            serial.into(),
+            mods.serialized.depressed,
+            mods.serialized.latched,
+            mods.serialized.locked,
+            mods.serialized.layout_effective,
+        );
         kbd.key(serial.into(), time, evdev_code, wl_state);
-        if mods_changed {
-            kbd.modifiers(
-                serial.into(),
-                mods.serialized.depressed,
-                mods.serialized.latched,
-                mods.serialized.locked,
-                mods.serialized.layout_effective,
-            );
-        }
     }
 }
 
