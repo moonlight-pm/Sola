@@ -118,6 +118,7 @@ impl KeyCode {
     pub const KP_5: Self = Self(84);
     pub const KP_6: Self = Self(85);
     pub const KP_8: Self = Self(80);
+    pub const KP_DECIMAL: Self = Self(91);
 
     /// Returns true if this key code is either left or right Meta.
     #[inline]

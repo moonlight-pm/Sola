@@ -15,13 +15,26 @@ pub fn install(menubar: WindowHandle, runtime: Weak<RefCell<AppRuntime<ShellApp>
     key_ctrl.connect_key_pressed({
         let runtime = runtime.clone();
         move |_, _keyval, keycode, gtk_modifiers| {
+            // On Linux/Wayland the physical Super key produces SUPER_MASK
+            // (xkb Mod4). META_MASK only fires when an explicit Meta key is
+            // mapped. We treat either as "meta" since Sola's convention is
+            // Meta = Super.
             let chord = KeyChord {
                 keycode: KeyCode::from(keycode),
-                meta: gtk_modifiers.contains(gdk4::ModifierType::META_MASK),
+                meta: gtk_modifiers.contains(gdk4::ModifierType::SUPER_MASK)
+                    || gtk_modifiers.contains(gdk4::ModifierType::META_MASK),
                 alt: gtk_modifiers.contains(gdk4::ModifierType::ALT_MASK),
                 ctrl: gtk_modifiers.contains(gdk4::ModifierType::CONTROL_MASK),
                 shift: gtk_modifiers.contains(gdk4::ModifierType::SHIFT_MASK),
             };
+            tracing::debug!(
+                keycode = chord.keycode.raw(),
+                meta = chord.meta,
+                ctrl = chord.ctrl,
+                alt = chord.alt,
+                shift = chord.shift,
+                "shell key pressed"
+            );
             let Some(runtime) = runtime.upgrade() else {
                 return glib::Propagation::Proceed;
             };
