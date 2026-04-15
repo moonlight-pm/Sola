@@ -22,7 +22,8 @@ pub struct WindowConfig {
 
 /// JS dispatcher installed per window by the runtime after `A::new`.
 /// Converts a UCM script message into `SolaApp::on_js_command`.
-pub type JsDispatcher = Box<dyn FnMut(&str, &Value)>;
+/// The `Option<u64>` is the request id used to correlate replies.
+pub type JsDispatcher = Box<dyn FnMut(&str, &Value, Option<u64>)>;
 
 /// Internal per-window state owned by sola-app.
 pub(crate) struct WindowInner {
@@ -60,9 +61,20 @@ impl WindowHandle {
         );
     }
 
+    /// Send a JSON value to the frontend's `window.__solaRecv`. The frontend
+    /// expects a JSON *string* (it calls `JSON.parse` on the argument), so
+    /// this double-stringifies: once to turn the value into JSON, once to
+    /// encode that JSON as a JS string literal.
     pub fn send_to_js(&self, value: &Value) {
-        let json = serde_json::to_string(value).unwrap_or_default();
-        self.eval_js(&format!("window.__solaRecv({json})"));
+        let json_str = serde_json::to_string(value).unwrap_or_default();
+        self.send_raw_json_to_js(&json_str);
+    }
+
+    /// Variant of `send_to_js` for callers that already have a JSON-encoded
+    /// string to forward (e.g. messages coming off an mpsc channel).
+    pub fn send_raw_json_to_js(&self, json: &str) {
+        let js_literal = serde_json::to_string(json).unwrap_or_default();
+        self.eval_js(&format!("window.__solaRecv({js_literal})"));
     }
 
     /// Access the underlying GTK window for event controllers etc.

@@ -42,14 +42,19 @@ pub trait SolaApp: 'static {
     }
 
     /// Dispatch a JS command from a specific window. Default: ignore.
+    ///
+    /// `id` is the request id provided by `@sola/ipc`'s `invoke()` — pass it
+    /// back in the reply envelope (`{"id": ..., "result": ...}`) so the JS
+    /// `invoke` promise resolves. `None` means the command was fire-and-forget.
     fn on_js_command(
         &mut self,
         cmd: &str,
         args: &serde_json::Value,
+        id: Option<u64>,
         source: &WindowHandle,
         ctx: &mut AppCtx,
     ) {
-        let _ = (cmd, args, source, ctx);
+        let _ = (cmd, args, id, source, ctx);
     }
 
     /// Called right before GTK quits on Topic::Shutdown. Default: ignore.
@@ -162,15 +167,16 @@ pub fn run<A: SolaApp>() {
         for source in window_handles {
             let runtime_weak = Rc::downgrade(&runtime);
             let source_for_dispatch = source.clone();
-            let dispatcher: window::JsDispatcher =
-                Box::new(move |cmd: &str, args: &serde_json::Value| {
+            let dispatcher: window::JsDispatcher = Box::new(
+                move |cmd: &str, args: &serde_json::Value, id: Option<u64>| {
                     let Some(runtime) = runtime_weak.upgrade() else {
                         return;
                     };
                     let mut rt = runtime.borrow_mut();
                     let AppRuntime { app, ctx } = &mut *rt;
-                    app.on_js_command(cmd, args, &source_for_dispatch, ctx);
-                });
+                    app.on_js_command(cmd, args, id, &source_for_dispatch, ctx);
+                },
+            );
             *source.inner.dispatcher.borrow_mut() = Some(dispatcher);
         }
 

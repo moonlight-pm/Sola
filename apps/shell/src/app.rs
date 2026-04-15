@@ -140,7 +140,14 @@ impl SolaApp for ShellApp {
         }
     }
 
-    fn on_js_command(&mut self, cmd: &str, args: &Value, source: &WindowHandle, ctx: &mut AppCtx) {
+    fn on_js_command(
+        &mut self,
+        cmd: &str,
+        args: &Value,
+        _id: Option<u64>,
+        source: &WindowHandle,
+        ctx: &mut AppCtx,
+    ) {
         match (source.title(), cmd) {
             ("menubar", "open_menu") => {
                 let src = args.get("source").and_then(|v| v.as_str()).unwrap_or("app");

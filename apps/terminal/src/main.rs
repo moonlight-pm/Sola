@@ -68,7 +68,7 @@ impl SolaApp for TerminalApp {
         let mw_for_events = main_window.clone();
         gtk4::glib::timeout_add_local(std::time::Duration::from_millis(5), move || {
             while let Ok(msg) = event_rx.try_recv() {
-                mw_for_events.eval_js(&format!("window.__solaRecv({msg})"));
+                mw_for_events.send_raw_json_to_js(&msg);
             }
             gtk4::glib::ControlFlow::Continue
         });
@@ -93,14 +93,14 @@ impl SolaApp for TerminalApp {
         &mut self,
         cmd: &str,
         args: &Value,
+        id: Option<u64>,
         _source: &WindowHandle,
         _ctx: &mut AppCtx,
     ) {
         let source = self.main_window.clone();
-        let id = args.get("id").and_then(|v| v.as_u64());
-        let payload_args = args.get("args").cloned().unwrap_or(serde_json::json!({}));
+        let args = args.clone();
         self.dispatcher
-            .dispatch(cmd.to_string(), payload_args, move |result| {
+            .dispatch(cmd.to_string(), args, move |result| {
                 if let Some(id) = id {
                     source.send_to_js(&serde_json::json!({ "id": id, "result": result }));
                 }

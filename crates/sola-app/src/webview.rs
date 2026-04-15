@@ -69,10 +69,11 @@ pub(crate) fn create_ucm_for_window(
                 return;
             }
         };
+        let id = parsed.get("id").and_then(|v| v.as_u64());
         let cmd = parsed.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
         let args = parsed.get("args").cloned().unwrap_or(serde_json::json!({}));
         if let Some(dispatch) = dispatcher_slot.borrow_mut().as_mut() {
-            dispatch(cmd, &args);
+            dispatch(cmd, &args, id);
         } else {
             tracing::warn!(cmd, "JS command received before dispatcher installed");
         }
