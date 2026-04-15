@@ -25,6 +25,150 @@ pub use assets::{Asset, AssetBundle, ContentType};
 pub use ctx::AppCtx;
 pub use window::{WindowConfig, WindowHandle};
 
+// ===== Trait-based SolaApp API (new) ==================================
+
+/// Trait implemented by every Sola app. Only `APP_ID` and `new` are
+/// required; other methods have default no-op impls so apps opt in to
+/// what they need.
+pub trait SolaApp: 'static {
+    const APP_ID: &'static str;
+
+    /// Construct the app. This is where windows are created via
+    /// `ctx.add_window`; they get auto-declared to the compositor via
+    /// `SetWindowPolicy` after `new` returns.
+    fn new(ctx: &mut AppCtx) -> Self
+    where
+        Self: Sized;
+
+    /// Dispatch a bus event. Default: ignore.
+    fn on_bus_event(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let _ = (topic, ctx);
+    }
+
+    /// Dispatch a JS command from a specific window. Default: ignore.
+    fn on_js_command(
+        &mut self,
+        cmd: &str,
+        args: &serde_json::Value,
+        source: &WindowHandle,
+        ctx: &mut AppCtx,
+    ) {
+        let _ = (cmd, args, source, ctx);
+    }
+
+    /// Called right before GTK quits on Topic::Shutdown. Default: ignore.
+    fn on_shutdown(&mut self, ctx: &mut AppCtx) {
+        let _ = ctx;
+    }
+
+    /// Hook for any post-construction setup that needs access to the
+    /// runtime (e.g. attaching GTK event controllers that dispatch into
+    /// self via the runtime). Default: ignore.
+    #[allow(unused_variables)]
+    fn after_runtime_ready(
+        &mut self,
+        runtime: std::rc::Weak<std::cell::RefCell<AppRuntime<Self>>>,
+        ctx: &mut AppCtx,
+    ) where
+        Self: Sized,
+    {
+    }
+}
+
+/// Runtime container — holds the user app and its context together so
+/// GTK / bus callbacks can share `Rc<RefCell<_>>` and destructure into
+/// disjoint `&mut` borrows.
+pub struct AppRuntime<A: SolaApp> {
+    pub app: A,
+    pub ctx: AppCtx,
+}
+
+/// Entry point for the trait-based API. Bootstraps logging, waits for
+/// the Wayland socket, starts the GTK app, connects the bus, and runs
+/// `A::new` followed by the event loop.
+pub fn run<A: SolaApp>() {
+    let app_id: &'static str = A::APP_ID;
+
+    // --- Logging ---
+    let log_dir = "/opt/sola/log";
+    let _ = std::fs::create_dir_all(log_dir);
+    let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| format!("{}=info", app_id.replace('-', "_")).into());
+
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_writer(file_appender);
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(stderr_layer)
+        .with(file_layer)
+        .init();
+
+    tracing::info!("{app_id} starting");
+
+    // --- Binary self-watch ---
+    watcher::watch_own_binary();
+
+    // --- Wayland socket wait ---
+    if std::env::var("WAYLAND_DISPLAY").is_err() {
+        unsafe { std::env::set_var("WAYLAND_DISPLAY", "wayland-0") };
+    }
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap();
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR must be set");
+    let socket_path = std::path::PathBuf::from(&runtime_dir).join(&wayland_display);
+    for attempt in 1..=20 {
+        if socket_path.exists() {
+            tracing::info!(path = %socket_path.display(), "wayland socket ready");
+            break;
+        }
+        if attempt == 20 {
+            tracing::error!(path = %socket_path.display(), "wayland socket not found after 10s");
+            std::process::exit(1);
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    unsafe { std::env::set_var("GDK_BACKEND", "wayland") };
+    unsafe { std::env::set_var("GTK_A11Y", "none") };
+
+    glib::set_prgname(Some(app_id));
+
+    let gtk_app = gtk4::Application::new(None::<&str>, Default::default());
+
+    gtk_app.connect_activate(move |gtk_app| {
+        // --- Bus ---
+        let bus = Rc::new(RefCell::new(BusClient::new()));
+        {
+            let mut c = bus.borrow_mut();
+            c.set_app_id(app_id);
+            if let Err(e) = c.connect() {
+                tracing::warn!("bus not available: {e}");
+            }
+        }
+
+        // --- Build AppCtx, run A::new ---
+        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone(), app_id);
+        let app = A::new(&mut ctx);
+
+        // --- Wrap runtime ---
+        let _runtime = Rc::new(RefCell::new(AppRuntime { app, ctx }));
+
+        // (Remaining wiring — JS dispatchers, bus event loop, auto-emit
+        //  policy, after_runtime_ready — added in Tasks 5–7.)
+
+        tracing::info!("{app_id} ready");
+    });
+
+    gtk_app.run();
+}
+
+// ===== Legacy builder API (retired in Task 11) ========================
+
 /// Trait for app-specific command handling.
 /// Implement this to handle commands sent from the JS frontend.
 #[async_trait::async_trait]
