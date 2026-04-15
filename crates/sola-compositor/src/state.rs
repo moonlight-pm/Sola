@@ -27,6 +27,7 @@ use smithay::wayland::shm::ShmState;
 
 use crate::backend::device::Device;
 use crate::backend::gpu::SolaGpuManager;
+use crate::input::binding::ModifierState;
 
 pub struct State {
     /// Controls the main event loop. Set to `false` to trigger shutdown.
@@ -102,23 +103,29 @@ pub struct State {
     /// Current pointer position in compositor-space coordinates.
     pub pointer_location: (f64, f64),
 
+    /// Tracks Super/Shift state for input routing decisions.
+    pub modifiers: ModifierState,
+
     /// Cached keyboard_target surface for sola-shell.
     /// Super+key events are sent directly to this surface via wl_keyboard.key.
     pub shell_keyboard_target: Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
 
-    /// Most-recently-used app list, ordered by last focus time.
-    /// The app that most recently had keyboard focus is at index 0.
-    pub mru_apps: Vec<String>,
-
-    /// Window geometries received before the window appeared.
-    /// Keyed by (app_id, title) for disambiguation of multi-window apps.
-    pub pending_geometries: HashMap<(String, Option<String>), sola_bus::topics::WindowGeometry>,
+    /// Frame geometries from the shell, keyed by (app_id, title).
+    /// Applied when the matching surface is found or when Composition maps it.
+    pub frame_geometries: HashMap<(String, Option<String>), sola_bus::topics::FrameUpdate>,
 
     /// Window policies declared by apps. Keyed by app_id.
     pub window_policies: HashMap<String, Vec<sola_bus::topics::WindowPolicy>>,
 
-    /// Surfaces waiting for policy matching before being mapped and rendered.
+    /// Surfaces whose app_id isn't known yet (waiting for protocol).
     pub pending_surfaces: Vec<Window>,
+
+    /// Surfaces with a known app_id, waiting for Composition to map them.
+    pub unmapped_surfaces: Vec<Window>,
+
+    /// Set to true while applying a shell Focus command.
+    /// Suppresses FocusChanged emission in the seat handler.
+    pub applying_shell_focus: bool,
 
     // -- Protocol state --
 
@@ -178,11 +185,13 @@ impl State {
             seat,
             space: Space::default(),
             pointer_location: (0.0, 0.0),
+            modifiers: ModifierState::default(),
             shell_keyboard_target: None,
-            mru_apps: Vec::new(),
-            pending_geometries: HashMap::new(),
+            frame_geometries: HashMap::new(),
             window_policies: HashMap::new(),
             pending_surfaces: Vec::new(),
+            unmapped_surfaces: Vec::new(),
+            applying_shell_focus: false,
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             dmabuf_state: None,
@@ -218,6 +227,22 @@ impl State {
         self.space.elements().filter(|window| {
             window_app_id(window).is_some_and(|id| id == target)
         }).cloned().collect()
+    }
+
+    /// Find a window by app_id and optional title, searching both the
+    /// Space (mapped) and unmapped_surfaces.
+    pub fn find_surface(&self, app_id: &str, title: Option<&str>) -> Option<Window> {
+        self.window_by_app_id_title(app_id, title)
+            .or_else(|| {
+                self.unmapped_surfaces.iter().find(|window| {
+                    let id_match = window_app_id(window).is_some_and(|id| id == app_id);
+                    if !id_match { return false; }
+                    match title {
+                        Some(t) => window_title(window).is_some_and(|wt| wt == t),
+                        None => true,
+                    }
+                }).cloned()
+            })
     }
 }
 

@@ -101,7 +101,6 @@ fn main() {
                 windows: vec![WindowPolicy {
                     title: "main".into(),
                     zoned: true,
-                    auto_focus: true,
                     keyboard_target: true,
                     size: None,
                     position: None,

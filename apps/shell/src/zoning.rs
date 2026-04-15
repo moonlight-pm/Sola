@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use sola_bus::topics::{OutputGeometry, WindowGeometry, Zone};
+use sola_bus::topics::{FrameUpdate, OutputGeometry, Zone};
 use tracing::{info, warn};
 
 pub const MENUBAR_HEIGHT: i32 = 28;
@@ -44,9 +44,8 @@ impl ZoningState {
         self.focused_app_id = Some(app_id);
     }
 
-    /// Handle a zone snap keycode. All events arriving here are Super+key
-    /// presses routed by the compositor, so no modifier checks needed.
-    pub fn handle_key(&mut self, code: u32) -> Option<WindowGeometry> {
+    /// Handle a zone snap keycode. Returns a FrameUpdate for the focused app.
+    pub fn handle_key(&mut self, code: u32) -> Option<FrameUpdate> {
         let zone = zone_for_keycode(code)?;
 
         let (w, h) = match self.output_size {
@@ -66,29 +65,30 @@ impl ZoningState {
         };
 
         info!(app_id = %app_id, ?zone, "snapping to zone");
-        let geo = compute_geometry(zone, &app_id, w, h);
+        let frame = compute_frame(zone, &app_id, w, h);
 
         self.zone_assignments.insert(app_id, zone);
         self.save_session();
 
-        Some(geo)
+        Some(frame)
     }
 
-    pub fn restore(&self) -> Vec<WindowGeometry> {
+    /// Compute FrameUpdates for all zone-assigned apps (used on output resize).
+    pub fn restore(&self) -> Vec<FrameUpdate> {
         let Some((w, h)) = self.output_size else {
             return vec![];
         };
 
         self.zone_assignments
             .iter()
-            .map(|(app_id, zone)| compute_geometry(*zone, app_id, w, h))
+            .map(|(app_id, zone)| compute_frame(*zone, app_id, w, h))
             .collect()
     }
 
-    /// Compute the menubar's own geometry for a given output.
-    pub fn menubar_geometry(&self) -> Option<WindowGeometry> {
+    /// Compute the menubar's Frame for a given output.
+    pub fn menubar_frame(&self) -> Option<FrameUpdate> {
         let (w, _h) = self.output_size?;
-        Some(WindowGeometry {
+        Some(FrameUpdate {
             app_id: "sola-shell".into(),
             title: Some("menubar".into()),
             x: 0,
@@ -98,16 +98,28 @@ impl ZoningState {
         })
     }
 
-    pub fn overlay_geometry(&self) -> Option<WindowGeometry> {
+    /// Compute the default Frame for an app without a zone assignment.
+    /// Gives it the full output area below the menubar.
+    pub fn default_app_frame(&self, app_id: &str) -> Option<FrameUpdate> {
         let (w, h) = self.output_size?;
-        Some(WindowGeometry {
-            app_id: "sola-shell".into(),
-            title: Some("overlay".into()),
+        Some(FrameUpdate {
+            app_id: app_id.to_string(),
+            title: None,
             x: 0,
-            y: 0,
+            y: MENUBAR_HEIGHT,
             width: w,
-            height: h,
+            height: h - MENUBAR_HEIGHT,
         })
+    }
+
+    /// Compute the Frame for a zoned app, or default if no zone assigned.
+    pub fn app_frame(&self, app_id: &str) -> Option<FrameUpdate> {
+        if let Some(zone) = self.zone_assignments.get(app_id) {
+            let (w, h) = self.output_size?;
+            Some(compute_frame(*zone, app_id, w, h))
+        } else {
+            self.default_app_frame(app_id)
+        }
     }
 
     fn save_session(&self) {
@@ -146,7 +158,7 @@ fn zone_for_keycode(code: u32) -> Option<Zone> {
     }
 }
 
-fn compute_geometry(zone: Zone, app_id: &str, output_w: i32, output_h: i32) -> WindowGeometry {
+fn compute_frame(zone: Zone, app_id: &str, output_w: i32, output_h: i32) -> FrameUpdate {
     let (xp, yp, wp, hp) = zone.rect();
     let usable_h = output_h - MENUBAR_HEIGHT;
 
@@ -155,7 +167,7 @@ fn compute_geometry(zone: Zone, app_id: &str, output_w: i32, output_h: i32) -> W
     let w = (wp * output_w as f64).round() as i32;
     let h = (hp * usable_h as f64).round() as i32;
 
-    WindowGeometry {
+    FrameUpdate {
         app_id: app_id.to_string(),
         title: None,
         x,

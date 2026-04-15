@@ -29,11 +29,7 @@ pub fn run_loop(
             .dispatch_clients(state)
             .map_err(|e| CompositorError::Display(e.to_string()))?;
 
-        // After dispatch: app_id and title are now set on pending surfaces.
         apply_pending_surfaces(state);
-        apply_pending_geometries(state);
-        raise_shell_surfaces(state);
-        sync_mru(state);
 
         display
             .flush_clients()
@@ -49,40 +45,7 @@ pub fn run_loop(
     Ok(())
 }
 
-/// Ensure the MRU list reflects the current keyboard focus.
-///
-/// `focus_changed` can miss updates because `set_app_id` arrives after
-/// `set_focus` in the Wayland protocol stream. This runs after
-/// `dispatch_clients` when all protocol state is settled.
-fn sync_mru(state: &mut State) {
-    use smithay::wayland::seat::WaylandFocus;
-
-    let keyboard = state.seat.get_keyboard().unwrap();
-    let Some(focused) = keyboard.current_focus() else { return };
-
-    let app_id = state.space.elements().find_map(|window| {
-        window.wl_surface()
-            .filter(|s| s.as_ref() == &focused)
-            .and_then(|_| State::app_id(window))
-    });
-
-    let Some(app_id) = app_id else { return };
-
-    if state.mru_apps.first().is_some_and(|f| f == &app_id) { return; }
-
-    state.mru_apps.retain(|id| id != &app_id);
-    state.mru_apps.insert(0, app_id.clone());
-
-    use sola_bus::topics::Topic;
-    let _ = state.bus.emit_sticky(Topic::FocusChanged(app_id));
-
-    emit_apps_list(state);
-}
-
 /// Drain and dispatch all pending bus messages.
-///
-/// Called from the calloop bus event source when the notification fd
-/// signals readable. Not called from the frame loop.
 pub(crate) fn dispatch_bus(state: &mut State) {
     use sola_bus::topics::Topic;
 
@@ -101,8 +64,9 @@ pub(crate) fn dispatch_bus(state: &mut State) {
 
         match topic {
             Topic::SetWindowPolicy(payload) => handle_set_window_policy(state, payload),
-            Topic::RaiseApp(app_id) => handle_raise_app(state, &app_id),
-            Topic::SetWindowGeometry(geo) => handle_set_window_geometry(state, &geo),
+            Topic::Composition(entries) => handle_composition(state, entries),
+            Topic::Frame(update) => handle_frame(state, update),
+            Topic::Focus(target) => handle_focus(state, target),
             _ => {
                 tracing::debug!(topic = %msg.topic, "unhandled bus topic");
             }
@@ -110,103 +74,103 @@ pub(crate) fn dispatch_bus(state: &mut State) {
     }
 }
 
-/// Keep sola-shell surfaces (menubar, overlay) above all app windows.
-/// Called every frame so the shell layer stays on top after any raise or map.
-fn raise_shell_surfaces(state: &mut State) {
-    for window in state.windows_by_app_id("sola-shell") {
-        state.space.raise_element(&window, false);
-    }
-}
-
-/// Raise all windows belonging to the given app_id.
-fn handle_raise_app(state: &mut State, app_id: &str) {
-    let windows = state.windows_by_app_id(app_id);
-    if windows.is_empty() {
-        tracing::warn!(app_id, "RaiseApp: no windows found");
-        return;
-    }
-
-    tracing::info!(app_id, count = windows.len(), "raising app");
-
-    for window in &windows {
-        state.space.raise_element(window, true);
-    }
-
-    // Only focus if the app has at least one auto_focus window.
-    let should_focus = state.window_policies.get(app_id)
-        .map_or(true, |ps| ps.iter().any(|p| p.auto_focus));
-
-    if should_focus {
-        use smithay::wayland::seat::WaylandFocus;
-        if let Some(window) = windows.last() {
-            if let Some(surface) = window.wl_surface() {
-                let serial = SERIAL_COUNTER.next_serial();
-                let keyboard = state.seat.get_keyboard().unwrap();
-                keyboard.set_focus(state, Some(surface.into_owned()), serial);
-            }
-        }
-    }
-}
-
-/// Apply any pending geometries whose windows now exist in the Space.
-fn apply_pending_geometries(state: &mut State) {
-    use sola_bus::topics::WindowGeometry;
-
-    let matches: Vec<((String, Option<String>), WindowGeometry)> = state
-        .pending_geometries
+/// Apply a Composition list: unmap surfaces not in the list, map/reorder
+/// surfaces in the list (bottom to top).
+fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::CompositionEntry>) {
+    // First pass: find windows for each entry.
+    let to_map: Vec<(smithay::desktop::Window, String, Option<String>)> = entries
         .iter()
-        .filter_map(|(key, geo)| {
-            let window = state.window_by_app_id_title(&geo.app_id, geo.title.as_deref());
-            if window.is_some() {
-                Some((key.clone(), geo.clone()))
-            } else {
-                None
-            }
+        .filter_map(|entry| {
+            state.find_surface(&entry.app_id, entry.title.as_deref())
+                .map(|w| (w, entry.app_id.clone(), entry.title.clone()))
         })
         .collect();
 
-    for (key, geo) in matches {
-        if let Some(window) = state.window_by_app_id_title(&geo.app_id, geo.title.as_deref()) {
-            state.space.map_element(window.clone(), (geo.x, geo.y), false);
+    // Unmap all currently-mapped surfaces NOT in the composition list.
+    let current: Vec<smithay::desktop::Window> = state.space.elements().cloned().collect();
+    for window in &current {
+        let dominated = to_map.iter().any(|(w, _, _)| w == window);
+        if !dominated {
+            state.space.unmap_elem(window);
+            state.unmapped_surfaces.push(window.clone());
+        }
+    }
 
+    // Map surfaces in list order (bottom to top).
+    for (window, app_id, title) in &to_map {
+        state.unmapped_surfaces.retain(|w| w != window);
+
+        let key = (app_id.clone(), title.clone());
+        let geo = state.frame_geometries.get(&key);
+
+        let pos = geo.map(|g| (g.x, g.y)).unwrap_or((0, 0));
+        state.space.map_element(window.clone(), pos, false);
+
+        if let Some(geo) = geo {
             if let Some(toplevel) = window.toplevel() {
                 toplevel.with_pending_state(|s| {
-                    s.size = Some((geo.width, geo.height).into());
+                    s.size = Some(Size::from((geo.width, geo.height)));
                 });
                 toplevel.send_pending_configure();
             }
         }
-        state.pending_geometries.remove(&key);
+    }
+
+    // Reorder: raise elements in list order so the last entry is on top.
+    for (window, _, _) in &to_map {
+        state.space.raise_element(window, false);
     }
 }
 
-/// Reposition and resize a window based on geometry from the bus.
-/// If the window doesn't exist yet, store the geometry for later.
-fn handle_set_window_geometry(state: &mut State, geo: &sola_bus::topics::WindowGeometry) {
-    let window = state.window_by_app_id_title(&geo.app_id, geo.title.as_deref());
-    if let Some(window) = window {
-        state.space.map_element(window.clone(), (geo.x, geo.y), false);
+/// Apply a Frame update: configure the surface with the given size and position.
+fn handle_frame(state: &mut State, update: sola_bus::topics::FrameUpdate) {
+    let key = (update.app_id.clone(), update.title.clone());
+
+    // Store the geometry for future Composition mapping.
+    state.frame_geometries.insert(key, update.clone());
+
+    // If the surface exists (mapped or unmapped), configure it now.
+    if let Some(window) = state.find_surface(&update.app_id, update.title.as_deref()) {
+        // If already in Space, reposition.
+        if state.window_by_app_id_title(&update.app_id, update.title.as_deref()).is_some() {
+            state.space.map_element(window.clone(), (update.x, update.y), false);
+        }
 
         if let Some(toplevel) = window.toplevel() {
             toplevel.with_pending_state(|s| {
-                s.size = Some((geo.width, geo.height).into());
+                s.size = Some(Size::from((update.width, update.height)));
             });
             toplevel.send_pending_configure();
         }
     }
-    let key = (geo.app_id.clone(), geo.title.clone());
-    state.pending_geometries.insert(key, geo.clone());
+}
+
+/// Apply a Focus target: set keyboard focus to the matching surface.
+fn handle_focus(state: &mut State, target: sola_bus::topics::FocusTarget) {
+    use smithay::wayland::seat::WaylandFocus;
+
+    let window = state.window_by_app_id_title(&target.app_id, target.title.as_deref());
+    let Some(window) = window else { return };
+    let Some(surface) = window.wl_surface() else { return };
+
+    state.applying_shell_focus = true;
+    let serial = SERIAL_COUNTER.next_serial();
+    let keyboard = state.seat.get_keyboard().unwrap();
+    keyboard.set_focus(state, Some(surface.into_owned()), serial);
+    state.applying_shell_focus = false;
 }
 
 /// Emit the current app list as a sticky bus message.
 ///
-/// Called whenever windows are mapped, unmapped, or MRU order changes.
-/// The shell caches this list and uses it immediately when the switcher activates.
+/// Called whenever surfaces appear or disappear. The shell uses this to
+/// know which surfaces exist and compute composition.
 pub(crate) fn emit_apps_list(state: &mut State) {
     use sola_bus::topics::{App, Topic};
     use std::collections::HashMap;
 
     let mut counts: HashMap<String, u32> = HashMap::new();
+
+    // Count mapped surfaces.
     for window in state.space.elements() {
         if let Some(app_id) = State::app_id(window) {
             if app_id == "sola-shell" { continue; }
@@ -214,10 +178,16 @@ pub(crate) fn emit_apps_list(state: &mut State) {
         }
     }
 
+    // Count unmapped surfaces (known to exist but not yet composed).
+    for window in &state.unmapped_surfaces {
+        if let Some(app_id) = State::app_id(window) {
+            if app_id == "sola-shell" { continue; }
+            *counts.entry(app_id).or_default() += 1;
+        }
+    }
+
     let mut app_ids: Vec<String> = counts.keys().cloned().collect();
-    app_ids.sort_by_key(|id| {
-        state.mru_apps.iter().position(|m| m == id).unwrap_or(usize::MAX)
-    });
+    app_ids.sort();
 
     let apps: Vec<App> = app_ids.into_iter().map(|app_id| {
         let window_count = counts[&app_id];
@@ -246,105 +216,65 @@ fn handle_set_window_policy(
         .insert(payload.app_id.clone(), payload.windows);
 }
 
-/// Map pending surfaces whose app_id is known and can be matched to a policy.
+/// Move pending surfaces whose app_id is now known to unmapped_surfaces.
+/// Emit updated Apps list when new surfaces are detected.
 ///
-/// - Surfaces with a matching policy: apply the declared sizing and focus rules.
-/// - Surfaces with a known app_id but no policy: apply defaults (full size, auto-focus).
-/// - Surfaces with no app_id yet: keep pending (retry next frame).
+/// Surfaces stay unmapped until the shell includes them in a Composition.
 fn apply_pending_surfaces(state: &mut State) {
     use smithay::wayland::seat::WaylandFocus;
 
+    let surfaces: Vec<_> = state.pending_surfaces.drain(..).collect();
     let mut still_pending = Vec::new();
-    let mut to_map: Vec<(
-        smithay::desktop::Window,
-        String,
-        Option<sola_bus::topics::WindowPolicy>,
-    )> = Vec::new();
+    let mut new_surfaces = false;
 
-    for window in state.pending_surfaces.drain(..) {
-        let app_id = State::app_id(&window);
-        let Some(app_id) = app_id else {
+    for window in surfaces {
+        let Some(app_id) = State::app_id(&window) else {
             still_pending.push(window);
             continue;
         };
 
         let title = state::window_title(&window);
-        let policy = state.window_policies.get(&app_id).and_then(|policies| {
-            title
-                .as_ref()
-                .and_then(|t| policies.iter().find(|p| p.title == *t))
-                .cloned()
-        });
+        tracing::info!(app_id = %app_id, title = ?title, "surface ready, waiting for composition");
 
-        tracing::info!(
-            app_id = %app_id,
-            title = ?title,
-            has_policy = policy.is_some(),
-            "mapping surface"
-        );
+        // Cache keyboard_target surface for direct Super+key routing.
+        let is_keyboard_target = state.window_policies.get(&app_id)
+            .and_then(|policies| {
+                title.as_ref()
+                    .and_then(|t| policies.iter().find(|p| p.title == *t))
+            })
+            .is_some_and(|p| p.keyboard_target);
 
-        to_map.push((window, app_id, policy));
+        if is_keyboard_target {
+            if let Some(surface) = window.wl_surface() {
+                let owned = surface.into_owned();
+                setup_shell_keyboard_target(state, &owned);
+                state.shell_keyboard_target = Some(owned);
+            }
+        }
+
+        // If the app has no WindowPolicy, emit a default one.
+        if !state.window_policies.contains_key(&app_id) {
+            let default_policy = sola_bus::topics::WindowPolicyPayload {
+                app_id: app_id.clone(),
+                windows: vec![sola_bus::topics::WindowPolicy {
+                    title: title.unwrap_or_default(),
+                    zoned: true,
+                    keyboard_target: false,
+                    size: None,
+                    position: None,
+                }],
+            };
+            let _ = state.bus.emit_sticky(sola_bus::topics::Topic::SetWindowPolicy(default_policy.clone()));
+            state.window_policies.insert(app_id, default_policy.windows);
+        }
+
+        state.unmapped_surfaces.push(window);
+        new_surfaces = true;
     }
 
     state.pending_surfaces = still_pending;
 
-    let mut mapped_any = false;
-
-    for (window, ref _app_id, policy) in to_map {
-        let should_focus = policy.as_ref().map_or(true, |p| p.auto_focus);
-
-        match policy {
-            Some(ref p) if !p.zoned => {
-                let pos = p.position.unwrap_or((0, 0));
-                state
-                    .space
-                    .map_element(window.clone(), pos, should_focus);
-
-                if let Some((w, h)) = p.size {
-                    if let Some(toplevel) = window.toplevel() {
-                        toplevel.with_pending_state(|s| {
-                            s.size = Some(Size::from((w, h)));
-                        });
-                        toplevel.send_pending_configure();
-                    }
-                }
-
-                // Cache keyboard_target surface for direct Super+key routing.
-                if p.keyboard_target {
-                    if let Some(surface) = window.wl_surface() {
-                        let owned = surface.into_owned();
-                        setup_shell_keyboard_target(state, &owned);
-                        state.shell_keyboard_target = Some(owned);
-                    }
-                }
-            }
-            _ => {
-                if let Some(mode) =
-                    state.space.outputs().next().and_then(|o| o.current_mode())
-                {
-                    if let Some(toplevel) = window.toplevel() {
-                        toplevel.with_pending_state(|s| {
-                            s.size = Some(Size::from((mode.size.w, mode.size.h)));
-                        });
-                        toplevel.send_pending_configure();
-                    }
-                }
-                state.space.map_element(window.clone(), (0, 0), true);
-            }
-        }
-
-        if should_focus {
-            if let Some(surface) = window.wl_surface() {
-                let serial = SERIAL_COUNTER.next_serial();
-                let keyboard = state.seat.get_keyboard().unwrap();
-                keyboard.set_focus(state, Some(surface.into_owned()), serial);
-            }
-        }
-
-        mapped_any = true;
-    }
-
-    if mapped_any {
+    if new_surfaces {
         emit_apps_list(state);
     }
 }

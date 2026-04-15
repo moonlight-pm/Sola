@@ -57,18 +57,6 @@ pub struct State {
     /// surfaces after compositor reconnection.
     pub x11_windows: HashMap<u32, X11WindowInfo>,
 
-    /// App IDs (X11 classes) whose size has been explicitly set by the user
-    /// (via a zone action, i.e. a bus-originated SetWindowGeometry), mapped
-    /// to the last user-commanded (width, height).
-    ///
-    /// Used to:
-    ///   - reject client-initiated X11 ConfigureRequests that would change size
-    ///   - reject compositor-initiated xdg_toplevel configures whose size
-    ///     doesn't match the user's zone (e.g. after a reconnect when the
-    ///     compositor's new_toplevel default resets to fullscreen)
-    ///   - re-sync the compositor by re-emitting the locked size on reconnect
-    pub user_locked_sizes: HashMap<String, (i32, i32)>,
-
     // -- Client side --
 
     /// Wayland client connection to sola-compositor.
@@ -234,7 +222,6 @@ impl State {
             bus: sola_bus::BusClient::new(),
             surface_to_x11: HashMap::new(),
             x11_windows: HashMap::new(),
-            user_locked_sizes: HashMap::new(),
             client: None,
             running: true,
         }

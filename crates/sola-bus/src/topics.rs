@@ -16,17 +16,30 @@ pub struct OpenUrlRequest {
     pub activate: bool,
 }
 
-/// Window geometry for positioning and sizing.
+/// Z-ordered entry in the composition list. Bottom to top.
+/// Title is optional — `None` matches any window from that app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowGeometry {
+pub struct CompositionEntry {
     pub app_id: String,
-    /// Optional title to disambiguate multiple windows from the same app.
-    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// Per-surface position and size. Applied immediately.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameUpdate {
+    pub app_id: String,
     pub title: Option<String>,
     pub x: i32,
     pub y: i32,
     pub width: i32,
     pub height: i32,
+}
+
+/// Which surface receives keyboard focus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusTarget {
+    pub app_id: String,
+    pub title: Option<String>,
 }
 
 /// Output resolution, emitted by compositor on startup and hotplug.
@@ -82,8 +95,6 @@ pub struct WindowPolicy {
     pub title: String,
     /// If true, the shell manages position/size via zones.
     pub zoned: bool,
-    /// If true, compositor gives keyboard focus on map.
-    pub auto_focus: bool,
     /// If true, compositor routes Super+key events to this surface.
     #[serde(default)]
     pub keyboard_target: bool,
@@ -122,13 +133,16 @@ impl Zone {
 define_topics! {
     // App management
     Apps(Vec<App>),
-    RaiseApp(String),
     FocusChanged(String),
     LaunchApp(String),
 
+    // Composition authority (shell → compositor)
+    Composition(Vec<CompositionEntry>),
+    Frame(FrameUpdate),
+    Focus(FocusTarget),
+
     // Window management
     SetWindowPolicy(WindowPolicyPayload),
-    SetWindowGeometry(WindowGeometry),
     OutputGeometry(OutputGeometry),
 
     // Menus

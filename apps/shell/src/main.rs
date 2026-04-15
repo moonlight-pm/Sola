@@ -9,7 +9,7 @@ use gtk4::prelude::*;
 use webkit6::prelude::*;
 
 use sola_app::{asset_bundle, SolaApp};
-use sola_bus::topics::Topic;
+use sola_bus::topics::{App, CompositionEntry, FocusTarget, FrameUpdate, Topic};
 
 mod keycode {
     pub const TAB: u32 = 23;
@@ -20,22 +20,126 @@ mod keycode {
 
 struct ShellState {
     focused_app_id: Option<String>,
+    mru_apps: Vec<String>,
+    known_apps: Vec<App>,
     menus: menus::MenuCache,
     zoning: zoning::ZoningState,
     switcher: switcher::SwitcherState,
-    overlay_webview: Option<webkit6::WebView>,
-    overlay_window: Option<gtk4::ApplicationWindow>,
+    switcher_webview: Option<webkit6::WebView>,
 }
 
 impl ShellState {
     fn new() -> Self {
         Self {
             focused_app_id: None,
+            mru_apps: Vec::new(),
+            known_apps: Vec::new(),
             menus: menus::MenuCache::new(),
             zoning: zoning::ZoningState::new(),
             switcher: switcher::SwitcherState::default(),
-            overlay_webview: None,
-            overlay_window: None,
+            switcher_webview: None,
+        }
+    }
+
+    /// Build the composition list (bottom to top) and emit it.
+    fn emit_composition(&self, emit: &dyn Fn(Topic)) {
+        let mut entries = Vec::new();
+
+        // 1. Shell menubar — always present at the bottom.
+        entries.push(CompositionEntry {
+            app_id: "sola-shell".into(),
+            title: Some("menubar".into()),
+        });
+
+        // 2. App windows ordered by MRU (least recent first = bottom of stack).
+        for app_id in self.mru_apps.iter().rev() {
+            if app_id == "sola-shell" { continue; }
+            entries.push(CompositionEntry {
+                app_id: app_id.clone(),
+                title: None,
+            });
+        }
+
+        // Apps not yet in MRU (just appeared).
+        for app in &self.known_apps {
+            if app.app_id == "sola-shell" { continue; }
+            if !self.mru_apps.contains(&app.app_id) {
+                entries.push(CompositionEntry {
+                    app_id: app.app_id.clone(),
+                    title: None,
+                });
+            }
+        }
+
+        // 3. Shell panels on top when active.
+        if self.switcher.active {
+            entries.push(CompositionEntry {
+                app_id: "sola-shell".into(),
+                title: Some("switcher".into()),
+            });
+        }
+
+        emit(Topic::Composition(entries));
+    }
+
+    /// Emit Frame updates for all known apps.
+    fn emit_all_frames(&self, emit: &dyn Fn(Topic)) {
+        if let Some(frame) = self.zoning.menubar_frame() {
+            emit(Topic::Frame(frame));
+        }
+
+        for app in &self.known_apps {
+            if app.app_id == "sola-shell" { continue; }
+            if let Some(frame) = self.zoning.app_frame(&app.app_id) {
+                emit(Topic::Frame(frame));
+            }
+        }
+    }
+
+    /// Handle new/removed apps from the compositor's Apps list.
+    fn handle_apps_update(&mut self, apps: Vec<App>, emit: &dyn Fn(Topic)) {
+        let old_ids: std::collections::HashSet<&str> =
+            self.known_apps.iter().map(|a| a.app_id.as_str()).collect();
+        let new_ids: std::collections::HashSet<&str> =
+            apps.iter().map(|a| a.app_id.as_str()).collect();
+
+        let added: Vec<String> = apps.iter()
+            .filter(|a| !old_ids.contains(a.app_id.as_str()) && a.app_id != "sola-shell")
+            .map(|a| a.app_id.clone())
+            .collect();
+
+        let removed: Vec<String> = self.known_apps.iter()
+            .filter(|a| !new_ids.contains(a.app_id.as_str()) && a.app_id != "sola-shell")
+            .map(|a| a.app_id.clone())
+            .collect();
+
+        self.known_apps = apps.clone();
+        self.switcher.apps = apps.into_iter()
+            .filter(|a| a.app_id != "sola-shell")
+            .collect();
+
+        for id in &removed {
+            self.mru_apps.retain(|m| m != id);
+        }
+
+        // Emit Frames for new apps.
+        for id in &added {
+            if let Some(frame) = self.zoning.app_frame(id) {
+                emit(Topic::Frame(frame));
+            }
+        }
+
+        self.emit_composition(emit);
+
+        // Focus the newest app.
+        if let Some(id) = added.first() {
+            self.mru_apps.retain(|m| m != id);
+            self.mru_apps.insert(0, id.clone());
+            emit(Topic::Focus(FocusTarget {
+                app_id: id.clone(),
+                title: None,
+            }));
+            self.emit_composition(emit);
         }
     }
 }
@@ -63,17 +167,16 @@ fn main() {
                 let mut s = state.borrow_mut();
                 match topic {
                     Topic::Apps(apps) => {
-                        s.switcher.apps = apps.clone();
+                        s.handle_apps_update(apps.clone(), emit);
 
                         if s.switcher.active {
-                            tracing::info!(count = apps.len(), "updated app list (switcher active)");
                             let json = serde_json::to_string(&s.switcher.apps).unwrap_or_default();
                             let script = format!(
                                 "renderSwitcher({}, {})",
                                 json, s.switcher.selected
                             );
-                            if let Some(ref ov) = s.overlay_webview {
-                                push_overlay_js(ov, &script);
+                            if let Some(ref wv) = s.switcher_webview {
+                                eval_js(wv, &script);
                             }
                         }
                     }
@@ -81,6 +184,12 @@ fn main() {
                         tracing::info!(app_id = %app_id, "focus changed");
                         s.focused_app_id = Some(app_id.clone());
                         s.zoning.set_focused(app_id.clone());
+
+                        // Update MRU.
+                        s.mru_apps.retain(|m| m != app_id);
+                        s.mru_apps.insert(0, app_id.clone());
+
+                        s.emit_composition(emit);
 
                         let menu = s.menus.get_menu(app_id);
                         let app_name = menu
@@ -117,17 +226,8 @@ fn main() {
                     }
                     Topic::OutputGeometry(geo) => {
                         s.zoning.set_output_size(geo);
-
-                        if let Some(g) = s.zoning.menubar_geometry() {
-                            emit(Topic::SetWindowGeometry(g));
-                        }
-                        if let Some(g) = s.zoning.overlay_geometry() {
-                            emit(Topic::SetWindowGeometry(g));
-                        }
-
-                        for geo in s.zoning.restore() {
-                            emit(Topic::SetWindowGeometry(geo));
-                        }
+                        s.emit_all_frames(emit);
+                        s.emit_composition(emit);
                     }
                     _ => {}
                 }
@@ -148,18 +248,16 @@ fn main() {
                             WindowPolicy {
                                 title: "menubar".into(),
                                 zoned: false,
-                                auto_focus: false,
                                 keyboard_target: true,
                                 size: Some((1920, zoning::MENUBAR_HEIGHT)),
                                 position: Some((0, 0)),
                             },
                             WindowPolicy {
-                                title: "overlay".into(),
+                                title: "switcher".into(),
                                 zoned: false,
-                                auto_focus: false,
                                 keyboard_target: false,
-                                size: None,
-                                position: None,
+                                size: Some((800, 400)),
+                                position: Some((560, 340)),
                             },
                         ],
                     },
@@ -182,14 +280,13 @@ fn main() {
 
                 window.set_title(Some("menubar"));
 
-                // Menubar command bridge via title
+                // Menubar command bridge via title.
                 let webview_ref = {
                     let child = window.child().unwrap();
                     child.downcast::<webkit6::WebView>().unwrap()
                 };
                 webview_ref.connect_notify_local(Some("title"), {
                     let bus = bus.clone();
-                    let state = state.clone();
                     move |webview, _| {
                         let Some(title) = webview.title() else { return };
                         let title = title.to_string();
@@ -198,86 +295,81 @@ fn main() {
                                 tracing::info!("exit requested from system menu");
                                 let _ = bus.borrow_mut().emit(Topic::Shutdown);
                             }
-                            "cmd:system_menu" => {
-                                let items = serde_json::json!([
-                                    {"type": "action", "id": "exit", "label": "Exit Sola"}
-                                ]);
-                                let script = format!("showDropdown({}, 0)", items);
-                                if let Some(ref ov) = state.borrow().overlay_webview {
-                                    push_overlay_js(ov, &script);
-                                }
-                            }
                             _ => {}
                         }
                     }
                 });
 
-                setup_overlay(window, &state, &bus);
+                setup_switcher_panel(window, &state, &bus);
+                setup_key_controller(window, &state, &bus);
+
                 tracing::info!("shell ready");
             }
         })
         .run();
 }
 
-fn setup_overlay(
+fn setup_switcher_panel(
     window: &gtk4::ApplicationWindow,
     state: &Rc<RefCell<ShellState>>,
-    bus: &Rc<RefCell<sola_bus::BusClient>>,
+    _bus: &Rc<RefCell<sola_bus::BusClient>>,
 ) {
     let app = window.application().unwrap();
 
-    let overlay_window = gtk4::ApplicationWindow::new(&app);
-    overlay_window.set_decorated(false);
-    overlay_window.set_default_size(1920, 1080);
-    overlay_window.set_title(Some("overlay"));
+    let switcher_window = gtk4::ApplicationWindow::new(&app);
+    switcher_window.set_decorated(false);
+    switcher_window.set_default_size(800, 400);
+    switcher_window.set_title(Some("switcher"));
 
     let css = gtk4::CssProvider::new();
-    css.load_from_data("window.overlay-window, window.overlay-window.background { background: transparent; }");
+    css.load_from_data("window.switcher-window, window.switcher-window.background { background: transparent; }");
     gtk4::style_context_add_provider_for_display(
         &gdk4::Display::default().unwrap(),
         &css,
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
-    overlay_window.add_css_class("overlay-window");
+    switcher_window.add_css_class("switcher-window");
 
-    let overlay_webview = webkit6::WebView::new();
-    overlay_webview.set_background_color(&gdk4::RGBA::new(0.0, 0.0, 0.0, 0.0));
-    if let Some(settings) = webkit6::prelude::WebViewExt::settings(&overlay_webview) {
+    let switcher_webview = webkit6::WebView::new();
+    switcher_webview.set_background_color(&gdk4::RGBA::new(0.0, 0.0, 0.0, 0.0));
+    if let Some(settings) = webkit6::prelude::WebViewExt::settings(&switcher_webview) {
         settings.set_enable_developer_extras(true);
         settings.set_enable_write_console_messages_to_stdout(true);
     }
-    overlay_webview.connect_context_menu(|_, _, _| true);
+    switcher_webview.connect_context_menu(|_, _, _| true);
 
     let html = OVERLAY_HTML.replace("__OVERLAY_JS__", &strip_ts_inline(OVERLAY_JS));
-    overlay_webview.load_html(&html, None);
+    switcher_webview.load_html(&html, None);
 
-    overlay_window.set_child(Some(&overlay_webview));
-    overlay_window.present();
+    switcher_window.set_child(Some(&switcher_webview));
+    switcher_window.present();
 
-    {
-        let mut s = state.borrow_mut();
-        s.overlay_webview = Some(overlay_webview.clone());
-        s.overlay_window = Some(overlay_window.clone());
-    }
+    state.borrow_mut().switcher_webview = Some(switcher_webview);
+}
 
-    // Key controller on the MENUBAR window.
-    // The compositor routes Super+key events directly here via wl_keyboard.key.
+fn setup_key_controller(
+    window: &gtk4::ApplicationWindow,
+    state: &Rc<RefCell<ShellState>>,
+    bus: &Rc<RefCell<sola_bus::BusClient>>,
+) {
     let key_ctrl = gtk4::EventControllerKey::new();
     key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
 
     key_ctrl.connect_key_pressed({
         let state = state.clone();
         let bus = bus.clone();
-        let overlay_webview = overlay_webview.clone();
         move |_, _keyval, keycode, gtk_modifiers| {
             let mut s = state.borrow_mut();
             let shift_held = gtk_modifiers.contains(gdk4::ModifierType::SHIFT_MASK);
+            let emit = |topic: Topic| {
+                let _ = bus.borrow_mut().emit(topic);
+            };
 
             // Shell system shortcuts (highest priority).
             if let Some(action) = s.menus.lookup_shortcut(keycode, shift_held, "sola-shell") {
                 tracing::info!(action_id = %action.action_id, "shell shortcut");
                 if action.action_id == "exit" {
-                    let _ = bus.borrow_mut().emit(Topic::Shutdown);
+                    emit(Topic::Shutdown);
                 }
                 return glib::Propagation::Stop;
             }
@@ -289,7 +381,22 @@ fn setup_overlay(
                 s.switcher.selected = if s.switcher.apps.len() > 1 { 1 } else { 0 };
                 let json = serde_json::to_string(&s.switcher.apps).unwrap_or_default();
                 let script = format!("renderSwitcher({}, {})", json, s.switcher.selected);
-                push_overlay_js(&overlay_webview, &script);
+                if let Some(ref wv) = s.switcher_webview {
+                    eval_js(wv, &script);
+                }
+
+                // Emit switcher frame (centered on screen).
+                if let Some((ow, oh)) = s.zoning.output_size {
+                    emit(Topic::Frame(FrameUpdate {
+                        app_id: "sola-shell".into(),
+                        title: Some("switcher".into()),
+                        x: (ow - 800) / 2,
+                        y: (oh - 400) / 2,
+                        width: 800,
+                        height: 400,
+                    }));
+                }
+                s.emit_composition(&emit);
                 return glib::Propagation::Stop;
             }
 
@@ -299,13 +406,17 @@ fn setup_overlay(
                     keycode::TAB | keycode::RIGHT => {
                         s.switcher.select_next();
                         let sel = s.switcher.selected;
-                        push_overlay_js(&overlay_webview, &format!("setSelection({sel})"));
+                        if let Some(ref wv) = s.switcher_webview {
+                            eval_js(wv, &format!("setSelection({sel})"));
+                        }
                         return glib::Propagation::Stop;
                     }
                     keycode::LEFT => {
                         s.switcher.select_prev();
                         let sel = s.switcher.selected;
-                        push_overlay_js(&overlay_webview, &format!("setSelection({sel})"));
+                        if let Some(ref wv) = s.switcher_webview {
+                            eval_js(wv, &format!("setSelection({sel})"));
+                        }
                         return glib::Propagation::Stop;
                     }
                     _ => {}
@@ -313,8 +424,8 @@ fn setup_overlay(
             }
 
             // Zone snapping (Super+Numpad).
-            if let Some(geo) = s.zoning.handle_key(keycode) {
-                let _ = bus.borrow_mut().emit(Topic::SetWindowGeometry(geo));
+            if let Some(frame) = s.zoning.handle_key(keycode) {
+                emit(Topic::Frame(frame));
                 return glib::Propagation::Stop;
             }
 
@@ -326,7 +437,7 @@ fn setup_overlay(
                         action_id = %action.action_id,
                         "menu shortcut matched"
                     );
-                    let _ = bus.borrow_mut().emit(Topic::MenuAction(action));
+                    emit(Topic::MenuAction(action));
                     return glib::Propagation::Stop;
                 }
             }
@@ -337,52 +448,47 @@ fn setup_overlay(
 
     key_ctrl.connect_key_released({
         let state = state.clone();
-        let overlay_webview = overlay_webview.clone();
         let bus = bus.clone();
         move |_, _keyval, keycode, _modifiers| {
             if keycode != keycode::SUPER_L {
                 return;
             }
 
-            let app_id = {
-                let mut s = state.borrow_mut();
-                if !s.switcher.active {
-                    return;
-                }
-                s.switcher.active = false;
-                s.switcher.selected_app_id().map(String::from)
+            let emit = |topic: Topic| {
+                let _ = bus.borrow_mut().emit(topic);
             };
 
+            let mut s = state.borrow_mut();
+            if !s.switcher.active {
+                return;
+            }
+
+            let app_id = s.switcher.selected_app_id().map(String::from);
             tracing::info!(app_id = ?app_id, "deactivating switcher");
-            push_overlay_js(&overlay_webview, "clear()");
 
-            if let Some(app_id) = app_id {
-                let _ = bus.borrow_mut().emit(Topic::RaiseApp(app_id));
+            s.switcher.active = false;
+            if let Some(ref wv) = s.switcher_webview {
+                eval_js(wv, "clear()");
             }
-        }
-    });
 
-    overlay_webview.connect_notify_local(Some("title"), {
-        let state = state.clone();
-        let bus = bus.clone();
-        move |webview, _| {
-            let Some(title) = webview.title() else { return };
-            let title = title.to_string();
-            if let Ok(index) = title.parse::<usize>() {
-                state.borrow_mut().switcher.selected = index;
-            } else if let Some(action) = title.strip_prefix("action:") {
-                tracing::info!(action, "overlay menu action");
-                if action == "exit" {
-                    let _ = bus.borrow_mut().emit(Topic::Shutdown);
-                }
+            if let Some(ref app_id) = app_id {
+                // Move to front of MRU.
+                s.mru_apps.retain(|m| m != app_id);
+                s.mru_apps.insert(0, app_id.clone());
+
+                emit(Topic::Focus(FocusTarget {
+                    app_id: app_id.clone(),
+                    title: None,
+                }));
             }
+            s.emit_composition(&emit);
         }
     });
 
     window.add_controller(key_ctrl);
 }
 
-fn push_overlay_js(webview: &webkit6::WebView, script: &str) {
+fn eval_js(webview: &webkit6::WebView, script: &str) {
     webview.evaluate_javascript(script, None, None, None::<&gio::Cancellable>, |_| {});
 }
 

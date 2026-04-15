@@ -114,13 +114,12 @@ fn run() -> Result<(), Error> {
 /// and re-emits any user-locked geometries so the compositor's
 /// `new_toplevel` fullscreen default doesn't override the user's zones.
 fn connect_to_compositor(state: &mut State) {
-    use sola_bus::topics::{Topic, WindowGeometry};
+    use sola_bus::topics::{Topic, WindowPolicy, WindowPolicyPayload};
 
     if state.client.is_some() {
         return;
     }
     if let Some(mut conn) = client::ClientConnection::connect() {
-        // Gather existing X11 windows to re-create proxies.
         let windows: Vec<(u32, String, String)> = state
             .x11_windows
             .iter()
@@ -130,27 +129,25 @@ fn connect_to_compositor(state: &mut State) {
         conn.recreate_proxies(&windows);
         state.client = Some(conn);
 
-        // Re-emit locked sizes so the compositor re-syncs to the user's zone
-        // instead of leaving each newly-created proxy at its fullscreen default.
+        // Re-emit WindowPolicy for all known X11 windows so the shell
+        // can compose them after a compositor reconnect.
         for info in state.x11_windows.values() {
-            let Some(&(w, h)) = state.user_locked_sizes.get(&info.class) else {
-                continue;
-            };
             let geo = info.surface.geometry();
-            let _ = state.bus.emit(Topic::SetWindowGeometry(WindowGeometry {
+            let size = if geo.size.w > 0 && geo.size.h > 0 {
+                Some((geo.size.w, geo.size.h))
+            } else {
+                None
+            };
+            let _ = state.bus.emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
                 app_id: info.class.clone(),
-                title: None,
-                x: geo.loc.x,
-                y: geo.loc.y,
-                width: w,
-                height: h,
+                windows: vec![WindowPolicy {
+                    title: info.title.clone(),
+                    zoned: true,
+                    keyboard_target: false,
+                    size,
+                    position: None,
+                }],
             }));
-            tracing::info!(
-                app_id = %info.class,
-                width = w,
-                height = h,
-                "re-emitted locked geometry after reconnect"
-            );
         }
     }
 }
@@ -276,23 +273,6 @@ fn process_bus(state: &mut State) {
             Topic::OutputGeometry(geo) => {
                 update_output_mode(state, geo.width, geo.height);
             }
-            // The bus doesn't echo messages to the sender, so any
-            // SetWindowGeometry we see came from another client — in
-            // practice, sola's zoning code. Record the commanded size
-            // so we can enforce it against X11 clients and against
-            // compositor configures on reconnect.
-            Topic::SetWindowGeometry(geo) => {
-                let size = (geo.width, geo.height);
-                let prev = state.user_locked_sizes.insert(geo.app_id.clone(), size);
-                if prev != Some(size) {
-                    tracing::info!(
-                        app_id = %geo.app_id,
-                        width = geo.width,
-                        height = geo.height,
-                        "locking X11 window size (user zone)"
-                    );
-                }
-            }
             _ => {}
         }
     }
@@ -315,10 +295,8 @@ fn update_output_mode(state: &mut State, width: i32, height: i32) {
 /// Apply any queued resize requests (from proxy xdg_toplevel configures)
 /// to their matching X11 windows via xwm.
 ///
-/// For user-locked apps, only configures whose size matches the user's
-/// zone are applied — others are ignored to prevent the compositor from
-/// overriding the zone (e.g. via new_toplevel's fullscreen default on
-/// reconnect).
+/// The shell controls geometry via Frame → compositor → xdg_toplevel configure
+/// → sola-x proxy → X11 window. All configures are applied directly.
 fn apply_pending_configures(state: &mut State) {
     use smithay::utils::Rectangle;
 
@@ -331,20 +309,6 @@ fn apply_pending_configures(state: &mut State) {
         let Some(info) = state.x11_windows.get(&conf.x11_id) else {
             continue;
         };
-
-        if let Some(&(lw, lh)) = state.user_locked_sizes.get(&info.class) {
-            if conf.width as i32 != lw || conf.height as i32 != lh {
-                tracing::info!(
-                    app_id = %info.class,
-                    configure_w = conf.width,
-                    configure_h = conf.height,
-                    locked_w = lw,
-                    locked_h = lh,
-                    "ignoring compositor configure for user-locked app"
-                );
-                continue;
-            }
-        }
 
         let geo = info.surface.geometry();
         let new_geo = Rectangle::new(
