@@ -188,7 +188,6 @@ fn build_ui(app: &gtk4::Application) {
         )),
         tabs: RefCell::new(Vec::new()),
         active_tab_id: RefCell::new(None),
-        focused: RefCell::new(false),
     });
 
     // IPC setup
@@ -323,11 +322,6 @@ fn build_ui(app: &gtk4::Application) {
                             }
                             _ => {}
                         }
-                    }
-                    Topic::FocusChanged(app_id) => {
-                        let is_focused = app_id == "sola-browser";
-                        *app_state.focused.borrow_mut() = is_focused;
-                        tracing::info!(%app_id, is_focused, "focus changed");
                     }
                     Topic::OpenUrl(req) => {
                         let tab_id = uuid::Uuid::new_v4().to_string();
@@ -466,7 +460,6 @@ struct AppState {
     history: RefCell<state::BrowsingHistory>,
     tabs: RefCell<Vec<Tab>>,
     active_tab_id: RefCell<Option<String>>,
-    focused: RefCell<bool>,
 }
 
 impl AppState {

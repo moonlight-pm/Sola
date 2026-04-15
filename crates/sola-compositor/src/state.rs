@@ -123,10 +123,6 @@ pub struct State {
     /// Surfaces with a known app_id, waiting for Composition to map them.
     pub unmapped_surfaces: Vec<Window>,
 
-    /// Set to true while applying a shell Focus command.
-    /// Suppresses FocusChanged emission in the seat handler.
-    pub applying_shell_focus: bool,
-
     // -- Protocol state --
 
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
@@ -191,7 +187,6 @@ impl State {
             window_policies: HashMap::new(),
             pending_surfaces: Vec::new(),
             unmapped_surfaces: Vec::new(),
-            applying_shell_focus: false,
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             dmabuf_state: None,

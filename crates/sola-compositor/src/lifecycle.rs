@@ -153,11 +153,9 @@ fn handle_focus(state: &mut State, target: sola_bus::topics::FocusTarget) {
     let Some(window) = window else { return };
     let Some(surface) = window.wl_surface() else { return };
 
-    state.applying_shell_focus = true;
     let serial = SERIAL_COUNTER.next_serial();
     let keyboard = state.seat.get_keyboard().unwrap();
     keyboard.set_focus(state, Some(surface.into_owned()), serial);
-    state.applying_shell_focus = false;
 }
 
 /// Emit the current app list as a sticky bus message.

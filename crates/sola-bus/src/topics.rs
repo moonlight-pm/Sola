@@ -133,7 +133,6 @@ impl Zone {
 define_topics! {
     // App management
     Apps(Vec<App>),
-    FocusChanged(String),
     LaunchApp(String),
 
     // Composition authority (shell → compositor)

@@ -6,8 +6,6 @@ use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::input::pointer::CursorImageStatus;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
-use sola_bus::topics::Topic;
-
 use crate::state::State;
 
 impl SeatHandler for State {
@@ -21,26 +19,7 @@ impl SeatHandler for State {
 
     fn cursor_image(&mut self, _seat: &Seat<Self>, _image: CursorImageStatus) {}
 
-    fn focus_changed(&mut self, _seat: &Seat<Self>, focused: Option<&Self::KeyboardFocus>) {
-        // Don't emit FocusChanged when applying a shell Focus command —
-        // the shell already knows the focus it set.
-        if self.applying_shell_focus {
-            return;
-        }
-
-        let Some(surface) = focused else { return };
-
-        use smithay::wayland::seat::WaylandFocus;
-        let app_id = self.space.elements().find_map(|window| {
-            window.wl_surface()
-                .filter(|s| s.as_ref() == surface)
-                .and_then(|_| State::app_id(window))
-        });
-
-        let Some(app_id) = app_id else { return };
-
-        let _ = self.bus.emit_sticky(Topic::FocusChanged(app_id));
-    }
+    fn focus_changed(&mut self, _seat: &Seat<Self>, _focused: Option<&Self::KeyboardFocus>) {}
 }
 
 smithay::delegate_seat!(State);

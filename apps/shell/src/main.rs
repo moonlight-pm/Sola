@@ -221,11 +221,6 @@ fn main() {
                             }
                         }
                     }
-                    Topic::FocusChanged(app_id) => {
-                        tracing::info!(app_id = %app_id, "focus changed");
-                        s.set_focus(app_id);
-                        s.emit_composition(emit);
-                    }
                     Topic::SetAppMenu(payload) => {
                         s.menus.set_menu(payload.clone());
 
