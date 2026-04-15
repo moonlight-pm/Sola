@@ -18,9 +18,11 @@ pub mod config;
 pub mod strip;
 pub mod watcher;
 pub mod webview;
+pub mod window;
 
 // Re-export for macro use
 pub use assets::{Asset, AssetBundle, ContentType};
+pub use window::{WindowConfig, WindowHandle};
 
 /// Trait for app-specific command handling.
 /// Implement this to handle commands sent from the JS frontend.
