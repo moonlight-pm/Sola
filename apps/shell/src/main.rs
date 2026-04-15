@@ -230,7 +230,7 @@ fn main() {
                     "open_menu" => {
                         let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("app");
                         let index = args.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                        let anchor_x = args.get("anchor_x").and_then(|v| v.as_f64()).unwrap_or(0.0) as i32;
+                        let anchor_x = args.get("anchor_x").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let mut s = state.borrow_mut();
                         open_menu(&mut s, source, index, anchor_x);
                     }
@@ -477,7 +477,7 @@ fn setup_menu_panel(
     state.borrow_mut().menu_webview = Some(menu_webview);
 }
 
-fn open_menu(s: &mut ShellState, source: &str, menu_index: usize, anchor_x: i32) {
+fn open_menu(s: &mut ShellState, source: &str, menu_index: usize, anchor_x: f64) {
     use sola_bus::topics::MenuItem;
 
     let app_id = if source == "system" {
