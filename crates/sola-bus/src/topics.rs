@@ -50,6 +50,13 @@ pub struct OutputGeometry {
     pub height: i32,
 }
 
+/// Emitted by compositor when pointer enters a different surface/window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MouseEnteredPayload {
+    pub app_id: String,
+    pub title: Option<String>,
+}
+
 /// App menu definition, emitted as sticky by apps at startup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppMenuPayload {
@@ -154,6 +161,7 @@ define_topics! {
     // Window management
     SetWindowPolicy(WindowPolicyPayload),
     OutputGeometry(OutputGeometry),
+    MouseEntered(MouseEnteredPayload),
 
     // Menus
     SetAppMenu(AppMenuPayload),

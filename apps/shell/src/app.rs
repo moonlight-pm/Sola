@@ -4,7 +4,7 @@ use serde_json::Value;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
     App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord, MenuDefinition,
-    MenuItem, ShellKeyBindingsPayload, Topic,
+    MenuItem, MouseEnteredPayload, ShellKeyBindingsPayload, Topic,
 };
 use sola_core::KeyCode;
 
@@ -139,6 +139,24 @@ impl SolaApp for ShellApp {
             Topic::OutputGeometry(geo) => {
                 self.zoning.set_output_size(geo);
                 self.emit_all_frames(ctx);
+                self.emit_composition(ctx);
+            }
+            Topic::MouseEntered(MouseEnteredPayload { app_id, title }) => {
+                // Shell-owned surfaces should not steal app focus.
+                if app_id == Self::APP_ID {
+                    return;
+                }
+
+                // Keep menu/switcher interactions stable while overlays are active.
+                if self.menu_open || self.switcher.active {
+                    return;
+                }
+
+                self.set_focus(app_id);
+                ctx.emit(Topic::Focus(FocusTarget {
+                    app_id: app_id.clone(),
+                    title: title.clone(),
+                }));
                 self.emit_composition(ctx);
             }
             _ => {}

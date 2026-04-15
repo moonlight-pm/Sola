@@ -112,6 +112,10 @@ pub struct State {
     /// Key combinations declared by the shell as handled.
     pub shell_key_bindings: Vec<KeyChord>,
 
+    /// Last surface identity currently hovered by pointer, as (app_id, title).
+    /// Used to emit edge-triggered MouseEntered events only on hover changes.
+    pub hovered_surface: Option<(String, Option<String>)>,
+
     /// Frame geometries from the shell, keyed by (app_id, title).
     /// Applied when the matching surface is found or when Composition maps it.
     pub frame_geometries: HashMap<(String, Option<String>), sola_bus::topics::FrameUpdate>,
@@ -184,6 +188,7 @@ impl State {
             modifiers: ModifierState::default(),
             shell_keyboard_target: None,
             shell_key_bindings: Vec::new(),
+            hovered_surface: None,
             frame_geometries: HashMap::new(),
             window_policies: HashMap::new(),
             pending_surfaces: Vec::new(),

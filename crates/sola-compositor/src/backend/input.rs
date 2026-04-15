@@ -242,9 +242,29 @@ fn send_to_shell(
 }
 
 /// Forward the current pointer position through the seat to the client.
+/// Emits MouseEntered on the bus only when hovered surface/window changes.
 fn forward_pointer_motion(state: &mut State) {
     let (x, y) = state.pointer_location;
     let serial = SERIAL_COUNTER.next_serial();
+
+    let hovered = state.space.element_under((x, y)).map(|(window, _loc)| {
+        (
+            crate::State::app_id(&window).unwrap_or_default(),
+            crate::state::window_title(&window),
+        )
+    });
+
+    if hovered != state.hovered_surface {
+        state.hovered_surface = hovered.clone();
+
+        if let Some((app_id, title)) = hovered {
+            if !app_id.is_empty() {
+                let _ = state.bus.emit(sola_bus::topics::Topic::MouseEntered(
+                    sola_bus::topics::MouseEnteredPayload { app_id, title },
+                ));
+            }
+        }
+    }
 
     let under = state.space.element_under((x, y)).and_then(|(window, loc)| {
         window
