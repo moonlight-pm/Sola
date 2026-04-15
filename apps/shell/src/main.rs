@@ -294,7 +294,9 @@ fn setup_overlay(
         s.overlay_window = Some(overlay_window.clone());
     }
 
-    // Overlay key controller for switcher navigation
+    // Switcher key controller on the MENUBAR window.
+    // GrabInput focuses the menubar (first sola-shell surface), so the
+    // menubar's key controller receives Tab/Arrow/Super release events.
     let key_ctrl = gtk4::EventControllerKey::new();
     key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
 
@@ -376,7 +378,8 @@ fn setup_overlay(
         }
     });
 
-    overlay_window.add_controller(key_ctrl);
+    // Add to menubar window — it gets focus during GrabInput
+    window.add_controller(key_ctrl);
 }
 
 fn push_overlay_js(webview: &webkit6::WebView, script: &str) {
