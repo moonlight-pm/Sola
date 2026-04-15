@@ -197,6 +197,7 @@ fn emit_apps_list(state: &mut State) {
     let mut counts: HashMap<String, u32> = HashMap::new();
     for window in state.space.elements() {
         if let Some(app_id) = State::app_id(window) {
+            if app_id == "sola-shell" { continue; }
             *counts.entry(app_id).or_default() += 1;
         }
     }
