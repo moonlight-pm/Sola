@@ -1,5 +1,5 @@
-pub mod panel;
+pub mod assets;
 pub mod state;
 
-pub use panel::{close_menu, open_menu, setup_menu_panel};
+pub use assets::MENU_ASSETS;
 pub use state::MenuCache;

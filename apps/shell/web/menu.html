@@ -52,65 +52,6 @@
 </head>
 <body>
 <div id="menu"></div>
-<script>
-var menuEl = document.getElementById('menu');
-
-document.addEventListener('click', function(e) {
-    if (!menuEl.contains(e.target)) {
-        document.title = 'dismiss';
-    }
-});
-
-function showMenu(items, anchorX) {
-    while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
-    menuEl.style.left = (anchorX || 0) + 'px';
-    menuEl.style.top = '0px';
-    menuEl.className = 'active';
-
-    items.forEach(function(item) {
-        if (item.type === 'divider') {
-            var div = document.createElement('div');
-            div.className = 'menu-divider';
-            menuEl.appendChild(div);
-            return;
-        }
-
-        var el = document.createElement('div');
-        el.className = 'menu-item' + (item.disabled ? ' disabled' : '');
-
-        var label = document.createElement('span');
-        label.textContent = item.label;
-        el.appendChild(label);
-
-        if (item.shortcut) {
-            var sc = document.createElement('span');
-            sc.className = 'shortcut';
-            sc.textContent = formatShortcut(item.shortcut);
-            el.appendChild(sc);
-        }
-
-        if (!item.disabled) {
-            el.addEventListener('click', function() {
-                document.title = 'action:' + item.app_id + ':' + item.id;
-            });
-        }
-
-        menuEl.appendChild(el);
-    });
-}
-
-function clearMenu() {
-    menuEl.className = '';
-    while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
-}
-
-function formatShortcut(s) {
-    return s
-        .replace(/Super\+Shift\+/g, '\u21E7\u2318')
-        .replace(/Super\+/g, '\u2318')
-        .replace(/Shift\+/g, '\u21E7')
-        .replace('Backspace', '\u232B');
-}
-</script>
+<script type="module" src="/src/menu.ts"></script>
 </body>
 </html>

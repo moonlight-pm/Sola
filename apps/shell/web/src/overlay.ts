@@ -1,9 +1,10 @@
-// Overlay JS — handles both app switcher and dropdown menus.
-// Injected directly into overlay.html (no module system).
+// Overlay JS — app switcher (loaded as a module).
+// Rust calls renderSwitcher / setSelection / clear via evaluate_javascript,
+// which resolves against window globals — we expose them at the bottom.
 
-var switcherEl = document.getElementById('switcher');
-var dropdownEl = document.getElementById('dropdown');
-var apps = [];
+var switcherEl = document.getElementById('switcher')!;
+var dropdownEl = document.getElementById('dropdown')!;
+var apps: any[] = [];
 var selectedIndex = 0;
 
 // --- App Switcher ---
@@ -100,3 +101,7 @@ function showDropdown(items, anchorX) {
 // Called from Rust via __solaRecv for bus events forwarded to overlay
 // The shell's send_to_js goes to the menubar webview, not here.
 // Overlay gets events via evaluate_javascript from Rust directly.
+
+(window as any).renderSwitcher = renderSwitcher;
+(window as any).setSelection = setSelection;
+(window as any).clear = clear;
