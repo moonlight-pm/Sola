@@ -5,7 +5,7 @@ use gtk4::prelude::*;
 use webkit6::prelude::*;
 
 use sola_bus::BusClient;
-use sola_bus::topics::Topic;
+use sola_bus::topics::{Topic, WindowPolicy, WindowPolicyPayload};
 
 use crate::assets;
 use crate::webview;
@@ -122,5 +122,25 @@ impl AppCtx {
     /// Emit a sticky bus event.
     pub fn emit_sticky(&self, topic: Topic) {
         let _ = self.bus.borrow_mut().emit_sticky(topic);
+    }
+
+    /// Build a `SetWindowPolicy` sticky from the windows collected during
+    /// `A::new` and emit it. Called once by `run::<A>()`.
+    pub(crate) fn emit_window_policy(&self) {
+        let windows: Vec<WindowPolicy> = self
+            .windows
+            .iter()
+            .map(|h| WindowPolicy {
+                title: h.inner.title.clone(),
+                zoned: h.inner.zoned,
+                keyboard_target: h.inner.keyboard_target,
+                size: Some(h.inner.size),
+                position: h.inner.position,
+            })
+            .collect();
+        self.emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
+            app_id: self.app_id.to_string(),
+            windows,
+        }));
     }
 }

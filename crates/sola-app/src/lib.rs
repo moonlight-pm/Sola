@@ -155,6 +155,9 @@ pub fn run<A: SolaApp>() {
         let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone(), app_id);
         let app = A::new(&mut ctx);
 
+        // --- Auto-emit WindowPolicy for all windows created in new() ---
+        ctx.emit_window_policy();
+
         // --- Wrap runtime ---
         let runtime = Rc::new(RefCell::new(AppRuntime { app, ctx }));
 
