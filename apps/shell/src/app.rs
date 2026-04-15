@@ -13,6 +13,12 @@ use crate::menubar::setup_menubar;
 use crate::switcher::{SWITCHER_ASSETS, SwitcherState};
 use crate::zoning::{self, ZoningState};
 
+pub struct ShellWindows {
+    pub menubar: WindowHandle,
+    pub menu: WindowHandle,
+    pub switcher: WindowHandle,
+}
+
 pub struct ShellApp {
     pub focused_app_id: Option<String>,
     pub mru_apps: Vec<String>,
@@ -21,10 +27,7 @@ pub struct ShellApp {
     pub zoning: ZoningState,
     pub switcher: SwitcherState,
     pub menu_open: bool,
-
-    pub menubar: WindowHandle,
-    pub switcher_win: WindowHandle,
-    pub menu_win: WindowHandle,
+    pub windows: ShellWindows,
 }
 
 impl SolaApp for ShellApp {
@@ -33,7 +36,7 @@ impl SolaApp for ShellApp {
     fn new(ctx: &mut AppCtx) -> Self {
         let menubar = setup_menubar(ctx);
 
-        let switcher_win = ctx.add_window(WindowConfig {
+        let switcher = ctx.add_window(WindowConfig {
             title: "switcher".into(),
             size: (800, 400),
             position: Some((560, 340)),
@@ -45,7 +48,7 @@ impl SolaApp for ShellApp {
             keyboard_target: false,
         });
 
-        let menu_win = ctx.add_window(WindowConfig {
+        let menu = ctx.add_window(WindowConfig {
             title: "menu".into(),
             size: (220, 300),
             position: Some((0, zoning::MENUBAR_HEIGHT)),
@@ -81,9 +84,11 @@ impl SolaApp for ShellApp {
             zoning: ZoningState::new(),
             switcher: SwitcherState::default(),
             menu_open: false,
-            menubar,
-            switcher_win,
-            menu_win,
+            windows: ShellWindows {
+                menubar,
+                menu,
+                switcher,
+            },
         };
 
         app.emit_shell_key_bindings(ctx);
@@ -96,7 +101,7 @@ impl SolaApp for ShellApp {
         runtime: std::rc::Weak<std::cell::RefCell<sola_app::AppRuntime<Self>>>,
         _ctx: &mut AppCtx,
     ) {
-        crate::keys::install(self.menubar.clone(), runtime);
+        crate::keys::install(self.windows.menubar.clone(), runtime);
     }
 
     fn on_bus_event(&mut self, topic: &Topic, ctx: &mut AppCtx) {
@@ -105,7 +110,7 @@ impl SolaApp for ShellApp {
                 self.handle_apps_update(apps.clone(), ctx);
                 if self.switcher.active {
                     let json = serde_json::to_string(&self.switcher.apps).unwrap_or_default();
-                    self.switcher_win.eval_js(&format!(
+                    self.windows.switcher.eval_js(&format!(
                         "renderSwitcher({}, {})",
                         json, self.switcher.selected
                     ));
@@ -124,7 +129,7 @@ impl SolaApp for ShellApp {
                         .unwrap_or(&payload.app_id);
                     let menu_labels: Vec<String> =
                         payload.menus.iter().map(|d| d.label.clone()).collect();
-                    self.menubar.send_to_js(&serde_json::json!({
+                    self.windows.menubar.send_to_js(&serde_json::json!({
                         "event": "focus",
                         "app_name": app_name,
                         "menu_labels": menu_labels,
@@ -219,7 +224,7 @@ impl ShellApp {
         // Close any open menu — the focus event to JS handles the menubar UI.
         if self.menu_open {
             self.menu_open = false;
-            self.menu_win.eval_js("clearMenu()");
+            self.windows.menu.eval_js("clearMenu()");
         }
 
         let menu = self.menus.get_menu(app_id);
@@ -231,7 +236,7 @@ impl ShellApp {
             .map(|m| m.menus.iter().map(|d| d.label.clone()).collect())
             .unwrap_or_default();
 
-        self.menubar.send_to_js(&serde_json::json!({
+        self.windows.menubar.send_to_js(&serde_json::json!({
             "event": "focus",
             "app_name": app_name,
             "menu_labels": menu_labels,
@@ -402,7 +407,8 @@ impl ShellApp {
             .collect();
 
         let json = serde_json::to_string(&items).unwrap_or_default();
-        self.menu_win
+        self.windows
+            .menu
             .eval_js(&format!("showMenu({}, {})", json, anchor_x));
 
         // Full-screen overlay below the menubar — transparent except the dropdown.
@@ -426,8 +432,9 @@ impl ShellApp {
             return;
         }
         self.menu_open = false;
-        self.menu_win.eval_js("clearMenu()");
-        self.menubar
+        self.windows.menu.eval_js("clearMenu()");
+        self.windows
+            .menubar
             .send_to_js(&serde_json::json!({"event": "close_menu"}));
         self.emit_composition(ctx);
     }

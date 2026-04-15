@@ -70,7 +70,7 @@ fn handle_key_pressed(
         app.switcher.active = true;
         app.switcher.selected = if app.switcher.apps.len() > 1 { 1 } else { 0 };
         let json = serde_json::to_string(&app.switcher.apps).unwrap_or_default();
-        app.switcher_win.eval_js(&format!(
+        app.windows.switcher.eval_js(&format!(
             "renderSwitcher({}, {})",
             json, app.switcher.selected
         ));
@@ -95,13 +95,17 @@ fn handle_key_pressed(
             code if code == KeyCode::TAB || code == KeyCode::RIGHT => {
                 app.switcher.select_next();
                 let sel = app.switcher.selected;
-                app.switcher_win.eval_js(&format!("setSelection({sel})"));
+                app.windows
+                    .switcher
+                    .eval_js(&format!("setSelection({sel})"));
                 return glib::Propagation::Stop;
             }
             code if code == KeyCode::LEFT => {
                 app.switcher.select_prev();
                 let sel = app.switcher.selected;
-                app.switcher_win.eval_js(&format!("setSelection({sel})"));
+                app.windows
+                    .switcher
+                    .eval_js(&format!("setSelection({sel})"));
                 return glib::Propagation::Stop;
             }
             _ => {}
@@ -139,7 +143,7 @@ fn handle_meta_released(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
     tracing::info!(app_id = ?app_id, "deactivating switcher");
 
     app.switcher.active = false;
-    app.switcher_win.eval_js("clear()");
+    app.windows.switcher.eval_js("clear()");
 
     if let Some(ref app_id) = app_id {
         app.set_focus(app_id);
