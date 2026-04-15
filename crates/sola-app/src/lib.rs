@@ -213,36 +213,26 @@ impl SolaApp {
             // WebContext with app:/// URI scheme
             let web_context = webview::create_web_context(app_assets, platform, html);
 
-            // Channels
-            let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
             let (event_tx, event_rx) = mpsc::channel::<String>();
 
-            // UserContentManager
-            let ucm = webview::create_content_manager(cmd_tx);
+            // UserContentManager + command dispatch
+            let ucm = if let Some(js_handler) = js_command_handler.borrow_mut().take() {
+                webview::create_content_manager_with_handler(js_handler)
+            } else {
+                let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+                let ucm = webview::create_content_manager(cmd_tx);
 
-            // Spawn tokio thread with app handler
-            if let Some(factory) = handler_factory.borrow_mut().take() {
-                let handler = factory(event_tx.clone());
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new()
-                        .expect("failed to create tokio runtime");
-                    rt.block_on(dispatch_loop(handler, cmd_rx, event_tx));
-                });
-            } else if let Some(js_handler) = js_command_handler.borrow_mut().take() {
-                let mut cmd_rx = cmd_rx;
-                glib::timeout_add_local(Duration::from_millis(2), move || {
-                    while let Ok(msg) = cmd_rx.try_recv() {
-                        let parsed: serde_json::Value = match serde_json::from_str(&msg) {
-                            Ok(v) => v,
-                            Err(_) => continue,
-                        };
-                        let cmd = parsed.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
-                        let args = parsed.get("args").cloned().unwrap_or(serde_json::json!({}));
-                        js_handler(cmd, &args);
-                    }
-                    glib::ControlFlow::Continue
-                });
-            }
+                if let Some(factory) = handler_factory.borrow_mut().take() {
+                    let handler = factory(event_tx.clone());
+                    std::thread::spawn(move || {
+                        let rt = tokio::runtime::Runtime::new()
+                            .expect("failed to create tokio runtime");
+                        rt.block_on(dispatch_loop(handler, cmd_rx, event_tx));
+                    });
+                }
+
+                ucm
+            };
 
             // Transparent window background
             if transparent {
