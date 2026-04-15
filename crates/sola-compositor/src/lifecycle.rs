@@ -236,15 +236,8 @@ fn apply_pending_surfaces(state: &mut State) {
         let title = state::window_title(&window);
         tracing::info!(app_id = %app_id, title = ?title, "surface ready, waiting for composition");
 
-        // Cache keyboard_target surface for direct Super+key routing.
-        let is_keyboard_target = state.window_policies.get(&app_id)
-            .and_then(|policies| {
-                title.as_ref()
-                    .and_then(|t| policies.iter().find(|p| p.title == *t))
-            })
-            .is_some_and(|p| p.keyboard_target);
-
-        if is_keyboard_target {
+        // The sola-shell menubar is the Super+key routing target.
+        if app_id == "sola-shell" && title.as_deref() == Some("menubar") {
             if let Some(surface) = window.wl_surface() {
                 let owned = surface.into_owned();
                 setup_shell_keyboard_target(state, &owned);
