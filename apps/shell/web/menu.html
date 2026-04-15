@@ -69,7 +69,7 @@ function showMenu(items) {
         if (item.shortcut) {
             var sc = document.createElement('span');
             sc.className = 'shortcut';
-            sc.textContent = item.shortcut;
+            sc.textContent = formatShortcut(item.shortcut);
             el.appendChild(sc);
         }
 
@@ -85,6 +85,14 @@ function showMenu(items) {
 
 function clearMenu() {
     while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
+}
+
+function formatShortcut(s) {
+    return s
+        .replace(/Super\+Shift\+/g, '\u21E7\u2318')
+        .replace(/Super\+/g, '\u2318')
+        .replace(/Shift\+/g, '\u21E7')
+        .replace('Backspace', '\u232B');
 }
 </script>
 </body>

@@ -46,8 +46,8 @@
         white-space: nowrap;
     }
 
-    .menu-label:hover {
-        background: rgba(255, 255, 255, 0.1);
+    .menu-label.active, #system-menu.active {
+        background: rgba(255, 255, 255, 0.15);
     }
 
     #system-menu {
@@ -56,10 +56,6 @@
         display: flex;
         align-items: center;
         cursor: default;
-    }
-
-    #system-menu:hover {
-        background: rgba(255, 255, 255, 0.1);
     }
 
     #system-menu svg {

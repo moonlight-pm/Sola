@@ -221,6 +221,14 @@ fn build_ui(app: &gtk4::Application) {
                             disabled: false,
                             checked: false,
                         },
+                        sola_bus::topics::MenuItem::Divider,
+                        sola_bus::topics::MenuItem::Action {
+                            id: "quit".into(),
+                            label: "Quit Browser".into(),
+                            shortcut: Some("Super+Q".into()),
+                            disabled: false,
+                            checked: false,
+                        },
                     ],
                 },
                 sola_bus::topics::MenuDefinition {

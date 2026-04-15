@@ -224,6 +224,14 @@ fn main() {
                         let mut s = state.borrow_mut();
                         open_menu(&mut s, index);
                     }
+                    "close_menu" => {
+                        let mut s = state.borrow_mut();
+                        if let Some(ref bus) = s.bus {
+                            let bus = bus.clone();
+                            let emit = move |topic: Topic| { let _ = bus.borrow_mut().emit(topic); };
+                            close_menu(&mut s, &emit);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -510,6 +518,11 @@ fn close_menu(s: &mut ShellState, emit: &dyn Fn(Topic)) {
     s.menu_open = false;
     if let Some(ref wv) = s.menu_webview {
         eval_js(wv, "clearMenu()");
+    }
+    if let Some(ref wv) = s.menubar_webview {
+        let msg = serde_json::json!({"event": "close_menu"}).to_string();
+        let js_str = serde_json::to_string(&msg).unwrap_or_default();
+        eval_js(wv, &format!("window.__solaRecv({js_str})"));
     }
     s.emit_composition(emit);
 }
