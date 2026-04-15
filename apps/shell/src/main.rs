@@ -55,6 +55,14 @@ impl ShellState {
         self.mru_apps.retain(|m| m != app_id);
         self.mru_apps.insert(0, app_id.to_string());
 
+        // Close any open menu — the focus event to JS handles the menubar UI.
+        if self.menu_open {
+            self.menu_open = false;
+            if let Some(ref wv) = self.menu_webview {
+                eval_js(wv, "clearMenu()");
+            }
+        }
+
         let menu = self.menus.get_menu(app_id);
         let app_name = menu
             .and_then(|m| m.menus.first())
@@ -220,9 +228,11 @@ fn main() {
             move |cmd, args| {
                 match cmd {
                     "open_menu" => {
+                        let source = args.get("source").and_then(|v| v.as_str()).unwrap_or("app");
                         let index = args.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                        let anchor_x = args.get("anchor_x").and_then(|v| v.as_f64()).unwrap_or(0.0) as i32;
                         let mut s = state.borrow_mut();
-                        open_menu(&mut s, index);
+                        open_menu(&mut s, source, index, anchor_x);
                     }
                     "close_menu" => {
                         let mut s = state.borrow_mut();
@@ -459,10 +469,10 @@ fn setup_menu_panel(
     state.borrow_mut().menu_webview = Some(menu_webview);
 }
 
-fn open_menu(s: &mut ShellState, menu_index: usize) {
+fn open_menu(s: &mut ShellState, source: &str, menu_index: usize, anchor_x: i32) {
     use sola_bus::topics::MenuItem;
 
-    let app_id = if menu_index == 0 {
+    let app_id = if source == "system" {
         "sola-shell".to_string()
     } else {
         s.focused_app_id.clone().unwrap_or_default()
@@ -493,8 +503,6 @@ fn open_menu(s: &mut ShellState, menu_index: usize) {
         eval_js(wv, &format!("showMenu({})", json));
     }
 
-    // Position the menu panel below the menubar, roughly aligned to the clicked label.
-    let anchor_x = menu_index as i32 * 80;
     if let Some(ref bus) = s.bus {
         let _ = bus.borrow_mut().emit(Topic::Frame(FrameUpdate {
             app_id: "sola-shell".into(),

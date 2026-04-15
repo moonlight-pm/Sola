@@ -6,52 +6,73 @@ const menuLabelsEl = document.getElementById('menu-labels')!;
 const clockEl = document.getElementById('clock')!;
 
 let currentMenuLabels: string[] = [];
-let openIndex: number | null = null;
+let openKey: string | null = null;
 
 on('focus', (msg: any) => {
     appNameEl.textContent = msg.app_name || '';
     currentMenuLabels = msg.menu_labels || [];
-    closeMenu();
+    dismissMenu();
     renderMenuLabels();
 });
 
 on('close_menu', () => {
-    closeMenu();
+    openKey = null;
+    updateActiveState();
 });
 
-function openMenu(index: number): void {
-    if (openIndex === index) {
-        closeMenu();
+function clickMenu(key: string, source: string, index: number, anchorX: number): void {
+    if (openKey === key) {
+        dismissMenu();
         return;
     }
-    openIndex = index;
-    updateActiveState();
-    invoke('open_menu', { index });
+    showMenu(key, source, index, anchorX);
 }
 
-function closeMenu(): void {
-    if (openIndex === null) return;
-    openIndex = null;
+function hoverMenu(key: string, source: string, index: number, anchorX: number): void {
+    if (openKey === null || openKey === key) return;
+    showMenu(key, source, index, anchorX);
+}
+
+function showMenu(key: string, source: string, index: number, anchorX: number): void {
+    openKey = key;
+    updateActiveState();
+    invoke('open_menu', { source, index, anchor_x: anchorX });
+}
+
+function dismissMenu(): void {
+    if (openKey === null) return;
+    openKey = null;
     updateActiveState();
     invoke('close_menu', {});
 }
 
 function updateActiveState(): void {
-    systemMenuEl.classList.toggle('active', openIndex === 0);
+    systemMenuEl.classList.toggle('active', openKey === 'system');
+    appNameEl.classList.toggle('active', openKey === 'app:0');
     const labels = menuLabelsEl.children;
     for (let i = 0; i < labels.length; i++) {
-        const labelIndex = i + 1;
-        labels[i].classList.toggle('active', openIndex === labelIndex);
+        labels[i].classList.toggle('active', openKey === 'app:' + (i + 1));
     }
 }
 
 systemMenuEl.addEventListener('click', (e: Event) => {
     e.stopPropagation();
-    openMenu(0);
+    clickMenu('system', 'system', 0, systemMenuEl.getBoundingClientRect().left);
 });
 
 systemMenuEl.addEventListener('mouseenter', () => {
-    if (openIndex !== null) openMenu(0);
+    hoverMenu('system', 'system', 0, systemMenuEl.getBoundingClientRect().left);
+});
+
+appNameEl.addEventListener('click', (e: Event) => {
+    e.stopPropagation();
+    if (currentMenuLabels.length === 0) return;
+    clickMenu('app:0', 'app', 0, appNameEl.getBoundingClientRect().left);
+});
+
+appNameEl.addEventListener('mouseenter', () => {
+    if (currentMenuLabels.length === 0) return;
+    hoverMenu('app:0', 'app', 0, appNameEl.getBoundingClientRect().left);
 });
 
 function renderMenuLabels(): void {
@@ -65,17 +86,17 @@ function renderMenuLabels(): void {
         el.textContent = label;
         el.addEventListener('click', (e: Event) => {
             e.stopPropagation();
-            openMenu(index);
+            clickMenu('app:' + index, 'app', index, el.getBoundingClientRect().left);
         });
         el.addEventListener('mouseenter', () => {
-            if (openIndex !== null) openMenu(index);
+            hoverMenu('app:' + index, 'app', index, el.getBoundingClientRect().left);
         });
         menuLabelsEl.appendChild(el);
     });
 }
 
 document.addEventListener('click', () => {
-    closeMenu();
+    dismissMenu();
 });
 
 function updateClock(): void {
