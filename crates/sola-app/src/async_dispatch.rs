@@ -8,7 +8,12 @@ use serde_json::Value;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc as tokio_mpsc;
 
-use crate::AppHandler;
+/// Trait implemented by async command handlers used with `AsyncDispatcher`.
+/// Runs on a dedicated tokio runtime thread.
+#[async_trait::async_trait]
+pub trait AppHandler: Send + Sync + 'static {
+    async fn dispatch(&self, cmd: &str, args: &Value) -> Value;
+}
 
 struct AsyncCmd {
     id: u64,

@@ -1,6 +1,3 @@
-use std::sync::mpsc;
-use std::time::Duration;
-
 use webkit6::prelude::*;
 
 /// Send a JSON message to the JS frontend via evaluate_javascript.
@@ -18,18 +15,4 @@ pub fn send_to_js(webview: &webkit6::WebView, msg: &str) {
             }
         },
     );
-}
-
-/// Set up the glib→JS bridge: polls the event channel every 2ms and
-/// forwards messages to the WebView via evaluate_javascript.
-pub fn setup_event_poller(
-    webview: webkit6::WebView,
-    event_rx: mpsc::Receiver<String>,
-) {
-    glib::timeout_add_local(Duration::from_millis(2), move || {
-        while let Ok(msg) = event_rx.try_recv() {
-            send_to_js(&webview, &msg);
-        }
-        glib::ControlFlow::Continue
-    });
 }
