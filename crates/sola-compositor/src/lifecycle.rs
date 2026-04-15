@@ -32,6 +32,7 @@ pub fn run_loop(
         // After dispatch: app_id and title are now set on pending surfaces.
         apply_pending_surfaces(state);
         apply_pending_geometries(state);
+        raise_shell_surfaces(state);
         sync_mru(state);
 
         display
@@ -106,6 +107,14 @@ pub(crate) fn dispatch_bus(state: &mut State) {
                 tracing::debug!(topic = %msg.topic, "unhandled bus topic");
             }
         }
+    }
+}
+
+/// Keep sola-shell surfaces (menubar, overlay) above all app windows.
+/// Called every frame so the shell layer stays on top after any raise or map.
+fn raise_shell_surfaces(state: &mut State) {
+    for window in state.windows_by_app_id("sola-shell") {
+        state.space.raise_element(&window, false);
     }
 }
 
