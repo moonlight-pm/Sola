@@ -30,7 +30,11 @@ pub trait AppHandler: Send + Sync + 'static {
 }
 
 /// Builder for configuring and running a Sola WebView app.
-pub struct SolaApp {
+///
+/// NOTE: This is the legacy builder API. New apps should implement the
+/// `SolaApp` trait and use `sola_app::run::<A>()` instead. This type is
+/// scheduled for removal once all apps have migrated.
+pub struct SolaAppBuilder {
     app_id: String,
     window_width: i32,
     window_height: i32,
@@ -49,8 +53,14 @@ pub struct SolaApp {
     js_command_handler: Option<Box<dyn Fn(&str, &serde_json::Value) + 'static>>,
 }
 
-impl SolaApp {
-    pub fn builder() -> Self {
+impl Default for SolaAppBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SolaAppBuilder {
+    pub fn new() -> Self {
         Self {
             app_id: "sola-app".to_string(),
             window_width: 1920,

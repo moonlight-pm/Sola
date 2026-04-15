@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gtk4::prelude::*;
-use sola_app::{asset_bundle, SolaApp};
+use sola_app::{asset_bundle, SolaAppBuilder};
 use sola_bus::topics::{
     AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic,
     WindowPolicy, WindowPolicyPayload,
@@ -46,7 +46,7 @@ fn main() {
 
     let state_for_handler = terminal_state.clone();
 
-    SolaApp::builder()
+    SolaAppBuilder::new()
         .app_id("sola-terminal")
         .window_size(1920, 1080)
         .decorated(false)

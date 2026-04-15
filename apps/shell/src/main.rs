@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 
-use sola_app::{SolaApp, asset_bundle};
+use sola_app::{SolaAppBuilder, asset_bundle};
 use sola_bus::topics::Topic;
 
 use state::ShellState;
@@ -24,7 +24,7 @@ static MENUBAR_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
 fn main() {
     let state: Rc<RefCell<ShellState>> = Rc::new(RefCell::new(ShellState::new()));
 
-    SolaApp::builder()
+    SolaAppBuilder::new()
         .app_id("sola-shell")
         .window_size(1920, zoning::MENUBAR_HEIGHT)
         .decorated(false)
