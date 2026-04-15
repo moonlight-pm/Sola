@@ -14,7 +14,7 @@ use sola_bus::topics::Topic;
 pub mod assets;
 pub mod bridge;
 pub mod config;
-
+pub mod ctx;
 pub mod strip;
 pub mod watcher;
 pub mod webview;
@@ -22,6 +22,7 @@ pub mod window;
 
 // Re-export for macro use
 pub use assets::{Asset, AssetBundle, ContentType};
+pub use ctx::AppCtx;
 pub use window::{WindowConfig, WindowHandle};
 
 /// Trait for app-specific command handling.
@@ -346,7 +347,7 @@ impl SolaAppBuilder {
 }
 
 /// Inject the platform import map into HTML.
-fn inject_import_map(html: &str) -> String {
+pub(crate) fn inject_import_map(html: &str) -> String {
     let platform_imports = r#""@arrow-js/core": "/vendor/arrow/index.mjs",
       "@sola/ipc": "/lib/ipc.js",
       "@sola/store": "/lib/store.js",
