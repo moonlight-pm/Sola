@@ -9,10 +9,9 @@ use gtk4::prelude::*;
 use webkit6::prelude::*;
 
 use sola_app::{asset_bundle, SolaApp};
-use sola_bus::topics::{KeyEvent, Topic};
+use sola_bus::topics::Topic;
 
 mod keycode {
-    pub const BACKSPACE: u32 = 22;
     pub const TAB: u32 = 23;
     pub const LEFT: u32 = 113;
     pub const RIGHT: u32 = 114;
@@ -63,14 +62,11 @@ fn main() {
             move |topic, send_to_js, emit| {
                 let mut s = state.borrow_mut();
                 match topic {
-                    Topic::Key(key) => {
-                        handle_key(&mut s, key, send_to_js, emit);
-                    }
                     Topic::Apps(apps) => {
+                        s.switcher.apps = apps.clone();
+
                         if s.switcher.active {
-                            tracing::info!(count = apps.len(), "received app list for switcher");
-                            s.switcher.apps = apps.clone();
-                            s.switcher.selected = if apps.len() > 1 { 1 } else { 0 };
+                            tracing::info!(count = apps.len(), "updated app list (switcher active)");
                             let json = serde_json::to_string(&s.switcher.apps).unwrap_or_default();
                             let script = format!(
                                 "renderSwitcher({}, {})",
@@ -104,8 +100,6 @@ fn main() {
                     Topic::SetAppMenu(payload) => {
                         s.menus.set_menu(payload.clone());
 
-                        // Re-send focus data if this menu is for the focused app
-                        // (handles out-of-order sticky replay on reconnect)
                         if s.focused_app_id.as_deref() == Some(&payload.app_id) {
                             let app_name = payload
                                 .menus
@@ -142,8 +136,11 @@ fn main() {
         .on_activate({
             let state = state.clone();
             move |window, _webview, bus| {
-                // Declare window policies before any surfaces map
-                use sola_bus::topics::{WindowPolicy, WindowPolicyPayload};
+                use sola_bus::topics::{
+                    AppMenuPayload, MenuDefinition, MenuItem,
+                    WindowPolicy, WindowPolicyPayload,
+                };
+
                 let _ = bus.borrow_mut().emit_sticky(Topic::SetWindowPolicy(
                     WindowPolicyPayload {
                         app_id: "sola-shell".into(),
@@ -152,6 +149,7 @@ fn main() {
                                 title: "menubar".into(),
                                 zoned: false,
                                 auto_focus: false,
+                                keyboard_target: true,
                                 size: Some((1920, zoning::MENUBAR_HEIGHT)),
                                 position: Some((0, 0)),
                             },
@@ -159,6 +157,7 @@ fn main() {
                                 title: "overlay".into(),
                                 zoned: false,
                                 auto_focus: false,
+                                keyboard_target: false,
                                 size: None,
                                 position: None,
                             },
@@ -166,11 +165,25 @@ fn main() {
                     },
                 ));
 
+                // Register the shell's system menu (for shortcut lookup).
+                state.borrow_mut().menus.set_menu(AppMenuPayload {
+                    app_id: "sola-shell".into(),
+                    menus: vec![MenuDefinition {
+                        label: "Sola".into(),
+                        items: vec![MenuItem::Action {
+                            id: "exit".into(),
+                            label: "Exit Sola".into(),
+                            shortcut: Some("Super+Shift+Backspace".into()),
+                            disabled: false,
+                            checked: false,
+                        }],
+                    }],
+                });
+
                 window.set_title(Some("menubar"));
 
                 // Menubar command bridge via title
                 let webview_ref = {
-                    // The webview is the window's child
                     let child = window.child().unwrap();
                     child.downcast::<webkit6::WebView>().unwrap()
                 };
@@ -206,50 +219,6 @@ fn main() {
         .run();
 }
 
-fn handle_key(
-    s: &mut ShellState,
-    key: &KeyEvent,
-    _send_to_js: &dyn Fn(serde_json::Value),
-    emit: &dyn Fn(Topic),
-) {
-    // Super+Shift+Backspace → shutdown (safety fallback)
-    if key.pressed && key.code == keycode::BACKSPACE && key.super_held && key.shift_held {
-        tracing::info!("shutdown chord");
-        emit(Topic::Shutdown);
-        return;
-    }
-
-    // Super+Tab → activate switcher
-    if key.pressed && key.code == keycode::TAB && key.super_held && !s.switcher.active {
-        tracing::info!("activating switcher");
-        s.switcher.active = true;
-        emit(Topic::GrabInput("sola-shell".into()));
-        emit(Topic::ListApps);
-        return;
-    }
-
-    // Zone snapping (Super+Numpad)
-    if let Some(geo) = s.zoning.handle_key(key) {
-        emit(Topic::SetWindowGeometry(geo));
-        return;
-    }
-
-    // Menu shortcut lookup
-    if key.pressed && key.super_held {
-        if let Some(focused) = &s.focused_app_id {
-            let focused = focused.clone();
-            if let Some(action) = s.menus.lookup_shortcut(key.code, key.shift_held, &focused) {
-                tracing::info!(
-                    app_id = %action.app_id,
-                    action_id = %action.action_id,
-                    "menu shortcut matched"
-                );
-                emit(Topic::MenuAction(action));
-            }
-        }
-    }
-}
-
 fn setup_overlay(
     window: &gtk4::ApplicationWindow,
     state: &Rc<RefCell<ShellState>>,
@@ -262,7 +231,6 @@ fn setup_overlay(
     overlay_window.set_default_size(1920, 1080);
     overlay_window.set_title(Some("overlay"));
 
-    // Transparent CSS for overlay
     let css = gtk4::CssProvider::new();
     css.load_from_data("window.overlay-window, window.overlay-window.background { background: transparent; }");
     gtk4::style_context_add_provider_for_display(
@@ -280,13 +248,10 @@ fn setup_overlay(
     }
     overlay_webview.connect_context_menu(|_, _, _| true);
 
-    // Build overlay HTML with embedded JS (simple, no asset system needed)
     let html = OVERLAY_HTML.replace("__OVERLAY_JS__", &strip_ts_inline(OVERLAY_JS));
     overlay_webview.load_html(&html, None);
 
     overlay_window.set_child(Some(&overlay_webview));
-    // Present now — the policy system prevents auto-focus and force-resize.
-    // Empty + transparent = invisible. Avoids map/unmap flicker on each activation.
     overlay_window.present();
 
     {
@@ -295,41 +260,78 @@ fn setup_overlay(
         s.overlay_window = Some(overlay_window.clone());
     }
 
-    // Switcher key controller on the MENUBAR window.
-    // GrabInput focuses the menubar (first sola-shell surface), so the
-    // menubar's key controller receives Tab/Arrow/Super release events.
+    // Key controller on the MENUBAR window.
+    // The compositor routes Super+key events directly here via wl_keyboard.key.
     let key_ctrl = gtk4::EventControllerKey::new();
     key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
 
     key_ctrl.connect_key_pressed({
         let state = state.clone();
+        let bus = bus.clone();
         let overlay_webview = overlay_webview.clone();
-        move |_, _keyval, keycode, _modifiers| {
-            let s = state.borrow();
-            if !s.switcher.active {
-                return glib::Propagation::Proceed;
-            }
-            drop(s);
+        move |_, _keyval, keycode, gtk_modifiers| {
+            let mut s = state.borrow_mut();
+            let shift_held = gtk_modifiers.contains(gdk4::ModifierType::SHIFT_MASK);
 
-            match keycode {
-                keycode::TAB | keycode::RIGHT => {
-                    let mut s = state.borrow_mut();
-                    s.switcher.select_next();
-                    let sel = s.switcher.selected;
-                    drop(s);
-                    push_overlay_js(&overlay_webview, &format!("setSelection({sel})"));
-                    glib::Propagation::Stop
+            // Shell system shortcuts (highest priority).
+            if let Some(action) = s.menus.lookup_shortcut(keycode, shift_held, "sola-shell") {
+                tracing::info!(action_id = %action.action_id, "shell shortcut");
+                if action.action_id == "exit" {
+                    let _ = bus.borrow_mut().emit(Topic::Shutdown);
                 }
-                keycode::LEFT => {
-                    let mut s = state.borrow_mut();
-                    s.switcher.select_prev();
-                    let sel = s.switcher.selected;
-                    drop(s);
-                    push_overlay_js(&overlay_webview, &format!("setSelection({sel})"));
-                    glib::Propagation::Stop
-                }
-                _ => glib::Propagation::Proceed,
+                return glib::Propagation::Stop;
             }
+
+            // Super+Tab: activate switcher.
+            if keycode == keycode::TAB && !s.switcher.active {
+                tracing::info!("activating switcher");
+                s.switcher.active = true;
+                s.switcher.selected = if s.switcher.apps.len() > 1 { 1 } else { 0 };
+                let json = serde_json::to_string(&s.switcher.apps).unwrap_or_default();
+                let script = format!("renderSwitcher({}, {})", json, s.switcher.selected);
+                push_overlay_js(&overlay_webview, &script);
+                return glib::Propagation::Stop;
+            }
+
+            // Switcher navigation.
+            if s.switcher.active {
+                match keycode {
+                    keycode::TAB | keycode::RIGHT => {
+                        s.switcher.select_next();
+                        let sel = s.switcher.selected;
+                        push_overlay_js(&overlay_webview, &format!("setSelection({sel})"));
+                        return glib::Propagation::Stop;
+                    }
+                    keycode::LEFT => {
+                        s.switcher.select_prev();
+                        let sel = s.switcher.selected;
+                        push_overlay_js(&overlay_webview, &format!("setSelection({sel})"));
+                        return glib::Propagation::Stop;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Zone snapping (Super+Numpad).
+            if let Some(geo) = s.zoning.handle_key(keycode) {
+                let _ = bus.borrow_mut().emit(Topic::SetWindowGeometry(geo));
+                return glib::Propagation::Stop;
+            }
+
+            // Focused app menu shortcut lookup.
+            if let Some(focused) = s.focused_app_id.clone() {
+                if let Some(action) = s.menus.lookup_shortcut(keycode, shift_held, &focused) {
+                    tracing::info!(
+                        app_id = %action.app_id,
+                        action_id = %action.action_id,
+                        "menu shortcut matched"
+                    );
+                    let _ = bus.borrow_mut().emit(Topic::MenuAction(action));
+                    return glib::Propagation::Stop;
+                }
+            }
+
+            glib::Propagation::Proceed
         }
     });
 
@@ -354,11 +356,9 @@ fn setup_overlay(
             tracing::info!(app_id = ?app_id, "deactivating switcher");
             push_overlay_js(&overlay_webview, "clear()");
 
-            let mut client = bus.borrow_mut();
             if let Some(app_id) = app_id {
-                let _ = client.emit(Topic::RaiseApp(app_id));
+                let _ = bus.borrow_mut().emit(Topic::RaiseApp(app_id));
             }
-            let _ = client.emit(Topic::ReleaseInput);
         }
     });
 
@@ -379,7 +379,6 @@ fn setup_overlay(
         }
     });
 
-    // Add to menubar window — it gets focus during GrabInput
     window.add_controller(key_ctrl);
 }
 
@@ -387,11 +386,6 @@ fn push_overlay_js(webview: &webkit6::WebView, script: &str) {
     webview.evaluate_javascript(script, None, None, None::<&gio::Cancellable>, |_| {});
 }
 
-/// Minimal TS→JS strip for inline overlay code (just remove type annotations).
-/// For the simple overlay code we write, just stripping `: type` suffices.
-/// Full strip uses sola-app's swc-based stripper, but we don't have that here.
 fn strip_ts_inline(ts: &str) -> String {
-    // For the overlay, we write plain JS-compatible TS (no type-only syntax).
-    // Just return as-is — the overlay code avoids TypeScript-only features.
     ts.to_string()
 }

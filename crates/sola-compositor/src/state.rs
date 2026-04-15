@@ -102,10 +102,9 @@ pub struct State {
     /// Current pointer position in compositor-space coordinates.
     pub pointer_location: (f64, f64),
 
-    /// The app_id that currently has exclusive input grab, if any.
-    /// While set, all input goes to this app's surface and other clients
-    /// are excluded. The grabbed surface is shown above all others.
-    pub input_grab: Option<String>,
+    /// Cached keyboard_target surface for sola-shell.
+    /// Super+key events are sent directly to this surface via wl_keyboard.key.
+    pub shell_keyboard_target: Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
 
     /// Most-recently-used app list, ordered by last focus time.
     /// The app that most recently had keyboard focus is at index 0.
@@ -179,7 +178,7 @@ impl State {
             seat,
             space: Space::default(),
             pointer_location: (0.0, 0.0),
-            input_grab: None,
+            shell_keyboard_target: None,
             mru_apps: Vec::new(),
             pending_geometries: HashMap::new(),
             window_policies: HashMap::new(),

@@ -24,10 +24,6 @@ impl SeatHandler for State {
     fn cursor_image(&mut self, _seat: &Seat<Self>, _image: CursorImageStatus) {}
 
     fn focus_changed(&mut self, _seat: &Seat<Self>, focused: Option<&Self::KeyboardFocus>) {
-        // Don't track focus during input grab — the grabbed surface
-        // (e.g., switcher) is not a normal app focus change.
-        if self.input_grab.is_some() { return; }
-
         let Some(surface) = focused else { return };
 
         // Find the app_id for the focused surface.

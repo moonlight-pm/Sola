@@ -1,6 +1,7 @@
 /// Main event loop and shutdown logic.
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
+use smithay::reexports::wayland_server::Resource;
 use smithay::utils::{Size, SERIAL_COUNTER};
 
 use crate::error::CompositorError;
@@ -16,7 +17,13 @@ pub fn run_loop(
     tracing::info!("entering event loop");
 
     while state.running {
+        let pre_refresh_count = state.space.elements().count();
         state.space.refresh();
+        let post_refresh_count = state.space.elements().count();
+
+        if post_refresh_count < pre_refresh_count {
+            emit_apps_list(state);
+        }
 
         display
             .dispatch_clients(state)
@@ -25,7 +32,6 @@ pub fn run_loop(
         // After dispatch: app_id and title are now set on pending surfaces.
         apply_pending_surfaces(state);
         apply_pending_geometries(state);
-        clear_stale_grab(state);
         sync_mru(state);
 
         display
@@ -50,8 +56,6 @@ pub fn run_loop(
 fn sync_mru(state: &mut State) {
     use smithay::wayland::seat::WaylandFocus;
 
-    if state.input_grab.is_some() { return; }
-
     let keyboard = state.seat.get_keyboard().unwrap();
     let Some(focused) = keyboard.current_focus() else { return };
 
@@ -63,16 +67,15 @@ fn sync_mru(state: &mut State) {
 
     let Some(app_id) = app_id else { return };
 
-    // Already at the front — nothing to do.
     if state.mru_apps.first().is_some_and(|f| f == &app_id) { return; }
 
     state.mru_apps.retain(|id| id != &app_id);
     state.mru_apps.insert(0, app_id.clone());
 
-    // Emit FocusChanged that seat::focus_changed missed due to the
-    // set_app_id / set_focus race.
     use sola_bus::topics::Topic;
     let _ = state.bus.emit_sticky(Topic::FocusChanged(app_id));
+
+    emit_apps_list(state);
 }
 
 /// Drain and dispatch all pending bus messages.
@@ -97,50 +100,13 @@ pub(crate) fn dispatch_bus(state: &mut State) {
 
         match topic {
             Topic::SetWindowPolicy(payload) => handle_set_window_policy(state, payload),
-            Topic::GrabInput(target) => handle_grab_input(state, &target),
-            Topic::ReleaseInput => handle_release_input(state),
             Topic::RaiseApp(app_id) => handle_raise_app(state, &app_id),
             Topic::SetWindowGeometry(geo) => handle_set_window_geometry(state, &geo),
-            Topic::ListApps => handle_list_apps(state),
             _ => {
                 tracing::debug!(topic = %msg.topic, "unhandled bus topic");
             }
         }
     }
-}
-
-/// Set exclusive input grab for the target app.
-///
-/// Always sets the grab immediately so key routing switches away from the bus.
-/// If the target window exists, raise and focus it. If not (race with window
-/// mapping), `new_toplevel` will handle raise+focus when the window appears.
-fn handle_grab_input(state: &mut State, target: &str) {
-    tracing::info!(target, "grabbing input");
-    state.input_grab = Some(target.to_string());
-
-    if let Some(window) = state.window_by_app_id(target) {
-        use smithay::wayland::seat::WaylandFocus;
-        state.space.raise_element(&window, true);
-        if let Some(surface) = window.wl_surface() {
-            let serial = SERIAL_COUNTER.next_serial();
-            let keyboard = state.seat.get_keyboard().unwrap();
-            keyboard.set_focus(state, Some(surface.into_owned()), serial);
-        }
-    } else {
-        tracing::debug!(target, "window not yet mapped, will focus on arrival");
-    }
-}
-
-/// Release the input grab.
-///
-/// Callers must emit RaiseApp before ReleaseInput so that a window has
-/// focus when the grab clears. The grabbed surface stays mapped — the
-/// raised app covers it, and the shell app clears its own UI.
-fn handle_release_input(state: &mut State) {
-    let Some(target) = state.input_grab.take() else {
-        return;
-    };
-    tracing::info!(target = %target, "releasing input");
 }
 
 /// Raise all windows belonging to the given app_id.
@@ -220,15 +186,14 @@ fn handle_set_window_geometry(state: &mut State, geo: &sola_bus::topics::WindowG
     state.pending_geometries.insert(key, geo.clone());
 }
 
-/// Respond to a ListApps request.
+/// Emit the current app list as a sticky bus message.
 ///
-/// Scans all mapped windows for app_ids, deduplicates, and orders by MRU.
-/// Excludes the current input grab target (e.g., the switcher itself).
-fn handle_list_apps(state: &mut State) {
-    use sola_bus::topics::App;
+/// Called whenever windows are mapped, unmapped, or MRU order changes.
+/// The shell caches this list and uses it immediately when the switcher activates.
+fn emit_apps_list(state: &mut State) {
+    use sola_bus::topics::{App, Topic};
     use std::collections::HashMap;
 
-    // Count windows per app_id from the Space.
     let mut counts: HashMap<String, u32> = HashMap::new();
     for window in state.space.elements() {
         if let Some(app_id) = State::app_id(window) {
@@ -236,12 +201,6 @@ fn handle_list_apps(state: &mut State) {
         }
     }
 
-    // Exclude the grab target (e.g., the switcher).
-    if let Some(ref target) = state.input_grab {
-        counts.remove(target);
-    }
-
-    // Order by MRU position (known apps first), then alphabetical for unknown.
     let mut app_ids: Vec<String> = counts.keys().cloned().collect();
     app_ids.sort_by_key(|id| {
         state.mru_apps.iter().position(|m| m == id).unwrap_or(usize::MAX)
@@ -257,21 +216,7 @@ fn handle_list_apps(state: &mut State) {
         }
     }).collect();
 
-    tracing::debug!(count = apps.len(), "responding to ListApps");
-
-    use sola_bus::topics::Topic;
-    let _ = state.bus.emit(Topic::Apps(apps));
-}
-
-/// Clear input grab if the grabbed app has no mapped surfaces.
-/// Handles the case where the grabbed app dies (e.g., shell restart
-/// during switcher activation).
-fn clear_stale_grab(state: &mut State) {
-    let Some(ref target) = state.input_grab else { return };
-    if state.window_by_app_id(target).is_none() {
-        tracing::warn!(target = %target, "clearing stale input grab (no surfaces)");
-        state.input_grab = None;
-    }
+    let _ = state.bus.emit_sticky(Topic::Apps(apps));
 }
 
 fn handle_set_window_policy(
@@ -330,13 +275,10 @@ fn apply_pending_surfaces(state: &mut State) {
 
     state.pending_surfaces = still_pending;
 
-    for (window, ref app_id, policy) in to_map {
-        // Active input grab overrides auto_focus policy
-        let grab_active = state
-            .input_grab
-            .as_ref()
-            .is_some_and(|g| g == app_id);
-        let should_focus = grab_active || policy.as_ref().map_or(true, |p| p.auto_focus);
+    let mut mapped_any = false;
+
+    for (window, ref _app_id, policy) in to_map {
+        let should_focus = policy.as_ref().map_or(true, |p| p.auto_focus);
 
         match policy {
             Some(ref p) if !p.zoned => {
@@ -353,9 +295,17 @@ fn apply_pending_surfaces(state: &mut State) {
                         toplevel.send_pending_configure();
                     }
                 }
+
+                // Cache keyboard_target surface for direct Super+key routing.
+                if p.keyboard_target {
+                    if let Some(surface) = window.wl_surface() {
+                        let owned = surface.into_owned();
+                        setup_shell_keyboard_target(state, &owned);
+                        state.shell_keyboard_target = Some(owned);
+                    }
+                }
             }
             _ => {
-                // Zoned or no policy: suggest full output size
                 if let Some(mode) =
                     state.space.outputs().next().and_then(|o| o.current_mode())
                 {
@@ -377,7 +327,31 @@ fn apply_pending_surfaces(state: &mut State) {
                 keyboard.set_focus(state, Some(surface.into_owned()), serial);
             }
         }
+
+        mapped_any = true;
     }
+
+    if mapped_any {
+        emit_apps_list(state);
+    }
+}
+
+/// Send wl_keyboard.enter to the shell's keyboard_target surface so GTK
+/// dispatches key events to it.
+fn setup_shell_keyboard_target(
+    state: &State,
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) {
+    let Some(client) = surface.client() else {
+        return;
+    };
+    let keyboard = state.seat.get_keyboard().unwrap();
+    let serial = SERIAL_COUNTER.next_serial();
+    for kbd in keyboard.client_keyboards(&client) {
+        kbd.enter(serial.into(), surface, vec![]);
+        kbd.modifiers(serial.into(), 0, 0, 0, 0);
+    }
+    tracing::info!("shell keyboard_target surface registered");
 }
 
 /// Graceful shutdown — clean up all resources.

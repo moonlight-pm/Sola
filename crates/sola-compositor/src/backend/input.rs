@@ -1,7 +1,8 @@
 /// Input device plumbing via libinput.
 ///
 /// Sets up libinput, forwards keyboard/pointer events through the Wayland
-/// seat. Super+key events are sent to the bus instead of the focused client.
+/// seat. Super+key events are sent directly to sola-shell's keyboard_target
+/// surface via wl_keyboard.key, bypassing Smithay's focus mechanism.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/libinput/index.html
 use smithay::backend::input::{
@@ -16,6 +17,7 @@ use smithay::input::keyboard::FilterResult;
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::input::Libinput;
+use smithay::reexports::wayland_server::Resource;
 use smithay::utils::SERIAL_COUNTER;
 
 use crate::State;
@@ -45,44 +47,30 @@ pub fn setup(
         .insert_source(libinput_backend, move |event, _, state| {
             match event {
                 InputEvent::Keyboard { event } => {
-                    let code = event.key_code().raw();
                     let pressed = event.state() == KeyState::Pressed;
+                    let was_super_held = modifiers.super_held;
 
-                    modifiers.update(code, pressed);
+                    modifiers.update(event.key_code().raw(), pressed);
 
-                    tracing::debug!(code, pressed, super_held = modifiers.super_held, "key event");
+                    let route_to_shell = modifiers.super_held
+                        || (was_super_held && !modifiers.super_held);
 
-                    // Super held → send to bus, don't forward to client.
-                    // Exception: during input grab, ALL keys go to the grabbed
-                    // surface via normal Wayland focus (including Super+key combos).
-                    if modifiers.super_held && state.input_grab.is_none() {
-                        use sola_bus::topics::{Topic, KeyEvent};
-                        let key = KeyEvent {
-                            code,
-                            pressed,
-                            super_held: modifiers.super_held,
-                            shift_held: modifiers.shift_held,
-                        };
-                        if let Err(e) = state.bus.emit(Topic::Key(key)) {
-                            tracing::warn!("failed to emit key to bus: {e}");
-                        }
+                    if route_to_shell {
+                        send_to_shell(state, event.key_code(), event.state(), event.time_msec());
                         return;
                     }
 
-                    // Forward to focused client.
                     let serial = SERIAL_COUNTER.next_serial();
                     let time = event.time_msec();
-                    {
-                        let keyboard = state.seat.get_keyboard().unwrap();
-                        keyboard.input::<(), _>(
-                            state,
-                            event.key_code(),
-                            event.state(),
-                            serial,
-                            time,
-                            |_, _, _| FilterResult::Forward,
-                        );
-                    }
+                    let keyboard = state.seat.get_keyboard().unwrap();
+                    keyboard.input::<(), _>(
+                        state,
+                        event.key_code(),
+                        event.state(),
+                        serial,
+                        time,
+                        |_, _, _| FilterResult::Forward,
+                    );
                 }
 
                 InputEvent::PointerMotion { event } => {
@@ -171,6 +159,63 @@ pub fn setup(
 
     tracing::info!("libinput initialized for seat '{seat_name}'");
     Ok(())
+}
+
+/// Send a key event directly to sola-shell's keyboard_target surface.
+///
+/// Uses wl_keyboard.key on the shell client's keyboard resources,
+/// bypassing Smithay's focus mechanism. The focused app never sees
+/// these events.
+fn send_to_shell(
+    state: &mut State,
+    keycode: smithay::input::keyboard::Keycode,
+    key_state: KeyState,
+    time: u32,
+) {
+    use smithay::reexports::wayland_server::protocol::wl_keyboard;
+
+    let surface = match state.shell_keyboard_target {
+        Some(ref s) => s.clone(),
+        None => return,
+    };
+
+    let client = match surface.client() {
+        Some(c) => c,
+        None => {
+            state.shell_keyboard_target = None;
+            return;
+        }
+    };
+
+    let keyboard = state.seat.get_keyboard().unwrap();
+
+    let ((), mods_changed) = keyboard.input_intercept(
+        state,
+        keycode,
+        key_state,
+        |_, _, _| (),
+    );
+    let mods = keyboard.modifier_state();
+
+    let serial = SERIAL_COUNTER.next_serial();
+    let evdev_code = keycode.raw() - 8;
+    let wl_state = match key_state {
+        KeyState::Pressed => wl_keyboard::KeyState::Pressed,
+        KeyState::Released => wl_keyboard::KeyState::Released,
+    };
+
+    for kbd in keyboard.client_keyboards(&client) {
+        kbd.key(serial.into(), time, evdev_code, wl_state);
+        if mods_changed {
+            kbd.modifiers(
+                serial.into(),
+                mods.serialized.depressed,
+                mods.serialized.latched,
+                mods.serialized.locked,
+                mods.serialized.layout_effective,
+            );
+        }
+    }
 }
 
 /// Forward the current pointer position through the seat to the client.

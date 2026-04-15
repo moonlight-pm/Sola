@@ -10,15 +10,6 @@ pub struct App {
     pub window_count: u32,
 }
 
-/// A key event forwarded over the bus (Super+key combos).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyEvent {
-    pub code: u32,
-    pub pressed: bool,
-    pub super_held: bool,
-    pub shift_held: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenUrlRequest {
     pub url: String,
@@ -93,6 +84,9 @@ pub struct WindowPolicy {
     pub zoned: bool,
     /// If true, compositor gives keyboard focus on map.
     pub auto_focus: bool,
+    /// If true, compositor routes Super+key events to this surface.
+    #[serde(default)]
+    pub keyboard_target: bool,
     /// Fixed size for unzoned windows (width, height).
     #[serde(default)]
     pub size: Option<(i32, i32)>,
@@ -126,13 +120,7 @@ impl Zone {
 }
 
 define_topics! {
-    // Input routing
-    Key(KeyEvent),
-    GrabInput(String),
-    ReleaseInput,
-
     // App management
-    ListApps,
     Apps(Vec<App>),
     RaiseApp(String),
     FocusChanged(String),
@@ -160,12 +148,12 @@ mod tests {
 
     #[test]
     fn unit_topic_roundtrip() {
-        let msg = Topic::ReleaseInput.to_message();
-        assert_eq!(msg.topic, "ReleaseInput");
+        let msg = Topic::Shutdown.to_message();
+        assert_eq!(msg.topic, "Shutdown");
         assert!(msg.payload.is_none());
 
         let parsed = Topic::parse(&msg).unwrap();
-        assert!(matches!(parsed, Topic::ReleaseInput));
+        assert!(matches!(parsed, Topic::Shutdown));
     }
 
     #[test]
@@ -186,38 +174,6 @@ mod tests {
                 assert_eq!(decoded[0].app_id, "zen");
                 assert_eq!(decoded[0].window_count, 2);
             }
-            _ => panic!("wrong variant"),
-        }
-    }
-
-    #[test]
-    fn key_event_roundtrip() {
-        let msg = Topic::Key(KeyEvent {
-            code: 23,
-            pressed: true,
-            super_held: true,
-            shift_held: false,
-        })
-        .to_message();
-        assert_eq!(msg.topic, "Key");
-
-        match Topic::parse(&msg).unwrap() {
-            Topic::Key(k) => {
-                assert_eq!(k.code, 23);
-                assert!(k.pressed);
-                assert!(k.super_held);
-                assert!(!k.shift_held);
-            }
-            _ => panic!("wrong variant"),
-        }
-    }
-
-    #[test]
-    fn grab_input_roundtrip() {
-        let msg = Topic::GrabInput("sola-switcher".into()).to_message();
-
-        match Topic::parse(&msg).unwrap() {
-            Topic::GrabInput(target) => assert_eq!(target, "sola-switcher"),
             _ => panic!("wrong variant"),
         }
     }

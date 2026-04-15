@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use sola_bus::topics::{KeyEvent, OutputGeometry, WindowGeometry, Zone};
+use sola_bus::topics::{OutputGeometry, WindowGeometry, Zone};
 use tracing::{info, warn};
 
 pub const MENUBAR_HEIGHT: i32 = 28;
@@ -44,12 +44,10 @@ impl ZoningState {
         self.focused_app_id = Some(app_id);
     }
 
-    pub fn handle_key(&mut self, key: &KeyEvent) -> Option<WindowGeometry> {
-        if !key.pressed || !key.super_held {
-            return None;
-        }
-
-        let zone = zone_for_keycode(key.code)?;
+    /// Handle a zone snap keycode. All events arriving here are Super+key
+    /// presses routed by the compositor, so no modifier checks needed.
+    pub fn handle_key(&mut self, code: u32) -> Option<WindowGeometry> {
+        let zone = zone_for_keycode(code)?;
 
         let (w, h) = match self.output_size {
             Some(s) => s,
