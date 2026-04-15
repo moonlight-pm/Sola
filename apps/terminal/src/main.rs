@@ -1,12 +1,9 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use sola_app::{
-    asset_bundle, AppCtx, AsyncDispatcher, SolaApp, WindowConfig, WindowHandle,
-};
-use sola_bus::topics::{
-    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic,
-};
+use sola_app::{AppCtx, AsyncDispatcher, SolaApp, WindowConfig, WindowHandle, asset_bundle};
+use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic};
+use sola_core::KeyCode;
 
 mod commands;
 mod pty;
@@ -111,11 +108,7 @@ impl SolaApp for TerminalApp {
     }
 
     fn on_bus_event(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        if let Topic::MenuAction(MenuActionPayload {
-            app_id,
-            action_id,
-        }) = topic
-        {
+        if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic {
             if app_id != Self::APP_ID {
                 return;
             }
@@ -173,7 +166,7 @@ fn terminal_menu() -> AppMenuPayload {
                     MenuItem::Action {
                         id: "quit".into(),
                         label: "Quit Terminal".into(),
-                        shortcut: Some("Super+Q".into()),
+                        shortcut: Some(KeyCode::Q.meta()),
                         disabled: false,
                         checked: false,
                     },
@@ -184,7 +177,7 @@ fn terminal_menu() -> AppMenuPayload {
                 items: vec![MenuItem::Action {
                     id: "new_tab".into(),
                     label: "New Tab".into(),
-                    shortcut: Some("Super+T".into()),
+                    shortcut: Some(KeyCode::T.meta()),
                     disabled: false,
                     checked: false,
                 }],
@@ -195,14 +188,14 @@ fn terminal_menu() -> AppMenuPayload {
                     MenuItem::Action {
                         id: "copy".into(),
                         label: "Copy".into(),
-                        shortcut: Some("Super+C".into()),
+                        shortcut: Some(KeyCode::C.meta()),
                         disabled: false,
                         checked: false,
                     },
                     MenuItem::Action {
                         id: "paste".into(),
                         label: "Paste".into(),
-                        shortcut: Some("Super+V".into()),
+                        shortcut: Some(KeyCode::V.meta()),
                         disabled: false,
                         checked: false,
                     },

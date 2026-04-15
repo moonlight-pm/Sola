@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 # Smithay — the Rust Wayland compositor framework.

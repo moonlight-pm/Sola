@@ -51,8 +51,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 fn run() -> Result<(), Error> {
     let mut event_loop: EventLoop<State> =
         EventLoop::try_new().map_err(|e| Error::EventLoop(e.to_string()))?;
-    let mut display: Display<State> =
-        Display::new().map_err(|e| Error::Display(e.to_string()))?;
+    let mut display: Display<State> = Display::new().map_err(|e| Error::Display(e.to_string()))?;
 
     let mut state = State::new(display.handle(), event_loop.handle());
 
@@ -138,23 +137,30 @@ fn connect_to_compositor(state: &mut State) {
             } else {
                 None
             };
-            let _ = state.bus.emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
-                app_id: info.class.clone(),
-                windows: vec![WindowPolicy {
-                    title: info.title.clone(),
-                    zoned: true,
-                    keyboard_target: false,
-                    size,
-                    position: None,
-                }],
-            }));
+            let _ = state
+                .bus
+                .emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
+                    app_id: info.class.clone(),
+                    windows: vec![WindowPolicy {
+                        title: info.title.clone(),
+                        zoned: true,
+                        keyboard_target: false,
+                        size,
+                        position: None,
+                    }],
+                }));
         }
     }
 }
 
 /// Find the server-side WlSurface for an X11 window ID.
-fn server_surface_for_x11(state: &State, x11_id: u32) -> Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> {
-    state.surface_to_x11.iter()
+fn server_surface_for_x11(
+    state: &State,
+    x11_id: u32,
+) -> Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> {
+    state
+        .surface_to_x11
+        .iter()
         .find(|&(_, &id)| id == x11_id)
         .map(|(surface, _)| surface.clone())
 }
@@ -162,7 +168,7 @@ fn server_surface_for_x11(state: &State, x11_id: u32) -> Option<smithay::reexpor
 /// Inject input events received from sola-compositor into XWayland's seat.
 fn inject_input(state: &mut State) {
     use smithay::input::keyboard::FilterResult;
-    use smithay::input::pointer::{ButtonEvent, MotionEvent, AxisFrame};
+    use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
     use smithay::utils::SERIAL_COUNTER;
 
     let events = match &mut state.client {
@@ -180,8 +186,7 @@ fn inject_input(state: &mut State) {
     for event in events {
         match event {
             client::InputEvent::PointerEnter { x11_id, x, y } => {
-                let focus = server_surface_for_x11(state, x11_id)
-                    .map(|s| (s, (0.0, 0.0).into()));
+                let focus = server_surface_for_x11(state, x11_id).map(|s| (s, (0.0, 0.0).into()));
                 let serial = SERIAL_COUNTER.next_serial();
                 pointer.motion(
                     state,
@@ -222,7 +227,11 @@ fn inject_input(state: &mut State) {
                 );
                 pointer.frame(state);
             }
-            client::InputEvent::PointerButton { button, pressed, time } => {
+            client::InputEvent::PointerButton {
+                button,
+                pressed,
+                time,
+            } => {
                 use smithay::backend::input::ButtonState;
                 let serial = SERIAL_COUNTER.next_serial();
                 pointer.button(
@@ -241,8 +250,8 @@ fn inject_input(state: &mut State) {
                 pointer.frame(state);
             }
             client::InputEvent::PointerAxis { value, time } => {
-                let frame = AxisFrame::new(time)
-                    .value(smithay::backend::input::Axis::Vertical, value);
+                let frame =
+                    AxisFrame::new(time).value(smithay::backend::input::Axis::Vertical, value);
                 pointer.axis(state, frame);
                 pointer.frame(state);
             }
@@ -253,7 +262,11 @@ fn inject_input(state: &mut State) {
                 keyboard.input::<(), _>(
                     state,
                     Keycode::new(key + 8), // evdev → xkb offset
-                    if pressed { KeyState::Pressed } else { KeyState::Released },
+                    if pressed {
+                        KeyState::Pressed
+                    } else {
+                        KeyState::Released
+                    },
                     serial,
                     time,
                     |_, _, _| FilterResult::Forward,
@@ -268,7 +281,9 @@ fn process_bus(state: &mut State) {
     use sola_bus::topics::Topic;
 
     while let Some(msg) = state.bus.try_recv() {
-        let Some(topic) = Topic::parse(&msg) else { continue };
+        let Some(topic) = Topic::parse(&msg) else {
+            continue;
+        };
         match topic {
             Topic::OutputGeometry(geo) => {
                 update_output_mode(state, geo.width, geo.height);
@@ -287,7 +302,9 @@ fn update_output_mode(state: &mut State, width: i32, height: i32) {
         size: (width, height).into(),
         refresh: 60_000,
     };
-    state.output.change_current_state(Some(mode), None, None, None);
+    state
+        .output
+        .change_current_state(Some(mode), None, None, None);
     state.output.set_preferred(mode);
     tracing::info!(width, height, "updated virtual output mode from compositor");
 }
@@ -311,10 +328,7 @@ fn apply_pending_configures(state: &mut State) {
         };
 
         let geo = info.surface.geometry();
-        let new_geo = Rectangle::new(
-            geo.loc,
-            (conf.width as i32, conf.height as i32).into(),
-        );
+        let new_geo = Rectangle::new(geo.loc, (conf.width as i32, conf.height as i32).into());
         if let Err(err) = info.surface.configure(Some(new_geo)) {
             tracing::warn!(x11_id = conf.x11_id, ?err, "failed to configure X11 window");
         }
@@ -338,7 +352,10 @@ fn setup_wayland_socket(
         .handle()
         .insert_source(listener, |client_stream, _, state| {
             let client_state = std::sync::Arc::new(server::compositor::ClientState::default());
-            match state.display_handle.insert_client(client_stream, client_state) {
+            match state
+                .display_handle
+                .insert_client(client_stream, client_state)
+            {
                 Ok(_) => tracing::info!("XWayland connected as Wayland client"),
                 Err(err) => tracing::error!(?err, "failed to accept XWayland client"),
             }

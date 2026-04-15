@@ -2,7 +2,7 @@
 use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::wayland_server::Display;
 use smithay::reexports::wayland_server::Resource;
-use smithay::utils::{Size, SERIAL_COUNTER};
+use smithay::utils::{SERIAL_COUNTER, Size};
 
 use crate::error::CompositorError;
 use crate::output::render;
@@ -67,6 +67,7 @@ pub(crate) fn dispatch_bus(state: &mut State) {
             Topic::Composition(entries) => handle_composition(state, entries),
             Topic::Frame(update) => handle_frame(state, update),
             Topic::Focus(target) => handle_focus(state, target),
+            Topic::ShellKeyBindings(payload) => handle_set_key_bindings(state, payload),
             _ => {
                 tracing::debug!(topic = %msg.topic, "unhandled bus topic");
             }
@@ -81,7 +82,8 @@ fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::Composit
     let to_map: Vec<(smithay::desktop::Window, String, Option<String>)> = entries
         .iter()
         .filter_map(|entry| {
-            state.find_surface(&entry.app_id, entry.title.as_deref())
+            state
+                .find_surface(&entry.app_id, entry.title.as_deref())
                 .map(|w| (w, entry.app_id.clone(), entry.title.clone()))
         })
         .collect();
@@ -132,8 +134,13 @@ fn handle_frame(state: &mut State, update: sola_bus::topics::FrameUpdate) {
     // If the surface exists (mapped or unmapped), configure it now.
     if let Some(window) = state.find_surface(&update.app_id, update.title.as_deref()) {
         // If already in Space, reposition.
-        if state.window_by_app_id_title(&update.app_id, update.title.as_deref()).is_some() {
-            state.space.map_element(window.clone(), (update.x, update.y), false);
+        if state
+            .window_by_app_id_title(&update.app_id, update.title.as_deref())
+            .is_some()
+        {
+            state
+                .space
+                .map_element(window.clone(), (update.x, update.y), false);
         }
 
         if let Some(toplevel) = window.toplevel() {
@@ -151,7 +158,9 @@ fn handle_focus(state: &mut State, target: sola_bus::topics::FocusTarget) {
 
     let window = state.window_by_app_id_title(&target.app_id, target.title.as_deref());
     let Some(window) = window else { return };
-    let Some(surface) = window.wl_surface() else { return };
+    let Some(surface) = window.wl_surface() else {
+        return;
+    };
 
     let serial = SERIAL_COUNTER.next_serial();
     let keyboard = state.seat.get_keyboard().unwrap();
@@ -171,7 +180,9 @@ pub(crate) fn emit_apps_list(state: &mut State) {
     // Count mapped surfaces.
     for window in state.space.elements() {
         if let Some(app_id) = State::app_id(window) {
-            if app_id == "sola-shell" { continue; }
+            if app_id == "sola-shell" {
+                continue;
+            }
             *counts.entry(app_id).or_default() += 1;
         }
     }
@@ -179,7 +190,9 @@ pub(crate) fn emit_apps_list(state: &mut State) {
     // Count unmapped surfaces (known to exist but not yet composed).
     for window in &state.unmapped_surfaces {
         if let Some(app_id) = State::app_id(window) {
-            if app_id == "sola-shell" { continue; }
+            if app_id == "sola-shell" {
+                continue;
+            }
             *counts.entry(app_id).or_default() += 1;
         }
     }
@@ -187,23 +200,23 @@ pub(crate) fn emit_apps_list(state: &mut State) {
     let mut app_ids: Vec<String> = counts.keys().cloned().collect();
     app_ids.sort();
 
-    let apps: Vec<App> = app_ids.into_iter().map(|app_id| {
-        let window_count = counts[&app_id];
-        App {
-            name: app_id.clone(),
-            icon: "app".into(),
-            window_count,
-            app_id,
-        }
-    }).collect();
+    let apps: Vec<App> = app_ids
+        .into_iter()
+        .map(|app_id| {
+            let window_count = counts[&app_id];
+            App {
+                name: app_id.clone(),
+                icon: "app".into(),
+                window_count,
+                app_id,
+            }
+        })
+        .collect();
 
     let _ = state.bus.emit_sticky(Topic::Apps(apps));
 }
 
-fn handle_set_window_policy(
-    state: &mut State,
-    payload: sola_bus::topics::WindowPolicyPayload,
-) {
+fn handle_set_window_policy(state: &mut State, payload: sola_bus::topics::WindowPolicyPayload) {
     tracing::info!(
         app_id = %payload.app_id,
         windows = payload.windows.len(),
@@ -212,6 +225,16 @@ fn handle_set_window_policy(
     state
         .window_policies
         .insert(payload.app_id.clone(), payload.windows);
+}
+
+fn handle_set_key_bindings(state: &mut State, payload: sola_bus::topics::ShellKeyBindingsPayload) {
+    tracing::info!(
+        app_id = %payload.app_id,
+        count = payload.bindings.len(),
+        "registered shell key bindings"
+    );
+
+    state.shell_key_bindings = payload.bindings;
 }
 
 /// Move pending surfaces whose app_id is now known to unmapped_surfaces.
@@ -234,7 +257,7 @@ fn apply_pending_surfaces(state: &mut State) {
         let title = state::window_title(&window);
         tracing::info!(app_id = %app_id, title = ?title, "surface ready, waiting for composition");
 
-        // The sola-shell menubar is the Super+key routing target.
+        // The sola-shell menubar is the Meta+key routing target.
         if app_id == "sola-shell" && title.as_deref() == Some("menubar") {
             if let Some(surface) = window.wl_surface() {
                 let owned = surface.into_owned();
@@ -255,7 +278,11 @@ fn apply_pending_surfaces(state: &mut State) {
                     position: None,
                 }],
             };
-            let _ = state.bus.emit_sticky(sola_bus::topics::Topic::SetWindowPolicy(default_policy.clone()));
+            let _ = state
+                .bus
+                .emit_sticky(sola_bus::topics::Topic::SetWindowPolicy(
+                    default_policy.clone(),
+                ));
             state.window_policies.insert(app_id, default_policy.windows);
         }
 

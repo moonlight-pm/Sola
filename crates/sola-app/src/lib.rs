@@ -164,7 +164,9 @@ pub fn run<A: SolaApp>() {
             let source_for_dispatch = source.clone();
             let dispatcher: window::JsDispatcher =
                 Box::new(move |cmd: &str, args: &serde_json::Value| {
-                    let Some(runtime) = runtime_weak.upgrade() else { return };
+                    let Some(runtime) = runtime_weak.upgrade() else {
+                        return;
+                    };
                     let mut rt = runtime.borrow_mut();
                     let AppRuntime { app, ctx } = &mut *rt;
                     app.on_js_command(cmd, args, &source_for_dispatch, ctx);
@@ -196,7 +198,9 @@ pub fn run<A: SolaApp>() {
                 drop(client);
 
                 for msg in messages {
-                    let Some(topic) = Topic::parse(&msg) else { continue };
+                    let Some(topic) = Topic::parse(&msg) else {
+                        continue;
+                    };
                     if matches!(topic, Topic::Shutdown) {
                         {
                             let mut rt = runtime.borrow_mut();

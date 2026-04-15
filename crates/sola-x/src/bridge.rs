@@ -11,7 +11,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use smithay::backend::allocator::Buffer;
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface as ServerWlSurface;
-use smithay::wayland::compositor::{self, SurfaceAttributes, BufferAssignment};
+use smithay::wayland::compositor::{self, BufferAssignment, SurfaceAttributes};
 use smithay::wayland::dmabuf::get_dmabuf;
 use smithay::wayland::shm::with_buffer_contents;
 
@@ -112,11 +112,7 @@ fn forward_dmabuf(
 }
 
 /// Forward an SHM buffer by copying pixel data to a client-side SHM pool.
-fn forward_shm(
-    wl_buffer: &WlBuffer,
-    x11_window_id: u32,
-    client: &mut ClientConnection,
-) {
+fn forward_shm(wl_buffer: &WlBuffer, x11_window_id: u32, client: &mut ClientConnection) {
     let proxy = match client.app.proxies.get(&x11_window_id) {
         Some(p) => p,
         None => return,

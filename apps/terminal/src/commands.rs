@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use base64::Engine;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::pty::PtyEvent;
@@ -38,10 +38,7 @@ impl TerminalHandler {
             .get("tmuxSession")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let cwd = args
-            .get("cwd")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let cwd = args.get("cwd").and_then(|v| v.as_str()).map(String::from);
 
         let pty_id = uuid::Uuid::new_v4().to_string();
         let (pty_event_tx, pty_event_rx) = mpsc::unbounded_channel::<PtyEvent>();

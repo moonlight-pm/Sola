@@ -1,7 +1,7 @@
 /// Input device plumbing via libinput.
 ///
 /// Sets up libinput, forwards keyboard/pointer events through the Wayland
-/// seat. Super+key events are sent directly to sola-shell's keyboard_target
+/// seat. Meta+key events are sent directly to sola-shell's keyboard_target
 /// surface via wl_keyboard.key, bypassing Smithay's focus mechanism.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/libinput/index.html
@@ -10,8 +10,8 @@ use smithay::backend::input::{
     PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
 };
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
-use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::Session;
+use smithay::backend::session::libseat::LibSeatSession;
 use smithay::desktop::WindowSurfaceType;
 use smithay::input::keyboard::FilterResult;
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
@@ -47,13 +47,25 @@ pub fn setup(
         .insert_source(libinput_backend, move |event, _, state| {
             match event {
                 InputEvent::Keyboard { event } => {
+                    let keycode = event.key_code().raw();
                     let pressed = event.state() == KeyState::Pressed;
-                    let was_super_held = modifiers.super_held;
+                    modifiers.update(keycode, pressed);
 
-                    modifiers.update(event.key_code().raw(), pressed);
+                    let chord = sola_core::KeyChord {
+                        keycode: sola_core::KeyCode::from(keycode),
+                        meta: modifiers.meta_held,
+                        alt: modifiers.alt_held,
+                        ctrl: modifiers.ctrl_held,
+                        shift: modifiers.shift_held,
+                    };
 
-                    let route_to_shell = modifiers.super_held
-                        || (was_super_held && !modifiers.super_held);
+                    // Always route any Meta-key release so shell can close switcher reliably.
+                    let is_meta_release = !pressed
+                        && (keycode == sola_core::KeyCode::LEFT_META.raw()
+                            || keycode == sola_core::KeyCode::RIGHT_META.raw());
+
+                    let route_to_shell =
+                        is_meta_release || state.shell_key_bindings.contains(&chord);
 
                     if route_to_shell {
                         send_to_shell(state, event.key_code(), event.state(), event.time_msec());
@@ -76,8 +88,10 @@ pub fn setup(
                 InputEvent::PointerMotion { event } => {
                     let delta = event.delta();
                     let (max_x, max_y) = output_size(state);
-                    state.pointer_location.0 = (state.pointer_location.0 + delta.x).clamp(0.0, max_x);
-                    state.pointer_location.1 = (state.pointer_location.1 + delta.y).clamp(0.0, max_y);
+                    state.pointer_location.0 =
+                        (state.pointer_location.0 + delta.x).clamp(0.0, max_x);
+                    state.pointer_location.1 =
+                        (state.pointer_location.1 + delta.y).clamp(0.0, max_y);
                     forward_pointer_motion(state);
                 }
 
@@ -110,7 +124,8 @@ pub fn setup(
                     let mut frame = AxisFrame::new(event.time_msec()).source(source);
 
                     // Horizontal axis.
-                    let h_amount = event.amount(Axis::Horizontal)
+                    let h_amount = event
+                        .amount(Axis::Horizontal)
                         .or_else(|| event.amount_v120(Axis::Horizontal).map(|v| v * 3.0 / 120.0));
                     if let Some(h) = h_amount {
                         frame = frame.value(Axis::Horizontal, h);
@@ -124,7 +139,8 @@ pub fn setup(
                     }
 
                     // Vertical axis.
-                    let v_amount = event.amount(Axis::Vertical)
+                    let v_amount = event
+                        .amount(Axis::Vertical)
                         .or_else(|| event.amount_v120(Axis::Vertical).map(|v| v * 3.0 / 120.0));
                     if let Some(v) = v_amount {
                         frame = frame.value(Axis::Vertical, -v);
@@ -189,12 +205,7 @@ fn send_to_shell(
 
     let keyboard = state.seat.get_keyboard().unwrap();
 
-    let ((), mods_changed) = keyboard.input_intercept(
-        state,
-        keycode,
-        key_state,
-        |_, _, _| (),
-    );
+    let ((), mods_changed) = keyboard.input_intercept(state, keycode, key_state, |_, _, _| ());
     let mods = keyboard.modifier_state();
 
     let serial = SERIAL_COUNTER.next_serial();
@@ -225,10 +236,7 @@ fn forward_pointer_motion(state: &mut State) {
 
     let under = state.space.element_under((x, y)).and_then(|(window, loc)| {
         window
-            .surface_under(
-                (x - loc.x as f64, y - loc.y as f64),
-                WindowSurfaceType::ALL,
-            )
+            .surface_under((x - loc.x as f64, y - loc.y as f64), WindowSurfaceType::ALL)
             .map(|(surface, offset)| (surface, (loc + offset).to_f64()))
     });
 
@@ -247,7 +255,8 @@ fn forward_pointer_motion(state: &mut State) {
 
 /// Get the output size for clamping pointer position.
 fn output_size(state: &State) -> (f64, f64) {
-    state.space
+    state
+        .space
         .outputs()
         .next()
         .and_then(|o| o.current_mode())

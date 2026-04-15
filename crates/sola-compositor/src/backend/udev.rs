@@ -41,7 +41,11 @@ pub fn setup(
                     if let Err(err) = register_gpu(state, &path, node) {
                         tracing::warn!(?err, ?node, "failed to register non-display GPU");
                     } else {
-                        tracing::info!(?node, ?path, "registered non-display GPU for buffer import");
+                        tracing::info!(
+                            ?node,
+                            ?path,
+                            "registered non-display GPU for buffer import"
+                        );
                     }
                     continue;
                 }
@@ -73,10 +77,10 @@ fn register_gpu(
     path: &std::path::Path,
     node: DrmNode,
 ) -> Result<(), DeviceError> {
-    let (_drm, _notifier, gbm, render_node) =
-        super::device::open(&mut state.session, path, node)?;
+    let (_drm, _notifier, gbm, render_node) = super::device::open(&mut state.session, path, node)?;
 
-    state.gpu_manager
+    state
+        .gpu_manager
         .as_mut()
         .add_node(render_node, gbm)
         .map_err(|e| DeviceError::Open {
@@ -99,7 +103,8 @@ pub fn init_device(
     let mut scanner = smithay_drm_extras::drm_scanner::DrmScanner::new();
     let connected_outputs = crate::output::scan::find_connected_outputs(&mut scanner, &drm);
 
-    state.gpu_manager
+    state
+        .gpu_manager
         .as_mut()
         .add_node(render_node, gbm.clone())
         .map_err(|e| DeviceError::Open {
@@ -146,17 +151,14 @@ pub fn init_device(
         use smithay::wayland::dmabuf::{DmabufFeedbackBuilder, DmabufState};
 
         let mut dmabuf_state = DmabufState::new();
-        let feedback =
-            DmabufFeedbackBuilder::new(render_node.dev_id(), renderer_formats.clone())
-                .build()
-                .map_err(|e| DeviceError::OutputInit {
-                    node,
-                    reason: format!("dmabuf feedback: {e}"),
-                })?;
-        dmabuf_state.create_global_with_default_feedback::<crate::State>(
-            &state.display_handle,
-            &feedback,
-        );
+        let feedback = DmabufFeedbackBuilder::new(render_node.dev_id(), renderer_formats.clone())
+            .build()
+            .map_err(|e| DeviceError::OutputInit {
+                node,
+                reason: format!("dmabuf feedback: {e}"),
+            })?;
+        dmabuf_state
+            .create_global_with_default_feedback::<crate::State>(&state.display_handle, &feedback);
         state.dmabuf_state = Some(dmabuf_state);
         tracing::info!(
             format_count = renderer_formats.len(),
@@ -207,13 +209,13 @@ pub fn init_device(
         let mut render_elements = DrmOutputRenderElements::<SolaRenderer, Element>::new();
         render_elements.add_output(&crtc, CLEAR_COLOR, std::iter::empty());
 
-        let mut renderer =
-            state.gpu_manager
-                .single_renderer(&render_node)
-                .map_err(|e| DeviceError::OutputInit {
-                    node,
-                    reason: format!("renderer: {e:?}"),
-                })?;
+        let mut renderer = state
+            .gpu_manager
+            .single_renderer(&render_node)
+            .map_err(|e| DeviceError::OutputInit {
+                node,
+                reason: format!("renderer: {e:?}"),
+            })?;
 
         let mut drm_output = output_manager
             .initialize_output(
@@ -232,13 +234,13 @@ pub fn init_device(
 
         tracing::info!(?crtc, "DRM output initialized, starting render loop");
 
-        let mut renderer =
-            state.gpu_manager
-                .single_renderer(&render_node)
-                .map_err(|e| DeviceError::OutputInit {
-                    node,
-                    reason: format!("renderer: {e:?}"),
-                })?;
+        let mut renderer = state
+            .gpu_manager
+            .single_renderer(&render_node)
+            .map_err(|e| DeviceError::OutputInit {
+                node,
+                reason: format!("renderer: {e:?}"),
+            })?;
         let elements: Vec<Element> = vec![];
         match drm_output.render_frame::<_, Element>(
             &mut renderer,
@@ -289,7 +291,11 @@ pub fn init_device(
             width: mode.size.w,
             height: mode.size.h,
         };
-        tracing::info!(width = geo.width, height = geo.height, "emitting OutputGeometry (sticky)");
+        tracing::info!(
+            width = geo.width,
+            height = geo.height,
+            "emitting OutputGeometry (sticky)"
+        );
         let _ = state.bus.emit_sticky(Topic::OutputGeometry(geo));
     }
 

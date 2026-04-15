@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{mpsc as std_mpsc, Arc};
+use std::sync::{Arc, mpsc as std_mpsc};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -76,12 +76,7 @@ impl AsyncDispatcher {
 
     /// Dispatch a command. `reply` runs on the main thread with the
     /// handler's return value.
-    pub fn dispatch(
-        &self,
-        cmd: String,
-        args: Value,
-        reply: impl FnOnce(Value) + 'static,
-    ) {
+    pub fn dispatch(&self, cmd: String, args: Value, reply: impl FnOnce(Value) + 'static) {
         let id = self.next_id.get();
         self.next_id.set(id.wrapping_add(1));
         self.pending.borrow_mut().insert(id, Box::new(reply));

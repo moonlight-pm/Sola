@@ -1,10 +1,10 @@
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 /// Central state for sola-x.
 ///
 /// Holds both the server side (Wayland compositor for XWayland) and
 /// the client side (Wayland client connecting to sola). The server
 /// side is long-lived; the client side is rebuilt on each reconnection.
 use std::collections::{HashMap, HashSet};
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 use smithay::input::{Seat, SeatState};
 use smithay::output::{Mode as WlMode, Output, PhysicalProperties, Subpixel};
@@ -22,7 +22,6 @@ use smithay::xwayland::{X11Surface, X11Wm};
 
 pub struct State {
     // -- Server side (Wayland compositor for XWayland) --
-
     pub display_handle: DisplayHandle,
     pub loop_handle: LoopHandle<'static, Self>,
     pub compositor_state: CompositorState,
@@ -43,12 +42,10 @@ pub struct State {
     pub output: Output,
 
     // -- Bus --
-
     /// Connection to the Sola Bus for lifecycle coordination.
     pub bus: sola_bus::BusClient,
 
     // -- Bridge state --
-
     /// Maps server-side WlSurface (from XWayland) to X11 window ID.
     /// Populated when `surface_associated` fires.
     pub surface_to_x11: HashMap<WlSurface, u32>,
@@ -58,7 +55,6 @@ pub struct State {
     pub x11_windows: HashMap<u32, X11WindowInfo>,
 
     // -- Client side --
-
     /// Wayland client connection to sola-compositor.
     /// None when disconnected; rebuilt on reconnection.
     pub client: Option<crate::client::ClientConnection>,
@@ -67,15 +63,14 @@ pub struct State {
     pub running: bool,
 }
 
-
 /// Initialize dmabuf v4 by opening the primary GPU render node and querying
 /// its supported formats. Returns None if no GPU is available.
 fn init_dmabuf(dh: &DisplayHandle) -> Option<DmabufState> {
     use smithay::backend::allocator::gbm::GbmDevice;
     use smithay::backend::drm::{DrmNode, NodeType};
-    use smithay::backend::egl::{EGLDisplay, EGLContext};
-    use smithay::backend::renderer::gles::GlesRenderer;
+    use smithay::backend::egl::{EGLContext, EGLDisplay};
     use smithay::backend::renderer::ImportDma;
+    use smithay::backend::renderer::gles::GlesRenderer;
     use smithay::backend::udev;
     use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 
@@ -101,7 +96,11 @@ fn init_dmabuf(dh: &DisplayHandle) -> Option<DmabufState> {
         .unwrap_or(drm_node);
 
     // Open GBM device.
-    let gbm_fd = match std::fs::File::options().read(true).write(true).open(primary.dev_path()?) {
+    let gbm_fd = match std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(primary.dev_path()?)
+    {
         Ok(f) => f,
         Err(e) => {
             tracing::warn!(?e, "failed to open render node, dmabuf disabled");
@@ -166,10 +165,7 @@ pub struct X11WindowInfo {
 }
 
 impl State {
-    pub fn new(
-        dh: DisplayHandle,
-        loop_handle: LoopHandle<'static, Self>,
-    ) -> Self {
+    pub fn new(dh: DisplayHandle, loop_handle: LoopHandle<'static, Self>) -> Self {
         let compositor_state = CompositorState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let mut seat_state = SeatState::new();

@@ -98,7 +98,10 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
         let ts = event.timestamp_ms();
-        assert!(ts >= before && ts <= after, "timestamp {ts} not in [{before}, {after}]");
+        assert!(
+            ts >= before && ts <= after,
+            "timestamp {ts} not in [{before}, {after}]"
+        );
     }
 
     #[test]

@@ -282,7 +282,6 @@ impl PtyManager {
         }
     }
 
-
     /// Close a PTY: close the master fd and kill the child process.
     pub fn close_pty(&mut self, id: &str) -> Result<(), String> {
         let instance = self

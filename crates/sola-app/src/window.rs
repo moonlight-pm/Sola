@@ -51,9 +51,13 @@ impl WindowHandle {
 
     pub fn eval_js(&self, script: &str) {
         use webkit6::prelude::WebViewExt;
-        self.inner
-            .webview
-            .evaluate_javascript(script, None, None, None::<&gio::Cancellable>, |_| {});
+        self.inner.webview.evaluate_javascript(
+            script,
+            None,
+            None,
+            None::<&gio::Cancellable>,
+            |_| {},
+        );
     }
 
     pub fn send_to_js(&self, value: &Value) {

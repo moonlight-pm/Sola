@@ -6,8 +6,8 @@
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Rectangle};
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
-use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 use smithay::xwayland::X11Surface;
+use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 
 use crate::state::{State, X11WindowInfo};
 
@@ -130,7 +130,8 @@ impl XwmHandler for State {
             (
                 w.map(|v| v as i32).unwrap_or(geo.size.w),
                 h.map(|v| v as i32).unwrap_or(geo.size.h),
-            ).into(),
+            )
+                .into(),
         );
 
         if let Err(err) = window.configure(Some(new_geo)) {
@@ -192,11 +193,14 @@ fn track_x11_window(state: &mut State, surface: X11Surface) {
 
     tracing::info!(id, title = %title, class = %class, x = geo.loc.x, y = geo.loc.y, "tracking X11 window");
 
-    state.x11_windows.insert(id, X11WindowInfo {
-        title: title.clone(),
-        class: class.clone(),
-        surface: surface.clone(),
-    });
+    state.x11_windows.insert(
+        id,
+        X11WindowInfo {
+            title: title.clone(),
+            class: class.clone(),
+            surface: surface.clone(),
+        },
+    );
 
     if let Some(client) = &mut state.client {
         client.create_proxy(id, &title, &class);
@@ -206,12 +210,7 @@ fn track_x11_window(state: &mut State, surface: X11Surface) {
 }
 
 /// Emit a WindowPolicy for an X11 app so the shell knows about it.
-fn emit_window_policy(
-    state: &mut State,
-    app_id: &str,
-    title: &str,
-    geo: Rectangle<i32, Logical>,
-) {
+fn emit_window_policy(state: &mut State, app_id: &str, title: &str, geo: Rectangle<i32, Logical>) {
     use sola_bus::topics::{Topic, WindowPolicy, WindowPolicyPayload};
 
     let size = if geo.size.w > 0 && geo.size.h > 0 {
@@ -220,16 +219,18 @@ fn emit_window_policy(
         None
     };
 
-    let _ = state.bus.emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
-        app_id: app_id.to_string(),
-        windows: vec![WindowPolicy {
-            title: title.to_string(),
-            zoned: true,
-            keyboard_target: false,
-            size,
-            position: None,
-        }],
-    }));
+    let _ = state
+        .bus
+        .emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
+            app_id: app_id.to_string(),
+            windows: vec![WindowPolicy {
+                title: title.to_string(),
+                zoned: true,
+                keyboard_target: false,
+                size,
+                position: None,
+            }],
+        }));
 }
 
 smithay::delegate_xwayland_shell!(State);

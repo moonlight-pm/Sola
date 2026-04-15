@@ -1,5 +1,5 @@
-use crate::ipc;
 use crate::AppState;
+use crate::ipc;
 use base64::Engine;
 use std::rc::Rc;
 use webkit6::prelude::*;
@@ -98,13 +98,9 @@ pub fn create_tab_webview(
     webview.load_uri(load_url);
 
     // Position in content area
-    let area = crate::chrome::content_area(
-        state.chrome_webview.width(),
-        state.chrome_webview.height(),
-    );
-    state
-        .container
-        .put(&webview, area.x as f64, area.y as f64);
+    let area =
+        crate::chrome::content_area(state.chrome_webview.width(), state.chrome_webview.height());
+    state.container.put(&webview, area.x as f64, area.y as f64);
     webview.set_size_request(area.width, area.height);
     webview.set_visible(false); // Hidden until switched to
 
@@ -175,11 +171,7 @@ pub fn create_tab_webview(
                                 "url": url,
                                 "activate": true,
                             });
-                            ipc::emit_event(
-                                &state_ref.chrome_webview,
-                                "bus_new_tab",
-                                &data,
-                            );
+                            ipc::emit_event(&state_ref.chrome_webview, "bus_new_tab", &data);
                         }
                     }
                 }

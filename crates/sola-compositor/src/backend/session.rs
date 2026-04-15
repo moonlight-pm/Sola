@@ -1,3 +1,4 @@
+use smithay::backend::session::Session;
 /// Session management via libseat.
 ///
 /// On Linux, accessing GPU and input hardware requires elevated privileges.
@@ -6,7 +7,6 @@
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/session/libseat/index.html
 use smithay::backend::session::libseat::{LibSeatSession, LibSeatSessionNotifier};
-use smithay::backend::session::Session;
 
 use crate::error::SessionError;
 

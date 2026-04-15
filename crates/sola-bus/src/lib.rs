@@ -1,5 +1,5 @@
-mod message;
 mod client;
+mod message;
 pub mod topic;
 pub mod topics;
 pub mod transport;

@@ -3,18 +3,15 @@ use std::collections::HashSet;
 use serde_json::Value;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
-    App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, MenuDefinition, MenuItem,
-    Topic,
+    App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord, MenuDefinition,
+    MenuItem, ShellKeyBindingsPayload, Topic,
 };
+use sola_core::KeyCode;
 
-use crate::menu::{MenuCache, MENU_ASSETS};
-use crate::switcher::{SwitcherState, SWITCHER_ASSETS};
+use crate::menu::{MENU_ASSETS, MenuCache};
+use crate::menubar::setup_menubar;
+use crate::switcher::{SWITCHER_ASSETS, SwitcherState};
 use crate::zoning::{self, ZoningState};
-
-pub static MENUBAR_ASSETS: &sola_app::AssetBundle = &sola_app::asset_bundle! {
-    "/index.html" => (include_str!("../web/index.html"), Html),
-    "/src/menubar.ts" => (include_str!("../web/src/menubar.ts"), TypeScript),
-};
 
 pub struct ShellApp {
     pub focused_app_id: Option<String>,
@@ -34,17 +31,7 @@ impl SolaApp for ShellApp {
     const APP_ID: &'static str = "sola-shell";
 
     fn new(ctx: &mut AppCtx) -> Self {
-        let menubar = ctx.add_window(WindowConfig {
-            title: "menubar".into(),
-            size: (1920, zoning::MENUBAR_HEIGHT),
-            position: Some((0, 0)),
-            decorated: false,
-            transparent: true,
-            assets: MENUBAR_ASSETS,
-            initial_state: None,
-            zoned: false,
-            keyboard_target: true,
-        });
+        let menubar = setup_menubar(ctx);
 
         let switcher_win = ctx.add_window(WindowConfig {
             title: "switcher".into(),
@@ -79,14 +66,14 @@ impl SolaApp for ShellApp {
                 items: vec![MenuItem::Action {
                     id: "exit".into(),
                     label: "Exit Sola".into(),
-                    shortcut: Some("Super+Shift+Backspace".into()),
+                    shortcut: Some(KeyCode::BACKSPACE.meta().shift()),
                     disabled: false,
                     checked: false,
                 }],
             }],
         });
 
-        Self {
+        let app = Self {
             focused_app_id: None,
             mru_apps: Vec::new(),
             known_apps: Vec::new(),
@@ -97,7 +84,11 @@ impl SolaApp for ShellApp {
             menubar,
             switcher_win,
             menu_win,
-        }
+        };
+
+        app.emit_shell_key_bindings(ctx);
+
+        app
     }
 
     fn after_runtime_ready(
@@ -122,6 +113,9 @@ impl SolaApp for ShellApp {
             }
             Topic::SetAppMenu(payload) => {
                 self.menus.set_menu(payload.clone());
+
+                self.emit_shell_key_bindings(ctx);
+
                 if self.focused_app_id.as_deref() == Some(&payload.app_id) {
                     let app_name = payload
                         .menus
@@ -146,13 +140,7 @@ impl SolaApp for ShellApp {
         }
     }
 
-    fn on_js_command(
-        &mut self,
-        cmd: &str,
-        args: &Value,
-        source: &WindowHandle,
-        ctx: &mut AppCtx,
-    ) {
+    fn on_js_command(&mut self, cmd: &str, args: &Value, source: &WindowHandle, ctx: &mut AppCtx) {
         match (source.title(), cmd) {
             ("menubar", "open_menu") => {
                 let src = args.get("source").and_then(|v| v.as_str()).unwrap_or("app");
@@ -182,6 +170,39 @@ impl SolaApp for ShellApp {
 }
 
 impl ShellApp {
+    fn emit_shell_key_bindings(&self, ctx: &mut AppCtx) {
+        ctx.emit_sticky(Topic::ShellKeyBindings(ShellKeyBindingsPayload {
+            app_id: Self::APP_ID.into(),
+            bindings: self.shell_key_bindings(),
+        }));
+    }
+
+    fn shell_key_bindings(&self) -> Vec<KeyChord> {
+        let mut bindings: Vec<KeyChord> = self
+            .menus
+            .key_bindings()
+            .into_iter()
+            .filter(|b| b.meta)
+            .collect();
+
+        // Ensure compositor always routes Meta+Tab for switcher activation.
+        bindings.push(KeyCode::TAB.meta());
+
+        // Ensure compositor routes Meta+Numpad zoning keys.
+        for &keycode in zoning::ZONING_KEYCODES {
+            bindings.push(KeyChord {
+                keycode: keycode.into(),
+                ..KeyCode::TAB.meta()
+            });
+        }
+
+        // Keep list de-duplicated and stable.
+        bindings.sort_by_key(|b| (b.keycode, b.meta, b.alt, b.ctrl, b.shift));
+        bindings.dedup();
+
+        bindings
+    }
+
     pub fn set_focus(&mut self, app_id: &str) {
         self.focused_app_id = Some(app_id.to_string());
         self.zoning.set_focused(app_id.to_string());
@@ -294,11 +315,7 @@ impl ShellApp {
 
     /// Handle new/removed apps from the compositor's Apps list.
     pub fn handle_apps_update(&mut self, apps: Vec<App>, ctx: &mut AppCtx) {
-        let old_ids: HashSet<&str> = self
-            .known_apps
-            .iter()
-            .map(|a| a.app_id.as_str())
-            .collect();
+        let old_ids: HashSet<&str> = self.known_apps.iter().map(|a| a.app_id.as_str()).collect();
         let new_ids: HashSet<&str> = apps.iter().map(|a| a.app_id.as_str()).collect();
 
         let added: Vec<String> = apps
@@ -370,7 +387,7 @@ impl ShellApp {
                     "id": id,
                     "app_id": app_id,
                     "label": label,
-                    "shortcut": shortcut,
+                    "shortcut": shortcut.as_ref().map(format_shortcut),
                     "disabled": disabled,
                 }),
                 MenuItem::Divider => serde_json::json!({ "type": "divider" }),
@@ -406,5 +423,77 @@ impl ShellApp {
         self.menubar
             .send_to_js(&serde_json::json!({"event": "close_menu"}));
         self.emit_composition(ctx);
+    }
+}
+
+fn format_shortcut(chord: &KeyChord) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+
+    if chord.meta {
+        parts.push("Meta");
+    }
+    if chord.ctrl {
+        parts.push("Ctrl");
+    }
+    if chord.alt {
+        parts.push("Alt");
+    }
+    if chord.shift {
+        parts.push("Shift");
+    }
+
+    parts.push(keycode_label(chord.keycode));
+    parts.join("+")
+}
+
+fn keycode_label(code: KeyCode) -> &'static str {
+    match code {
+        KeyCode::ESCAPE => "Escape",
+        KeyCode::KEY_1 => "1",
+        KeyCode::KEY_2 => "2",
+        KeyCode::KEY_3 => "3",
+        KeyCode::KEY_4 => "4",
+        KeyCode::KEY_5 => "5",
+        KeyCode::KEY_6 => "6",
+        KeyCode::KEY_7 => "7",
+        KeyCode::KEY_8 => "8",
+        KeyCode::KEY_9 => "9",
+        KeyCode::KEY_0 => "0",
+        KeyCode::BACKSPACE => "Backspace",
+        KeyCode::TAB => "Tab",
+        KeyCode::Q => "Q",
+        KeyCode::W => "W",
+        KeyCode::E => "E",
+        KeyCode::R => "R",
+        KeyCode::T => "T",
+        KeyCode::Y => "Y",
+        KeyCode::U => "U",
+        KeyCode::I => "I",
+        KeyCode::O => "O",
+        KeyCode::P => "P",
+        KeyCode::ENTER => "Enter",
+        KeyCode::A => "A",
+        KeyCode::S => "S",
+        KeyCode::D => "D",
+        KeyCode::F => "F",
+        KeyCode::G => "G",
+        KeyCode::H => "H",
+        KeyCode::J => "J",
+        KeyCode::K => "K",
+        KeyCode::L => "L",
+        KeyCode::Z => "Z",
+        KeyCode::X => "X",
+        KeyCode::C => "C",
+        KeyCode::V => "V",
+        KeyCode::B => "B",
+        KeyCode::N => "N",
+        KeyCode::M => "M",
+        KeyCode::KP_8 => "KP_8",
+        KeyCode::KP_4 => "KP_4",
+        KeyCode::KP_5 => "KP_5",
+        KeyCode::KP_6 => "KP_6",
+        KeyCode::KP_2 => "KP_2",
+        KeyCode::KP_0 => "KP_0",
+        _ => "Key",
     }
 }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use sola_bus::topics::{FrameUpdate, OutputGeometry, Zone};
+use sola_core::KeyCode;
 use tracing::{info, warn};
 
 use crate::config::ShellConfig;
@@ -116,14 +117,23 @@ impl ZoningState {
     }
 }
 
+pub const ZONING_KEYCODES: &[u32] = &[
+    KeyCode::KP_8.raw(),
+    KeyCode::KP_4.raw(),
+    KeyCode::KP_5.raw(),
+    KeyCode::KP_6.raw(),
+    KeyCode::KP_2.raw(),
+    KeyCode::KP_0.raw(),
+];
+
 fn zone_for_keycode(code: u32) -> Option<Zone> {
     match code {
-        80 => Some(Zone::TopMiddle),
-        83 => Some(Zone::Left),
-        84 => Some(Zone::FullMiddle),
-        85 => Some(Zone::Right),
-        88 => Some(Zone::BottomMiddle),
-        90 => Some(Zone::Fullscreen),
+        c if c == KeyCode::KP_8.raw() => Some(Zone::TopMiddle),
+        c if c == KeyCode::KP_4.raw() => Some(Zone::Left),
+        c if c == KeyCode::KP_5.raw() => Some(Zone::FullMiddle),
+        c if c == KeyCode::KP_6.raw() => Some(Zone::Right),
+        c if c == KeyCode::KP_2.raw() => Some(Zone::BottomMiddle),
+        c if c == KeyCode::KP_0.raw() => Some(Zone::Fullscreen),
         _ => None,
     }
 }

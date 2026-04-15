@@ -1,10 +1,10 @@
 use std::collections::VecDeque;
+use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
-use std::io::{self, Read, Write};
 
 use tracing::{info, warn};
 
@@ -107,7 +107,10 @@ impl BusClient {
     /// so the caller should reconnect.
     pub fn is_connected(&self) -> bool {
         self.writer.is_some()
-            && self.reader_alive.as_ref().is_some_and(|a| a.load(Ordering::Acquire))
+            && self
+                .reader_alive
+                .as_ref()
+                .is_some_and(|a| a.load(Ordering::Acquire))
     }
 
     fn drop_if_reader_dead(&mut self) {
@@ -167,7 +170,9 @@ impl BusClient {
     /// Must be called before `try_recv()` to clear the notification pipe,
     /// otherwise the event loop will keep waking.
     pub fn drain_notify(&self) {
-        let Some(stream) = self.notify_read.as_ref() else { return };
+        let Some(stream) = self.notify_read.as_ref() else {
+            return;
+        };
         let mut buf = [0u8; 64];
         let mut r: &UnixStream = stream;
         loop {

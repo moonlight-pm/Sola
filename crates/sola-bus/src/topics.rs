@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+pub use sola_core::KeyChord;
 
 use crate::define_topics;
 
@@ -67,7 +68,7 @@ pub enum MenuItem {
     Action {
         id: String,
         label: String,
-        shortcut: Option<String>,
+        shortcut: Option<KeyChord>,
         disabled: bool,
         checked: bool,
     },
@@ -95,7 +96,7 @@ pub struct WindowPolicy {
     pub title: String,
     /// If true, the shell manages position/size via zones.
     pub zoned: bool,
-    /// If true, compositor routes Super+key events to this surface.
+    /// If true, compositor routes Meta+key events to this surface.
     #[serde(default)]
     pub keyboard_target: bool,
     /// Fixed size for unzoned windows (width, height).
@@ -104,6 +105,14 @@ pub struct WindowPolicy {
     /// Fixed position for unzoned windows (x, y).
     #[serde(default)]
     pub position: Option<(i32, i32)>,
+}
+
+/// Declares which key chords the shell wants intercepted.
+/// Emitted as sticky by the shell; compositor uses this as a routing allowlist.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellKeyBindingsPayload {
+    pub app_id: String,
+    pub bindings: Vec<KeyChord>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -147,6 +156,9 @@ define_topics! {
     // Menus
     SetAppMenu(AppMenuPayload),
     MenuAction(MenuActionPayload),
+
+    // Shell input routing
+    ShellKeyBindings(ShellKeyBindingsPayload),
 
     // Browser
     OpenUrl(OpenUrlRequest),
@@ -207,7 +219,7 @@ mod tests {
                     MenuItem::Action {
                         id: "new".into(),
                         label: "New".into(),
-                        shortcut: Some("Super+N".into()),
+                        shortcut: Some(sola_core::KeyCode::N.meta()),
                         disabled: false,
                         checked: false,
                     },

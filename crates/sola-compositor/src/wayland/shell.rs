@@ -37,7 +37,13 @@ impl XdgShellHandler for State {
 
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
     fn grab(&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: Serial) {}
-    fn reposition_request(&mut self, _surface: PopupSurface, _positioner: PositionerState, _token: u32) {}
+    fn reposition_request(
+        &mut self,
+        _surface: PopupSurface,
+        _positioner: PositionerState,
+        _token: u32,
+    ) {
+    }
 }
 
 smithay::delegate_xdg_shell!(State);

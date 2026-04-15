@@ -4,15 +4,9 @@ use std::rc::Weak;
 use gtk4::prelude::*;
 use sola_app::{AppRuntime, SolaApp, WindowHandle};
 use sola_bus::topics::{FocusTarget, FrameUpdate, Topic};
+use sola_core::{KeyChord, KeyCode};
 
 use crate::app::ShellApp;
-
-mod keycode {
-    pub const TAB: u32 = 23;
-    pub const LEFT: u32 = 113;
-    pub const RIGHT: u32 = 114;
-    pub const SUPER_L: u32 = 133;
-}
 
 pub fn install(menubar: WindowHandle, runtime: Weak<RefCell<AppRuntime<ShellApp>>>) {
     let key_ctrl = gtk4::EventControllerKey::new();
@@ -21,26 +15,34 @@ pub fn install(menubar: WindowHandle, runtime: Weak<RefCell<AppRuntime<ShellApp>
     key_ctrl.connect_key_pressed({
         let runtime = runtime.clone();
         move |_, _keyval, keycode, gtk_modifiers| {
-            let shift = gtk_modifiers.contains(gdk4::ModifierType::SHIFT_MASK);
+            let chord = KeyChord {
+                keycode: KeyCode::from(keycode),
+                meta: gtk_modifiers.contains(gdk4::ModifierType::META_MASK),
+                alt: gtk_modifiers.contains(gdk4::ModifierType::ALT_MASK),
+                ctrl: gtk_modifiers.contains(gdk4::ModifierType::CONTROL_MASK),
+                shift: gtk_modifiers.contains(gdk4::ModifierType::SHIFT_MASK),
+            };
             let Some(runtime) = runtime.upgrade() else {
                 return glib::Propagation::Proceed;
             };
             let mut rt = runtime.borrow_mut();
             let AppRuntime { app, ctx } = &mut *rt;
-            handle_key_pressed(app, ctx, keycode, shift)
+            handle_key_pressed(app, ctx, chord)
         }
     });
 
     key_ctrl.connect_key_released({
         let runtime = runtime.clone();
         move |_, _keyval, keycode, _modifiers| {
-            if keycode != keycode::SUPER_L {
+            if keycode != KeyCode::LEFT_META.raw() && keycode != KeyCode::RIGHT_META.raw() {
                 return;
             }
-            let Some(runtime) = runtime.upgrade() else { return };
+            let Some(runtime) = runtime.upgrade() else {
+                return;
+            };
             let mut rt = runtime.borrow_mut();
             let AppRuntime { app, ctx } = &mut *rt;
-            handle_super_released(app, ctx);
+            handle_meta_released(app, ctx);
         }
     });
 
@@ -50,11 +52,10 @@ pub fn install(menubar: WindowHandle, runtime: Weak<RefCell<AppRuntime<ShellApp>
 fn handle_key_pressed(
     app: &mut ShellApp,
     ctx: &mut sola_app::AppCtx,
-    keycode: u32,
-    shift_held: bool,
+    chord: KeyChord,
 ) -> glib::Propagation {
     // Shell system shortcuts (highest priority).
-    if let Some(action) = app.menus.lookup_shortcut(keycode, shift_held, ShellApp::APP_ID) {
+    if let Some(action) = app.menus.lookup_shortcut(&chord, ShellApp::APP_ID) {
         tracing::info!(action_id = %action.action_id, "shell shortcut");
         if action.action_id == "exit" {
             ctx.emit(Topic::Shutdown);
@@ -62,15 +63,17 @@ fn handle_key_pressed(
         return glib::Propagation::Stop;
     }
 
-    // Super+Tab: activate switcher.
-    if keycode == keycode::TAB && !app.switcher.active {
+    // Meta+Tab: activate switcher.
+    if chord.keycode == KeyCode::TAB && !app.switcher.active {
         tracing::info!("activating switcher");
         app.switcher.apps = app.rebuild_switcher_apps();
         app.switcher.active = true;
         app.switcher.selected = if app.switcher.apps.len() > 1 { 1 } else { 0 };
         let json = serde_json::to_string(&app.switcher.apps).unwrap_or_default();
-        app.switcher_win
-            .eval_js(&format!("renderSwitcher({}, {})", json, app.switcher.selected));
+        app.switcher_win.eval_js(&format!(
+            "renderSwitcher({}, {})",
+            json, app.switcher.selected
+        ));
 
         if let Some((ow, oh)) = app.zoning.output_size {
             ctx.emit(Topic::Frame(FrameUpdate {
@@ -88,14 +91,14 @@ fn handle_key_pressed(
 
     // Switcher navigation.
     if app.switcher.active {
-        match keycode {
-            keycode::TAB | keycode::RIGHT => {
+        match chord.keycode {
+            code if code == KeyCode::TAB || code == KeyCode::RIGHT => {
                 app.switcher.select_next();
                 let sel = app.switcher.selected;
                 app.switcher_win.eval_js(&format!("setSelection({sel})"));
                 return glib::Propagation::Stop;
             }
-            keycode::LEFT => {
+            code if code == KeyCode::LEFT => {
                 app.switcher.select_prev();
                 let sel = app.switcher.selected;
                 app.switcher_win.eval_js(&format!("setSelection({sel})"));
@@ -105,15 +108,15 @@ fn handle_key_pressed(
         }
     }
 
-    // Zone snapping (Super+Numpad).
-    if let Some(frame) = app.zoning.handle_key(keycode) {
+    // Zone snapping (Meta+Numpad).
+    if let Some(frame) = app.zoning.handle_key(chord.keycode.raw()) {
         ctx.emit(Topic::Frame(frame));
         return glib::Propagation::Stop;
     }
 
     // Focused app menu shortcut lookup.
     if let Some(focused) = app.focused_app_id.clone() {
-        if let Some(action) = app.menus.lookup_shortcut(keycode, shift_held, &focused) {
+        if let Some(action) = app.menus.lookup_shortcut(&chord, &focused) {
             tracing::info!(
                 app_id = %action.app_id,
                 action_id = %action.action_id,
@@ -127,7 +130,7 @@ fn handle_key_pressed(
     glib::Propagation::Proceed
 }
 
-fn handle_super_released(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
+fn handle_meta_released(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
     if !app.switcher.active {
         return;
     }

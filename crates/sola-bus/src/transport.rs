@@ -27,8 +27,8 @@ pub fn read_event(stream: &mut impl Read) -> io::Result<Option<Message>> {
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf)?;
 
-    let event = postcard::from_bytes(&buf)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let event =
+        postcard::from_bytes(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(Some(event))
 }
 

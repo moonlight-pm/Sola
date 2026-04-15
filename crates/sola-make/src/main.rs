@@ -126,7 +126,10 @@ fn build_web_frontends() {
         }
 
         println!("Building web frontend for {app_name}...");
-        run_or_exit("bun", &["run", "--cwd", &web_dir.to_string_lossy(), "build"]);
+        run_or_exit(
+            "bun",
+            &["run", "--cwd", &web_dir.to_string_lossy(), "build"],
+        );
     }
 }
 
@@ -200,7 +203,10 @@ fn run_or_exit(program: &str, args: &[&str]) {
             exit(1);
         });
     if !status.success() {
-        eprintln!("{program} failed with exit code {}", status.code().unwrap_or(1));
+        eprintln!(
+            "{program} failed with exit code {}",
+            status.code().unwrap_or(1)
+        );
         exit(status.code().unwrap_or(1));
     }
 }
@@ -240,7 +246,10 @@ mod tests {
         let cli = Cli::try_parse_from(["sola-make", "build"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Build { target: None, release: false }
+            Commands::Build {
+                target: None,
+                release: false
+            }
         ));
     }
 
@@ -258,7 +267,10 @@ mod tests {
         let cli = Cli::try_parse_from(["sola-make", "build", "--release"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Build { target: None, release: true }
+            Commands::Build {
+                target: None,
+                release: true
+            }
         ));
     }
 
@@ -267,7 +279,11 @@ mod tests {
         let cli = Cli::try_parse_from(["sola-make", "deploy", "--canto"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Deploy { app: None, canto: true, watch: false }
+            Commands::Deploy {
+                app: None,
+                canto: true,
+                watch: false
+            }
         ));
     }
 
@@ -285,7 +301,11 @@ mod tests {
         let cli = Cli::try_parse_from(["sola-make", "deploy"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Deploy { app: None, canto: false, watch: false }
+            Commands::Deploy {
+                app: None,
+                canto: false,
+                watch: false
+            }
         ));
     }
 
@@ -300,7 +320,8 @@ mod tests {
 
     #[test]
     fn cli_parses_deploy_watch() {
-        let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal", "--canto", "--watch"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["sola-make", "deploy", "terminal", "--canto", "--watch"]).unwrap();
         assert!(matches!(
             cli.command,
             Commands::Deploy { app: Some(ref a), canto: true, watch: true } if a == "terminal"

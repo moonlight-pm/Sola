@@ -53,8 +53,7 @@ impl AppCtx {
 
         let web_context = webview::create_web_context(cfg.assets, platform, html);
 
-        let dispatcher_slot: Rc<RefCell<Option<JsDispatcher>>> =
-            Rc::new(RefCell::new(None));
+        let dispatcher_slot: Rc<RefCell<Option<JsDispatcher>>> = Rc::new(RefCell::new(None));
         let ucm = webview::create_ucm_for_window(dispatcher_slot.clone());
 
         if cfg.transparent {

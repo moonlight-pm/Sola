@@ -89,7 +89,9 @@ fn main() {
 
         for msg in &messages {
             tracing::debug!(topic = %msg.topic, "bus message received");
-            let Some(topic) = Topic::parse(msg) else { continue };
+            let Some(topic) = Topic::parse(msg) else {
+                continue;
+            };
             match topic {
                 Topic::Shutdown => {
                     info!("shutdown requested via bus");
@@ -117,17 +119,16 @@ fn main() {
         // Check for exited or missing processes
         for name in MANAGED {
             if let Some(proc) = managed.get_mut(name) {
-                let exited = proc
-                    .child
-                    .try_wait()
-                    .ok()
-                    .flatten()
-                    .is_some();
+                let exited = proc.child.try_wait().ok().flatten().is_some();
 
                 if exited {
                     let uptime = proc.started_at.elapsed();
                     if uptime < MIN_UPTIME {
-                        warn!(process = name, ?uptime, "crashed quickly, waiting before restart");
+                        warn!(
+                            process = name,
+                            ?uptime,
+                            "crashed quickly, waiting before restart"
+                        );
                         thread::sleep(BACKOFF_DELAY);
                     } else {
                         warn!(process = name, ?uptime, "exited, restarting");
@@ -167,10 +168,13 @@ fn launch<'a>(
     match result {
         Ok(child) => {
             info!(process = name, pid = child.id(), "launched");
-            managed.insert(name, ManagedProcess {
-                child,
-                started_at: Instant::now(),
-            });
+            managed.insert(
+                name,
+                ManagedProcess {
+                    child,
+                    started_at: Instant::now(),
+                },
+            );
         }
         Err(e) => {
             error!(process = name, path = %bin.display(), "failed to launch: {e}");

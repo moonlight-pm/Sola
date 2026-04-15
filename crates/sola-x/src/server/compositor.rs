@@ -4,7 +4,9 @@ use smithay::reexports::wayland_server::backend::{ClientData, ClientId, Disconne
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::buffer::BufferHandler;
-use smithay::wayland::compositor::{self, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes};
+use smithay::wayland::compositor::{
+    self, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes,
+};
 
 use crate::state::State;
 

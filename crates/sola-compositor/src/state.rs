@@ -18,16 +18,17 @@ use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_server::DisplayHandle;
 use smithay::wayland::compositor::CompositorState;
+use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
-use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::shm::ShmState;
 
 use crate::backend::device::Device;
 use crate::backend::gpu::SolaGpuManager;
 use crate::input::binding::ModifierState;
+use sola_bus::topics::KeyChord;
 
 pub struct State {
     /// Controls the main event loop. Set to `false` to trigger shutdown.
@@ -46,7 +47,6 @@ pub struct State {
     pub loop_handle: LoopHandle<'static, Self>,
 
     // -- Hardware backend state --
-
     /// The libseat session for opening device files with proper privileges.
     pub session: LibSeatSession,
 
@@ -66,7 +66,6 @@ pub struct State {
     pub devices: HashMap<DrmNode, Device>,
 
     // -- Wayland protocol state --
-
     /// Tracks `wl_compositor` — surface creation and management.
     pub compositor_state: CompositorState,
 
@@ -94,7 +93,6 @@ pub struct State {
     pub xdg_decoration_state: XdgDecorationState,
 
     // -- Desktop state --
-
     /// Tracks mapped windows and their positions on outputs.
     /// `Space` is Smithay's built-in window manager: it handles z-order,
     /// output assignment, and provides render elements for compositing.
@@ -103,12 +101,16 @@ pub struct State {
     /// Current pointer position in compositor-space coordinates.
     pub pointer_location: (f64, f64),
 
-    /// Tracks Super/Shift state for input routing decisions.
+    /// Tracks Meta/Shift state for input routing decisions.
     pub modifiers: ModifierState,
 
     /// Cached keyboard_target surface for sola-shell.
-    /// Super+key events are sent directly to this surface via wl_keyboard.key.
-    pub shell_keyboard_target: Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
+    /// Meta+key events are sent directly to this surface via wl_keyboard.key.
+    pub shell_keyboard_target:
+        Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
+
+    /// Key combinations declared by the shell as handled.
+    pub shell_key_bindings: Vec<KeyChord>,
 
     /// Frame geometries from the shell, keyed by (app_id, title).
     /// Applied when the matching surface is found or when Composition maps it.
@@ -124,7 +126,6 @@ pub struct State {
     pub unmapped_surfaces: Vec<Window>,
 
     // -- Protocol state --
-
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
     pub dmabuf_state: Option<DmabufState>,
 
@@ -134,7 +135,6 @@ pub struct State {
     /// The cursor hotspot — the pixel offset within the cursor image that
     /// represents the actual click point.
     pub cursor_hotspot: (i32, i32),
-
 }
 
 impl State {
@@ -183,6 +183,7 @@ impl State {
             pointer_location: (0.0, 0.0),
             modifiers: ModifierState::default(),
             shell_keyboard_target: None,
+            shell_key_bindings: Vec::new(),
             frame_geometries: HashMap::new(),
             window_policies: HashMap::new(),
             pending_surfaces: Vec::new(),
@@ -200,44 +201,56 @@ impl State {
 
     /// Find the first window with the given app_id.
     pub fn window_by_app_id(&self, target: &str) -> Option<Window> {
-        self.space.elements().find(|window| {
-            window_app_id(window).is_some_and(|id| id == target)
-        }).cloned()
+        self.space
+            .elements()
+            .find(|window| window_app_id(window).is_some_and(|id| id == target))
+            .cloned()
     }
 
     /// Find a window by app_id and optional title.
     pub fn window_by_app_id_title(&self, app_id: &str, title: Option<&str>) -> Option<Window> {
-        self.space.elements().find(|window| {
-            let id_match = window_app_id(window).is_some_and(|id| id == app_id);
-            if !id_match { return false; }
-            match title {
-                Some(t) => window_title(window).is_some_and(|wt| wt == t),
-                None => true,
-            }
-        }).cloned()
+        self.space
+            .elements()
+            .find(|window| {
+                let id_match = window_app_id(window).is_some_and(|id| id == app_id);
+                if !id_match {
+                    return false;
+                }
+                match title {
+                    Some(t) => window_title(window).is_some_and(|wt| wt == t),
+                    None => true,
+                }
+            })
+            .cloned()
     }
 
     /// Find all windows with the given app_id.
     pub fn windows_by_app_id(&self, target: &str) -> Vec<Window> {
-        self.space.elements().filter(|window| {
-            window_app_id(window).is_some_and(|id| id == target)
-        }).cloned().collect()
+        self.space
+            .elements()
+            .filter(|window| window_app_id(window).is_some_and(|id| id == target))
+            .cloned()
+            .collect()
     }
 
     /// Find a window by app_id and optional title, searching both the
     /// Space (mapped) and unmapped_surfaces.
     pub fn find_surface(&self, app_id: &str, title: Option<&str>) -> Option<Window> {
-        self.window_by_app_id_title(app_id, title)
-            .or_else(|| {
-                self.unmapped_surfaces.iter().find(|window| {
+        self.window_by_app_id_title(app_id, title).or_else(|| {
+            self.unmapped_surfaces
+                .iter()
+                .find(|window| {
                     let id_match = window_app_id(window).is_some_and(|id| id == app_id);
-                    if !id_match { return false; }
+                    if !id_match {
+                        return false;
+                    }
                     match title {
                         Some(t) => window_title(window).is_some_and(|wt| wt == t),
                         None => true,
                     }
-                }).cloned()
-            })
+                })
+                .cloned()
+        })
     }
 }
 

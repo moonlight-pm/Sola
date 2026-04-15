@@ -1,3 +1,4 @@
+use smithay::backend::drm::DrmNode;
 /// Frame rendering and DRM output management.
 ///
 /// ## Render loop design
@@ -16,11 +17,10 @@
 /// before committing their first buffer, but VBlanks only fire after a
 /// successful queue_frame, which requires damage from a committed buffer.
 use smithay::backend::drm::compositor::FrameFlags;
-use smithay::backend::drm::DrmNode;
+use smithay::backend::renderer::Color32F;
+use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
-use smithay::backend::renderer::element::Kind;
-use smithay::backend::renderer::Color32F;
 use smithay::desktop::space::SpaceRenderElements;
 use smithay::reexports::drm::control::crtc;
 use smithay::utils::IsAlive;
@@ -75,9 +75,7 @@ pub fn render_all(state: &mut State) {
         .devices
         .iter()
         .filter(|(_, device)| !device.frame_pending)
-        .flat_map(|(node, device)| {
-            device.outputs.keys().map(move |crtc| (*node, *crtc))
-        })
+        .flat_map(|(node, device)| device.outputs.keys().map(move |crtc| (*node, *crtc)))
         .collect();
 
     for (node, crtc) in targets {
@@ -100,7 +98,8 @@ fn do_render(state: &mut State, node: DrmNode, crtc: crtc::Handle) {
 
     let output = state.space.outputs().next().cloned();
     let space_elements = if let Some(ref output) = output {
-        state.space
+        state
+            .space
             .render_elements_for_output(&mut renderer, output, 1.0)
             .unwrap_or_default()
     } else {

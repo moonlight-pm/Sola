@@ -132,10 +132,8 @@ impl TerminalState {
                                         .get("customTitle")
                                         .and_then(|v| v.as_str())
                                         .map(String::from);
-                                    let cwd = entry
-                                        .get("cwd")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from);
+                                    let cwd =
+                                        entry.get("cwd").and_then(|v| v.as_str()).map(String::from);
                                     Some(RestoredTab {
                                         tmux_session,
                                         custom_title,

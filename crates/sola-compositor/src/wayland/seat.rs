@@ -1,9 +1,9 @@
+use smithay::input::pointer::CursorImageStatus;
 /// Wayland seat protocol handler.
 ///
 /// A "seat" represents a group of input devices (keyboard, mouse, touch)
 /// belonging to one user. Manages input focus — which surface receives events.
 use smithay::input::{Seat, SeatHandler, SeatState};
-use smithay::input::pointer::CursorImageStatus;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 use crate::state::State;
