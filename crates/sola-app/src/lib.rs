@@ -173,8 +173,44 @@ pub fn run<A: SolaApp>() {
             *source.inner.dispatcher.borrow_mut() = Some(dispatcher);
         }
 
-        // (Remaining wiring — bus event loop, auto-emit policy,
-        //  after_runtime_ready — added in Tasks 6–7.)
+        // --- Bus event loop ---
+        let notify_fd = bus.borrow().notify_fd();
+        if let Some(fd) = notify_fd {
+            let runtime = runtime.clone();
+            let gtk_app = gtk_app.clone();
+            let bus = bus.clone();
+            glib::unix_fd_add_local(fd, glib::IOCondition::IN, move |_fd, _cond| {
+                let client = bus.borrow();
+                client.drain_notify();
+                let mut messages = Vec::new();
+                while let Some(msg) = client.try_recv() {
+                    messages.push(msg);
+                }
+                drop(client);
+
+                for msg in messages {
+                    let Some(topic) = Topic::parse(&msg) else { continue };
+                    if matches!(topic, Topic::Shutdown) {
+                        {
+                            let mut rt = runtime.borrow_mut();
+                            let AppRuntime { app, ctx } = &mut *rt;
+                            app.on_shutdown(ctx);
+                        }
+                        gtk_app.quit();
+                        return glib::ControlFlow::Continue;
+                    }
+                    let mut rt = runtime.borrow_mut();
+                    let AppRuntime { app, ctx } = &mut *rt;
+                    app.on_bus_event(&topic, ctx);
+                }
+                glib::ControlFlow::Continue
+            });
+        } else {
+            tracing::warn!("bus notify_fd unavailable; no bus events will be delivered");
+        }
+
+        // (Remaining wiring — auto-emit policy, after_runtime_ready
+        //  — added in Task 7 and Task 10.)
 
         tracing::info!("{app_id} ready");
     });
