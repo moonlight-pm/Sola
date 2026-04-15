@@ -41,10 +41,18 @@ impl ShellState {
         }
     }
 
-    fn sort_switcher_apps(&mut self) {
-        self.switcher.apps.sort_by_key(|a| {
-            self.mru_apps.iter().position(|m| m == &a.app_id).unwrap_or(usize::MAX)
-        });
+    fn rebuild_switcher_apps(&self) -> Vec<App> {
+        let mut apps: Vec<App> = self.mru_apps.iter()
+            .filter_map(|id| self.known_apps.iter().find(|a| &a.app_id == id))
+            .cloned()
+            .collect();
+        // Append any known apps not yet in MRU.
+        for a in &self.known_apps {
+            if a.app_id != "sola-shell" && !self.mru_apps.contains(&a.app_id) {
+                apps.push(a.clone());
+            }
+        }
+        apps
     }
 
     /// Build the composition list (bottom to top) and emit it.
@@ -120,13 +128,9 @@ impl ShellState {
             .collect();
 
         self.known_apps = apps.clone();
-        let mut switcher_apps: Vec<App> = apps.into_iter()
+        self.switcher.apps = apps.into_iter()
             .filter(|a| a.app_id != "sola-shell")
             .collect();
-        switcher_apps.sort_by_key(|a| {
-            self.mru_apps.iter().position(|m| m == &a.app_id).unwrap_or(usize::MAX)
-        });
-        self.switcher.apps = switcher_apps;
 
         for id in &removed {
             self.mru_apps.retain(|m| m != id);
@@ -195,10 +199,9 @@ fn main() {
                         s.focused_app_id = Some(app_id.clone());
                         s.zoning.set_focused(app_id.clone());
 
-                        // Update MRU and re-sort switcher.
+                        // Update MRU.
                         s.mru_apps.retain(|m| m != app_id);
                         s.mru_apps.insert(0, app_id.clone());
-                        s.sort_switcher_apps();
 
                         s.emit_composition(emit);
 
@@ -388,6 +391,7 @@ fn setup_key_controller(
             // Super+Tab: activate switcher.
             if keycode == keycode::TAB && !s.switcher.active {
                 tracing::info!("activating switcher");
+                s.switcher.apps = s.rebuild_switcher_apps();
                 s.switcher.active = true;
                 s.switcher.selected = if s.switcher.apps.len() > 1 { 1 } else { 0 };
                 let json = serde_json::to_string(&s.switcher.apps).unwrap_or_default();
