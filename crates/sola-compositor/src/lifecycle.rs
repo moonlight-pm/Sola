@@ -174,20 +174,21 @@ fn handle_raise_app(state: &mut State, app_id: &str) {
 fn apply_pending_geometries(state: &mut State) {
     use sola_bus::topics::WindowGeometry;
 
-    let matches: Vec<WindowGeometry> = state
+    let matches: Vec<((String, Option<String>), WindowGeometry)> = state
         .pending_geometries
         .iter()
-        .filter_map(|(app_id, geo)| {
-            if state.window_by_app_id(app_id).is_some() {
-                Some(geo.clone())
+        .filter_map(|(key, geo)| {
+            let window = state.window_by_app_id_title(&geo.app_id, geo.title.as_deref());
+            if window.is_some() {
+                Some((key.clone(), geo.clone()))
             } else {
                 None
             }
         })
         .collect();
 
-    for geo in matches {
-        if let Some(window) = state.window_by_app_id(&geo.app_id) {
+    for (key, geo) in matches {
+        if let Some(window) = state.window_by_app_id_title(&geo.app_id, geo.title.as_deref()) {
             state.space.map_element(window.clone(), (geo.x, geo.y), false);
 
             if let Some(toplevel) = window.toplevel() {
@@ -197,17 +198,17 @@ fn apply_pending_geometries(state: &mut State) {
                 toplevel.send_pending_configure();
             }
         }
-        state.pending_geometries.remove(&geo.app_id);
+        state.pending_geometries.remove(&key);
     }
 }
 
 /// Reposition and resize a window based on geometry from the bus.
 /// If the window doesn't exist yet, store the geometry for later.
 fn handle_set_window_geometry(state: &mut State, geo: &sola_bus::topics::WindowGeometry) {
-    if let Some(window) = state.window_by_app_id(&geo.app_id) {
+    let window = state.window_by_app_id_title(&geo.app_id, geo.title.as_deref());
+    if let Some(window) = window {
         state.space.map_element(window.clone(), (geo.x, geo.y), false);
 
-        // Configure the toplevel with the target size so the client resizes.
         if let Some(toplevel) = window.toplevel() {
             toplevel.with_pending_state(|s| {
                 s.size = Some((geo.width, geo.height).into());
@@ -215,8 +216,8 @@ fn handle_set_window_geometry(state: &mut State, geo: &sola_bus::topics::WindowG
             toplevel.send_pending_configure();
         }
     }
-    // Always store — the window might appear later via new_toplevel.
-    state.pending_geometries.insert(geo.app_id.clone(), geo.clone());
+    let key = (geo.app_id.clone(), geo.title.clone());
+    state.pending_geometries.insert(key, geo.clone());
 }
 
 /// Respond to a ListApps request.

@@ -124,12 +124,13 @@ fn main() {
                     Topic::OutputGeometry(geo) => {
                         s.zoning.set_output_size(geo);
 
-                        // Position the menubar
-                        if let Some(menubar_geo) = s.zoning.menubar_geometry() {
-                            emit(Topic::SetWindowGeometry(menubar_geo));
+                        if let Some(g) = s.zoning.menubar_geometry() {
+                            emit(Topic::SetWindowGeometry(g));
+                        }
+                        if let Some(g) = s.zoning.overlay_geometry() {
+                            emit(Topic::SetWindowGeometry(g));
                         }
 
-                        // Restore saved zones with menubar offset
                         for geo in s.zoning.restore() {
                             emit(Topic::SetWindowGeometry(geo));
                         }

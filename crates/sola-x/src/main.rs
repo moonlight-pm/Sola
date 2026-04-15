@@ -139,6 +139,7 @@ fn connect_to_compositor(state: &mut State) {
             let geo = info.surface.geometry();
             let _ = state.bus.emit(Topic::SetWindowGeometry(WindowGeometry {
                 app_id: info.class.clone(),
+                title: None,
                 x: geo.loc.x,
                 y: geo.loc.y,
                 width: w,

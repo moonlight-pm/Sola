@@ -25,10 +25,13 @@ pub struct OpenUrlRequest {
     pub activate: bool,
 }
 
-/// Window geometry from sola-x for X11 window positioning.
+/// Window geometry for positioning and sizing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowGeometry {
     pub app_id: String,
+    /// Optional title to disambiguate multiple windows from the same app.
+    #[serde(default)]
+    pub title: Option<String>,
     pub x: i32,
     pub y: i32,
     pub width: i32,

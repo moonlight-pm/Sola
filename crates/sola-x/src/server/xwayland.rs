@@ -243,6 +243,7 @@ fn emit_geometry(state: &mut State, app_id: &str, geo: Rectangle<i32, Logical>) 
     use sola_bus::topics::{Topic, WindowGeometry};
     let _ = state.bus.emit(Topic::SetWindowGeometry(WindowGeometry {
         app_id: app_id.to_string(),
+        title: None,
         x: geo.loc.x,
         y: geo.loc.y,
         width: geo.size.w,

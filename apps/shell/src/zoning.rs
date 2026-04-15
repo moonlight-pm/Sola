@@ -92,10 +92,23 @@ impl ZoningState {
         let (w, _h) = self.output_size?;
         Some(WindowGeometry {
             app_id: "sola-shell".into(),
+            title: Some("menubar".into()),
             x: 0,
             y: 0,
             width: w,
             height: MENUBAR_HEIGHT,
+        })
+    }
+
+    pub fn overlay_geometry(&self) -> Option<WindowGeometry> {
+        let (w, h) = self.output_size?;
+        Some(WindowGeometry {
+            app_id: "sola-shell".into(),
+            title: Some("overlay".into()),
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
         })
     }
 
@@ -146,6 +159,7 @@ fn compute_geometry(zone: Zone, app_id: &str, output_w: i32, output_h: i32) -> W
 
     WindowGeometry {
         app_id: app_id.to_string(),
+        title: None,
         x,
         y,
         width: w,

@@ -112,8 +112,8 @@ pub struct State {
     pub mru_apps: Vec<String>,
 
     /// Window geometries received before the window appeared.
-    /// Applied in `apply_pending_geometries` when the window is first mapped.
-    pub pending_geometries: HashMap<String, sola_bus::topics::WindowGeometry>,
+    /// Keyed by (app_id, title) for disambiguation of multi-window apps.
+    pub pending_geometries: HashMap<(String, Option<String>), sola_bus::topics::WindowGeometry>,
 
     /// Window policies declared by apps. Keyed by app_id.
     pub window_policies: HashMap<String, Vec<sola_bus::topics::WindowPolicy>>,
@@ -199,6 +199,18 @@ impl State {
     pub fn window_by_app_id(&self, target: &str) -> Option<Window> {
         self.space.elements().find(|window| {
             window_app_id(window).is_some_and(|id| id == target)
+        }).cloned()
+    }
+
+    /// Find a window by app_id and optional title.
+    pub fn window_by_app_id_title(&self, app_id: &str, title: Option<&str>) -> Option<Window> {
+        self.space.elements().find(|window| {
+            let id_match = window_app_id(window).is_some_and(|id| id == app_id);
+            if !id_match { return false; }
+            match title {
+                Some(t) => window_title(window).is_some_and(|wt| wt == t),
+                None => true,
+            }
         }).cloned()
     }
 
