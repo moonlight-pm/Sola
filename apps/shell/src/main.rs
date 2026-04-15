@@ -1,3 +1,4 @@
+mod config;
 mod keys;
 mod menu;
 mod state;
@@ -10,7 +11,7 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 
-use sola_app::{asset_bundle, SolaApp};
+use sola_app::{SolaApp, asset_bundle};
 use sola_bus::topics::Topic;
 
 use state::ShellState;

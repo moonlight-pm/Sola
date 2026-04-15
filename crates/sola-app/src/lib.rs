@@ -4,6 +4,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use gtk4::prelude::*;
+use tokio::runtime::Runtime;
+use tokio::sync::mpsc::UnboundedReceiver;
 use webkit6::prelude::*;
 
 use sola_bus::BusClient;
@@ -11,6 +13,8 @@ use sola_bus::topics::Topic;
 
 pub mod assets;
 pub mod bridge;
+pub mod config;
+
 pub mod strip;
 pub mod watcher;
 pub mod webview;
@@ -35,8 +39,7 @@ pub struct SolaApp {
     app_assets: &'static AssetBundle,
     initial_state: Option<String>,
     handler_factory: Option<Box<dyn FnOnce(mpsc::Sender<String>) -> Box<dyn AppHandler>>>,
-    bus_handler:
-        Option<Box<dyn Fn(&Topic, &dyn Fn(serde_json::Value), &dyn Fn(Topic)) + 'static>>,
+    bus_handler: Option<Box<dyn Fn(&Topic, &dyn Fn(serde_json::Value), &dyn Fn(Topic)) + 'static>>,
     on_activate_callback: Option<
         Box<
             dyn FnOnce(&gtk4::ApplicationWindow, &webkit6::WebView, Rc<RefCell<BusClient>>)
@@ -225,8 +228,7 @@ impl SolaApp {
                 if let Some(factory) = handler_factory.borrow_mut().take() {
                     let handler = factory(event_tx.clone());
                     std::thread::spawn(move || {
-                        let rt = tokio::runtime::Runtime::new()
-                            .expect("failed to create tokio runtime");
+                        let rt = Runtime::new().expect("failed to create tokio runtime");
                         rt.block_on(dispatch_loop(handler, cmd_rx, event_tx));
                     });
                 }
@@ -302,7 +304,9 @@ impl SolaApp {
                         drop(client);
 
                         for msg in messages {
-                            let Some(topic) = Topic::parse(&msg) else { continue };
+                            let Some(topic) = Topic::parse(&msg) else {
+                                continue;
+                            };
                             let send = |value: serde_json::Value| {
                                 bridge::send_to_js(&webview_for_bus, &value.to_string());
                             };
@@ -377,7 +381,7 @@ fn inject_import_map(html: &str) -> String {
 /// Command dispatch loop running on the tokio runtime.
 async fn dispatch_loop(
     handler: Box<dyn AppHandler>,
-    mut cmd_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    mut cmd_rx: UnboundedReceiver<String>,
     event_tx: mpsc::Sender<String>,
 ) {
     while let Some(msg) = cmd_rx.recv().await {

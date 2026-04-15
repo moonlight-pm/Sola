@@ -2264,6 +2264,7 @@ dependencies = [
  "gtk4",
  "nix 0.31.2",
  "notify",
+ "serde",
  "serde_json",
  "sola-bus",
  "swc_common",
