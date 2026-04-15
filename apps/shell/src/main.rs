@@ -290,6 +290,8 @@ fn setup_overlay(
                 let json = serde_json::to_string(&s.switcher.apps).unwrap_or_default();
                 let script = format!("renderSwitcher({}, {})", json, s.switcher.selected);
                 push_overlay_js(&overlay_webview, &script);
+                // Raise the overlay above other windows (no focus change).
+                let _ = bus.borrow_mut().emit(Topic::RaiseApp("sola-shell".into()));
                 return glib::Propagation::Stop;
             }
 

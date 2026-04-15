@@ -119,19 +119,22 @@ fn handle_raise_app(state: &mut State, app_id: &str) {
 
     tracing::info!(app_id, count = windows.len(), "raising app");
 
-    // Raise each window, maintaining their relative z-order.
-    // The last one raised gets focus.
     for window in &windows {
         state.space.raise_element(window, true);
     }
 
-    // Focus the topmost window of the raised app.
-    use smithay::wayland::seat::WaylandFocus;
-    if let Some(window) = windows.last() {
-        if let Some(surface) = window.wl_surface() {
-            let serial = SERIAL_COUNTER.next_serial();
-            let keyboard = state.seat.get_keyboard().unwrap();
-            keyboard.set_focus(state, Some(surface.into_owned()), serial);
+    // Only focus if the app has at least one auto_focus window.
+    let should_focus = state.window_policies.get(app_id)
+        .map_or(true, |ps| ps.iter().any(|p| p.auto_focus));
+
+    if should_focus {
+        use smithay::wayland::seat::WaylandFocus;
+        if let Some(window) = windows.last() {
+            if let Some(surface) = window.wl_surface() {
+                let serial = SERIAL_COUNTER.next_serial();
+                let keyboard = state.seat.get_keyboard().unwrap();
+                keyboard.set_focus(state, Some(surface.into_owned()), serial);
+            }
         }
     }
 }
