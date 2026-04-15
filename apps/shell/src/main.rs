@@ -26,6 +26,7 @@ struct ShellState {
     zoning: zoning::ZoningState,
     switcher: switcher::SwitcherState,
     switcher_webview: Option<webkit6::WebView>,
+    menubar_webview: Option<webkit6::WebView>,
 }
 
 impl ShellState {
@@ -38,6 +39,33 @@ impl ShellState {
             zoning: zoning::ZoningState::new(),
             switcher: switcher::SwitcherState::default(),
             switcher_webview: None,
+            menubar_webview: None,
+        }
+    }
+
+    fn set_focus(&mut self, app_id: &str) {
+        self.focused_app_id = Some(app_id.to_string());
+        self.zoning.set_focused(app_id.to_string());
+        self.mru_apps.retain(|m| m != app_id);
+        self.mru_apps.insert(0, app_id.to_string());
+
+        let menu = self.menus.get_menu(app_id);
+        let app_name = menu
+            .and_then(|m| m.menus.first())
+            .map(|d| d.label.as_str())
+            .unwrap_or(app_id);
+        let menu_labels: Vec<String> = menu
+            .map(|m| m.menus.iter().map(|d| d.label.clone()).collect())
+            .unwrap_or_default();
+
+        if let Some(ref wv) = self.menubar_webview {
+            let msg = serde_json::json!({
+                "event": "focus",
+                "app_name": app_name,
+                "menu_labels": menu_labels,
+            }).to_string();
+            let js_str = serde_json::to_string(&msg).unwrap_or_default();
+            eval_js(wv, &format!("window.__solaRecv({js_str})"));
         }
     }
 
@@ -147,8 +175,7 @@ impl ShellState {
 
         // Focus the newest app.
         if let Some(id) = added.first() {
-            self.mru_apps.retain(|m| m != id);
-            self.mru_apps.insert(0, id.clone());
+            self.set_focus(id);
             emit(Topic::Focus(FocusTarget {
                 app_id: id.clone(),
                 title: None,
@@ -196,29 +223,8 @@ fn main() {
                     }
                     Topic::FocusChanged(app_id) => {
                         tracing::info!(app_id = %app_id, "focus changed");
-                        s.focused_app_id = Some(app_id.clone());
-                        s.zoning.set_focused(app_id.clone());
-
-                        // Update MRU.
-                        s.mru_apps.retain(|m| m != app_id);
-                        s.mru_apps.insert(0, app_id.clone());
-
+                        s.set_focus(app_id);
                         s.emit_composition(emit);
-
-                        let menu = s.menus.get_menu(app_id);
-                        let app_name = menu
-                            .and_then(|m| m.menus.first())
-                            .map(|d| d.label.as_str())
-                            .unwrap_or(app_id);
-                        let menu_labels: Vec<String> = menu
-                            .map(|m| m.menus.iter().map(|d| d.label.clone()).collect())
-                            .unwrap_or_default();
-
-                        send_to_js(serde_json::json!({
-                            "event": "focus",
-                            "app_name": app_name,
-                            "menu_labels": menu_labels,
-                        }));
                     }
                     Topic::SetAppMenu(payload) => {
                         s.menus.set_menu(payload.clone());
@@ -294,11 +300,11 @@ fn main() {
 
                 window.set_title(Some("menubar"));
 
-                // Menubar command bridge via title.
                 let webview_ref = {
                     let child = window.child().unwrap();
                     child.downcast::<webkit6::WebView>().unwrap()
                 };
+                state.borrow_mut().menubar_webview = Some(webview_ref.clone());
                 webview_ref.connect_notify_local(Some("title"), {
                     let bus = bus.clone();
                     move |webview, _| {
@@ -487,10 +493,7 @@ fn setup_key_controller(
             }
 
             if let Some(ref app_id) = app_id {
-                // Move to front of MRU.
-                s.mru_apps.retain(|m| m != app_id);
-                s.mru_apps.insert(0, app_id.clone());
-
+                s.set_focus(app_id);
                 emit(Topic::Focus(FocusTarget {
                     app_id: app_id.clone(),
                     title: None,
