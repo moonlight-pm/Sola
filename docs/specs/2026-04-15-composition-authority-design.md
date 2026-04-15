@@ -148,12 +148,13 @@ Between steps 2 and 4, the surface is invisible. No fallback — if the shell is
 
 ## Non-Sola Apps
 
-Regular Wayland clients and X11 apps (via sola-x) appear in the `Apps` list with their app_id. They have no WindowPolicy, so the shell uses defaults:
+Every app gets a WindowPolicy — just emitted by different sources:
 
-- Full output size, position (0, 0).
-- Zoning available via Super+Numpad like any other app.
-- Included in MRU ordering.
-- Referenced by `(app_id, None)` which matches any window from that app.
+- **Sola apps** emit their own WindowPolicy (they're bus clients).
+- **sola-x** emits WindowPolicy for X11 apps. It knows their class (app_id), title, and requested geometry.
+- **The compositor** emits WindowPolicy for non-sola Wayland apps with defaults (zoned=true, size from client geometry hints or None).
+
+The shell treats all apps uniformly. No special "apps without a policy" path.
 
 ## WindowPolicy Changes
 
@@ -205,4 +206,8 @@ Each surface has its own WindowPolicy with `keyboard_target: false` (only the me
 
 ## sola-x Impact
 
-sola-x currently emits and handles `SetWindowGeometry` for X11 window resizing. With SetWindowGeometry removed, X11 geometry flows through Frame: the compositor configures sola-x's proxy surfaces based on Frame, and sola-x applies those configures to the X11 windows (this path already works). For X11-initiated resizes, sola-x reports the new size to the shell (mechanism TBD — may need a new topic or reuse of Apps metadata).
+sola-x currently emits and handles `SetWindowGeometry`. With the new design:
+
+- **Receiving geometry**: Frame → compositor configures sola-x's proxy surface → sola-x receives the Wayland configure → applies to X11 window. This path already works via `apply_pending_configures`.
+- **Declaring preferences**: sola-x emits WindowPolicy for each X11 app (class as app_id, title, requested geometry as size). The shell uses these policies like any other app's.
+- **SetWindowGeometry removed**: sola-x no longer emits or listens for it. The `user_locked_sizes` mechanism in sola-x is replaced by the shell's zone tracking — the shell emits Frame with the correct zone size, the compositor configures the proxy, sola-x applies it.
