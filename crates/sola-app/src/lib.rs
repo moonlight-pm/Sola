@@ -43,6 +43,7 @@ pub struct SolaApp {
                 + 'static,
         >,
     >,
+    js_command_handler: Option<Box<dyn Fn(&str, &serde_json::Value) + 'static>>,
 }
 
 impl SolaApp {
@@ -58,6 +59,7 @@ impl SolaApp {
             handler_factory: None,
             bus_handler: None,
             on_activate_callback: None,
+            js_command_handler: None,
         }
     }
 
@@ -98,6 +100,14 @@ impl SolaApp {
         F: FnOnce(mpsc::Sender<String>) -> H + 'static,
     {
         self.handler_factory = Some(Box::new(move |tx| Box::new(factory(tx))));
+        self
+    }
+
+    pub fn on_js_command<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&str, &serde_json::Value) + 'static,
+    {
+        self.js_command_handler = Some(Box::new(handler));
         self
     }
 
@@ -181,6 +191,7 @@ impl SolaApp {
         let handler_factory = RefCell::new(self.handler_factory);
         let bus_handler = RefCell::new(self.bus_handler);
         let on_activate_callback = RefCell::new(self.on_activate_callback);
+        let js_command_handler = RefCell::new(self.js_command_handler);
 
         app.connect_activate(move |app| {
             // Prepare HTML with initial state
@@ -216,6 +227,20 @@ impl SolaApp {
                     let rt = tokio::runtime::Runtime::new()
                         .expect("failed to create tokio runtime");
                     rt.block_on(dispatch_loop(handler, cmd_rx, event_tx));
+                });
+            } else if let Some(js_handler) = js_command_handler.borrow_mut().take() {
+                let mut cmd_rx = cmd_rx;
+                glib::timeout_add_local(Duration::from_millis(2), move || {
+                    while let Ok(msg) = cmd_rx.try_recv() {
+                        let parsed: serde_json::Value = match serde_json::from_str(&msg) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        let cmd = parsed.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
+                        let args = parsed.get("args").cloned().unwrap_or(serde_json::json!({}));
+                        js_handler(cmd, &args);
+                    }
+                    glib::ControlFlow::Continue
                 });
             }
 

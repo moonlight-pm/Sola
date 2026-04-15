@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+        background: transparent;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+        font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    #menu {
+        min-width: 200px;
+        background: rgba(40, 42, 48, 0.96);
+        border-radius: 6px;
+        padding: 4px 0;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+
+    .menu-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 16px;
+        font-size: 13px;
+        color: #ccc;
+        cursor: default;
+    }
+
+    .menu-item:hover { background: rgba(56, 120, 240, 0.7); color: white; }
+    .menu-item.disabled { color: #666; pointer-events: none; }
+    .menu-item .shortcut { color: #888; font-size: 11px; margin-left: 24px; }
+    .menu-item:hover .shortcut { color: rgba(255,255,255,0.7); }
+
+    .menu-divider {
+        height: 1px;
+        background: rgba(255,255,255,0.1);
+        margin: 4px 8px;
+    }
+</style>
+</head>
+<body>
+<div id="menu"></div>
+<script>
+var menuEl = document.getElementById('menu');
+
+function showMenu(items) {
+    while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
+
+    items.forEach(function(item) {
+        if (item.type === 'divider') {
+            var div = document.createElement('div');
+            div.className = 'menu-divider';
+            menuEl.appendChild(div);
+            return;
+        }
+
+        var el = document.createElement('div');
+        el.className = 'menu-item' + (item.disabled ? ' disabled' : '');
+
+        var label = document.createElement('span');
+        label.textContent = item.label;
+        el.appendChild(label);
+
+        if (item.shortcut) {
+            var sc = document.createElement('span');
+            sc.className = 'shortcut';
+            sc.textContent = item.shortcut;
+            el.appendChild(sc);
+        }
+
+        if (!item.disabled) {
+            el.addEventListener('click', function() {
+                document.title = 'action:' + item.app_id + ':' + item.id;
+            });
+        }
+
+        menuEl.appendChild(el);
+    });
+}
+
+function clearMenu() {
+    while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
+}
+</script>
+</body>
+</html>

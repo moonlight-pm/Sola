@@ -27,6 +27,9 @@ struct ShellState {
     switcher: switcher::SwitcherState,
     switcher_webview: Option<webkit6::WebView>,
     menubar_webview: Option<webkit6::WebView>,
+    menu_webview: Option<webkit6::WebView>,
+    menu_open: bool,
+    bus: Option<Rc<RefCell<sola_bus::BusClient>>>,
 }
 
 impl ShellState {
@@ -40,6 +43,9 @@ impl ShellState {
             switcher: switcher::SwitcherState::default(),
             switcher_webview: None,
             menubar_webview: None,
+            menu_webview: None,
+            menu_open: false,
+            bus: None,
         }
     }
 
@@ -114,6 +120,12 @@ impl ShellState {
         }
 
         // 3. Shell panels on top when active.
+        if self.menu_open {
+            entries.push(CompositionEntry {
+                app_id: "sola-shell".into(),
+                title: Some("menu".into()),
+            });
+        }
         if self.switcher.active {
             entries.push(CompositionEntry {
                 app_id: "sola-shell".into(),
@@ -192,6 +204,7 @@ static MENUBAR_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
 
 static OVERLAY_HTML: &str = include_str!("../web/overlay.html");
 static OVERLAY_JS: &str = include_str!("../web/src/overlay.ts");
+static MENU_HTML: &str = include_str!("../web/menu.html");
 
 fn main() {
     let state: Rc<RefCell<ShellState>> = Rc::new(RefCell::new(ShellState::new()));
@@ -202,6 +215,19 @@ fn main() {
         .decorated(false)
         .transparent(true)
         .web_assets(MENUBAR_ASSETS)
+        .on_js_command({
+            let state = state.clone();
+            move |cmd, args| {
+                match cmd {
+                    "open_menu" => {
+                        let index = args.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                        let mut s = state.borrow_mut();
+                        open_menu(&mut s, index);
+                    }
+                    _ => {}
+                }
+            }
+        })
         .on_bus_event({
             let state = state.clone();
             move |topic, send_to_js, emit| {
@@ -274,6 +300,13 @@ fn main() {
                                 size: Some((800, 400)),
                                 position: Some((560, 340)),
                             },
+                            WindowPolicy {
+                                title: "menu".into(),
+                                zoned: false,
+                                keyboard_target: false,
+                                size: Some((220, 300)),
+                                position: Some((0, zoning::MENUBAR_HEIGHT)),
+                            },
                         ],
                     },
                 ));
@@ -299,23 +332,12 @@ fn main() {
                     let child = window.child().unwrap();
                     child.downcast::<webkit6::WebView>().unwrap()
                 };
-                state.borrow_mut().menubar_webview = Some(webview_ref.clone());
-                webview_ref.connect_notify_local(Some("title"), {
-                    let bus = bus.clone();
-                    move |webview, _| {
-                        let Some(title) = webview.title() else { return };
-                        let title = title.to_string();
-                        match title.as_str() {
-                            "cmd:exit" => {
-                                tracing::info!("exit requested from system menu");
-                                let _ = bus.borrow_mut().emit(Topic::Shutdown);
-                            }
-                            _ => {}
-                        }
-                    }
-                });
+                state.borrow_mut().menubar_webview = Some(webview_ref);
+
+                state.borrow_mut().bus = Some(bus.clone());
 
                 setup_switcher_panel(window, &state, &bus);
+                setup_menu_panel(window, &state, &bus);
                 setup_key_controller(window, &state, &bus);
 
                 tracing::info!("shell ready");
@@ -360,6 +382,136 @@ fn setup_switcher_panel(
     switcher_window.present();
 
     state.borrow_mut().switcher_webview = Some(switcher_webview);
+}
+
+fn setup_menu_panel(
+    window: &gtk4::ApplicationWindow,
+    state: &Rc<RefCell<ShellState>>,
+    bus: &Rc<RefCell<sola_bus::BusClient>>,
+) {
+    let app = window.application().unwrap();
+
+    let menu_window = gtk4::ApplicationWindow::new(&app);
+    menu_window.set_decorated(false);
+    menu_window.set_default_size(220, 300);
+    menu_window.set_title(Some("menu"));
+
+    let css = gtk4::CssProvider::new();
+    css.load_from_data("window.menu-window, window.menu-window.background { background: transparent; }");
+    gtk4::style_context_add_provider_for_display(
+        &gdk4::Display::default().unwrap(),
+        &css,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    menu_window.add_css_class("menu-window");
+
+    let menu_webview = webkit6::WebView::new();
+    menu_webview.set_background_color(&gdk4::RGBA::new(0.0, 0.0, 0.0, 0.0));
+    if let Some(settings) = webkit6::prelude::WebViewExt::settings(&menu_webview) {
+        settings.set_enable_developer_extras(true);
+        settings.set_enable_write_console_messages_to_stdout(true);
+    }
+    menu_webview.connect_context_menu(|_, _, _| true);
+    menu_webview.load_html(MENU_HTML, None);
+
+    // Menu item clicks come back via title change: "action:app_id:action_id"
+    menu_webview.connect_notify_local(Some("title"), {
+        let state = state.clone();
+        let bus = bus.clone();
+        move |webview, _| {
+            let Some(title) = webview.title() else { return };
+            let title = title.to_string();
+            if let Some(rest) = title.strip_prefix("action:") {
+                if let Some((app_id, action_id)) = rest.split_once(':') {
+                    tracing::info!(app_id, action_id, "menu action");
+
+                    if app_id == "sola-shell" && action_id == "exit" {
+                        let _ = bus.borrow_mut().emit(Topic::Shutdown);
+                    } else {
+                        let _ = bus.borrow_mut().emit(Topic::MenuAction(
+                            sola_bus::topics::MenuActionPayload {
+                                app_id: app_id.to_string(),
+                                action_id: action_id.to_string(),
+                            },
+                        ));
+                    }
+
+                    let mut s = state.borrow_mut();
+                    close_menu(&mut s, &|topic: Topic| {
+                        let _ = bus.borrow_mut().emit(topic);
+                    });
+                }
+            }
+        }
+    });
+
+    menu_window.set_child(Some(&menu_webview));
+    menu_window.present();
+
+    state.borrow_mut().menu_webview = Some(menu_webview);
+}
+
+fn open_menu(s: &mut ShellState, menu_index: usize) {
+    use sola_bus::topics::MenuItem;
+
+    let app_id = if menu_index == 0 {
+        "sola-shell".to_string()
+    } else {
+        s.focused_app_id.clone().unwrap_or_default()
+    };
+
+    let menu = s.menus.get_menu(&app_id);
+    let menu_def = menu.and_then(|m| m.menus.get(menu_index));
+    let Some(menu_def) = menu_def else { return };
+
+    let items: Vec<serde_json::Value> = menu_def.items.iter().map(|item| {
+        match item {
+            MenuItem::Action { id, label, shortcut, disabled, .. } => {
+                serde_json::json!({
+                    "type": "action",
+                    "id": id,
+                    "app_id": app_id,
+                    "label": label,
+                    "shortcut": shortcut,
+                    "disabled": disabled,
+                })
+            }
+            MenuItem::Divider => serde_json::json!({ "type": "divider" }),
+        }
+    }).collect();
+
+    if let Some(ref wv) = s.menu_webview {
+        let json = serde_json::to_string(&items).unwrap_or_default();
+        eval_js(wv, &format!("showMenu({})", json));
+    }
+
+    // Position the menu panel below the menubar, roughly aligned to the clicked label.
+    let anchor_x = menu_index as i32 * 80;
+    if let Some(ref bus) = s.bus {
+        let _ = bus.borrow_mut().emit(Topic::Frame(FrameUpdate {
+            app_id: "sola-shell".into(),
+            title: Some("menu".into()),
+            x: anchor_x,
+            y: zoning::MENUBAR_HEIGHT,
+            width: 220,
+            height: 300,
+        }));
+    }
+
+    s.menu_open = true;
+    if let Some(ref bus) = s.bus {
+        let emit = |topic: Topic| { let _ = bus.borrow_mut().emit(topic); };
+        s.emit_composition(&emit);
+    }
+}
+
+fn close_menu(s: &mut ShellState, emit: &dyn Fn(Topic)) {
+    if !s.menu_open { return; }
+    s.menu_open = false;
+    if let Some(ref wv) = s.menu_webview {
+        eval_js(wv, "clearMenu()");
+    }
+    s.emit_composition(emit);
 }
 
 fn setup_key_controller(

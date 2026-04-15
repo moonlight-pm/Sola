@@ -1,4 +1,4 @@
-import { on } from '@sola/ipc';
+import { invoke, on } from '@sola/ipc';
 
 const systemMenuEl = document.getElementById('system-menu')!;
 const appNameEl = document.getElementById('app-name')!;
@@ -6,7 +6,6 @@ const menuLabelsEl = document.getElementById('menu-labels')!;
 const clockEl = document.getElementById('clock')!;
 
 let currentMenuLabels: string[] = [];
-let systemMenuOpen = false;
 
 on('focus', (msg: any) => {
     appNameEl.textContent = msg.app_name || '';
@@ -14,12 +13,8 @@ on('focus', (msg: any) => {
     renderMenuLabels();
 });
 
-// System menu (eclipse icon)
 systemMenuEl.addEventListener('click', () => {
-    systemMenuOpen = !systemMenuOpen;
-    if (systemMenuOpen) {
-        document.title = 'cmd:system_menu';
-    }
+    invoke('open_menu', { index: 0 });
 });
 
 function renderMenuLabels(): void {
@@ -31,11 +26,13 @@ function renderMenuLabels(): void {
         const el = document.createElement('div');
         el.className = 'menu-label';
         el.textContent = label;
+        el.addEventListener('click', () => {
+            invoke('open_menu', { index });
+        });
         menuLabelsEl.appendChild(el);
     });
 }
 
-// Clock
 function updateClock(): void {
     const now = new Date();
     const h = now.getHours();
