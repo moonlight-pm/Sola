@@ -12,6 +12,7 @@ use sola_bus::BusClient;
 use sola_bus::topics::Topic;
 
 pub mod assets;
+pub mod async_dispatch;
 pub mod bridge;
 pub mod config;
 pub mod ctx;
@@ -22,6 +23,7 @@ pub mod window;
 
 // Re-export for macro use
 pub use assets::{Asset, AssetBundle, ContentType};
+pub use async_dispatch::AsyncDispatcher;
 pub use ctx::AppCtx;
 pub use window::{WindowConfig, WindowHandle};
 
