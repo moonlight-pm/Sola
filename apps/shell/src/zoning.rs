@@ -73,18 +73,6 @@ impl ZoningState {
         Some(frame)
     }
 
-    /// Compute FrameUpdates for all zone-assigned apps (used on output resize).
-    pub fn restore(&self) -> Vec<FrameUpdate> {
-        let Some((w, h)) = self.output_size else {
-            return vec![];
-        };
-
-        self.zone_assignments
-            .iter()
-            .map(|(app_id, zone)| compute_frame(*zone, app_id, w, h))
-            .collect()
-    }
-
     /// Compute the menubar's Frame for a given output.
     pub fn menubar_frame(&self) -> Option<FrameUpdate> {
         let (w, _h) = self.output_size?;
