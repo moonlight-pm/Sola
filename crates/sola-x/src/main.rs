@@ -272,6 +272,16 @@ fn inject_input(state: &mut State) {
                     |_, _, _| FilterResult::Forward,
                 );
             }
+            client::InputEvent::KeyboardEnter { x11_id } => {
+                if let Some(surface) = server_surface_for_x11(state, x11_id) {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    keyboard.set_focus(state, Some(surface), serial);
+                }
+            }
+            client::InputEvent::KeyboardLeave => {
+                let serial = SERIAL_COUNTER.next_serial();
+                keyboard.set_focus(state, None, serial);
+            }
         }
     }
 }

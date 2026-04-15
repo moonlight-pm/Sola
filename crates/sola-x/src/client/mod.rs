@@ -83,6 +83,10 @@ pub enum InputEvent {
         pressed: bool,
         time: u32,
     },
+    KeyboardEnter {
+        x11_id: u32,
+    },
+    KeyboardLeave,
 }
 
 /// A proxy surface in sola-compositor representing an X11 window.
@@ -427,6 +431,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for ClientApp {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
+            wl_keyboard::Event::Enter { surface, .. } => {
+                let surface_id = surface.id().protocol_id();
+                if let Some(&x11_id) = state.surface_to_x11.get(&surface_id) {
+                    state
+                        .pending_input
+                        .push(InputEvent::KeyboardEnter { x11_id });
+                }
+            }
+            wl_keyboard::Event::Leave { .. } => {
+                state.pending_input.push(InputEvent::KeyboardLeave);
+            }
             wl_keyboard::Event::Key {
                 key,
                 state: key_state,

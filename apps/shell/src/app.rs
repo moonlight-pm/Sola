@@ -369,6 +369,19 @@ impl ShellApp {
 
         for id in &removed {
             self.mru_apps.retain(|m| m != id);
+            if self.focused_app_id.as_deref() == Some(id.as_str()) {
+                self.focused_app_id = None;
+            }
+        }
+
+        // Insert newly appeared apps at the BACK of MRU (bottom of the
+        // composition stack). Apps re-mapping themselves must not visually
+        // raise to the top — the user has to actively focus via click or
+        // hover to bring an app forward.
+        for id in &added {
+            if !self.mru_apps.iter().any(|m| m == id) {
+                self.mru_apps.push(id.clone());
+            }
         }
 
         // Emit Frames for new apps.
@@ -380,14 +393,16 @@ impl ShellApp {
 
         self.emit_composition(ctx);
 
-        // Focus the newest app.
-        if let Some(id) = added.first() {
-            self.set_focus(id);
-            ctx.emit(Topic::Focus(FocusTarget {
-                app_id: id.clone(),
-                title: None,
-            }));
-            self.emit_composition(ctx);
+        // Auto-focus the newest app only when nothing is currently focused.
+        if self.focused_app_id.is_none() {
+            if let Some(id) = added.first() {
+                self.set_focus(id);
+                ctx.emit(Topic::Focus(FocusTarget {
+                    app_id: id.clone(),
+                    title: None,
+                }));
+                self.emit_composition(ctx);
+            }
         }
     }
 
