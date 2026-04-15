@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use gtk4::prelude::*;
-use sola_app::{asset_bundle, SolaAppBuilder};
+use serde_json::Value;
+use sola_app::{
+    asset_bundle, AppCtx, AsyncDispatcher, SolaApp, WindowConfig, WindowHandle,
+};
 use sola_bus::topics::{
     AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic,
-    WindowPolicy, WindowPolicyPayload,
 };
 
 mod commands;
@@ -12,109 +13,151 @@ mod pty;
 mod state;
 mod tmux;
 
-fn main() {
-    tmux::cleanup_stale_socket();
-    tmux::kill_orphaned_clients();
-    tmux::reload_config();
+static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
+    "/index.html" => (include_str!("../web/index.html"), Html),
+    "/src/main.ts" => (include_str!("../web/src/main.ts"), TypeScript),
+    "/src/app.ts" => (include_str!("../web/src/app.ts"), TypeScript),
+    "/src/terminal-pane.ts" => (include_str!("../web/src/terminal-pane.ts"), TypeScript),
+    "/src/components/sidebar.ts" => (include_str!("../web/src/components/sidebar.ts"), TypeScript),
+    "/src/theme.css" => (include_str!("../web/src/theme.css"), Css),
+    "/vendor/xterm.mjs" => (include_str!("../web/vendor/xterm.mjs"), JavaScript),
+    "/vendor/xterm.css" => (include_str!("../web/vendor/xterm.css"), Css),
+    "/vendor/addon-fit.mjs" => (include_str!("../web/vendor/addon-fit.mjs"), JavaScript),
+    "/vendor/addon-web-links.mjs" => (include_str!("../web/vendor/addon-web-links.mjs"), JavaScript),
+};
 
-    let restored_tabs = state::TerminalState::load_from_disk();
-    let restored_json = serde_json::to_string(&restored_tabs).unwrap_or_default();
+struct TerminalApp {
+    main_window: WindowHandle,
+    dispatcher: AsyncDispatcher,
+    #[allow(dead_code)]
+    state: Arc<state::TerminalState>,
+}
 
-    let terminal_state = Arc::new(state::TerminalState::new());
+impl SolaApp for TerminalApp {
+    const APP_ID: &'static str = "sola-terminal";
 
-    {
-        let mut titles = terminal_state.custom_titles.try_write().unwrap();
-        for tab in &restored_tabs {
-            if let Some(ref title) = tab.custom_title {
-                titles.insert(tab.tmux_session.clone(), title.clone());
+    fn new(ctx: &mut AppCtx) -> Self {
+        tmux::cleanup_stale_socket();
+        tmux::kill_orphaned_clients();
+        tmux::reload_config();
+
+        let restored_tabs = state::TerminalState::load_from_disk();
+        let restored_json = serde_json::to_string(&restored_tabs).unwrap_or_default();
+
+        let terminal_state = Arc::new(state::TerminalState::new());
+        {
+            let mut titles = terminal_state.custom_titles.try_write().unwrap();
+            for tab in &restored_tabs {
+                if let Some(ref title) = tab.custom_title {
+                    titles.insert(tab.tmux_session.clone(), title.clone());
+                }
             }
+        }
+
+        let main_window = ctx.add_window(WindowConfig {
+            title: "main".into(),
+            size: (1920, 1080),
+            position: None,
+            decorated: false,
+            transparent: false,
+            assets: APP_ASSETS,
+            initial_state: Some(restored_json),
+            zoned: true,
+            keyboard_target: true,
+        });
+
+        // Bridge TerminalHandler's mpsc event channel to the main window's JS.
+        let (event_tx, event_rx) = std::sync::mpsc::channel::<String>();
+        let mw_for_events = main_window.clone();
+        gtk4::glib::timeout_add_local(std::time::Duration::from_millis(5), move || {
+            while let Ok(msg) = event_rx.try_recv() {
+                mw_for_events.eval_js(&format!("window.__solaRecv({msg})"));
+            }
+            gtk4::glib::ControlFlow::Continue
+        });
+
+        let dispatcher = AsyncDispatcher::spawn(commands::TerminalHandler {
+            state: terminal_state.clone(),
+            event_tx,
+        });
+
+        // Register the terminal's app menu.
+        ctx.emit_sticky(Topic::SetAppMenu(terminal_menu()));
+        tracing::info!("registered terminal menu");
+
+        Self {
+            main_window,
+            dispatcher,
+            state: terminal_state,
         }
     }
 
-    static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
-        "/index.html" => (include_str!("../web/index.html"), Html),
-        "/src/main.ts" => (include_str!("../web/src/main.ts"), TypeScript),
-        "/src/app.ts" => (include_str!("../web/src/app.ts"), TypeScript),
-        "/src/terminal-pane.ts" => (include_str!("../web/src/terminal-pane.ts"), TypeScript),
-        "/src/components/sidebar.ts" => (include_str!("../web/src/components/sidebar.ts"), TypeScript),
-        "/src/theme.css" => (include_str!("../web/src/theme.css"), Css),
-        "/vendor/xterm.mjs" => (include_str!("../web/vendor/xterm.mjs"), JavaScript),
-        "/vendor/xterm.css" => (include_str!("../web/vendor/xterm.css"), Css),
-        "/vendor/addon-fit.mjs" => (include_str!("../web/vendor/addon-fit.mjs"), JavaScript),
-        "/vendor/addon-web-links.mjs" => (include_str!("../web/vendor/addon-web-links.mjs"), JavaScript),
-    };
-
-    let state_for_handler = terminal_state.clone();
-
-    SolaAppBuilder::new()
-        .app_id("sola-terminal")
-        .window_size(1920, 1080)
-        .decorated(false)
-        .web_assets(APP_ASSETS)
-        .initial_state(&restored_json)
-        .handler(move |event_tx| commands::TerminalHandler {
-            state: state_for_handler.clone(),
-            event_tx,
-        })
-        .on_bus_event(|topic, send_to_js, _emit| {
-            if let Topic::MenuAction(MenuActionPayload {
-                app_id,
-                action_id,
-            }) = topic
-            {
-                if app_id != "sola-terminal" {
-                    return;
+    fn on_js_command(
+        &mut self,
+        cmd: &str,
+        args: &Value,
+        _source: &WindowHandle,
+        _ctx: &mut AppCtx,
+    ) {
+        let source = self.main_window.clone();
+        let id = args.get("id").and_then(|v| v.as_u64());
+        let payload_args = args.get("args").cloned().unwrap_or(serde_json::json!({}));
+        self.dispatcher
+            .dispatch(cmd.to_string(), payload_args, move |result| {
+                if let Some(id) = id {
+                    source.send_to_js(&serde_json::json!({ "id": id, "result": result }));
                 }
-                match action_id.as_str() {
-                    "new_tab" => {
-                        tracing::info!("menu action: new tab");
-                        send_to_js(serde_json::json!({"event": "new_tab"}));
+            });
+    }
+
+    fn on_bus_event(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        if let Topic::MenuAction(MenuActionPayload {
+            app_id,
+            action_id,
+        }) = topic
+        {
+            if app_id != Self::APP_ID {
+                return;
+            }
+            match action_id.as_str() {
+                "new_tab" => {
+                    tracing::info!("menu action: new tab");
+                    self.main_window
+                        .send_to_js(&serde_json::json!({"event": "new_tab"}));
+                }
+                "copy" => {
+                    tracing::info!("menu action: copy");
+                    self.main_window
+                        .send_to_js(&serde_json::json!({"event": "copy"}));
+                }
+                "paste" => {
+                    tracing::info!("menu action: paste");
+                    self.main_window
+                        .send_to_js(&serde_json::json!({"event": "paste"}));
+                }
+                id if id.starts_with("select_tab_") => {
+                    if let Ok(index) = id.strip_prefix("select_tab_").unwrap().parse::<usize>() {
+                        tracing::info!(index, "menu action: select tab");
+                        self.main_window.send_to_js(
+                            &serde_json::json!({"event": "select_tab", "index": index}),
+                        );
                     }
-                    "copy" => {
-                        tracing::info!("menu action: copy");
-                        send_to_js(serde_json::json!({"event": "copy"}));
-                    }
-                    "paste" => {
-                        tracing::info!("menu action: paste");
-                        send_to_js(serde_json::json!({"event": "paste"}));
-                    }
-                    id if id.starts_with("select_tab_") => {
-                        if let Ok(index) = id.strip_prefix("select_tab_").unwrap().parse::<usize>()
-                        {
-                            tracing::info!(index, "menu action: select tab");
-                            send_to_js(
-                                serde_json::json!({"event": "select_tab", "index": index}),
-                            );
-                        }
-                    }
-                    _ => {
-                        tracing::debug!(action_id, "unknown menu action");
-                    }
+                }
+                _ => {
+                    tracing::debug!(action_id, "unknown menu action");
                 }
             }
-        })
-        .on_activate(|window, _webview, bus| {
-            window.set_title(Some("main"));
-            let mut client = bus.borrow_mut();
-            let _ = client.emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
-                app_id: "sola-terminal".into(),
-                windows: vec![WindowPolicy {
-                    title: "main".into(),
-                    zoned: true,
-                    keyboard_target: true,
-                    size: None,
-                    position: None,
-                }],
-            }));
-            let _ = client.emit_sticky(Topic::SetAppMenu(terminal_menu()));
-            tracing::info!("advertised terminal policy and menu");
-        })
-        .run();
+        }
+    }
+}
+
+fn main() {
+    sola_app::run::<TerminalApp>();
 }
 
 fn terminal_menu() -> AppMenuPayload {
     AppMenuPayload {
-        app_id: "sola-terminal".into(),
+        app_id: TerminalApp::APP_ID.into(),
         menus: vec![
             MenuDefinition {
                 label: "Terminal".into(),

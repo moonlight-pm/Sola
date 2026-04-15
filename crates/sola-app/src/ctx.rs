@@ -134,7 +134,13 @@ impl AppCtx {
                 title: h.inner.title.clone(),
                 zoned: h.inner.zoned,
                 keyboard_target: h.inner.keyboard_target,
-                size: Some(h.inner.size),
+                // Zoned windows are sized by the compositor's zone system,
+                // so skip the hint to match the pre-migration behavior.
+                size: if h.inner.zoned {
+                    None
+                } else {
+                    Some(h.inner.size)
+                },
                 position: h.inner.position,
             })
             .collect();
