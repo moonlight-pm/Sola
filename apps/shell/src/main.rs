@@ -432,13 +432,21 @@ fn setup_menu_panel(
     menu_webview.connect_context_menu(|_, _, _| true);
     menu_webview.load_html(MENU_HTML, None);
 
-    // Menu item clicks come back via title change: "action:app_id:action_id"
     menu_webview.connect_notify_local(Some("title"), {
         let state = state.clone();
         let bus = bus.clone();
         move |webview, _| {
             let Some(title) = webview.title() else { return };
             let title = title.to_string();
+
+            if title == "dismiss" {
+                let mut s = state.borrow_mut();
+                close_menu(&mut s, &|topic: Topic| {
+                    let _ = bus.borrow_mut().emit(topic);
+                });
+                return;
+            }
+
             if let Some(rest) = title.strip_prefix("action:") {
                 if let Some((app_id, action_id)) = rest.split_once(':') {
                     tracing::info!(app_id, action_id, "menu action");
@@ -500,18 +508,21 @@ fn open_menu(s: &mut ShellState, source: &str, menu_index: usize, anchor_x: i32)
 
     if let Some(ref wv) = s.menu_webview {
         let json = serde_json::to_string(&items).unwrap_or_default();
-        eval_js(wv, &format!("showMenu({})", json));
+        eval_js(wv, &format!("showMenu({}, {})", json, anchor_x));
     }
 
-    if let Some(ref bus) = s.bus {
-        let _ = bus.borrow_mut().emit(Topic::Frame(FrameUpdate {
-            app_id: "sola-shell".into(),
-            title: Some("menu".into()),
-            x: anchor_x,
-            y: zoning::MENUBAR_HEIGHT,
-            width: 220,
-            height: 300,
-        }));
+    // Full-screen overlay below the menubar — transparent except for the dropdown.
+    if let Some((ow, oh)) = s.zoning.output_size {
+        if let Some(ref bus) = s.bus {
+            let _ = bus.borrow_mut().emit(Topic::Frame(FrameUpdate {
+                app_id: "sola-shell".into(),
+                title: Some("menu".into()),
+                x: 0,
+                y: zoning::MENUBAR_HEIGHT,
+                width: ow,
+                height: oh - zoning::MENUBAR_HEIGHT,
+            }));
+        }
     }
 
     s.menu_open = true;

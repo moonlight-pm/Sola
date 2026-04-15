@@ -6,6 +6,8 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
+        width: 100vw;
+        height: 100vh;
         background: transparent;
         overflow: hidden;
         user-select: none;
@@ -14,13 +16,16 @@
     }
 
     #menu {
-        display: inline-block;
+        position: absolute;
+        display: none;
         min-width: 180px;
         background: rgba(40, 42, 48, 0.96);
         border-radius: 6px;
         padding: 4px 0;
         box-shadow: 0 4px 16px rgba(0,0,0,0.4);
     }
+
+    #menu.active { display: inline-block; }
 
     .menu-item {
         display: flex;
@@ -50,8 +55,17 @@
 <script>
 var menuEl = document.getElementById('menu');
 
-function showMenu(items) {
+document.addEventListener('click', function(e) {
+    if (!menuEl.contains(e.target)) {
+        document.title = 'dismiss';
+    }
+});
+
+function showMenu(items, anchorX) {
     while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
+    menuEl.style.left = (anchorX || 0) + 'px';
+    menuEl.style.top = '0px';
+    menuEl.className = 'active';
 
     items.forEach(function(item) {
         if (item.type === 'divider') {
@@ -86,6 +100,7 @@ function showMenu(items) {
 }
 
 function clearMenu() {
+    menuEl.className = '';
     while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
 }
 
