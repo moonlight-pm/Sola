@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
     App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord, MenuDefinition,
@@ -9,6 +10,7 @@ use sola_bus::topics::{
 };
 use sola_core::KeyCode;
 
+use crate::applications::{Application, ApplicationsConfig};
 use crate::menu::{MENU_ASSETS, MenuCache};
 use crate::menubar::setup_menubar;
 use crate::switcher::{SWITCHER_ASSETS, SwitcherState};
@@ -30,6 +32,7 @@ pub struct ShellApp {
     pub focused_app_id: Option<String>,
     pub mru_apps: Vec<String>,
     pub known_apps: Vec<App>,
+    pub applications: ApplicationsConfig,
     pub menus: MenuCache,
     pub zoning: ZoningState,
     pub switcher: SwitcherState,
@@ -90,6 +93,7 @@ impl SolaApp for ShellApp {
             focused_app_id: None,
             mru_apps: Vec::new(),
             known_apps: Vec::new(),
+            applications: ApplicationsConfig::load(),
             menus,
             zoning: ZoningState::new(),
             switcher: SwitcherState::default(),
@@ -211,6 +215,16 @@ impl SolaApp for ShellApp {
 }
 
 impl ShellApp {
+    /// Look up a configured application by its `app_id`.
+    pub fn application(&self, app_id: &str) -> Option<&Application> {
+        self.applications.get(app_id)
+    }
+
+    /// Icon reference (`"<pack>/<name>"`) for an application, if configured.
+    pub fn icon_for(&self, app_id: &str) -> Option<&str> {
+        self.application(app_id).map(|a| a.icon.as_str())
+    }
+
     fn emit_shell_key_bindings(&self, ctx: &mut AppCtx) {
         ctx.emit_sticky(Topic::ShellKeyBindings(ShellKeyBindingsPayload {
             app_id: Self::APP_ID.into(),
