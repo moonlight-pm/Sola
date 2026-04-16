@@ -92,6 +92,9 @@ pub fn run() -> Result<(), CompositorError> {
     let (socket_name, _socket_fd) = backend::socket::listen(&event_loop.handle(), None)?;
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &socket_name) };
 
+    // -- XWayland --
+    xwayland::setup(&mut state, &event_loop);
+
     // -- Run --
     lifecycle::run_loop(&mut state, &mut display, &mut event_loop)?;
 
