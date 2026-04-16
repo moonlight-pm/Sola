@@ -1,6 +1,5 @@
 import { html, reactive } from '@arrow-js/core';
-import { on } from '@sola/ipc';
-import { persist } from '@sola/store';
+import { invoke, on } from '@sola/ipc';
 
 // --- Types ---
 
@@ -52,10 +51,8 @@ const state = reactive({
   autoScroll: true,
   stickyMessages: [] as BusMessage[],
   expandedStickyKey: null as string | null,
-  sidebarWidth: 240,
+  sidebarWidth: (window as any).RESTORED_STATE?.sidebar_width ?? 240,
 });
-
-persist(state, 'monitor-layout', ['sidebarWidth']);
 
 let pauseBuffer: BusMessage[] = [];
 const seenTopics = new Set<string>();
@@ -362,6 +359,11 @@ export async function createApp(root: HTMLElement) {
       if (!dragging) return;
       state.sidebarWidth = Math.max(120, Math.min(window.innerWidth - e.clientX, 600));
     });
-    window.addEventListener('mouseup', () => { dragging = false; });
+    window.addEventListener('mouseup', () => {
+      if (dragging) {
+        dragging = false;
+        invoke('save_sidebar_width', { width: state.sidebarWidth });
+      }
+    });
   }
 }
