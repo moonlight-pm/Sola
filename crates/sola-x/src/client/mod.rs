@@ -50,6 +50,10 @@ pub struct ClientApp {
     /// X11 window IDs whose async dmabuf import succeeded (Created) or
     /// failed. The main loop uses this to fire or drop stashed frame callbacks.
     pub pending_frame_done: Vec<FrameDone>,
+
+    /// Dup'd dmabuf fds that must stay alive until `conn.flush()` sends
+    /// them via sendmsg. Cleared after every flush.
+    pub inflight_fds: Vec<std::os::unix::io::OwnedFd>,
 }
 
 /// Signals that an async dmabuf import finished for an X11 window.
@@ -150,6 +154,7 @@ impl ClientConnection {
             pending_input: Vec::new(),
             pending_configures: Vec::new(),
             pending_frame_done: Vec::new(),
+            inflight_fds: Vec::new(),
         };
 
         // Roundtrip to bind globals.
@@ -264,6 +269,8 @@ impl ClientConnection {
         }
         self.queue.dispatch_pending(&mut self.app)?;
         self.conn.flush()?;
+        // Safe to close dmabuf fds now — sendmsg has dup'd them into the kernel.
+        self.app.inflight_fds.clear();
         Ok(())
     }
 }

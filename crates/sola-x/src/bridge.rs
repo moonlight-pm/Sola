@@ -97,7 +97,11 @@ fn forward_dmabuf(
         .zip(dmabuf.strides())
         .enumerate()
     {
-        // dup the fd — the client-side protocol takes ownership.
+        // Dup the fd and stash the OwnedFd so it stays alive until
+        // conn.flush() sends it via sendmsg. The protocol layer only
+        // stores the raw fd number — if we dropped here, the number
+        // could be recycled before flush and the compositor would
+        // receive a wrong/invalid fd.
         let dup_fd = fd.try_clone_to_owned().unwrap();
         params.add(
             dup_fd.as_fd(),
@@ -107,6 +111,7 @@ fn forward_dmabuf(
             (modifier_raw >> 32) as u32,
             modifier_raw as u32,
         );
+        client.app.inflight_fds.push(dup_fd);
     }
 
     use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_buffer_params_v1;
