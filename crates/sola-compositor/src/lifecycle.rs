@@ -120,11 +120,21 @@ fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::Composit
 
         let geo = state.frame_geometries.get(wid);
 
-        let pos = geo.map(|g| (g.x, g.y)).unwrap_or((0, 0));
-        state.space.map_element(window.clone(), pos, false);
-
         if let Some(geo) = geo {
+            // Shell has a frame for this window — use it.
+            state
+                .space
+                .map_element(window.clone(), (geo.x, geo.y), false);
             configure_window(window, geo.x, geo.y, geo.width, geo.height);
+        } else if let Some(x11) = window.x11_surface() {
+            // Unframed X11 window — respect its self-requested geometry.
+            let x11_geo = x11.geometry();
+            state
+                .space
+                .map_element(window.clone(), (x11_geo.loc.x, x11_geo.loc.y), false);
+        } else {
+            // Unframed Wayland window — map at origin.
+            state.space.map_element(window.clone(), (0, 0), false);
         }
     }
 
