@@ -529,17 +529,9 @@ impl ShellApp {
             }
         }
 
-        // Emit Frames for windows of newly added apps.
-        for id in &added {
-            for w in &self.known_windows {
-                if w.app_id == *id {
-                    if let Some(frame) = self.zoning.app_frame(id, w.window_id) {
-                        ctx.emit(Topic::Frame(frame));
-                    }
-                }
-            }
-        }
-
+        // Emit frames for all windows (including shell windows like the
+        // menubar whose frames couldn't be emitted before we had window IDs).
+        self.emit_all_frames(ctx);
         self.emit_composition(ctx);
 
         // Focus the newest app so the user can start using it immediately.
