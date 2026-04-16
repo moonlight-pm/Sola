@@ -36,6 +36,11 @@ pub trait SolaApp: 'static {
     where
         Self: Sized;
 
+    /// Called for every raw bus message before topic parsing.
+    /// Override to access message metadata (id, timestamp, sticky flags).
+    /// Default: no-op.
+    fn on_raw_bus_message(&mut self, _msg: &sola_bus::Message, _ctx: &mut AppCtx) {}
+
     /// Dispatch a bus event. Default: ignore.
     fn on_bus_event(&mut self, topic: &Topic, ctx: &mut AppCtx) {
         let _ = (topic, ctx);
@@ -204,6 +209,11 @@ pub fn run<A: SolaApp>() {
                 drop(client);
 
                 for msg in messages {
+                    {
+                        let mut rt = runtime.borrow_mut();
+                        let AppRuntime { app, ctx } = &mut *rt;
+                        app.on_raw_bus_message(&msg, ctx);
+                    }
                     let Some(topic) = Topic::parse(&msg) else {
                         continue;
                     };

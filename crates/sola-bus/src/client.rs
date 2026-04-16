@@ -138,7 +138,8 @@ impl BusClient {
 
     /// Emit a typed topic to the bus, or queue it if not connected.
     pub fn emit(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
-        let message = topic.to_message();
+        let mut message = topic.to_message();
+        message.source = self.app_id.clone();
         self.send(&message)
     }
 
@@ -150,7 +151,7 @@ impl BusClient {
     pub fn emit_sticky(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
         let mut message = topic.to_message();
         message.sticky = true;
-        message.sticky_tag = self.app_id.clone();
+        message.source = self.app_id.clone();
         self.send(&message)
     }
 
