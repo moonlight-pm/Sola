@@ -54,15 +54,21 @@ pub fn forward_buffer(
 }
 
 /// Forward a dmabuf buffer to the proxy surface via linux-dmabuf protocol.
+///
+/// Uses the async `create` flow (not `create_immed`) so that if the
+/// compositor's EGL rejects the buffer — which happens on this hardware
+/// for some buffer formats / modifiers — we receive a recoverable `failed`
+/// event instead of getting killed with an `invalid_wl_buffer` protocol
+/// error. The resulting wl_buffer is attached to the proxy surface inside
+/// the params Dispatch handler when `Created` arrives.
 fn forward_dmabuf(
     dmabuf: &smithay::backend::allocator::dmabuf::Dmabuf,
     x11_window_id: u32,
     client: &mut ClientConnection,
 ) {
-    let proxy = match client.app.proxies.get(&x11_window_id) {
-        Some(p) => p,
-        None => return,
-    };
+    if !client.app.proxies.contains_key(&x11_window_id) {
+        return;
+    }
 
     let Some(ref dmabuf_manager) = client.app.dmabuf else {
         tracing::warn!("compositor doesn't support linux-dmabuf, can't forward buffer");
@@ -72,8 +78,16 @@ fn forward_dmabuf(
     let format = dmabuf.format();
     let size = dmabuf.size();
 
-    // Create buffer params and add each plane.
-    let params = dmabuf_manager.create_params(&client.qh, ());
+    // Create buffer params with user data identifying the target proxy, so
+    // the async Created/Failed events can attach (or drop) correctly.
+    let params = dmabuf_manager.create_params(
+        &client.qh,
+        crate::client::ForwardBufferData {
+            x11_window_id,
+            width: size.w,
+            height: size.h,
+        },
+    );
 
     let modifier_raw = u64::from(format.modifier);
 
@@ -95,20 +109,15 @@ fn forward_dmabuf(
         );
     }
 
-    // Create the buffer immediately (no roundtrip needed).
     use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_buffer_params_v1;
-    let buffer = params.create_immed(
+    params.create(
         size.w,
         size.h,
         format.code as u32,
         zwp_linux_buffer_params_v1::Flags::empty(),
-        &client.qh,
-        (),
     );
-
-    proxy.surface.attach(Some(&buffer), 0, 0);
-    proxy.surface.damage_buffer(0, 0, size.w, size.h);
-    proxy.surface.commit();
+    // No attach/commit here — handled in the Dispatch handler when the
+    // compositor confirms import via `Created`.
 }
 
 /// Forward an SHM buffer by copying pixel data to a client-side SHM pool.

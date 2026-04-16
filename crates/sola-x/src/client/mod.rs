@@ -105,6 +105,16 @@ pub struct ProxySurface {
     pub toplevel: xdg_toplevel::XdgToplevel,
 }
 
+/// User data stashed on each zwp_linux_buffer_params_v1 we create, so the
+/// Dispatch callback for the async `Created` / `Failed` events knows which
+/// proxy surface to attach the resulting wl_buffer to.
+#[derive(Clone, Debug)]
+pub struct ForwardBufferData {
+    pub x11_window_id: u32,
+    pub width: i32,
+    pub height: i32,
+}
+
 impl ClientConnection {
     /// Connect to sola-compositor's Wayland display (wayland-0).
     /// Connects explicitly by path rather than using WAYLAND_DISPLAY,
@@ -308,7 +318,37 @@ delegate_noop!(ClientApp: ignore wl_buffer::WlBuffer);
 delegate_noop!(ClientApp: ignore wl_callback::WlCallback);
 delegate_noop!(ClientApp: ignore wl_seat::WlSeat);
 delegate_noop!(ClientApp: ignore zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1);
-delegate_noop!(ClientApp: ignore zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1);
+impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ForwardBufferData>
+    for ClientApp
+{
+    fn event(
+        state: &mut Self,
+        params: &zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
+        event: zwp_linux_buffer_params_v1::Event,
+        data: &ForwardBufferData,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwp_linux_buffer_params_v1::Event::Created { buffer } => {
+                if let Some(proxy) = state.proxies.get(&data.x11_window_id) {
+                    proxy.surface.attach(Some(&buffer), 0, 0);
+                    proxy.surface.damage_buffer(0, 0, data.width, data.height);
+                    proxy.surface.commit();
+                }
+                params.destroy();
+            }
+            zwp_linux_buffer_params_v1::Event::Failed => {
+                tracing::debug!(
+                    x11_id = data.x11_window_id,
+                    "dmabuf import rejected by compositor; frame dropped"
+                );
+                params.destroy();
+            }
+            _ => {}
+        }
+    }
+}
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for ClientApp {
     fn event(
