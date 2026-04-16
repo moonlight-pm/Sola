@@ -95,7 +95,7 @@ function highlightedPreview(msg: BusMessage): any[] {
     if (msg.rawHex) return [`[hex: ${msg.rawHex.slice(0, 40)}\u2026]`];
     return [];
   }
-  return tokenizeJson(JSON.stringify(msg.payload), 80);
+  return tokenizeJson(JSON.stringify(msg.payload));
 }
 
 function highlightedJson(obj: any): any[] {

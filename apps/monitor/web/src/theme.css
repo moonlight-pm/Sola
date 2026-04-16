@@ -385,6 +385,7 @@ html, body {
 .message-row .cell.preview {
   color: var(--text-muted);
   font-size: 11px;
+  min-width: 0;
 }
 
 .message-row .cell.preview.expanded {
