@@ -114,7 +114,7 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
     loop {
         match transport::read_event(&mut reader) {
             Ok(Some(event)) => {
-                tracing::debug!(client = id, topic = %event.topic, sticky = event.sticky, "received");
+                log_bus_message(id, &event);
 
                 let mut bus = state.lock().unwrap();
 
@@ -141,6 +141,37 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
     }
 
     state.lock().unwrap().clients.remove(&id);
+}
+
+/// Append a line to /opt/sola/log/bus.log for every message that flows
+/// through the bus. Separate file to avoid polluting the main sola.log.
+fn log_bus_message(client: ClientId, event: &sola_bus::Message) {
+    use std::io::Write;
+    thread_local! {
+        static LOG: std::cell::RefCell<Option<fs::File>> = std::cell::RefCell::new(
+            fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/opt/sola/log/bus.log")
+                .ok()
+        );
+    }
+    LOG.with(|f| {
+        if let Some(ref mut file) = *f.borrow_mut() {
+            let elapsed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            let secs = elapsed.as_secs();
+            let millis = elapsed.subsec_millis();
+            let _ = writeln!(
+                file,
+                "{secs}.{millis:03} c={client} {}{} src={}",
+                event.topic,
+                if event.sticky { " [sticky]" } else { "" },
+                event.source,
+            );
+        }
+    });
 }
 
 fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
