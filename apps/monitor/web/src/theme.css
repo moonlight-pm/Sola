@@ -36,7 +36,6 @@
   /* Sizes */
   --row-height: 28px;
   --toolbar-height: 44px;
-  --detail-height: 200px;
 }
 
 * {
@@ -204,13 +203,24 @@ html, body {
   overflow-y: auto;
 }
 
+.sticky-entry {
+  border-bottom: 1px solid var(--border-subtle);
+  border-left: 3px solid transparent;
+}
+
+.sticky-entry[data-category="lifecycle"]   { border-left-color: var(--topic-lifecycle); }
+.sticky-entry[data-category="composition"] { border-left-color: var(--topic-composition); }
+.sticky-entry[data-category="window"]      { border-left-color: var(--topic-window); }
+.sticky-entry[data-category="input"]       { border-left-color: var(--topic-input); }
+.sticky-entry[data-category="menu"]        { border-left-color: var(--topic-menu); }
+.sticky-entry[data-category="browser"]     { border-left-color: var(--topic-browser); }
+.sticky-entry[data-category="unknown"]     { border-left-color: var(--topic-unknown); }
+
 .sticky-item {
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-  border-left: 3px solid transparent;
   cursor: pointer;
   transition: background 0.1s;
 }
@@ -218,18 +228,6 @@ html, body {
 .sticky-item:hover {
   background: var(--bg-hover);
 }
-
-.sticky-item.selected {
-  background: var(--bg-selected);
-}
-
-.sticky-item[data-category="lifecycle"]   { border-left-color: var(--topic-lifecycle); }
-.sticky-item[data-category="composition"] { border-left-color: var(--topic-composition); }
-.sticky-item[data-category="window"]      { border-left-color: var(--topic-window); }
-.sticky-item[data-category="input"]       { border-left-color: var(--topic-input); }
-.sticky-item[data-category="menu"]        { border-left-color: var(--topic-menu); }
-.sticky-item[data-category="browser"]     { border-left-color: var(--topic-browser); }
-.sticky-item[data-category="unknown"]     { border-left-color: var(--topic-unknown); }
 
 .sticky-item-topic {
   font-family: var(--font-mono);
@@ -251,18 +249,11 @@ html, body {
 .sticky-detail {
   padding: 8px 12px;
   background: var(--bg-primary);
-  border-bottom: 1px solid var(--border-subtle);
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
   color: var(--text-primary);
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.sticky-detail.hidden {
-  display: none;
 }
 
 /* --- Message table header --- */
@@ -270,6 +261,7 @@ html, body {
 .table-header {
   display: grid;
   grid-template-columns: 100px 160px 140px 28px 1fr;
+  width: 100%;
   align-items: center;
   height: 26px;
   padding: 0 12px 0 16px;
@@ -314,14 +306,15 @@ html, body {
 .message-row {
   display: grid;
   grid-template-columns: 100px 160px 140px 28px 1fr;
-  align-items: center;
-  height: var(--row-height);
+  align-items: start;
+  min-height: var(--row-height);
   padding: 0 12px 0 0;
   border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
   transition: background 0.1s;
   border-left: 3px solid transparent;
   padding-left: 13px;
+  width: 100%;
 }
 
 .message-row:nth-child(even) {
@@ -351,6 +344,7 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: var(--row-height);
 }
 
 .message-row .cell.time {
@@ -391,68 +385,15 @@ html, body {
 .message-row .cell.preview {
   color: var(--text-muted);
   font-size: 11px;
+  min-width: 0;
 }
 
-/* --- Detail pane --- */
-
-.detail-pane {
-  height: var(--detail-height);
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  overflow: hidden;
-}
-
-.detail-pane.hidden {
-  display: none;
-}
-
-.detail-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.detail-header .detail-topic {
-  font-family: var(--font-mono);
-  font-weight: 500;
-}
-
-.detail-header .detail-meta {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.detail-header .detail-close {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 2px 6px;
-}
-
-.detail-header .detail-close:hover {
-  color: var(--text-primary);
-}
-
-.detail-body {
-  flex: 1;
-  overflow: auto;
-  padding: 10px 12px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
+.message-row .cell.preview.expanded {
   white-space: pre-wrap;
+  overflow: visible;
+  text-overflow: unset;
+  padding: 4px 0;
+  line-height: 1.5;
   color: var(--text-primary);
 }
 

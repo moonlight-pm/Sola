@@ -1,4 +1,6 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sola_app::config::JsonConfig;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 use sola_bus::Message;
 use sola_bus::topics::{
@@ -7,6 +9,22 @@ use sola_bus::topics::{
 use sola_core::KeyCode;
 
 mod decode;
+
+#[derive(Serialize, Deserialize)]
+#[serde(default)]
+struct MonitorConfig {
+    sidebar_width: i32,
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self { sidebar_width: 240 }
+    }
+}
+
+impl JsonConfig for MonitorConfig {
+    const FILE_NAME: &'static str = "monitor.json";
+}
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
@@ -23,6 +41,9 @@ impl SolaApp for MonitorApp {
     const APP_ID: &'static str = "sola-monitor";
 
     fn new(ctx: &mut AppCtx) -> Self {
+        let config = MonitorConfig::load();
+        let initial_state = serde_json::to_string(&config).unwrap_or_default();
+
         let main_window = ctx.add_window(WindowConfig {
             title: "main".into(),
             size: (900, 600),
@@ -30,7 +51,7 @@ impl SolaApp for MonitorApp {
             decorated: false,
             transparent: false,
             assets: APP_ASSETS,
-            initial_state: None,
+            initial_state: Some(initial_state),
             zoned: false,
             keyboard_target: false,
         });
@@ -63,12 +84,18 @@ impl SolaApp for MonitorApp {
 
     fn on_js_command(
         &mut self,
-        _cmd: &str,
-        _args: &Value,
+        cmd: &str,
+        args: &Value,
         _id: Option<u64>,
         _source: &WindowHandle,
         _ctx: &mut AppCtx,
     ) {
+        if cmd == "save_sidebar_width" {
+            if let Some(w) = args.get("width").and_then(|v| v.as_i64()) {
+                let config = MonitorConfig { sidebar_width: w as i32 };
+                config.save();
+            }
+        }
     }
 
     fn on_bus_event(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
