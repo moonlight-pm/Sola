@@ -296,11 +296,7 @@ export async function createApp(root: HTMLElement) {
                     <span class="cell topic">${msg.topic}</span>
                     <span class="cell source">${msg.source || '\u2014'}</span>
                     <span class="cell sticky">${msg.sticky ? html`<span class="dot"></span>` : ''}</span>
-                    <span class="${() => state.selectedId === msg.msgId ? 'cell preview expanded' : 'cell preview'}">
-                      ${() => state.selectedId === msg.msgId && msg.payload != null
-                        ? highlightedJson(msg.payload)
-                        : highlightedPreview(msg)}
-                    </span>
+                    <span class="${() => state.selectedId === msg.msgId ? 'cell preview expanded' : 'cell preview'}">${() => state.selectedId === msg.msgId && msg.payload != null ? highlightedJson(msg.payload) : highlightedPreview(msg)}</span>
                   </div>
                 `;
               }
