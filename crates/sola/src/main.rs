@@ -1,5 +1,4 @@
 mod watcher;
-mod zoning;
 
 use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
@@ -18,7 +17,7 @@ const MANAGED: &[&str] = &[
     "sola-bus",
     "sola-compositor",
     "sola-x",
-    "sola-switcher",
+    "sola-shell",
     "sola-terminal",
 ];
 
@@ -67,7 +66,7 @@ fn main() {
 
     // Connect to bus (retry until available)
     let mut bus = sola_bus::BusClient::new();
-    let mut zoning = zoning::ZoningState::new();
+    bus.set_app_id("sola");
 
     // Supervise — block on bus messages, fall through every 500ms
     // to check process health and binary changes.
@@ -80,11 +79,9 @@ fn main() {
         }
 
         // Block until a bus message arrives or the supervision interval expires.
-        // This replaces the old poll+sleep pattern — key events are now instant.
         let mut messages = Vec::new();
         if let Some(msg) = bus.recv_timeout(poll_interval) {
             messages.push(msg);
-            // Drain any additional messages that arrived.
             while let Some(msg) = bus.try_recv() {
                 messages.push(msg);
             }
@@ -92,36 +89,14 @@ fn main() {
 
         for msg in &messages {
             tracing::debug!(topic = %msg.topic, "bus message received");
-            let Some(topic) = Topic::parse(msg) else { continue };
+            let Some(topic) = Topic::parse(msg) else {
+                continue;
+            };
             match topic {
                 Topic::Shutdown => {
                     info!("shutdown requested via bus");
                     shutdown_all(&mut managed);
                     std::process::exit(0);
-                }
-                Topic::Key(key) => {
-                    // Super+Shift+Backspace → shutdown
-                    if !key.pressed && key.code == 22 && key.super_held && key.shift_held {
-                        info!("kill chord received, shutting down");
-                        shutdown_all(&mut managed);
-                        std::process::exit(0);
-                    }
-
-                    // Zone snapping
-                    if let Some(geo) = zoning.handle_key(&key) {
-                        let _ = bus.emit(Topic::SetWindowGeometry(geo));
-                    }
-                }
-                Topic::FocusChanged(app_id) => {
-                    zoning.set_focused(app_id);
-                }
-                Topic::OutputGeometry(geo) => {
-                    zoning.set_output_size(&geo);
-
-                    // Restore saved zones on first OutputGeometry.
-                    for geo in zoning.restore() {
-                        let _ = bus.emit(Topic::SetWindowGeometry(geo));
-                    }
                 }
                 _ => {}
             }
@@ -141,23 +116,27 @@ fn main() {
             }
         }
 
-        // Check for exited processes
+        // Check for exited or missing processes
         for name in MANAGED {
-            let needs_restart = managed
-                .get_mut(name)
-                .and_then(|proc| proc.child.try_wait().ok().flatten().map(|s| (s, proc.started_at)))
-                .is_some();
+            if let Some(proc) = managed.get_mut(name) {
+                let exited = proc.child.try_wait().ok().flatten().is_some();
 
-            if needs_restart {
-                let started_at = managed[name].started_at;
-                let uptime = started_at.elapsed();
-
-                if uptime < MIN_UPTIME {
-                    warn!(process = name, ?uptime, "crashed quickly, waiting before restart");
-                    thread::sleep(BACKOFF_DELAY);
-                } else {
-                    warn!(process = name, ?uptime, "exited, restarting");
+                if exited {
+                    let uptime = proc.started_at.elapsed();
+                    if uptime < MIN_UPTIME {
+                        warn!(
+                            process = name,
+                            ?uptime,
+                            "crashed quickly, waiting before restart"
+                        );
+                        thread::sleep(BACKOFF_DELAY);
+                    } else {
+                        warn!(process = name, ?uptime, "exited, restarting");
+                    }
+                    launch(&bin_dir, name, &mut managed);
                 }
+            } else {
+                // Initial launch failed — retry
                 launch(&bin_dir, name, &mut managed);
             }
         }
@@ -189,10 +168,13 @@ fn launch<'a>(
     match result {
         Ok(child) => {
             info!(process = name, pid = child.id(), "launched");
-            managed.insert(name, ManagedProcess {
-                child,
-                started_at: Instant::now(),
-            });
+            managed.insert(
+                name,
+                ManagedProcess {
+                    child,
+                    started_at: Instant::now(),
+                },
+            );
         }
         Err(e) => {
             error!(process = name, path = %bin.display(), "failed to launch: {e}");

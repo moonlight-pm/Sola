@@ -10,7 +10,7 @@ use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
     wl_shm_pool, wl_surface,
 };
-use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
+use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum, delegate_noop};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1, zwp_linux_dmabuf_v1,
 };
@@ -58,12 +58,35 @@ pub struct PendingConfigure {
 
 /// An input event received on a proxy surface, to be injected into XWayland's seat.
 pub enum InputEvent {
-    PointerEnter { x11_id: u32, x: f64, y: f64 },
+    PointerEnter {
+        x11_id: u32,
+        x: f64,
+        y: f64,
+    },
     PointerLeave,
-    PointerMotion { x: f64, y: f64, time: u32 },
-    PointerButton { button: u32, pressed: bool, time: u32 },
-    PointerAxis { value: f64, time: u32 },
-    Key { key: u32, pressed: bool, time: u32 },
+    PointerMotion {
+        x: f64,
+        y: f64,
+        time: u32,
+    },
+    PointerButton {
+        button: u32,
+        pressed: bool,
+        time: u32,
+    },
+    PointerAxis {
+        value: f64,
+        time: u32,
+    },
+    Key {
+        key: u32,
+        pressed: bool,
+        time: u32,
+    },
+    KeyboardEnter {
+        x11_id: u32,
+    },
+    KeyboardLeave,
 }
 
 /// A proxy surface in sola-compositor representing an X11 window.
@@ -116,7 +139,12 @@ impl ClientConnection {
 
         tracing::info!("connected to sola-compositor as Wayland client");
 
-        Some(Self { conn, queue, qh, app })
+        Some(Self {
+            conn,
+            queue,
+            qh,
+            app,
+        })
     }
 
     /// Create a proxy surface in sola-compositor for an X11 window.
@@ -141,11 +169,14 @@ impl ClientConnection {
         tracing::info!(x11_id, title, class, surface_id, "created proxy surface");
 
         self.app.surface_to_x11.insert(surface_id, x11_id);
-        self.app.proxies.insert(x11_id, ProxySurface {
-            surface,
-            xdg_surface,
-            toplevel,
-        });
+        self.app.proxies.insert(
+            x11_id,
+            ProxySurface {
+                surface,
+                xdg_surface,
+                toplevel,
+            },
+        );
     }
 
     /// Destroy a proxy surface.
@@ -167,7 +198,10 @@ impl ClientConnection {
         if !windows.is_empty() {
             // Roundtrip to ensure surfaces are created before we start forwarding.
             let _ = self.queue.roundtrip(&mut self.app);
-            tracing::info!(count = windows.len(), "re-created proxy surfaces after reconnect");
+            tracing::info!(
+                count = windows.len(),
+                "re-created proxy surfaces after reconnect"
+            );
         }
     }
 
@@ -218,34 +252,28 @@ impl Dispatch<wl_registry::WlRegistry, ()> for ClientApp {
         {
             match interface.as_str() {
                 "wl_compositor" => {
-                    state.compositor = Some(
-                        registry.bind::<wl_compositor::WlCompositor, _, _>(
-                            name,
-                            version.min(6),
-                            qh,
-                            (),
-                        ),
-                    );
+                    state.compositor = Some(registry.bind::<wl_compositor::WlCompositor, _, _>(
+                        name,
+                        version.min(6),
+                        qh,
+                        (),
+                    ));
                 }
                 "xdg_wm_base" => {
-                    state.xdg_wm_base = Some(
-                        registry.bind::<xdg_wm_base::XdgWmBase, _, _>(
-                            name,
-                            version.min(6),
-                            qh,
-                            (),
-                        ),
-                    );
+                    state.xdg_wm_base = Some(registry.bind::<xdg_wm_base::XdgWmBase, _, _>(
+                        name,
+                        version.min(6),
+                        qh,
+                        (),
+                    ));
                 }
                 "wl_seat" => {
-                    state.seat = Some(
-                        registry.bind::<wl_seat::WlSeat, _, _>(name, version.min(9), qh, ()),
-                    );
+                    state.seat =
+                        Some(registry.bind::<wl_seat::WlSeat, _, _>(name, version.min(9), qh, ()));
                 }
                 "wl_shm" => {
-                    state.shm = Some(
-                        registry.bind::<wl_shm::WlShm, _, _>(name, version.min(1), qh, ()),
-                    );
+                    state.shm =
+                        Some(registry.bind::<wl_shm::WlShm, _, _>(name, version.min(1), qh, ()));
                 }
                 "zwp_linux_dmabuf_v1" => {
                     state.dmabuf = Some(
@@ -383,10 +411,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for ClientApp {
                 axis, value, time, ..
             } => {
                 if let WEnum::Value(_) = axis {
-                    state.pending_input.push(InputEvent::PointerAxis {
-                        value,
-                        time,
-                    });
+                    state
+                        .pending_input
+                        .push(InputEvent::PointerAxis { value, time });
                 }
             }
             _ => {}
@@ -404,6 +431,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for ClientApp {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
+            wl_keyboard::Event::Enter { surface, .. } => {
+                let surface_id = surface.id().protocol_id();
+                if let Some(&x11_id) = state.surface_to_x11.get(&surface_id) {
+                    state
+                        .pending_input
+                        .push(InputEvent::KeyboardEnter { x11_id });
+                }
+            }
+            wl_keyboard::Event::Leave { .. } => {
+                state.pending_input.push(InputEvent::KeyboardLeave);
+            }
             wl_keyboard::Event::Key {
                 key,
                 state: key_state,

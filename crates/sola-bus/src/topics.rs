@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+pub use sola_core::KeyChord;
 
 use crate::define_topics;
 
@@ -10,29 +11,36 @@ pub struct App {
     pub window_count: u32,
 }
 
-/// A key event forwarded over the bus (Super+key combos).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyEvent {
-    pub code: u32,
-    pub pressed: bool,
-    pub super_held: bool,
-    pub shift_held: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenUrlRequest {
     pub url: String,
     pub activate: bool,
 }
 
-/// Window geometry from sola-x for X11 window positioning.
+/// Z-ordered entry in the composition list. Bottom to top.
+/// Title is optional — `None` matches any window from that app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowGeometry {
+pub struct CompositionEntry {
     pub app_id: String,
+    pub title: Option<String>,
+}
+
+/// Per-surface position and size. Applied immediately.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameUpdate {
+    pub app_id: String,
+    pub title: Option<String>,
     pub x: i32,
     pub y: i32,
     pub width: i32,
     pub height: i32,
+}
+
+/// Which surface receives keyboard focus.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FocusTarget {
+    pub app_id: String,
+    pub title: Option<String>,
 }
 
 /// Output resolution, emitted by compositor on startup and hotplug.
@@ -42,10 +50,84 @@ pub struct OutputGeometry {
     pub height: i32,
 }
 
+/// Emitted by compositor when pointer enters a different surface/window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MouseEnteredPayload {
+    pub app_id: String,
+    pub title: Option<String>,
+}
+
+/// App menu definition, emitted as sticky by apps at startup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppMenuPayload {
+    pub app_id: String,
+    pub menus: Vec<MenuDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MenuDefinition {
+    pub label: String,
+    pub items: Vec<MenuItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MenuItem {
+    Action {
+        id: String,
+        label: String,
+        shortcut: Option<KeyChord>,
+        disabled: bool,
+        checked: bool,
+    },
+    Divider,
+}
+
+/// Dispatched by the shell when a shortcut or menu click maps to an action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MenuActionPayload {
+    pub app_id: String,
+    pub action_id: String,
+}
+
+/// Declares how an app's windows should be managed by the compositor.
+/// Emitted as sticky by apps at startup, before mapping surfaces.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPolicyPayload {
+    pub app_id: String,
+    pub windows: Vec<WindowPolicy>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowPolicy {
+    /// Matches xdg_toplevel title for surface identification.
+    pub title: String,
+    /// If true, the shell manages position/size via zones.
+    pub zoned: bool,
+    /// If true, compositor routes Meta+key events to this surface.
+    #[serde(default)]
+    pub keyboard_target: bool,
+    /// Fixed size for unzoned windows (width, height).
+    #[serde(default)]
+    pub size: Option<(i32, i32)>,
+    /// Fixed position for unzoned windows (x, y).
+    #[serde(default)]
+    pub position: Option<(i32, i32)>,
+}
+
+/// Declares which key chords the shell wants intercepted.
+/// Emitted as sticky by the shell; compositor uses this as a routing allowlist.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellKeyBindingsPayload {
+    pub app_id: String,
+    pub bindings: Vec<KeyChord>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
     Left,
     Right,
+    Top,
+    Bottom,
     TopMiddle,
     BottomMiddle,
     FullMiddle,
@@ -58,6 +140,8 @@ impl Zone {
         match self {
             Zone::Left => (0.0, 0.0, 0.28, 1.0),
             Zone::Right => (0.72, 0.0, 0.28, 1.0),
+            Zone::Top => (0.0, 0.0, 1.0, 0.7),
+            Zone::Bottom => (0.0, 0.7, 1.0, 0.3),
             Zone::TopMiddle => (0.28, 0.0, 0.44, 0.7),
             Zone::BottomMiddle => (0.28, 0.7, 0.44, 0.3),
             Zone::FullMiddle => (0.28, 0.0, 0.44, 1.0),
@@ -67,21 +151,26 @@ impl Zone {
 }
 
 define_topics! {
-    // Input routing
-    Key(KeyEvent),
-    GrabInput(String),
-    ReleaseInput,
-
     // App management
-    ListApps,
     Apps(Vec<App>),
-    RaiseApp(String),
-    FocusChanged(String),
     LaunchApp(String),
 
+    // Composition authority (shell → compositor)
+    Composition(Vec<CompositionEntry>),
+    Frame(FrameUpdate),
+    Focus(FocusTarget),
+
     // Window management
-    SetWindowGeometry(WindowGeometry),
+    SetWindowPolicy(WindowPolicyPayload),
     OutputGeometry(OutputGeometry),
+    MouseEntered(MouseEnteredPayload),
+
+    // Menus
+    SetAppMenu(AppMenuPayload),
+    MenuAction(MenuActionPayload),
+
+    // Shell input routing
+    ShellKeyBindings(ShellKeyBindingsPayload),
 
     // Browser
     OpenUrl(OpenUrlRequest),
@@ -96,12 +185,12 @@ mod tests {
 
     #[test]
     fn unit_topic_roundtrip() {
-        let msg = Topic::ReleaseInput.to_message();
-        assert_eq!(msg.topic, "ReleaseInput");
+        let msg = Topic::Shutdown.to_message();
+        assert_eq!(msg.topic, "Shutdown");
         assert!(msg.payload.is_none());
 
         let parsed = Topic::parse(&msg).unwrap();
-        assert!(matches!(parsed, Topic::ReleaseInput));
+        assert!(matches!(parsed, Topic::Shutdown));
     }
 
     #[test]
@@ -127,40 +216,37 @@ mod tests {
     }
 
     #[test]
-    fn key_event_roundtrip() {
-        let msg = Topic::Key(KeyEvent {
-            code: 23,
-            pressed: true,
-            super_held: true,
-            shift_held: false,
-        })
-        .to_message();
-        assert_eq!(msg.topic, "Key");
-
-        match Topic::parse(&msg).unwrap() {
-            Topic::Key(k) => {
-                assert_eq!(k.code, 23);
-                assert!(k.pressed);
-                assert!(k.super_held);
-                assert!(!k.shift_held);
-            }
-            _ => panic!("wrong variant"),
-        }
-    }
-
-    #[test]
-    fn grab_input_roundtrip() {
-        let msg = Topic::GrabInput("sola-switcher".into()).to_message();
-
-        match Topic::parse(&msg).unwrap() {
-            Topic::GrabInput(target) => assert_eq!(target, "sola-switcher"),
-            _ => panic!("wrong variant"),
-        }
-    }
-
-    #[test]
     fn unknown_topic_returns_none() {
         let msg = crate::Message::new("SomeUnknownTopic");
         assert!(Topic::parse(&msg).is_none());
+    }
+
+    #[test]
+    fn app_menu_roundtrip() {
+        let payload = AppMenuPayload {
+            app_id: "test-app".into(),
+            menus: vec![MenuDefinition {
+                label: "File".into(),
+                items: vec![
+                    MenuItem::Action {
+                        id: "new".into(),
+                        label: "New".into(),
+                        shortcut: Some(sola_core::KeyCode::N.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Divider,
+                ],
+            }],
+        };
+        let msg = Topic::SetAppMenu(payload).to_message();
+        match Topic::parse(&msg) {
+            Some(Topic::SetAppMenu(p)) => {
+                assert_eq!(p.app_id, "test-app");
+                assert_eq!(p.menus.len(), 1);
+                assert_eq!(p.menus[0].items.len(), 2);
+            }
+            other => panic!("expected SetAppMenu, got {other:?}"),
+        }
     }
 }

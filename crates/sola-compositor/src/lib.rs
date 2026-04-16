@@ -2,7 +2,6 @@
 ///
 /// This crate contains the compositor core: backend initialization,
 /// Wayland protocol handling, output management, and rendering.
-
 pub mod backend;
 pub mod cursor;
 pub mod error;
@@ -11,7 +10,6 @@ mod lifecycle;
 pub mod output;
 pub mod state;
 pub mod types;
-pub mod wallpaper;
 pub mod wayland;
 
 use smithay::backend::session::Session;
@@ -43,7 +41,13 @@ pub fn run() -> Result<(), CompositorError> {
     let primary_gpu = backend::gpu::find_primary(&seat_name)?;
     let gpu_manager = backend::gpu::create_manager()?;
 
-    let mut state = State::new(display.handle(), event_loop.handle(), session, gpu_manager, primary_gpu);
+    let mut state = State::new(
+        display.handle(),
+        event_loop.handle(),
+        session,
+        gpu_manager,
+        primary_gpu,
+    );
 
     // -- Cursor --
     if let Some((buffer, hotspot)) = cursor::load_default() {
@@ -51,11 +55,6 @@ pub fn run() -> Result<(), CompositorError> {
         state.cursor_hotspot = hotspot;
     } else {
         tracing::warn!("failed to load cursor from xcursor theme");
-    }
-
-    // -- Wallpaper --
-    if let Some(buffer) = wallpaper::load() {
-        state.wallpaper_buffer = Some(buffer);
     }
 
     // -- Session notifier --

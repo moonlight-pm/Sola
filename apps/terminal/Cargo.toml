@@ -10,6 +10,8 @@ path = "src/main.rs"
 [dependencies]
 sola-app = { path = "../../crates/sola-app" }
 sola-bus = { path = "../../crates/sola-bus" }
+sola-core = { path = "../../crates/sola-core" }
+gtk4 = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "macros"] }
 nix = { version = "0.30", features = ["process", "term", "signal"] }
 libc = "0.2"

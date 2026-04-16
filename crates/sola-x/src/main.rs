@@ -51,8 +51,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 fn run() -> Result<(), Error> {
     let mut event_loop: EventLoop<State> =
         EventLoop::try_new().map_err(|e| Error::EventLoop(e.to_string()))?;
-    let mut display: Display<State> =
-        Display::new().map_err(|e| Error::Display(e.to_string()))?;
+    let mut display: Display<State> = Display::new().map_err(|e| Error::Display(e.to_string()))?;
 
     let mut state = State::new(display.handle(), event_loop.handle());
 
@@ -114,13 +113,12 @@ fn run() -> Result<(), Error> {
 /// and re-emits any user-locked geometries so the compositor's
 /// `new_toplevel` fullscreen default doesn't override the user's zones.
 fn connect_to_compositor(state: &mut State) {
-    use sola_bus::topics::{Topic, WindowGeometry};
+    use sola_bus::topics::{Topic, WindowPolicy, WindowPolicyPayload};
 
     if state.client.is_some() {
         return;
     }
     if let Some(mut conn) = client::ClientConnection::connect() {
-        // Gather existing X11 windows to re-create proxies.
         let windows: Vec<(u32, String, String)> = state
             .x11_windows
             .iter()
@@ -130,33 +128,39 @@ fn connect_to_compositor(state: &mut State) {
         conn.recreate_proxies(&windows);
         state.client = Some(conn);
 
-        // Re-emit locked sizes so the compositor re-syncs to the user's zone
-        // instead of leaving each newly-created proxy at its fullscreen default.
+        // Re-emit WindowPolicy for all known X11 windows so the shell
+        // can compose them after a compositor reconnect.
         for info in state.x11_windows.values() {
-            let Some(&(w, h)) = state.user_locked_sizes.get(&info.class) else {
-                continue;
-            };
             let geo = info.surface.geometry();
-            let _ = state.bus.emit(Topic::SetWindowGeometry(WindowGeometry {
-                app_id: info.class.clone(),
-                x: geo.loc.x,
-                y: geo.loc.y,
-                width: w,
-                height: h,
-            }));
-            tracing::info!(
-                app_id = %info.class,
-                width = w,
-                height = h,
-                "re-emitted locked geometry after reconnect"
-            );
+            let size = if geo.size.w > 0 && geo.size.h > 0 {
+                Some((geo.size.w, geo.size.h))
+            } else {
+                None
+            };
+            let _ = state
+                .bus
+                .emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
+                    app_id: info.class.clone(),
+                    windows: vec![WindowPolicy {
+                        title: info.title.clone(),
+                        zoned: true,
+                        keyboard_target: false,
+                        size,
+                        position: None,
+                    }],
+                }));
         }
     }
 }
 
 /// Find the server-side WlSurface for an X11 window ID.
-fn server_surface_for_x11(state: &State, x11_id: u32) -> Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> {
-    state.surface_to_x11.iter()
+fn server_surface_for_x11(
+    state: &State,
+    x11_id: u32,
+) -> Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface> {
+    state
+        .surface_to_x11
+        .iter()
         .find(|&(_, &id)| id == x11_id)
         .map(|(surface, _)| surface.clone())
 }
@@ -164,7 +168,7 @@ fn server_surface_for_x11(state: &State, x11_id: u32) -> Option<smithay::reexpor
 /// Inject input events received from sola-compositor into XWayland's seat.
 fn inject_input(state: &mut State) {
     use smithay::input::keyboard::FilterResult;
-    use smithay::input::pointer::{ButtonEvent, MotionEvent, AxisFrame};
+    use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
     use smithay::utils::SERIAL_COUNTER;
 
     let events = match &mut state.client {
@@ -182,8 +186,7 @@ fn inject_input(state: &mut State) {
     for event in events {
         match event {
             client::InputEvent::PointerEnter { x11_id, x, y } => {
-                let focus = server_surface_for_x11(state, x11_id)
-                    .map(|s| (s, (0.0, 0.0).into()));
+                let focus = server_surface_for_x11(state, x11_id).map(|s| (s, (0.0, 0.0).into()));
                 let serial = SERIAL_COUNTER.next_serial();
                 pointer.motion(
                     state,
@@ -224,7 +227,11 @@ fn inject_input(state: &mut State) {
                 );
                 pointer.frame(state);
             }
-            client::InputEvent::PointerButton { button, pressed, time } => {
+            client::InputEvent::PointerButton {
+                button,
+                pressed,
+                time,
+            } => {
                 use smithay::backend::input::ButtonState;
                 let serial = SERIAL_COUNTER.next_serial();
                 pointer.button(
@@ -243,8 +250,8 @@ fn inject_input(state: &mut State) {
                 pointer.frame(state);
             }
             client::InputEvent::PointerAxis { value, time } => {
-                let frame = AxisFrame::new(time)
-                    .value(smithay::backend::input::Axis::Vertical, value);
+                let frame =
+                    AxisFrame::new(time).value(smithay::backend::input::Axis::Vertical, value);
                 pointer.axis(state, frame);
                 pointer.frame(state);
             }
@@ -255,11 +262,25 @@ fn inject_input(state: &mut State) {
                 keyboard.input::<(), _>(
                     state,
                     Keycode::new(key + 8), // evdev → xkb offset
-                    if pressed { KeyState::Pressed } else { KeyState::Released },
+                    if pressed {
+                        KeyState::Pressed
+                    } else {
+                        KeyState::Released
+                    },
                     serial,
                     time,
                     |_, _, _| FilterResult::Forward,
                 );
+            }
+            client::InputEvent::KeyboardEnter { x11_id } => {
+                if let Some(surface) = server_surface_for_x11(state, x11_id) {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    keyboard.set_focus(state, Some(surface), serial);
+                }
+            }
+            client::InputEvent::KeyboardLeave => {
+                let serial = SERIAL_COUNTER.next_serial();
+                keyboard.set_focus(state, None, serial);
             }
         }
     }
@@ -270,27 +291,12 @@ fn process_bus(state: &mut State) {
     use sola_bus::topics::Topic;
 
     while let Some(msg) = state.bus.try_recv() {
-        let Some(topic) = Topic::parse(&msg) else { continue };
+        let Some(topic) = Topic::parse(&msg) else {
+            continue;
+        };
         match topic {
             Topic::OutputGeometry(geo) => {
                 update_output_mode(state, geo.width, geo.height);
-            }
-            // The bus doesn't echo messages to the sender, so any
-            // SetWindowGeometry we see came from another client — in
-            // practice, sola's zoning code. Record the commanded size
-            // so we can enforce it against X11 clients and against
-            // compositor configures on reconnect.
-            Topic::SetWindowGeometry(geo) => {
-                let size = (geo.width, geo.height);
-                let prev = state.user_locked_sizes.insert(geo.app_id.clone(), size);
-                if prev != Some(size) {
-                    tracing::info!(
-                        app_id = %geo.app_id,
-                        width = geo.width,
-                        height = geo.height,
-                        "locking X11 window size (user zone)"
-                    );
-                }
             }
             _ => {}
         }
@@ -306,7 +312,9 @@ fn update_output_mode(state: &mut State, width: i32, height: i32) {
         size: (width, height).into(),
         refresh: 60_000,
     };
-    state.output.change_current_state(Some(mode), None, None, None);
+    state
+        .output
+        .change_current_state(Some(mode), None, None, None);
     state.output.set_preferred(mode);
     tracing::info!(width, height, "updated virtual output mode from compositor");
 }
@@ -314,10 +322,8 @@ fn update_output_mode(state: &mut State, width: i32, height: i32) {
 /// Apply any queued resize requests (from proxy xdg_toplevel configures)
 /// to their matching X11 windows via xwm.
 ///
-/// For user-locked apps, only configures whose size matches the user's
-/// zone are applied — others are ignored to prevent the compositor from
-/// overriding the zone (e.g. via new_toplevel's fullscreen default on
-/// reconnect).
+/// The shell controls geometry via Frame → compositor → xdg_toplevel configure
+/// → sola-x proxy → X11 window. All configures are applied directly.
 fn apply_pending_configures(state: &mut State) {
     use smithay::utils::Rectangle;
 
@@ -331,25 +337,8 @@ fn apply_pending_configures(state: &mut State) {
             continue;
         };
 
-        if let Some(&(lw, lh)) = state.user_locked_sizes.get(&info.class) {
-            if conf.width as i32 != lw || conf.height as i32 != lh {
-                tracing::info!(
-                    app_id = %info.class,
-                    configure_w = conf.width,
-                    configure_h = conf.height,
-                    locked_w = lw,
-                    locked_h = lh,
-                    "ignoring compositor configure for user-locked app"
-                );
-                continue;
-            }
-        }
-
         let geo = info.surface.geometry();
-        let new_geo = Rectangle::new(
-            geo.loc,
-            (conf.width as i32, conf.height as i32).into(),
-        );
+        let new_geo = Rectangle::new(geo.loc, (conf.width as i32, conf.height as i32).into());
         if let Err(err) = info.surface.configure(Some(new_geo)) {
             tracing::warn!(x11_id = conf.x11_id, ?err, "failed to configure X11 window");
         }
@@ -373,7 +362,10 @@ fn setup_wayland_socket(
         .handle()
         .insert_source(listener, |client_stream, _, state| {
             let client_state = std::sync::Arc::new(server::compositor::ClientState::default());
-            match state.display_handle.insert_client(client_stream, client_state) {
+            match state
+                .display_handle
+                .insert_client(client_stream, client_state)
+            {
                 Ok(_) => tracing::info!("XWayland connected as Wayland client"),
                 Err(err) => tracing::error!(?err, "failed to accept XWayland client"),
             }

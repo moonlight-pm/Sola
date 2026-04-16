@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
+use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread;
-use std::io::{self, Read, Write};
 
 use tracing::{info, warn};
 
@@ -15,12 +16,17 @@ use crate::{Message, transport};
 /// queued and flushed on successful `connect()`. Callers never need to
 /// wrap this in `Option` — just call `emit()` at any time.
 pub struct BusClient {
+    app_id: String,
     writer: Option<UnixStream>,
     rx: Option<mpsc::Receiver<Message>>,
     /// Read end of a notification pipe. Becomes readable when the reader
     /// thread delivers a message to `rx`. Event-loop callers watch this fd
     /// instead of polling `try_recv()`.
     notify_read: Option<UnixStream>,
+    /// Set to false by the reader thread when it exits. Lets `is_connected()`
+    /// distinguish a live connection from a half-open one (writer alive,
+    /// reader dead) so callers can reconnect.
+    reader_alive: Option<Arc<AtomicBool>>,
     queue: VecDeque<Message>,
 }
 
@@ -30,11 +36,18 @@ impl BusClient {
     /// Messages sent via `emit()` / `send()` are queued until `connect()` succeeds.
     pub fn new() -> Self {
         Self {
+            app_id: String::new(),
             writer: None,
             rx: None,
             notify_read: None,
+            reader_alive: None,
             queue: VecDeque::new(),
         }
+    }
+
+    /// Set the app identity used to tag sticky messages.
+    pub fn set_app_id(&mut self, id: impl Into<String>) {
+        self.app_id = id.into();
     }
 
     /// Attempt to connect to the bus at the default socket path.
@@ -42,6 +55,7 @@ impl BusClient {
     /// On success, flushes any queued messages. Safe to call repeatedly —
     /// returns `Ok(())` immediately if already connected.
     pub fn connect(&mut self) -> io::Result<()> {
+        self.drop_if_reader_dead();
         if self.writer.is_some() {
             return Ok(());
         }
@@ -51,6 +65,9 @@ impl BusClient {
 
     /// Attempt to connect to the bus at a specific socket path.
     pub fn connect_to(&mut self, path: &str) -> io::Result<()> {
+        // If the previous reader thread died, drop the half-open state so
+        // we really re-open the socket instead of returning Ok.
+        self.drop_if_reader_dead();
         if self.writer.is_some() {
             return Ok(());
         }
@@ -66,13 +83,17 @@ impl BusClient {
         info!(path = %path, "connected to bus");
 
         let (tx, rx) = mpsc::channel();
+        let alive = Arc::new(AtomicBool::new(true));
+        let alive_for_thread = alive.clone();
         thread::spawn(move || {
             read_loop(reader, tx, notify_write);
+            alive_for_thread.store(false, Ordering::Release);
         });
 
         self.writer = Some(stream);
         self.rx = Some(rx);
         self.notify_read = Some(notify_read);
+        self.reader_alive = Some(alive);
 
         self.flush_queue();
 
@@ -80,8 +101,29 @@ impl BusClient {
     }
 
     /// Whether the client has an active bus connection.
+    ///
+    /// Returns false if the reader thread has exited, even if the writer
+    /// socket is still open — in that case no messages are being delivered,
+    /// so the caller should reconnect.
     pub fn is_connected(&self) -> bool {
         self.writer.is_some()
+            && self
+                .reader_alive
+                .as_ref()
+                .is_some_and(|a| a.load(Ordering::Acquire))
+    }
+
+    fn drop_if_reader_dead(&mut self) {
+        let dead = self
+            .reader_alive
+            .as_ref()
+            .is_some_and(|a| !a.load(Ordering::Acquire));
+        if dead {
+            self.writer = None;
+            self.rx = None;
+            self.notify_read = None;
+            self.reader_alive = None;
+        }
     }
 
     /// Send a raw message to the bus, or queue it if not connected.
@@ -102,11 +144,13 @@ impl BusClient {
 
     /// Emit a typed topic as a sticky message.
     ///
-    /// The bus retains the latest sticky message per topic and replays
-    /// it to every newly connected client.
+    /// The bus retains the latest sticky per (topic, app_id) and replays
+    /// all stickies to every newly connected client. Multiple apps can
+    /// have independent stickies on the same topic.
     pub fn emit_sticky(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
         let mut message = topic.to_message();
         message.sticky = true;
+        message.sticky_tag = self.app_id.clone();
         self.send(&message)
     }
 
@@ -126,7 +170,9 @@ impl BusClient {
     /// Must be called before `try_recv()` to clear the notification pipe,
     /// otherwise the event loop will keep waking.
     pub fn drain_notify(&self) {
-        let Some(stream) = self.notify_read.as_ref() else { return };
+        let Some(stream) = self.notify_read.as_ref() else {
+            return;
+        };
         let mut buf = [0u8; 64];
         let mut r: &UnixStream = stream;
         loop {

@@ -19,10 +19,16 @@ pub struct Message {
     /// The bus does not inspect this — it's opaque bytes.
     pub payload: Option<Vec<u8>>,
 
-    /// If true, the bus retains this message (keyed by topic, latest wins)
-    /// and replays it to every newly connected client.
+    /// If true, the bus retains this message and replays it to newly
+    /// connected clients. Keyed by (topic, sticky_tag) so multiple apps
+    /// can have independent stickies on the same topic.
     #[serde(default)]
     pub sticky: bool,
+
+    /// Identifies the emitter for sticky deduplication. Set automatically
+    /// by BusClient from its app_id. Stickies are keyed by (topic, tag).
+    #[serde(default)]
+    pub sticky_tag: String,
 }
 
 impl Message {
@@ -33,6 +39,7 @@ impl Message {
             topic: topic.into(),
             payload: None,
             sticky: false,
+            sticky_tag: String::new(),
         }
     }
 
@@ -43,6 +50,7 @@ impl Message {
             topic: topic.into(),
             payload: Some(payload),
             sticky: false,
+            sticky_tag: String::new(),
         }
     }
 
@@ -90,7 +98,10 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
         let ts = event.timestamp_ms();
-        assert!(ts >= before && ts <= after, "timestamp {ts} not in [{before}, {after}]");
+        assert!(
+            ts >= before && ts <= after,
+            "timestamp {ts} not in [{before}, {after}]"
+        );
     }
 
     #[test]

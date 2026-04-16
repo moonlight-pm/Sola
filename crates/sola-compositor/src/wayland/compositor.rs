@@ -6,8 +6,8 @@ use smithay::reexports::wayland_server::Client;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::compositor::{CompositorClientState, CompositorHandler, CompositorState};
 
-use crate::state::State;
 use super::ClientState;
+use crate::state::State;
 
 // Fallback CompositorClientState for clients not created through our
 // socket listener (e.g., XWayland's internal client).
@@ -24,9 +24,7 @@ impl CompositorHandler for State {
         if let Some(state) = client.get_data::<ClientState>() {
             &state.compositor_state
         } else {
-            XWAYLAND_CLIENT_STATE.with(|s| unsafe {
-                &*(s as *const CompositorClientState)
-            })
+            XWAYLAND_CLIENT_STATE.with(|s| unsafe { &*(s as *const CompositorClientState) })
         }
     }
 
@@ -39,15 +37,19 @@ impl CompositorHandler for State {
 
         // Import the buffer into the primary GPU's renderer early.
         // See: https://docs.rs/smithay/latest/smithay/backend/renderer/multigpu/struct.GpuManager.html#method.early_import
-        if let Err(err) = self.gpu_manager.early_import(self.primary_render_node, surface) {
+        if let Err(err) = self
+            .gpu_manager
+            .early_import(self.primary_render_node, surface)
+        {
             tracing::warn!(?err, "early_import failed");
         }
 
         // Update geometry for the window that owns this surface.
-        if let Some(window) = self.space.elements().find(|w| {
-            w.wl_surface()
-                .is_some_and(|s| s.as_ref() == surface)
-        }) {
+        if let Some(window) = self
+            .space
+            .elements()
+            .find(|w| w.wl_surface().is_some_and(|s| s.as_ref() == surface))
+        {
             window.on_commit();
         }
     }

@@ -14,13 +14,6 @@ use webkit6::prelude::*;
 use sola_bus::BusClient;
 use sola_bus::topics::Topic;
 
-/// XKB keycodes (evdev + 8) -- same values the compositor puts on the bus.
-mod keycode {
-    pub const T: u32 = 28;
-    pub const W: u32 = 25;
-    pub const L: u32 = 46;
-}
-
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
     "/src/main.ts" => (include_str!("../web/src/main.ts"), TypeScript),
@@ -37,19 +30,16 @@ fn config_dir() -> PathBuf {
 }
 
 fn setup_logging() {
-    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
     let log_dir = "/opt/sola/log";
     let _ = std::fs::create_dir_all(log_dir);
     let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| "sola_browser=info".into());
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "sola_browser=info".into());
 
     let stderr_layer = fmt::layer().with_writer(std::io::stderr);
-    let file_layer = fmt::layer()
-        .with_ansi(false)
-        .with_writer(file_appender);
+    let file_layer = fmt::layer().with_ansi(false).with_writer(file_appender);
 
     tracing_subscriber::registry()
         .with(filter)
@@ -194,7 +184,6 @@ fn build_ui(app: &gtk4::Application) {
         )),
         tabs: RefCell::new(Vec::new()),
         active_tab_id: RefCell::new(None),
-        focused: RefCell::new(false),
     });
 
     // IPC setup
@@ -202,8 +191,54 @@ fn build_ui(app: &gtk4::Application) {
 
     // Bus connection
     let bus: Rc<RefCell<BusClient>> = Rc::new(RefCell::new(BusClient::new()));
-    if let Err(e) = bus.borrow_mut().connect() {
-        tracing::warn!("bus not available: {e}");
+    {
+        let mut client = bus.borrow_mut();
+        client.set_app_id("sola-browser");
+        if let Err(e) = client.connect() {
+            tracing::warn!("bus not available: {e}");
+        }
+        let _ = client.emit_sticky(Topic::SetAppMenu(sola_bus::topics::AppMenuPayload {
+            app_id: "sola-browser".into(),
+            menus: vec![
+                sola_bus::topics::MenuDefinition {
+                    label: "Browser".into(),
+                    items: vec![
+                        sola_bus::topics::MenuItem::Action {
+                            id: "new_tab".into(),
+                            label: "New Tab".into(),
+                            shortcut: Some(sola_core::KeyCode::T.meta()),
+                            disabled: false,
+                            checked: false,
+                        },
+                        sola_bus::topics::MenuItem::Action {
+                            id: "close_tab".into(),
+                            label: "Close Tab".into(),
+                            shortcut: Some(sola_core::KeyCode::W.meta()),
+                            disabled: false,
+                            checked: false,
+                        },
+                        sola_bus::topics::MenuItem::Divider,
+                        sola_bus::topics::MenuItem::Action {
+                            id: "quit".into(),
+                            label: "Quit Browser".into(),
+                            shortcut: Some(sola_core::KeyCode::Q.meta()),
+                            disabled: false,
+                            checked: false,
+                        },
+                    ],
+                },
+                sola_bus::topics::MenuDefinition {
+                    label: "Edit".into(),
+                    items: vec![sola_bus::topics::MenuItem::Action {
+                        id: "focus_address".into(),
+                        label: "Focus Address Bar".into(),
+                        shortcut: Some(sola_core::KeyCode::L.meta()),
+                        disabled: false,
+                        checked: false,
+                    }],
+                },
+            ],
+        }));
     }
 
     // Bus event source: keyboard shortcuts and OpenUrl handling
@@ -221,98 +256,73 @@ fn build_ui(app: &gtk4::Application) {
             drop(client);
 
             for msg in messages {
-                let Some(topic) = Topic::parse(&msg) else { continue };
+                let Some(topic) = Topic::parse(&msg) else {
+                    continue;
+                };
                 match topic {
-                    Topic::Key(key) => {
-                        // TODO: re-enable focus check once compositor emits FocusChanged
-                        // for normal app focus transitions (not just input grabs).
-                        // Currently FocusChanged is never emitted, so we match the
-                        // terminal's behavior: process Super+key unconditionally.
-                        if key.pressed && key.super_held {
-                            match key.code {
-                                keycode::T => {
-                                    let tab_id = uuid::Uuid::new_v4().to_string();
-                                    tabs::create_tab_webview(
-                                        &app_state, &tab_id, None, None,
-                                    );
-                                    tabs::switch_tab(&app_state, &tab_id);
+                    Topic::MenuAction(action) if action.app_id == "sola-browser" => {
+                        match action.action_id.as_str() {
+                            "new_tab" => {
+                                let tab_id = uuid::Uuid::new_v4().to_string();
+                                tabs::create_tab_webview(&app_state, &tab_id, None, None);
+                                tabs::switch_tab(&app_state, &tab_id);
 
-                                    // Persist new tab
-                                    let mut store = app_state.tab_store.borrow_mut();
-                                    store.tabs.push(state::PersistedTab {
-                                        url: String::new(),
-                                        title: String::new(),
-                                        session_state: None,
-                                    });
-                                    drop(store);
-                                    app_state.persist_tabs();
+                                let mut store = app_state.tab_store.borrow_mut();
+                                store.tabs.push(state::PersistedTab {
+                                    url: String::new(),
+                                    title: String::new(),
+                                    session_state: None,
+                                });
+                                drop(store);
+                                app_state.persist_tabs();
 
-                                    let data = serde_json::json!({
-                                        "tabId": tab_id,
-                                        "url": "",
-                                        "activate": true,
-                                    });
-                                    ipc::emit_event(
-                                        &app_state.chrome_webview,
-                                        "bus_new_tab",
-                                        &data,
-                                    );
-                                    // Give chrome WebView GTK focus so address bar can receive input
-                                    app_state.chrome_webview.grab_focus();
-                                    tracing::debug!("Super+T: new tab {tab_id}");
-                                }
-                                keycode::W => {
-                                    let active_id =
-                                        app_state.active_tab_id.borrow().clone();
-                                    if let Some(id) = active_id {
-                                        tabs::close_tab(&app_state, &id);
-
-                                        // Switch to next tab on Rust side
-                                        let tabs = app_state.tabs.borrow();
-                                        let next_id = tabs.last().map(|t| t.id.clone());
-                                        drop(tabs);
-                                        if let Some(next) = &next_id {
-                                            tabs::switch_tab(&app_state, next);
-                                        }
-
-                                        ipc::emit_event(
-                                            &app_state.chrome_webview,
-                                            "tab_closed",
-                                            &serde_json::json!({
-                                                "tabId": id,
-                                                "nextTabId": next_id,
-                                            }),
-                                        );
-                                        tracing::debug!("Super+W: closed tab {id}");
-                                    }
-                                }
-                                keycode::L => {
-                                    ipc::emit_event(
-                                        &app_state.chrome_webview,
-                                        "bus_focus_address",
-                                        &serde_json::json!({}),
-                                    );
-                                    // Give chrome WebView GTK focus so address bar can receive input
-                                    app_state.chrome_webview.grab_focus();
-                                    tracing::debug!("Super+L: focus address bar");
-                                }
-                                _ => {}
+                                let data = serde_json::json!({
+                                    "tabId": tab_id,
+                                    "url": "",
+                                    "activate": true,
+                                });
+                                ipc::emit_event(&app_state.chrome_webview, "bus_new_tab", &data);
+                                app_state.chrome_webview.grab_focus();
+                                tracing::debug!("new tab {tab_id}");
                             }
+                            "close_tab" => {
+                                let active_id = app_state.active_tab_id.borrow().clone();
+                                if let Some(id) = active_id {
+                                    tabs::close_tab(&app_state, &id);
+
+                                    let tabs = app_state.tabs.borrow();
+                                    let next_id = tabs.last().map(|t| t.id.clone());
+                                    drop(tabs);
+                                    if let Some(next) = &next_id {
+                                        tabs::switch_tab(&app_state, next);
+                                    }
+
+                                    ipc::emit_event(
+                                        &app_state.chrome_webview,
+                                        "tab_closed",
+                                        &serde_json::json!({
+                                            "tabId": id,
+                                            "nextTabId": next_id,
+                                        }),
+                                    );
+                                    tracing::debug!("closed tab {id}");
+                                }
+                            }
+                            "focus_address" => {
+                                ipc::emit_event(
+                                    &app_state.chrome_webview,
+                                    "bus_focus_address",
+                                    &serde_json::json!({}),
+                                );
+                                app_state.chrome_webview.grab_focus();
+                                tracing::debug!("focus address bar");
+                            }
+                            _ => {}
                         }
-                    }
-                    Topic::FocusChanged(app_id) => {
-                        let is_focused = app_id == "sola-browser";
-                        *app_state.focused.borrow_mut() = is_focused;
-                        tracing::info!(%app_id, is_focused, "focus changed");
                     }
                     Topic::OpenUrl(req) => {
                         let tab_id = uuid::Uuid::new_v4().to_string();
-                        tabs::create_tab_webview(
-                            &app_state,
-                            &tab_id,
-                            Some(&req.url),
-                            None,
-                        );
+                        tabs::create_tab_webview(&app_state, &tab_id, Some(&req.url), None);
                         if req.activate {
                             tabs::switch_tab(&app_state, &tab_id);
                         }
@@ -332,11 +342,7 @@ fn build_ui(app: &gtk4::Application) {
                             "url": req.url,
                             "activate": req.activate,
                         });
-                        ipc::emit_event(
-                            &app_state.chrome_webview,
-                            "bus_new_tab",
-                            &data,
-                        );
+                        ipc::emit_event(&app_state.chrome_webview, "bus_new_tab", &data);
                         tracing::info!(url = %req.url, "OpenUrl: created tab {tab_id}");
                     }
                     _ => {}
@@ -442,7 +448,6 @@ struct AppState {
     history: RefCell<state::BrowsingHistory>,
     tabs: RefCell<Vec<Tab>>,
     active_tab_id: RefCell<Option<String>>,
-    focused: RefCell<bool>,
 }
 
 impl AppState {

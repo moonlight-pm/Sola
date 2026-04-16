@@ -6,8 +6,8 @@
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Rectangle};
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
-use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 use smithay::xwayland::X11Surface;
+use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 
 use crate::state::{State, X11WindowInfo};
 
@@ -124,34 +124,18 @@ impl XwmHandler for State {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
-        let class = window.class();
         let geo = window.geometry();
-        let locked = self.user_locked_sizes.contains_key(&class);
-
-        // For user-locked apps, discard the client's requested size —
-        // the compositor's zone is authoritative. Position is still
-        // honored so apps can reposition themselves internally.
-        let (req_w, req_h) = if locked {
-            (geo.size.w, geo.size.h)
-        } else {
+        let new_geo = Rectangle::new(
+            (x.unwrap_or(geo.loc.x), y.unwrap_or(geo.loc.y)).into(),
             (
                 w.map(|v| v as i32).unwrap_or(geo.size.w),
                 h.map(|v| v as i32).unwrap_or(geo.size.h),
             )
-        };
-        let new_geo = Rectangle::new(
-            (x.unwrap_or(geo.loc.x), y.unwrap_or(geo.loc.y)).into(),
-            (req_w, req_h).into(),
+                .into(),
         );
 
         if let Err(err) = window.configure(Some(new_geo)) {
             tracing::error!(?err, "failed to configure X11 window");
-        }
-
-        // Only propagate geometry back to the compositor when we actually
-        // honored a size change; otherwise we'd overwrite the zone size.
-        if !locked {
-            emit_geometry(self, &class, new_geo);
         }
     }
 
@@ -209,30 +193,44 @@ fn track_x11_window(state: &mut State, surface: X11Surface) {
 
     tracing::info!(id, title = %title, class = %class, x = geo.loc.x, y = geo.loc.y, "tracking X11 window");
 
-    state.x11_windows.insert(id, X11WindowInfo {
-        title: title.clone(),
-        class: class.clone(),
-        surface: surface.clone(),
-    });
+    state.x11_windows.insert(
+        id,
+        X11WindowInfo {
+            title: title.clone(),
+            class: class.clone(),
+            surface: surface.clone(),
+        },
+    );
 
     if let Some(client) = &mut state.client {
         client.create_proxy(id, &title, &class);
     }
 
-    // Tell the compositor where to position this window.
-    emit_geometry(state, &class, geo);
+    emit_window_policy(state, &class, &title, geo);
 }
 
-/// Send window geometry to the compositor via the bus.
-fn emit_geometry(state: &mut State, app_id: &str, geo: Rectangle<i32, Logical>) {
-    use sola_bus::topics::{Topic, WindowGeometry};
-    let _ = state.bus.emit(Topic::SetWindowGeometry(WindowGeometry {
-        app_id: app_id.to_string(),
-        x: geo.loc.x,
-        y: geo.loc.y,
-        width: geo.size.w,
-        height: geo.size.h,
-    }));
+/// Emit a WindowPolicy for an X11 app so the shell knows about it.
+fn emit_window_policy(state: &mut State, app_id: &str, title: &str, geo: Rectangle<i32, Logical>) {
+    use sola_bus::topics::{Topic, WindowPolicy, WindowPolicyPayload};
+
+    let size = if geo.size.w > 0 && geo.size.h > 0 {
+        Some((geo.size.w, geo.size.h))
+    } else {
+        None
+    };
+
+    let _ = state
+        .bus
+        .emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
+            app_id: app_id.to_string(),
+            windows: vec![WindowPolicy {
+                title: title.to_string(),
+                zoned: true,
+                keyboard_target: false,
+                size,
+                position: None,
+            }],
+        }));
 }
 
 smithay::delegate_xwayland_shell!(State);

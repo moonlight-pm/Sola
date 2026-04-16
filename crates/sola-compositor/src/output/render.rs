@@ -1,3 +1,4 @@
+use smithay::backend::drm::DrmNode;
 /// Frame rendering and DRM output management.
 ///
 /// ## Render loop design
@@ -16,11 +17,10 @@
 /// before committing their first buffer, but VBlanks only fire after a
 /// successful queue_frame, which requires damage from a committed buffer.
 use smithay::backend::drm::compositor::FrameFlags;
-use smithay::backend::drm::DrmNode;
+use smithay::backend::renderer::Color32F;
+use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
-use smithay::backend::renderer::element::Kind;
-use smithay::backend::renderer::Color32F;
 use smithay::desktop::space::SpaceRenderElements;
 use smithay::reexports::drm::control::crtc;
 use smithay::utils::IsAlive;
@@ -28,8 +28,8 @@ use smithay::utils::IsAlive;
 use crate::State;
 use crate::types::SolaRenderer;
 
-/// Background color — dark blue-gray.
-pub const CLEAR_COLOR: Color32F = Color32F::new(0.1, 0.1, 0.2, 1.0);
+/// Background color — dark slate matching the terminal theme (#0a0b0d).
+pub const CLEAR_COLOR: Color32F = Color32F::new(0.039, 0.043, 0.051, 1.0);
 
 // Combined render element enum.
 smithay::backend::renderer::element::render_elements! {
@@ -75,9 +75,7 @@ pub fn render_all(state: &mut State) {
         .devices
         .iter()
         .filter(|(_, device)| !device.frame_pending)
-        .flat_map(|(node, device)| {
-            device.outputs.keys().map(move |crtc| (*node, *crtc))
-        })
+        .flat_map(|(node, device)| device.outputs.keys().map(move |crtc| (*node, *crtc)))
         .collect();
 
     for (node, crtc) in targets {
@@ -100,7 +98,8 @@ fn do_render(state: &mut State, node: DrmNode, crtc: crtc::Handle) {
 
     let output = state.space.outputs().next().cloned();
     let space_elements = if let Some(ref output) = output {
-        state.space
+        state
+            .space
             .render_elements_for_output(&mut renderer, output, 1.0)
             .unwrap_or_default()
     } else {
@@ -111,26 +110,6 @@ fn do_render(state: &mut State, node: DrmNode, crtc: crtc::Handle) {
         .into_iter()
         .map(OutputElement::Space)
         .collect();
-
-    // Wallpaper — behind everything (push to end of element list).
-    if let Some(ref wallpaper_buffer) = state.wallpaper_buffer {
-        match MemoryRenderBufferRenderElement::from_buffer(
-            &mut renderer,
-            (0.0, 0.0),
-            wallpaper_buffer,
-            None,
-            None,
-            None,
-            Kind::Unspecified,
-        ) {
-            Ok(wallpaper_element) => {
-                elements.push(OutputElement::Memory(wallpaper_element));
-            }
-            Err(err) => {
-                tracing::warn!(?err, "failed to create wallpaper render element");
-            }
-        }
-    }
 
     if let Some(ref cursor_buffer) = state.cursor_buffer {
         let (hx, hy) = state.cursor_hotspot;

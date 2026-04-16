@@ -2,9 +2,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 fn main() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        "sola_compositor=info,smithay=error".into()
-    });
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "sola_compositor=info,smithay=error".into());
 
     let log_dir = "/opt/sola/log";
     let _ = std::fs::create_dir_all(log_dir);

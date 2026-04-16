@@ -1,7 +1,8 @@
 /// Input device plumbing via libinput.
 ///
 /// Sets up libinput, forwards keyboard/pointer events through the Wayland
-/// seat. Super+key events are sent to the bus instead of the focused client.
+/// seat. Meta+key events are sent directly to sola-shell's keyboard_target
+/// surface via wl_keyboard.key, bypassing Smithay's focus mechanism.
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/backend/libinput/index.html
 use smithay::backend::input::{
@@ -9,13 +10,14 @@ use smithay::backend::input::{
     PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
 };
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
-use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::Session;
+use smithay::backend::session::libseat::LibSeatSession;
 use smithay::desktop::WindowSurfaceType;
 use smithay::input::keyboard::FilterResult;
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::input::Libinput;
+use smithay::reexports::wayland_server::Resource;
 use smithay::utils::SERIAL_COUNTER;
 
 use crate::State;
@@ -45,51 +47,63 @@ pub fn setup(
         .insert_source(libinput_backend, move |event, _, state| {
             match event {
                 InputEvent::Keyboard { event } => {
-                    let code = event.key_code().raw();
+                    let keycode = event.key_code().raw();
                     let pressed = event.state() == KeyState::Pressed;
+                    modifiers.update(keycode, pressed);
 
-                    modifiers.update(code, pressed);
+                    let chord = sola_core::KeyChord {
+                        keycode: sola_core::KeyCode::from(keycode),
+                        meta: modifiers.meta_held,
+                        alt: modifiers.alt_held,
+                        ctrl: modifiers.ctrl_held,
+                        shift: modifiers.shift_held,
+                    };
 
-                    tracing::debug!(code, pressed, super_held = modifiers.super_held, "key event");
+                    // Always route any Meta-key release so shell can close switcher reliably.
+                    let is_meta_release = !pressed
+                        && (keycode == sola_core::KeyCode::LEFT_META.raw()
+                            || keycode == sola_core::KeyCode::RIGHT_META.raw());
 
-                    // Super held → send to bus, don't forward to client.
-                    // Exception: during input grab, ALL keys go to the grabbed
-                    // surface via normal Wayland focus (including Super+key combos).
-                    if modifiers.super_held && state.input_grab.is_none() {
-                        use sola_bus::topics::{Topic, KeyEvent};
-                        let key = KeyEvent {
-                            code,
-                            pressed,
-                            super_held: modifiers.super_held,
-                            shift_held: modifiers.shift_held,
-                        };
-                        if let Err(e) = state.bus.emit(Topic::Key(key)) {
-                            tracing::warn!("failed to emit key to bus: {e}");
-                        }
+                    let route_to_shell =
+                        is_meta_release || state.shell_key_bindings.contains(&chord);
+
+                    tracing::debug!(
+                        keycode = keycode,
+                        state = ?event.state(),
+                        meta = modifiers.meta_held,
+                        alt = modifiers.alt_held,
+                        ctrl = modifiers.ctrl_held,
+                        shift = modifiers.shift_held,
+                        is_meta_release = is_meta_release,
+                        route_to_shell = route_to_shell,
+                        "keyboard event"
+                    );
+
+                    if route_to_shell {
+                        send_to_shell(state, event.key_code(), event.state(), event.time_msec());
                         return;
                     }
 
-                    // Forward to focused client.
                     let serial = SERIAL_COUNTER.next_serial();
                     let time = event.time_msec();
-                    {
-                        let keyboard = state.seat.get_keyboard().unwrap();
-                        keyboard.input::<(), _>(
-                            state,
-                            event.key_code(),
-                            event.state(),
-                            serial,
-                            time,
-                            |_, _, _| FilterResult::Forward,
-                        );
-                    }
+                    let keyboard = state.seat.get_keyboard().unwrap();
+                    keyboard.input::<(), _>(
+                        state,
+                        event.key_code(),
+                        event.state(),
+                        serial,
+                        time,
+                        |_, _, _| FilterResult::Forward,
+                    );
                 }
 
                 InputEvent::PointerMotion { event } => {
                     let delta = event.delta();
                     let (max_x, max_y) = output_size(state);
-                    state.pointer_location.0 = (state.pointer_location.0 + delta.x).clamp(0.0, max_x);
-                    state.pointer_location.1 = (state.pointer_location.1 + delta.y).clamp(0.0, max_y);
+                    state.pointer_location.0 =
+                        (state.pointer_location.0 + delta.x).clamp(0.0, max_x);
+                    state.pointer_location.1 =
+                        (state.pointer_location.1 + delta.y).clamp(0.0, max_y);
                     forward_pointer_motion(state);
                 }
 
@@ -122,7 +136,8 @@ pub fn setup(
                     let mut frame = AxisFrame::new(event.time_msec()).source(source);
 
                     // Horizontal axis.
-                    let h_amount = event.amount(Axis::Horizontal)
+                    let h_amount = event
+                        .amount(Axis::Horizontal)
                         .or_else(|| event.amount_v120(Axis::Horizontal).map(|v| v * 3.0 / 120.0));
                     if let Some(h) = h_amount {
                         frame = frame.value(Axis::Horizontal, h);
@@ -136,7 +151,8 @@ pub fn setup(
                     }
 
                     // Vertical axis.
-                    let v_amount = event.amount(Axis::Vertical)
+                    let v_amount = event
+                        .amount(Axis::Vertical)
                         .or_else(|| event.amount_v120(Axis::Vertical).map(|v| v * 3.0 / 120.0));
                     if let Some(v) = v_amount {
                         frame = frame.value(Axis::Vertical, -v);
@@ -173,17 +189,90 @@ pub fn setup(
     Ok(())
 }
 
+/// Send a key event directly to sola-shell's keyboard_target surface.
+///
+/// Uses wl_keyboard.key on the shell client's keyboard resources,
+/// bypassing Smithay's focus mechanism. The focused app never sees
+/// these events.
+fn send_to_shell(
+    state: &mut State,
+    keycode: smithay::input::keyboard::Keycode,
+    key_state: KeyState,
+    time: u32,
+) {
+    use smithay::reexports::wayland_server::protocol::wl_keyboard;
+
+    let surface = match state.shell_keyboard_target {
+        Some(ref s) => s.clone(),
+        None => return,
+    };
+
+    let client = match surface.client() {
+        Some(c) => c,
+        None => {
+            state.shell_keyboard_target = None;
+            return;
+        }
+    };
+
+    let keyboard = state.seat.get_keyboard().unwrap();
+
+    let ((), mods_changed) = keyboard.input_intercept(state, keycode, key_state, |_, _, _| ());
+    let mods = keyboard.modifier_state();
+
+    let serial = SERIAL_COUNTER.next_serial();
+    let evdev_code = keycode.raw() - 8;
+    let wl_state = match key_state {
+        KeyState::Pressed => wl_keyboard::KeyState::Pressed,
+        KeyState::Released => wl_keyboard::KeyState::Released,
+    };
+
+    // The current modifier state was set by prior keyboard events that
+    // went to the focused app (e.g. the Meta press itself is routed to
+    // the app, not shell). Shell never sees those, so its wl_keyboard
+    // view is stale. Sync the modifiers on every routed key before the
+    // key event so lookup_shortcut in shell sees the correct chord.
+    let _ = mods_changed;
+    for kbd in keyboard.client_keyboards(&client) {
+        kbd.modifiers(
+            serial.into(),
+            mods.serialized.depressed,
+            mods.serialized.latched,
+            mods.serialized.locked,
+            mods.serialized.layout_effective,
+        );
+        kbd.key(serial.into(), time, evdev_code, wl_state);
+    }
+}
+
 /// Forward the current pointer position through the seat to the client.
+/// Emits MouseEntered on the bus only when hovered surface/window changes.
 fn forward_pointer_motion(state: &mut State) {
     let (x, y) = state.pointer_location;
     let serial = SERIAL_COUNTER.next_serial();
 
+    let hovered = state.space.element_under((x, y)).map(|(window, _loc)| {
+        (
+            crate::State::app_id(&window).unwrap_or_default(),
+            crate::state::window_title(&window),
+        )
+    });
+
+    if hovered != state.hovered_surface {
+        state.hovered_surface = hovered.clone();
+
+        if let Some((app_id, title)) = hovered {
+            if !app_id.is_empty() {
+                let _ = state.bus.emit(sola_bus::topics::Topic::MouseEntered(
+                    sola_bus::topics::MouseEnteredPayload { app_id, title },
+                ));
+            }
+        }
+    }
+
     let under = state.space.element_under((x, y)).and_then(|(window, loc)| {
         window
-            .surface_under(
-                (x - loc.x as f64, y - loc.y as f64),
-                WindowSurfaceType::ALL,
-            )
+            .surface_under((x - loc.x as f64, y - loc.y as f64), WindowSurfaceType::ALL)
             .map(|(surface, offset)| (surface, (loc + offset).to_f64()))
     });
 
@@ -202,7 +291,8 @@ fn forward_pointer_motion(state: &mut State) {
 
 /// Get the output size for clamping pointer position.
 fn output_size(state: &State) -> (f64, f64) {
-    state.space
+    state
+        .space
         .outputs()
         .next()
         .and_then(|o| o.current_mode())

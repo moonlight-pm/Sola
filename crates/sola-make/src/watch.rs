@@ -105,10 +105,7 @@ fn build_and_deploy(crate_name: &str, target: &dyn DeployTarget) -> bool {
     match status {
         Ok(s) if s.success() => {}
         Ok(s) => {
-            eprintln!(
-                "[build] FAILED (exit {})",
-                s.code().unwrap_or(1)
-            );
+            eprintln!("[build] FAILED (exit {})", s.code().unwrap_or(1));
             return false;
         }
         Err(err) => {

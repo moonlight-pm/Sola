@@ -51,17 +51,32 @@ pub fn create_web_context(
     ctx
 }
 
-/// Create a UserContentManager with the `sola` message handler.
-/// Returns the UCM and a command receiver.
-pub fn create_content_manager(
-    cmd_tx: tokio::sync::mpsc::UnboundedSender<String>,
+/// Create a UserContentManager for a specific window. UCM messages route
+/// through the shared dispatcher slot, which is filled by `run::<A>()` after
+/// `A::new` returns.
+pub(crate) fn create_ucm_for_window(
+    dispatcher_slot: std::rc::Rc<std::cell::RefCell<Option<crate::window::JsDispatcher>>>,
 ) -> webkit6::UserContentManager {
     let ucm = webkit6::UserContentManager::new();
     ucm.register_script_message_handler("sola", None::<&str>);
 
     ucm.connect_script_message_received(Some("sola"), move |_ucm, js_value| {
         let msg: String = js_value.to_string().into();
-        let _ = cmd_tx.send(msg);
+        let parsed: serde_json::Value = match serde_json::from_str(&msg) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("invalid JS command JSON: {e}");
+                return;
+            }
+        };
+        let id = parsed.get("id").and_then(|v| v.as_u64());
+        let cmd = parsed.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
+        let args = parsed.get("args").cloned().unwrap_or(serde_json::json!({}));
+        if let Some(dispatch) = dispatcher_slot.borrow_mut().as_mut() {
+            dispatch(cmd, &args, id);
+        } else {
+            tracing::warn!(cmd, "JS command received before dispatcher installed");
+        }
     });
 
     ucm

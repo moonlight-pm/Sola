@@ -18,15 +18,17 @@ use smithay::input::{Seat, SeatState};
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_server::DisplayHandle;
 use smithay::wayland::compositor::CompositorState;
+use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
-use smithay::wayland::dmabuf::DmabufState;
 use smithay::wayland::shm::ShmState;
 
 use crate::backend::device::Device;
 use crate::backend::gpu::SolaGpuManager;
+use crate::input::binding::ModifierState;
+use sola_bus::topics::KeyChord;
 
 pub struct State {
     /// Controls the main event loop. Set to `false` to trigger shutdown.
@@ -45,7 +47,6 @@ pub struct State {
     pub loop_handle: LoopHandle<'static, Self>,
 
     // -- Hardware backend state --
-
     /// The libseat session for opening device files with proper privileges.
     pub session: LibSeatSession,
 
@@ -65,7 +66,6 @@ pub struct State {
     pub devices: HashMap<DrmNode, Device>,
 
     // -- Wayland protocol state --
-
     /// Tracks `wl_compositor` — surface creation and management.
     pub compositor_state: CompositorState,
 
@@ -93,7 +93,6 @@ pub struct State {
     pub xdg_decoration_state: XdgDecorationState,
 
     // -- Desktop state --
-
     /// Tracks mapped windows and their positions on outputs.
     /// `Space` is Smithay's built-in window manager: it handles z-order,
     /// output assignment, and provides render elements for compositing.
@@ -102,22 +101,35 @@ pub struct State {
     /// Current pointer position in compositor-space coordinates.
     pub pointer_location: (f64, f64),
 
-    /// The app_id that currently has exclusive input grab, if any.
-    /// While set, all input goes to this app's surface and other clients
-    /// are excluded. The grabbed surface is shown above all others.
-    pub input_grab: Option<String>,
+    /// Tracks Meta/Shift state for input routing decisions.
+    pub modifiers: ModifierState,
 
-    /// Most-recently-used app list, ordered by last focus time.
-    /// The app that most recently had keyboard focus is at index 0.
-    pub mru_apps: Vec<String>,
+    /// Cached keyboard_target surface for sola-shell.
+    /// Meta+key events are sent directly to this surface via wl_keyboard.key.
+    pub shell_keyboard_target:
+        Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
 
-    /// Window geometries received before the window appeared.
-    /// Applied in `apply_pending_geometries` when the window is first mapped.
-    pub pending_geometries: HashMap<String, sola_bus::topics::WindowGeometry>,
+    /// Key combinations declared by the shell as handled.
+    pub shell_key_bindings: Vec<KeyChord>,
 
+    /// Last surface identity currently hovered by pointer, as (app_id, title).
+    /// Used to emit edge-triggered MouseEntered events only on hover changes.
+    pub hovered_surface: Option<(String, Option<String>)>,
+
+    /// Frame geometries from the shell, keyed by (app_id, title).
+    /// Applied when the matching surface is found or when Composition maps it.
+    pub frame_geometries: HashMap<(String, Option<String>), sola_bus::topics::FrameUpdate>,
+
+    /// Window policies declared by apps. Keyed by app_id.
+    pub window_policies: HashMap<String, Vec<sola_bus::topics::WindowPolicy>>,
+
+    /// Surfaces whose app_id isn't known yet (waiting for protocol).
+    pub pending_surfaces: Vec<Window>,
+
+    /// Surfaces with a known app_id, waiting for Composition to map them.
+    pub unmapped_surfaces: Vec<Window>,
 
     // -- Protocol state --
-
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
     pub dmabuf_state: Option<DmabufState>,
 
@@ -127,9 +139,6 @@ pub struct State {
     /// The cursor hotspot — the pixel offset within the cursor image that
     /// represents the actual click point.
     pub cursor_hotspot: (i32, i32),
-
-    /// Desktop wallpaper. Rendered behind all windows.
-    pub wallpaper_buffer: Option<MemoryRenderBuffer>,
 }
 
 impl State {
@@ -153,9 +162,12 @@ impl State {
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
 
+        let mut bus = sola_bus::BusClient::new();
+        bus.set_app_id("sola-compositor");
+
         Self {
             running: true,
-            bus: sola_bus::BusClient::new(),
+            bus,
             display_handle: dh,
             loop_handle,
             session,
@@ -173,12 +185,16 @@ impl State {
             seat,
             space: Space::default(),
             pointer_location: (0.0, 0.0),
-            input_grab: None,
-            mru_apps: Vec::new(),
-            pending_geometries: HashMap::new(),
+            modifiers: ModifierState::default(),
+            shell_keyboard_target: None,
+            shell_key_bindings: Vec::new(),
+            hovered_surface: None,
+            frame_geometries: HashMap::new(),
+            window_policies: HashMap::new(),
+            pending_surfaces: Vec::new(),
+            unmapped_surfaces: Vec::new(),
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
-            wallpaper_buffer: None,
             dmabuf_state: None,
         }
     }
@@ -190,16 +206,56 @@ impl State {
 
     /// Find the first window with the given app_id.
     pub fn window_by_app_id(&self, target: &str) -> Option<Window> {
-        self.space.elements().find(|window| {
-            window_app_id(window).is_some_and(|id| id == target)
-        }).cloned()
+        self.space
+            .elements()
+            .find(|window| window_app_id(window).is_some_and(|id| id == target))
+            .cloned()
+    }
+
+    /// Find a window by app_id and optional title.
+    pub fn window_by_app_id_title(&self, app_id: &str, title: Option<&str>) -> Option<Window> {
+        self.space
+            .elements()
+            .find(|window| {
+                let id_match = window_app_id(window).is_some_and(|id| id == app_id);
+                if !id_match {
+                    return false;
+                }
+                match title {
+                    Some(t) => window_title(window).is_some_and(|wt| wt == t),
+                    None => true,
+                }
+            })
+            .cloned()
     }
 
     /// Find all windows with the given app_id.
     pub fn windows_by_app_id(&self, target: &str) -> Vec<Window> {
-        self.space.elements().filter(|window| {
-            window_app_id(window).is_some_and(|id| id == target)
-        }).cloned().collect()
+        self.space
+            .elements()
+            .filter(|window| window_app_id(window).is_some_and(|id| id == target))
+            .cloned()
+            .collect()
+    }
+
+    /// Find a window by app_id and optional title, searching both the
+    /// Space (mapped) and unmapped_surfaces.
+    pub fn find_surface(&self, app_id: &str, title: Option<&str>) -> Option<Window> {
+        self.window_by_app_id_title(app_id, title).or_else(|| {
+            self.unmapped_surfaces
+                .iter()
+                .find(|window| {
+                    let id_match = window_app_id(window).is_some_and(|id| id == app_id);
+                    if !id_match {
+                        return false;
+                    }
+                    match title {
+                        Some(t) => window_title(window).is_some_and(|wt| wt == t),
+                        None => true,
+                    }
+                })
+                .cloned()
+        })
     }
 }
 
@@ -215,6 +271,22 @@ fn window_app_id(window: &Window) -> Option<String> {
                 .get::<XdgToplevelSurfaceData>()
                 .and_then(|data| data.lock().ok())
                 .and_then(|attrs| attrs.app_id.clone())
+        })
+    })
+}
+
+/// Extract the title from a Window's xdg_toplevel surface data.
+pub fn window_title(window: &Window) -> Option<String> {
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+
+    window.toplevel().and_then(|toplevel| {
+        with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok())
+                .and_then(|attrs| attrs.title.clone())
         })
     })
 }

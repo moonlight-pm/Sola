@@ -130,10 +130,7 @@ mod tests {
 
     #[test]
     fn ignores_other_cards() {
-        let sysfs = mock_sysfs(&[
-            ("card1-DP-1", "connected"),
-            ("card2-DP-10", "disconnected"),
-        ]);
+        let sysfs = mock_sysfs(&[("card1-DP-1", "connected"), ("card2-DP-10", "disconnected")]);
         assert!(!has_connected_display_in(
             Path::new("/dev/dri/card2"),
             sysfs.path()

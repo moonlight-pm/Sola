@@ -10,10 +10,10 @@ use std::path::Path;
 
 use smithay::backend::allocator::gbm::GbmDevice;
 use smithay::backend::drm::{DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmNode};
-use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::Session;
-use smithay::reexports::drm::control::crtc;
+use smithay::backend::session::libseat::LibSeatSession;
 use smithay::reexports::drm::Device as DrmDeviceTrait;
+use smithay::reexports::drm::control::crtc;
 use smithay::reexports::rustix::fs::OFlags;
 use smithay::utils::DeviceFd;
 use smithay_drm_extras::drm_scanner::DrmScanner;
@@ -46,7 +46,15 @@ pub fn open(
     session: &mut LibSeatSession,
     path: &Path,
     node: DrmNode,
-) -> Result<(DrmDevice, DrmDeviceNotifier, GbmDevice<DrmDeviceFd>, DrmNode), DeviceError> {
+) -> Result<
+    (
+        DrmDevice,
+        DrmDeviceNotifier,
+        GbmDevice<DrmDeviceFd>,
+        DrmNode,
+    ),
+    DeviceError,
+> {
     let fd = session
         .open(
             path,

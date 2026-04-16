@@ -12,8 +12,9 @@ type ClientId = u64;
 
 struct BusState {
     clients: HashMap<ClientId, UnixStream>,
-    /// Latest sticky message per topic, replayed to newly connected clients.
-    sticky: HashMap<String, sola_bus::Message>,
+    /// Latest sticky message per (topic, tag), replayed to newly connected clients.
+    /// Multiple apps can have independent stickies on the same topic.
+    sticky: HashMap<(String, String), sola_bus::Message>,
 }
 
 type SharedState = Arc<Mutex<BusState>>;
@@ -100,11 +101,11 @@ fn replay_sticky(id: ClientId, bus: &mut BusState, writer: &UnixStream) {
         }
     };
 
-    for (topic, msg) in &bus.sticky {
+    for ((topic, tag), msg) in &bus.sticky {
         if let Err(e) = transport::write_event(&mut writer, msg) {
-            warn!(client = id, topic = %topic, "failed to replay sticky message: {e}");
+            warn!(client = id, topic = %topic, tag = %tag, "failed to replay sticky message: {e}");
         } else {
-            tracing::debug!(client = id, topic = %topic, "replayed sticky message");
+            tracing::debug!(client = id, topic = %topic, tag = %tag, "replayed sticky message");
         }
     }
 }
@@ -117,9 +118,9 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
 
                 let mut bus = state.lock().unwrap();
 
-                // Store sticky messages (latest per topic wins).
                 if event.sticky {
-                    bus.sticky.insert(event.topic.clone(), event.clone());
+                    let key = (event.topic.clone(), event.sticky_tag.clone());
+                    bus.sticky.insert(key, event.clone());
                 }
 
                 broadcast(id, &event, &mut bus);

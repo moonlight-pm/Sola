@@ -1,3 +1,4 @@
+use smithay::wayland::selection::SelectionHandler;
 /// Wayland data device (clipboard and drag-and-drop) protocol handler.
 ///
 /// Manages clipboard (copy/paste) and drag-and-drop between clients.
@@ -6,7 +7,6 @@
 use smithay::wayland::selection::data_device::{
     ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
 };
-use smithay::wayland::selection::SelectionHandler;
 
 use crate::state::State;
 

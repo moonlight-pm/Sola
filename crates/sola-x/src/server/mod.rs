@@ -8,10 +8,10 @@ pub mod seat;
 pub mod shm;
 pub mod xwayland;
 
+use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{
     ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
 };
-use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::shell::xdg::{XdgShellHandler, XdgShellState};
 
 use crate::state::State;
@@ -45,11 +45,7 @@ impl XdgShellHandler for State {
         &mut self.xdg_shell_state
     }
 
-    fn new_toplevel(
-        &mut self,
-        _surface: smithay::wayland::shell::xdg::ToplevelSurface,
-    ) {
-    }
+    fn new_toplevel(&mut self, _surface: smithay::wayland::shell::xdg::ToplevelSurface) {}
 
     fn new_popup(
         &mut self,
