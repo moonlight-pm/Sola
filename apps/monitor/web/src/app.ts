@@ -99,7 +99,7 @@ function highlightedPreview(msg: BusMessage): any[] {
 }
 
 function highlightedJson(obj: any): any[] {
-  return tokenizeJson(JSON.stringify(obj, null, 2).trim());
+  return tokenizeJson(JSON.stringify(obj, null, 2));
 }
 
 function tokenizeJson(json: string, maxChars?: number): any[] {
