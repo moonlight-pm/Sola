@@ -86,8 +86,11 @@ fn handle_key_pressed(
         return glib::Propagation::Stop;
     }
 
-    // Meta+Tab: activate switcher.
+    // Meta+Tab: activate switcher. Close launcher first if open.
     if chord.keycode == KeyCode::TAB && !app.switcher.active {
+        if app.launcher.active {
+            app.close_launcher(ctx);
+        }
         tracing::info!("activating switcher");
         app.switcher.apps = app.rebuild_switcher_apps();
         app.switcher.active = true;

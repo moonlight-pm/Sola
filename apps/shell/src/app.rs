@@ -180,7 +180,7 @@ impl SolaApp for ShellApp {
                 }
 
                 // Keep menu/switcher interactions stable while overlays are active.
-                if self.menu_open || self.switcher.active {
+                if self.menu_open || self.switcher.active || self.launcher.active {
                     return;
                 }
 
