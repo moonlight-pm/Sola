@@ -52,8 +52,11 @@ impl ZoningState {
 
     /// Apply the config zone to a window if its app has a saved zone
     /// and no window for that app has been zoned yet.
-    /// Returns a FrameUpdate if the zone was applied.
+    /// Only sola-* apps persist zones — external apps are zoned manually.
     pub fn apply_config_zone(&mut self, app_id: &str, window_id: u32) -> Option<FrameUpdate> {
+        if !app_id.starts_with("sola-") {
+            return None;
+        }
         if self.config_applied.contains(app_id) {
             return None;
         }
@@ -96,12 +99,16 @@ impl ZoningState {
         let frame = compute_frame(zone, window_id, w, h);
 
         self.window_zones.insert(window_id, zone);
-        // Save to config by app_id for persistence across restarts.
-        self.app_zone_config.insert(app_id, zone);
-        self.config_applied.insert(
-            self.focused_app_id.clone().unwrap_or_default(),
-        );
-        self.save_session();
+
+        // Only persist zone config for sola-* apps. External apps
+        // are zoned manually each session.
+        if app_id.starts_with("sola-") {
+            self.app_zone_config.insert(app_id, zone);
+            self.config_applied.insert(
+                self.focused_app_id.clone().unwrap_or_default(),
+            );
+            self.save_session();
+        }
 
         Some(frame)
     }
