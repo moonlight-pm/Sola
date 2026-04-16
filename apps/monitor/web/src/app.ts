@@ -94,6 +94,27 @@ function previewPayload(msg: BusMessage): string {
   return '';
 }
 
+// --- JSON syntax highlighting ---
+
+function highlightJson(obj: any): string {
+  const json = JSON.stringify(obj, null, 2);
+  return json.replace(
+    /("(?:\\.|[^"\\])*")\s*(:)|("(?:\\.|[^"\\])*")|(true|false)|(null)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+    (_match, key, colon, str, bool, nil, num) => {
+      if (key && colon) return `<span class="json-key">${esc(key)}</span>:`;
+      if (str) return `<span class="json-string">${esc(str)}</span>`;
+      if (bool) return `<span class="json-bool">${bool}</span>`;
+      if (nil) return `<span class="json-null">${nil}</span>`;
+      if (num) return `<span class="json-number">${num}</span>`;
+      return _match;
+    }
+  );
+}
+
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // --- Message handling ---
 
 function addMessage(msg: BusMessage) {
@@ -138,11 +159,30 @@ function selectMessage(msg: BusMessage | null) {
     state.selectedId = null;
     state.selectedMessage = null;
   }
+  updateDetailBody();
+}
+
+function updateDetailBody() {
+  if (!detailBodyEl) return;
+  const m = state.selectedMessage;
+  if (!m) {
+    detailBodyEl.textContent = '';
+    return;
+  }
+  if (m.payload != null) {
+    // Safe: highlightJson escapes all user content via esc() before wrapping in spans
+    detailBodyEl.innerHTML = highlightJson(m.payload);
+  } else if (m.rawHex) {
+    detailBodyEl.textContent = `[raw hex]\n${m.rawHex}`;
+  } else {
+    detailBodyEl.textContent = '(no payload)';
+  }
 }
 
 // --- Scroll management ---
 
 let listEl: HTMLElement | null = null;
+let detailBodyEl: HTMLElement | null = null;
 
 function scrollToBottom() {
   if (listEl && state.autoScroll) {
@@ -269,15 +309,7 @@ export async function createApp(root: HTMLElement) {
         </span>
         <button class="detail-close" @click="${() => selectMessage(null)}">\u00d7</button>
       </div>
-      <div class="detail-body">
-        ${() => {
-          const m = state.selectedMessage;
-          if (!m) return '';
-          if (m.payload != null) return JSON.stringify(m.payload, null, 2);
-          if (m.rawHex) return `[raw hex]\n${m.rawHex}`;
-          return '(no payload)';
-        }}
-      </div>
+      <div class="detail-body" id="detail-body"></div>
     </div>
 
     <div
@@ -292,4 +324,5 @@ export async function createApp(root: HTMLElement) {
 
   listEl = document.getElementById('message-list');
   selectEl = document.getElementById('topic-select') as HTMLSelectElement;
+  detailBodyEl = document.getElementById('detail-body');
 }

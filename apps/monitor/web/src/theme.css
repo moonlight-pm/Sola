@@ -337,6 +337,14 @@ html, body {
   color: var(--text-primary);
 }
 
+/* --- JSON syntax highlighting --- */
+
+.json-key    { color: #79c0ff; }
+.json-string { color: #a5d6ff; }
+.json-number { color: #f0883e; }
+.json-bool   { color: #d2a8ff; }
+.json-null   { color: #484f58; }
+
 /* --- Auto-scroll indicator --- */
 
 .auto-scroll-indicator {

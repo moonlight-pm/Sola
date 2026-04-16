@@ -10,13 +10,22 @@ pub fn message_to_json(msg: &Message) -> Value {
 
     let (payload, raw_hex) = decode_payload(msg);
 
+    // Source: prefer sticky_tag, then extract app_id from payload
+    let source = if !msg.sticky_tag.is_empty() {
+        msg.sticky_tag.clone()
+    } else if let Some(app_id) = payload.get("app_id").and_then(|v| v.as_str()) {
+        app_id.to_string()
+    } else {
+        String::new()
+    };
+
     json!({
         "event": "bus_message",
         "msgId": id,
         "timestamp": timestamp,
         "topic": topic_name,
         "sticky": msg.sticky,
-        "source": msg.sticky_tag,
+        "source": source,
         "payload": payload,
         "rawHex": raw_hex,
     })
