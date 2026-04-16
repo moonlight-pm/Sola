@@ -40,7 +40,8 @@ impl ZoningState {
     }
 
     /// Handle a zone snap keycode. Returns a FrameUpdate for the focused app.
-    pub fn handle_key(&mut self, code: u32) -> Option<FrameUpdate> {
+    /// Requires the focused window_id to build the FrameUpdate.
+    pub fn handle_key(&mut self, code: u32, focused_window_id: Option<u32>) -> Option<FrameUpdate> {
         let zone = zone_for_keycode(code)?;
 
         let (w, h) = match self.output_size {
@@ -59,8 +60,16 @@ impl ZoningState {
             }
         };
 
+        let window_id = match focused_window_id {
+            Some(wid) => wid,
+            None => {
+                warn!("zone key pressed but no focused window_id");
+                return None;
+            }
+        };
+
         info!(app_id = %app_id, ?zone, "snapping to zone");
-        let frame = compute_frame(zone, &app_id, w, h);
+        let frame = compute_frame(zone, window_id, w, h);
 
         self.zone_assignments.insert(app_id, zone);
         self.save_session();
@@ -69,11 +78,10 @@ impl ZoningState {
     }
 
     /// Compute the menubar's Frame for a given output.
-    pub fn menubar_frame(&self) -> Option<FrameUpdate> {
+    pub fn menubar_frame(&self, window_id: u32) -> Option<FrameUpdate> {
         let (w, _h) = self.output_size?;
         Some(FrameUpdate {
-            app_id: "sola-shell".into(),
-            title: Some("menubar".into()),
+            window_id,
             x: 0,
             y: 0,
             width: w,
@@ -83,11 +91,10 @@ impl ZoningState {
 
     /// Compute the default Frame for an app without a zone assignment.
     /// Gives it the full output area below the menubar.
-    pub fn default_app_frame(&self, app_id: &str) -> Option<FrameUpdate> {
+    pub fn default_app_frame(&self, window_id: u32) -> Option<FrameUpdate> {
         let (w, h) = self.output_size?;
         Some(FrameUpdate {
-            app_id: app_id.to_string(),
-            title: None,
+            window_id,
             x: 0,
             y: MENUBAR_HEIGHT,
             width: w,
@@ -96,12 +103,12 @@ impl ZoningState {
     }
 
     /// Compute the Frame for a zoned app, or default if no zone assigned.
-    pub fn app_frame(&self, app_id: &str) -> Option<FrameUpdate> {
+    pub fn app_frame(&self, app_id: &str, window_id: u32) -> Option<FrameUpdate> {
         if let Some(zone) = self.zone_assignments.get(app_id) {
             let (w, h) = self.output_size?;
-            Some(compute_frame(*zone, app_id, w, h))
+            Some(compute_frame(*zone, window_id, w, h))
         } else {
-            self.default_app_frame(app_id)
+            self.default_app_frame(window_id)
         }
     }
 
@@ -142,7 +149,7 @@ fn zone_for_keycode(code: u32) -> Option<Zone> {
     }
 }
 
-fn compute_frame(zone: Zone, app_id: &str, output_w: i32, output_h: i32) -> FrameUpdate {
+fn compute_frame(zone: Zone, window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
     let (xp, yp, wp, hp) = zone.rect();
     let usable_h = output_h - MENUBAR_HEIGHT;
 
@@ -152,8 +159,7 @@ fn compute_frame(zone: Zone, app_id: &str, output_w: i32, output_h: i32) -> Fram
     let h = (hp * usable_h as f64).round() as i32;
 
     FrameUpdate {
-        app_id: app_id.to_string(),
-        title: None,
+        window_id,
         x,
         y,
         width: w,

@@ -114,13 +114,19 @@ pub struct State {
     /// Key combinations declared by the shell as handled.
     pub shell_key_bindings: Vec<KeyChord>,
 
-    /// Last surface identity currently hovered by pointer, as (app_id, title).
-    /// Used to emit edge-triggered MouseEntered events only on hover changes.
-    pub hovered_surface: Option<(String, Option<String>)>,
+    /// Next window ID to assign. Monotonically increasing, starts at 1.
+    pub next_window_id: u32,
 
-    /// Frame geometries from the shell, keyed by (app_id, title).
+    /// Maps compositor-assigned window_id to Window.
+    pub window_ids: HashMap<u32, Window>,
+
+    /// Last window_id currently hovered by pointer.
+    /// Used to emit edge-triggered MouseEntered events only on hover changes.
+    pub hovered_window_id: Option<u32>,
+
+    /// Frame geometries from the shell, keyed by window_id.
     /// Applied when the matching surface is found or when Composition maps it.
-    pub frame_geometries: HashMap<(String, Option<String>), sola_bus::topics::FrameUpdate>,
+    pub frame_geometries: HashMap<u32, sola_bus::topics::FrameUpdate>,
 
     /// Window policies declared by apps. Keyed by app_id.
     pub window_policies: HashMap<String, Vec<sola_bus::topics::WindowPolicy>>,
@@ -196,7 +202,9 @@ impl State {
             modifiers: ModifierState::default(),
             shell_keyboard_target: None,
             shell_key_bindings: Vec::new(),
-            hovered_surface: None,
+            next_window_id: 1,
+            window_ids: HashMap::new(),
+            hovered_window_id: None,
             frame_geometries: HashMap::new(),
             window_policies: HashMap::new(),
             pending_surfaces: Vec::new(),
@@ -267,6 +275,32 @@ impl State {
                 .cloned()
         })
     }
+
+    /// Assign a window ID to a window. Stores it in the Window's UserDataMap
+    /// and in the window_ids lookup map.
+    pub fn assign_window_id(&mut self, window: &Window) -> u32 {
+        let id = self.next_window_id;
+        self.next_window_id += 1;
+        window
+            .user_data()
+            .insert_if_missing(|| WindowId(id));
+        self.window_ids.insert(id, window.clone());
+        id
+    }
+
+    /// Find a window by its compositor-assigned window_id.
+    pub fn find_window_by_id(&self, id: u32) -> Option<Window> {
+        self.window_ids.get(&id).cloned()
+    }
+}
+
+/// Compositor-assigned stable window identifier.
+/// Stored in each Window's `UserDataMap`.
+pub struct WindowId(pub u32);
+
+/// Read the compositor-assigned window_id from a Window's UserDataMap.
+pub fn window_id(window: &Window) -> Option<u32> {
+    window.user_data().get::<WindowId>().map(|wid| wid.0)
 }
 
 /// Extract the app_id from a Window.

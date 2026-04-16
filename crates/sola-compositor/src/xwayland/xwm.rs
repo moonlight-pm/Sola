@@ -5,7 +5,7 @@ use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState}
 use smithay::xwayland::xwm::{Reorder, ResizeEdge, X11Window, XwmHandler, XwmId};
 use smithay::xwayland::X11Surface;
 
-use crate::lifecycle::emit_apps_list;
+use crate::lifecycle::emit_windows_list;
 use crate::state::State;
 
 impl XwmHandler for State {
@@ -146,18 +146,34 @@ fn remove_x11_window(state: &mut State, surface: &X11Surface) {
     }).cloned();
 
     if let Some(window) = found {
+        // Remove from window_ids map.
+        if let Some(wid) = crate::state::window_id(&window) {
+            state.window_ids.remove(&wid);
+        }
         state.space.unmap_elem(&window);
     }
 
-    // Remove from pending/unmapped.
+    // Remove from pending/unmapped, also cleaning window_ids.
     state.pending_surfaces.retain(|w| {
-        !w.x11_surface().is_some_and(|s| s.window_id() == surface.window_id())
+        let remove = w.x11_surface().is_some_and(|s| s.window_id() == surface.window_id());
+        if remove {
+            if let Some(wid) = crate::state::window_id(w) {
+                state.window_ids.remove(&wid);
+            }
+        }
+        !remove
     });
     state.unmapped_surfaces.retain(|w| {
-        !w.x11_surface().is_some_and(|s| s.window_id() == surface.window_id())
+        let remove = w.x11_surface().is_some_and(|s| s.window_id() == surface.window_id());
+        if remove {
+            if let Some(wid) = crate::state::window_id(w) {
+                state.window_ids.remove(&wid);
+            }
+        }
+        !remove
     });
 
-    emit_apps_list(state);
+    emit_windows_list(state);
 }
 
 smithay::delegate_xwayland_shell!(State);

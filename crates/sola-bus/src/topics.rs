@@ -4,11 +4,10 @@ pub use sola_core::KeyChord;
 use crate::define_topics;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct App {
+pub struct WindowInfo {
+    pub window_id: u32,
     pub app_id: String,
-    pub name: String,
-    pub icon: String,
-    pub window_count: u32,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,18 +17,15 @@ pub struct OpenUrlRequest {
 }
 
 /// Z-ordered entry in the composition list. Bottom to top.
-/// Title is optional — `None` matches any window from that app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompositionEntry {
-    pub app_id: String,
-    pub title: Option<String>,
+    pub window_id: u32,
 }
 
 /// Per-surface position and size. Applied immediately.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrameUpdate {
-    pub app_id: String,
-    pub title: Option<String>,
+    pub window_id: u32,
     pub x: i32,
     pub y: i32,
     pub width: i32,
@@ -39,8 +35,7 @@ pub struct FrameUpdate {
 /// Which surface receives keyboard focus.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FocusTarget {
-    pub app_id: String,
-    pub title: Option<String>,
+    pub window_id: u32,
 }
 
 /// Output resolution, emitted by compositor on startup and hotplug.
@@ -53,8 +48,7 @@ pub struct OutputGeometry {
 /// Emitted by compositor when pointer enters a different surface/window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
-    pub app_id: String,
-    pub title: Option<String>,
+    pub window_id: u32,
 }
 
 /// App menu definition, emitted as sticky by apps at startup.
@@ -151,8 +145,8 @@ impl Zone {
 }
 
 define_topics! {
-    // App management
-    Apps(Vec<App>),
+    // Window management list
+    Windows(Vec<WindowInfo>),
     LaunchApp(String),
 
     // Composition authority (shell → compositor)
@@ -195,21 +189,20 @@ mod tests {
 
     #[test]
     fn payload_topic_roundtrip() {
-        let apps = vec![App {
+        let windows = vec![WindowInfo {
+            window_id: 1,
             app_id: "zen".into(),
-            name: "Browser".into(),
-            icon: "globe".into(),
-            window_count: 2,
+            title: "Browser".into(),
         }];
-        let msg = Topic::Apps(apps).to_message();
-        assert_eq!(msg.topic, "Apps");
+        let msg = Topic::Windows(windows).to_message();
+        assert_eq!(msg.topic, "Windows");
 
         let parsed = Topic::parse(&msg).unwrap();
         match parsed {
-            Topic::Apps(decoded) => {
+            Topic::Windows(decoded) => {
                 assert_eq!(decoded.len(), 1);
                 assert_eq!(decoded[0].app_id, "zen");
-                assert_eq!(decoded[0].window_count, 2);
+                assert_eq!(decoded[0].window_id, 1);
             }
             _ => panic!("wrong variant"),
         }

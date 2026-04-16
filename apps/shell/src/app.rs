@@ -1,11 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
-    App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord, MenuDefinition,
-    MenuItem, MouseEnteredPayload, ShellKeyBindingsPayload, Topic,
+    AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord, MenuDefinition,
+    MenuItem, MouseEnteredPayload, ShellKeyBindingsPayload, Topic, WindowInfo,
 };
 use sola_core::KeyCode;
 
@@ -23,10 +23,20 @@ pub struct ShellWindows {
     pub launcher: WindowHandle,
 }
 
+/// Lightweight app entry for the switcher (grouped by app_id).
+#[derive(Clone)]
+pub struct SwitcherApp {
+    pub app_id: String,
+}
+
 pub struct ShellApp {
     pub focused_app_id: Option<String>,
+    pub focused_window_id: Option<u32>,
     pub mru_apps: Vec<String>,
-    pub known_apps: Vec<App>,
+    /// All known windows from the compositor, keyed by window_id.
+    pub known_windows: Vec<WindowInfo>,
+    /// Maps (app_id, title) to window_id for lookup.
+    pub window_id_by_key: HashMap<(String, String), u32>,
     pub applications: ApplicationsConfig,
     pub menus: MenuCache,
     pub zoning: ZoningState,
@@ -96,8 +106,10 @@ impl SolaApp for ShellApp {
 
         let app = Self {
             focused_app_id: None,
+            focused_window_id: None,
             mru_apps: Vec::new(),
-            known_apps: Vec::new(),
+            known_windows: Vec::new(),
+            window_id_by_key: HashMap::new(),
             applications: ApplicationsConfig::load(),
             menus,
             zoning: ZoningState::new(),
@@ -127,8 +139,8 @@ impl SolaApp for ShellApp {
 
     fn on_bus_event(&mut self, topic: &Topic, ctx: &mut AppCtx) {
         match topic {
-            Topic::Apps(apps) => {
-                self.handle_apps_update(apps.clone(), ctx);
+            Topic::Windows(windows) => {
+                self.handle_windows_update(windows.clone(), ctx);
                 if self.switcher.active {
                     let json = self.switcher_apps_json();
                     self.windows.switcher.eval_js(&format!(
@@ -162,9 +174,16 @@ impl SolaApp for ShellApp {
                 self.emit_all_frames(ctx);
                 self.emit_composition(ctx);
             }
-            Topic::MouseEntered(MouseEnteredPayload { app_id, title }) => {
+            Topic::MouseEntered(MouseEnteredPayload { window_id }) => {
+                // Look up app_id from the window list.
+                let info = self
+                    .known_windows
+                    .iter()
+                    .find(|w| w.window_id == *window_id);
+                let Some(info) = info else { return };
+
                 // Shell-owned surfaces should not steal app focus.
-                if app_id == Self::APP_ID {
+                if info.app_id == Self::APP_ID {
                     return;
                 }
 
@@ -173,10 +192,11 @@ impl SolaApp for ShellApp {
                     return;
                 }
 
-                self.set_focus(app_id);
+                let app_id = info.app_id.clone();
+                self.set_focus(&app_id);
+                self.focused_window_id = Some(*window_id);
                 ctx.emit(Topic::Focus(FocusTarget {
-                    app_id: app_id.clone(),
-                    title: title.clone(),
+                    window_id: *window_id,
                 }));
                 self.emit_composition(ctx);
             }
@@ -255,12 +275,17 @@ impl ShellApp {
                 let icon = self
                     .icon_for(&app.app_id)
                     .map(String::from)
-                    .unwrap_or_else(|| app.icon.clone());
+                    .unwrap_or_else(|| "app".to_string());
+                let window_count = self
+                    .known_windows
+                    .iter()
+                    .filter(|w| w.app_id == app.app_id)
+                    .count() as u32;
                 serde_json::json!({
                     "app_id": app.app_id,
-                    "name": app.name,
+                    "name": app.app_id,
                     "icon": icon,
-                    "window_count": app.window_count,
+                    "window_count": window_count,
                 })
             })
             .collect();
@@ -331,20 +356,49 @@ impl ShellApp {
         }));
     }
 
-    pub fn rebuild_switcher_apps(&self) -> Vec<App> {
-        let mut apps: Vec<App> = self
+    /// Build a deduplicated list of app_ids for the switcher, ordered by MRU.
+    pub fn rebuild_switcher_apps(&self) -> Vec<SwitcherApp> {
+        let unique_app_ids: Vec<String> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID)
+            .map(|w| w.app_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let mut apps: Vec<SwitcherApp> = self
             .mru_apps
             .iter()
-            .filter_map(|id| self.known_apps.iter().find(|a| &a.app_id == id))
-            .cloned()
+            .filter(|id| unique_app_ids.contains(id))
+            .map(|id| SwitcherApp {
+                app_id: id.clone(),
+            })
             .collect();
         // Append any known apps not yet in MRU.
-        for a in &self.known_apps {
-            if a.app_id != Self::APP_ID && !self.mru_apps.contains(&a.app_id) {
-                apps.push(a.clone());
+        for id in &unique_app_ids {
+            if !self.mru_apps.contains(id) {
+                apps.push(SwitcherApp {
+                    app_id: id.clone(),
+                });
             }
         }
         apps
+    }
+
+    /// Look up a window_id from the known windows list by (app_id, title).
+    pub fn lookup_window_id(&self, app_id: &str, title: &str) -> Option<u32> {
+        self.window_id_by_key
+            .get(&(app_id.to_string(), title.to_string()))
+            .copied()
+    }
+
+    /// Look up any window_id for an app_id (first match).
+    pub fn lookup_any_window_id(&self, app_id: &str) -> Option<u32> {
+        self.known_windows
+            .iter()
+            .find(|w| w.app_id == app_id)
+            .map(|w| w.window_id)
     }
 
     /// Build the composition list (bottom to top) and emit it.
@@ -352,108 +406,137 @@ impl ShellApp {
         let mut entries = Vec::new();
 
         // 1. Shell menubar — always at the bottom.
-        entries.push(CompositionEntry {
-            app_id: Self::APP_ID.into(),
-            title: Some("menubar".into()),
-        });
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
+            entries.push(CompositionEntry { window_id: wid });
+        }
 
         // 2. App windows ordered by MRU (least recent first = bottom of stack).
+        let mut seen_app_ids = HashSet::new();
         for app_id in self.mru_apps.iter().rev() {
             if app_id == Self::APP_ID {
                 continue;
             }
-            entries.push(CompositionEntry {
-                app_id: app_id.clone(),
-                title: None,
-            });
+            seen_app_ids.insert(app_id.clone());
+            // Include all windows for this app.
+            for w in &self.known_windows {
+                if w.app_id == *app_id {
+                    entries.push(CompositionEntry {
+                        window_id: w.window_id,
+                    });
+                }
+            }
         }
 
         // Apps not yet in MRU.
-        for app in &self.known_apps {
-            if app.app_id == Self::APP_ID {
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID || seen_app_ids.contains(&w.app_id) {
                 continue;
             }
-            if !self.mru_apps.contains(&app.app_id) {
-                entries.push(CompositionEntry {
-                    app_id: app.app_id.clone(),
-                    title: None,
-                });
-            }
+            entries.push(CompositionEntry {
+                window_id: w.window_id,
+            });
         }
 
         // 3. Shell panels on top when active.
         if self.menu_open {
-            entries.push(CompositionEntry {
-                app_id: Self::APP_ID.into(),
-                title: Some("menu".into()),
-            });
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
         }
         if self.switcher.active {
-            entries.push(CompositionEntry {
-                app_id: Self::APP_ID.into(),
-                title: Some("switcher".into()),
-            });
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
         }
         if self.launcher.active {
-            entries.push(CompositionEntry {
-                app_id: Self::APP_ID.into(),
-                title: Some("launcher".into()),
-            });
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
         }
 
         ctx.emit(Topic::Composition(entries));
     }
 
-    /// Emit Frame updates for all known apps.
+    /// Emit Frame updates for all known windows.
     pub fn emit_all_frames(&self, ctx: &mut AppCtx) {
-        if let Some(frame) = self.zoning.menubar_frame() {
-            ctx.emit(Topic::Frame(frame));
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
+            if let Some(frame) = self.zoning.menubar_frame(wid) {
+                ctx.emit(Topic::Frame(frame));
+            }
         }
-        for app in &self.known_apps {
-            if app.app_id == Self::APP_ID {
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID {
                 continue;
             }
-            if let Some(frame) = self.zoning.app_frame(&app.app_id) {
+            if let Some(frame) = self.zoning.app_frame(&w.app_id, w.window_id) {
                 ctx.emit(Topic::Frame(frame));
             }
         }
     }
 
-    /// Handle new/removed apps from the compositor's Apps list.
-    pub fn handle_apps_update(&mut self, apps: Vec<App>, ctx: &mut AppCtx) {
-        let old_ids: HashSet<&str> = self.known_apps.iter().map(|a| a.app_id.as_str()).collect();
-        let new_ids: HashSet<&str> = apps.iter().map(|a| a.app_id.as_str()).collect();
-
-        let added: Vec<String> = apps
+    /// Handle new/removed windows from the compositor's Windows list.
+    pub fn handle_windows_update(&mut self, windows: Vec<WindowInfo>, ctx: &mut AppCtx) {
+        let old_app_ids: HashSet<String> = self
+            .known_windows
             .iter()
-            .filter(|a| !old_ids.contains(a.app_id.as_str()) && a.app_id != Self::APP_ID)
-            .map(|a| a.app_id.clone())
+            .filter(|w| w.app_id != Self::APP_ID)
+            .map(|w| w.app_id.clone())
             .collect();
-
-        let removed: Vec<String> = self
-            .known_apps
+        let new_app_ids: HashSet<String> = windows
             .iter()
-            .filter(|a| !new_ids.contains(a.app_id.as_str()) && a.app_id != Self::APP_ID)
-            .map(|a| a.app_id.clone())
+            .filter(|w| w.app_id != Self::APP_ID)
+            .map(|w| w.app_id.clone())
             .collect();
 
-        self.known_apps = apps.clone();
-        self.switcher.apps = apps
-            .into_iter()
-            .filter(|a| a.app_id != Self::APP_ID)
+        let added: Vec<String> = new_app_ids
+            .iter()
+            .filter(|id| !old_app_ids.contains(id.as_str()))
+            .cloned()
             .collect();
+
+        let removed: Vec<String> = old_app_ids
+            .iter()
+            .filter(|id| !new_app_ids.contains(id.as_str()))
+            .cloned()
+            .collect();
+
+        // Rebuild lookup map.
+        self.window_id_by_key.clear();
+        for w in &windows {
+            self.window_id_by_key
+                .insert((w.app_id.clone(), w.title.clone()), w.window_id);
+        }
+
+        self.known_windows = windows;
+
+        // Rebuild switcher apps (unique app_ids, excluding shell).
+        self.switcher.apps = {
+            let mut seen = HashSet::new();
+            self.known_windows
+                .iter()
+                .filter(|w| w.app_id != Self::APP_ID && seen.insert(w.app_id.clone()))
+                .map(|w| SwitcherApp {
+                    app_id: w.app_id.clone(),
+                })
+                .collect()
+        };
 
         for id in &removed {
             self.mru_apps.retain(|m| m != id);
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
+                self.focused_window_id = None;
             }
         }
 
-        // Emit Frames for new apps.
+        // Emit Frames for windows of newly added apps.
         for id in &added {
-            if let Some(frame) = self.zoning.app_frame(id) {
-                ctx.emit(Topic::Frame(frame));
+            for w in &self.known_windows {
+                if w.app_id == *id {
+                    if let Some(frame) = self.zoning.app_frame(id, w.window_id) {
+                        ctx.emit(Topic::Frame(frame));
+                    }
+                }
             }
         }
 
@@ -462,10 +545,11 @@ impl ShellApp {
         // Focus the newest app so the user can start using it immediately.
         if let Some(id) = added.first() {
             self.set_focus(id);
-            ctx.emit(Topic::Focus(FocusTarget {
-                app_id: id.clone(),
-                title: None,
-            }));
+            // Focus the first window of this app.
+            if let Some(wid) = self.lookup_any_window_id(id) {
+                self.focused_window_id = Some(wid);
+                ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
+            }
             self.emit_composition(ctx);
         }
     }
@@ -509,10 +593,11 @@ impl ShellApp {
             .eval_js(&format!("showMenu({}, {})", json, anchor_x));
 
         // Full-screen overlay below the menubar — transparent except the dropdown.
-        if let Some((ow, oh)) = self.zoning.output_size {
+        if let (Some((ow, oh)), Some(wid)) =
+            (self.zoning.output_size, self.lookup_window_id(Self::APP_ID, "menu"))
+        {
             ctx.emit(Topic::Frame(FrameUpdate {
-                app_id: Self::APP_ID.into(),
-                title: Some("menu".into()),
+                window_id: wid,
                 x: 0,
                 y: zoning::MENUBAR_HEIGHT,
                 width: ow,
@@ -546,18 +631,17 @@ impl ShellApp {
         self.applications = ApplicationsConfig::load();
 
         // Snapshot the focus target we'll restore on close.
-        self.launcher.prior_focus = self.focused_app_id.as_ref().map(|id| FocusTarget {
-            app_id: id.clone(),
-            title: None,
-        });
+        self.launcher.prior_focus = self.focused_window_id;
 
         self.launcher.active = true;
         self.launcher.apply_query(&self.applications, "");
 
-        if let Some((ow, oh)) = self.zoning.output_size {
+        if let (Some((ow, oh)), Some(wid)) = (
+            self.zoning.output_size,
+            self.lookup_window_id(Self::APP_ID, "launcher"),
+        ) {
             ctx.emit(Topic::Frame(FrameUpdate {
-                app_id: Self::APP_ID.into(),
-                title: Some("launcher".into()),
+                window_id: wid,
                 x: (ow - launcher::WIDTH) / 2,
                 y: (oh - launcher::HEIGHT) / 3,
                 width: launcher::WIDTH,
@@ -568,10 +652,9 @@ impl ShellApp {
         self.emit_composition(ctx);
 
         // Route keyboard to the launcher window.
-        ctx.emit(Topic::Focus(FocusTarget {
-            app_id: Self::APP_ID.into(),
-            title: Some("launcher".into()),
-        }));
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
+            ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
+        }
 
         self.windows.launcher.eval_js("resetForOpen()");
         self.render_launcher();
@@ -582,7 +665,7 @@ impl ShellApp {
             return;
         }
         tracing::info!("deactivating launcher");
-        let prior = self.launcher.prior_focus.take();
+        let prior_wid = self.launcher.prior_focus.take();
         self.launcher.active = false;
         self.launcher.query.clear();
         self.launcher.filtered_ids.clear();
@@ -590,8 +673,8 @@ impl ShellApp {
 
         self.emit_composition(ctx);
 
-        if let Some(target) = prior {
-            ctx.emit(Topic::Focus(target));
+        if let Some(wid) = prior_wid {
+            ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
         }
     }
 

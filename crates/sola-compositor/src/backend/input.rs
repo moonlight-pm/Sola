@@ -250,22 +250,18 @@ fn forward_pointer_motion(state: &mut State) {
     let (x, y) = state.pointer_location;
     let serial = SERIAL_COUNTER.next_serial();
 
-    let hovered = state.space.element_under((x, y)).map(|(window, _loc)| {
-        (
-            crate::State::app_id(&window).unwrap_or_default(),
-            crate::state::window_title(&window),
-        )
-    });
+    let hovered_wid = state
+        .space
+        .element_under((x, y))
+        .and_then(|(window, _loc)| crate::state::window_id(&window));
 
-    if hovered != state.hovered_surface {
-        state.hovered_surface = hovered.clone();
+    if hovered_wid != state.hovered_window_id {
+        state.hovered_window_id = hovered_wid;
 
-        if let Some((app_id, title)) = hovered {
-            if !app_id.is_empty() {
-                let _ = state.bus.emit(sola_bus::topics::Topic::MouseEntered(
-                    sola_bus::topics::MouseEnteredPayload { app_id, title },
-                ));
-            }
+        if let Some(wid) = hovered_wid {
+            let _ = state.bus.emit(sola_bus::topics::Topic::MouseEntered(
+                sola_bus::topics::MouseEnteredPayload { window_id: wid },
+            ));
         }
     }
 

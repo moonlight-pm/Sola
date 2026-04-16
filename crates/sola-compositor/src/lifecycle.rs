@@ -22,7 +22,13 @@ pub fn run_loop(
         let post_refresh_count = state.space.elements().count();
 
         if post_refresh_count < pre_refresh_count {
-            emit_apps_list(state);
+            // Clean up window_ids for surfaces that space.refresh() removed.
+            state.window_ids.retain(|_, w| {
+                state.space.elements().any(|e| e == w)
+                    || state.unmapped_surfaces.contains(w)
+                    || state.pending_surfaces.contains(w)
+            });
+            emit_windows_list(state);
         }
 
         display
@@ -79,12 +85,12 @@ pub(crate) fn dispatch_bus(state: &mut State) {
 /// surfaces in the list (bottom to top).
 fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::CompositionEntry>) {
     // First pass: find windows for each entry.
-    let to_map: Vec<(smithay::desktop::Window, String, Option<String>)> = entries
+    let to_map: Vec<(smithay::desktop::Window, u32)> = entries
         .iter()
         .filter_map(|entry| {
             state
-                .find_surface(&entry.app_id, entry.title.as_deref())
-                .map(|w| (w, entry.app_id.clone(), entry.title.clone()))
+                .find_window_by_id(entry.window_id)
+                .map(|w| (w, entry.window_id))
         })
         .collect();
 
@@ -100,7 +106,7 @@ fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::Composit
         if is_or {
             continue;
         }
-        let dominated = to_map.iter().any(|(w, _, _)| w == window);
+        let dominated = to_map.iter().any(|(w, _)| w == window);
         if !dominated {
             state.space.unmap_elem(window);
             state.unmapped_surfaces.push(window.clone());
@@ -108,11 +114,10 @@ fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::Composit
     }
 
     // Map surfaces in list order (bottom to top).
-    for (window, app_id, title) in &to_map {
+    for (window, wid) in &to_map {
         state.unmapped_surfaces.retain(|w| w != window);
 
-        let key = (app_id.clone(), title.clone());
-        let geo = state.frame_geometries.get(&key);
+        let geo = state.frame_geometries.get(wid);
 
         let pos = geo.map(|g| (g.x, g.y)).unwrap_or((0, 0));
         state.space.map_element(window.clone(), pos, false);
@@ -123,25 +128,24 @@ fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::Composit
     }
 
     // Reorder: raise elements in list order so the last entry is on top.
-    for (window, _, _) in &to_map {
+    for (window, _) in &to_map {
         state.space.raise_element(window, false);
     }
 }
 
 /// Apply a Frame update: configure the surface with the given size and position.
 fn handle_frame(state: &mut State, update: sola_bus::topics::FrameUpdate) {
-    let key = (update.app_id.clone(), update.title.clone());
-
     // Store the geometry for future Composition mapping.
-    state.frame_geometries.insert(key, update.clone());
+    state.frame_geometries.insert(update.window_id, update.clone());
 
-    // If the surface exists (mapped or unmapped), configure it now.
-    if let Some(window) = state.find_surface(&update.app_id, update.title.as_deref()) {
+    // If the surface exists, configure it now.
+    if let Some(window) = state.find_window_by_id(update.window_id) {
         // If already in Space, reposition.
-        if state
-            .window_by_app_id_title(&update.app_id, update.title.as_deref())
-            .is_some()
-        {
+        let in_space = state
+            .space
+            .elements()
+            .any(|w| w == &window);
+        if in_space {
             state
                 .space
                 .map_element(window.clone(), (update.x, update.y), false);
@@ -177,8 +181,11 @@ fn configure_window_size(window: &smithay::desktop::Window, width: i32, height: 
 /// target. This ensures GTK dispatches shell key-binding events even
 /// after keyboard focus has moved to another client.
 fn handle_focus(state: &mut State, target: sola_bus::topics::FocusTarget) {
-    let window = state.window_by_app_id_title(&target.app_id, target.title.as_deref());
-    let Some(window) = window else { return };
+    let Some(window) = state.find_window_by_id(target.window_id) else {
+        return;
+    };
+
+    let is_shell = State::app_id(&window).is_some_and(|id| id == "sola-shell");
 
     let serial = SERIAL_COUNTER.next_serial();
     let keyboard = state.seat.get_keyboard().unwrap();
@@ -188,60 +195,48 @@ fn handle_focus(state: &mut State, target: sola_bus::topics::FocusTarget) {
         serial,
     );
 
-    if target.app_id != "sola-shell" {
+    if !is_shell {
         if let Some(ref shell_surface) = state.shell_keyboard_target.clone() {
             setup_shell_keyboard_target(state, shell_surface);
         }
     }
 }
 
-/// Emit the current app list as a sticky bus message.
+/// Emit the current window list as a sticky bus message.
 ///
 /// Called whenever surfaces appear or disappear. The shell uses this to
-/// know which surfaces exist and compute composition.
-pub(crate) fn emit_apps_list(state: &mut State) {
-    use sola_bus::topics::{App, Topic};
-    use std::collections::HashMap;
+/// know which windows exist and compute composition.
+pub(crate) fn emit_windows_list(state: &mut State) {
+    use crate::state::window_id;
+    use sola_bus::topics::{Topic, WindowInfo};
 
-    let mut counts: HashMap<String, u32> = HashMap::new();
+    let mut windows: Vec<WindowInfo> = Vec::new();
 
-    // Count mapped surfaces.
+    // Collect mapped surfaces.
     for window in state.space.elements() {
-        if let Some(app_id) = State::app_id(window) {
-            if app_id == "sola-shell" {
-                continue;
-            }
-            *counts.entry(app_id).or_default() += 1;
-        }
-    }
-
-    // Count unmapped surfaces (known to exist but not yet composed).
-    for window in &state.unmapped_surfaces {
-        if let Some(app_id) = State::app_id(window) {
-            if app_id == "sola-shell" {
-                continue;
-            }
-            *counts.entry(app_id).or_default() += 1;
-        }
-    }
-
-    let mut app_ids: Vec<String> = counts.keys().cloned().collect();
-    app_ids.sort();
-
-    let apps: Vec<App> = app_ids
-        .into_iter()
-        .map(|app_id| {
-            let window_count = counts[&app_id];
-            App {
-                name: app_id.clone(),
-                icon: "app".into(),
-                window_count,
+        if let (Some(wid), Some(app_id)) = (window_id(window), State::app_id(window)) {
+            let title = state::window_title(window).unwrap_or_default();
+            windows.push(WindowInfo {
+                window_id: wid,
                 app_id,
-            }
-        })
-        .collect();
+                title,
+            });
+        }
+    }
 
-    let _ = state.bus.emit_sticky(Topic::Apps(apps));
+    // Collect unmapped surfaces (known to exist but not yet composed).
+    for window in &state.unmapped_surfaces {
+        if let (Some(wid), Some(app_id)) = (window_id(window), State::app_id(window)) {
+            let title = state::window_title(window).unwrap_or_default();
+            windows.push(WindowInfo {
+                window_id: wid,
+                app_id,
+                title,
+            });
+        }
+    }
+
+    let _ = state.bus.emit_sticky(Topic::Windows(windows));
 }
 
 fn handle_set_window_policy(state: &mut State, payload: sola_bus::topics::WindowPolicyPayload) {
@@ -266,7 +261,7 @@ fn handle_set_key_bindings(state: &mut State, payload: sola_bus::topics::ShellKe
 }
 
 /// Move pending surfaces whose app_id is now known to unmapped_surfaces.
-/// Emit updated Apps list when new surfaces are detected.
+/// Emit updated Windows list when new surfaces are detected.
 ///
 /// Surfaces stay unmapped until the shell includes them in a Composition.
 fn apply_pending_surfaces(state: &mut State) {
@@ -289,7 +284,10 @@ fn apply_pending_surfaces(state: &mut State) {
         }
 
         let title = state::window_title(&window);
-        tracing::info!(app_id = %app_id, title = ?title, "surface ready, waiting for composition");
+
+        // Assign a stable window ID.
+        let wid = state.assign_window_id(&window);
+        tracing::info!(window_id = wid, app_id = %app_id, title = ?title, "surface ready, waiting for composition");
 
         // The sola-shell menubar is the Meta+key routing target.
         if app_id == "sola-shell" && title.as_deref() == Some("menubar") {
@@ -327,7 +325,7 @@ fn apply_pending_surfaces(state: &mut State) {
     state.pending_surfaces = still_pending;
 
     if new_surfaces {
-        emit_apps_list(state);
+        emit_windows_list(state);
     }
 }
 

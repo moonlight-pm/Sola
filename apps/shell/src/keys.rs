@@ -101,10 +101,12 @@ fn handle_key_pressed(
             json, app.switcher.selected
         ));
 
-        if let Some((ow, oh)) = app.zoning.output_size {
+        if let (Some((ow, oh)), Some(wid)) = (
+            app.zoning.output_size,
+            app.lookup_window_id(ShellApp::APP_ID, "switcher"),
+        ) {
             ctx.emit(Topic::Frame(FrameUpdate {
-                app_id: ShellApp::APP_ID.into(),
-                title: Some("switcher".into()),
+                window_id: wid,
                 x: (ow - 800) / 2,
                 y: (oh - 400) / 2,
                 width: 800,
@@ -139,7 +141,7 @@ fn handle_key_pressed(
     }
 
     // Zone snapping (Meta+Numpad).
-    if let Some(frame) = app.zoning.handle_key(chord.keycode.raw()) {
+    if let Some(frame) = app.zoning.handle_key(chord.keycode.raw(), app.focused_window_id) {
         ctx.emit(Topic::Frame(frame));
         return glib::Propagation::Stop;
     }
@@ -173,10 +175,11 @@ fn handle_meta_released(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
 
     if let Some(ref app_id) = app_id {
         app.set_focus(app_id);
-        ctx.emit(Topic::Focus(FocusTarget {
-            app_id: app_id.clone(),
-            title: None,
-        }));
+        // Focus the first window of this app.
+        if let Some(wid) = app.lookup_any_window_id(app_id) {
+            app.focused_window_id = Some(wid);
+            ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
+        }
     }
     app.emit_composition(ctx);
 }

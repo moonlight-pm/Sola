@@ -48,7 +48,7 @@ fn decode_payload(msg: &Message) -> (Value, Value) {
 /// Convert a parsed Topic's payload into a JSON value.
 fn topic_to_json(topic: &Topic) -> Value {
     match topic {
-        Topic::Apps(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::Windows(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::LaunchApp(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Composition(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Frame(v) => serde_json::to_value(v).unwrap_or_default(),
