@@ -163,10 +163,24 @@ html, body {
   overflow: hidden;
 }
 
+/* --- Resize handle --- */
+
+.resize-handle {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--border);
+  transition: background 0.15s;
+}
+
+.resize-handle:hover {
+  background: var(--text-accent);
+}
+
 /* --- Sticky panel --- */
 
 .sticky-panel {
-  width: 220px;
+  width: 240px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -228,6 +242,27 @@ html, body {
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-muted);
+}
+
+.sticky-item.expanded {
+  background: var(--bg-selected);
+}
+
+.sticky-detail {
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-primary);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.sticky-detail.hidden {
+  display: none;
 }
 
 /* --- Message table header --- */

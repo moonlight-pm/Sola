@@ -50,6 +50,7 @@ const state = reactive({
   count: 0,
   autoScroll: true,
   stickyMessages: [] as BusMessage[],
+  expandedStickyKey: null as string | null,
 });
 
 let pauseBuffer: BusMessage[] = [];
@@ -87,27 +88,36 @@ function formatTime(ms: number): string {
   return `${h}:${m}:${s}.${ms_}`;
 }
 
-function previewPayload(msg: BusMessage): string {
-  if (msg.payload != null) {
-    const str = JSON.stringify(msg.payload);
-    return str.length > 80 ? str.slice(0, 80) + '\u2026' : str;
-  }
-  if (msg.rawHex) return `[hex: ${msg.rawHex.slice(0, 40)}\u2026]`;
-  return '';
-}
-
 // --- JSON syntax highlighting (Arrow.js templates) ---
 
+function highlightedPreview(msg: BusMessage): any[] {
+  if (msg.payload == null) {
+    if (msg.rawHex) return [`[hex: ${msg.rawHex.slice(0, 40)}\u2026]`];
+    return [];
+  }
+  return tokenizeJson(JSON.stringify(msg.payload), 80);
+}
+
 function highlightedJson(obj: any): any[] {
-  const json = JSON.stringify(obj, null, 2);
+  return tokenizeJson(JSON.stringify(obj, null, 2));
+}
+
+function tokenizeJson(json: string, maxChars?: number): any[] {
   const result: any[] = [];
   const re = /("(?:\\.|[^"\\])*")\s*(:)|("(?:\\.|[^"\\])*")|(true|false)|(null)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
   let last = 0;
+  let chars = 0;
   let match;
   while ((match = re.exec(json)) !== null) {
     if (match.index > last) {
-      result.push(json.slice(last, match.index));
+      const plain = json.slice(last, match.index);
+      chars += plain.length;
+      if (maxChars && chars > maxChars) { result.push('\u2026'); return result; }
+      result.push(plain);
     }
+    const tokenLen = match[0].length;
+    chars += tokenLen;
+    if (maxChars && chars > maxChars) { result.push('\u2026'); return result; }
     if (match[1] && match[2]) {
       result.push(html`<span class="json-key">${match[1]}</span>`);
       result.push(':');
@@ -284,28 +294,36 @@ export async function createApp(root: HTMLElement) {
                   <span class="cell topic">${msg.topic}</span>
                   <span class="cell source">${msg.source || '\u2014'}</span>
                   <span class="cell sticky">${msg.sticky ? html`<span class="dot"></span>` : ''}</span>
-                  <span class="cell preview">${previewPayload(msg)}</span>
+                  <span class="cell preview">${highlightedPreview(msg)}</span>
                 </div>
               `
             )}
         </div>
       </div>
 
-      <div class="sticky-panel">
+      <div class="resize-handle" id="resize-handle"></div>
+      <div class="sticky-panel" id="sticky-panel">
         <div class="sticky-header">Sticky State</div>
         <div class="sticky-list">
           ${() =>
             state.stickyMessages.map(
-              (msg) => html`
-                <div
-                  class="${`sticky-item${state.selectedId === msg.msgId ? ' selected' : ''}`}"
-                  data-category="${categoryOf(msg.topic)}"
-                  @click="${() => selectMessage(msg)}"
-                >
-                  <span class="sticky-item-topic">${msg.topic}</span>
-                  <span class="sticky-item-source">${msg.source || ''}</span>
-                </div>
-              `
+              (msg) => {
+                const key = `${msg.topic}:${msg.source}`;
+                const expanded = state.expandedStickyKey === key;
+                return html`
+                  <div
+                    class="${`sticky-item${expanded ? ' expanded' : ''}`}"
+                    data-category="${categoryOf(msg.topic)}"
+                    @click="${() => { state.expandedStickyKey = expanded ? null : key; }}"
+                  >
+                    <span class="sticky-item-topic">${msg.topic}</span>
+                    <span class="sticky-item-source">${msg.source || ''}</span>
+                  </div>
+                  <div class="${`sticky-detail${expanded ? '' : ' hidden'}`}">
+                    ${expanded && msg.payload != null ? highlightedJson(msg.payload) : ''}
+                  </div>
+                `;
+              }
             )}
         </div>
       </div>
@@ -355,4 +373,21 @@ export async function createApp(root: HTMLElement) {
 
   listEl = document.getElementById('message-list');
   selectEl = document.getElementById('topic-select') as HTMLSelectElement;
+
+  // Resize handle for sticky panel
+  const handle = document.getElementById('resize-handle');
+  const panel = document.getElementById('sticky-panel');
+  if (handle && panel) {
+    let dragging = false;
+    handle.addEventListener('mousedown', (e) => {
+      dragging = true;
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const width = window.innerWidth - e.clientX;
+      panel.style.width = `${Math.max(120, Math.min(width, 600))}px`;
+    });
+    window.addEventListener('mouseup', () => { dragging = false; });
+  }
 }

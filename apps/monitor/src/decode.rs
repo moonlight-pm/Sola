@@ -10,9 +10,9 @@ pub fn message_to_json(msg: &Message) -> Value {
 
     let (payload, raw_hex) = decode_payload(msg);
 
-    // Source: prefer sticky_tag, then extract app_id from payload
-    let source = if !msg.sticky_tag.is_empty() {
-        msg.sticky_tag.clone()
+    // Source: prefer msg.source, then extract app_id from payload
+    let source = if !msg.source.is_empty() {
+        msg.source.clone()
     } else if let Some(app_id) = payload.get("app_id").and_then(|v| v.as_str()) {
         app_id.to_string()
     } else {

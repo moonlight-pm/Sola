@@ -119,7 +119,7 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                 let mut bus = state.lock().unwrap();
 
                 if event.sticky {
-                    let key = (event.topic.clone(), event.sticky_tag.clone());
+                    let key = (event.topic.clone(), event.source.clone());
                     bus.sticky.insert(key, event.clone());
                 }
 
