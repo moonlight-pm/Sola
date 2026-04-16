@@ -259,8 +259,15 @@ impl State {
     }
 }
 
-/// Extract the app_id from a Window's xdg_toplevel surface data.
+/// Extract the app_id from a Window.
 fn window_app_id(window: &Window) -> Option<String> {
+    // X11 windows use class as app_id.
+    if let Some(x11) = window.x11_surface() {
+        let class = x11.class();
+        return if class.is_empty() { None } else { Some(class) };
+    }
+
+    // Wayland toplevels use xdg_toplevel app_id.
     use smithay::wayland::compositor::with_states;
     use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
 
@@ -275,8 +282,15 @@ fn window_app_id(window: &Window) -> Option<String> {
     })
 }
 
-/// Extract the title from a Window's xdg_toplevel surface data.
+/// Extract the title from a Window.
 pub fn window_title(window: &Window) -> Option<String> {
+    // X11 windows use the X11 title property.
+    if let Some(x11) = window.x11_surface() {
+        let title = x11.title();
+        return if title.is_empty() { None } else { Some(title) };
+    }
+
+    // Wayland toplevels use xdg_toplevel title.
     use smithay::wayland::compositor::with_states;
     use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
 
