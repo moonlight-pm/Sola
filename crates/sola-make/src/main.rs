@@ -5,6 +5,7 @@
 /// Makefiles and shell scripts with type-safe, maintainable build logic.
 ///
 /// See: https://github.com/matklad/cargo-xtask
+mod assets;
 mod deploy;
 mod watch;
 
@@ -32,6 +33,12 @@ enum Commands {
         release: bool,
     },
 
+    /// Manage vendored third-party assets (icons, etc).
+    Assets {
+        #[command(subcommand)]
+        action: AssetsAction,
+    },
+
     /// Deploy to a target machine.
     ///
     /// Deploys locally by default. Use --canto for remote deploy.
@@ -50,10 +57,19 @@ enum Commands {
     },
 }
 
+#[derive(clap::Subcommand, Debug)]
+enum AssetsAction {
+    /// Pull vendored asset packs from their pinned upstream sources.
+    Pull,
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
         Commands::Build { target, release } => build(target, release),
+        Commands::Assets { action } => match action {
+            AssetsAction::Pull => assets::pull(),
+        },
         Commands::Deploy { app, canto, watch } => {
             let target: Box<dyn deploy::DeployTarget> = if canto {
                 Box::new(deploy::Remote { host: "canto" })
