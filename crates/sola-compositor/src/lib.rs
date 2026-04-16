@@ -11,6 +11,7 @@ pub mod output;
 pub mod state;
 pub mod types;
 pub mod wayland;
+pub mod xwayland;
 
 use smithay::backend::session::Session;
 use smithay::reexports::calloop::generic::Generic;

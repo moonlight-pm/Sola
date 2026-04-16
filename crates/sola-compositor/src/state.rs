@@ -24,6 +24,8 @@ use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
 use smithay::wayland::shm::ShmState;
+use smithay::wayland::xwayland_shell::XWaylandShellState;
+use smithay::xwayland::X11Wm;
 
 use crate::backend::device::Device;
 use crate::backend::gpu::SolaGpuManager;
@@ -133,6 +135,12 @@ pub struct State {
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
     pub dmabuf_state: Option<DmabufState>,
 
+    // -- XWayland --
+    /// X11 window manager. Set when XWayland connects and sends Ready.
+    pub xwm: Option<X11Wm>,
+    /// XWayland shell protocol state.
+    pub xwayland_shell_state: Option<XWaylandShellState>,
+
     /// The cursor image loaded from the xcursor theme. `None` if loading failed.
     pub cursor_buffer: Option<MemoryRenderBuffer>,
 
@@ -196,6 +204,8 @@ impl State {
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             dmabuf_state: None,
+            xwm: None,
+            xwayland_shell_state: None,
         }
     }
 
