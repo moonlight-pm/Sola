@@ -348,6 +348,12 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ForwardBufferD
             _ => {}
         }
     }
+
+    // The `Created` event (opcode 0) carries a server-allocated wl_buffer.
+    // Without this, wayland-client panics when dispatching the new object.
+    wayland_client::event_created_child!(ClientApp, zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, [
+        0 => (wl_buffer::WlBuffer, ()),
+    ]);
 }
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for ClientApp {
