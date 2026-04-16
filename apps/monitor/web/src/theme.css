@@ -146,6 +146,90 @@ html, body {
   padding-right: 4px;
 }
 
+/* --- Main area (messages + sticky panel) --- */
+
+.main-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.messages-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* --- Sticky panel --- */
+
+.sticky-panel {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border);
+}
+
+.sticky-header {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sticky-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sticky-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.sticky-item:hover {
+  background: var(--bg-hover);
+}
+
+.sticky-item.selected {
+  background: var(--bg-selected);
+}
+
+.sticky-item[data-category="lifecycle"]   { border-left-color: var(--topic-lifecycle); }
+.sticky-item[data-category="composition"] { border-left-color: var(--topic-composition); }
+.sticky-item[data-category="window"]      { border-left-color: var(--topic-window); }
+.sticky-item[data-category="input"]       { border-left-color: var(--topic-input); }
+.sticky-item[data-category="menu"]        { border-left-color: var(--topic-menu); }
+.sticky-item[data-category="browser"]     { border-left-color: var(--topic-browser); }
+.sticky-item[data-category="unknown"]     { border-left-color: var(--topic-unknown); }
+
+.sticky-item-topic {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.sticky-item-source {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 /* --- Message table header --- */
 
 .table-header {

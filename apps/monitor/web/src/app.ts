@@ -49,10 +49,12 @@ const state = reactive({
   topicFilter: '',
   count: 0,
   autoScroll: true,
+  stickyMessages: [] as BusMessage[],
 });
 
 let pauseBuffer: BusMessage[] = [];
 const seenTopics = new Set<string>();
+const stickyMap = new Map<string, BusMessage>();
 
 // --- Filtering ---
 
@@ -94,25 +96,36 @@ function previewPayload(msg: BusMessage): string {
   return '';
 }
 
-// --- JSON syntax highlighting ---
+// --- JSON syntax highlighting (Arrow.js templates) ---
 
-function highlightJson(obj: any): string {
+function highlightedJson(obj: any): any[] {
   const json = JSON.stringify(obj, null, 2);
-  return json.replace(
-    /("(?:\\.|[^"\\])*")\s*(:)|("(?:\\.|[^"\\])*")|(true|false)|(null)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
-    (_match, key, colon, str, bool, nil, num) => {
-      if (key && colon) return `<span class="json-key">${esc(key)}</span>:`;
-      if (str) return `<span class="json-string">${esc(str)}</span>`;
-      if (bool) return `<span class="json-bool">${bool}</span>`;
-      if (nil) return `<span class="json-null">${nil}</span>`;
-      if (num) return `<span class="json-number">${num}</span>`;
-      return _match;
+  const result: any[] = [];
+  const re = /("(?:\\.|[^"\\])*")\s*(:)|("(?:\\.|[^"\\])*")|(true|false)|(null)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+  let last = 0;
+  let match;
+  while ((match = re.exec(json)) !== null) {
+    if (match.index > last) {
+      result.push(json.slice(last, match.index));
     }
-  );
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (match[1] && match[2]) {
+      result.push(html`<span class="json-key">${match[1]}</span>`);
+      result.push(':');
+    } else if (match[3]) {
+      result.push(html`<span class="json-string">${match[3]}</span>`);
+    } else if (match[4]) {
+      result.push(html`<span class="json-bool">${match[4]}</span>`);
+    } else if (match[5]) {
+      result.push(html`<span class="json-null">${match[5]}</span>`);
+    } else if (match[6]) {
+      result.push(html`<span class="json-number">${match[6]}</span>`);
+    }
+    last = re.lastIndex;
+  }
+  if (last < json.length) {
+    result.push(json.slice(last));
+  }
+  return result;
 }
 
 // --- Message handling ---
@@ -120,6 +133,12 @@ function esc(s: string): string {
 function addMessage(msg: BusMessage) {
   seenTopics.add(msg.topic);
   updateTopicDropdown();
+
+  if (msg.sticky) {
+    const key = `${msg.topic}:${msg.source}`;
+    stickyMap.set(key, msg);
+    state.stickyMessages = Array.from(stickyMap.values());
+  }
 
   if (state.paused) {
     pauseBuffer.push(msg);
@@ -159,30 +178,11 @@ function selectMessage(msg: BusMessage | null) {
     state.selectedId = null;
     state.selectedMessage = null;
   }
-  updateDetailBody();
-}
-
-function updateDetailBody() {
-  if (!detailBodyEl) return;
-  const m = state.selectedMessage;
-  if (!m) {
-    detailBodyEl.textContent = '';
-    return;
-  }
-  if (m.payload != null) {
-    // Safe: highlightJson escapes all user content via esc() before wrapping in spans
-    detailBodyEl.innerHTML = highlightJson(m.payload);
-  } else if (m.rawHex) {
-    detailBodyEl.textContent = `[raw hex]\n${m.rawHex}`;
-  } else {
-    detailBodyEl.textContent = '(no payload)';
-  }
 }
 
 // --- Scroll management ---
 
 let listEl: HTMLElement | null = null;
-let detailBodyEl: HTMLElement | null = null;
 
 function scrollToBottom() {
   if (listEl && state.autoScroll) {
@@ -257,35 +257,58 @@ export async function createApp(root: HTMLElement) {
       <span class="count">${() => state.count} msgs</span>
     </div>
 
-    <div class="table-header">
-      <span>Time</span>
-      <span>Topic</span>
-      <span>Source</span>
-      <span>S</span>
-      <span>Preview</span>
-    </div>
+    <div class="main-area">
+      <div class="messages-panel">
+        <div class="table-header">
+          <span>Time</span>
+          <span>Topic</span>
+          <span>Source</span>
+          <span>S</span>
+          <span>Preview</span>
+        </div>
 
-    <div
-      class="message-list"
-      id="message-list"
-      @scroll="${onListScroll}"
-    >
-      ${() =>
-        state.filteredMessages.map(
-          (msg) => html`
-            <div
-              class="${`message-row${state.selectedId === msg.msgId ? ' selected' : ''}`}"
-              data-category="${categoryOf(msg.topic)}"
-              @click="${() => selectMessage(msg)}"
-            >
-              <span class="cell time">${formatTime(msg.timestamp)}</span>
-              <span class="cell topic">${msg.topic}</span>
-              <span class="cell source">${msg.source || '\u2014'}</span>
-              <span class="cell sticky">${msg.sticky ? html`<span class="dot"></span>` : ''}</span>
-              <span class="cell preview">${previewPayload(msg)}</span>
-            </div>
-          `
-        )}
+        <div
+          class="message-list"
+          id="message-list"
+          @scroll="${onListScroll}"
+        >
+          ${() =>
+            state.filteredMessages.map(
+              (msg) => html`
+                <div
+                  class="${`message-row${state.selectedId === msg.msgId ? ' selected' : ''}`}"
+                  data-category="${categoryOf(msg.topic)}"
+                  @click="${() => selectMessage(msg)}"
+                >
+                  <span class="cell time">${formatTime(msg.timestamp)}</span>
+                  <span class="cell topic">${msg.topic}</span>
+                  <span class="cell source">${msg.source || '\u2014'}</span>
+                  <span class="cell sticky">${msg.sticky ? html`<span class="dot"></span>` : ''}</span>
+                  <span class="cell preview">${previewPayload(msg)}</span>
+                </div>
+              `
+            )}
+        </div>
+      </div>
+
+      <div class="sticky-panel">
+        <div class="sticky-header">Sticky State</div>
+        <div class="sticky-list">
+          ${() =>
+            state.stickyMessages.map(
+              (msg) => html`
+                <div
+                  class="${`sticky-item${state.selectedId === msg.msgId ? ' selected' : ''}`}"
+                  data-category="${categoryOf(msg.topic)}"
+                  @click="${() => selectMessage(msg)}"
+                >
+                  <span class="sticky-item-topic">${msg.topic}</span>
+                  <span class="sticky-item-source">${msg.source || ''}</span>
+                </div>
+              `
+            )}
+        </div>
+      </div>
     </div>
 
     <div class="${() => `detail-pane${state.selectedMessage ? '' : ' hidden'}`}">
@@ -309,7 +332,15 @@ export async function createApp(root: HTMLElement) {
         </span>
         <button class="detail-close" @click="${() => selectMessage(null)}">\u00d7</button>
       </div>
-      <div class="detail-body" id="detail-body"></div>
+      <div class="detail-body">
+        ${() => {
+          const m = state.selectedMessage;
+          if (!m) return '';
+          if (m.payload != null) return highlightedJson(m.payload);
+          if (m.rawHex) return `[raw hex]\n${m.rawHex}`;
+          return '(no payload)';
+        }}
+      </div>
     </div>
 
     <div
@@ -324,5 +355,4 @@ export async function createApp(root: HTMLElement) {
 
   listEl = document.getElementById('message-list');
   selectEl = document.getElementById('topic-select') as HTMLSelectElement;
-  detailBodyEl = document.getElementById('detail-body');
 }
