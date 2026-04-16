@@ -542,6 +542,9 @@ impl ShellApp {
         }
         tracing::info!("activating launcher");
 
+        // Reload apps from disk so edits take effect without restarting.
+        self.applications = ApplicationsConfig::load();
+
         // Snapshot the focus target we'll restore on close.
         self.launcher.prior_focus = self.focused_app_id.as_ref().map(|id| FocusTarget {
             app_id: id.clone(),
