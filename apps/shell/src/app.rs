@@ -1,5 +1,4 @@
-use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::collections::HashSet;
 
 use serde_json::Value;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle};
@@ -13,12 +12,6 @@ use crate::menu::{MENU_ASSETS, MenuCache};
 use crate::menubar::setup_menubar;
 use crate::switcher::{SWITCHER_ASSETS, SwitcherState};
 use crate::zoning::{self, ZoningState};
-
-/// How long after an app disappears do we treat its re-appearance as a
-/// "re-map" (e.g. sola-x reconnect after an EGL buffer failure) rather
-/// than a fresh launch. Inside the window: keep MRU position, don't
-/// steal focus. Outside the window: treat as a brand-new launch.
-const REMAP_WINDOW: Duration = Duration::from_secs(5);
 
 pub struct ShellWindows {
     pub menubar: WindowHandle,
@@ -35,9 +28,6 @@ pub struct ShellApp {
     pub switcher: SwitcherState,
     pub menu_open: bool,
     pub windows: ShellWindows,
-    /// Timestamps of recent removals, used to distinguish a genuine
-    /// re-launch from an app that just briefly vanished and came back.
-    pub recently_removed: HashMap<String, Instant>,
 }
 
 impl SolaApp for ShellApp {
@@ -99,7 +89,6 @@ impl SolaApp for ShellApp {
                 menu,
                 switcher,
             },
-            recently_removed: HashMap::new(),
         };
 
         app.emit_shell_key_bindings(ctx);
@@ -378,43 +367,14 @@ impl ShellApp {
             .filter(|a| a.app_id != Self::APP_ID)
             .collect();
 
-        // Preserve MRU entries for removed apps so a brief disappearance
-        // (sola-x reconnect, etc) can restore them in place. Stamp the
-        // removal time so handle_apps_update below can distinguish a
-        // quick re-map from a true re-launch.
-        let now = Instant::now();
         for id in &removed {
-            self.recently_removed.insert(id.clone(), now);
+            self.mru_apps.retain(|m| m != id);
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
             }
         }
-        self.recently_removed
-            .retain(|_, ts| now.duration_since(*ts) < Duration::from_secs(60));
 
-        // Classify each added app as a re-map or a fresh launch.
-        let mut truly_new: Vec<String> = Vec::new();
-        for id in &added {
-            let is_remap = self
-                .recently_removed
-                .get(id)
-                .is_some_and(|ts| now.duration_since(*ts) < REMAP_WINDOW);
-            self.recently_removed.remove(id);
-
-            if is_remap {
-                // Keep existing MRU position; if we've somehow lost it,
-                // drop the app at the back so it doesn't visually raise.
-                if !self.mru_apps.iter().any(|m| m == id) {
-                    self.mru_apps.push(id.clone());
-                }
-            } else {
-                // Fresh launch — will land at the front of MRU via
-                // set_focus below, and should receive keyboard focus.
-                truly_new.push(id.clone());
-            }
-        }
-
-        // Emit Frames for all added apps (new and re-mapped alike).
+        // Emit Frames for new apps.
         for id in &added {
             if let Some(frame) = self.zoning.app_frame(id) {
                 ctx.emit(Topic::Frame(frame));
@@ -423,22 +383,14 @@ impl ShellApp {
 
         self.emit_composition(ctx);
 
-        // Focus the first fresh launch so the user can start using it
-        // immediately. set_focus inserts it at the front of MRU.
-        if let Some(id) = truly_new.first() {
+        // Focus the newest app so the user can start using it immediately.
+        if let Some(id) = added.first() {
             self.set_focus(id);
             ctx.emit(Topic::Focus(FocusTarget {
                 app_id: id.clone(),
                 title: None,
             }));
             self.emit_composition(ctx);
-        }
-        // Any additional fresh launches in the same batch go near the
-        // front of MRU but behind the focused one.
-        for id in truly_new.iter().skip(1) {
-            if !self.mru_apps.iter().any(|m| m == id) {
-                self.mru_apps.insert(1.min(self.mru_apps.len()), id.clone());
-            }
         }
     }
 
