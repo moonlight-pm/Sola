@@ -48,23 +48,51 @@ impl CompositorHandler for State {
             return;
         };
 
+        // Check whether this commit uses the async dmabuf path.
+        let is_dmabuf = compositor::with_states(surface, |data| {
+            let mut guard = data.cached_state.get::<SurfaceAttributes>();
+            let attrs = guard.current();
+            matches!(
+                attrs.buffer,
+                Some(ref a) if matches!(a, compositor::BufferAssignment::NewBuffer(buf) if smithay::wayland::dmabuf::get_dmabuf(buf).is_ok())
+            )
+        });
+
         // Forward the buffer to the proxy surface in sola-compositor.
         if let Some(client) = &mut self.client {
             crate::bridge::forward_buffer(surface, x11_id, client);
         }
 
-        // Fire frame callbacks so XWayland knows to send the next frame.
-        compositor::with_states(surface, |data| {
-            let mut guard = data.cached_state.get::<SurfaceAttributes>();
-            let attrs = guard.current();
-            let time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u32;
-            for callback in attrs.frame_callbacks.drain(..) {
-                callback.done(time);
-            }
-        });
+        if is_dmabuf {
+            // Async dmabuf: stash frame callbacks until the compositor
+            // confirms import via `Created`. This prevents XWayland from
+            // submitting frames faster than the compositor can import them.
+            compositor::with_states(surface, |data| {
+                let mut guard = data.cached_state.get::<SurfaceAttributes>();
+                let attrs = guard.current();
+                let callbacks: Vec<_> = attrs.frame_callbacks.drain(..).collect();
+                if !callbacks.is_empty() {
+                    self.pending_frame_callbacks
+                        .entry(x11_id)
+                        .or_default()
+                        .extend(callbacks);
+                }
+            });
+        } else {
+            // SHM or buffer-removed: fire frame callbacks immediately
+            // since the buffer is already forwarded synchronously.
+            compositor::with_states(surface, |data| {
+                let mut guard = data.cached_state.get::<SurfaceAttributes>();
+                let attrs = guard.current();
+                let time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u32;
+                for callback in attrs.frame_callbacks.drain(..) {
+                    callback.done(time);
+                }
+            });
+        }
     }
 }
 

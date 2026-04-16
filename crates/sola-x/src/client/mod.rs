@@ -46,6 +46,16 @@ pub struct ClientApp {
     /// Size-change requests from sola-compositor (via xdg_toplevel configure),
     /// queued for the main loop to forward to the matching X11 window.
     pub pending_configures: Vec<PendingConfigure>,
+
+    /// X11 window IDs whose async dmabuf import succeeded (Created) or
+    /// failed. The main loop uses this to fire or drop stashed frame callbacks.
+    pub pending_frame_done: Vec<FrameDone>,
+}
+
+/// Signals that an async dmabuf import finished for an X11 window.
+pub struct FrameDone {
+    pub x11_id: u32,
+    pub success: bool,
 }
 
 /// A resize request for an X11 window, carried from a proxy xdg_toplevel
@@ -139,6 +149,7 @@ impl ClientConnection {
             surface_to_x11: HashMap::new(),
             pending_input: Vec::new(),
             pending_configures: Vec::new(),
+            pending_frame_done: Vec::new(),
         };
 
         // Roundtrip to bind globals.
@@ -232,6 +243,11 @@ impl ClientConnection {
     /// Drain queued resize requests for X11 windows (from proxy toplevel configures).
     pub fn drain_configures(&mut self) -> Vec<PendingConfigure> {
         std::mem::take(&mut self.app.pending_configures)
+    }
+
+    /// Drain queued frame-done signals (from async dmabuf Created/Failed events).
+    pub fn drain_frame_done(&mut self) -> Vec<FrameDone> {
+        std::mem::take(&mut self.app.pending_frame_done)
     }
 
     /// Read new events from the connection and dispatch them.
@@ -336,6 +352,10 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ForwardBufferD
                     proxy.surface.damage_buffer(0, 0, data.width, data.height);
                     proxy.surface.commit();
                 }
+                state.pending_frame_done.push(FrameDone {
+                    x11_id: data.x11_window_id,
+                    success: true,
+                });
                 params.destroy();
             }
             zwp_linux_buffer_params_v1::Event::Failed => {
@@ -343,6 +363,10 @@ impl Dispatch<zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1, ForwardBufferD
                     x11_id = data.x11_window_id,
                     "dmabuf import rejected by compositor; frame dropped"
                 );
+                state.pending_frame_done.push(FrameDone {
+                    x11_id: data.x11_window_id,
+                    success: false,
+                });
                 params.destroy();
             }
             _ => {}

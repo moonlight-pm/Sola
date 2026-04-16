@@ -61,6 +61,16 @@ pub struct State {
 
     /// Whether the main loop should keep running.
     pub running: bool,
+
+    /// Last keymap string adopted from the compositor. Used to skip
+    /// redundant `set_keymap_from_string` calls on every keyboard enter.
+    pub last_keymap: Option<String>,
+
+    /// Frame callbacks stashed while waiting for async dmabuf import.
+    /// Keyed by X11 window ID. Fired when the `Created` event arrives,
+    /// or dropped on `Failed`.
+    pub pending_frame_callbacks:
+        HashMap<u32, Vec<smithay::reexports::wayland_server::protocol::wl_callback::WlCallback>>,
 }
 
 /// Initialize dmabuf v4 by opening the primary GPU render node and querying
@@ -220,6 +230,8 @@ impl State {
             x11_windows: HashMap::new(),
             client: None,
             running: true,
+            last_keymap: None,
+            pending_frame_callbacks: HashMap::new(),
         }
     }
 }

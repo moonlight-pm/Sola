@@ -92,6 +92,7 @@ fn run() -> Result<(), Error> {
             } else {
                 inject_input(&mut state);
                 apply_pending_configures(&mut state);
+                fire_pending_frame_callbacks(&mut state);
                 // Flush injected input events to XWayland immediately.
                 let _ = display.flush_clients();
             }
@@ -286,12 +287,21 @@ fn inject_input(state: &mut State) {
                 // Adopt the compositor's keymap so sola-x's own seat (and
                 // therefore XWayland, and therefore X11 clients like Brave)
                 // translates keycodes to the same symbols the user's physical
-                // keyboard was producing upstream. Without this, both sides
-                // fall back to XkbConfig::default which may differ from the
-                // compositor's actual layout if XKB_DEFAULT_* env vars aren't
-                // identical between processes.
-                if let Err(e) = keyboard.set_keymap_from_string(state, keymap) {
-                    tracing::warn!("failed to adopt compositor keymap: {e:?}");
+                // keyboard was producing upstream.
+                //
+                // Skip if the keymap hasn't changed — set_keymap_from_string
+                // is expensive (xkb reparse + fd creation + redistribution to
+                // all XWayland clients) and gets called on every keyboard enter.
+                let changed = state
+                    .last_keymap
+                    .as_ref()
+                    .map_or(true, |prev| *prev != keymap);
+                if changed {
+                    if let Err(e) = keyboard.set_keymap_from_string(state, keymap.clone()) {
+                        tracing::warn!("failed to adopt compositor keymap: {e:?}");
+                    } else {
+                        state.last_keymap = Some(keymap);
+                    }
                 }
             }
             client::InputEvent::KeyboardModifiers {
@@ -382,6 +392,36 @@ fn apply_pending_configures(state: &mut State) {
         let new_geo = Rectangle::new(geo.loc, (conf.width as i32, conf.height as i32).into());
         if let Err(err) = info.surface.configure(Some(new_geo)) {
             tracing::warn!(x11_id = conf.x11_id, ?err, "failed to configure X11 window");
+        }
+    }
+}
+
+/// Fire or drop stashed frame callbacks based on async dmabuf results.
+///
+/// When a dmabuf commit uses the async `create` path, frame callbacks are
+/// stashed until the compositor confirms import. On `Created`, we fire them
+/// so XWayland can submit the next frame. On `Failed`, we drop them (the
+/// frame was lost, but XWayland will re-commit on the next render).
+fn fire_pending_frame_callbacks(state: &mut State) {
+    let events = match &mut state.client {
+        Some(client) => client.drain_frame_done(),
+        None => return,
+    };
+
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u32;
+
+    for done in events {
+        if let Some(callbacks) = state.pending_frame_callbacks.remove(&done.x11_id) {
+            if done.success {
+                for cb in callbacks {
+                    cb.done(time);
+                }
+            }
+            // On failure, callbacks are just dropped — XWayland will
+            // re-commit when it renders the next frame.
         }
     }
 }
