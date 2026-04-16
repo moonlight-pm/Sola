@@ -93,6 +93,9 @@ pub enum InputEvent {
         locked: u32,
         group: u32,
     },
+    KeyboardKeymap {
+        keymap: String,
+    },
 }
 
 /// A proxy surface in sola-compositor representing an X11 window.
@@ -472,6 +475,35 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for ClientApp {
                     locked: mods_locked,
                     group,
                 });
+            }
+            wl_keyboard::Event::Keymap { format, fd, size } => {
+                if !matches!(format, WEnum::Value(wl_keyboard::KeymapFormat::XkbV1)) {
+                    tracing::warn!("unsupported keymap format from compositor");
+                    return;
+                }
+                // Read the keymap text from the shared fd so we can hand
+                // it to sola-x's own seat. xkb v1 keymaps are null-terminated.
+                use std::io::{Read, Seek, SeekFrom};
+                let mut file = std::fs::File::from(fd);
+                let _ = file.seek(SeekFrom::Start(0));
+                let mut buf = vec![0u8; size as usize];
+                if let Err(e) = file.read_exact(&mut buf) {
+                    tracing::warn!("failed to read compositor keymap: {e}");
+                    return;
+                }
+                while buf.last() == Some(&0) {
+                    buf.pop();
+                }
+                match String::from_utf8(buf) {
+                    Ok(keymap) => {
+                        state
+                            .pending_input
+                            .push(InputEvent::KeyboardKeymap { keymap });
+                    }
+                    Err(e) => {
+                        tracing::warn!("compositor keymap is not valid utf-8: {e}");
+                    }
+                }
             }
             _ => {}
         }

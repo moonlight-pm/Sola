@@ -282,6 +282,18 @@ fn inject_input(state: &mut State) {
                 let serial = SERIAL_COUNTER.next_serial();
                 keyboard.set_focus(state, None, serial);
             }
+            client::InputEvent::KeyboardKeymap { keymap } => {
+                // Adopt the compositor's keymap so sola-x's own seat (and
+                // therefore XWayland, and therefore X11 clients like Brave)
+                // translates keycodes to the same symbols the user's physical
+                // keyboard was producing upstream. Without this, both sides
+                // fall back to XkbConfig::default which may differ from the
+                // compositor's actual layout if XKB_DEFAULT_* env vars aren't
+                // identical between processes.
+                if let Err(e) = keyboard.set_keymap_from_string(state, keymap) {
+                    tracing::warn!("failed to adopt compositor keymap: {e:?}");
+                }
+            }
             client::InputEvent::KeyboardModifiers {
                 depressed,
                 latched,
