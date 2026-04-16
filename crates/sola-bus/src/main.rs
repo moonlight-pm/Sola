@@ -70,17 +70,18 @@ fn main() {
                     }
                 };
 
+                // Short write timeout prevents a slow client from
+                // deadlocking the bus. Reads are unaffected (the reader
+                // fd has no timeout set). We can't use set_nonblocking
+                // because dup'd fds share the same file description —
+                // it would make the reader non-blocking too.
+                writer
+                    .set_write_timeout(Some(std::time::Duration::from_millis(5)))
+                    .ok();
+
                 let mut bus = state.lock().unwrap();
 
-                // Replay sticky messages BEFORE setting non-blocking.
-                // try_clone + dup share the same file description, so
-                // set_nonblocking on any clone affects all of them.
                 replay_sticky(id, &mut bus, &writer);
-
-                // Non-blocking writes prevent a slow client from
-                // deadlocking the entire bus. Set AFTER replay so the
-                // client receives all sticky state reliably.
-                writer.set_nonblocking(true).ok();
 
                 bus.clients.insert(id, writer);
                 info!(client = id, "connected");
@@ -190,7 +191,10 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
         }
         match transport::write_event(stream, event) {
             Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            Err(e)
+                if e.kind() == io::ErrorKind::WouldBlock
+                    || e.kind() == io::ErrorKind::TimedOut =>
+            {
                 // Client is slow — drop the message rather than blocking
                 // the entire bus. Sticky messages will be replayed on the
                 // next successful write or reconnect.
