@@ -11,6 +11,8 @@ pub fn create_web_context(
 ) -> webkit6::WebContext {
     let ctx = webkit6::WebContext::new();
 
+    sola_assets::register_uri_scheme(&ctx);
+
     ctx.register_uri_scheme("app", move |request| {
         let uri = request.uri().unwrap_or_default().to_string();
         let path = uri

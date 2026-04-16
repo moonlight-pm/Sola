@@ -2275,6 +2275,7 @@ dependencies = [
  "notify",
  "serde",
  "serde_json",
+ "sola-assets",
  "sola-bus",
  "swc_common",
  "swc_ts_fast_strip",

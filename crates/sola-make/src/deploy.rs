@@ -3,6 +3,8 @@ use std::process::Command;
 
 const BIN_DIR: &str = "/opt/sola/bin";
 const LOG_DIR: &str = "/opt/sola/log";
+const SHARE_DIR: &str = "/opt/sola/share";
+const ASSETS_SRC: &str = "crates/sola-assets/assets/";
 
 pub trait DeployTarget {
     /// Ensure target directories exist.
@@ -13,6 +15,9 @@ pub trait DeployTarget {
     /// already identical and skipped.
     fn deploy_binary(&self, src: &str) -> Result<bool, String>;
 
+    /// Sync the shared assets tree to the target's share directory.
+    fn deploy_assets(&self) -> Result<(), String>;
+
     /// Human-readable label for log messages.
     fn label(&self) -> &str;
 }
@@ -22,7 +27,14 @@ pub struct Local;
 
 impl DeployTarget for Local {
     fn ensure_dirs(&self) -> Result<(), String> {
-        run("sudo", &["mkdir", "-p", BIN_DIR, LOG_DIR])
+        run("sudo", &["mkdir", "-p", BIN_DIR, LOG_DIR, SHARE_DIR])
+    }
+
+    fn deploy_assets(&self) -> Result<(), String> {
+        run(
+            "sudo",
+            &["rsync", "-a", "--checksum", "--delete", ASSETS_SRC, &format!("{SHARE_DIR}/")],
+        )
     }
 
     fn deploy_binary(&self, src: &str) -> Result<bool, String> {
@@ -55,8 +67,16 @@ pub struct Remote {
 
 impl DeployTarget for Remote {
     fn ensure_dirs(&self) -> Result<(), String> {
-        let cmd = format!("mkdir -p {BIN_DIR} {LOG_DIR}");
+        let cmd = format!("mkdir -p {BIN_DIR} {LOG_DIR} {SHARE_DIR}");
         run("ssh", &[self.host, &cmd])
+    }
+
+    fn deploy_assets(&self) -> Result<(), String> {
+        let dest = format!("{}:{SHARE_DIR}/", self.host);
+        run(
+            "rsync",
+            &["-az", "--checksum", "--delete", ASSETS_SRC, &dest],
+        )
     }
 
     fn deploy_binary(&self, src: &str) -> Result<bool, String> {
@@ -109,6 +129,12 @@ pub fn deploy(target: &dyn DeployTarget, app: Option<&str>) {
     println!("Preparing {}...", target.label());
     if let Err(e) = target.ensure_dirs() {
         eprintln!("failed to create directories on {}: {e}", target.label());
+        std::process::exit(1);
+    }
+
+    println!("Deploying shared assets to {}...", target.label());
+    if let Err(e) = target.deploy_assets() {
+        eprintln!("failed to deploy assets: {e}");
         std::process::exit(1);
     }
 
