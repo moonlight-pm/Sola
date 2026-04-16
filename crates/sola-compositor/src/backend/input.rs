@@ -12,7 +12,6 @@ use smithay::backend::input::{
 use smithay::backend::libinput::{LibinputInputBackend, LibinputSessionInterface};
 use smithay::backend::session::Session;
 use smithay::backend::session::libseat::LibSeatSession;
-use smithay::desktop::WindowSurfaceType;
 use smithay::input::keyboard::FilterResult;
 use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
 use smithay::reexports::calloop::LoopHandle;
@@ -270,11 +269,13 @@ fn forward_pointer_motion(state: &mut State) {
         }
     }
 
-    let under = state.space.element_under((x, y)).and_then(|(window, loc)| {
-        window
-            .surface_under((x - loc.x as f64, y - loc.y as f64), WindowSurfaceType::ALL)
-            .map(|(surface, offset)| (surface, (loc + offset).to_f64()))
-    });
+    let under = state
+        .space
+        .element_under((x, y))
+        .map(|(window, loc)| {
+            let target = crate::focus::FocusTarget::Window(window.clone());
+            (target, loc.to_f64())
+        });
 
     let pointer = state.seat.get_pointer().unwrap();
     pointer.motion(

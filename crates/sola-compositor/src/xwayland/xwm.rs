@@ -88,10 +88,21 @@ impl XwmHandler for State {
     fn configure_notify(
         &mut self,
         _xwm: XwmId,
-        _window: X11Surface,
-        _geometry: Rectangle<i32, Logical>,
+        window: X11Surface,
+        geometry: Rectangle<i32, Logical>,
         _above: Option<X11Window>,
     ) {
+        if window.is_override_redirect() {
+            let found = self.space.elements().find(|w| {
+                w.x11_surface()
+                    .is_some_and(|s| s.window_id() == window.window_id())
+            }).cloned();
+
+            if let Some(win) = found {
+                self.space
+                    .map_element(win, (geometry.loc.x, geometry.loc.y), false);
+            }
+        }
     }
 
     fn resize_request(

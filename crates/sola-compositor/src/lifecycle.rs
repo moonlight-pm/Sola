@@ -89,8 +89,17 @@ fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::Composit
         .collect();
 
     // Unmap all currently-mapped surfaces NOT in the composition list.
+    // Skip X11 override-redirect windows (popups, menus, tooltips) — they
+    // live outside the shell's composition and are mapped/unmapped directly
+    // by the XwmHandler.
     let current: Vec<smithay::desktop::Window> = state.space.elements().cloned().collect();
     for window in &current {
+        let is_or = window
+            .x11_surface()
+            .is_some_and(|s| s.is_override_redirect());
+        if is_or {
+            continue;
+        }
         let dominated = to_map.iter().any(|(w, _, _)| w == window);
         if !dominated {
             state.space.unmap_elem(window);
@@ -168,17 +177,16 @@ fn configure_window_size(window: &smithay::desktop::Window, width: i32, height: 
 /// target. This ensures GTK dispatches shell key-binding events even
 /// after keyboard focus has moved to another client.
 fn handle_focus(state: &mut State, target: sola_bus::topics::FocusTarget) {
-    use smithay::wayland::seat::WaylandFocus;
-
     let window = state.window_by_app_id_title(&target.app_id, target.title.as_deref());
     let Some(window) = window else { return };
-    let Some(surface) = window.wl_surface() else {
-        return;
-    };
 
     let serial = SERIAL_COUNTER.next_serial();
     let keyboard = state.seat.get_keyboard().unwrap();
-    keyboard.set_focus(state, Some(surface.into_owned()), serial);
+    keyboard.set_focus(
+        state,
+        Some(crate::focus::FocusTarget::Window(window)),
+        serial,
+    );
 
     if target.app_id != "sola-shell" {
         if let Some(ref shell_surface) = state.shell_keyboard_target.clone() {

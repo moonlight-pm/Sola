@@ -5,6 +5,7 @@
 pub mod backend;
 pub mod cursor;
 pub mod error;
+pub mod focus;
 pub mod input;
 mod lifecycle;
 pub mod output;
