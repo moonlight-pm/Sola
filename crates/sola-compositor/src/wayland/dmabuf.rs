@@ -6,6 +6,7 @@
 ///
 /// See: https://docs.rs/smithay/0.7.0/smithay/wayland/dmabuf/index.html
 use smithay::backend::allocator::dmabuf::Dmabuf;
+use smithay::backend::renderer::ImportDma;
 use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
 
 use crate::state::State;
@@ -23,17 +24,24 @@ impl DmabufHandler for State {
         dmabuf: Dmabuf,
         notifier: ImportNotifier,
     ) {
-        // Accept unconditionally. The actual EGL import happens at render
-        // time where Smithay handles failures by skipping the surface.
-        //
-        // We deliberately avoid calling renderer.import_dmabuf() here
-        // because a failed eglCreateImageKHR on this NVIDIA GPU corrupts
-        // the EGL context's fence state, making ALL subsequent renders
-        // fail with eglDupNativeFenceFDANDROID errors — freezing the
-        // entire desktop. Deferring to render time avoids this because
-        // Smithay's render path isolates import failures per-surface.
-        dmabuf.set_node(self.primary_render_node);
-        let _ = notifier.successful::<State>();
+        let render_node = self.primary_render_node;
+
+        match self.gpu_manager.single_renderer(&render_node) {
+            Ok(mut renderer) => match renderer.import_dmabuf(&dmabuf, None) {
+                Ok(_texture) => {
+                    dmabuf.set_node(render_node);
+                    let _ = notifier.successful::<State>();
+                }
+                Err(err) => {
+                    tracing::debug!(?err, "dmabuf import failed");
+                    notifier.failed();
+                }
+            },
+            Err(err) => {
+                tracing::error!(?err, "failed to get renderer for dmabuf import");
+                notifier.failed();
+            }
+        }
     }
 }
 
