@@ -60,9 +60,10 @@ const state = reactive({
   searchQuery: '',
   editingTitle: false,
   statsWidth: 240,
+  pinnedIds: [] as string[],
 });
 
-persist(state, 'agent-ui', ['activeId', 'statsWidth']);
+persist(state, 'agent-ui', ['activeId', 'statsWidth', 'pinnedIds']);
 
 // Track in-flight tool calls by stable id so output events match the right
 // ToolCall entry even when tools of the same name run in sequence.
@@ -88,9 +89,36 @@ function truncate(s: string | null, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
+function saveUi(): void {
+  save(state, 'agent-ui', ['activeId', 'statsWidth', 'pinnedIds']);
+}
+
 function setActive(id: string): void {
   state.activeId = id;
-  save(state, 'agent-ui', ['activeId', 'statsWidth']);
+  saveUi();
+}
+
+function pinSession(id: string, atIndex?: number): void {
+  if (state.pinnedIds.indexOf(id) >= 0) return;
+  const copy = [...state.pinnedIds];
+  if (atIndex !== undefined) copy.splice(atIndex, 0, id);
+  else copy.push(id);
+  state.pinnedIds = copy;
+  saveUi();
+}
+
+function unpinSession(id: string): void {
+  if (state.pinnedIds.indexOf(id) < 0) return;
+  state.pinnedIds = state.pinnedIds.filter((x: string) => x !== id);
+  saveUi();
+}
+
+function reorderPinned(fromIndex: number, toIndex: number): void {
+  const copy = [...state.pinnedIds];
+  const [moved] = copy.splice(fromIndex, 1);
+  copy.splice(toIndex, 0, moved);
+  state.pinnedIds = copy;
+  saveUi();
 }
 
 function focusInput(): void {
@@ -419,12 +447,35 @@ function filterSessions(): Session[] {
   );
 }
 
-function sessionRow(s: Session) {
-  // Keyed by session id so Arrow.js reconciles by identity, not position.
-  // This is the single source of truth for tab identity — without it, DOM
-  // nodes get reused across logical rows and @click/class bindings go stale.
+function deleteSession(id: string): void {
+  unpinSession(id);
+  state.sessions = state.sessions.filter((x: Session) => x.id !== id);
+  if (state.activeId === id) {
+    state.activeId = state.sessions.length ? state.sessions[0].id : null;
+    saveUi();
+  }
+  invoke('delete_session', { session_id: id });
+}
+
+function sessionRow(s: Session, group: string) {
+  let confirmTimer: number | null = null;
+  const del = reactive({ confirming: false });
+
+  function onDeleteClick(e: MouseEvent) {
+    e.stopPropagation();
+    if (del.confirming) {
+      if (confirmTimer) clearTimeout(confirmTimer);
+      del.confirming = false;
+      deleteSession(s.id);
+    } else {
+      del.confirming = true;
+      confirmTimer = window.setTimeout(() => { del.confirming = false; }, 2500);
+    }
+  }
+
   return html`
     <div class="${() => 'convo-item' + (state.activeId === s.id ? ' active' : '')}"
+      data-sid="${s.id}" data-group="${group}"
       @click="${() => selectSession(s.id)}"
       @dblclick="${() => {
         const next = prompt('Rename session:', s.name || '');
@@ -433,11 +484,131 @@ function sessionRow(s: Session) {
     >
       <span class="${() => 'dot ' + s.status}"></span>
       <span class="convo-name">${() => s.name || truncate(s.firstPrompt, 30) || 'New session'}</span>
+      <button class="${() => 'btn-del' + (del.confirming ? ' confirm' : '')}" @click="${onDeleteClick}" @mousedown="${(e: MouseEvent) => e.stopPropagation()}"><span class="${() => del.confirming ? 'icon icon-check' : 'icon icon-x'}"></span></button>
     </div>
   `.key(s.id);
 }
 
 function sidebarTemplate() {
+  // ── Drag state (imperative, not reactive) ──
+  let dragSid: string | null = null;
+  let dragStartY = 0;
+  let isDragging = false;
+  let dropGroup: 'pinned' | 'recent' | null = null;
+  let dropIndex: number | null = null;
+  let ghost: HTMLElement | null = null;
+
+  function onMouseDown(e: MouseEvent) {
+    if (e.button !== 0) return;
+    const row = (e.target as HTMLElement).closest('.convo-item') as HTMLElement | null;
+    if (!row?.dataset.sid) return;
+    dragSid = row.dataset.sid;
+    dragStartY = e.clientY;
+    isDragging = false;
+  }
+
+  function createGhost(sourceRow: HTMLElement, e: MouseEvent) {
+    const label = sourceRow.querySelector('.convo-name') as HTMLElement | null;
+    const dot = sourceRow.querySelector('.dot') as HTMLElement | null;
+    ghost = document.createElement('div');
+    ghost.className = 'drag-ghost';
+    if (dot) {
+      const dotClone = dot.cloneNode(true) as HTMLElement;
+      ghost.appendChild(dotClone);
+    }
+    const text = document.createElement('span');
+    text.textContent = label?.textContent || 'Session';
+    ghost.appendChild(text);
+    document.body.appendChild(ghost);
+    positionGhost(e);
+  }
+
+  function positionGhost(e: MouseEvent) {
+    if (!ghost) return;
+    ghost.style.left = (e.clientX + 12) + 'px';
+    ghost.style.top = (e.clientY - 14) + 'px';
+  }
+
+  function destroyGhost() {
+    ghost?.remove();
+    ghost = null;
+  }
+
+  function onMouseMove(e: MouseEvent) {
+    if (!dragSid) return;
+    if (!isDragging && Math.abs(e.clientY - dragStartY) > 5) {
+      isDragging = true;
+      const src = document.querySelector(`[data-sid="${dragSid}"]`) as HTMLElement | null;
+      if (src) {
+        src.classList.add('drag-source');
+        createGhost(src, e);
+      }
+    }
+    if (!isDragging) return;
+    positionGhost(e);
+
+    const list = document.querySelector('.convo-list') as HTMLElement;
+    if (!list) return;
+    clearHighlights(list);
+    dropGroup = null;
+    dropIndex = null;
+
+    const pinnedRows = list.querySelectorAll('[data-group="pinned"].convo-item');
+    const recentLabel = list.querySelector('[data-group="recent"].group-label');
+
+    const recentTop = recentLabel?.getBoundingClientRect().top ?? Infinity;
+    if (e.clientY < recentTop) {
+      dropGroup = 'pinned';
+      dropIndex = 0;
+      for (let i = 0; i < pinnedRows.length; i++) {
+        const rect = pinnedRows[i].getBoundingClientRect();
+        if (e.clientY > rect.top + rect.height / 2) dropIndex = i + 1;
+      }
+      if (pinnedRows[dropIndex]) {
+        pinnedRows[dropIndex].classList.add('drop-before');
+      } else {
+        const target = list.querySelector('.empty-drop') || list.querySelector('[data-group="pinned"].group-label');
+        target?.classList.add('drop-target');
+      }
+    } else {
+      dropGroup = 'recent';
+      recentLabel?.classList.add('drop-target');
+    }
+  }
+
+  function clearHighlights(list: HTMLElement) {
+    list.querySelectorAll('.drop-target,.drop-before,.drag-source').forEach(el =>
+      el.classList.remove('drop-target', 'drop-before', 'drag-source')
+    );
+  }
+
+  function onMouseUp() {
+    if (isDragging && dragSid && dropGroup) {
+      const isPinned = state.pinnedIds.indexOf(dragSid) >= 0;
+      if (dropGroup === 'pinned') {
+        if (isPinned) {
+          const from = state.pinnedIds.indexOf(dragSid);
+          const to = dropIndex ?? state.pinnedIds.length;
+          if (from !== to) reorderPinned(from, to > from ? to - 1 : to);
+        } else {
+          pinSession(dragSid, dropIndex ?? undefined);
+        }
+      } else if (dropGroup === 'recent' && isPinned) {
+        unpinSession(dragSid);
+      }
+    }
+    destroyGhost();
+    const list = document.querySelector('.convo-list') as HTMLElement;
+    if (list) clearHighlights(list);
+    dragSid = null;
+    isDragging = false;
+    dropGroup = null;
+    dropIndex = null;
+  }
+
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+
   return html`
     <div class="sidebar">
       <div class="sidebar-toolbar">
@@ -451,16 +622,28 @@ function sidebarTemplate() {
           <span class="icon icon-plus"></span>
         </button>
       </div>
-      <div class="convo-list">
+      <div class="convo-list" @mousedown="${onMouseDown}">
         ${() => {
           const all = filterSessions();
-          const running = all.filter((s: Session) => s.status === 'running');
-          const live = all.filter((s: Session) => s.status === 'idle' || s.status === 'error');
-          const saved = all.filter((s: Session) => s.status === 'saved');
+          const pinnedSet = new Set(state.pinnedIds);
+          const pinned = state.pinnedIds
+            .map((id: string) => all.find((s: Session) => s.id === id))
+            .filter(Boolean) as Session[];
+          const recent = all
+            .filter((s: Session) => !pinnedSet.has(s.id))
+            .sort((a: Session, b: Session) => {
+              const w = (s: Session) => s.status === 'running' ? 0 : s.status === 'idle' || s.status === 'error' ? 1 : 2;
+              return w(a) - w(b);
+            });
           const items: any[] = [];
-          if (running.length) { items.push(html`<div class="group-label">Running</div>`.key('g-run'), ...running.map(sessionRow)); }
-          if (live.length) { items.push(html`<div class="group-label">Sessions</div>`.key('g-live'), ...live.map(sessionRow)); }
-          if (saved.length) { items.push(html`<div class="group-label">Saved</div>`.key('g-saved'), ...saved.map(sessionRow)); }
+          items.push(html`<div class="group-label" data-group="pinned">Pinned</div>`.key('g-pin'));
+          if (pinned.length) {
+            pinned.forEach(s => items.push(sessionRow(s, 'pinned')));
+          } else {
+            items.push(html`<div class="empty-drop" data-group="pinned">Drag here to pin</div>`.key('gp-empty'));
+          }
+          items.push(html`<div class="group-label" data-group="recent">Recent</div>`.key('g-rec'));
+          recent.forEach(s => items.push(sessionRow(s, 'recent')));
           return items;
         }}
       </div>
@@ -549,7 +732,7 @@ function statsTemplate() {
     document.removeEventListener('mousemove', onDragMove);
     document.removeEventListener('mouseup', onDragEnd);
     document.body.style.cursor = '';
-    save(state, 'agent-ui', ['activeId', 'statsWidth']);
+    saveUi();
   }
 
   return html`

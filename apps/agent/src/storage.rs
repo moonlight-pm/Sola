@@ -119,6 +119,21 @@ pub fn load_history(session_id: &str) -> Result<Vec<Value>> {
     Ok(messages)
 }
 
+/// Delete session metadata and history files from disk.
+pub fn delete_session(session_id: &str) -> Result<()> {
+    let meta = meta_path(session_id);
+    let hist = history_path(session_id);
+    if meta.exists() {
+        std::fs::remove_file(&meta)
+            .with_context(|| format!("Failed to remove {}", meta.display()))?;
+    }
+    if hist.exists() {
+        std::fs::remove_file(&hist)
+            .with_context(|| format!("Failed to remove {}", hist.display()))?;
+    }
+    Ok(())
+}
+
 /// List all saved sessions, sorted by most recently updated.
 pub fn list_all() -> Vec<SessionMeta> {
     let dir = sessions_dir();

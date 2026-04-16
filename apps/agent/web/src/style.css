@@ -1,5 +1,14 @@
 /* ── Reset ──────────────────────────────────────────────────────────────── */
-* { margin: 0; padding: 0; box-sizing: border-box; }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Only allow text selection in actual text input/output areas */
+textarea, input, .msg { user-select: text; -webkit-user-select: text; }
 
 /* ── Theme — Cogsworth dark industrial ─────────────────────────────────── */
 :root {
@@ -185,8 +194,15 @@ html, body {
   padding: 7px 10px;
   margin: 1px 6px;
   border-radius: 5px;
-  cursor: pointer;
+  cursor: grab;
   border-left: 2px solid transparent;
+  transition: opacity 0.15s, transform 0.15s;
+  position: relative;
+}
+
+.convo-item.drag-source {
+  opacity: 0.25;
+  transform: scale(0.97);
 }
 
 .convo-item:hover { background: var(--bg-tertiary); }
@@ -194,6 +210,44 @@ html, body {
 .convo-item.active {
   background: rgba(0, 168, 255, 0.08);
   border-left-color: var(--cyan);
+}
+
+/* Insertion indicator — a thin cyan line above the target row */
+.convo-item.drop-before::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--cyan);
+  border-radius: 1px;
+  box-shadow: 0 0 6px rgba(0, 168, 255, 0.4);
+}
+
+/* Floating drag ghost — appended to body, positioned via JS */
+.drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-medium);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  opacity: 0.92;
+  transform: scale(1.02);
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
 }
 
 .dot {
@@ -231,6 +285,57 @@ html, body {
 }
 
 .convo-item.active .convo-name { color: var(--text-primary); }
+
+.btn-del {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-ghost);
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.15s, background 0.15s;
+}
+
+.btn-del .icon { width: 11px; height: 11px; }
+
+.convo-item:hover .btn-del { opacity: 1; }
+.btn-del:hover { color: var(--text-muted); background: rgba(255,255,255,0.06); }
+
+.btn-del.confirm {
+  opacity: 1;
+  color: var(--red);
+  background: rgba(255, 61, 90, 0.12);
+}
+
+.btn-del.confirm:hover {
+  background: rgba(255, 61, 90, 0.2);
+}
+
+.empty-drop {
+  font-size: 11px;
+  color: var(--text-ghost);
+  padding: 8px 12px;
+  text-align: center;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 5px;
+  margin: 2px 6px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.empty-drop.drop-target {
+  border-color: rgba(0, 168, 255, 0.4);
+  background: rgba(0, 168, 255, 0.06);
+}
+
+.group-label.drop-target {
+  color: var(--cyan);
+}
 
 .convo-name-input {
   flex: 1;

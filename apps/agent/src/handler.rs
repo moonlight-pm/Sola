@@ -19,6 +19,7 @@ impl sola_app::AppHandler for AgentHandler {
             "send_message" => self.cmd_send_message(args).await,
             "cancel" => self.cmd_cancel(args).await,
             "close_session" => self.cmd_close_session(args).await,
+            "delete_session" => self.cmd_delete_session(args).await,
             "rename_conversation" => self.cmd_rename(args).await,
             "list_conversations" => self.cmd_list_conversations().await,
             "resume_session" => self.cmd_resume_session(args).await,
@@ -138,6 +139,17 @@ impl AgentHandler {
             return json!({ "error": "session_id is required" });
         };
         self.session_mgr.close_session(session_id).await;
+        json!({ "ok": true })
+    }
+
+    async fn cmd_delete_session(&self, args: &Value) -> Value {
+        let Some(session_id) = args.get("session_id").and_then(|v| v.as_str()) else {
+            return json!({ "error": "session_id is required" });
+        };
+        self.session_mgr.close_session(session_id).await;
+        if let Err(e) = storage::delete_session(session_id) {
+            tracing::warn!(session_id, "failed to delete session files: {:#}", e);
+        }
         json!({ "ok": true })
     }
 
