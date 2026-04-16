@@ -124,7 +124,7 @@ fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::Composit
         state.space.map_element(window.clone(), pos, false);
 
         if let Some(geo) = geo {
-            configure_window_size(window, geo.width, geo.height);
+            configure_window(window, geo.x, geo.y, geo.width, geo.height);
         }
     }
 
@@ -152,26 +152,42 @@ fn handle_frame(state: &mut State, update: sola_bus::topics::FrameUpdate) {
                 .map_element(window.clone(), (update.x, update.y), false);
         }
 
-        configure_window_size(&window, update.width, update.height);
+        configure_window(
+            &window,
+            update.x,
+            update.y,
+            update.width,
+            update.height,
+        );
     }
 }
 
-/// Send a size configure to a window — works for both Wayland toplevels
+/// Configure a window's geometry — works for both Wayland toplevels
 /// and X11 surfaces.
-fn configure_window_size(window: &smithay::desktop::Window, width: i32, height: i32) {
+///
+/// For Wayland toplevels, only size is sent (position is managed by
+/// map_element in the Space). For X11 windows, both position and size
+/// are sent so XWayland knows where the window is — this is critical
+/// for correct override-redirect popup positioning.
+fn configure_window(
+    window: &smithay::desktop::Window,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) {
     if let Some(toplevel) = window.toplevel() {
         toplevel.with_pending_state(|s| {
             s.size = Some(Size::from((width, height)));
         });
         toplevel.send_pending_configure();
     } else if let Some(x11) = window.x11_surface() {
-        let geo = x11.geometry();
         let new_geo = smithay::utils::Rectangle::new(
-            geo.loc,
+            (x, y).into(),
             (width, height).into(),
         );
         if let Err(err) = x11.configure(Some(new_geo)) {
-            tracing::warn!(?err, "failed to configure X11 window size");
+            tracing::warn!(?err, "failed to configure X11 window");
         }
     }
 }
