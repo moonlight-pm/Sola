@@ -198,6 +198,7 @@ mod tests {
             window_id: 1,
             app_id: "zen".into(),
             title: "Browser".into(),
+            parent_window_id: None,
         }];
         let msg = Topic::Windows(windows).to_message();
         assert_eq!(msg.topic, "Windows");

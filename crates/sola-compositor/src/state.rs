@@ -285,11 +285,12 @@ impl State {
     /// Assign a window ID to a window. Stores it in the Window's UserDataMap
     /// and in the window_ids lookup map.
     pub fn assign_window_id(&mut self, window: &Window) -> u32 {
+        if let Some(existing) = window_id(window) {
+            return existing;
+        }
         let id = self.next_window_id;
         self.next_window_id += 1;
-        window
-            .user_data()
-            .insert_if_missing(|| WindowId(id));
+        window.user_data().insert_if_missing(|| WindowId(id));
         self.window_ids.insert(id, window.clone());
         id
     }

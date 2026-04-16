@@ -145,11 +145,6 @@ impl ZoningState {
         Some(compute_frame(*zone, window_id, w, h))
     }
 
-    /// Remove zone tracking for a window (e.g., when it's destroyed).
-    pub fn remove_window(&mut self, window_id: u32) {
-        self.window_zones.remove(&window_id);
-    }
-
     fn save_session(&self) {
         let config = ShellConfig {
             zones: self
