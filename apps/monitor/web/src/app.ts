@@ -311,16 +311,17 @@ export async function createApp(root: HTMLElement) {
                 const key = `${msg.topic}:${msg.source}`;
                 const expanded = state.expandedStickyKey === key;
                 return html`
-                  <div
-                    class="${`sticky-item${expanded ? ' expanded' : ''}`}"
-                    data-category="${categoryOf(msg.topic)}"
-                    @click="${() => { state.expandedStickyKey = expanded ? null : key; }}"
-                  >
-                    <span class="sticky-item-topic">${msg.topic}</span>
-                    <span class="sticky-item-source">${msg.source || ''}</span>
-                  </div>
-                  <div class="${`sticky-detail${expanded ? '' : ' hidden'}`}">
-                    ${expanded && msg.payload != null ? highlightedJson(msg.payload) : ''}
+                  <div class="sticky-entry" data-category="${categoryOf(msg.topic)}">
+                    <div
+                      class="${`sticky-item${expanded ? ' expanded' : ''}`}"
+                      @click="${() => { state.expandedStickyKey = expanded ? null : key; }}"
+                    >
+                      <span class="sticky-item-topic">${msg.topic}</span>
+                      <span class="sticky-item-source">${msg.source || ''}</span>
+                    </div>
+                    ${expanded && msg.payload != null
+                      ? html`<div class="sticky-detail">${highlightedJson(msg.payload)}</div>`
+                      : ''}
                   </div>
                 `;
               }
