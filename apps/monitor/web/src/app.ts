@@ -284,19 +284,26 @@ export async function createApp(root: HTMLElement) {
         >
           ${() =>
             state.filteredMessages.map(
-              (msg) => html`
-                <div
-                  class="${`message-row${state.selectedId === msg.msgId ? ' selected' : ''}`}"
-                  data-category="${categoryOf(msg.topic)}"
-                  @click="${() => selectMessage(msg)}"
-                >
-                  <span class="cell time">${formatTime(msg.timestamp)}</span>
-                  <span class="cell topic">${msg.topic}</span>
-                  <span class="cell source">${msg.source || '\u2014'}</span>
-                  <span class="cell sticky">${msg.sticky ? html`<span class="dot"></span>` : ''}</span>
-                  <span class="cell preview">${highlightedPreview(msg)}</span>
-                </div>
-              `
+              (msg) => {
+                const selected = state.selectedId === msg.msgId;
+                return html`
+                  <div
+                    class="${`message-row${selected ? ' selected' : ''}`}"
+                    data-category="${categoryOf(msg.topic)}"
+                    @click="${() => selectMessage(selected ? null : msg)}"
+                  >
+                    <span class="cell time">${formatTime(msg.timestamp)}</span>
+                    <span class="cell topic">${msg.topic}</span>
+                    <span class="cell source">${msg.source || '\u2014'}</span>
+                    <span class="cell sticky">${msg.sticky ? html`<span class="dot"></span>` : ''}</span>
+                    <span class="${() => state.selectedId === msg.msgId ? 'cell preview expanded' : 'cell preview'}">
+                      ${() => state.selectedId === msg.msgId && msg.payload != null
+                        ? highlightedJson(msg.payload)
+                        : highlightedPreview(msg)}
+                    </span>
+                  </div>
+                `;
+              }
             )}
         </div>
       </div>
@@ -327,38 +334,6 @@ export async function createApp(root: HTMLElement) {
               }
             )}
         </div>
-      </div>
-    </div>
-
-    <div class="${() => `detail-pane${state.selectedMessage ? '' : ' hidden'}`}">
-      <div class="detail-header">
-        <span
-          class="detail-topic"
-          style="${() => `color: var(--topic-${state.selectedMessage ? categoryOf(state.selectedMessage.topic) : 'unknown'})`}"
-        >
-          ${() => state.selectedMessage?.topic || ''}
-        </span>
-        <span class="detail-meta">
-          ${() => {
-            const m = state.selectedMessage;
-            if (!m) return '';
-            const parts: string[] = [];
-            if (m.source) parts.push(m.source);
-            if (m.sticky) parts.push('sticky');
-            parts.push(m.msgId);
-            return parts.join(' \u00b7 ');
-          }}
-        </span>
-        <button class="detail-close" @click="${() => selectMessage(null)}">\u00d7</button>
-      </div>
-      <div class="detail-body">
-        ${() => {
-          const m = state.selectedMessage;
-          if (!m) return '';
-          if (m.payload != null) return highlightedJson(m.payload);
-          if (m.rawHex) return `[raw hex]\n${m.rawHex}`;
-          return '(no payload)';
-        }}
       </div>
     </div>
 
