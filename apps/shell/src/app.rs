@@ -457,7 +457,8 @@ impl ShellApp {
         ctx.emit(Topic::Composition(entries));
     }
 
-    /// Emit Frame updates for all known windows.
+    /// Emit Frame updates for the menubar and explicitly-zoned windows.
+    /// Windows without a zone assignment keep their own geometry.
     pub fn emit_all_frames(&self, ctx: &mut AppCtx) {
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
             if let Some(frame) = self.zoning.menubar_frame(wid) {
@@ -468,12 +469,7 @@ impl ShellApp {
             if w.app_id == Self::APP_ID {
                 continue;
             }
-            // Don't frame transient windows — they position themselves
-            // relative to their parent via X11.
-            if w.parent_window_id.is_some() {
-                continue;
-            }
-            if let Some(frame) = self.zoning.app_frame(&w.app_id, w.window_id) {
+            if let Some(frame) = self.zoning.window_frame(w.window_id) {
                 ctx.emit(Topic::Frame(frame));
             }
         }
@@ -534,8 +530,24 @@ impl ShellApp {
             }
         }
 
-        // Emit frames for all windows (including shell windows like the
-        // menubar whose frames couldn't be emitted before we had window IDs).
+        // Clean up zone tracking for removed windows.
+        let current_wids: HashSet<u32> = self.known_windows.iter().map(|w| w.window_id).collect();
+        self.zoning
+            .window_zones
+            .retain(|wid, _| current_wids.contains(wid));
+
+        // For newly appeared apps, apply their saved zone config to the
+        // first window. Subsequent windows of the same app are unzoned.
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID {
+                continue;
+            }
+            if let Some(frame) = self.zoning.apply_config_zone(&w.app_id, w.window_id) {
+                ctx.emit(Topic::Frame(frame));
+            }
+        }
+
+        // Emit frames for menubar and all explicitly-zoned windows.
         self.emit_all_frames(ctx);
         self.emit_composition(ctx);
 
