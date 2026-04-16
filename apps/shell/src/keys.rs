@@ -76,6 +76,16 @@ fn handle_key_pressed(
         return glib::Propagation::Stop;
     }
 
+    // Meta+Space: toggle launcher.
+    if chord.meta && chord.keycode == KeyCode::SPACE {
+        if app.launcher.active {
+            app.close_launcher(ctx);
+        } else {
+            app.open_launcher(ctx);
+        }
+        return glib::Propagation::Stop;
+    }
+
     // Meta+Tab: activate switcher.
     if chord.keycode == KeyCode::TAB && !app.switcher.active {
         tracing::info!("activating switcher");
