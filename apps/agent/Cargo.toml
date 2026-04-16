@@ -7,6 +7,7 @@ edition.workspace = true
 # Sola framework
 sola-app = { path = "../../crates/sola-app" }
 sola-bus = { path = "../../crates/sola-bus" }
+gtk4 = "0.9"
 
 # Async
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "io-util"] }

@@ -162,6 +162,7 @@ impl AgentHandler {
 
     async fn cmd_list_conversations(&self) -> Value {
         let metas = storage::list_all();
+        tracing::info!(count = metas.len(), "list_conversations");
         let conversations: Vec<Value> = metas
             .iter()
             .map(|m| {
@@ -179,13 +180,13 @@ impl AgentHandler {
                     "first_prompt": first_prompt,
                     "working_dir": &m.working_dir,
                     "updated_at": m.updated_at,
+                    "metrics": &m.metrics,
                 })
             })
             .collect();
-        self.send_event(json!({
-            "event": "conversations_list",
-            "conversations": &conversations
-        }));
+        // Return the conversations directly in the invoke reply; the frontend
+        // reads them from the promise result rather than going through a
+        // separate event channel.
         json!({ "conversations": conversations })
     }
 
