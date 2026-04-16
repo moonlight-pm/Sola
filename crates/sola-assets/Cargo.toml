@@ -1,0 +1,10 @@
+[package]
+name = "sola-assets"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+webkit6 = "0.4"
+glib = "0.20"
+gio = "0.20"
+tracing = "0.1"
