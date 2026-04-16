@@ -264,6 +264,12 @@ fn apply_pending_surfaces(state: &mut State) {
             continue;
         };
 
+        // X11 windows need their wl_surface associated before they're ready.
+        if window.x11_surface().is_some() && window.wl_surface().is_none() {
+            still_pending.push(window);
+            continue;
+        }
+
         let title = state::window_title(&window);
         tracing::info!(app_id = %app_id, title = ?title, "surface ready, waiting for composition");
 
