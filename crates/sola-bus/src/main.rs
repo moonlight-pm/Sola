@@ -63,13 +63,7 @@ fn main() {
                 next_id += 1;
 
                 let writer = match stream.try_clone() {
-                    Ok(s) => {
-                        // Non-blocking writes prevent a slow client from
-                        // deadlocking the entire bus. If a write would block,
-                        // we drop the message (or disconnect the client).
-                        s.set_nonblocking(true).ok();
-                        s
-                    }
+                    Ok(s) => s,
                     Err(e) => {
                         error!(client = id, "failed to clone stream: {e}");
                         continue;
@@ -78,8 +72,15 @@ fn main() {
 
                 let mut bus = state.lock().unwrap();
 
-                // Replay sticky messages to the new client.
+                // Replay sticky messages BEFORE setting non-blocking.
+                // try_clone + dup share the same file description, so
+                // set_nonblocking on any clone affects all of them.
                 replay_sticky(id, &mut bus, &writer);
+
+                // Non-blocking writes prevent a slow client from
+                // deadlocking the entire bus. Set AFTER replay so the
+                // client receives all sticky state reliably.
+                writer.set_nonblocking(true).ok();
 
                 bus.clients.insert(id, writer);
                 info!(client = id, "connected");
@@ -107,9 +108,6 @@ fn replay_sticky(id: ClientId, bus: &mut BusState, writer: &UnixStream) {
         }
     };
 
-    // Replay needs blocking writes — the client just connected and must
-    // receive all sticky state before processing any live messages.
-    writer.set_nonblocking(false).ok();
     for ((topic, tag), msg) in &bus.sticky {
         if let Err(e) = transport::write_event(&mut writer, msg) {
             warn!(client = id, topic = %topic, tag = %tag, "failed to replay sticky message: {e}");
