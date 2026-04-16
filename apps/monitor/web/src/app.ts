@@ -319,7 +319,7 @@ export async function createApp(root: HTMLElement) {
                       <span class="sticky-item-topic">${msg.topic}</span>
                       <span class="sticky-item-source">${msg.source || ''}</span>
                     </div>
-                    ${expanded && msg.payload != null
+                    ${() => state.expandedStickyKey === key && msg.payload != null
                       ? html`<div class="sticky-detail">${highlightedJson(msg.payload)}</div>`
                       : ''}
                   </div>
