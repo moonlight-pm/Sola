@@ -109,12 +109,7 @@ fn handle_composition(state: &mut State, entries: Vec<sola_bus::topics::Composit
         state.space.map_element(window.clone(), pos, false);
 
         if let Some(geo) = geo {
-            if let Some(toplevel) = window.toplevel() {
-                toplevel.with_pending_state(|s| {
-                    s.size = Some(Size::from((geo.width, geo.height)));
-                });
-                toplevel.send_pending_configure();
-            }
+            configure_window_size(window, geo.width, geo.height);
         }
     }
 
@@ -143,11 +138,26 @@ fn handle_frame(state: &mut State, update: sola_bus::topics::FrameUpdate) {
                 .map_element(window.clone(), (update.x, update.y), false);
         }
 
-        if let Some(toplevel) = window.toplevel() {
-            toplevel.with_pending_state(|s| {
-                s.size = Some(Size::from((update.width, update.height)));
-            });
-            toplevel.send_pending_configure();
+        configure_window_size(&window, update.width, update.height);
+    }
+}
+
+/// Send a size configure to a window — works for both Wayland toplevels
+/// and X11 surfaces.
+fn configure_window_size(window: &smithay::desktop::Window, width: i32, height: i32) {
+    if let Some(toplevel) = window.toplevel() {
+        toplevel.with_pending_state(|s| {
+            s.size = Some(Size::from((width, height)));
+        });
+        toplevel.send_pending_configure();
+    } else if let Some(x11) = window.x11_surface() {
+        let geo = x11.geometry();
+        let new_geo = smithay::utils::Rectangle::new(
+            geo.loc,
+            (width, height).into(),
+        );
+        if let Err(err) = x11.configure(Some(new_geo)) {
+            tracing::warn!(?err, "failed to configure X11 window size");
         }
     }
 }
