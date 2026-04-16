@@ -82,7 +82,7 @@ fn handle_key_pressed(
         app.switcher.apps = app.rebuild_switcher_apps();
         app.switcher.active = true;
         app.switcher.selected = if app.switcher.apps.len() > 1 { 1 } else { 0 };
-        let json = serde_json::to_string(&app.switcher.apps).unwrap_or_default();
+        let json = app.switcher_apps_json();
         app.windows.switcher.eval_js(&format!(
             "renderSwitcher({}, {})",
             json, app.switcher.selected

@@ -124,7 +124,7 @@ impl SolaApp for ShellApp {
             Topic::Apps(apps) => {
                 self.handle_apps_update(apps.clone(), ctx);
                 if self.switcher.active {
-                    let json = serde_json::to_string(&self.switcher.apps).unwrap_or_default();
+                    let json = self.switcher_apps_json();
                     self.windows.switcher.eval_js(&format!(
                         "renderSwitcher({}, {})",
                         json, self.switcher.selected
@@ -223,6 +223,30 @@ impl ShellApp {
     /// Icon reference (`"<pack>/<name>"`) for an application, if configured.
     pub fn icon_for(&self, app_id: &str) -> Option<&str> {
         self.application(app_id).map(|a| a.icon.as_str())
+    }
+
+    /// JSON payload of the switcher's apps, with `icon` resolved against the
+    /// `applications` registry. Used in place of raw `switcher.apps` JSON so
+    /// the overlay can render real icons.
+    pub fn switcher_apps_json(&self) -> String {
+        let entries: Vec<Value> = self
+            .switcher
+            .apps
+            .iter()
+            .map(|app| {
+                let icon = self
+                    .icon_for(&app.app_id)
+                    .map(String::from)
+                    .unwrap_or_else(|| app.icon.clone());
+                serde_json::json!({
+                    "app_id": app.app_id,
+                    "name": app.name,
+                    "icon": icon,
+                    "window_count": app.window_count,
+                })
+            })
+            .collect();
+        serde_json::to_string(&entries).unwrap_or_default()
     }
 
     fn emit_shell_key_bindings(&self, ctx: &mut AppCtx) {
