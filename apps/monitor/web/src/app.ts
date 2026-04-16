@@ -1,5 +1,6 @@
 import { html, reactive } from '@arrow-js/core';
 import { on } from '@sola/ipc';
+import { persist } from '@sola/store';
 
 // --- Types ---
 
@@ -51,7 +52,10 @@ const state = reactive({
   autoScroll: true,
   stickyMessages: [] as BusMessage[],
   expandedStickyKey: null as string | null,
+  sidebarWidth: 240,
 });
+
+persist(state, 'monitor-layout', ['sidebarWidth']);
 
 let pauseBuffer: BusMessage[] = [];
 const seenTopics = new Set<string>();
@@ -305,7 +309,7 @@ export async function createApp(root: HTMLElement) {
       </div>
 
       <div class="resize-handle" id="resize-handle"></div>
-      <div class="sticky-panel" id="sticky-panel">
+      <div class="sticky-panel" id="sticky-panel" style="${() => `width:${state.sidebarWidth}px`}">
         <div class="sticky-header">Sticky State</div>
         <div class="sticky-list">
           ${() =>
@@ -348,8 +352,7 @@ export async function createApp(root: HTMLElement) {
 
   // Resize handle for sticky panel
   const handle = document.getElementById('resize-handle');
-  const panel = document.getElementById('sticky-panel');
-  if (handle && panel) {
+  if (handle) {
     let dragging = false;
     handle.addEventListener('mousedown', (e) => {
       dragging = true;
@@ -357,8 +360,7 @@ export async function createApp(root: HTMLElement) {
     });
     window.addEventListener('mousemove', (e) => {
       if (!dragging) return;
-      const width = window.innerWidth - e.clientX;
-      panel.style.width = `${Math.max(120, Math.min(width, 600))}px`;
+      state.sidebarWidth = Math.max(120, Math.min(window.innerWidth - e.clientX, 600));
     });
     window.addEventListener('mouseup', () => { dragging = false; });
   }
