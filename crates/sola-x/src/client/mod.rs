@@ -87,6 +87,12 @@ pub enum InputEvent {
         x11_id: u32,
     },
     KeyboardLeave,
+    KeyboardModifiers {
+        depressed: u32,
+        latched: u32,
+        locked: u32,
+        group: u32,
+    },
 }
 
 /// A proxy surface in sola-compositor representing an X11 window.
@@ -452,6 +458,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for ClientApp {
                 state
                     .pending_input
                     .push(InputEvent::Key { key, pressed, time });
+            }
+            wl_keyboard::Event::Modifiers {
+                mods_depressed,
+                mods_latched,
+                mods_locked,
+                group,
+                ..
+            } => {
+                state.pending_input.push(InputEvent::KeyboardModifiers {
+                    depressed: mods_depressed,
+                    latched: mods_latched,
+                    locked: mods_locked,
+                    group,
+                });
             }
             _ => {}
         }

@@ -282,6 +282,35 @@ fn inject_input(state: &mut State) {
                 let serial = SERIAL_COUNTER.next_serial();
                 keyboard.set_focus(state, None, serial);
             }
+            client::InputEvent::KeyboardModifiers {
+                depressed,
+                latched,
+                locked,
+                group,
+            } => {
+                // Forward the compositor's authoritative modifier state into
+                // sola-x's own seat so XWayland (and Brave) see the same
+                // modifier state the user is actually holding. Without this,
+                // modifier tracking can drift (Shift+key can produce wrong
+                // case, AltGr combos break, etc).
+                let _ = latched;
+                keyboard.with_xkb_state(state, |mut ctx| {
+                    ctx.set_layout(smithay::input::keyboard::Layout(group));
+                });
+                let mut mods = keyboard.modifier_state();
+                // Decode the wl_keyboard modifier bitmask into the logical
+                // modifier bools. Indices match xkb's default layout, which
+                // both sola-x and sola-compositor use via XkbConfig::default.
+                mods.shift = depressed & 0x01 != 0;
+                mods.caps_lock = (depressed | locked) & 0x02 != 0;
+                mods.ctrl = depressed & 0x04 != 0;
+                mods.alt = depressed & 0x08 != 0;
+                mods.num_lock = (depressed | locked) & 0x10 != 0;
+                mods.iso_level5_shift = depressed & 0x20 != 0;
+                mods.logo = depressed & 0x40 != 0;
+                mods.iso_level3_shift = depressed & 0x80 != 0;
+                let _ = keyboard.set_modifier_state(mods);
+            }
         }
     }
 }
