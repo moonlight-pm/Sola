@@ -11,7 +11,7 @@ pub struct WindowInfo {
     /// If this window is a child of another (X11 transient_for), the
     /// parent's window_id. The shell should not independently frame
     /// or zone transient windows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub parent_window_id: Option<u32>,
 }
 
