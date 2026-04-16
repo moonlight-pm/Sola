@@ -60,7 +60,7 @@ impl CompositorHandler for State {
 
         // Forward the buffer to the proxy surface in sola-compositor.
         if let Some(client) = &mut self.client {
-            crate::bridge::forward_buffer(surface, x11_id, client);
+            crate::bridge::forward_buffer(surface, x11_id, client, &mut self.renderer);
         }
 
         if is_dmabuf {

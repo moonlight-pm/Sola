@@ -23,6 +23,7 @@ pub fn forward_buffer(
     server_surface: &ServerWlSurface,
     x11_window_id: u32,
     client: &mut ClientConnection,
+    renderer: &mut Option<smithay::backend::renderer::gles::GlesRenderer>,
 ) {
     compositor::with_states(server_surface, |data| {
         let mut guard = data.cached_state.get::<SurfaceAttributes>();
@@ -42,6 +43,19 @@ pub fn forward_buffer(
             BufferAssignment::NewBuffer(wl_buffer) => {
                 // Try dmabuf first (GPU path, zero-copy).
                 if let Ok(dmabuf) = get_dmabuf(wl_buffer) {
+                    // Pre-validate on sola-x's own EGL context before
+                    // forwarding. A failed eglCreateImageKHR on NVIDIA
+                    // corrupts the EGL context's fence state — we sacrifice
+                    // sola-x's context (which isn't used for rendering)
+                    // to protect the compositor's.
+                    if let Some(r) = renderer {
+                        use smithay::backend::renderer::ImportDma;
+                        if r.import_dmabuf(dmabuf, None).is_err() {
+                            tracing::debug!("dmabuf rejected by local EGL, falling back to SHM");
+                            forward_shm(wl_buffer, x11_window_id, client);
+                            return;
+                        }
+                    }
                     forward_dmabuf(dmabuf, x11_window_id, client);
                     return;
                 }

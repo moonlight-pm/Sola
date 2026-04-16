@@ -71,11 +71,20 @@ pub struct State {
     /// or dropped on `Failed`.
     pub pending_frame_callbacks:
         HashMap<u32, Vec<smithay::reexports::wayland_server::protocol::wl_callback::WlCallback>>,
+
+    /// Renderer for pre-validating dmabuf imports. A failed eglCreateImageKHR
+    /// on NVIDIA corrupts the EGL context, so we test-import here (on sola-x's
+    /// own context) before forwarding to the compositor. If it fails here, we
+    /// fall back to SHM and the compositor's context is never touched.
+    pub renderer: Option<smithay::backend::renderer::gles::GlesRenderer>,
 }
 
 /// Initialize dmabuf v4 by opening the primary GPU render node and querying
-/// its supported formats. Returns None if no GPU is available.
-fn init_dmabuf(dh: &DisplayHandle) -> Option<DmabufState> {
+/// its supported formats. Returns the DmabufState and a GlesRenderer for
+/// pre-validating imports. Returns None if no GPU is available.
+fn init_dmabuf(
+    dh: &DisplayHandle,
+) -> Option<(DmabufState, smithay::backend::renderer::gles::GlesRenderer)> {
     use smithay::backend::allocator::gbm::GbmDevice;
     use smithay::backend::drm::{DrmNode, NodeType};
     use smithay::backend::egl::{EGLContext, EGLDisplay};
@@ -163,7 +172,7 @@ fn init_dmabuf(dh: &DisplayHandle) -> Option<DmabufState> {
     dmabuf_state.create_global_with_default_feedback::<State>(dh, &feedback);
 
     tracing::info!(format_count, ?primary, "dmabuf v4 initialized from GPU");
-    Some(dmabuf_state)
+    Some((dmabuf_state, renderer))
 }
 
 /// Metadata about an X11 window, retained for proxy re-creation on reconnect
@@ -208,7 +217,10 @@ impl State {
 
         // Dmabuf v4 support — query the real GPU for supported formats so
         // XWayland/Mesa can use GPU buffers instead of falling back to SHM.
-        let dmabuf_state = init_dmabuf(&dh);
+        let (dmabuf_state, renderer) = match init_dmabuf(&dh) {
+            Some((state, renderer)) => (Some(state), Some(renderer)),
+            None => (None, None),
+        };
 
         Self {
             display_handle: dh,
@@ -232,6 +244,7 @@ impl State {
             running: true,
             last_keymap: None,
             pending_frame_callbacks: HashMap::new(),
+            renderer,
         }
     }
 }
