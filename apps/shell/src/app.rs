@@ -457,8 +457,11 @@ impl ShellApp {
         ctx.emit(Topic::Composition(entries));
     }
 
-    /// Emit Frame updates for the menubar and explicitly-zoned windows.
-    /// Windows without a zone assignment keep their own geometry.
+    /// Emit Frame updates for all managed windows.
+    ///
+    /// - Menubar: full width, fixed height.
+    /// - Sola apps (sola-*): zoned frame, or full-screen-below-menubar default.
+    /// - External apps: zoned frame only. No frame if unzoned (self-positioning).
     pub fn emit_all_frames(&self, ctx: &mut AppCtx) {
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
             if let Some(frame) = self.zoning.menubar_frame(wid) {
@@ -471,6 +474,11 @@ impl ShellApp {
             }
             if let Some(frame) = self.zoning.window_frame(w.window_id) {
                 ctx.emit(Topic::Frame(frame));
+            } else if w.app_id.starts_with("sola-") {
+                // Sola apps get full-screen-below-menubar by default.
+                if let Some(frame) = self.zoning.default_app_frame(w.window_id) {
+                    ctx.emit(Topic::Frame(frame));
+                }
             }
         }
     }

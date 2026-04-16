@@ -125,6 +125,18 @@ impl ZoningState {
         })
     }
 
+    /// Default frame: full output area below the menubar.
+    pub fn default_app_frame(&self, window_id: u32) -> Option<FrameUpdate> {
+        let (w, h) = self.output_size?;
+        Some(FrameUpdate {
+            window_id,
+            x: 0,
+            y: MENUBAR_HEIGHT,
+            width: w,
+            height: h - MENUBAR_HEIGHT,
+        })
+    }
+
     /// Compute the Frame for an explicitly-zoned window.
     /// Returns None if the window has no zone assignment.
     pub fn window_frame(&self, window_id: u32) -> Option<FrameUpdate> {
