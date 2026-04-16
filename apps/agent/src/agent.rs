@@ -1,7 +1,8 @@
-//! Agent: spawns `claude -p` subprocess with stream-json I/O.
+//! Agent: spawns `claude -p` subprocess per turn with stream-json I/O.
 //!
-//! Stdin stays open so follow-up messages can be injected mid-response.
-//! Full conversation history is managed by us.
+//! We manage conversation history ourselves in JSONL files.
+//! Each turn, we replay the full history as stream-json input so the
+//! subprocess has full context without relying on Claude's session persistence.
 
 use crate::session::{SessionManager, SessionStatus};
 use crate::storage;
@@ -12,7 +13,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 
-/// Start a new agent subprocess and send the first message.
+/// Start a new agent subprocess and send a message.
 pub async fn run_session_message(
     session_id: String,
     text: String,
@@ -20,6 +21,8 @@ pub async fn run_session_message(
     session_mgr: Arc<SessionManager>,
     event_tx: std::sync::mpsc::Sender<String>,
     cancel_token: tokio_util::sync::CancellationToken,
+    model: String,
+    effort: String,
 ) {
     session_mgr
         .set_status(&session_id, SessionStatus::Running)
@@ -35,7 +38,7 @@ pub async fn run_session_message(
 
     match run_claude(
         &session_id, &text, &working_dir, session_name.as_deref(),
-        &session_mgr, &event_tx, cancel_token,
+        &session_mgr, &event_tx, cancel_token, &model, &effort,
     ).await {
         Ok(()) => {
             session_mgr.set_stdin(&session_id, None).await;
@@ -88,6 +91,12 @@ fn send_event(tx: &std::sync::mpsc::Sender<String>, value: serde_json::Value) {
     let _ = tx.send(value.to_string());
 }
 
+fn resolve_claude_bin() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let local = PathBuf::from(&home).join(".local/bin/claude");
+    if local.exists() { local } else { PathBuf::from("claude") }
+}
+
 async fn run_claude(
     session_id: &str,
     text: &str,
@@ -96,11 +105,13 @@ async fn run_claude(
     session_mgr: &SessionManager,
     event_tx: &std::sync::mpsc::Sender<String>,
     cancel_token: tokio_util::sync::CancellationToken,
+    model: &str,
+    effort: &str,
 ) -> Result<()> {
-    // Load existing conversation or start fresh
+    // Load existing conversation history.
     let mut history = storage::load_history(session_id).unwrap_or_default();
 
-    // Append user message and persist it
+    // Append the new user message and persist it.
     let user_msg = json!({
         "role": "user",
         "content": [{"type": "text", "text": text}]
@@ -108,22 +119,49 @@ async fn run_claude(
     history.push(user_msg.clone());
     let _ = storage::append_message(session_id, &user_msg);
 
-    // Build stream-json input from history
-    let mut input_lines = String::new();
+    // Build stream-json input: replay full conversation so Claude has context.
+    // Merge consecutive same-role messages (e.g. tool_result user + next user
+    // prompt) into a single message — the API requires strict alternation.
+    let mut merged: Vec<serde_json::Value> = Vec::new();
     for msg in &history {
-        let stream_msg = json!({
-            "type": if msg["role"] == "user" { "user" } else { "assistant" },
-            "message": {
-                "role": msg["role"],
-                "content": msg["content"]
+        let role = msg["role"].as_str().unwrap_or("user");
+        let content = msg.get("content").cloned().unwrap_or(json!([]));
+        let blocks: Vec<serde_json::Value> = if let Some(arr) = content.as_array() {
+            arr.clone()
+        } else if let Some(s) = content.as_str() {
+            vec![json!({"type": "text", "text": s})]
+        } else {
+            vec![]
+        };
+
+        // If the last merged message has the same role, append blocks to it.
+        let should_merge = merged.last()
+            .map(|m| m["role"].as_str() == Some(role))
+            .unwrap_or(false);
+
+        if should_merge {
+            let last = merged.last_mut().unwrap();
+            if let Some(arr) = last["content"].as_array_mut() {
+                arr.extend(blocks);
             }
+        } else {
+            merged.push(json!({"role": role, "content": blocks}));
+        }
+    }
+
+    let mut input_lines = String::new();
+    for msg in &merged {
+        let msg_type = if msg["role"] == "user" { "user" } else { "assistant" };
+        let stream_msg = json!({
+            "type": msg_type,
+            "message": msg
         });
         input_lines.push_str(&stream_msg.to_string());
         input_lines.push('\n');
     }
 
-    // Spawn claude subprocess
-    let mut child = tokio::process::Command::new("claude")
+    let claude_bin = resolve_claude_bin();
+    let mut child = tokio::process::Command::new(&claude_bin)
         .arg("-p")
         .arg("--verbose")
         .arg("--no-session-persistence")
@@ -131,14 +169,16 @@ async fn run_claude(
         .arg("--input-format").arg("stream-json")
         .arg("--include-partial-messages")
         .arg("--dangerously-skip-permissions")
+        .arg("--model").arg(model)
+        .arg("--effort").arg(effort)
         .current_dir(working_dir)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .context("Failed to spawn claude CLI")?;
 
-    // Write history to stdin but keep it open for follow-ups
+    // Write full history to stdin, then keep it open for follow-ups.
     let stdin = child.stdin.take().context("No stdin")?;
     let stdin = Arc::new(Mutex::new(stdin));
 
@@ -148,10 +188,28 @@ async fn run_claude(
         stdin_guard.flush().await?;
     }
 
-    // Store stdin handle in session so handler can inject follow-ups
     session_mgr.set_stdin(session_id, Some(stdin.clone())).await;
 
-    // Read and process stdout
+    // Capture stderr in background.
+    let stderr = child.stderr.take().context("No stderr")?;
+    let stderr_sid = session_id.to_string();
+    let stderr_tx = event_tx.clone();
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = String::new();
+        let mut reader = BufReader::new(stderr);
+        use tokio::io::AsyncReadExt;
+        let _ = reader.read_to_string(&mut buf).await;
+        if !buf.trim().is_empty() {
+            tracing::warn!(session_id = %stderr_sid, "claude stderr: {}", buf.trim());
+            send_event(&stderr_tx, json!({
+                "event": "error", "session_id": stderr_sid,
+                "message": buf.trim()
+            }));
+        }
+        buf
+    });
+
+    // Read and process stdout.
     let stdout = child.stdout.take().context("No stdout")?;
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
@@ -166,6 +224,7 @@ async fn run_claude(
     let read_task = tokio::spawn(async move {
         let mut text_acc = String::new();
         let mut blocks: Vec<serde_json::Value> = Vec::new();
+        let mut tool_results: Vec<serde_json::Value> = Vec::new();
         let mut result_metrics: Option<serde_json::Value> = None;
 
         while let Ok(Some(line)) = lines.next_line().await {
@@ -214,17 +273,47 @@ async fn run_claude(
                     }
                 }
 
+                // Tool result from Claude CLI — a synthetic "user" message with
+                // tool_result content. Save it so the API sees the required
+                // tool_result after each tool_use on replay.
+                "user" => {
+                    if let Some(content) = parsed.get("message")
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_array())
+                    {
+                        let has_tool_result = content.iter().any(|b|
+                            b.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+                        );
+                        if has_tool_result {
+                            tool_results.extend(content.iter().cloned());
+
+                            // Also emit tool_end events to the frontend.
+                            for block in content {
+                                if block.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
+                                    let tool_use_id = block.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
+                                    // Find the matching tool_use name from our blocks.
+                                    let name = blocks.iter()
+                                        .find(|b| b.get("id").and_then(|v| v.as_str()) == Some(tool_use_id))
+                                        .and_then(|b| b.get("name").and_then(|v| v.as_str()))
+                                        .unwrap_or("unknown");
+                                    let output = block.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                    let is_error = block.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                                    send_event(&tx, json!({
+                                        "event": "tool_end", "session_id": sid,
+                                        "tool_name": name,
+                                        "result": &output[..output.len().min(2000)],
+                                        "is_error": is_error
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 "tool_use_summary" => {
-                    let name = parsed.get("tool_name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    let output = parsed.get("output").and_then(|v| v.as_str())
-                        .or_else(|| parsed.get("result").and_then(|v| v.as_str()))
-                        .unwrap_or("").to_string();
-                    let is_error = parsed.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
-                    send_event(&tx, json!({
-                        "event": "tool_end", "session_id": sid,
-                        "tool_name": name, "result": &output[..output.len().min(2000)],
-                        "is_error": is_error
-                    }));
+                    // We now get tool results from the "user" tool_result messages
+                    // above, but tool_use_summary still fires. Use it as a fallback
+                    // for the frontend event if we didn't already emit one.
                 }
 
                 "result" => {
@@ -237,10 +326,10 @@ async fn run_claude(
             }
         }
 
-        (text_acc, blocks, result_metrics)
+        (text_acc, blocks, tool_results, result_metrics)
     });
 
-    // Wait for completion, done signal, or cancellation
+    // Wait for completion, done signal, or cancellation.
     let was_cancelled = tokio::select! {
         _ = cancel_token.cancelled() => {
             tracing::info!("Session {} cancelled", session_id);
@@ -256,22 +345,25 @@ async fn run_claude(
         }
     };
 
-    // Close stdin so subprocess can exit
+    // Close stdin so subprocess can exit.
     {
         let mut stdin_guard = stdin.lock().await;
         let _ = stdin_guard.shutdown().await;
     }
 
-    // Get results from the read task (don't wait for child — it exits on its own)
-    let (acc_text, acc_blocks, result_metrics) = read_task.await
-        .unwrap_or_else(|_| (String::new(), Vec::new(), None));
+    let (acc_text, acc_blocks, acc_tool_results, result_metrics) = read_task.await
+        .unwrap_or_else(|_| (String::new(), Vec::new(), Vec::new(), None));
+
+    // Don't block on stderr — let it finish in the background.
+    // It'll log warnings and emit error events if anything shows up.
+    tokio::spawn(stderr_task);
 
     send_event(event_tx, json!({
         "event": "message_end", "session_id": session_id,
         "cancelled": was_cancelled
     }));
 
-    // Send metrics and save for persistence
+    // Send metrics and persist.
     let mut saved_metrics: Option<serde_json::Value> = None;
     if let Some(ref result) = result_metrics {
         let mut metrics = json!({"event": "metrics", "session_id": session_id});
@@ -313,11 +405,8 @@ async fn run_claude(
 
     let cwd_str = working_dir.to_string_lossy().to_string();
 
-    if was_cancelled {
-        // TODO: truncate the JSONL to remove the last user message
-        // For now, the user message is already in the JSONL — we'd need to rewrite it.
-        // This is acceptable for now; the model will see the unanswered message on resume.
-    } else if !acc_text.is_empty() || !acc_blocks.is_empty() {
+    // Save assistant response to our JSONL for display on reload.
+    if !was_cancelled && (!acc_text.is_empty() || !acc_blocks.is_empty()) {
         let content = if acc_blocks.is_empty() {
             json!([{"type": "text", "text": acc_text}])
         } else {
@@ -325,9 +414,16 @@ async fn run_claude(
         };
         let assistant_msg = json!({"role": "assistant", "content": content});
         let _ = storage::append_message(session_id, &assistant_msg);
+
+        // Save tool results as a user message so the API sees the required
+        // tool_result blocks when we replay history on the next turn.
+        if !acc_tool_results.is_empty() {
+            let tool_result_msg = json!({"role": "user", "content": acc_tool_results});
+            let _ = storage::append_message(session_id, &tool_result_msg);
+        }
     }
 
-    // Update metadata with latest metrics
+    // Update metadata with latest metrics.
     if let Err(e) = storage::save_meta(session_id, session_name, &cwd_str, saved_metrics) {
         tracing::warn!("Failed to save session metadata: {:#}", e);
     }

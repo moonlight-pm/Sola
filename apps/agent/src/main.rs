@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use sola_app::{AppCtx, AsyncDispatcher, SolaApp, WindowConfig, WindowHandle, asset_bundle};
+use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Topic};
+use sola_core::KeyCode;
 
 mod agent;
 mod handler;
@@ -51,6 +53,8 @@ impl SolaApp for AgentApp {
             event_tx,
         });
 
+        ctx.emit_sticky(Topic::SetAppMenu(agent_menu()));
+
         Self {
             main_window,
             dispatcher,
@@ -78,4 +82,32 @@ impl SolaApp for AgentApp {
 
 fn main() {
     sola_app::run::<AgentApp>();
+}
+
+fn agent_menu() -> AppMenuPayload {
+    AppMenuPayload {
+        app_id: AgentApp::APP_ID.into(),
+        menus: vec![
+            MenuDefinition {
+                label: "Agent".into(),
+                items: vec![
+                    MenuItem::Action {
+                        id: "about".into(),
+                        label: "About Agent".into(),
+                        shortcut: None,
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Divider,
+                    MenuItem::Action {
+                        id: "quit".into(),
+                        label: "Quit Agent".into(),
+                        shortcut: Some(KeyCode::Q.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                ],
+            },
+        ],
+    }
 }

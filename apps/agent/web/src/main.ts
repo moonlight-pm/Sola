@@ -15,12 +15,16 @@ interface ToolCall {
   expanded: boolean;
 }
 
+type ContentBlock =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; tool: ToolCall };
+
 interface Message {
   role: 'user' | 'assistant' | 'error';
   content: string;
+  blocks: ContentBlock[];
   streaming: boolean;
   cancelled: boolean;
-  tools: ToolCall[];
 }
 
 interface Metrics {
@@ -36,6 +40,15 @@ interface Metrics {
   num_turns: number;
 }
 
+interface McpServer {
+  name: string;
+  command: string;
+  status: 'connected' | 'auth' | 'error';
+}
+
+type ModelChoice = 'opus' | 'sonnet';
+type EffortLevel = 'low' | 'medium' | 'high' | 'max';
+
 interface Session {
   id: string;
   name: string | null;
@@ -44,6 +57,9 @@ interface Session {
   workingDir: string | null;
   messages: Message[];
   metrics: Metrics | null;
+  mcpServers: McpServer[];
+  model: ModelChoice;
+  effort: EffortLevel;
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -96,6 +112,23 @@ function saveUi(): void {
 function setActive(id: string): void {
   state.activeId = id;
   saveUi();
+  loadMcps(id);
+}
+
+const mcpLoading = reactive({ active: false });
+
+function loadMcps(sessionId: string): void {
+  const s = findSession(sessionId);
+  if (!s || mcpLoading.active) return;
+  mcpLoading.active = true;
+  const dir = s.workingDir || '.';
+  invoke('list_mcps', { working_dir: dir }).then((result: any) => {
+    const current = findSession(sessionId);
+    if (current && result?.servers) {
+      current.mcpServers = result.servers;
+    }
+    mcpLoading.active = false;
+  }).catch(() => { mcpLoading.active = false; });
 }
 
 function pinSession(id: string, atIndex?: number): void {
@@ -155,6 +188,9 @@ function upsertSession(patch: Partial<Session> & { id: string }): Session {
     workingDir: patch.workingDir ?? null,
     messages: [],
     metrics: patch.metrics ?? null,
+    mcpServers: [],
+    model: 'opus' as ModelChoice,
+    effort: 'high' as EffortLevel,
   };
   // Reassign rather than push: triggers the outer state's set trap, which
   // is the idiom the rest of this codebase uses (see apps/terminal).
@@ -215,13 +251,67 @@ on('session_state', (ev: any) => {
 on('session_loaded', (ev: any) => {
   const session = findSession(ev.session_id);
   if (!session) return;
-  session.messages = ev.messages.map((m: any) => ({
-    role: m.role,
-    content: m.content,
-    streaming: false,
-    cancelled: false,
-    tools: [],
-  }));
+  const msgs: Message[] = [];
+  for (const m of ev.messages) {
+    const content = m.content;
+    // Skip tool_result-only user messages — they're API plumbing, not user text.
+    if (m.role === 'user' && Array.isArray(content) &&
+        content.every((b: any) => b.type === 'tool_result')) continue;
+
+    // Extract text content.
+    let text = '';
+    if (typeof content === 'string') {
+      text = content;
+    } else if (Array.isArray(content)) {
+      text = content
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text || '')
+        .join('');
+    }
+
+    // Build interleaved blocks for assistant messages.
+    const blocks: ContentBlock[] = [];
+    if (m.role === 'assistant' && Array.isArray(content)) {
+      for (const b of content) {
+        if (b.type === 'text' && b.text) {
+          blocks.push({ kind: 'text', text: b.text });
+        } else if (b.type === 'tool_use') {
+          blocks.push({ kind: 'tool', tool: {
+            id: b.id || `t${nextToolId++}`,
+            name: b.name || 'unknown',
+            input: typeof b.input === 'string' ? b.input : JSON.stringify(b.input || {}),
+            output: null,
+            isError: false,
+            expanded: false,
+          }});
+        }
+      }
+    }
+
+    msgs.push({ role: m.role, content: text, blocks, streaming: false, cancelled: false });
+  }
+
+  // Match tool_result messages (skipped above) back to tool blocks.
+  // The JSONL order is: assistant(tool_use) → user(tool_result) → ...
+  // Walk the original messages to pair them up.
+  for (let i = 0; i < ev.messages.length; i++) {
+    const m = ev.messages[i];
+    if (m.role !== 'user' || !Array.isArray(m.content)) continue;
+    for (const b of m.content) {
+      if (b.type !== 'tool_result') continue;
+      // Find the tool block with matching id across all loaded messages.
+      for (const msg of msgs) {
+        for (const blk of msg.blocks) {
+          if (blk.kind === 'tool' && blk.tool.id === b.tool_use_id) {
+            blk.tool.output = typeof b.content === 'string' ? b.content : JSON.stringify(b.content || '');
+            blk.tool.isError = b.is_error || false;
+          }
+        }
+      }
+    }
+  }
+
+  session.messages = msgs;
   setActive(ev.session_id);
   focusInput();
 });
@@ -232,9 +322,9 @@ on('message_start', (ev: any) => {
   s.messages = [...s.messages, {
     role: 'assistant',
     content: '',
+    blocks: [],
     streaming: true,
     cancelled: false,
-    tools: [],
   }];
 });
 
@@ -242,7 +332,19 @@ on('message_delta', (ev: any) => {
   const s = findSession(ev.session_id);
   if (!s) return;
   const last = lastAssistantMessage(s);
-  if (last) last.content += ev.text;
+  if (!last) return;
+  // Trim leading whitespace from the very first text delta.
+  const delta = last.content === '' ? ev.text.replace(/^\s+/, '') : ev.text;
+  if (!delta) return;
+  last.content += delta;
+  // Extend the last text block or create a new one.
+  const b = last.blocks;
+  const tail = b.length ? b[b.length - 1] : null;
+  if (tail && tail.kind === 'text') {
+    tail.text += delta;
+  } else {
+    last.blocks = [...b, { kind: 'text' as const, text: delta }];
+  }
 });
 
 on('message_end', (ev: any) => {
@@ -259,14 +361,15 @@ on('tool_start', (ev: any) => {
   if (!s) return;
   const last = lastAssistantMessage(s);
   if (!last) return;
-  last.tools = [...last.tools, {
+  const tool: ToolCall = {
     id: `t${nextToolId++}`,
     name: ev.tool_name,
     input: ev.tool_input,
     output: null,
     isError: false,
     expanded: false,
-  }];
+  };
+  last.blocks = [...last.blocks, { kind: 'tool' as const, tool }];
 });
 
 on('tool_end', (ev: any) => {
@@ -275,11 +378,11 @@ on('tool_end', (ev: any) => {
   const last = lastAssistantMessage(s);
   if (!last) return;
   // Match the most recent still-pending tool with the given name.
-  for (let i = last.tools.length - 1; i >= 0; i--) {
-    const t = last.tools[i];
-    if (t.name === ev.tool_name && t.output === null) {
-      t.output = ev.result;
-      t.isError = ev.is_error;
+  for (let i = last.blocks.length - 1; i >= 0; i--) {
+    const b = last.blocks[i];
+    if (b.kind === 'tool' && b.tool.name === ev.tool_name && b.tool.output === null) {
+      b.tool.output = ev.result;
+      b.tool.isError = ev.is_error;
       break;
     }
   }
@@ -309,9 +412,9 @@ on('error', (ev: any) => {
   s.messages = [...s.messages, {
     role: 'error',
     content: ev.message,
+    blocks: [],
     streaming: false,
     cancelled: false,
-    tools: [],
   }];
 });
 
@@ -327,16 +430,16 @@ async function sendMessage(): Promise<void> {
   s.messages = [...s.messages, {
     role: 'user',
     content: text,
+    blocks: [],
     streaming: false,
     cancelled: false,
-    tools: [],
   }];
   if (!s.firstPrompt) s.firstPrompt = text;
 
   ta.value = '';
   ta.style.height = 'auto';
   ta.focus();
-  await invoke('send_message', { session_id: s.id, text });
+  await invoke('send_message', { session_id: s.id, text, model: s.model, effort: s.effort });
 }
 
 async function selectSession(id: string): Promise<void> {
@@ -735,9 +838,26 @@ function statsTemplate() {
     saveUi();
   }
 
+  function setModel(m: string) {
+    const s = activeSession();
+    if (s) s.model = m as ModelChoice;
+  }
+  function setEffort(e: string) {
+    const s = activeSession();
+    if (s) s.effort = e as EffortLevel;
+  }
+
   return html`
-    <div class="stats-panel" style="${() => !activeSession()?.metrics ? 'display:none' : `width:${state.statsWidth}px`}">
+    <div class="stats-panel" style="${() => !activeSession() ? 'display:none' : `width:${state.statsWidth}px`}">
       <div class="stats-drag" @mousedown="${onDragStart}"></div>
+      ${() => {
+        const s = activeSession();
+        if (!s) return html`<div class="config-section"></div>`;
+        return html`<div class="config-section">
+          <div class="config-row"><span class="config-label">Model</span><div class="toggle-group"><button class="${() => s.model === 'opus' ? 'toggle-btn active' : 'toggle-btn'}" @click="${() => setModel('opus')}">Opus</button><button class="${() => s.model === 'sonnet' ? 'toggle-btn active' : 'toggle-btn'}" @click="${() => setModel('sonnet')}">Sonnet</button></div></div>
+          <div class="config-row"><span class="config-label">Effort</span><div class="toggle-group"><button class="${() => s.effort === 'low' ? 'toggle-btn active' : 'toggle-btn'}" @click="${() => setEffort('low')}">Low</button><button class="${() => s.effort === 'medium' ? 'toggle-btn active' : 'toggle-btn'}" @click="${() => setEffort('medium')}">Med</button><button class="${() => s.effort === 'high' ? 'toggle-btn active' : 'toggle-btn'}" @click="${() => setEffort('high')}">High</button><button class="${() => s.effort === 'max' ? 'toggle-btn active' : 'toggle-btn'}" @click="${() => setEffort('max')}">Max</button></div></div>
+        </div>`;
+      }}
       ${() => {
         const s = activeSession();
         const m = s?.metrics;
@@ -753,44 +873,45 @@ function statsTemplate() {
           <div class="stats-section"><div class="stats-label">Usage</div><div class="stats-row"><span>Turns</span><span class="stats-num">${m.num_turns}</span></div><div class="stats-row"><span>Duration</span><span class="stats-num">${fmtDuration(m.duration_ms)}</span></div><div class="stats-row"><span>Cost</span><span class="stats-num cost">${fmtCost(m.total_cost_usd)}</span></div></div>
         </div>`;
       }}
+      ${() => {
+        const s = activeSession();
+        if (!s) return html`<div class="mcp-section"></div>`;
+        const servers = s.mcpServers;
+        const reloadBtn = html`<button class="${() => 'btn-mcp-reload' + (mcpLoading.active ? ' spinning' : '')}" @click="${() => loadMcps(s.id)}"><span class="icon icon-refresh"></span></button>`;
+        if (!servers.length) return html`<div class="mcp-section"><div class="stats-label mcp-hdr">MCP Servers${reloadBtn}</div><div class="stats-dim">${() => mcpLoading.active ? 'Loading...' : 'No servers'}</div></div>`;
+        return html`<div class="mcp-section"><div class="stats-label mcp-hdr">MCP Servers${reloadBtn}</div>${servers.map((srv: McpServer) => html`<div class="mcp-row"><span class="${'mcp-dot ' + srv.status}"></span><span class="mcp-name">${srv.name}</span></div>`.key(srv.name))}</div>`;
+      }}
     </div>
   `;
 }
 
 function toolTemplate(tool: ToolCall) {
-  return html`
-    <div class="${() => 'tool-call' + (tool.expanded ? ' expanded' : '')}">
-      <div class="tool-hdr" @click="${() => { tool.expanded = !tool.expanded; }}">
-        <span class="${() => 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '')}"></span>
-        <span class="tname">${tool.name}</span>
-        <span class="${() => 'tstatus' + (tool.output === null ? '' : tool.isError ? ' error' : ' done')}">
-          ${() => tool.output === null ? 'running…' : tool.isError ? 'error' : 'done'}
-        </span>
-      </div>
-      <div class="${() => 'tool-body' + (tool.expanded ? ' open' : '')}">
-        <div class="tool-label">Input</div>
-        <pre>${() => truncate(tool.input, 2000)}</pre>
-        ${() => tool.output !== null ? html`
-          <div class="tool-label">Output</div>
-          <pre class="${tool.isError ? 'terr' : ''}">${truncate(tool.output, 2000)}</pre>
-        ` : html``}
-      </div>
-    </div>
-  `.key(tool.id);
+  return html`<div class="${() => 'tool-call' + (tool.expanded ? ' expanded' : '')}"><div class="tool-hdr" @click="${() => { tool.expanded = !tool.expanded; }}"><span class="${() => 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '')}"></span><span class="tname">${tool.name}</span><span class="${() => 'tstatus' + (tool.output === null ? '' : tool.isError ? ' error' : ' done')}">${() => tool.output === null ? 'running…' : tool.isError ? 'error' : 'done'}</span></div><div class="${() => 'tool-body' + (tool.expanded ? ' open' : '')}"><div class="tool-label">Input</div><pre>${() => truncate(tool.input, 2000)}</pre>${() => tool.output !== null ? html`<div class="tool-label">Output</div><pre class="${tool.isError ? 'terr' : ''}">${truncate(tool.output, 2000)}</pre>` : html``}</div></div>`.key(tool.id);
+}
+
+function blockTemplate(block: ContentBlock) {
+  if (block.kind === 'text') {
+    return html`<span class="text-block">${() => block.text}</span>`.key('t' + block.text.slice(0, 8));
+  }
+  return toolTemplate(block.tool);
 }
 
 function messageTemplate(msg: Message, idx: number) {
-  // No stable per-message id from the backend; index is fine since messages
-  // are append-only within a session and never reordered.
   if (msg.role === 'user') {
     return html`<div class="msg user">${() => msg.content}</div>`.key(`u${idx}`);
   }
   if (msg.role === 'error') {
     return html`<div class="msg error-msg">${() => msg.content}</div>`.key(`e${idx}`);
   }
-  return html`<div class="msg assistant">${() => msg.content}${() => msg.streaming
+  // Assistant: render interleaved text + tool blocks in order.
+  // For loaded messages (no blocks), fall back to content string.
+  return html`<div class="msg assistant">${() => {
+    if (msg.blocks.length) return msg.blocks.map(blockTemplate);
+    if (msg.content) return [html`<span class="text-block">${msg.content}</span>`.key('loaded')];
+    return [];
+  }}${() => msg.streaming
     ? html`<span class="cursor"></span>`
-    : msg.cancelled ? html`<span class="cancelled-label"> Cancelled</span>` : html``}${() => msg.tools.map(toolTemplate)}</div>`.key(`a${idx}`);
+    : msg.cancelled ? html`<span class="cancelled-label"> Cancelled</span>` : html``}</div>`.key(`a${idx}`);
 }
 
 function messagesTemplate() {

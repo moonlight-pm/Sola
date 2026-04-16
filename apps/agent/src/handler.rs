@@ -20,6 +20,7 @@ impl sola_app::AppHandler for AgentHandler {
             "cancel" => self.cmd_cancel(args).await,
             "close_session" => self.cmd_close_session(args).await,
             "delete_session" => self.cmd_delete_session(args).await,
+            "list_mcps" => self.cmd_list_mcps(args).await,
             "rename_conversation" => self.cmd_rename(args).await,
             "list_conversations" => self.cmd_list_conversations().await,
             "resume_session" => self.cmd_resume_session(args).await,
@@ -108,6 +109,8 @@ impl AgentHandler {
 
         let session_id = session_id.to_string();
         let text = text.to_string();
+        let model = args.get("model").and_then(|v| v.as_str()).unwrap_or("opus").to_string();
+        let effort = args.get("effort").and_then(|v| v.as_str()).unwrap_or("high").to_string();
         let session_mgr = self.session_mgr.clone();
         let event_tx = self.event_tx.clone();
 
@@ -119,6 +122,8 @@ impl AgentHandler {
                 session_mgr,
                 event_tx,
                 cancel_token,
+                model,
+                effort,
             )
             .await;
         });
@@ -151,6 +156,49 @@ impl AgentHandler {
             tracing::warn!(session_id, "failed to delete session files: {:#}", e);
         }
         json!({ "ok": true })
+    }
+
+    async fn cmd_list_mcps(&self, args: &Value) -> Value {
+        let working_dir = args.get("working_dir").and_then(|v| v.as_str()).unwrap_or(".");
+        let claude_bin = {
+            let home = std::env::var("HOME").unwrap_or_default();
+            let local = std::path::PathBuf::from(&home).join(".local/bin/claude");
+            if local.exists() { local } else { std::path::PathBuf::from("claude") }
+        };
+        let output = match tokio::process::Command::new(&claude_bin)
+            .args(["mcp", "list"])
+            .current_dir(working_dir)
+            .output()
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => return json!({ "error": format!("failed to run claude mcp list: {e}") }),
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut servers = Vec::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("Checking") { continue; }
+            // Format: "name: command - status"
+            let (name, rest) = match line.split_once(':') {
+                Some(pair) => pair,
+                None => continue,
+            };
+            let name = name.trim();
+            let (command, status) = match rest.rsplit_once(" - ") {
+                Some(pair) => (pair.0.trim(), pair.1.trim()),
+                None => (rest.trim(), ""),
+            };
+            if name == "claude.ai Google Drive" { continue; }
+            let connected = status.contains("Connected");
+            let needs_auth = status.contains("authentication");
+            servers.push(json!({
+                "name": name,
+                "command": command,
+                "status": if connected { "connected" } else if needs_auth { "auth" } else { "error" },
+            }));
+        }
+        json!({ "servers": servers })
     }
 
     async fn cmd_rename(&self, args: &Value) -> Value {
@@ -229,12 +277,13 @@ impl AgentHandler {
             "working_dir": meta.working_dir,
         }));
 
-        // Load and forward conversation history
+        // Load and forward conversation history with full content blocks
+        // (including tool_use, tool_result, thinking) so the frontend can
+        // reconstruct the interleaved presentation.
         let history = storage::load_history(session_id).unwrap_or_default();
         let messages: Vec<Value> = history.iter().map(|m: &Value| {
             let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("user");
-            let content = extract_text_content(m);
-            json!({ "role": role, "content": content })
+            json!({ "role": role, "content": m.get("content").cloned().unwrap_or(json!("")) })
         }).collect();
 
         self.send_event(json!({

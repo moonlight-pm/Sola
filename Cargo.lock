@@ -2280,6 +2280,7 @@ dependencies = [
  "serde_json",
  "sola-app",
  "sola-bus",
+ "sola-core",
  "tokio",
  "tokio-util",
  "tracing",
