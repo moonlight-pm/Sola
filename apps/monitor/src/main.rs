@@ -1,7 +1,10 @@
 use serde_json::Value;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 use sola_bus::Message;
-use sola_bus::topics::Topic;
+use sola_bus::topics::{
+    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic,
+};
+use sola_core::KeyCode;
 
 mod decode;
 
@@ -21,16 +24,32 @@ impl SolaApp for MonitorApp {
 
     fn new(ctx: &mut AppCtx) -> Self {
         let main_window = ctx.add_window(WindowConfig {
-            title: "Monitor".into(),
+            title: "main".into(),
             size: (900, 600),
             position: None,
-            decorated: true,
+            decorated: false,
             transparent: false,
             assets: APP_ASSETS,
             initial_state: None,
             zoned: false,
             keyboard_target: false,
         });
+
+        ctx.emit_sticky(Topic::SetAppMenu(AppMenuPayload {
+            app_id: Self::APP_ID.into(),
+            menus: vec![MenuDefinition {
+                label: "Monitor".into(),
+                items: vec![
+                    MenuItem::Action {
+                        id: "quit".into(),
+                        label: "Quit Monitor".into(),
+                        shortcut: Some(KeyCode::Q.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                ],
+            }],
+        }));
 
         tracing::info!("sola-monitor ready");
 
@@ -52,7 +71,12 @@ impl SolaApp for MonitorApp {
     ) {
     }
 
-    fn on_bus_event(&mut self, _topic: &Topic, _ctx: &mut AppCtx) {
+    fn on_bus_event(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic {
+            if app_id == Self::APP_ID && action_id == "quit" {
+                std::process::exit(0);
+            }
+        }
     }
 }
 
