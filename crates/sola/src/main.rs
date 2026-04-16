@@ -64,6 +64,11 @@ fn main() {
         launch(&bin_dir, name, &mut managed);
     }
 
+    // User apps spawned on LaunchApp bus messages. Fire-and-forget: we reap
+    // them in the supervision loop so they don't zombie, but we don't
+    // restart or track them beyond that.
+    let mut user_apps: Vec<UserApp> = Vec::new();
+
     // Connect to bus (retry until available)
     let mut bus = sola_bus::BusClient::new();
     bus.set_app_id("sola");
@@ -98,9 +103,14 @@ fn main() {
                     shutdown_all(&mut managed);
                     std::process::exit(0);
                 }
+                Topic::LaunchApp(command) => {
+                    launch_user_app(&command, &mut user_apps);
+                }
                 _ => {}
             }
         }
+
+        reap_user_apps(&mut user_apps);
 
         // Check for binary changes
         while let Ok(changed) = change_rx.try_recv() {
@@ -146,6 +156,63 @@ fn main() {
 struct ManagedProcess {
     child: Child,
     started_at: Instant,
+}
+
+struct UserApp {
+    command: String,
+    child: Child,
+}
+
+fn launch_user_app(command: &str, user_apps: &mut Vec<UserApp>) {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        warn!("LaunchApp with empty command, ignoring");
+        return;
+    }
+    let mut parts = trimmed.split_whitespace();
+    let Some(program) = parts.next() else {
+        warn!(command, "LaunchApp with no program, ignoring");
+        return;
+    };
+    let args: Vec<&str> = parts.collect();
+
+    // SAFETY: pre_exec runs in the child after fork. PR_SET_PDEATHSIG asks
+    // the kernel to kill the child if sola dies, preventing orphans.
+    let result = unsafe {
+        Command::new(program)
+            .args(&args)
+            .pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            })
+            .spawn()
+    };
+    match result {
+        Ok(child) => {
+            info!(command = trimmed, pid = child.id(), "user app launched");
+            user_apps.push(UserApp {
+                command: trimmed.to_string(),
+                child,
+            });
+        }
+        Err(e) => {
+            warn!(command = trimmed, "failed to launch user app: {e}");
+        }
+    }
+}
+
+fn reap_user_apps(user_apps: &mut Vec<UserApp>) {
+    user_apps.retain_mut(|app| match app.child.try_wait() {
+        Ok(Some(status)) => {
+            info!(command = %app.command, pid = app.child.id(), ?status, "user app exited");
+            false
+        }
+        Ok(None) => true,
+        Err(e) => {
+            warn!(command = %app.command, "wait failed: {e}");
+            false
+        }
+    });
 }
 
 fn launch<'a>(
