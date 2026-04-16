@@ -4,7 +4,7 @@ import { on } from '@sola/ipc';
 // --- Types ---
 
 interface BusMessage {
-  id: string;
+  msgId: string;
   timestamp: number;
   topic: string;
   sticky: boolean;
@@ -132,7 +132,7 @@ function clearMessages() {
 
 function selectMessage(msg: BusMessage | null) {
   if (msg) {
-    state.selectedId = msg.id;
+    state.selectedId = msg.msgId;
     state.selectedMessage = msg;
   } else {
     state.selectedId = null;
@@ -234,7 +234,7 @@ export async function createApp(root: HTMLElement) {
         state.filteredMessages.map(
           (msg) => html`
             <div
-              class="${`message-row${state.selectedId === msg.id ? ' selected' : ''}`}"
+              class="${`message-row${state.selectedId === msg.msgId ? ' selected' : ''}`}"
               data-category="${categoryOf(msg.topic)}"
               @click="${() => selectMessage(msg)}"
             >
@@ -263,7 +263,7 @@ export async function createApp(root: HTMLElement) {
             const parts: string[] = [];
             if (m.source) parts.push(m.source);
             if (m.sticky) parts.push('sticky');
-            parts.push(m.id);
+            parts.push(m.msgId);
             return parts.join(' \u00b7 ');
           }}
         </span>

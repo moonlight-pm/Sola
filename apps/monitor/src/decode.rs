@@ -12,7 +12,7 @@ pub fn message_to_json(msg: &Message) -> Value {
 
     json!({
         "event": "bus_message",
-        "id": id,
+        "msgId": id,
         "timestamp": timestamp,
         "topic": topic_name,
         "sticky": msg.sticky,

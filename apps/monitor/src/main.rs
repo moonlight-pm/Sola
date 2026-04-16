@@ -21,7 +21,7 @@ impl SolaApp for MonitorApp {
 
     fn new(ctx: &mut AppCtx) -> Self {
         let main_window = ctx.add_window(WindowConfig {
-            title: "main".into(),
+            title: "Monitor".into(),
             size: (900, 600),
             position: None,
             decorated: true,
