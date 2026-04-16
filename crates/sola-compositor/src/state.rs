@@ -137,6 +137,11 @@ pub struct State {
     /// Surfaces with a known app_id, waiting for Composition to map them.
     pub unmapped_surfaces: Vec<Window>,
 
+    /// X11 override-redirect windows waiting for their wl_surface to be
+    /// ready. Mapped directly into the Space (bypassing composition) once
+    /// their surface has content.
+    pub pending_or_windows: Vec<Window>,
+
     // -- Protocol state --
     /// Tracks `zwp_linux_dmabuf` — GPU buffer sharing with clients.
     pub dmabuf_state: Option<DmabufState>,
@@ -209,6 +214,7 @@ impl State {
             window_policies: HashMap::new(),
             pending_surfaces: Vec::new(),
             unmapped_surfaces: Vec::new(),
+            pending_or_windows: Vec::new(),
             cursor_buffer: None,
             cursor_hotspot: (0, 0),
             dmabuf_state: None,

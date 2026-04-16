@@ -43,12 +43,12 @@ impl XwmHandler for State {
             "X11 override-redirect window mapped"
         );
 
-        // OR windows (menus, popups, tooltips) are mapped directly
-        // into the space at their X11-requested position, above
-        // everything else.
-        let geo = window.geometry();
+        // OR windows (menus, popups, tooltips) bypass the shell's
+        // composition system. They position and size themselves.
+        // Defer mapping until the wl_surface has content — mapping
+        // a bufferless surface hangs NVIDIA's EGL.
         let win = Window::new_x11_window(window);
-        self.space.map_element(win, (geo.loc.x, geo.loc.y), true);
+        self.pending_or_windows.push(win);
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -152,6 +152,11 @@ fn remove_x11_window(state: &mut State, surface: &X11Surface) {
         }
         state.space.unmap_elem(&window);
     }
+
+    // Remove from pending OR windows.
+    state.pending_or_windows.retain(|w| {
+        !w.x11_surface().is_some_and(|s| s.window_id() == surface.window_id())
+    });
 
     // Remove from pending/unmapped, also cleaning window_ids.
     state.pending_surfaces.retain(|w| {

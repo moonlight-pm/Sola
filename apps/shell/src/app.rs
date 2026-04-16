@@ -468,6 +468,11 @@ impl ShellApp {
             if w.app_id == Self::APP_ID {
                 continue;
             }
+            // Don't frame transient windows — they position themselves
+            // relative to their parent via X11.
+            if w.parent_window_id.is_some() {
+                continue;
+            }
             if let Some(frame) = self.zoning.app_frame(&w.app_id, w.window_id) {
                 ctx.emit(Topic::Frame(frame));
             }

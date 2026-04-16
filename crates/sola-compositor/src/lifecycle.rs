@@ -36,6 +36,7 @@ pub fn run_loop(
             .map_err(|e| CompositorError::Display(e.to_string()))?;
 
         apply_pending_surfaces(state);
+        apply_pending_or_windows(state);
 
         display
             .flush_clients()
@@ -212,28 +213,51 @@ pub(crate) fn emit_windows_list(state: &mut State) {
 
     let mut windows: Vec<WindowInfo> = Vec::new();
 
-    // Collect mapped surfaces.
-    for window in state.space.elements() {
-        if let (Some(wid), Some(app_id)) = (window_id(window), State::app_id(window)) {
-            let title = state::window_title(window).unwrap_or_default();
-            windows.push(WindowInfo {
-                window_id: wid,
-                app_id,
-                title,
-            });
-        }
-    }
+    let all_windows: Vec<_> = state
+        .space
+        .elements()
+        .cloned()
+        .chain(state.unmapped_surfaces.iter().cloned())
+        .collect();
 
-    // Collect unmapped surfaces (known to exist but not yet composed).
-    for window in &state.unmapped_surfaces {
-        if let (Some(wid), Some(app_id)) = (window_id(window), State::app_id(window)) {
-            let title = state::window_title(window).unwrap_or_default();
-            windows.push(WindowInfo {
-                window_id: wid,
-                app_id,
-                title,
-            });
+    for window in &all_windows {
+        // Skip OR windows — they're unmanaged and not visible to the shell.
+        if window
+            .x11_surface()
+            .is_some_and(|s| s.is_override_redirect())
+        {
+            continue;
         }
+
+        let Some(wid) = window_id(window) else {
+            continue;
+        };
+        let Some(app_id) = State::app_id(window) else {
+            continue;
+        };
+
+        let title = state::window_title(window).unwrap_or_default();
+
+        // Resolve X11 transient_for to a compositor window_id.
+        let parent_window_id = window.x11_surface().and_then(|x11| {
+            let parent_x11_id = x11.is_transient_for()?;
+            // Find the compositor window whose X11 window ID matches.
+            all_windows.iter().find_map(|w| {
+                let x = w.x11_surface()?;
+                if x.window_id() == parent_x11_id {
+                    window_id(w)
+                } else {
+                    None
+                }
+            })
+        });
+
+        windows.push(WindowInfo {
+            window_id: wid,
+            app_id,
+            title,
+            parent_window_id,
+        });
     }
 
     let _ = state.bus.emit_sticky(Topic::Windows(windows));
@@ -327,6 +351,38 @@ fn apply_pending_surfaces(state: &mut State) {
     if new_surfaces {
         emit_windows_list(state);
     }
+}
+
+/// Map pending override-redirect windows once their wl_surface has content.
+///
+/// OR windows bypass the shell's composition system entirely — they
+/// position themselves via X11 geometry and are rendered above managed
+/// windows. We defer mapping until the wl_surface is associated to
+/// avoid rendering a bufferless surface (hangs NVIDIA EGL).
+fn apply_pending_or_windows(state: &mut State) {
+    use smithay::wayland::seat::WaylandFocus;
+
+    let pending: Vec<_> = state.pending_or_windows.drain(..).collect();
+    let mut still_pending = Vec::new();
+
+    for window in pending {
+        if window.wl_surface().is_none() {
+            still_pending.push(window);
+            continue;
+        }
+
+        let (x, y) = window
+            .x11_surface()
+            .map(|s| {
+                let geo = s.geometry();
+                (geo.loc.x, geo.loc.y)
+            })
+            .unwrap_or((0, 0));
+
+        state.space.map_element(window, (x, y), false);
+    }
+
+    state.pending_or_windows = still_pending;
 }
 
 /// Send wl_keyboard.enter to the shell's keyboard_target surface so GTK
