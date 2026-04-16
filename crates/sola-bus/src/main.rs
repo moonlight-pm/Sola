@@ -63,7 +63,13 @@ fn main() {
                 next_id += 1;
 
                 let writer = match stream.try_clone() {
-                    Ok(s) => s,
+                    Ok(s) => {
+                        // Non-blocking writes prevent a slow client from
+                        // deadlocking the entire bus. If a write would block,
+                        // we drop the message (or disconnect the client).
+                        s.set_nonblocking(true).ok();
+                        s
+                    }
                     Err(e) => {
                         error!(client = id, "failed to clone stream: {e}");
                         continue;
@@ -101,6 +107,9 @@ fn replay_sticky(id: ClientId, bus: &mut BusState, writer: &UnixStream) {
         }
     };
 
+    // Replay needs blocking writes — the client just connected and must
+    // receive all sticky state before processing any live messages.
+    writer.set_nonblocking(false).ok();
     for ((topic, tag), msg) in &bus.sticky {
         if let Err(e) = transport::write_event(&mut writer, msg) {
             warn!(client = id, topic = %topic, tag = %tag, "failed to replay sticky message: {e}");
@@ -181,9 +190,18 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
         if id == sender {
             continue;
         }
-        if let Err(e) = transport::write_event(stream, event) {
-            warn!(client = id, "write error: {e}");
-            dead.push(id);
+        match transport::write_event(stream, event) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                // Client is slow — drop the message rather than blocking
+                // the entire bus. Sticky messages will be replayed on the
+                // next successful write or reconnect.
+                tracing::debug!(client = id, topic = %event.topic, "dropped (client busy)");
+            }
+            Err(e) => {
+                warn!(client = id, "write error: {e}");
+                dead.push(id);
+            }
         }
     }
 
