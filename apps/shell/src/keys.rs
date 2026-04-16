@@ -76,13 +76,26 @@ fn handle_key_pressed(
         return glib::Propagation::Stop;
     }
 
-    // Meta+Tab: activate switcher.
+    // Meta+Space: toggle launcher.
+    if chord.meta && chord.keycode == KeyCode::SPACE {
+        if app.launcher.active {
+            app.close_launcher(ctx);
+        } else {
+            app.open_launcher(ctx);
+        }
+        return glib::Propagation::Stop;
+    }
+
+    // Meta+Tab: activate switcher. Close launcher first if open.
     if chord.keycode == KeyCode::TAB && !app.switcher.active {
+        if app.launcher.active {
+            app.close_launcher(ctx);
+        }
         tracing::info!("activating switcher");
         app.switcher.apps = app.rebuild_switcher_apps();
         app.switcher.active = true;
         app.switcher.selected = if app.switcher.apps.len() > 1 { 1 } else { 0 };
-        let json = serde_json::to_string(&app.switcher.apps).unwrap_or_default();
+        let json = app.switcher_apps_json();
         app.windows.switcher.eval_js(&format!(
             "renderSwitcher({}, {})",
             json, app.switcher.selected

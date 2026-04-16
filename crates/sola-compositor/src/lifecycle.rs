@@ -153,6 +153,10 @@ fn handle_frame(state: &mut State, update: sola_bus::topics::FrameUpdate) {
 }
 
 /// Apply a Focus target: set keyboard focus to the matching surface.
+///
+/// After focusing a non-shell surface, re-enters the shell keyboard
+/// target. This ensures GTK dispatches shell key-binding events even
+/// after keyboard focus has moved to another client.
 fn handle_focus(state: &mut State, target: sola_bus::topics::FocusTarget) {
     use smithay::wayland::seat::WaylandFocus;
 
@@ -165,6 +169,12 @@ fn handle_focus(state: &mut State, target: sola_bus::topics::FocusTarget) {
     let serial = SERIAL_COUNTER.next_serial();
     let keyboard = state.seat.get_keyboard().unwrap();
     keyboard.set_focus(state, Some(surface.into_owned()), serial);
+
+    if target.app_id != "sola-shell" {
+        if let Some(ref shell_surface) = state.shell_keyboard_target.clone() {
+            setup_shell_keyboard_target(state, shell_surface);
+        }
+    }
 }
 
 /// Emit the current app list as a sticky bus message.

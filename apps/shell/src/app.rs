@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use serde_json::Value;
+use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
     App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord, MenuDefinition,
@@ -8,6 +9,8 @@ use sola_bus::topics::{
 };
 use sola_core::KeyCode;
 
+use crate::applications::{Application, ApplicationsConfig};
+use crate::launcher::{self, LAUNCHER_ASSETS, LauncherState};
 use crate::menu::{MENU_ASSETS, MenuCache};
 use crate::menubar::setup_menubar;
 use crate::switcher::{SWITCHER_ASSETS, SwitcherState};
@@ -17,15 +20,18 @@ pub struct ShellWindows {
     pub menubar: WindowHandle,
     pub menu: WindowHandle,
     pub switcher: WindowHandle,
+    pub launcher: WindowHandle,
 }
 
 pub struct ShellApp {
     pub focused_app_id: Option<String>,
     pub mru_apps: Vec<String>,
     pub known_apps: Vec<App>,
+    pub applications: ApplicationsConfig,
     pub menus: MenuCache,
     pub zoning: ZoningState,
     pub switcher: SwitcherState,
+    pub launcher: LauncherState,
     pub menu_open: bool,
     pub windows: ShellWindows,
 }
@@ -60,6 +66,18 @@ impl SolaApp for ShellApp {
             keyboard_target: false,
         });
 
+        let launcher = ctx.add_window(WindowConfig {
+            title: "launcher".into(),
+            size: (launcher::WIDTH, launcher::HEIGHT),
+            position: Some((700, 340)),
+            decorated: false,
+            transparent: true,
+            assets: LAUNCHER_ASSETS,
+            initial_state: None,
+            zoned: false,
+            keyboard_target: true,
+        });
+
         let mut menus = MenuCache::new();
         // Register the shell's system menu (for shortcut lookup).
         menus.set_menu(AppMenuPayload {
@@ -80,14 +98,17 @@ impl SolaApp for ShellApp {
             focused_app_id: None,
             mru_apps: Vec::new(),
             known_apps: Vec::new(),
+            applications: ApplicationsConfig::load(),
             menus,
             zoning: ZoningState::new(),
             switcher: SwitcherState::default(),
+            launcher: LauncherState::default(),
             menu_open: false,
             windows: ShellWindows {
                 menubar,
                 menu,
                 switcher,
+                launcher,
             },
         };
 
@@ -109,7 +130,7 @@ impl SolaApp for ShellApp {
             Topic::Apps(apps) => {
                 self.handle_apps_update(apps.clone(), ctx);
                 if self.switcher.active {
-                    let json = serde_json::to_string(&self.switcher.apps).unwrap_or_default();
+                    let json = self.switcher_apps_json();
                     self.windows.switcher.eval_js(&format!(
                         "renderSwitcher({}, {})",
                         json, self.switcher.selected
@@ -148,7 +169,7 @@ impl SolaApp for ShellApp {
                 }
 
                 // Keep menu/switcher interactions stable while overlays are active.
-                if self.menu_open || self.switcher.active {
+                if self.menu_open || self.switcher.active || self.launcher.active {
                     return;
                 }
 
@@ -194,12 +215,58 @@ impl SolaApp for ShellApp {
                 }
                 self.close_menu(ctx);
             }
+            ("launcher", "query") => {
+                let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                self.launcher.apply_query(&self.applications, text);
+                self.render_launcher();
+            }
+            ("launcher", "launch") => {
+                let app_id = args.get("app_id").and_then(|v| v.as_str()).unwrap_or("");
+                self.launch_and_close(app_id, ctx);
+            }
+            ("launcher", "close") => {
+                self.close_launcher(ctx);
+            }
             _ => {}
         }
     }
 }
 
 impl ShellApp {
+    /// Look up a configured application by its `app_id`.
+    pub fn application(&self, app_id: &str) -> Option<&Application> {
+        self.applications.get(app_id)
+    }
+
+    /// Icon reference (`"<pack>/<name>"`) for an application, if configured.
+    pub fn icon_for(&self, app_id: &str) -> Option<&str> {
+        self.application(app_id).map(|a| a.icon.as_str())
+    }
+
+    /// JSON payload of the switcher's apps, with `icon` resolved against the
+    /// `applications` registry. Used in place of raw `switcher.apps` JSON so
+    /// the overlay can render real icons.
+    pub fn switcher_apps_json(&self) -> String {
+        let entries: Vec<Value> = self
+            .switcher
+            .apps
+            .iter()
+            .map(|app| {
+                let icon = self
+                    .icon_for(&app.app_id)
+                    .map(String::from)
+                    .unwrap_or_else(|| app.icon.clone());
+                serde_json::json!({
+                    "app_id": app.app_id,
+                    "name": app.name,
+                    "icon": icon,
+                    "window_count": app.window_count,
+                })
+            })
+            .collect();
+        serde_json::to_string(&entries).unwrap_or_default()
+    }
+
     fn emit_shell_key_bindings(&self, ctx: &mut AppCtx) {
         ctx.emit_sticky(Topic::ShellKeyBindings(ShellKeyBindingsPayload {
             app_id: Self::APP_ID.into(),
@@ -217,6 +284,9 @@ impl ShellApp {
 
         // Ensure compositor always routes Meta+Tab for switcher activation.
         bindings.push(KeyCode::TAB.meta());
+
+        // Ensure compositor always routes Meta+Space for launcher activation.
+        bindings.push(KeyCode::SPACE.meta());
 
         // Ensure compositor routes Meta+Numpad zoning keys.
         for &keycode in zoning::ZONING_KEYCODES {
@@ -322,6 +392,12 @@ impl ShellApp {
             entries.push(CompositionEntry {
                 app_id: Self::APP_ID.into(),
                 title: Some("switcher".into()),
+            });
+        }
+        if self.launcher.active {
+            entries.push(CompositionEntry {
+                app_id: Self::APP_ID.into(),
+                title: Some("launcher".into()),
             });
         }
 
@@ -458,6 +534,78 @@ impl ShellApp {
             .menubar
             .send_to_js(&serde_json::json!({"event": "close_menu"}));
         self.emit_composition(ctx);
+    }
+
+    pub fn open_launcher(&mut self, ctx: &mut AppCtx) {
+        if self.launcher.active {
+            return;
+        }
+        tracing::info!("activating launcher");
+
+        // Snapshot the focus target we'll restore on close.
+        self.launcher.prior_focus = self.focused_app_id.as_ref().map(|id| FocusTarget {
+            app_id: id.clone(),
+            title: None,
+        });
+
+        self.launcher.active = true;
+        self.launcher.apply_query(&self.applications, "");
+
+        if let Some((ow, oh)) = self.zoning.output_size {
+            ctx.emit(Topic::Frame(FrameUpdate {
+                app_id: Self::APP_ID.into(),
+                title: Some("launcher".into()),
+                x: (ow - launcher::WIDTH) / 2,
+                y: (oh - launcher::HEIGHT) / 3,
+                width: launcher::WIDTH,
+                height: launcher::HEIGHT,
+            }));
+        }
+
+        self.emit_composition(ctx);
+
+        // Route keyboard to the launcher window.
+        ctx.emit(Topic::Focus(FocusTarget {
+            app_id: Self::APP_ID.into(),
+            title: Some("launcher".into()),
+        }));
+
+        self.windows.launcher.eval_js("resetForOpen()");
+        self.render_launcher();
+    }
+
+    pub fn close_launcher(&mut self, ctx: &mut AppCtx) {
+        if !self.launcher.active {
+            return;
+        }
+        tracing::info!("deactivating launcher");
+        let prior = self.launcher.prior_focus.take();
+        self.launcher.active = false;
+        self.launcher.query.clear();
+        self.launcher.filtered_ids.clear();
+        self.launcher.selected = 0;
+
+        self.emit_composition(ctx);
+
+        if let Some(target) = prior {
+            ctx.emit(Topic::Focus(target));
+        }
+    }
+
+    pub fn launch_and_close(&mut self, app_id: &str, ctx: &mut AppCtx) {
+        if let Some(app) = self.applications.get(app_id) {
+            tracing::info!(app_id, command = %app.command, "launching application");
+            ctx.emit(Topic::LaunchApp(app.command.clone()));
+        } else {
+            tracing::warn!(app_id, "launch requested for unknown application");
+        }
+        self.close_launcher(ctx);
+    }
+
+    fn render_launcher(&self) {
+        let json = launcher::state::render_json(&self.applications, &self.launcher.filtered_ids);
+        let js = format!("renderApps({}, {})", json, self.launcher.selected);
+        self.windows.launcher.eval_js(&js);
     }
 }
 

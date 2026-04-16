@@ -1,0 +1,19 @@
+# Pinned upstream sources for vendored asset packs.
+#
+# Run `cargo make assets pull` to refresh. The fetched files are committed
+# to the repo so clean clones build offline.
+#
+# Leave `rev` empty to track the default branch; set to a tag or commit SHA
+# to pin.
+
+[packs.lucide]
+source   = "github:lucide-icons/lucide"
+rev      = ""
+src_dir  = "icons"
+category = "icons"
+
+[packs.simpleicons]
+source   = "github:simple-icons/simple-icons"
+rev      = ""
+src_dir  = "icons"
+category = "icons"
