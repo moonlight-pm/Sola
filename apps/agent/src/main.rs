@@ -5,6 +5,7 @@ use sola_app::{AppCtx, AsyncDispatcher, SolaApp, WindowConfig, WindowHandle, ass
 use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Topic};
 use sola_core::KeyCode;
 
+mod active;
 mod agent;
 mod handler;
 mod session;
@@ -47,6 +48,26 @@ impl SolaApp for AgentApp {
                 mw_for_events.send_raw_json_to_js(&msg);
             }
             gtk4::glib::ControlFlow::Continue
+        });
+
+        // Poll for terminal-live sessions; emit an event on change.
+        let active_tx = event_tx.clone();
+        std::thread::spawn(move || {
+            let mut last: Option<std::collections::HashSet<String>> = None;
+            loop {
+                let cur = active::detect();
+                if last.as_ref() != Some(&cur) {
+                    let mut ids: Vec<&String> = cur.iter().collect();
+                    ids.sort();
+                    let payload = serde_json::json!({
+                        "event": "active_sessions",
+                        "ids": ids,
+                    }).to_string();
+                    if active_tx.send(payload).is_err() { break; }
+                    last = Some(cur);
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
         });
 
         let session_mgr = Arc::new(session::SessionManager::new());

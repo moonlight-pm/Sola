@@ -236,7 +236,8 @@ impl AgentHandler {
 
     async fn cmd_list_conversations(&self) -> Value {
         let metas = crate::sync::sync_sessions();
-        tracing::info!(count = metas.len(), "list_conversations");
+        let active = crate::active::detect();
+        tracing::info!(count = metas.len(), active = active.len(), "list_conversations");
         let conversations: Vec<Value> = metas
             .iter()
             .map(|m| {
@@ -257,6 +258,7 @@ impl AgentHandler {
                     "metrics": &m.metrics,
                     "model": &m.model,
                     "effort": &m.effort,
+                    "active": active.contains(&m.session_id),
                 })
             })
             .collect();

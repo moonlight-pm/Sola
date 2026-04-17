@@ -276,6 +276,22 @@ html, body {
 
 .dot.error { background: var(--red); }
 .dot.saved { background: var(--text-ghost); }
+.dot.terminal {
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(0, 168, 255, 0.45);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.convo-item.terminal {
+  cursor: default;
+}
+.convo-item.terminal .convo-name {
+  font-style: italic;
+  color: var(--text-muted);
+}
+.convo-item.terminal.active .convo-name {
+  color: var(--text-primary);
+}
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -662,6 +678,13 @@ html, body {
 .input-area textarea:focus { border-color: rgba(0, 168, 255, 0.35); }
 .input-area textarea.running { border-color: rgba(255, 184, 0, 0.25); }
 .input-area textarea::placeholder { color: var(--text-ghost); }
+
+.input-area.readonly textarea {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border-style: dashed;
+  cursor: not-allowed;
+}
 
 .btn-send, .btn-cancel {
   width: 36px;

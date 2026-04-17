@@ -64,6 +64,10 @@ interface Session {
   mcpServers: McpServer[];
   model: ModelChoice;
   effort: EffortLevel;
+  /** True when a terminal `claude` process is currently attached to this
+   *  session's task dir. Such sessions are read-only in this UI to avoid
+   *  fighting with the terminal for stdin. */
+  terminalActive: boolean;
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -102,6 +106,10 @@ function activeSession(): Session | undefined {
 
 function isRunning(): boolean {
   return activeSession()?.status === 'running';
+}
+
+function isReadOnly(): boolean {
+  return !!activeSession()?.terminalActive;
 }
 
 function truncate(s: string | null, n: number): string {
@@ -184,6 +192,7 @@ function upsertSession(patch: Partial<Session> & { id: string }): Session {
     if (patch.metrics !== undefined) existing.metrics = patch.metrics;
     if ((patch as any).model !== undefined) existing.model = (patch as any).model;
     if ((patch as any).effort !== undefined) existing.effort = (patch as any).effort;
+    if (patch.terminalActive !== undefined) existing.terminalActive = patch.terminalActive;
     return existing;
   }
   const fresh: Session = {
@@ -197,6 +206,7 @@ function upsertSession(patch: Partial<Session> & { id: string }): Session {
     mcpServers: [],
     model: ((patch as any).model || 'opus') as ModelChoice,
     effort: ((patch as any).effort || 'high') as EffortLevel,
+    terminalActive: patch.terminalActive ?? false,
   };
   // Reassign rather than push: triggers the outer state's set trap, which
   // is the idiom the rest of this codebase uses (see apps/terminal).
@@ -237,9 +247,18 @@ function ingestConversations(conversations: any[]): void {
       } : undefined,
       model: c.model || undefined,
       effort: c.effort || undefined,
+      terminalActive: !!c.active,
     } as any);
   }
 }
+
+on('active_sessions', (ev: any) => {
+  const live = new Set<string>(ev.ids || []);
+  for (const s of state.sessions) {
+    const next = live.has(s.id);
+    if (s.terminalActive !== next) s.terminalActive = next;
+  }
+});
 
 on('session_state', (ev: any) => {
   const wasSaved = findSession(ev.session_id)?.status === 'saved';
@@ -588,15 +607,16 @@ function sessionRow(s: Session, group: string) {
   }
 
   return html`
-    <div class="${() => 'convo-item' + (state.activeId === s.id ? ' active' : '')}"
+    <div class="${() => 'convo-item' + (state.activeId === s.id ? ' active' : '') + (s.terminalActive ? ' terminal' : '')}"
       data-sid="${s.id}" data-group="${group}"
       @click="${() => selectSession(s.id)}"
       @dblclick="${() => {
+        if (s.terminalActive) return;
         const next = prompt('Rename session:', s.name || '');
         if (next) renameSession(s.id, next);
       }}"
     >
-      <span class="${() => 'dot ' + s.status}"></span>
+      <span class="${() => s.terminalActive ? 'dot terminal' : 'dot ' + s.status}"></span>
       <span class="convo-name">${() => s.name || truncate(s.firstPrompt, 30) || 'New session'}</span>
       <button class="${() => 'btn-del' + (del.confirming ? ' confirm' : '')}" @click="${onDeleteClick}" @mousedown="${(e: MouseEvent) => e.stopPropagation()}"><span class="${() => del.confirming ? 'icon icon-check' : 'icon icon-x'}"></span></button>
     </div>
@@ -616,6 +636,7 @@ function sidebarTemplate() {
     if (e.button !== 0) return;
     const row = (e.target as HTMLElement).closest('.convo-item') as HTMLElement | null;
     if (!row?.dataset.sid) return;
+    if (row.dataset.group === 'terminal') return;
     dragSid = row.dataset.sid;
     dragStartY = e.clientY;
     isDragging = false;
@@ -740,16 +761,22 @@ function sidebarTemplate() {
         ${() => {
           const all = filterSessions();
           const pinnedSet = new Set(state.pinnedIds);
+          const terminal = all.filter((s: Session) => s.terminalActive);
+          const terminalSet = new Set(terminal.map((s: Session) => s.id));
           const pinned = state.pinnedIds
             .map((id: string) => all.find((s: Session) => s.id === id))
-            .filter(Boolean) as Session[];
+            .filter((s): s is Session => !!s && !terminalSet.has(s.id));
           const recent = all
-            .filter((s: Session) => !pinnedSet.has(s.id))
+            .filter((s: Session) => !pinnedSet.has(s.id) && !terminalSet.has(s.id))
             .sort((a: Session, b: Session) => {
               const w = (s: Session) => s.status === 'running' ? 0 : s.status === 'idle' || s.status === 'error' ? 1 : 2;
               return w(a) - w(b);
             });
           const items: any[] = [];
+          if (terminal.length) {
+            items.push(html`<div class="group-label" data-group="terminal">In terminal</div>`.key('g-term'));
+            terminal.forEach(s => items.push(sessionRow(s, 'terminal')));
+          }
           items.push(html`<div class="group-label" data-group="pinned">Pinned</div>`.key('g-pin'));
           if (pinned.length) {
             pinned.forEach(s => items.push(sessionRow(s, 'pinned')));
@@ -904,6 +931,8 @@ function toolTemplate(tool: ToolCall) {
   return html`<div class="${() => 'tool-call' + (tool.expanded ? ' expanded' : '')}"><div class="tool-hdr" @click="${() => { tool.expanded = !tool.expanded; }}"><span class="${() => 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '')}"></span><span class="tname">${tool.name}</span><span class="${() => 'tstatus' + (tool.output === null ? '' : tool.isError ? ' error' : ' done')}">${() => tool.output === null ? 'running…' : tool.isError ? 'error' : 'done'}</span></div><div class="${() => 'tool-body' + (tool.expanded ? ' open' : '')}"><div class="tool-label">Input</div><pre>${() => truncate(tool.input, 2000)}</pre>${() => tool.output !== null ? html`<div class="tool-label">Output</div><pre class="${tool.isError ? 'terr' : ''}">${truncate(tool.output, 2000)}</pre>` : html``}</div></div>`.key(tool.id);
 }
 
+// Render markdown into .md-block elements by scanning the DOM.
+// Uses a WeakMap keyed on the block object to generate stable ids across re-renders.
 const mdSources = new Map<string, () => string>();
 const mdBlockIds = new WeakMap<object, string>();
 let mdIdCounter = 0;
@@ -925,10 +954,10 @@ function flushMd(): void {
     const text = getText();
     if (el.dataset.mdLast === text) continue;
     el.dataset.mdLast = text;
-    
     el.innerHTML = marked.parse(text) as string;
   }
 }
+
 
 function blockTemplate(block: ContentBlock) {
   if (block.kind === 'text') {
@@ -975,16 +1004,17 @@ function messagesTemplate() {
 
 function inputTemplate() {
   return html`
-    <div class="input-area">
+    <div class="${() => 'input-area' + (isReadOnly() ? ' readonly' : '')}">
       <textarea id="msg-input" rows="1"
         placeholder="${() => !state.activeId ? 'Create a session to start…' :
+                           isReadOnly() ? 'Read-only — this session is live in a terminal' :
                            isRunning() ? 'Send a follow-up…' : 'Send a message…'}"
-        disabled="${() => !state.activeId ? 'disabled' : false}"
+        disabled="${() => !state.activeId || isReadOnly() ? 'disabled' : false}"
         class="${() => isRunning() ? 'running' : ''}"
         @keydown="${(e: KeyboardEvent) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            sendMessage();
+            if (!isReadOnly()) sendMessage();
           }
           if (e.key === 'Escape' && isRunning() && state.activeId) {
             invoke('cancel', { session_id: state.activeId });
@@ -997,7 +1027,9 @@ function inputTemplate() {
         }}"
       ></textarea>
       <div>
-        ${() => isRunning()
+        ${() => isReadOnly()
+          ? html``
+          : isRunning()
           ? html`<button class="btn-cancel" @click="${() => invoke('cancel', { session_id: state.activeId })}">
               <span class="icon icon-square"></span>
             </button>`
