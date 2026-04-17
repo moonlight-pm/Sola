@@ -4,6 +4,11 @@
 // keysyms, so when this profile is active, physical Meta+letter
 // arrives at the focused client as Ctrl+letter. Used by sola-shell
 // to give Mac-style Cmd-C/V/T/W behavior inside non-Sola apps.
+//
+// The standard xkb_compat "complete" interpret rules automatically
+// bind the Control_L/R keysyms to the Control real modifier, so no
+// explicit modifier_map is needed. (Earlier drafts here had empty
+// modifier_map directives that xkbcommon rejects as a parse error.)
 xkb_keymap {
   xkb_keycodes  { include "evdev+aliases(qwerty)" };
   xkb_types     { include "complete" };
@@ -12,8 +17,6 @@ xkb_keymap {
     include "pc+us+inet(evdev)"
     replace key <LWIN> { [ Control_L ] };
     replace key <RWIN> { [ Control_R ] };
-    modifier_map Control { <LWIN>, <RWIN> };
-    modifier_map Mod4    { };
   };
   xkb_geometry  { include "pc(pc105)" };
 };
