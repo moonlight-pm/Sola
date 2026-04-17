@@ -77,6 +77,14 @@ impl WindowHandle {
     pub fn gtk_window(&self) -> &gtk4::ApplicationWindow {
         &self.inner.gtk_window
     }
+
+    /// Access the underlying WebKit WebView. Apps that need to restructure
+    /// the window's widget tree (e.g. reparent the WebView into a container
+    /// to add sibling WebViews) use this. The JS dispatcher / UCM stays
+    /// attached to the WebView across reparenting.
+    pub fn webview(&self) -> &webkit6::WebView {
+        &self.inner.webview
+    }
 }
 
 impl PartialEq for WindowHandle {

@@ -43,7 +43,9 @@ export class TerminalPane {
 
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
-    this.terminal.loadAddon(new WebLinksAddon());
+    this.terminal.loadAddon(new WebLinksAddon((_event: MouseEvent, uri: string) => {
+      invoke('open_url', { url: uri, activate: true });
+    }));
 
     // OSC 0/2: window title
     this.terminal.onTitleChange((title: string) => {

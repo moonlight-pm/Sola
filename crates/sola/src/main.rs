@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use sola_bus::topics::Topic;
+use sola_bus::topics::{LaunchResultPayload, Topic, UserAppExitedPayload};
 
 const MANAGED: &[&str] = &[
     "sola-bus",
@@ -156,7 +156,7 @@ fn main() {
                     std::process::exit(0);
                 }
                 Topic::LaunchApp(command) => {
-                    launch_user_app(&command, &mut user_apps);
+                    launch_user_app(&command, &mut user_apps, &mut bus);
                 }
                 _ => {}
             }
@@ -172,7 +172,7 @@ fn main() {
             std::process::exit(1);
         }
 
-        reap_user_apps(&mut user_apps);
+        reap_user_apps(&mut user_apps, &mut bus);
 
         // Check for binary changes
         while let Ok(changed) = change_rx.try_recv() {
@@ -225,15 +225,22 @@ struct UserApp {
     child: Child,
 }
 
-fn launch_user_app(command: &str, user_apps: &mut Vec<UserApp>) {
+fn launch_user_app(
+    command: &str,
+    user_apps: &mut Vec<UserApp>,
+    bus: &mut sola_bus::BusClient,
+) {
     let trimmed = command.trim();
+    info!(command = trimmed, "LaunchApp received");
     if trimmed.is_empty() {
         warn!("LaunchApp with empty command, ignoring");
+        emit_launch_result(bus, trimmed, false, Some("empty command".into()));
         return;
     }
     let mut parts = trimmed.split_whitespace();
     let Some(program) = parts.next() else {
         warn!(command, "LaunchApp with no program, ignoring");
+        emit_launch_result(bus, trimmed, false, Some("no program".into()));
         return;
     };
     let args: Vec<&str> = parts.collect();
@@ -270,17 +277,52 @@ fn launch_user_app(command: &str, user_apps: &mut Vec<UserApp>) {
                 command: trimmed.to_string(),
                 child,
             });
+            emit_launch_result(bus, trimmed, true, None);
         }
         Err(e) => {
             warn!(command = trimmed, "failed to launch user app: {e}");
+            emit_launch_result(bus, trimmed, false, Some(e.to_string()));
         }
     }
 }
 
-fn reap_user_apps(user_apps: &mut Vec<UserApp>) {
+fn emit_launch_result(
+    bus: &mut sola_bus::BusClient,
+    command: &str,
+    ok: bool,
+    error: Option<String>,
+) {
+    let payload = LaunchResultPayload {
+        command: command.to_string(),
+        ok,
+        error,
+    };
+    if let Err(e) = bus.emit(Topic::LaunchResult(payload)) {
+        warn!(%e, "failed to emit LaunchResult");
+    }
+}
+
+fn reap_user_apps(user_apps: &mut Vec<UserApp>, bus: &mut sola_bus::BusClient) {
+    use std::os::unix::process::ExitStatusExt;
     user_apps.retain_mut(|app| match app.child.try_wait() {
         Ok(Some(status)) => {
-            info!(command = %app.command, pid = app.child.id(), ?status, "user app exited");
+            let code = status.code();
+            let signal = status.signal();
+            info!(
+                command = %app.command,
+                pid = app.child.id(),
+                ?code,
+                ?signal,
+                "user app exited",
+            );
+            let payload = UserAppExitedPayload {
+                command: app.command.clone(),
+                code,
+                signal,
+            };
+            if let Err(e) = bus.emit(Topic::UserAppExited(payload)) {
+                warn!(%e, "failed to emit UserAppExited");
+            }
             false
         }
         Ok(None) => true,
@@ -346,11 +388,15 @@ fn resolve_wayland_socket() -> Option<String> {
     read_runtime_name("sola-wayland")
 }
 
-/// Read the X11 display that sola-river's XWayland is serving (e.g. `:0`)
-/// from `$XDG_RUNTIME_DIR/sola-display`. Returns `None` if XWayland isn't
-/// active or the file hasn't been written yet.
+/// Resolve the X11 display user apps should target. Prefers the value
+/// sola-river published to `$XDG_RUNTIME_DIR/sola-display`; if absent
+/// (XWayland started lazily or our startup probe missed it), falls back
+/// to a live probe of `/tmp/.X11-unix/X*` at the time of the call.
 fn resolve_x_display() -> Option<String> {
-    read_runtime_name("sola-display")
+    if let Some(name) = read_runtime_name("sola-display") {
+        return Some(name);
+    }
+    river::probe_live_x_display()
 }
 
 fn read_runtime_name(file: &str) -> Option<String> {

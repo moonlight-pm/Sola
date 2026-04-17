@@ -16,6 +16,25 @@ pub struct OpenUrlRequest {
     pub activate: bool,
 }
 
+/// Outcome of a `LaunchApp` spawn attempt, emitted by `sola`.
+/// `ok=true` means the process was spawned; it does not guarantee the
+/// process stayed alive. `error` is populated when `ok=false`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LaunchResultPayload {
+    pub command: String,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// Emitted by `sola` whenever a user app process exits. Exactly one of
+/// `code` or `signal` is set: `code` on normal exit, `signal` when killed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserAppExitedPayload {
+    pub command: String,
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+}
+
 /// Z-ordered entry in the composition list. Bottom to top.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompositionEntry {
@@ -155,6 +174,8 @@ define_topics! {
     // Window management list (sticky)
     Apps(Vec<App>),
     LaunchApp(String),
+    LaunchResult(LaunchResultPayload),
+    UserAppExited(UserAppExitedPayload),
 
     // Composition authority (shell → sola-river)
     Composition(Vec<CompositionEntry>),

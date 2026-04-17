@@ -332,6 +332,10 @@ pub fn handle_chord(
 
     // Meta+Space: toggle launcher.
     if chord.meta && chord.keycode == KeyCode::SPACE {
+        tracing::info!(
+            launcher_active = app.launcher.active,
+            "Meta+Space chord — toggling launcher"
+        );
         if app.launcher.active {
             app.close_launcher(ctx);
         } else {

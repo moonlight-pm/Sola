@@ -18,6 +18,8 @@ interface BusMessage {
 const TOPIC_CATEGORIES: Record<string, string> = {
   Apps: 'lifecycle',
   LaunchApp: 'lifecycle',
+  LaunchResult: 'lifecycle',
+  UserAppExited: 'lifecycle',
   Shutdown: 'lifecycle',
   Composition: 'composition',
   Frame: 'composition',

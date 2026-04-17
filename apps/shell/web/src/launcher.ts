@@ -1,9 +1,17 @@
-// Application launcher overlay. Rust drives rendering via renderApps() and
-// setSelection(); the input dispatches cmd messages back through @sola/ipc.
+// Application launcher overlay. Rust is authoritative for `entries` and
+// `selected`; it pushes both via `renderApps(list, selected)`. Arrow.js
+// re-renders the results reactively from the store.
 
+import { html } from '@arrow-js/core';
 import { invoke } from '@sola/ipc';
+import { createStore } from '@sola/store';
 
 type Entry = { app_id: string; label: string; icon: string };
+
+const state = createStore({
+    entries: [] as Entry[],
+    selected: 0,
+});
 
 const queryEl = document.getElementById('query') as HTMLInputElement;
 const resultsEl = document.getElementById('results')!;
@@ -18,76 +26,51 @@ document.addEventListener('mousedown', (e: MouseEvent) => {
     }
 });
 
-let entries: Entry[] = [];
-let selected = 0;
-
-function renderApps(list: Entry[], sel: number) {
-    entries = list;
-    selected = sel;
-
-    while (resultsEl.firstChild) resultsEl.removeChild(resultsEl.firstChild);
-
-    if (entries.length === 0) {
-        const empty = document.createElement('div');
-        empty.id = 'empty';
-        empty.textContent = 'No matching applications.';
-        resultsEl.appendChild(empty);
-        return;
-    }
-
-    entries.forEach((app, i) => {
-        const row = document.createElement('div');
-        row.className = 'row' + (i === selected ? ' selected' : '');
-
-        const iconEl = document.createElement('div');
-        iconEl.className = 'icon';
-        if (app.icon && app.icon.indexOf('/') > 0) {
-            const img = document.createElement('img');
-            img.src = 'sola-assets://icons/' + app.icon + '.svg';
-            iconEl.appendChild(img);
-        } else {
-            iconEl.textContent = '\u2B21';
-        }
-        row.appendChild(iconEl);
-
-        const labelEl = document.createElement('span');
-        labelEl.className = 'label';
-        labelEl.textContent = app.label;
-        row.appendChild(labelEl);
-
-        row.addEventListener('mouseenter', () => setSelection(i));
-        row.addEventListener('click', () => launchSelected(i));
-
-        resultsEl.appendChild(row);
-    });
+function launchAt(index: number): void {
+    const entry = state.entries[index];
+    if (!entry) return;
+    invoke('launch', { app_id: entry.app_id });
 }
 
-function setSelection(i: number) {
-    if (i < 0 || i >= entries.length) return;
-    selected = i;
-    const rows = resultsEl.children;
-    for (let k = 0; k < rows.length; k++) {
-        rows[k].classList.toggle('selected', k === selected);
-    }
-    const active = rows[selected] as HTMLElement | undefined;
-    active?.scrollIntoView({ block: 'nearest' });
+function launchSelected(): void {
+    invoke('launch', {});
 }
 
-function launchSelected(i?: number) {
-    const idx = typeof i === 'number' ? i : selected;
-    const app = entries[idx];
-    if (!app) return;
-    invoke('launch', { app_id: app.app_id });
+function navDir(dir: 'up' | 'down'): void {
+    invoke('nav', { dir });
 }
 
-function close() {
-    invoke('close', {});
+function navTo(index: number): void {
+    invoke('nav', { index });
 }
 
-function resetForOpen() {
-    queryEl.value = '';
-    queryEl.focus();
-}
+html`
+    ${() =>
+        state.entries.length === 0
+            ? html`<div id="empty">No matching applications.</div>`
+            : state.entries.map(
+                  (app, i) => html`
+                      <div
+                          class="${() =>
+                              'row' + (i === state.selected ? ' selected' : '')}"
+                          @mouseenter="${() => navTo(i)}"
+                          @click="${() => launchAt(i)}"
+                      >
+                          <div class="icon">
+                              ${() =>
+                                  app.icon && app.icon.indexOf('/') > 0
+                                      ? html`<img
+                                            src="${'sola-assets://icons/' +
+                                            app.icon +
+                                            '.svg'}"
+                                        />`
+                                      : html`<span>${'\u2B21'}</span>`}
+                          </div>
+                          <span class="label">${app.label}</span>
+                      </div>
+                  `,
+              )}
+`(resultsEl);
 
 queryEl.addEventListener('input', () => {
     invoke('query', { text: queryEl.value });
@@ -97,11 +80,11 @@ queryEl.addEventListener('keydown', (e) => {
     switch (e.key) {
         case 'ArrowDown':
             e.preventDefault();
-            setSelection(Math.min(selected + 1, entries.length - 1));
+            navDir('down');
             break;
         case 'ArrowUp':
             e.preventDefault();
-            setSelection(Math.max(selected - 1, 0));
+            navDir('up');
             break;
         case 'Enter':
             e.preventDefault();
@@ -109,11 +92,26 @@ queryEl.addEventListener('keydown', (e) => {
             break;
         case 'Escape':
             e.preventDefault();
-            close();
+            invoke('close', {});
             break;
     }
 });
 
+// Rust pushes the full list + selection index on every state change.
+// Scroll the new selection into view after the Arrow.js render tick.
+function renderApps(list: Entry[], sel: number): void {
+    state.entries = list;
+    state.selected = sel;
+    queueMicrotask(() => {
+        const active = resultsEl.children[sel] as HTMLElement | undefined;
+        active?.scrollIntoView({ block: 'nearest' });
+    });
+}
+
+function resetForOpen(): void {
+    queryEl.value = '';
+    queryEl.focus();
+}
+
 (window as any).renderApps = renderApps;
-(window as any).setSelection = setSelection;
 (window as any).resetForOpen = resetForOpen;

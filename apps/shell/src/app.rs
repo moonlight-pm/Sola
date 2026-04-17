@@ -5,8 +5,9 @@ use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
     App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
-    MenuDefinition, MenuItem, MouseClickedPayload, MouseEnteredPayload,
-    RegisteredChord, Topic, XkbProfilePayload,
+    LaunchResultPayload, MenuDefinition, MenuItem, MouseClickedPayload,
+    MouseEnteredPayload, RegisteredChord, Topic, UserAppExitedPayload,
+    XkbProfilePayload,
 };
 use sola_core::KeyCode;
 
@@ -183,6 +184,37 @@ impl SolaApp for ShellApp {
             Topic::ChordReleased(evt) => {
                 crate::keys::handle_chord_released(self, ctx, evt.clone());
             }
+            Topic::LaunchResult(LaunchResultPayload { command, ok, error }) => {
+                if *ok {
+                    tracing::info!(command = %command, "LaunchResult ok");
+                } else {
+                    tracing::warn!(
+                        command = %command,
+                        error = error.as_deref().unwrap_or(""),
+                        "LaunchResult failed"
+                    );
+                    let err_msg = error.as_deref().unwrap_or("launch failed");
+                    self.push_toast(&format!("{command}: {err_msg}"));
+                }
+            }
+            Topic::UserAppExited(UserAppExitedPayload {
+                command,
+                code,
+                signal,
+            }) => {
+                let detail = match (code, signal) {
+                    (Some(c), _) => format!("exit {c}"),
+                    (_, Some(s)) => format!("signal {s}"),
+                    _ => "exited".to_string(),
+                };
+                tracing::warn!(
+                    command = %command,
+                    code = ?code,
+                    signal = ?signal,
+                    "user app exited"
+                );
+                self.push_toast(&format!("{command} — {detail}"));
+            }
             _ => {}
         }
     }
@@ -223,9 +255,46 @@ impl SolaApp for ShellApp {
                 self.launcher.apply_query(&self.applications, text);
                 self.render_launcher();
             }
+            ("launcher", "nav") => {
+                let max = self.launcher.filtered_ids.len().saturating_sub(1);
+                let cur = self.launcher.selected;
+                let new_sel = if let Some(idx) =
+                    args.get("index").and_then(|v| v.as_u64())
+                {
+                    (idx as usize).min(max)
+                } else if let Some(dir) =
+                    args.get("dir").and_then(|v| v.as_str())
+                {
+                    match dir {
+                        "up" => cur.saturating_sub(1),
+                        "down" => (cur + 1).min(max),
+                        _ => cur,
+                    }
+                } else {
+                    cur
+                };
+                if new_sel != cur {
+                    self.launcher.selected = new_sel;
+                    self.render_launcher();
+                }
+            }
             ("launcher", "launch") => {
-                let app_id = args.get("app_id").and_then(|v| v.as_str()).unwrap_or("");
-                self.launch_and_close(app_id, ctx);
+                let explicit = args.get("app_id").and_then(|v| v.as_str());
+                let app_id = explicit
+                    .map(str::to_string)
+                    .or_else(|| {
+                        self.launcher
+                            .filtered_ids
+                            .get(self.launcher.selected)
+                            .cloned()
+                    })
+                    .unwrap_or_default();
+                tracing::info!(
+                    %app_id,
+                    explicit = explicit.is_some(),
+                    "launcher cmd 'launch' received"
+                );
+                self.launch_and_close(&app_id, ctx);
             }
             ("launcher", "close") => {
                 self.close_launcher(ctx);
@@ -701,10 +770,14 @@ impl ShellApp {
     }
 
     pub fn open_launcher(&mut self, ctx: &mut AppCtx) {
+        tracing::info!(
+            already_active = self.launcher.active,
+            prior_focus = ?self.focused_window_id,
+            "open_launcher"
+        );
         if self.launcher.active {
             return;
         }
-        tracing::info!("activating launcher");
 
         // Reload apps from disk so edits take effect without restarting.
         self.applications = ApplicationsConfig::load();
@@ -745,10 +818,14 @@ impl ShellApp {
     }
 
     pub fn close_launcher(&mut self, ctx: &mut AppCtx) {
+        tracing::info!(
+            was_active = self.launcher.active,
+            prior_focus = ?self.launcher.prior_focus,
+            "close_launcher"
+        );
         if !self.launcher.active {
             return;
         }
-        tracing::info!("deactivating launcher");
         let prior_wid = self.launcher.prior_focus.take();
         self.launcher.active = false;
         self.emit_registered_chords(ctx);
@@ -764,8 +841,9 @@ impl ShellApp {
     }
 
     pub fn launch_and_close(&mut self, app_id: &str, ctx: &mut AppCtx) {
+        tracing::info!(app_id, "launch_and_close");
         if let Some(app) = self.applications.get(app_id) {
-            tracing::info!(app_id, command = %app.command, "launching application");
+            tracing::info!(app_id, command = %app.command, "emitting LaunchApp");
             ctx.emit(Topic::LaunchApp(app.command.clone()));
         } else {
             tracing::warn!(app_id, "launch requested for unknown application");
@@ -777,6 +855,14 @@ impl ShellApp {
         let json = launcher::state::render_json(&self.applications, &self.launcher.filtered_ids);
         let js = format!("renderApps({}, {})", json, self.launcher.selected);
         self.windows.launcher.eval_js(&js);
+    }
+
+    /// Show a transient toast message in the menubar.
+    fn push_toast(&self, message: &str) {
+        self.windows.menubar.send_to_js(&serde_json::json!({
+            "event": "toast",
+            "message": message,
+        }));
     }
 }
 
