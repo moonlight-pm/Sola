@@ -333,8 +333,13 @@ impl BrowserApp {
     pub(crate) fn navigate_active(&mut self, url: &str) {
         if let Some(id) = self.active_tab_id.clone() {
             if let Some(tab) = self.tabs.iter().find(|t| t.id == id) {
+                tracing::info!(tab_id = %id, %url, "navigate");
                 tab.webview.load_uri(url);
+            } else {
+                tracing::warn!(tab_id = %id, %url, "navigate: active tab not found");
             }
+        } else {
+            tracing::warn!(%url, "navigate: no active tab");
         }
     }
 

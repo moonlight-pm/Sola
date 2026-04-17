@@ -188,6 +188,36 @@ pub fn wire_signals(
         });
     }
 
+    // load-failed: surface WebKit load errors. Default return false lets
+    // WebKit show its own error page; we just log here so the failure is
+    // diagnosable from /opt/sola/log/sola.log.
+    {
+        let tid = tab_id.to_string();
+        webview.connect_load_failed(move |_wv, _event, failing_uri, error| {
+            tracing::warn!(
+                tab_id = %tid,
+                uri = %failing_uri,
+                error = %error.message(),
+                "load-failed"
+            );
+            false
+        });
+    }
+
+    // load-failed-with-tls-errors: surface TLS-specific failures.
+    {
+        let tid = tab_id.to_string();
+        webview.connect_load_failed_with_tls_errors(move |_wv, failing_uri, _cert, errors| {
+            tracing::warn!(
+                tab_id = %tid,
+                uri = %failing_uri,
+                tls_errors = ?errors,
+                "load-failed-with-tls-errors"
+            );
+            false
+        });
+    }
+
     // decide-policy: target="_blank" → new tab.
     {
         let runtime = runtime.clone();
