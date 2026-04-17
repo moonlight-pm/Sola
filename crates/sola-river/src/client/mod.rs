@@ -26,10 +26,12 @@ use crate::protocol::river_xkb_bindings_v1::{
     river_xkb_bindings_seat_v1::RiverXkbBindingsSeatV1,
     river_xkb_bindings_v1::RiverXkbBindingsV1,
 };
+use crate::protocol::river_libinput_config_v1::river_libinput_config_v1::RiverLibinputConfigV1;
 use crate::protocol::wlr_output_management_unstable_v1::zwlr_output_manager_v1::ZwlrOutputManagerV1;
 use crate::registry::{ChordRegistry, WindowRegistry};
 
 pub mod binding;
+pub mod input;
 pub mod manage;
 pub mod output_config;
 pub mod seat;
@@ -65,6 +67,9 @@ pub struct AppData {
     /// Mode selection state for `zwlr_output_manager_v1` — we use this
     /// protocol to pick the highest resolution ≥60Hz on startup.
     pub output_config: output_config::OutputConfigState,
+    /// Held so its `device` events keep firing; preferences (natural
+    /// scroll) are applied in `client/input.rs`.
+    pub libinput_config: Option<RiverLibinputConfigV1>,
     pub qh: Option<QueueHandle<Self>>,
     /// Cloned from the wayland `Connection` so bus_tick (running on the
     /// calloop timer source) can flush outgoing wayland requests. Without
@@ -90,6 +95,7 @@ impl AppData {
             output_size: None,
             placed: std::collections::HashSet::new(),
             output_config: output_config::OutputConfigState::default(),
+            libinput_config: None,
             qh: None,
             conn: None,
         }
@@ -219,6 +225,15 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                         proxy.bind(name, version.min(4), qh, ());
                     info!(%version, "bound zwlr_output_manager_v1");
                     state.output_config.manager = Some(mgr);
+                }
+                "river_libinput_config_v1" => {
+                    // Keep the proxy alive on AppData so its device events
+                    // keep firing. Events drive the natural-scroll apply in
+                    // client/input.rs.
+                    let cfg: RiverLibinputConfigV1 =
+                        proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound river_libinput_config_v1");
+                    state.libinput_config = Some(cfg);
                 }
                 _ => {}
             }
