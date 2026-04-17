@@ -51,6 +51,10 @@ pub struct AppData {
     /// after `river_window_manager_v1::Event::Window` fires.
     pub nodes_by_window: HashMap<u32, RiverNodeV1>,
     pub qh: Option<QueueHandle<Self>>,
+    /// Cloned from the wayland `Connection` so bus_tick (running on the
+    /// calloop timer source) can flush outgoing wayland requests. Without
+    /// this, `manage_dirty` and friends queue forever.
+    pub conn: Option<Connection>,
 }
 
 impl AppData {
@@ -68,6 +72,7 @@ impl AppData {
             windows_by_id: HashMap::new(),
             nodes_by_window: HashMap::new(),
             qh: None,
+            conn: None,
         }
     }
 }
@@ -92,6 +97,7 @@ pub fn connect(
         );
     }
     data.qh = Some(qh);
+    data.conn = Some(conn.clone());
     info!("bound river_window_manager_v1");
     Ok((conn, queue, data))
 }
@@ -134,6 +140,12 @@ pub fn bus_tick(state: &mut AppData) {
 
     if (state.pending.manage_dirty || state.pending.render_dirty) && state.wm.is_some() {
         state.wm.as_ref().unwrap().manage_dirty();
+        // calloop-wayland-source only flushes when the wayland fd
+        // becomes readable. Our timer-driven bus_tick has to flush
+        // explicitly or `manage_dirty` sits in the outgoing buffer.
+        if let Some(conn) = state.conn.as_ref() {
+            let _ = conn.flush();
+        }
     }
 }
 
