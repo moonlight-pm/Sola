@@ -54,16 +54,16 @@ impl ZoningState {
     /// and no window for that app has been zoned yet.
     /// Only sola-* apps persist zones — external apps are zoned manually.
     pub fn apply_config_zone(&mut self, app_id: &str, window_id: u32) -> Option<FrameUpdate> {
-        if !app_id.starts_with("sola-") {
-            return None;
-        }
-        if self.config_applied.contains(app_id) {
+        if !app_id.starts_with("sola-") || self.config_applied.contains(app_id) {
             return None;
         }
         let zone = self.app_zone_config.get(app_id).copied()?;
+        // If geometry hasn't arrived yet we can't compute the frame. Bail
+        // without mutating state so a later Apps event retries once
+        // OutputGeometry has been cached.
+        let (w, h) = self.output_size?;
         self.config_applied.insert(app_id.to_string());
         self.window_zones.insert(window_id, zone);
-        let (w, h) = self.output_size?;
         Some(compute_frame(zone, window_id, w, h))
     }
 
