@@ -239,12 +239,8 @@ pub fn handle_chord(
     // Escape dismisses whichever shell overlay is up. Only registered
     // while one is active (see `emit_registered_chords`), so we don't
     // steal Escape from terminal apps otherwise.
-    if chord.keycode == KeyCode::ESCAPE
-        && !chord.meta
-        && !chord.ctrl
-        && !chord.alt
-        && !chord.shift
-    {
+    let bare = !chord.meta && !chord.ctrl && !chord.alt && !chord.shift;
+    if chord.keycode == KeyCode::ESCAPE && bare {
         if app.launcher.active {
             app.close_launcher(ctx);
             return;
@@ -261,6 +257,13 @@ pub fn handle_chord(
             app.emit_composition(ctx);
             return;
         }
+    }
+
+    // While the launcher or a dropdown menu is up, eat every other chord.
+    // We don't want zoning, menu shortcuts, or app shortcuts firing under
+    // a modal overlay. (Switcher has its own navigation branch below.)
+    if app.launcher.active || app.menu_open {
+        return;
     }
 
     // Switcher active: Meta+Tab (or arrow) cycles; Meta release confirms
