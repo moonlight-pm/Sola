@@ -25,6 +25,7 @@ impl sola_app::AppHandler for AgentHandler {
             "rename_conversation" => self.cmd_rename(args).await,
             "list_conversations" => self.cmd_list_conversations().await,
             "resume_session" => self.cmd_resume_session(args).await,
+            "update_session_config" => self.cmd_update_session_config(args).await,
             _ => json!({ "error": format!("unknown command: {cmd}") }),
         }
     }
@@ -217,6 +218,22 @@ impl AgentHandler {
         json!({ "ok": true })
     }
 
+    async fn cmd_update_session_config(&self, args: &Value) -> Value {
+        let Some(session_id) = args.get("session_id").and_then(|v| v.as_str()) else {
+            return json!({ "error": "session_id is required" });
+        };
+        if let Ok(mut meta) = storage::load_meta(session_id) {
+            if let Some(model) = args.get("model").and_then(|v| v.as_str()) {
+                meta.model = model.to_string();
+            }
+            if let Some(effort) = args.get("effort").and_then(|v| v.as_str()) {
+                meta.effort = effort.to_string();
+            }
+            let _ = storage::save_meta_full(&meta);
+        }
+        json!({ "ok": true })
+    }
+
     async fn cmd_list_conversations(&self) -> Value {
         let metas = crate::sync::sync_sessions();
         tracing::info!(count = metas.len(), "list_conversations");
@@ -238,6 +255,8 @@ impl AgentHandler {
                     "working_dir": &m.working_dir,
                     "updated_at": m.updated_at,
                     "metrics": &m.metrics,
+                    "model": &m.model,
+                    "effort": &m.effort,
                 })
             })
             .collect();

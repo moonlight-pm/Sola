@@ -19,7 +19,14 @@ pub struct SessionMeta {
     pub updated_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics: Option<Value>,
+    #[serde(default = "default_model")]
+    pub model: String,
+    #[serde(default = "default_effort")]
+    pub effort: String,
 }
+
+fn default_model() -> String { "opus".into() }
+fn default_effort() -> String { "high".into() }
 
 fn sessions_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -34,6 +41,11 @@ fn history_path(session_id: &str) -> PathBuf {
     sessions_dir().join(format!("{}.jsonl", session_id))
 }
 
+/// Raw NDJSON lines file — stores full stream-json messages for replay.
+fn raw_path(session_id: &str) -> PathBuf {
+    sessions_dir().join(format!("{}.ndjson", session_id))
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -41,7 +53,7 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Save or update session metadata.
+/// Save or update session metadata (preserves model/effort from existing).
 pub fn save_meta(
     session_id: &str,
     name: Option<&str>,
@@ -54,7 +66,9 @@ pub fn save_meta(
 
     let existing = load_meta(session_id).ok();
     let created_at = existing.as_ref().map(|e| e.created_at).unwrap_or_else(now_ms);
-    let metrics = metrics.or_else(|| existing.and_then(|e| e.metrics));
+    let metrics = metrics.or_else(|| existing.as_ref().and_then(|e| e.metrics.clone()));
+    let model = existing.as_ref().map(|e| e.model.clone()).unwrap_or_else(default_model);
+    let effort = existing.as_ref().map(|e| e.effort.clone()).unwrap_or_else(default_effort);
 
     let meta = SessionMeta {
         session_id: session_id.to_string(),
@@ -63,10 +77,22 @@ pub fn save_meta(
         created_at,
         updated_at: now_ms(),
         metrics,
+        model,
+        effort,
     };
 
     let json = serde_json::to_string_pretty(&meta)?;
     std::fs::write(meta_path(session_id), json)?;
+    Ok(())
+}
+
+/// Save a full SessionMeta struct directly.
+pub fn save_meta_full(meta: &SessionMeta) -> Result<()> {
+    let dir = sessions_dir();
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("Failed to create {}", dir.display()))?;
+    let json = serde_json::to_string_pretty(meta)?;
+    std::fs::write(meta_path(&meta.session_id), json)?;
     Ok(())
 }
 
@@ -121,15 +147,11 @@ pub fn load_history(session_id: &str) -> Result<Vec<Value>> {
 
 /// Delete session metadata and history files from disk.
 pub fn delete_session(session_id: &str) -> Result<()> {
-    let meta = meta_path(session_id);
-    let hist = history_path(session_id);
-    if meta.exists() {
-        std::fs::remove_file(&meta)
-            .with_context(|| format!("Failed to remove {}", meta.display()))?;
-    }
-    if hist.exists() {
-        std::fs::remove_file(&hist)
-            .with_context(|| format!("Failed to remove {}", hist.display()))?;
+    for path in [meta_path(session_id), history_path(session_id), raw_path(session_id)] {
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .with_context(|| format!("Failed to remove {}", path.display()))?;
+        }
     }
     Ok(())
 }
@@ -160,3 +182,4 @@ pub fn list_all() -> Vec<SessionMeta> {
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
 }
+

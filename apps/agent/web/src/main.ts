@@ -178,6 +178,8 @@ function upsertSession(patch: Partial<Session> & { id: string }): Session {
     if (patch.workingDir !== undefined) existing.workingDir = patch.workingDir;
     if (patch.firstPrompt !== undefined) existing.firstPrompt = patch.firstPrompt;
     if (patch.metrics !== undefined) existing.metrics = patch.metrics;
+    if ((patch as any).model !== undefined) existing.model = (patch as any).model;
+    if ((patch as any).effort !== undefined) existing.effort = (patch as any).effort;
     return existing;
   }
   const fresh: Session = {
@@ -189,8 +191,8 @@ function upsertSession(patch: Partial<Session> & { id: string }): Session {
     messages: [],
     metrics: patch.metrics ?? null,
     mcpServers: [],
-    model: 'opus' as ModelChoice,
-    effort: 'high' as EffortLevel,
+    model: ((patch as any).model || 'opus') as ModelChoice,
+    effort: ((patch as any).effort || 'high') as EffortLevel,
   };
   // Reassign rather than push: triggers the outer state's set trap, which
   // is the idiom the rest of this codebase uses (see apps/terminal).
@@ -229,7 +231,9 @@ function ingestConversations(conversations: any[]): void {
         model: m.model || 'unknown',
         num_turns: m.num_turns || 0,
       } : undefined,
-    });
+      model: c.model || undefined,
+      effort: c.effort || undefined,
+    } as any);
   }
 }
 
@@ -840,11 +844,15 @@ function statsTemplate() {
 
   function setModel(m: string) {
     const s = activeSession();
-    if (s) s.model = m as ModelChoice;
+    if (!s) return;
+    s.model = m as ModelChoice;
+    invoke('update_session_config', { session_id: s.id, model: m });
   }
   function setEffort(e: string) {
     const s = activeSession();
-    if (s) s.effort = e as EffortLevel;
+    if (!s) return;
+    s.effort = e as EffortLevel;
+    invoke('update_session_config', { session_id: s.id, effort: e });
   }
 
   return html`
