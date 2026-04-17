@@ -139,6 +139,11 @@ pub fn wire_signals(
     }
 
     // notify::uri: history + session snapshot + write-through.
+    //
+    // WebKit fires this signal synchronously from inside `load_uri`, which
+    // we call from `on_js_command` handlers while the runtime RefCell is
+    // already borrowed. Defer the runtime-touching work to the GTK idle
+    // loop so it runs after the triggering borrow releases.
     {
         let chrome = chrome.clone();
         let tid = tab_id.to_string();
@@ -154,15 +159,19 @@ pub fn wire_signals(
                 "url": url_str,
             }));
 
-            let Some(runtime) = runtime.upgrade() else {
-                return;
-            };
-            let mut rt = runtime.borrow_mut();
-            let AppRuntime { app, .. } = &mut *rt;
-            app.history.record_visit(&url_str, &title);
-            app.persist_history();
-            app.capture_tab_session_state(&tid);
-            app.persist_tabs();
+            let runtime = runtime.clone();
+            let tid = tid.clone();
+            glib::idle_add_local_once(move || {
+                let Some(runtime) = runtime.upgrade() else {
+                    return;
+                };
+                let mut rt = runtime.borrow_mut();
+                let AppRuntime { app, .. } = &mut *rt;
+                app.history.record_visit(&url_str, &title);
+                app.persist_history();
+                app.capture_tab_session_state(&tid);
+                app.persist_tabs();
+            });
         });
     }
 
@@ -201,7 +210,14 @@ pub fn wire_signals(
             let url = uri.to_string();
             let new_tab_id = uuid::Uuid::new_v4().to_string();
 
-            if let Some(runtime) = runtime.upgrade() {
+            // decide-policy may fire from inside a WebKit call made while
+            // the runtime is already borrowed. Defer tab creation to the
+            // GTK idle loop to avoid reentrant borrow_mut.
+            let runtime = runtime.clone();
+            glib::idle_add_local_once(move || {
+                let Some(runtime) = runtime.upgrade() else {
+                    return;
+                };
                 let mut rt = runtime.borrow_mut();
                 let AppRuntime { app, .. } = &mut *rt;
                 app.tab_store.tabs.push(crate::state::PersistedTab {
@@ -219,7 +235,7 @@ pub fn wire_signals(
                         "activate": true,
                     }),
                 );
-            }
+            });
             decision.ignore();
             true
         });
