@@ -63,6 +63,16 @@ pub fn handle_render_start(state: &mut AppData) {
     }
 
     if let Some(order) = state.pending.composition.take() {
+        // Anything in the order is visible; anything else hides. River's
+        // `hide`/`show` are idempotent (no-op if already in that state).
+        let visible: std::collections::HashSet<u32> = order.iter().copied().collect();
+        for (&id, proxy) in &state.windows_by_id {
+            if visible.contains(&id) {
+                proxy.show();
+            } else {
+                proxy.hide();
+            }
+        }
         for &window_id in &order {
             if let Some(node) = state.nodes_by_window.get(&window_id) {
                 node.place_top();
