@@ -4,6 +4,7 @@ const systemMenuEl = document.getElementById('system-menu')!;
 const appNameEl = document.getElementById('app-name')!;
 const menuLabelsEl = document.getElementById('menu-labels')!;
 const clockEl = document.getElementById('clock')!;
+const toastEl = document.getElementById('toast')!;
 
 let currentMenuLabels: string[] = [];
 let openKey: string | null = null;
@@ -18,6 +19,19 @@ on('focus', (msg: any) => {
 on('close_menu', () => {
     openKey = null;
     updateActiveState();
+});
+
+let toastTimer: number | null = null;
+on('toast', (msg: any) => {
+    toastEl.textContent = msg.message || '';
+    toastEl.classList.add('visible');
+    if (toastTimer !== null) {
+        clearTimeout(toastTimer);
+    }
+    toastTimer = window.setTimeout(() => {
+        toastEl.classList.remove('visible');
+        toastTimer = null;
+    }, 5000);
 });
 
 function clickMenu(key: string, source: string, index: number, anchorX: number): void {
