@@ -9,23 +9,25 @@ use tracing::info;
 use crate::client::AppData;
 use crate::pending::FocusAction;
 
+// Per `river-window-management-v1.xml`, each request is marked as
+// belonging to either the manage or render sequence:
+//   Manage:  propose_dimensions, focus_window, clear_focus
+//   Render:  node.set_position, node.place_top, window.set_borders
+// Modifying state outside the right sequence triggers
+// "invalid modification of window management state".
+
 pub fn handle_manage_start(state: &mut AppData) {
     let Some(wm) = state.wm.clone() else { return };
 
-    use crate::protocol::river_window_management_v1::river_window_v1::Edges;
     let pending_count = state.pending.manage.len();
     for (&window_id, &(w, h)) in &state.pending.manage {
         if let Some(proxy) = state.windows_by_id.get(&window_id) {
             proxy.propose_dimensions(w, h);
-            proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
         }
     }
     state.pending.manage_dirty = false;
     state.pending.manage.clear();
 
-    // `focus_window` / `clear_focus` are manage-sequence requests per
-    // river-window-management-v1.xml — calling them in render_start is a
-    // protocol error. Apply pending focus here.
     if let Some(focus) = state.pending.focus.take() {
         if let Some(seat) = state.seat.as_ref() {
             match focus {
@@ -45,9 +47,16 @@ pub fn handle_manage_start(state: &mut AppData) {
 
 pub fn handle_render_start(state: &mut AppData) {
     let Some(wm) = state.wm.clone() else { return };
+    use crate::protocol::river_window_management_v1::river_window_v1::Edges;
 
     let composition_len = state.pending.composition.as_ref().map(|c| c.len()).unwrap_or(0);
     let positions_len = state.pending.render_positions.len();
+
+    // Disable borders for any window we've seen but not yet decorated.
+    // Cheap to send repeatedly — River only diffs the resulting state.
+    for proxy in state.windows_by_id.values() {
+        proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+    }
 
     if let Some(order) = state.pending.composition.take() {
         for &window_id in &order {
