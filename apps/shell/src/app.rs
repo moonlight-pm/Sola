@@ -275,9 +275,9 @@ impl ShellApp {
         serde_json::to_string(&entries).unwrap_or_default()
     }
 
-    fn emit_registered_chords(&self, ctx: &mut AppCtx) {
+    pub fn emit_registered_chords(&self, ctx: &mut AppCtx) {
         let source = self.shell_key_chords();
-        let mut chords: Vec<RegisteredChord> = Vec::with_capacity(source.len() * 2 + 1);
+        let mut chords: Vec<RegisteredChord> = Vec::with_capacity(source.len() * 2 + 2);
         for c in &source {
             chords.push(crate::keys::to_registered(c));
             // Numpad keys have a different keysym when NumLock is off;
@@ -293,6 +293,16 @@ impl ShellApp {
             keysym: crate::keys::KEYSYM_SUPER_L,
             modifiers: 0,
         });
+        // While a shell overlay is active, grab Escape so the user can
+        // dismiss with one key regardless of which WebView owns DOM focus.
+        // Deregistered as soon as the overlay closes so terminal apps
+        // (vim, less, etc.) keep their Escape.
+        if self.launcher.active || self.switcher.active || self.menu_open {
+            chords.push(RegisteredChord {
+                keysym: crate::keys::KEYSYM_ESCAPE,
+                modifiers: 0,
+            });
+        }
         chords.sort_by_key(|c| (c.modifiers, c.keysym));
         chords.dedup();
         ctx.emit_sticky(Topic::RegisteredChords(chords));
@@ -645,6 +655,7 @@ impl ShellApp {
         }
 
         self.menu_open = true;
+        self.emit_registered_chords(ctx);
         self.emit_composition(ctx);
     }
 
@@ -653,6 +664,7 @@ impl ShellApp {
             return;
         }
         self.menu_open = false;
+        self.emit_registered_chords(ctx);
         self.windows.menu.eval_js("clearMenu()");
         self.windows
             .menubar
@@ -673,6 +685,7 @@ impl ShellApp {
         self.launcher.prior_focus = self.focused_window_id;
 
         self.launcher.active = true;
+        self.emit_registered_chords(ctx);
         self.launcher.apply_query(&self.applications, "");
 
         if let (Some((ow, oh)), Some(wid)) = (
@@ -706,6 +719,7 @@ impl ShellApp {
         tracing::info!("deactivating launcher");
         let prior_wid = self.launcher.prior_focus.take();
         self.launcher.active = false;
+        self.emit_registered_chords(ctx);
         self.launcher.query.clear();
         self.launcher.filtered_ids.clear();
         self.launcher.selected = 0;

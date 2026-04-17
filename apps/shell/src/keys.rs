@@ -29,6 +29,7 @@ const MOD_SUPER: u32 = 64; // mod4
 const KEYSYM_KP_0: u32 = 0xFFB0;
 // XK_Super_L — the left Super/Meta key on a stock xkb layout.
 pub const KEYSYM_SUPER_L: u32 = 0xFFEB;
+pub const KEYSYM_ESCAPE: u32 = 0xFF1B;
 
 // Numpad navigation keysyms (what the keys produce when NumLock is off).
 // Registering these alongside the KP_0..KP_9 digits lets zoning chords
@@ -235,6 +236,33 @@ pub fn handle_chord(
         "chord fired"
     );
 
+    // Escape dismisses whichever shell overlay is up. Only registered
+    // while one is active (see `emit_registered_chords`), so we don't
+    // steal Escape from terminal apps otherwise.
+    if chord.keycode == KeyCode::ESCAPE
+        && !chord.meta
+        && !chord.ctrl
+        && !chord.alt
+        && !chord.shift
+    {
+        if app.launcher.active {
+            app.close_launcher(ctx);
+            return;
+        }
+        if app.menu_open {
+            app.close_menu(ctx);
+            return;
+        }
+        if app.switcher.active {
+            tracing::info!("cancelling switcher via Escape");
+            app.switcher.active = false;
+            app.emit_registered_chords(ctx);
+            app.windows.switcher.eval_js("clear()");
+            app.emit_composition(ctx);
+            return;
+        }
+    }
+
     // Switcher active: Meta+Tab (or arrow) cycles; Meta release confirms
     // (handled in `handle_chord_released`).
     if app.switcher.active {
@@ -286,6 +314,7 @@ pub fn handle_chord(
         tracing::info!("activating switcher");
         app.switcher.apps = app.rebuild_switcher_apps();
         app.switcher.active = true;
+        app.emit_registered_chords(ctx);
         app.switcher.selected = if app.switcher.apps.len() > 1 { 1 } else { 0 };
         let json = app.switcher_apps_json();
         app.windows.switcher.eval_js(&format!(
@@ -348,6 +377,7 @@ fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
     let app_id = app.switcher.selected_app_id().map(String::from);
     tracing::info!(app_id = ?app_id, "confirming switcher");
     app.switcher.active = false;
+    app.emit_registered_chords(ctx);
     app.windows.switcher.eval_js("clear()");
     if let Some(ref app_id) = app_id {
         app.set_focus(app_id);
