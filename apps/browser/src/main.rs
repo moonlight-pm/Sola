@@ -48,19 +48,41 @@ fn setup_logging() {
         .init();
 }
 
-fn wait_for_wayland_socket() -> bool {
-    if std::env::var("WAYLAND_DISPLAY").is_err() {
-        unsafe { std::env::set_var("WAYLAND_DISPLAY", "wayland-0") };
+fn resolve_wayland_display(runtime_dir: &std::path::Path) -> String {
+    if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+        if !v.is_empty() {
+            return v;
+        }
     }
-    let display = std::env::var("WAYLAND_DISPLAY").unwrap();
+    let name_file = runtime_dir.join("sola-wayland");
+    for attempt in 1..=40 {
+        if let Ok(contents) = std::fs::read_to_string(&name_file) {
+            let name = contents.trim().to_string();
+            if !name.is_empty() {
+                return name;
+            }
+        }
+        if attempt == 1 {
+            tracing::info!(path = %name_file.display(), "waiting for sola-river to publish wayland socket name");
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    tracing::warn!("sola-wayland name file never appeared; falling back to wayland-0");
+    "wayland-0".to_string()
+}
+
+fn wait_for_wayland_socket() -> bool {
     let runtime_dir = match std::env::var("XDG_RUNTIME_DIR") {
-        Ok(d) => d,
+        Ok(d) => PathBuf::from(d),
         Err(_) => {
             tracing::error!("XDG_RUNTIME_DIR not set");
             return false;
         }
     };
-    let socket_path = PathBuf::from(&runtime_dir).join(&display);
+    // sola-river publishes the live socket name in $XDG_RUNTIME_DIR/sola-wayland.
+    let display = resolve_wayland_display(&runtime_dir);
+    unsafe { std::env::set_var("WAYLAND_DISPLAY", &display) };
+    let socket_path = runtime_dir.join(&display);
     for attempt in 1..=20 {
         if socket_path.exists() {
             tracing::info!(path = %socket_path.display(), "wayland socket ready");

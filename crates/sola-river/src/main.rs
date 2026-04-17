@@ -23,17 +23,21 @@ fn main() {
         }
     };
 
-    if let Err(e) = sup.wait_for_socket() {
-        error!(%e, "river socket never appeared");
-        sup.shutdown();
-        exit(1);
-    }
+    let socket_name = match sup.wait_for_socket() {
+        Ok(n) => n,
+        Err(e) => {
+            error!(%e, "river socket never appeared");
+            sup.shutdown();
+            exit(1);
+        }
+    };
 
-    // Children of `sola` inherit WAYLAND_DISPLAY from the parent; we set it
-    // explicitly here in case `sola-river` was launched standalone.
+    // Point our own wayland-client at whatever socket River actually
+    // opened. The `sola-wayland` file published by `wait_for_socket` is
+    // what our sibling sola processes read.
     // SAFETY: no other threads in sola-river yet — single-threaded main.
     unsafe {
-        std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
+        std::env::set_var("WAYLAND_DISPLAY", &socket_name);
     }
 
     let mut bus = bus::BusClient::new();

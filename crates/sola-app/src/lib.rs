@@ -118,27 +118,44 @@ pub fn run<A: SolaApp>() {
 
     tracing::info!("{app_id} starting");
 
+    fn resolve_wayland_display(runtime_dir: &std::path::Path) -> String {
+        if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+            if !v.is_empty() {
+                return v;
+            }
+        }
+        let name_file = runtime_dir.join("sola-wayland");
+        for attempt in 1..=40 {
+            if let Ok(contents) = std::fs::read_to_string(&name_file) {
+                let name = contents.trim().to_string();
+                if !name.is_empty() {
+                    return name;
+                }
+            }
+            if attempt == 1 {
+                tracing::info!(path = %name_file.display(), "waiting for sola-river to publish wayland socket name");
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        tracing::warn!("sola-wayland name file never appeared; falling back to wayland-0");
+        "wayland-0".to_string()
+    }
+
     // --- Binary self-watch ---
     watcher::watch_own_binary();
 
     // --- Wayland socket wait ---
-    if std::env::var("WAYLAND_DISPLAY").is_err() {
-        unsafe { std::env::set_var("WAYLAND_DISPLAY", "wayland-0") };
-    }
-    let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap();
+    //
+    // sola-river writes the live socket name (e.g. `wayland-1`) to
+    // `$XDG_RUNTIME_DIR/sola-wayland`. River's libwayland picks the
+    // first free `wayland-N`, which isn't always `wayland-0`, so
+    // hardcoding would race us against a stale-lock scenario.
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR must be set");
-    let socket_path = std::path::PathBuf::from(&runtime_dir).join(&wayland_display);
-    for attempt in 1..=20 {
-        if socket_path.exists() {
-            tracing::info!(path = %socket_path.display(), "wayland socket ready");
-            break;
-        }
-        if attempt == 20 {
-            tracing::error!(path = %socket_path.display(), "wayland socket not found after 10s");
-            std::process::exit(1);
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
+    let runtime_dir = std::path::PathBuf::from(runtime_dir);
+    let wayland_display = resolve_wayland_display(&runtime_dir);
+    unsafe { std::env::set_var("WAYLAND_DISPLAY", &wayland_display) };
+    let socket_path = runtime_dir.join(&wayland_display);
+    tracing::info!(path = %socket_path.display(), "wayland socket ready");
 
     unsafe { std::env::set_var("GDK_BACKEND", "wayland") };
     unsafe { std::env::set_var("GTK_A11Y", "none") };
