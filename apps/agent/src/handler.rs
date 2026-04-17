@@ -9,6 +9,7 @@ use crate::storage;
 pub struct AgentHandler {
     pub session_mgr: Arc<SessionManager>,
     pub event_tx: std::sync::mpsc::Sender<String>,
+    pub process_mgr: Arc<tokio::sync::Mutex<agent::ClaudeProcessManager>>,
 }
 
 #[async_trait::async_trait]
@@ -80,53 +81,48 @@ impl AgentHandler {
         let Some(text) = args.get("text").and_then(|v| v.as_str()) else {
             return json!({ "error": "text is required" });
         };
-
-        // If subprocess is already running, inject as follow-up
-        if self.session_mgr.is_running(session_id).await {
-            match agent::send_followup(session_id, text, &self.session_mgr).await {
-                Ok(()) => return json!({ "ok": true, "followup": true }),
-                Err(e) => {
-                    tracing::warn!("Follow-up injection failed: {:#}", e);
-                    // Fall through to spawn new subprocess
-                }
-            }
-        }
+        let model = args.get("model").and_then(|v| v.as_str()).unwrap_or("opus");
+        let effort = args.get("effort").and_then(|v| v.as_str()).unwrap_or("high");
 
         let working_dir = {
             let sessions = self.session_mgr.sessions.read().await;
             match sessions.get(session_id) {
-                Some(s) => s.working_dir.clone(),
+                Some(s) => s.working_dir.to_string_lossy().to_string(),
                 None => return json!({ "error": "Session not found" }),
             }
         };
 
-        let cancel_token = {
-            let mut sessions = self.session_mgr.sessions.write().await;
-            let session = sessions.get_mut(session_id).unwrap();
-            session.cancel_token = tokio_util::sync::CancellationToken::new();
-            session.cancel_token.clone()
-        };
-
-        let session_id = session_id.to_string();
-        let text = text.to_string();
-        let model = args.get("model").and_then(|v| v.as_str()).unwrap_or("opus").to_string();
-        let effort = args.get("effort").and_then(|v| v.as_str()).unwrap_or("high").to_string();
-        let session_mgr = self.session_mgr.clone();
-        let event_tx = self.event_tx.clone();
-
-        tokio::spawn(async move {
-            agent::run_session_message(
-                session_id,
-                text,
-                working_dir,
-                session_mgr,
-                event_tx,
-                cancel_token,
-                model,
-                effort,
-            )
-            .await;
+        // Save user message to our display JSONL.
+        let user_msg = json!({
+            "role": "user",
+            "content": [{"type": "text", "text": text}]
         });
+        let _ = storage::append_message(session_id, &user_msg);
+
+        // Ensure a Claude process is running for this session.
+        {
+            let mut mgr = self.process_mgr.lock().await;
+            if !mgr.is_running(session_id) {
+                if let Err(e) = mgr.start(session_id, &working_dir, model, effort, self.event_tx.clone()) {
+                    return json!({ "error": format!("Failed to start claude: {e:#}") });
+                }
+            }
+        }
+
+        // Send the message via stdin.
+        {
+            let mut mgr = self.process_mgr.lock().await;
+            if let Err(e) = mgr.send_message(session_id, text) {
+                // Process might have died; remove it so next attempt respawns.
+                mgr.remove(session_id);
+                return json!({ "error": format!("Failed to send message: {e:#}") });
+            }
+        }
+
+        // Emit running state.
+        self.send_event(json!({
+            "event": "session_state", "session_id": session_id, "status": "running"
+        }));
 
         json!({ "ok": true })
     }
@@ -135,7 +131,8 @@ impl AgentHandler {
         let Some(session_id) = args.get("session_id").and_then(|v| v.as_str()) else {
             return json!({ "error": "session_id is required" });
         };
-        self.session_mgr.cancel_session(session_id).await;
+        let mgr = self.process_mgr.lock().await;
+        let _ = mgr.interrupt(session_id);
         json!({ "ok": true })
     }
 
@@ -221,7 +218,7 @@ impl AgentHandler {
     }
 
     async fn cmd_list_conversations(&self) -> Value {
-        let metas = storage::list_all();
+        let metas = crate::sync::sync_sessions();
         tracing::info!(count = metas.len(), "list_conversations");
         let conversations: Vec<Value> = metas
             .iter()

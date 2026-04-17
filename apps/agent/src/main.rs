@@ -8,6 +8,7 @@ use sola_core::KeyCode;
 mod agent;
 mod handler;
 mod session;
+mod sync;
 mod storage;
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
@@ -48,9 +49,11 @@ impl SolaApp for AgentApp {
         });
 
         let session_mgr = Arc::new(session::SessionManager::new());
+        let process_mgr = Arc::new(tokio::sync::Mutex::new(agent::ClaudeProcessManager::new()));
         let dispatcher = AsyncDispatcher::spawn(handler::AgentHandler {
             session_mgr,
             event_tx,
+            process_mgr,
         });
 
         ctx.emit_sticky(Topic::SetAppMenu(agent_menu()));

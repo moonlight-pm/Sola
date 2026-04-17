@@ -2276,6 +2276,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "gtk4",
+ "libc",
  "serde",
  "serde_json",
  "sola-app",
