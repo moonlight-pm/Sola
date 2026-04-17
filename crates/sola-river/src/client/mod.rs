@@ -139,12 +139,18 @@ pub fn bus_tick(state: &mut AppData) {
     }
 
     if (state.pending.manage_dirty || state.pending.render_dirty) && state.wm.is_some() {
+        info!(
+            manage_items = state.pending.manage.len(),
+            render_pos = state.pending.render_positions.len(),
+            composition = state.pending.composition.as_ref().map(|c| c.len()).unwrap_or(0),
+            "requesting manage_dirty"
+        );
         state.wm.as_ref().unwrap().manage_dirty();
-        // calloop-wayland-source only flushes when the wayland fd
-        // becomes readable. Our timer-driven bus_tick has to flush
-        // explicitly or `manage_dirty` sits in the outgoing buffer.
         if let Some(conn) = state.conn.as_ref() {
-            let _ = conn.flush();
+            match conn.flush() {
+                Ok(()) => {}
+                Err(e) => tracing::warn!(%e, "wayland flush failed"),
+            }
         }
     }
 }
