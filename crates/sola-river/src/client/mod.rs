@@ -55,6 +55,13 @@ pub struct AppData {
     /// Live `river_output_v1` proxies. Stored so their Dispatch impl
     /// keeps receiving dimensions events (hotplug-safe).
     pub outputs: Vec<RiverOutputV1>,
+    /// Last-known dimensions of the primary output, used to center
+    /// unzoned windows.
+    pub output_size: Option<(i32, i32)>,
+    /// Windows we have already positioned at least once, either via an
+    /// explicit shell Frame or our own centered default. Prevents the
+    /// default from re-firing across subsequent render passes.
+    pub placed: std::collections::HashSet<u32>,
     /// Mode selection state for `zwlr_output_manager_v1` — we use this
     /// protocol to pick the highest resolution ≥60Hz on startup.
     pub output_config: output_config::OutputConfigState,
@@ -80,6 +87,8 @@ impl AppData {
             windows_by_id: HashMap::new(),
             nodes_by_window: HashMap::new(),
             outputs: Vec::new(),
+            output_size: None,
+            placed: std::collections::HashSet::new(),
             output_config: output_config::OutputConfigState::default(),
             qh: None,
             conn: None,
@@ -271,6 +280,7 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
         // a single output for v1.
         if let Event::Dimensions { width, height, .. } = event {
             info!(width, height, "river_output dimensions");
+            state.output_size = Some((width, height));
             state
                 .bus
                 .emit_sticky(Topic::OutputGeometry(OutputGeometry { width, height }));

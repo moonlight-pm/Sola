@@ -100,8 +100,18 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 state.windows_by_object.retain(|_, v| *v != window_id);
                 state.windows_by_id.remove(&window_id);
                 state.nodes_by_window.remove(&window_id);
+                state.placed.remove(&window_id);
                 window.destroy();
                 apps_dirty = true;
+            }
+            Event::DimensionsHint {
+                max_width,
+                max_height,
+                ..
+            } => {
+                state
+                    .registry
+                    .set_max_size(window_id, max_width, max_height);
             }
             _ => {}
         }

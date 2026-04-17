@@ -29,6 +29,9 @@ pub struct WindowRegistry {
 pub struct Entry {
     pub app_id: Option<String>,
     pub title: Option<String>,
+    /// Max-size dimensions hint from `river_window_v1.dimensions_hint`.
+    /// Used to center unzoned windows; `0` means "no preference".
+    pub max_size: (i32, i32),
 }
 
 impl WindowRegistry {
@@ -43,9 +46,16 @@ impl WindowRegistry {
             Entry {
                 app_id: None,
                 title: None,
+                max_size: (0, 0),
             },
         );
         self.next_id
+    }
+
+    pub fn set_max_size(&mut self, id: u32, width: i32, height: i32) {
+        if let Some(e) = self.by_id.get_mut(&id) {
+            e.max_size = (width, height);
+        }
     }
 
     pub fn get(&self, id: u32) -> Option<&Entry> {
