@@ -1,13 +1,21 @@
 //! Dispatch for `river_window_manager_v1` and `river_window_v1`.
 
 use tracing::{error, info, warn};
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
 
 use crate::client::AppData;
 use crate::protocol::river_window_management_v1::{
+    river_output_v1::RiverOutputV1,
+    river_seat_v1::RiverSeatV1,
     river_window_manager_v1::RiverWindowManagerV1,
     river_window_v1::RiverWindowV1,
 };
+
+// Opcodes of the events on `river_window_manager_v1` that create new
+// child objects. Order matches the XML event declarations.
+const EVT_WINDOW_OPCODE: u16 = 6;
+const EVT_OUTPUT_OPCODE: u16 = 7;
+const EVT_SEAT_OPCODE: u16 = 8;
 
 impl Dispatch<RiverWindowManagerV1, ()> for AppData {
     fn event(
@@ -51,6 +59,12 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
             _ => {}
         }
     }
+
+    event_created_child!(AppData, RiverWindowManagerV1, [
+        EVT_WINDOW_OPCODE => (RiverWindowV1, ()),
+        EVT_OUTPUT_OPCODE => (RiverOutputV1, ()),
+        EVT_SEAT_OPCODE   => (RiverSeatV1, ()),
+    ]);
 }
 
 impl Dispatch<RiverWindowV1, ()> for AppData {
