@@ -688,16 +688,20 @@ impl ShellApp {
         self.emit_registered_chords(ctx);
         self.launcher.apply_query(&self.applications, "");
 
+        // Launcher is a fullscreen-below-menubar overlay. The visible
+        // panel is centered by the CSS; the rest is transparent and
+        // absorbs pointer/scroll events so nothing beneath the launcher
+        // can be interacted with while it's open.
         if let (Some((ow, oh)), Some(wid)) = (
             self.zoning.output_size,
             self.lookup_window_id(Self::APP_ID, "launcher"),
         ) {
             ctx.emit(Topic::Frame(FrameUpdate {
                 window_id: wid,
-                x: (ow - launcher::WIDTH) / 2,
-                y: (oh - launcher::HEIGHT) / 3,
-                width: launcher::WIDTH,
-                height: launcher::HEIGHT,
+                x: 0,
+                y: zoning::MENUBAR_HEIGHT,
+                width: ow,
+                height: oh - zoning::MENUBAR_HEIGHT,
             }));
         }
 
