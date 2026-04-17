@@ -1,8 +1,13 @@
-use crate::AppState;
-use crate::ipc;
+use std::cell::RefCell;
+use std::rc::Weak;
+
 use base64::Engine;
-use std::rc::Rc;
+use serde_json::json;
 use webkit6::prelude::*;
+
+use sola_app::{AppRuntime, WindowHandle};
+
+use crate::app::BrowserApp;
 
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 
@@ -51,15 +56,27 @@ const EMACS_SCRIPT: &str = r#"
 })();
 "#;
 
-pub fn create_tab_webview(
-    state: &Rc<AppState>,
-    tab_id: &str,
-    url: Option<&str>,
-    session_state_b64: Option<&str>,
-) {
+pub struct Tab {
+    pub id: String,
+    pub webview: webkit6::WebView,
+}
+
+pub struct TabConfig {
+    pub url: Option<String>,
+    pub session_state_b64: Option<String>,
+}
+
+/// Build a per-tab WebView: Safari user agent, emacs keybinding UserScript,
+/// session-state restore, URL load. Signal handlers are wired separately by
+/// `wire_signals` after the caller has positioned the WebView in the
+/// chrome's content area.
+pub fn build_web_page_view(
+    web_context: &webkit6::WebContext,
+    network_session: &webkit6::NetworkSession,
+    cfg: &TabConfig,
+) -> webkit6::WebView {
     let manager = webkit6::UserContentManager::new();
 
-    // Inject emacs keybindings
     let emacs = webkit6::UserScript::new(
         EMACS_SCRIPT,
         webkit6::UserContentInjectedFrames::AllFrames,
@@ -70,13 +87,13 @@ pub fn create_tab_webview(
     manager.add_script(&emacs);
 
     let webview = webkit6::WebView::builder()
-        .web_context(&state.web_context)
-        .network_session(&state.network_session)
+        .web_context(web_context)
+        .network_session(network_session)
         .user_content_manager(&manager)
         .build();
 
-    // Dark background so about:blank isn't a white flash
-    webview.set_background_color(&gdk4::RGBA::new(0.039, 0.043, 0.051, 1.0)); // #0a0b0d
+    // Dark background so about:blank isn't a white flash.
+    webview.set_background_color(&gdk4::RGBA::new(0.039, 0.043, 0.051, 1.0));
 
     if let Some(settings) = webkit6::prelude::WebViewExt::settings(&webview) {
         settings.set_enable_developer_extras(true);
@@ -84,8 +101,7 @@ pub fn create_tab_webview(
         settings.set_user_agent(Some(USER_AGENT));
     }
 
-    // Restore session state (back/forward history)
-    if let Some(b64) = session_state_b64 {
+    if let Some(ref b64) = cfg.session_state_b64 {
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
             let gbytes = glib::Bytes::from(&bytes);
             let session = webkit6::WebViewSessionState::new(&gbytes);
@@ -93,204 +109,165 @@ pub fn create_tab_webview(
         }
     }
 
-    // Load URL
-    let load_url = url.unwrap_or("about:blank");
+    let load_url = cfg.url.as_deref().unwrap_or("about:blank");
     webview.load_uri(load_url);
 
-    // Position in content area
-    let area =
-        crate::chrome::content_area(state.chrome_webview.width(), state.chrome_webview.height());
-    state.container.put(&webview, area.x as f64, area.y as f64);
-    webview.set_size_request(area.width, area.height);
-    webview.set_visible(false); // Hidden until switched to
+    webview
+}
 
-    // Track title changes
-    let chrome_wv = state.chrome_webview.clone();
-    let tid = tab_id.to_string();
-    webview.connect_notify_local(Some("title"), move |wv, _| {
-        if let Some(title) = wv.title() {
-            let data = serde_json::json!({ "tabId": tid, "title": title.to_string() });
-            ipc::emit_event(&chrome_wv, "tab_title_changed", &data);
-        }
-    });
+/// Attach the four per-tab signal handlers. Called by `BrowserApp::create_tab`
+/// after the WebView is added to the Overlay.
+pub fn wire_signals(
+    webview: &webkit6::WebView,
+    tab_id: &str,
+    chrome: WindowHandle,
+    runtime: Weak<RefCell<AppRuntime<BrowserApp>>>,
+) {
+    // notify::title
+    {
+        let chrome = chrome.clone();
+        let tid = tab_id.to_string();
+        webview.connect_notify_local(Some("title"), move |wv, _| {
+            if let Some(title) = wv.title() {
+                chrome.send_to_js(&json!({
+                    "event": "tab_title_changed",
+                    "tabId": tid,
+                    "title": title.to_string(),
+                }));
+            }
+        });
+    }
 
-    // Track URL changes
-    let chrome_wv = state.chrome_webview.clone();
-    let tid = tab_id.to_string();
-    let state_ref = state.clone();
-    webview.connect_notify_local(Some("uri"), move |wv, _| {
-        if let Some(uri) = wv.uri() {
+    // notify::uri: history + session snapshot + write-through.
+    //
+    // WebKit fires this signal synchronously from inside `load_uri`, which
+    // we call from `on_js_command` handlers while the runtime RefCell is
+    // already borrowed. Defer the runtime-touching work to the GTK idle
+    // loop so it runs after the triggering borrow releases.
+    {
+        let chrome = chrome.clone();
+        let tid = tab_id.to_string();
+        let runtime = runtime.clone();
+        webview.connect_notify_local(Some("uri"), move |wv, _| {
+            let Some(uri) = wv.uri() else { return };
             let url_str = uri.to_string();
-            let data = serde_json::json!({ "tabId": tid, "url": url_str });
-            ipc::emit_event(&chrome_wv, "tab_url_changed", &data);
-
-            // Record in history
             let title = wv.title().map(|t| t.to_string()).unwrap_or_default();
-            state_ref
-                .history
-                .borrow_mut()
-                .record_visit(&url_str, &title);
-            state_ref.persist_history();
-        }
-    });
 
-    // Track load state
-    let chrome_wv = state.chrome_webview.clone();
-    let tid = tab_id.to_string();
-    webview.connect_notify_local(Some("is-loading"), move |wv, _| {
-        let loading = wv.is_loading();
-        let data = serde_json::json!({ "tabId": tid, "loading": loading });
-        ipc::emit_event(&chrome_wv, "tab_load_changed", &data);
-    });
+            chrome.send_to_js(&json!({
+                "event": "tab_url_changed",
+                "tabId": tid,
+                "url": url_str,
+            }));
 
-    // Handle target="_blank" -- open as new tab
-    let state_ref = state.clone();
-    webview.connect_decide_policy(move |_wv, decision, decision_type| {
-        if decision_type == webkit6::PolicyDecisionType::NewWindowAction {
-            if let Some(nav) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>() {
-                if let Some(mut action) = nav.navigation_action() {
-                    if let Some(request) = action.request() {
-                        if let Some(uri) = request.uri() {
-                            let url = uri.to_string();
-                            let tab_id = uuid::Uuid::new_v4().to_string();
-                            create_tab_webview(&state_ref, &tab_id, Some(&url), None);
-                            switch_tab(&state_ref, &tab_id);
+            let runtime = runtime.clone();
+            let tid = tid.clone();
+            glib::idle_add_local_once(move || {
+                let Some(runtime) = runtime.upgrade() else {
+                    return;
+                };
+                let mut rt = runtime.borrow_mut();
+                let AppRuntime { app, .. } = &mut *rt;
+                app.history.record_visit(&url_str, &title);
+                app.persist_history();
+                app.capture_tab_session_state(&tid);
+                app.persist_tabs();
+            });
+        });
+    }
 
-                            // Persist new tab (keep tab_store in sync with tabs vec)
-                            let mut store = state_ref.tab_store.borrow_mut();
-                            store.tabs.push(crate::state::PersistedTab {
-                                url: url.clone(),
-                                title: String::new(),
-                                session_state: None,
-                            });
-                            drop(store);
-                            state_ref.persist_tabs();
+    // notify::is-loading
+    {
+        let chrome = chrome.clone();
+        let tid = tab_id.to_string();
+        webview.connect_notify_local(Some("is-loading"), move |wv, _| {
+            chrome.send_to_js(&json!({
+                "event": "tab_load_changed",
+                "tabId": tid,
+                "loading": wv.is_loading(),
+            }));
+        });
+    }
 
-                            let data = serde_json::json!({
-                                "tabId": tab_id,
-                                "url": url,
-                                "activate": true,
-                            });
-                            ipc::emit_event(&state_ref.chrome_webview, "bus_new_tab", &data);
-                        }
-                    }
-                }
+    // load-failed: surface WebKit load errors. Default return false lets
+    // WebKit show its own error page; we just log here so the failure is
+    // diagnosable from /opt/sola/log/sola.log.
+    {
+        let tid = tab_id.to_string();
+        webview.connect_load_failed(move |_wv, _event, failing_uri, error| {
+            tracing::warn!(
+                tab_id = %tid,
+                uri = %failing_uri,
+                error = %error.message(),
+                "load-failed"
+            );
+            false
+        });
+    }
+
+    // load-failed-with-tls-errors: surface TLS-specific failures.
+    {
+        let tid = tab_id.to_string();
+        webview.connect_load_failed_with_tls_errors(move |_wv, failing_uri, _cert, errors| {
+            tracing::warn!(
+                tab_id = %tid,
+                uri = %failing_uri,
+                tls_errors = ?errors,
+                "load-failed-with-tls-errors"
+            );
+            false
+        });
+    }
+
+    // decide-policy: target="_blank" → new tab.
+    {
+        let runtime = runtime.clone();
+        webview.connect_decide_policy(move |_wv, decision, decision_type| {
+            if decision_type != webkit6::PolicyDecisionType::NewWindowAction {
+                return false;
             }
+            let Some(nav) = decision.downcast_ref::<webkit6::NavigationPolicyDecision>() else {
+                return false;
+            };
+            let Some(mut action) = nav.navigation_action() else {
+                return false;
+            };
+            let Some(request) = action.request() else {
+                return false;
+            };
+            let Some(uri) = request.uri() else {
+                return false;
+            };
+            let url = uri.to_string();
+            let new_tab_id = uuid::Uuid::new_v4().to_string();
+
+            // decide-policy may fire from inside a WebKit call made while
+            // the runtime is already borrowed. Defer tab creation to the
+            // GTK idle loop to avoid reentrant borrow_mut.
+            let runtime = runtime.clone();
+            glib::idle_add_local_once(move || {
+                let Some(runtime) = runtime.upgrade() else {
+                    return;
+                };
+                let mut rt = runtime.borrow_mut();
+                let AppRuntime { app, .. } = &mut *rt;
+                app.tab_store.tabs.push(crate::state::PersistedTab {
+                    url: url.clone(),
+                    title: String::new(),
+                    session_state: None,
+                });
+                app.create_tab(&new_tab_id, Some(&url), None);
+                app.switch_tab(&new_tab_id);
+                app.emit_to_chrome(
+                    "bus_new_tab",
+                    json!({
+                        "tabId": new_tab_id,
+                        "url": url,
+                        "activate": true,
+                    }),
+                );
+            });
             decision.ignore();
-            return true;
-        }
-        false
-    });
-
-    state.tabs.borrow_mut().push(crate::Tab {
-        id: tab_id.to_string(),
-        webview,
-    });
-}
-
-pub fn switch_tab(state: &Rc<AppState>, tab_id: &str) {
-    let tabs = state.tabs.borrow();
-
-    // Hide current
-    if let Some(current_id) = state.active_tab_id.borrow().as_ref() {
-        if let Some(tab) = tabs.iter().find(|t| t.id == *current_id) {
-            tab.webview.set_visible(false);
-        }
+            true
+        });
     }
-
-    // Show new
-    if let Some(tab) = tabs.iter().find(|t| t.id == tab_id) {
-        tab.webview.set_visible(true);
-        tab.webview.grab_focus();
-    }
-
-    drop(tabs);
-    *state.active_tab_id.borrow_mut() = Some(tab_id.to_string());
-
-    // Persist
-    state.tab_store.borrow_mut().active_tab_id = Some(tab_id.to_string());
-    state.persist_tabs();
-}
-
-pub fn close_tab(state: &Rc<AppState>, tab_id: &str) {
-    let mut tabs = state.tabs.borrow_mut();
-    if let Some(pos) = tabs.iter().position(|t| t.id == tab_id) {
-        let tab = tabs.remove(pos);
-        drop(tabs);
-        tab.webview.unparent();
-
-        // Update persisted store
-        let mut store = state.tab_store.borrow_mut();
-        if pos < store.tabs.len() {
-            store.tabs.remove(pos);
-        }
-        drop(store);
-        state.persist_tabs();
-    }
-}
-
-pub fn navigate_active(state: &Rc<AppState>, url: &str) {
-    let active_id = state.active_tab_id.borrow().clone();
-    if let Some(id) = active_id {
-        let tabs = state.tabs.borrow();
-        if let Some(tab) = tabs.iter().find(|t| t.id == id) {
-            tab.webview.load_uri(url);
-        }
-    }
-}
-
-pub fn go_back(state: &Rc<AppState>) {
-    let active_id = state.active_tab_id.borrow().clone();
-    if let Some(id) = active_id {
-        let tabs = state.tabs.borrow();
-        if let Some(tab) = tabs.iter().find(|t| t.id == id) {
-            tab.webview.go_back();
-        }
-    }
-}
-
-pub fn go_forward(state: &Rc<AppState>) {
-    let active_id = state.active_tab_id.borrow().clone();
-    if let Some(id) = active_id {
-        let tabs = state.tabs.borrow();
-        if let Some(tab) = tabs.iter().find(|t| t.id == id) {
-            tab.webview.go_forward();
-        }
-    }
-}
-
-pub fn reload(state: &Rc<AppState>) {
-    let active_id = state.active_tab_id.borrow().clone();
-    if let Some(id) = active_id {
-        let tabs = state.tabs.borrow();
-        if let Some(tab) = tabs.iter().find(|t| t.id == id) {
-            tab.webview.reload();
-        }
-    }
-}
-
-pub fn capture_session_state(state: &Rc<AppState>) {
-    let tabs = state.tabs.borrow();
-    let mut store = state.tab_store.borrow_mut();
-
-    for (i, tab) in tabs.iter().enumerate() {
-        if i < store.tabs.len() {
-            if let Some(uri) = tab.webview.uri() {
-                store.tabs[i].url = uri.to_string();
-            }
-            if let Some(title) = tab.webview.title() {
-                store.tabs[i].title = title.to_string();
-            }
-            if let Some(session) = tab.webview.session_state() {
-                if let Some(bytes) = session.serialize() {
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes.as_ref());
-                    store.tabs[i].session_state = Some(b64);
-                }
-            }
-        }
-    }
-
-    drop(store);
-    drop(tabs);
-    state.persist_tabs();
 }
