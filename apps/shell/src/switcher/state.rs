@@ -1,9 +1,9 @@
-use sola_bus::topics::App;
+use crate::app::SwitcherApp;
 
 #[derive(Default)]
 pub struct SwitcherState {
     pub active: bool,
-    pub apps: Vec<App>,
+    pub apps: Vec<SwitcherApp>,
     pub selected: usize,
 }
 

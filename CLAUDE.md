@@ -6,8 +6,7 @@ Sola is a Wayland desktop shell — a full compositor and desktop environment bu
 
 - **Process manager (`sola`):** Launches and supervises all components. No desktop or bus logic — pure process management.
 - **Bus (`sola-bus`):** General-purpose IPC bus. Separate process. All Sola components communicate via bus events over a Unix socket.
-- **Compositor (`sola-compositor`):** Smithay (pure Rust) — DRM/KMS backend, input handling, Wayland protocol, surface management. Separate process, bus client.
-- **XWayland host (`sola-x`):** Manages XWayland lifecycle independently of the compositor. Acts as a Wayland compositor for XWayland and a Wayland client of sola-compositor, bridging X11 windows as proxy surfaces. X11 apps survive compositor restarts.
+- **Compositor (`sola-compositor`):** Smithay (pure Rust) — DRM/KMS backend, input handling, Wayland protocol, surface management, XWayland hosting. Separate process, bus client.
 - **Renderer:** Smithay GlesRenderer (OpenGL ES) — composites Wayland client surfaces
 - **Shell apps:** WebKit6 WebViews as Wayland clients + bus clients. Each is a separate process (switcher, launcher, panel, etc.).
 - **Web frontends:** Framework-agnostic. Any app or component can use any web framework (Svelte, React, vanilla, etc.)
@@ -24,8 +23,7 @@ Reference codebase: `../Cogsworth` — Sola is a deliberate rebuild of Cogsworth
 crates/
   sola/                # Process manager (binary entry point)
   sola-bus/            # Bus host process + protocol definitions
-  sola-compositor/     # Smithay compositor (bus client)
-  sola-x/              # XWayland host (bus client, Wayland bridge)
+  sola-compositor/     # Smithay compositor + XWayland host (bus client)
   sola-app/            # WebView app framework (Rust host + JS platform lib)
   sola-make/           # Build/deploy orchestration (xtask)
 apps/

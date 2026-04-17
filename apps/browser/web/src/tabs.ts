@@ -28,6 +28,16 @@ export function createTabSidebar(config: TabSidebarConfig, target: HTMLElement):
     return tab.id === config.activeTabId() ? 'tab-item active' : 'tab-item';
   }
 
+  function tabContent(tab: TabItem) {
+    return html`
+      <span class="tab-item-title">${() => displayTitle(tab)}</span>
+      <button class="tab-item-close" title="Close tab"
+        @click="${(e: MouseEvent) => { e.stopPropagation(); config.onClose(tab.id); }}"
+        @mousedown="${(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}"
+      ><span class="icon icon-x"></span></button>
+    `;
+  }
+
   html`
     <div class="tab-sidebar">
       <div class="tab-sidebar-header"></div>
@@ -36,17 +46,16 @@ export function createTabSidebar(config: TabSidebarConfig, target: HTMLElement):
           <div class="${() => tabClass(tab)}"
             @click="${() => config.onSelect(tab.id)}"
           >
-            <span class="tab-item-title">${() => displayTitle(tab)}</span>
-            <button class="tab-item-close"
-              @click="${(e: MouseEvent) => { e.stopPropagation(); config.onClose(tab.id); }}"
-              @mousedown="${(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}"
-              title="Close tab"
-            ><span class="icon icon-x"></span></button>
+            ${() => tabContent(tab)}
           </div>
         `)}
       </div>
-      <button class="new-tab-btn" @click="${config.onCreate}">
-        <span class="icon icon-plus"></span> <span>New Tab</span>
+      <button class="new-tab-btn"
+        @mousedown="${(e: MouseEvent) => e.preventDefault()}"
+        @click="${config.onCreate}"
+      >
+        <span class="icon icon-plus"></span>
+        <span>New Tab</span>
       </button>
     </div>
   `(target);

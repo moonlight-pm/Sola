@@ -1,7 +1,9 @@
+mod river;
 mod watcher;
 
 use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::mpsc;
 use std::thread;
@@ -15,8 +17,7 @@ use sola_bus::topics::Topic;
 
 const MANAGED: &[&str] = &[
     "sola-bus",
-    "sola-compositor",
-    "sola-x",
+    "sola-river",
     "sola-shell",
     "sola-terminal",
 ];
@@ -58,11 +59,38 @@ fn main() {
     let (change_tx, change_rx) = mpsc::channel();
     watcher::watch_binaries(&bin_dir, &all_watched, change_tx);
 
+    // Spawn River first and wait for its wayland socket. Every other
+    // managed process is a wayland client that depends on it; without
+    // this synchronous wait they'd flap through the backoff path until
+    // the socket came up.
+    let mut river_sup = match river::RiverSupervisor::spawn(Path::new("/opt/sola/log/river.log"))
+    {
+        Ok(s) => s,
+        Err(e) => {
+            error!(%e, "failed to spawn river");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = river_sup.wait_for_socket() {
+        error!(%e, "river socket never appeared");
+        river_sup.shutdown();
+        std::process::exit(1);
+    }
+    // River starts XWayland asynchronously after the wayland socket is
+    // live. Poll briefly for the X socket so sola-spawned X apps can
+    // pick up DISPLAY. Absent XWayland → silent no-op.
+    river_sup.wait_for_xwayland(Duration::from_secs(3));
+
     // Launch managed processes
     let mut managed: HashMap<&str, ManagedProcess> = HashMap::new();
     for name in MANAGED {
         launch(&bin_dir, name, &mut managed);
     }
+
+    // User apps spawned on LaunchApp bus messages. Fire-and-forget: we reap
+    // them in the supervision loop so they don't zombie, but we don't
+    // restart or track them beyond that.
+    let mut user_apps: Vec<UserApp> = Vec::new();
 
     // Connect to bus (retry until available)
     let mut bus = sola_bus::BusClient::new();
@@ -71,20 +99,48 @@ fn main() {
     // Supervise — block on bus messages, fall through every 500ms
     // to check process health and binary changes.
     let poll_interval = Duration::from_millis(500);
+    // Keep reconnect attempts from hot-looping when the bus is down: the
+    // client's recv_timeout returns immediately while rx is None, so
+    // without this we'd call UnixStream::connect several thousand times
+    // per second.
+    let reconnect_interval = Duration::from_secs(1);
+    let mut last_reconnect_attempt = Instant::now() - reconnect_interval;
+    let mut reconnect_failures: u32 = 0;
 
     loop {
-        // Try to connect to bus if not connected
-        if !bus.is_connected() {
-            let _ = bus.connect();
+        if !bus.is_connected() && last_reconnect_attempt.elapsed() >= reconnect_interval {
+            last_reconnect_attempt = Instant::now();
+            match bus.connect() {
+                Ok(()) => {
+                    if reconnect_failures > 0 {
+                        info!(failures = reconnect_failures, "bus reconnected");
+                        reconnect_failures = 0;
+                    }
+                }
+                Err(e) => {
+                    reconnect_failures += 1;
+                    if reconnect_failures == 1
+                        || reconnect_failures.is_power_of_two()
+                    {
+                        warn!(%e, attempts = reconnect_failures, "bus reconnect failed");
+                    }
+                }
+            }
         }
 
         // Block until a bus message arrives or the supervision interval expires.
+        // When disconnected, rx is None and recv_timeout returns immediately —
+        // substitute an explicit sleep so supervision still ticks at a sane rate.
         let mut messages = Vec::new();
-        if let Some(msg) = bus.recv_timeout(poll_interval) {
-            messages.push(msg);
-            while let Some(msg) = bus.try_recv() {
+        if bus.is_connected() {
+            if let Some(msg) = bus.recv_timeout(poll_interval) {
                 messages.push(msg);
+                while let Some(msg) = bus.try_recv() {
+                    messages.push(msg);
+                }
             }
+        } else {
+            thread::sleep(poll_interval);
         }
 
         for msg in &messages {
@@ -96,11 +152,27 @@ fn main() {
                 Topic::Shutdown => {
                     info!("shutdown requested via bus");
                     shutdown_all(&mut managed);
+                    river_sup.shutdown();
                     std::process::exit(0);
+                }
+                Topic::LaunchApp(command) => {
+                    launch_user_app(&command, &mut user_apps);
                 }
                 _ => {}
             }
         }
+
+        // Every wayland client (sola-river, sola-shell, sola-terminal,
+        // user apps) depends on River. If River dies, restarting any
+        // individual client won't help — they need a fresh compositor.
+        // Tear the whole session down and let the user re-launch sola.
+        if let Ok(Some(status)) = river_sup.try_wait() {
+            error!(?status, "river exited; shutting down sola");
+            shutdown_all(&mut managed);
+            std::process::exit(1);
+        }
+
+        reap_user_apps(&mut user_apps);
 
         // Check for binary changes
         while let Ok(changed) = change_rx.try_recv() {
@@ -146,6 +218,77 @@ fn main() {
 struct ManagedProcess {
     child: Child,
     started_at: Instant,
+}
+
+struct UserApp {
+    command: String,
+    child: Child,
+}
+
+fn launch_user_app(command: &str, user_apps: &mut Vec<UserApp>) {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        warn!("LaunchApp with empty command, ignoring");
+        return;
+    }
+    let mut parts = trimmed.split_whitespace();
+    let Some(program) = parts.next() else {
+        warn!(command, "LaunchApp with no program, ignoring");
+        return;
+    };
+    let args: Vec<&str> = parts.collect();
+
+    let mut cmd = Command::new(program);
+    cmd.args(&args);
+    // Sola launches from a TTY where neither WAYLAND_DISPLAY nor DISPLAY
+    // is set, so user apps would try bare connects and fail. Point them
+    // at the sockets sola-river published.
+    if let Some(name) = resolve_wayland_socket() {
+        tracing::debug!(%name, "setting WAYLAND_DISPLAY for user app");
+        cmd.env("WAYLAND_DISPLAY", name);
+    } else {
+        warn!("sola-wayland not populated yet; user app may fail to connect");
+    }
+    if let Some(x_display) = resolve_x_display() {
+        tracing::debug!(display = %x_display, "setting DISPLAY for user app");
+        cmd.env("DISPLAY", x_display);
+    }
+
+    // SAFETY: pre_exec runs in the child after fork. PR_SET_PDEATHSIG asks
+    // the kernel to kill the child if sola dies, preventing orphans.
+    let result = unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        })
+        .spawn()
+    };
+    match result {
+        Ok(child) => {
+            info!(command = trimmed, pid = child.id(), "user app launched");
+            user_apps.push(UserApp {
+                command: trimmed.to_string(),
+                child,
+            });
+        }
+        Err(e) => {
+            warn!(command = trimmed, "failed to launch user app: {e}");
+        }
+    }
+}
+
+fn reap_user_apps(user_apps: &mut Vec<UserApp>) {
+    user_apps.retain_mut(|app| match app.child.try_wait() {
+        Ok(Some(status)) => {
+            info!(command = %app.command, pid = app.child.id(), ?status, "user app exited");
+            false
+        }
+        Ok(None) => true,
+        Err(e) => {
+            warn!(command = %app.command, "wait failed: {e}");
+            false
+        }
+    });
 }
 
 fn launch<'a>(
@@ -194,4 +337,30 @@ fn shutdown_all(managed: &mut HashMap<&str, ManagedProcess>) {
 /// Only called on binary change events, which are rare.
 fn leak_str(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
+}
+
+/// Read the wayland socket name that sola-river published to
+/// `$XDG_RUNTIME_DIR/sola-wayland`. Returns `None` if the file isn't
+/// there yet (sola-river still starting, or not running).
+fn resolve_wayland_socket() -> Option<String> {
+    read_runtime_name("sola-wayland")
+}
+
+/// Read the X11 display that sola-river's XWayland is serving (e.g. `:0`)
+/// from `$XDG_RUNTIME_DIR/sola-display`. Returns `None` if XWayland isn't
+/// active or the file hasn't been written yet.
+fn resolve_x_display() -> Option<String> {
+    read_runtime_name("sola-display")
+}
+
+fn read_runtime_name(file: &str) -> Option<String> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
+    let path = std::path::Path::new(&runtime_dir).join(file);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let name = raw.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }

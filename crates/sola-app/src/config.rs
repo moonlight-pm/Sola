@@ -87,6 +87,70 @@ pub trait JsonConfig: Serialize + DeserializeOwned + Default {
     }
 }
 
+/// Like [`JsonConfig`] but places the file inside an app-owned sub-directory:
+/// `<user_config>/sola/<APP_DIR>/<FILE_NAME>`.
+///
+/// Use this when an app owns multiple config files and wants to namespace them
+/// under its own directory (e.g. `shell/applications.json`).
+pub trait JsonConfigIn: Serialize + DeserializeOwned + Default {
+    /// Sub-directory under `<user_config>/sola/`.
+    const APP_DIR: &'static str;
+
+    /// File name inside the sub-directory.
+    const FILE_NAME: &'static str;
+
+    fn path() -> PathBuf {
+        sola_config_dir().join(Self::APP_DIR).join(Self::FILE_NAME)
+    }
+
+    fn load() -> Self {
+        match Self::try_load_or_default() {
+            Ok(cfg) => {
+                info!(
+                    dir = Self::APP_DIR,
+                    file = Self::FILE_NAME,
+                    "restored config"
+                );
+                cfg
+            }
+            Err(e) => {
+                warn!(
+                    dir = Self::APP_DIR,
+                    file = Self::FILE_NAME,
+                    "failed to load config: {e}"
+                );
+                Self::default()
+            }
+        }
+    }
+
+    fn try_load() -> Result<Self, ConfigError> {
+        load_json(&Self::path())
+    }
+
+    fn try_load_or_default() -> Result<Self, ConfigError> {
+        load_json_or_default(&Self::path())
+    }
+
+    fn save(&self) {
+        if let Err(e) = self.try_save_pretty() {
+            warn!(
+                dir = Self::APP_DIR,
+                file = Self::FILE_NAME,
+                "failed to write config: {e}"
+            );
+        }
+    }
+
+    fn try_save_pretty(&self) -> Result<(), ConfigError> {
+        save_json_pretty(&Self::path(), self)
+    }
+
+    fn try_save(&self) -> Result<(), ConfigError> {
+        save_json(&Self::path(), self)
+    }
+}
+
 #[derive(Debug)]
 pub enum ConfigError {
     Io {
@@ -214,4 +278,38 @@ pub fn sola_config_dir() -> PathBuf {
 /// - `sola_config_file("shell.json")` -> `<config>/sola/shell.json`
 pub fn sola_config_file(file_name: &str) -> PathBuf {
     sola_config_dir().join(file_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default, Serialize, serde::Deserialize)]
+    struct FlatCfg;
+    impl JsonConfig for FlatCfg {
+        const FILE_NAME: &'static str = "flat.json";
+    }
+
+    #[derive(Default, Serialize, serde::Deserialize)]
+    struct NestedCfg;
+    impl JsonConfigIn for NestedCfg {
+        const APP_DIR: &'static str = "shell";
+        const FILE_NAME: &'static str = "applications.json";
+    }
+
+    #[test]
+    fn flat_path_resolves_under_sola_dir() {
+        let p = <FlatCfg as JsonConfig>::path();
+        assert!(p.ends_with("sola/flat.json"), "got {}", p.display());
+    }
+
+    #[test]
+    fn nested_path_resolves_under_app_dir() {
+        let p = <NestedCfg as JsonConfigIn>::path();
+        assert!(
+            p.ends_with("sola/shell/applications.json"),
+            "got {}",
+            p.display()
+        );
+    }
 }

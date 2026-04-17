@@ -22,7 +22,15 @@ function renderSwitcher(appList, selected) {
 
         var iconEl = document.createElement('div');
         iconEl.className = 'icon';
-        iconEl.textContent = '\u2B21';
+        if (app.icon && typeof app.icon === 'string' && app.icon.indexOf('/') > 0) {
+            var img = document.createElement('img');
+            img.src = 'sola-assets://icons/' + app.icon + '.svg';
+            img.width = 48;
+            img.height = 48;
+            iconEl.appendChild(img);
+        } else {
+            iconEl.textContent = '\u2B21';
+        }
         el.appendChild(iconEl);
 
         var nameEl = document.createElement('div');

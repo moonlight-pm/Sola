@@ -70,6 +70,7 @@ impl KeyCode {
 
     pub const LEFT: Self = Self(113);
     pub const RIGHT: Self = Self(114);
+    pub const SPACE: Self = Self(65);
 
     // --- Alphanumeric ---
     pub const KEY_0: Self = Self(19);

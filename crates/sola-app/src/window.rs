@@ -33,10 +33,6 @@ pub(crate) struct WindowInner {
     /// Shared with the UCM handler: the UCM reads from this slot, the
     /// runtime writes into it after `A::new` returns.
     pub(crate) dispatcher: Rc<RefCell<Option<JsDispatcher>>>,
-    pub(crate) zoned: bool,
-    pub(crate) keyboard_target: bool,
-    pub(crate) size: (i32, i32),
-    pub(crate) position: Option<(i32, i32)>,
 }
 
 /// Cheap-clone handle to a window created via `AppCtx::add_window`.
@@ -80,6 +76,14 @@ impl WindowHandle {
     /// Access the underlying GTK window for event controllers etc.
     pub fn gtk_window(&self) -> &gtk4::ApplicationWindow {
         &self.inner.gtk_window
+    }
+
+    /// Access the underlying WebKit WebView. Apps that need to restructure
+    /// the window's widget tree (e.g. reparent the WebView into a container
+    /// to add sibling WebViews) use this. The JS dispatcher / UCM stays
+    /// attached to the WebView across reparenting.
+    pub fn webview(&self) -> &webkit6::WebView {
+        &self.inner.webview
     }
 }
 
