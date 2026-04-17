@@ -15,7 +15,9 @@ use std::os::fd::{AsFd, OwnedFd};
 
 use rustix::fs::{MemfdFlags, memfd_create};
 use tracing::{info, warn};
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, backend::ObjectId};
+use wayland_client::{
+    Connection, Dispatch, Proxy, QueueHandle, backend::ObjectId, event_created_child,
+};
 
 use crate::client::AppData;
 use crate::protocol::river_input_management_v1::river_input_device_v1::RiverInputDeviceV1;
@@ -27,6 +29,12 @@ use crate::protocol::river_xkb_config_v1::{
 
 const KEYMAP_DEFAULT: &str = include_str!("../../keymaps/default.xkb");
 const KEYMAP_META_AS_CTRL: &str = include_str!("../../keymaps/meta-as-ctrl.xkb");
+
+// Event opcodes from the river-xkb-config-v1 protocol XML.
+// `river_xkb_config_v1.xkb_keyboard` is the second event (after `finished`).
+const EVT_XKB_KEYBOARD_OPCODE: u16 = 1;
+// `river_xkb_keyboard_v1.input_device` is the second event (after `removed`).
+const EVT_INPUT_DEVICE_OPCODE: u16 = 1;
 
 #[derive(Default)]
 pub struct XkbConfigState {
@@ -120,6 +128,10 @@ impl Dispatch<RiverXkbConfigV1, ()> for AppData {
             river_xkb_config_v1::Event::Finished => {}
         }
     }
+
+    event_created_child!(AppData, RiverXkbConfigV1, [
+        EVT_XKB_KEYBOARD_OPCODE => (RiverXkbKeyboardV1, ()),
+    ]);
 }
 
 impl Dispatch<RiverXkbKeyboardV1, ()> for AppData {
@@ -136,6 +148,10 @@ impl Dispatch<RiverXkbKeyboardV1, ()> for AppData {
         }
         // input_device, layout, capslock, numlock events: not needed here.
     }
+
+    event_created_child!(AppData, RiverXkbKeyboardV1, [
+        EVT_INPUT_DEVICE_OPCODE => (RiverInputDeviceV1, ()),
+    ]);
 }
 
 impl Dispatch<RiverXkbKeymapV1, ()> for AppData {
