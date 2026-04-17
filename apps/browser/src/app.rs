@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::rc::Weak;
 
 use base64::Engine;
@@ -7,18 +6,13 @@ use gtk4::prelude::*;
 use serde_json::{Value, json};
 use webkit6::prelude::*;
 
+use sola_app::config::JsonConfig;
 use sola_app::{AppCtx, AppRuntime, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{MenuActionPayload, OpenUrlRequest, Topic};
 
 use crate::chrome;
 use crate::state::{BrowsingHistory, PersistedTab, TabStore};
 use crate::tabs::{Tab, build_web_page_view};
-
-fn config_dir() -> PathBuf {
-    let dir = glib::user_config_dir().join("sola");
-    std::fs::create_dir_all(&dir).ok();
-    dir
-}
 
 pub struct BrowserApp {
     pub(crate) chrome: WindowHandle,
@@ -29,8 +23,6 @@ pub struct BrowserApp {
     pub(crate) active_tab_id: Option<String>,
     pub(crate) tab_store: TabStore,
     pub(crate) history: BrowsingHistory,
-    tab_store_path: PathBuf,
-    history_path: PathBuf,
 }
 
 impl SolaApp for BrowserApp {
@@ -92,10 +84,8 @@ impl SolaApp for BrowserApp {
             );
         }
 
-        let tab_store_path = config_dir().join("browser-tabs.json");
-        let history_path = config_dir().join("browser-history.json");
-        let tab_store = TabStore::load(&tab_store_path);
-        let history = BrowsingHistory::load(&history_path);
+        let tab_store = TabStore::load();
+        let history = BrowsingHistory::load();
 
         ctx.emit_sticky(Topic::SetAppMenu(browser_menu()));
         tracing::info!("registered browser menu");
@@ -109,8 +99,6 @@ impl SolaApp for BrowserApp {
             active_tab_id: None,
             tab_store,
             history,
-            tab_store_path,
-            history_path,
         }
     }
 
@@ -263,11 +251,11 @@ impl BrowserApp {
     }
 
     pub(crate) fn persist_tabs(&self) {
-        self.tab_store.save(&self.tab_store_path);
+        self.tab_store.save();
     }
 
     pub(crate) fn persist_history(&self) {
-        self.history.save(&self.history_path);
+        self.history.save();
     }
 
     pub(crate) fn create_tab(

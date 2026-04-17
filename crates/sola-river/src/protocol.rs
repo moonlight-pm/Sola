@@ -71,3 +71,39 @@ pub mod virtual_keyboard_unstable_v1 {
         "protocols/virtual-keyboard-unstable-v1.xml"
     );
 }
+
+pub mod river_input_management_v1 {
+    use wayland_client;
+    use wayland_client::protocol::*;
+
+    pub mod __interfaces {
+        use wayland_client::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!(
+            "protocols/river-input-management-v1.xml"
+        );
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!(
+        "protocols/river-input-management-v1.xml"
+    );
+}
+
+pub mod river_libinput_config_v1 {
+    use wayland_client;
+
+    // `river_libinput_device_v1.input_device` references this type.
+    use crate::protocol::river_input_management_v1::*;
+
+    pub mod __interfaces {
+        use crate::protocol::river_input_management_v1::__interfaces::*;
+        wayland_scanner::generate_interfaces!(
+            "protocols/river-libinput-config-v1.xml"
+        );
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!(
+        "protocols/river-libinput-config-v1.xml"
+    );
+}

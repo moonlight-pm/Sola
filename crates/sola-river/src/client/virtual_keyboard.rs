@@ -21,7 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustix::fs::{MemfdFlags, memfd_create};
 use tracing::{info, warn};
-use wayland_client::{Connection, Dispatch, QueueHandle, protocol::wl_seat};
+use wayland_client::{Connection, Dispatch, QueueHandle};
 
 use crate::client::AppData;
 use crate::protocol::virtual_keyboard_unstable_v1::{
@@ -170,6 +170,3 @@ impl Dispatch<ZwpVirtualKeyboardV1, ()> for AppData {
     }
 }
 
-// Used in protocol binding to satisfy wl_seat type reference.
-#[allow(dead_code)]
-fn _type_anchor(_: wl_seat::WlSeat) {}
