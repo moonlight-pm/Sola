@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use tracing::{error, info, warn};
+use tracing::info;
 use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
     backend::ObjectId,
@@ -50,6 +50,9 @@ pub struct AppData {
     /// Map from our u32 to the per-window `river_node_v1`, created eagerly
     /// after `river_window_manager_v1::Event::Window` fires.
     pub nodes_by_window: HashMap<u32, RiverNodeV1>,
+    /// Live `river_output_v1` proxies. Stored so their Dispatch impl
+    /// keeps receiving dimensions events (hotplug-safe).
+    pub outputs: Vec<RiverOutputV1>,
     pub qh: Option<QueueHandle<Self>>,
     /// Cloned from the wayland `Connection` so bus_tick (running on the
     /// calloop timer source) can flush outgoing wayland requests. Without
@@ -71,6 +74,7 @@ impl AppData {
             windows_by_object: HashMap::new(),
             windows_by_id: HashMap::new(),
             nodes_by_window: HashMap::new(),
+            outputs: Vec::new(),
             qh: None,
             conn: None,
         }
@@ -114,12 +118,17 @@ pub fn bus_tick(state: &mut AppData) {
         };
         match topic {
             sola_bus::topics::Topic::Composition(entries) => {
-                info!(count = entries.len(), "got Composition");
+                tracing::debug!(count = entries.len(), "got Composition");
                 let ids: Vec<u32> = entries.into_iter().map(|e| e.window_id).collect();
                 state.pending.set_composition(ids);
             }
             sola_bus::topics::Topic::Frame(f) => {
-                info!(window_id = f.window_id, w = f.width, h = f.height, "got Frame");
+                tracing::debug!(
+                    window_id = f.window_id,
+                    w = f.width,
+                    h = f.height,
+                    "got Frame"
+                );
                 state.pending.frame(f.window_id, f.x, f.y, f.width, f.height);
             }
             sola_bus::topics::Topic::Focus(t) => {
@@ -143,7 +152,7 @@ pub fn bus_tick(state: &mut AppData) {
     }
 
     if (state.pending.manage_dirty || state.pending.render_dirty) && state.wm.is_some() {
-        info!(
+        tracing::debug!(
             manage_items = state.pending.manage.len(),
             render_pos = state.pending.render_positions.len(),
             composition = state.pending.composition.as_ref().map(|c| c.len()).unwrap_or(0),
@@ -151,9 +160,8 @@ pub fn bus_tick(state: &mut AppData) {
         );
         state.wm.as_ref().unwrap().manage_dirty();
         if let Some(conn) = state.conn.as_ref() {
-            match conn.flush() {
-                Ok(()) => {}
-                Err(e) => tracing::warn!(%e, "wayland flush failed"),
+            if let Err(e) = conn.flush() {
+                tracing::warn!(%e, "wayland flush failed");
             }
         }
     }
@@ -323,9 +331,3 @@ impl Dispatch<RiverPointerBindingV1, ()> for AppData {
     }
 }
 
-// Emitted via `error!`/`warn!` imports above to keep them used.
-#[allow(dead_code)]
-fn _touch_imports() {
-    error!("unreachable");
-    warn!("unreachable");
-}

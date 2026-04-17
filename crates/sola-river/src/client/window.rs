@@ -47,8 +47,11 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                     state.seat = Some(seat);
                 }
             }
-            Event::Output { id: _ } => {
-                // Output dimensions not surfaced to the bus in v1.
+            Event::Output { id: output } => {
+                // Retain the proxy so its Dispatch impl can surface
+                // Dimensions events (forwarded as OutputGeometry on the
+                // bus). Dropping it would close the per-output channel.
+                state.outputs.push(output);
             }
             Event::Unavailable => {
                 error!("river_window_manager_v1 unavailable");

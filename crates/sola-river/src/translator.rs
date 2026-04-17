@@ -3,7 +3,7 @@
 //! Everything here operates on `AppData` directly — this is the only file
 //! in the crate that imports both the bus and wayland sides.
 use sola_bus::topics::Topic;
-use tracing::info;
+use tracing::debug;
 use wayland_client::{Proxy, QueueHandle};
 
 use crate::client::AppData;
@@ -11,7 +11,7 @@ use crate::registry::chord_diff;
 
 pub fn emit_apps(state: &mut AppData) {
     let apps = state.registry.as_apps();
-    info!(count = apps.len(), "emitting Apps");
+    debug!(count = apps.len(), "emitting Apps");
     state.bus.emit_sticky(Topic::Apps(apps));
 }
 

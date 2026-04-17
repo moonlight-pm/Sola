@@ -40,8 +40,11 @@ impl PendingUpdate {
     }
 
     pub fn set_focus(&mut self, action: FocusAction) {
+        // Focus is applied inside `handle_manage_start` because
+        // `seat.focus_window` / `clear_focus` are manage-sequence requests
+        // per the River protocol.
         self.focus = Some(action);
-        self.render_dirty = true;
+        self.manage_dirty = true;
     }
 
     pub fn set_chords(&mut self, chords: Vec<(u32, u32)>) {

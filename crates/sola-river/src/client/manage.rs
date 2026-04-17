@@ -4,7 +4,7 @@
 //! `PendingUpdate` into `propose_dimensions` (and ensure borders are off).
 //! When it sends `render_start`, we apply composition (`place_top`),
 //! positions (`set_position`), and focus (`focus_window` / `clear_focus`).
-use tracing::info;
+use tracing::debug;
 
 use crate::client::AppData;
 use crate::pending::FocusAction;
@@ -46,7 +46,7 @@ pub fn handle_manage_start(state: &mut AppData) {
     }
 
     wm.manage_finish();
-    info!(pending_count, "manage_finish sent");
+    debug!(pending_count, "manage_finish sent");
 }
 
 pub fn handle_render_start(state: &mut AppData) {
@@ -89,5 +89,5 @@ pub fn handle_render_start(state: &mut AppData) {
 
     state.pending.render_dirty = false;
     wm.render_finish();
-    info!(composition_len, positions_len, "render_finish sent");
+    debug!(composition_len, positions_len, "render_finish sent");
 }
