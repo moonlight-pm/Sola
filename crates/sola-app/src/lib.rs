@@ -275,9 +275,32 @@ pub fn run<A: SolaApp>() {
                             }
                         }
                         Topic::Paste(req) => {
+                            // WebKit's navigator.clipboard.readText() requires
+                            // a user-activation transient that host-injected
+                            // JS doesn't provide, so fetch the text via
+                            // GdkClipboard on the Rust side and deliver it
+                            // already-resolved as part of the event payload.
                             let rt = runtime.borrow();
                             if let Some(handle) = rt.ctx.find_window_by_id(req.window_id) {
-                                handle.send_to_js(&serde_json::json!({"event": "paste"}));
+                                let handle = handle.clone();
+                                if let Some(display) = gdk4::Display::default() {
+                                    use gdk4::prelude::DisplayExt;
+                                    let clipboard = display.clipboard();
+                                    clipboard.read_text_async(
+                                        None::<&gio::Cancellable>,
+                                        move |result| {
+                                            let text = result
+                                                .ok()
+                                                .flatten()
+                                                .map(|s| s.to_string())
+                                                .unwrap_or_default();
+                                            handle.send_to_js(&serde_json::json!({
+                                                "event": "paste",
+                                                "text": text,
+                                            }));
+                                        },
+                                    );
+                                }
                             }
                         }
                         _ => {}

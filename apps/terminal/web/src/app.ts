@@ -221,14 +221,9 @@ export async function createApp(root: HTMLElement) {
     });
   });
 
-  on('paste', () => {
-    if (!state.activeTabId) return;
+  on('paste', (msg: { text?: string }) => {
+    if (!state.activeTabId || !msg.text) return;
     const pane = panes.get(state.activeTabId);
-    if (!pane) return;
-    navigator.clipboard.readText().then((text) => {
-      if (text) pane.paste(text);
-    }).catch((e) => {
-      console.error('paste failed', e);
-    });
+    if (pane) pane.paste(msg.text);
   });
 }

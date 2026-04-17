@@ -16,12 +16,11 @@ const defaults = new Map<string, EventCallback>([
       });
     }
   }],
-  ["paste", () => {
-    navigator.clipboard.readText().then((text) => {
-      if (text) document.execCommand("insertText", false, text);
-    }).catch((e) => {
-      console.error("default paste failed", e);
-    });
+  // The framework reads the clipboard on the Rust side and hands the
+  // resolved text to us as `msg.text` — navigator.clipboard.readText() can't
+  // be used here because host-injected JS lacks user-activation transient.
+  ["paste", (msg: { text?: string }) => {
+    if (msg.text) document.execCommand("insertText", false, msg.text);
   }],
 ]);
 
