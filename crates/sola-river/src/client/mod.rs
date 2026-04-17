@@ -215,7 +215,7 @@ impl Dispatch<RiverNodeV1, ()> for AppData {
 
 impl Dispatch<RiverOutputV1, ()> for AppData {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         _: &RiverOutputV1,
         event: <RiverOutputV1 as Proxy>::Event,
         _: &(),
@@ -224,12 +224,15 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
     ) {
         use crate::protocol::river_window_management_v1::river_output_v1::Event;
         use sola_bus::topics::{OutputGeometry, Topic};
-        if let Event::Dimensions { width, height } = event {
-            // Track the first output we see.
-            _ = (width, height);
+        // River emits dimensions each time the logical output changes.
+        // Forward the first one we see — the shell's zoning code keys on
+        // a single output for v1.
+        if let Event::Dimensions { width, height, .. } = event {
+            info!(width, height, "river_output dimensions");
+            state
+                .bus
+                .emit_sticky(Topic::OutputGeometry(OutputGeometry { width, height }));
         }
-        let _: Option<OutputGeometry> = None;
-        let _: Option<Topic> = None;
     }
 }
 
