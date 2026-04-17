@@ -493,6 +493,7 @@ impl ShellApp {
 
     /// Handle new/removed windows from sola-river's Apps list.
     pub fn handle_apps_update(&mut self, apps: Vec<App>, ctx: &mut AppCtx) {
+        tracing::info!(count = apps.len(), "shell received Apps");
         let old_app_ids: HashSet<String> = self
             .known_windows
             .iter()

@@ -108,10 +108,12 @@ pub fn bus_tick(state: &mut AppData) {
         };
         match topic {
             sola_bus::topics::Topic::Composition(entries) => {
+                info!(count = entries.len(), "got Composition");
                 let ids: Vec<u32> = entries.into_iter().map(|e| e.window_id).collect();
                 state.pending.set_composition(ids);
             }
             sola_bus::topics::Topic::Frame(f) => {
+                info!(window_id = f.window_id, w = f.width, h = f.height, "got Frame");
                 state.pending.frame(f.window_id, f.x, f.y, f.width, f.height);
             }
             sola_bus::topics::Topic::Focus(t) => {
