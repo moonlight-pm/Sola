@@ -55,39 +55,19 @@ pub mod river_xkb_bindings_v1 {
     );
 }
 
-pub mod river_input_management_v1 {
+pub mod virtual_keyboard_unstable_v1 {
     use wayland_client;
     use wayland_client::protocol::*;
 
     pub mod __interfaces {
         use wayland_client::protocol::__interfaces::*;
         wayland_scanner::generate_interfaces!(
-            "protocols/river-input-management-v1.xml"
+            "protocols/virtual-keyboard-unstable-v1.xml"
         );
     }
     use self::__interfaces::*;
 
     wayland_scanner::generate_client_code!(
-        "protocols/river-input-management-v1.xml"
-    );
-}
-
-pub mod river_xkb_config_v1 {
-    use wayland_client;
-
-    // The xkb-config protocol references `river_input_device_v1` from
-    // the input-management protocol.
-    use crate::protocol::river_input_management_v1::*;
-
-    pub mod __interfaces {
-        use crate::protocol::river_input_management_v1::__interfaces::*;
-        wayland_scanner::generate_interfaces!(
-            "protocols/river-xkb-config-v1.xml"
-        );
-    }
-    use self::__interfaces::*;
-
-    wayland_scanner::generate_client_code!(
-        "protocols/river-xkb-config-v1.xml"
+        "protocols/virtual-keyboard-unstable-v1.xml"
     );
 }

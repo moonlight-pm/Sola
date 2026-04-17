@@ -134,14 +134,6 @@ pub struct EditRequest {
     pub window_id: u32,
 }
 
-/// Named xkb keymap profile for the seat, emitted by the shell when
-/// focus moves between Sola and non-Sola apps. Consumed by sola-river,
-/// which pushes the corresponding keymap to River.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct XkbProfilePayload {
-    pub profile: String,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
     Left,
@@ -202,12 +194,11 @@ define_topics! {
     // Browser
     OpenUrl(OpenUrlRequest),
 
-    // Global clipboard chords (shell → focused sola-app)
+    // Global clipboard chords. Shell broadcasts when Meta+C/V fires;
+    // sola-app handles for its own windows, sola-river handles for
+    // foreign (non-sola) windows by synthesizing Ctrl+C / Ctrl+V.
     Copy(EditRequest),
     Paste(EditRequest),
-
-    // Focus-driven xkb profile (shell → sola-river, sticky)
-    XkbProfile(XkbProfilePayload),
 
     // Lifecycle
     Shutdown,

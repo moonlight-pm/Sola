@@ -25,7 +25,7 @@ Previously the terminal defined an **Edit** menu with Copy/Paste entries shortcu
 - A `Clipboard` bus topic, cache directory, or any file-based payload plumbing. The previous (never-shipped) design's entire pipeline is discarded.
 - Cut (Meta+X). Skipped for v1; adding later is symmetric.
 - Primary-selection (middle-click paste). Unchanged; continues to work via River.
-- Filtering by app identity in the shell. See §6.3.
+- "Mac-style everything" — Meta+T/W/R/L etc. inside non-Sola apps. Only Meta+C and Meta+V are synthesized. Adding more shortcuts is one-liner work when the need comes up.
 
 ## 4. Architecture
 
@@ -98,11 +98,7 @@ No is-Sola check. The shell emits the topic unconditionally. Non-Sola apps aren'
 
 ### 6.3 No is-Sola filter
 
-An earlier draft of this spec had the shell consult a hardcoded `SOLA_APP_IDS` set to decide whether to emit. Dropped in favor of unconditional emission:
-
-- Non-Sola apps don't listen on the bus — a stray `Copy(window_id=42)` where window 42 is Brave is received by nobody. Zero cost.
-- The shell never has to track which `app_id`s are Sola vs. foreign — the bus's subscribe model handles it for us.
-- (Separately, the focus-driven xkb remap in §8 means Meta+C doesn't even fire the chord when non-Sola is focused — so in practice the bus emission only happens with a Sola app focused anyway. But we don't rely on that invariant; the no-filter story holds either way.)
+An earlier draft of this spec had the shell consult a hardcoded `SOLA_APP_IDS` set to decide whether to emit. Dropped in favor of unconditional emission — sola-river makes its own is-Sola check on the receiving side (see §8), and each sola-app only acts on window_ids in its own `WindowHandle` list, so foreign windows are inherently ignored.
 
 ### 6.4 Removed: Edit menu generation
 
@@ -143,42 +139,55 @@ Apps that want to customize copy/paste (terminal already does) register a JS `on
 
 Audit for any other Edit menus or Meta+C/V bindings in apps. Remove them in favor of the global path. Expected hits: zero beyond terminal (browser, monitor, switcher, launcher don't define one today), but verify during implementation.
 
-## 8. Non-Sola app handling — focus-driven xkb remap
+## 8. Non-Sola app handling — virtual keyboard synthesis
 
-For non-Sola apps (Brave, future native Wayland clients), we want Meta+C / Meta+V (and more generally Meta+letter) to behave the way Ctrl+C / Ctrl+V / Ctrl+letter does — Meta-as-Cmd, Mac-style. Applied universally inside non-Sola apps this also gives Meta+T = new tab, Meta+W = close tab, Meta+R = reload, etc. for free.
+For non-Sola apps (Brave, future native Wayland clients), Meta+C / Meta+V need to actually copy/paste. We synthesize real Ctrl+C / Ctrl+V keystrokes via `zwp_virtual_keyboard_unstable_v1`, targeting the focused seat. The non-Sola client receives genuine key events and responds with its own copy/paste handlers.
 
 ### 8.1 Mechanism
 
-Shell watches focus transitions (it already has `focused_app_id` for this). When focus enters a non-Sola window, shell pushes an xkb configuration to River via `river-xkb-config-v1` where the Meta (Super/Mod4) key is rebound to Ctrl. When focus returns to a Sola window, shell restores the default keymap.
+`sola-river` also subscribes to `Topic::Copy` / `Topic::Paste` (alongside each sola-app). When a message arrives:
 
-Effect chain:
-- Physical Meta+C pressed while Brave is focused.
-- River's keymap evaluation (using the remap) produces keysym `c` with modifier `Ctrl`, not `Meta`.
-- The shell's chord registration for Meta+C doesn't match (it expected modifier `Meta`), so no chord fires.
-- River routes Ctrl+C to the focused client (Brave), which copies as usual.
+1. Look up `window_id` in its `WindowRegistry` → get `app_id`.
+2. If `app_id` starts with `"sola-"`: no-op. The owning sola-app process handles it.
+3. Otherwise: emit a Ctrl+<key> keystroke on the virtual keyboard.
 
-Symmetrically, Super+Tab / Super+Space / Super+arrows — all currently shell chords — *also* arrive as Ctrl+... under the remap and don't fire their registered chords. That's a *known tradeoff*, discussed below.
+The synthesis uses explicit `modifiers()` requests rather than a LeftCtrl keycode press/release pair, both for robustness (no stuck-modifier failure mode) and to isolate our virtual keyboard state from the user's physical state on wlroots:
 
-### 8.2 Known tradeoff: shell navigation chords break under remap
+```
+virtual_keyboard.modifiers(depressed=CTRL, latched=0, locked=0, group=0)
+virtual_keyboard.key(time=T,   key=KEY_C, state=pressed)
+virtual_keyboard.key(time=T+1, key=KEY_C, state=released)
+virtual_keyboard.modifiers(depressed=0, latched=0, locked=0, group=0)
+```
 
-While focused on a non-Sola app, the usual "escape to Sola" chords (Super+Tab, Super+Space) don't fire, because the keymap swap transforms them into Ctrl+Tab / Ctrl+Space before they reach the chord layer. The user ends up having to click on a Sola panel / menubar / another window to get focus back.
+`KEY_C = 46`, `KEY_V = 47` — raw evdev keycodes from `linux/input-event-codes.h`. The compositor adds the +8 offset internally when resolving against the virtual keyboard's uploaded xkb keymap.
 
-For v1 this is acceptable — the user is already on a foreign app by choice, and focus return via mouse is a single motion. If it proves annoying in practice, two refinements are available:
+### 8.2 Virtual keyboard lifecycle
 
-1. **Selective remap** — write a custom xkb layout that remaps Meta only for alphabetic keysyms (a–z, 0–9, and printable symbols), leaving Meta+Tab / Meta+Space / Meta+arrows on Meta. This requires a hand-authored xkb variant file shipped with sola-assets. Not hard, just extra work; defer until the tradeoff is felt.
-2. **Reserved return chord** — register a non-Meta chord (e.g. Ctrl+Alt+Escape) as a "return to Sola" action that always fires regardless of keymap state.
+- `sola-river` binds `zwp_virtual_keyboard_manager_v1` (advertised by wlroots-based compositors by default).
+- Once both the manager and `wl_seat` are bound, sola-river calls `create_virtual_keyboard(seat)` and uploads a standard us-layout xkb keymap via a sealed memfd. This is the same default keymap River uses for physical keyboards.
+- The keyboard persists for the life of sola-river; there's no per-chord teardown.
+- If River doesn't advertise the global (unusual config), sola-river logs a warning on the first synthesis attempt and the feature degrades to "Meta+C/V work only in sola apps."
 
-### 8.3 Custom exceptions
+### 8.3 What this does and doesn't provide
 
-Some Meta+letter keys arguably shouldn't Meta→Ctrl translate even inside non-Sola apps — e.g. if we ever want Meta+Q to do something Sola-level (quit session) globally, it shouldn't become Ctrl+Q (quit Brave). v1 doesn't ship any such exceptions; add them as the selective-remap file from §8.2 (1) if needed.
+**Does provide:**
+- Meta+C / Meta+V copy/paste inside Brave and any other foreign client that binds Ctrl+C / Ctrl+V.
+- Symmetry — both directions use the same mechanism.
+- No focus-change keymap churn; the keyboard layout is stable.
+- Shell navigation chords (Super+Tab / Super+Space / Super+Numpad) continue to work regardless of which app is focused, because there's no keymap swap.
 
-### 8.4 Alternative: `zwp_virtual_keyboard_v1` synthesis
+**Does not provide:**
+- Meta+T = new tab, Meta+W = close tab, Meta+R = reload in foreign apps. Only the specific chords we synthesize for work. Adding more is a small incremental change: register the chord in the shell, add a synthesis entry in sola-river.
+- Anything inside apps that don't bind Ctrl+C / Ctrl+V as copy/paste. In practice that's rare.
 
-If the xkb-remap approach in §8.1 ends up not working out (e.g. `river-xkb-config-v1` isn't expressive enough, or modifier-state tracking under focus churn proves unreliable), an alternative is available: on each Meta+C / Meta+V with non-Sola focus, the shell sends a synthetic Ctrl+C / Ctrl+V via `zwp_virtual_keyboard_manager_v1` to the focused seat. The non-Sola app receives a real Ctrl+C / Ctrl+V.
+### 8.4 Custom exceptions
 
-Tradeoffs: symmetric and no focus-change keymap churn, but requires careful modifier-state hygiene (release physical Meta in the virtual keyboard state before emitting Ctrl, restore on completion) and only solves C/V — *doesn't* give the free Meta+T / Meta+W / Meta+R benefit the xkb approach provides.
+Not applicable at v1's scope. Every chord that reaches the synthesis path is explicitly enumerated on the sola-river side, so there's nothing to exclude.
 
-Documented here so we can switch approaches without re-designing. Not implemented in v1.
+### 8.5 Earlier alternative (rejected): focus-driven xkb remap
+
+An earlier draft of this spec specified swapping xkb keymaps on focus transitions so that physical Meta→Ctrl inside non-Sola apps. That approach would have given Meta+T = new tab and friends "for free" but broke shell navigation chords (Super+Tab/Space/numpad arrived as Ctrl+Tab/Space/numpad and no longer matched registered chords). Remediations (register Ctrl+numpad variants, write a selective per-keysym xkb file) rapidly compounded. Abandoned in favor of the narrower, more surgical approach above.
 
 ## 9. Implementation checklist
 
@@ -187,15 +196,15 @@ Documented here so we can switch approaches without re-designing. Not implemente
 3. `crates/sola-app`: add `Topic::Copy` / `Topic::Paste` interception in the framework event loop; implement `find_window_by_id` helper (single-window fast path at minimum).
 4. `crates/sola-app` platform JS: add default `copy` / `paste` handlers that use `navigator.clipboard` + `window.getSelection()` / `document.execCommand("insertText", ...)`. Apps can override.
 5. Terminal: remove the Edit menu entries and the MenuAction `"copy"` / `"paste"` arms; leave JS-side handlers in place.
-6. `sola-river`: bind `river_xkb_config_manager_v1` (or whatever the actual crate name resolves to) and expose a method on the bus-side translator for "push this xkb config now" driven by a new bus topic from shell. Topic shape TBD in the implementation plan — simplest is `Topic::XkbProfile(String)` with profile names like `"default"` and `"meta-as-ctrl"`, keymaps stored in sola-assets.
-7. Shell: on focus transitions, emit the appropriate `XkbProfile` topic (`"meta-as-ctrl"` when the focused window's app_id does not start with `"sola-"`; `"default"` otherwise). The `"sola-"` prefix is the Sola-app convention.
+6. `sola-river`: add `zwp_virtual_keyboard_unstable_v1` protocol module; bind `zwp_virtual_keyboard_manager_v1`; create a per-seat virtual keyboard and upload a standard xkb keymap via sealed memfd.
+7. `sola-river`: also subscribe to `Topic::Copy` / `Topic::Paste`; look up `window_id → app_id` in the existing `WindowRegistry`; if the app_id doesn't start with `"sola-"`, synthesize Ctrl+KEY_C / Ctrl+KEY_V via `modifiers(CTRL)` → `key(press)` → `key(release)` → `modifiers(0)`.
 8. `cargo check --workspace`; deploy to canto; verify:
    - Meta+C / Meta+V copy/paste inside the terminal (xterm.js selection).
    - Meta+C / Meta+V copy/paste inside a generic WebView app with a `<textarea>` (default handler path).
-   - Meta+C in Brave triggers Brave's native copy (via the remap).
-   - Meta+T in Brave opens a new tab (via the remap).
+   - Meta+C in Brave triggers Brave's native copy (via synthesized Ctrl+C).
+   - Meta+V in Brave triggers Brave's native paste.
    - Ctrl+C / Ctrl+V and Ctrl+Shift+C / Ctrl+Shift+V continue to work natively in all clients.
-   - Moving focus back to a Sola app restores Meta+Tab / Meta+Space chord behavior.
+   - Meta+Tab / Meta+Space / Meta+Numpad chords continue to fire regardless of which app is focused.
 
 ## 10. Open questions
 

@@ -7,7 +7,6 @@ use sola_bus::topics::{
     App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
     LaunchResultPayload, MenuDefinition, MenuItem, MouseClickedPayload,
     MouseEnteredPayload, RegisteredChord, Topic, UserAppExitedPayload,
-    XkbProfilePayload,
 };
 use sola_core::KeyCode;
 
@@ -396,20 +395,11 @@ impl ShellApp {
         bindings.push(KeyCode::C.meta());
         bindings.push(KeyCode::V.meta());
 
-        // Meta+Numpad zones a window. Also register Ctrl+Numpad: when
-        // focus is on a non-Sola app the xkb profile swaps Super→Ctrl,
-        // so physical Meta+Numpad arrives here as Ctrl+Numpad. Numpad
-        // keys with Ctrl aren't used by any real app, so catching both
-        // is safe; the chord handler dispatches zoning on keycode alone
-        // without inspecting the modifier.
+        // Meta+Numpad zones a window.
         for &keycode in zoning::ZONING_KEYCODES {
             bindings.push(KeyChord {
                 keycode: keycode.into(),
                 ..KeyCode::TAB.meta()
-            });
-            bindings.push(KeyChord {
-                keycode: keycode.into(),
-                ..KeyCode::TAB.ctrl()
             });
         }
 
@@ -438,7 +428,6 @@ impl ShellApp {
         self.focused_window_id = Some(window_id);
         self.mru_window_by_app.insert(app_id, window_id);
         ctx.emit(Topic::Focus(FocusTarget { window_id }));
-        self.emit_xkb_profile_for_focus(ctx);
         self.emit_composition(ctx);
     }
 
@@ -467,22 +456,6 @@ impl ShellApp {
             "event": "focus",
             "app_name": app_name,
             "menu_labels": menu_labels,
-        }));
-    }
-
-    /// Emit `Topic::XkbProfile` reflecting the current focused app:
-    /// `"meta-as-ctrl"` when focus is on a non-Sola client (so Meta+letter
-    /// arrives as Ctrl+letter), `"default"` otherwise. Sola apps are
-    /// identified by the `sola-` app_id prefix. sola-river dedupes
-    /// redundant switches, so calling this on every focus update is fine.
-    pub fn emit_xkb_profile_for_focus(&self, ctx: &mut AppCtx) {
-        let profile = match self.focused_app_id.as_deref() {
-            Some(id) if id.starts_with("sola-") => "default",
-            Some(_) => "meta-as-ctrl",
-            None => "default",
-        };
-        ctx.emit_sticky(Topic::XkbProfile(XkbProfilePayload {
-            profile: profile.to_string(),
         }));
     }
 
@@ -661,17 +634,12 @@ impl ShellApp {
                 .collect()
         };
 
-        let mut focus_lost = false;
         for id in &removed {
             self.mru_apps.retain(|m| m != id);
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
                 self.focused_window_id = None;
-                focus_lost = true;
             }
-        }
-        if focus_lost {
-            self.emit_xkb_profile_for_focus(ctx);
         }
 
         // Clean up zone tracking for removed windows.
@@ -704,7 +672,6 @@ impl ShellApp {
                 self.mru_window_by_app.insert(id.clone(), wid);
                 ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
             }
-            self.emit_xkb_profile_for_focus(ctx);
             self.emit_composition(ctx);
         }
     }

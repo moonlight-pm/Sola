@@ -67,7 +67,6 @@ fn topic_to_json(topic: &Topic) -> Value {
         Topic::OpenUrl(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Copy(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Paste(v) => serde_json::to_value(v).unwrap_or_default(),
-        Topic::XkbProfile(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Shutdown => Value::Null,
     }
 }

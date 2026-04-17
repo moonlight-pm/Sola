@@ -62,6 +62,11 @@ impl WindowRegistry {
         self.by_id.get(&id)
     }
 
+    /// Look up the app_id for a window, if known.
+    pub fn app_id_for(&self, id: u32) -> Option<&str> {
+        self.by_id.get(&id).and_then(|e| e.app_id.as_deref())
+    }
+
     pub fn set_app_id(&mut self, id: u32, value: String) {
         if let Some(e) = self.by_id.get_mut(&id) {
             e.app_id = Some(value);

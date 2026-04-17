@@ -428,7 +428,6 @@ fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
             app.focused_window_id = Some(wid);
             ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
         }
-        app.emit_xkb_profile_for_focus(ctx);
     }
     app.emit_composition(ctx);
 }
