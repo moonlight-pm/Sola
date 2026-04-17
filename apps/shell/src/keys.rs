@@ -119,33 +119,37 @@ fn keycode_to_keysym(k: KeyCode) -> u32 {
     }
 }
 
+// XKB letter keysyms are lowercase (XK_a = 0x61 .. XK_z = 0x7A). River
+// emits those when Shift isn't held, so the chord registration must
+// match on lowercase — matching on uppercase meant Meta+<letter>
+// bindings never fired.
 const LETTER_KEYCODES: &[(KeyCode, u8)] = &[
-    (KeyCode::A, b'A'),
-    (KeyCode::B, b'B'),
-    (KeyCode::C, b'C'),
-    (KeyCode::D, b'D'),
-    (KeyCode::E, b'E'),
-    (KeyCode::F, b'F'),
-    (KeyCode::G, b'G'),
-    (KeyCode::H, b'H'),
-    (KeyCode::I, b'I'),
-    (KeyCode::J, b'J'),
-    (KeyCode::K, b'K'),
-    (KeyCode::L, b'L'),
-    (KeyCode::M, b'M'),
-    (KeyCode::N, b'N'),
-    (KeyCode::O, b'O'),
-    (KeyCode::P, b'P'),
-    (KeyCode::Q, b'Q'),
-    (KeyCode::R, b'R'),
-    (KeyCode::S, b'S'),
-    (KeyCode::T, b'T'),
-    (KeyCode::U, b'U'),
-    (KeyCode::V, b'V'),
-    (KeyCode::W, b'W'),
-    (KeyCode::X, b'X'),
-    (KeyCode::Y, b'Y'),
-    (KeyCode::Z, b'Z'),
+    (KeyCode::A, b'a'),
+    (KeyCode::B, b'b'),
+    (KeyCode::C, b'c'),
+    (KeyCode::D, b'd'),
+    (KeyCode::E, b'e'),
+    (KeyCode::F, b'f'),
+    (KeyCode::G, b'g'),
+    (KeyCode::H, b'h'),
+    (KeyCode::I, b'i'),
+    (KeyCode::J, b'j'),
+    (KeyCode::K, b'k'),
+    (KeyCode::L, b'l'),
+    (KeyCode::M, b'm'),
+    (KeyCode::N, b'n'),
+    (KeyCode::O, b'o'),
+    (KeyCode::P, b'p'),
+    (KeyCode::Q, b'q'),
+    (KeyCode::R, b'r'),
+    (KeyCode::S, b's'),
+    (KeyCode::T, b't'),
+    (KeyCode::U, b'u'),
+    (KeyCode::V, b'v'),
+    (KeyCode::W, b'w'),
+    (KeyCode::X, b'x'),
+    (KeyCode::Y, b'y'),
+    (KeyCode::Z, b'z'),
 ];
 
 fn letter_keysym(k: KeyCode) -> Option<u32> {
@@ -204,7 +208,7 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
         KEYSYM_KP_DOWN => Some(KeyCode::KP_2),
         KEYSYM_KP_INSERT => Some(KeyCode::KP_0),
         KEYSYM_KP_DELETE => Some(KeyCode::KP_DECIMAL),
-        0x41..=0x5A => LETTER_KEYCODES
+        0x61..=0x7A => LETTER_KEYCODES
             .iter()
             .find(|(_, c)| *c as u32 == sym)
             .map(|(code, _)| *code),
