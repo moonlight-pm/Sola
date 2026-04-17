@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use sola_app::{AppCtx, AsyncDispatcher, SolaApp, WindowConfig, WindowHandle, asset_bundle};
-use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic};
+use sola_bus::topics::{
+    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, OpenUrlRequest, Topic,
+};
 use sola_core::KeyCode;
 
 mod commands;
@@ -95,8 +97,26 @@ impl SolaApp for TerminalApp {
         args: &Value,
         id: Option<u64>,
         _source: &WindowHandle,
-        _ctx: &mut AppCtx,
+        ctx: &mut AppCtx,
     ) {
+        if cmd == "open_url" {
+            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if url.is_empty() {
+                tracing::warn!("open_url command with empty url");
+                return;
+            }
+            let activate = args
+                .get("activate")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            tracing::info!(url, activate, "open_url");
+            ctx.emit(Topic::OpenUrl(OpenUrlRequest {
+                url: url.to_string(),
+                activate,
+            }));
+            return;
+        }
+
         let source = self.main_window.clone();
         let args = args.clone();
         self.dispatcher
