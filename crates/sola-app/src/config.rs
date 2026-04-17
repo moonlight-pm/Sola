@@ -230,12 +230,8 @@ where
     T: Serialize,
 {
     ensure_parent_dir(path)?;
-
     let content = serde_json::to_string_pretty(value).map_err(ConfigError::JsonSerialize)?;
-    std::fs::write(path, content).map_err(|source| ConfigError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
+    atomic_write(path, content.as_bytes())
 }
 
 /// Save value as compact JSON to `path`.
@@ -244,9 +240,28 @@ where
     T: Serialize,
 {
     ensure_parent_dir(path)?;
-
     let content = serde_json::to_string(value).map_err(ConfigError::JsonSerialize)?;
-    std::fs::write(path, content).map_err(|source| ConfigError::Io {
+    atomic_write(path, content.as_bytes())
+}
+
+/// Write `content` to `path` via a temp file + rename so a crash between
+/// truncate and rewrite can't leave the destination torn. The temp file
+/// lives alongside the target (same directory, same filesystem) so
+/// `rename` is atomic.
+fn atomic_write(path: &Path, content: &[u8]) -> Result<(), ConfigError> {
+    let tmp = path.with_extension({
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext.is_empty() {
+            "tmp".to_string()
+        } else {
+            format!("{ext}.tmp")
+        }
+    });
+    std::fs::write(&tmp, content).map_err(|source| ConfigError::Io {
+        path: tmp.clone(),
+        source,
+    })?;
+    std::fs::rename(&tmp, path).map_err(|source| ConfigError::Io {
         path: path.to_path_buf(),
         source,
     })

@@ -4,7 +4,6 @@
 //! This module encapsulates that dependency: spawn River with stdio captured
 //! to a dedicated log file, block until its `wayland-N` socket appears,
 //! publish the socket name and XWayland DISPLAY, and surface process exit.
-use std::collections::HashSet;
 use std::io;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -16,9 +15,6 @@ use tracing::{error, info, warn};
 pub struct RiverSupervisor {
     child: Child,
     runtime_dir: PathBuf,
-    /// `/tmp/.X11-unix/X*` entries observed before spawning River.
-    /// Anything new that appears afterward is attributed to XWayland.
-    pre_x_sockets: HashSet<String>,
 }
 
 /// Filename (inside XDG_RUNTIME_DIR) where sola publishes the name of
@@ -138,16 +134,27 @@ fn publish_socket_name(runtime_dir: &Path, name: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// List `X<N>` entries in `/tmp/.X11-unix/`. Returned names include the
-/// `X` prefix — strip it to get an X11 display number.
-fn list_x_sockets() -> HashSet<String> {
-    let Ok(dir) = std::fs::read_dir(X_UNIX_DIR) else {
-        return HashSet::new();
-    };
-    dir.flatten()
-        .filter_map(|e| e.file_name().to_str().map(String::from))
-        .filter(|n| n.starts_with('X') && n[1..].chars().all(|c| c.is_ascii_digit()))
-        .collect()
+/// Return the lowest-numbered X11 display (e.g. `":0"`) whose
+/// `/tmp/.X11-unix/X<N>` socket accepts a connection, or `None` if none
+/// do. We probe liveness rather than trusting the filesystem entry —
+/// X sockets are often left behind by dead X servers.
+pub fn probe_live_x_display() -> Option<String> {
+    let dir = std::fs::read_dir(X_UNIX_DIR).ok()?;
+    let mut candidates: Vec<(u32, PathBuf)> = dir
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_str()?.to_owned();
+            let n = name.strip_prefix('X')?.parse::<u32>().ok()?;
+            Some((n, e.path()))
+        })
+        .collect();
+    candidates.sort_by_key(|(n, _)| *n);
+    for (n, path) in candidates {
+        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+            return Some(format!(":{n}"));
+        }
+    }
+    None
 }
 
 /// Write `:N` to `$XDG_RUNTIME_DIR/sola-display` so other sola components
@@ -198,7 +205,6 @@ impl RiverSupervisor {
         cleanup_stale_sockets(&runtime_dir);
         let _ = std::fs::remove_file(runtime_dir.join(SOLA_WAYLAND_NAME_FILE));
         let _ = std::fs::remove_file(runtime_dir.join(SOLA_DISPLAY_NAME_FILE));
-        let pre_x_sockets = list_x_sockets();
 
         if let Some(parent) = log_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -232,23 +238,19 @@ impl RiverSupervisor {
         Ok(Self {
             child,
             runtime_dir,
-            pre_x_sockets,
         })
     }
 
-    /// Poll `/tmp/.X11-unix/` for a new `X<N>` entry that wasn't present
-    /// before River spawned, for up to `timeout`. On finding one, publish
-    /// the corresponding `:N` to `$XDG_RUNTIME_DIR/sola-display`. Missing
-    /// XWayland is silent — a display file is simply never written.
+    /// Poll `/tmp/.X11-unix/` for a live X server (one whose socket accepts
+    /// a connection) for up to `timeout`, and publish the corresponding
+    /// `:N` to `$XDG_RUNTIME_DIR/sola-display`. Stale socket files left by
+    /// dead X servers are ignored — we only trust a live connect. Missing
+    /// XWayland within the window is silent; the display file is absent
+    /// and consumers fall back to their own probe.
     pub fn wait_for_xwayland(&self, timeout: Duration) {
         let start = Instant::now();
         loop {
-            let new_sockets: Vec<String> = list_x_sockets()
-                .into_iter()
-                .filter(|n| !self.pre_x_sockets.contains(n))
-                .collect();
-            if let Some(name) = new_sockets.iter().min() {
-                let display = format!(":{}", &name[1..]);
+            if let Some(display) = probe_live_x_display() {
                 if let Err(e) = publish_display_name(&self.runtime_dir, &display) {
                     warn!(%e, "failed to publish DISPLAY");
                 }
