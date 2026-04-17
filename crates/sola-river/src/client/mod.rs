@@ -26,10 +26,12 @@ use crate::protocol::river_xkb_bindings_v1::{
     river_xkb_bindings_seat_v1::RiverXkbBindingsSeatV1,
     river_xkb_bindings_v1::RiverXkbBindingsV1,
 };
+use crate::protocol::wlr_output_management_unstable_v1::zwlr_output_manager_v1::ZwlrOutputManagerV1;
 use crate::registry::{ChordRegistry, WindowRegistry};
 
 pub mod binding;
 pub mod manage;
+pub mod output_config;
 pub mod seat;
 pub mod window;
 
@@ -53,6 +55,9 @@ pub struct AppData {
     /// Live `river_output_v1` proxies. Stored so their Dispatch impl
     /// keeps receiving dimensions events (hotplug-safe).
     pub outputs: Vec<RiverOutputV1>,
+    /// Mode selection state for `zwlr_output_manager_v1` — we use this
+    /// protocol to pick the highest resolution ≥60Hz on startup.
+    pub output_config: output_config::OutputConfigState,
     pub qh: Option<QueueHandle<Self>>,
     /// Cloned from the wayland `Connection` so bus_tick (running on the
     /// calloop timer source) can flush outgoing wayland requests. Without
@@ -75,6 +80,7 @@ impl AppData {
             windows_by_id: HashMap::new(),
             nodes_by_window: HashMap::new(),
             outputs: Vec::new(),
+            output_config: output_config::OutputConfigState::default(),
             qh: None,
             conn: None,
         }
@@ -198,6 +204,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                 "wl_seat" => {
                     let s: wl_seat::WlSeat = proxy.bind(name, version.min(7), qh, ());
                     state.wl_seat = Some(s);
+                }
+                "zwlr_output_manager_v1" => {
+                    let mgr: ZwlrOutputManagerV1 =
+                        proxy.bind(name, version.min(4), qh, ());
+                    info!(%version, "bound zwlr_output_manager_v1");
+                    state.output_config.manager = Some(mgr);
                 }
                 _ => {}
             }

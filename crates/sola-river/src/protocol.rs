@@ -20,6 +20,22 @@ pub mod river_window_management_v1 {
     );
 }
 
+pub mod wlr_output_management_unstable_v1 {
+    use wayland_client;
+    use wayland_client::protocol::*;
+
+    pub mod __interfaces {
+        wayland_scanner::generate_interfaces!(
+            "protocols/wlr-output-management-unstable-v1.xml"
+        );
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!(
+        "protocols/wlr-output-management-unstable-v1.xml"
+    );
+}
+
 pub mod river_xkb_bindings_v1 {
     use wayland_client;
 
