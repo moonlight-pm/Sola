@@ -50,6 +50,8 @@ fn topic_to_json(topic: &Topic) -> Value {
     match topic {
         Topic::Apps(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::LaunchApp(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::LaunchResult(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::UserAppExited(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Composition(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Frame(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Focus(v) => serde_json::to_value(v).unwrap_or_default(),
