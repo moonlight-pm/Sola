@@ -150,9 +150,17 @@ impl AgentHandler {
             return json!({ "error": "session_id is required" });
         };
         self.session_mgr.close_session(session_id).await;
+        // If we spawned a claude process for this session, drop it so it
+        // can't keep writing files we're about to remove.
+        {
+            let mut mgr = self.process_mgr.lock().await;
+            let _ = mgr.interrupt(session_id);
+            mgr.remove(session_id);
+        }
         if let Err(e) = storage::delete_session(session_id) {
             tracing::warn!(session_id, "failed to delete session files: {:#}", e);
         }
+        crate::sync::cli_delete_session(session_id);
         json!({ "ok": true })
     }
 

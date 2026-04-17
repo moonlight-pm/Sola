@@ -77,6 +77,81 @@ pub fn cli_session_exists(session_id: &str) -> bool {
     find_cli_jsonl(&projects_root(), session_id).is_some()
 }
 
+/// Remove every Claude CLI artifact tied to a session id. Best-effort:
+/// logs per-path failures but always continues. Only touches paths whose
+/// final component is a literal match for the session UUID (or the
+/// exact `security_warnings_state_<uuid>.json` / `<uuid>-agent-<uuid>.json`
+/// form). Refuses to run unless `session_id` parses as a UUID — guards
+/// against path traversal via a malformed id.
+pub fn cli_delete_session(session_id: &str) {
+    if !is_uuid(session_id) {
+        warn!(session_id, "cli_delete_session: not a UUID, refusing");
+        return;
+    }
+
+    let Ok(home) = std::env::var("HOME") else { return };
+    let claude = PathBuf::from(&home).join(".claude");
+
+    // Single-file artifacts.
+    let files = [
+        claude.join(format!("security_warnings_state_{session_id}.json")),
+        claude.join("todos").join(format!("{session_id}-agent-{session_id}.json")),
+    ];
+    for path in &files {
+        remove_file_if_present(path);
+    }
+
+    // Single-directory artifacts.
+    let dirs = [
+        claude.join("session-env").join(session_id),
+        claude.join("tasks").join(session_id),
+        claude.join("file-history").join(session_id),
+    ];
+    for path in &dirs {
+        remove_dir_if_present(path);
+    }
+
+    // projects/<any>/<id>.jsonl + projects/<any>/<id>/ — scan each project dir.
+    if let Ok(entries) = std::fs::read_dir(claude.join("projects")) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_dir() { continue; }
+            remove_file_if_present(&p.join(format!("{session_id}.jsonl")));
+            remove_dir_if_present(&p.join(session_id));
+        }
+    }
+}
+
+fn is_uuid(s: &str) -> bool {
+    if s.len() != 36 { return false; }
+    let b = s.as_bytes();
+    for (i, &c) in b.iter().enumerate() {
+        match i {
+            8 | 13 | 18 | 23 => if c != b'-' { return false; },
+            _ => if !c.is_ascii_hexdigit() { return false; },
+        }
+    }
+    true
+}
+
+fn remove_file_if_present(path: &Path) {
+    if !path.exists() { return; }
+    if let Err(e) = std::fs::remove_file(path) {
+        warn!(path = %path.display(), "cli delete failed: {e}");
+    } else {
+        debug!(path = %path.display(), "cli file deleted");
+    }
+}
+
+fn remove_dir_if_present(path: &Path) {
+    if !path.exists() { return; }
+    if let Err(e) = std::fs::remove_dir_all(path) {
+        warn!(path = %path.display(), "cli delete failed: {e}");
+    } else {
+        debug!(path = %path.display(), "cli dir deleted");
+    }
+}
+
 // ── Internals ──────────────────────────────────────────────────────────────
 
 fn projects_root() -> PathBuf {
