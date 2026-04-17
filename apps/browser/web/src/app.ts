@@ -169,6 +169,7 @@ export async function createApp(root: HTMLElement): Promise<void> {
   createTopBar({
     value: () => state.addressValue,
     suggestions: () => state.suggestions,
+    enabled: () => state.activeTabId !== null,
     focusNonce: () => state.addressFocusNonce,
     onBack: goBack,
     onForward: goForward,

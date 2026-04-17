@@ -275,6 +275,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg-p
   border-color: var(--cyan);
 }
 
+.address-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--bg-primary);
+}
+
 .autocomplete-list {
   position: absolute;
   top: 100%;

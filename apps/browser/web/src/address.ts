@@ -3,6 +3,8 @@ import { html, watch } from '@arrow-js/core';
 export interface TopBarConfig {
   value: () => string;
   suggestions: () => Array<{ url: string; title: string; visits: number }>;
+  /** True when the browser has an active tab; when false the address input is disabled. */
+  enabled: () => boolean;
   /** Bump this value to request address-input focus. Reactive watch fires on change. */
   focusNonce: () => number;
   onBack: () => void;
@@ -32,6 +34,16 @@ export function createTopBar(config: TopBarConfig, target: HTMLElement): void {
     (e.target as HTMLInputElement).select();
   }
 
+  // When the input is already focused, clicking it normally places the
+  // caret at the click point. Match browser-address-bar convention: if
+  // the user has not actively selected a range, select all on click.
+  function onClick(e: MouseEvent) {
+    const input = e.target as HTMLInputElement;
+    if (input.selectionStart === input.selectionEnd) {
+      input.select();
+    }
+  }
+
   function onBlur() {
     setTimeout(() => config.onBlur(), 200);
   }
@@ -50,6 +62,7 @@ export function createTopBar(config: TopBarConfig, target: HTMLElement): void {
           @input="${onInput}"
           @keydown="${onKeyDown}"
           @focus="${onFocus}"
+          @click="${onClick}"
           @blur="${onBlur}"
         />
         ${() => config.suggestions().length > 0 ? html`
@@ -77,5 +90,15 @@ export function createTopBar(config: TopBarConfig, target: HTMLElement): void {
     requestAnimationFrame(() => {
       target.querySelector<HTMLInputElement>('.address-input')?.focus();
     });
+  });
+
+  // Reactive disabled state: HTML boolean attrs can't be toggled by
+  // Arrow.js string expressions (presence/absence matters, not value),
+  // so drive the .disabled DOM property imperatively from a reactive
+  // watch. Arrow.js's watch() is the sanctioned side-effect primitive.
+  watch(() => {
+    const disabled = !config.enabled();
+    const input = target.querySelector<HTMLInputElement>('.address-input');
+    if (input) input.disabled = disabled;
   });
 }
