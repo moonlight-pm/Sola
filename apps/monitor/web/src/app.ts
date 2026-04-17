@@ -1,5 +1,5 @@
 import { html, reactive } from '@arrow-js/core';
-import { on } from '@sola/ipc';
+import { invoke, on } from '@sola/ipc';
 
 // --- Types ---
 
@@ -51,6 +51,7 @@ const state = reactive({
   autoScroll: true,
   stickyMessages: [] as BusMessage[],
   expandedStickyKey: null as string | null,
+  sidebarWidth: (window as any).RESTORED_STATE?.sidebar_width ?? 240,
 });
 
 let pauseBuffer: BusMessage[] = [];
@@ -95,7 +96,7 @@ function highlightedPreview(msg: BusMessage): any[] {
     if (msg.rawHex) return [`[hex: ${msg.rawHex.slice(0, 40)}\u2026]`];
     return [];
   }
-  return tokenizeJson(JSON.stringify(msg.payload), 80);
+  return tokenizeJson(JSON.stringify(msg.payload));
 }
 
 function highlightedJson(obj: any): any[] {
@@ -284,25 +285,28 @@ export async function createApp(root: HTMLElement) {
         >
           ${() =>
             state.filteredMessages.map(
-              (msg) => html`
-                <div
-                  class="${`message-row${state.selectedId === msg.msgId ? ' selected' : ''}`}"
-                  data-category="${categoryOf(msg.topic)}"
-                  @click="${() => selectMessage(msg)}"
-                >
-                  <span class="cell time">${formatTime(msg.timestamp)}</span>
-                  <span class="cell topic">${msg.topic}</span>
-                  <span class="cell source">${msg.source || '\u2014'}</span>
-                  <span class="cell sticky">${msg.sticky ? html`<span class="dot"></span>` : ''}</span>
-                  <span class="cell preview">${highlightedPreview(msg)}</span>
-                </div>
-              `
+              (msg) => {
+                const selected = state.selectedId === msg.msgId;
+                return html`
+                  <div
+                    class="${`message-row${selected ? ' selected' : ''}`}"
+                    data-category="${categoryOf(msg.topic)}"
+                    @click="${() => selectMessage(selected ? null : msg)}"
+                  >
+                    <span class="cell time">${formatTime(msg.timestamp)}</span>
+                    <span class="cell topic">${msg.topic}</span>
+                    <span class="cell source">${msg.source || '\u2014'}</span>
+                    <span class="cell sticky">${msg.sticky ? html`<span class="dot"></span>` : ''}</span>
+                    <span class="${() => state.selectedId === msg.msgId ? 'cell preview expanded' : 'cell preview'}">${() => state.selectedId === msg.msgId && msg.payload != null ? highlightedJson(msg.payload) : highlightedPreview(msg)}</span>
+                  </div>
+                `;
+              }
             )}
         </div>
       </div>
 
       <div class="resize-handle" id="resize-handle"></div>
-      <div class="sticky-panel" id="sticky-panel">
+      <div class="sticky-panel" id="sticky-panel" style="${() => `width:${state.sidebarWidth}px`}">
         <div class="sticky-header">Sticky State</div>
         <div class="sticky-list">
           ${() =>
@@ -311,53 +315,22 @@ export async function createApp(root: HTMLElement) {
                 const key = `${msg.topic}:${msg.source}`;
                 const expanded = state.expandedStickyKey === key;
                 return html`
-                  <div
-                    class="${`sticky-item${expanded ? ' expanded' : ''}`}"
-                    data-category="${categoryOf(msg.topic)}"
-                    @click="${() => { state.expandedStickyKey = expanded ? null : key; }}"
-                  >
-                    <span class="sticky-item-topic">${msg.topic}</span>
-                    <span class="sticky-item-source">${msg.source || ''}</span>
-                  </div>
-                  <div class="${`sticky-detail${expanded ? '' : ' hidden'}`}">
-                    ${expanded && msg.payload != null ? highlightedJson(msg.payload) : ''}
+                  <div class="sticky-entry" data-category="${categoryOf(msg.topic)}">
+                    <div
+                      class="${`sticky-item${expanded ? ' expanded' : ''}`}"
+                      @click="${() => { state.expandedStickyKey = expanded ? null : key; }}"
+                    >
+                      <span class="sticky-item-topic">${msg.topic}</span>
+                      <span class="sticky-item-source">${msg.source || ''}</span>
+                    </div>
+                    ${() => state.expandedStickyKey === key && msg.payload != null
+                      ? html`<div class="sticky-detail">${highlightedJson(msg.payload)}</div>`
+                      : ''}
                   </div>
                 `;
               }
             )}
         </div>
-      </div>
-    </div>
-
-    <div class="${() => `detail-pane${state.selectedMessage ? '' : ' hidden'}`}">
-      <div class="detail-header">
-        <span
-          class="detail-topic"
-          style="${() => `color: var(--topic-${state.selectedMessage ? categoryOf(state.selectedMessage.topic) : 'unknown'})`}"
-        >
-          ${() => state.selectedMessage?.topic || ''}
-        </span>
-        <span class="detail-meta">
-          ${() => {
-            const m = state.selectedMessage;
-            if (!m) return '';
-            const parts: string[] = [];
-            if (m.source) parts.push(m.source);
-            if (m.sticky) parts.push('sticky');
-            parts.push(m.msgId);
-            return parts.join(' \u00b7 ');
-          }}
-        </span>
-        <button class="detail-close" @click="${() => selectMessage(null)}">\u00d7</button>
-      </div>
-      <div class="detail-body">
-        ${() => {
-          const m = state.selectedMessage;
-          if (!m) return '';
-          if (m.payload != null) return highlightedJson(m.payload);
-          if (m.rawHex) return `[raw hex]\n${m.rawHex}`;
-          return '(no payload)';
-        }}
       </div>
     </div>
 
@@ -376,8 +349,7 @@ export async function createApp(root: HTMLElement) {
 
   // Resize handle for sticky panel
   const handle = document.getElementById('resize-handle');
-  const panel = document.getElementById('sticky-panel');
-  if (handle && panel) {
+  if (handle) {
     let dragging = false;
     handle.addEventListener('mousedown', (e) => {
       dragging = true;
@@ -385,9 +357,13 @@ export async function createApp(root: HTMLElement) {
     });
     window.addEventListener('mousemove', (e) => {
       if (!dragging) return;
-      const width = window.innerWidth - e.clientX;
-      panel.style.width = `${Math.max(120, Math.min(width, 600))}px`;
+      state.sidebarWidth = Math.max(120, Math.min(window.innerWidth - e.clientX, 600));
     });
-    window.addEventListener('mouseup', () => { dragging = false; });
+    window.addEventListener('mouseup', () => {
+      if (dragging) {
+        dragging = false;
+        invoke('save_sidebar_width', { width: state.sidebarWidth });
+      }
+    });
   }
 }

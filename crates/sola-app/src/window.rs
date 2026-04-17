@@ -33,10 +33,6 @@ pub(crate) struct WindowInner {
     /// Shared with the UCM handler: the UCM reads from this slot, the
     /// runtime writes into it after `A::new` returns.
     pub(crate) dispatcher: Rc<RefCell<Option<JsDispatcher>>>,
-    pub(crate) zoned: bool,
-    pub(crate) keyboard_target: bool,
-    pub(crate) size: (i32, i32),
-    pub(crate) position: Option<(i32, i32)>,
 }
 
 /// Cheap-clone handle to a window created via `AppCtx::add_window`.

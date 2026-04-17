@@ -15,8 +15,7 @@ use sola_bus::topics::Topic;
 
 const MANAGED: &[&str] = &[
     "sola-bus",
-    "sola-compositor",
-    "sola-x",
+    "sola-river",
     "sola-shell",
     "sola-terminal",
 ];
@@ -76,20 +75,48 @@ fn main() {
     // Supervise — block on bus messages, fall through every 500ms
     // to check process health and binary changes.
     let poll_interval = Duration::from_millis(500);
+    // Keep reconnect attempts from hot-looping when the bus is down: the
+    // client's recv_timeout returns immediately while rx is None, so
+    // without this we'd call UnixStream::connect several thousand times
+    // per second.
+    let reconnect_interval = Duration::from_secs(1);
+    let mut last_reconnect_attempt = Instant::now() - reconnect_interval;
+    let mut reconnect_failures: u32 = 0;
 
     loop {
-        // Try to connect to bus if not connected
-        if !bus.is_connected() {
-            let _ = bus.connect();
+        if !bus.is_connected() && last_reconnect_attempt.elapsed() >= reconnect_interval {
+            last_reconnect_attempt = Instant::now();
+            match bus.connect() {
+                Ok(()) => {
+                    if reconnect_failures > 0 {
+                        info!(failures = reconnect_failures, "bus reconnected");
+                        reconnect_failures = 0;
+                    }
+                }
+                Err(e) => {
+                    reconnect_failures += 1;
+                    if reconnect_failures == 1
+                        || reconnect_failures.is_power_of_two()
+                    {
+                        warn!(%e, attempts = reconnect_failures, "bus reconnect failed");
+                    }
+                }
+            }
         }
 
         // Block until a bus message arrives or the supervision interval expires.
+        // When disconnected, rx is None and recv_timeout returns immediately —
+        // substitute an explicit sleep so supervision still ticks at a sane rate.
         let mut messages = Vec::new();
-        if let Some(msg) = bus.recv_timeout(poll_interval) {
-            messages.push(msg);
-            while let Some(msg) = bus.try_recv() {
+        if bus.is_connected() {
+            if let Some(msg) = bus.recv_timeout(poll_interval) {
                 messages.push(msg);
+                while let Some(msg) = bus.try_recv() {
+                    messages.push(msg);
+                }
             }
+        } else {
+            thread::sleep(poll_interval);
         }
 
         for msg in &messages {
@@ -176,16 +203,30 @@ fn launch_user_app(command: &str, user_apps: &mut Vec<UserApp>) {
     };
     let args: Vec<&str> = parts.collect();
 
+    let mut cmd = Command::new(program);
+    cmd.args(&args);
+    // Sola launches from a TTY where neither WAYLAND_DISPLAY nor DISPLAY
+    // is set, so user apps would try bare connects and fail. Point them
+    // at the sockets sola-river published.
+    if let Some(name) = resolve_wayland_socket() {
+        tracing::debug!(%name, "setting WAYLAND_DISPLAY for user app");
+        cmd.env("WAYLAND_DISPLAY", name);
+    } else {
+        warn!("sola-wayland not populated yet; user app may fail to connect");
+    }
+    if let Some(x_display) = resolve_x_display() {
+        tracing::debug!(display = %x_display, "setting DISPLAY for user app");
+        cmd.env("DISPLAY", x_display);
+    }
+
     // SAFETY: pre_exec runs in the child after fork. PR_SET_PDEATHSIG asks
     // the kernel to kill the child if sola dies, preventing orphans.
     let result = unsafe {
-        Command::new(program)
-            .args(&args)
-            .pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                Ok(())
-            })
-            .spawn()
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        })
+        .spawn()
     };
     match result {
         Ok(child) => {
@@ -261,4 +302,30 @@ fn shutdown_all(managed: &mut HashMap<&str, ManagedProcess>) {
 /// Only called on binary change events, which are rare.
 fn leak_str(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
+}
+
+/// Read the wayland socket name that sola-river published to
+/// `$XDG_RUNTIME_DIR/sola-wayland`. Returns `None` if the file isn't
+/// there yet (sola-river still starting, or not running).
+fn resolve_wayland_socket() -> Option<String> {
+    read_runtime_name("sola-wayland")
+}
+
+/// Read the X11 display that sola-river's XWayland is serving (e.g. `:0`)
+/// from `$XDG_RUNTIME_DIR/sola-display`. Returns `None` if XWayland isn't
+/// active or the file hasn't been written yet.
+fn resolve_x_display() -> Option<String> {
+    read_runtime_name("sola-display")
+}
+
+fn read_runtime_name(file: &str) -> Option<String> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
+    let path = std::path::Path::new(&runtime_dir).join(file);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let name = raw.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }

@@ -1,13 +1,11 @@
-use sola_bus::topics::FocusTarget;
-
 use crate::applications::{Application, ApplicationsConfig};
 
 #[derive(Default)]
 pub struct LauncherState {
     pub active: bool,
-    /// Focus target at the moment the launcher opened. Restored on close so
-    /// the previously-focused app gets keyboard routing back.
-    pub prior_focus: Option<FocusTarget>,
+    /// Window ID of the focused window when the launcher opened. Restored on
+    /// close so the previously-focused app gets keyboard routing back.
+    pub prior_focus: Option<u32>,
     pub query: String,
     /// `app_id`s that pass the current filter, in config order.
     pub filtered_ids: Vec<String>,

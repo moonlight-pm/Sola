@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sola_bus::topics::{FrameUpdate, OutputGeometry, Zone};
 use sola_core::KeyCode;
@@ -12,7 +12,16 @@ pub const MENUBAR_HEIGHT: i32 = 28;
 pub struct ZoningState {
     pub output_size: Option<(i32, i32)>,
     pub focused_app_id: Option<String>,
-    pub zone_assignments: HashMap<String, Zone>,
+    /// Persistent zone assignments by app_id. Saved to config.
+    /// Applied to the first window of each app on startup.
+    app_zone_config: HashMap<String, Zone>,
+    /// Runtime zone assignments by window_id. Only windows that have
+    /// been explicitly zoned (by the user or from config) are here.
+    /// Windows NOT in this map keep their own geometry.
+    pub window_zones: HashMap<u32, Zone>,
+    /// App IDs that have already had their config zone applied to a
+    /// window. Prevents auto-zoning every new window of the same app.
+    config_applied: HashSet<String>,
 }
 
 impl ZoningState {
@@ -22,7 +31,9 @@ impl ZoningState {
         Self {
             output_size: None,
             focused_app_id: None,
-            zone_assignments: config.zones,
+            app_zone_config: config.zones,
+            window_zones: HashMap::new(),
+            config_applied: HashSet::new(),
         }
     }
 
@@ -39,8 +50,25 @@ impl ZoningState {
         self.focused_app_id = Some(app_id);
     }
 
-    /// Handle a zone snap keycode. Returns a FrameUpdate for the focused app.
-    pub fn handle_key(&mut self, code: u32) -> Option<FrameUpdate> {
+    /// Apply the config zone to a window if its app has a saved zone
+    /// and no window for that app has been zoned yet.
+    /// Only sola-* apps persist zones — external apps are zoned manually.
+    pub fn apply_config_zone(&mut self, app_id: &str, window_id: u32) -> Option<FrameUpdate> {
+        if !app_id.starts_with("sola-") {
+            return None;
+        }
+        if self.config_applied.contains(app_id) {
+            return None;
+        }
+        let zone = self.app_zone_config.get(app_id).copied()?;
+        self.config_applied.insert(app_id.to_string());
+        self.window_zones.insert(window_id, zone);
+        let (w, h) = self.output_size?;
+        Some(compute_frame(zone, window_id, w, h))
+    }
+
+    /// Handle a zone snap keycode for the focused window.
+    pub fn handle_key(&mut self, code: u32, focused_window_id: Option<u32>) -> Option<FrameUpdate> {
         let zone = zone_for_keycode(code)?;
 
         let (w, h) = match self.output_size {
@@ -59,21 +87,37 @@ impl ZoningState {
             }
         };
 
-        info!(app_id = %app_id, ?zone, "snapping to zone");
-        let frame = compute_frame(zone, &app_id, w, h);
+        let window_id = match focused_window_id {
+            Some(wid) => wid,
+            None => {
+                warn!("zone key pressed but no focused window_id");
+                return None;
+            }
+        };
 
-        self.zone_assignments.insert(app_id, zone);
-        self.save_session();
+        info!(app_id = %app_id, window_id, ?zone, "snapping to zone");
+        let frame = compute_frame(zone, window_id, w, h);
+
+        self.window_zones.insert(window_id, zone);
+
+        // Only persist zone config for sola-* apps. External apps
+        // are zoned manually each session.
+        if app_id.starts_with("sola-") {
+            self.app_zone_config.insert(app_id, zone);
+            self.config_applied.insert(
+                self.focused_app_id.clone().unwrap_or_default(),
+            );
+            self.save_session();
+        }
 
         Some(frame)
     }
 
     /// Compute the menubar's Frame for a given output.
-    pub fn menubar_frame(&self) -> Option<FrameUpdate> {
+    pub fn menubar_frame(&self, window_id: u32) -> Option<FrameUpdate> {
         let (w, _h) = self.output_size?;
         Some(FrameUpdate {
-            app_id: "sola-shell".into(),
-            title: Some("menubar".into()),
+            window_id,
             x: 0,
             y: 0,
             width: w,
@@ -81,13 +125,11 @@ impl ZoningState {
         })
     }
 
-    /// Compute the default Frame for an app without a zone assignment.
-    /// Gives it the full output area below the menubar.
-    pub fn default_app_frame(&self, app_id: &str) -> Option<FrameUpdate> {
+    /// Default frame: full output area below the menubar.
+    pub fn default_app_frame(&self, window_id: u32) -> Option<FrameUpdate> {
         let (w, h) = self.output_size?;
         Some(FrameUpdate {
-            app_id: app_id.to_string(),
-            title: None,
+            window_id,
             x: 0,
             y: MENUBAR_HEIGHT,
             width: w,
@@ -95,20 +137,18 @@ impl ZoningState {
         })
     }
 
-    /// Compute the Frame for a zoned app, or default if no zone assigned.
-    pub fn app_frame(&self, app_id: &str) -> Option<FrameUpdate> {
-        if let Some(zone) = self.zone_assignments.get(app_id) {
-            let (w, h) = self.output_size?;
-            Some(compute_frame(*zone, app_id, w, h))
-        } else {
-            self.default_app_frame(app_id)
-        }
+    /// Compute the Frame for an explicitly-zoned window.
+    /// Returns None if the window has no zone assignment.
+    pub fn window_frame(&self, window_id: u32) -> Option<FrameUpdate> {
+        let zone = self.window_zones.get(&window_id)?;
+        let (w, h) = self.output_size?;
+        Some(compute_frame(*zone, window_id, w, h))
     }
 
     fn save_session(&self) {
         let config = ShellConfig {
             zones: self
-                .zone_assignments
+                .app_zone_config
                 .iter()
                 .map(|(k, v)| (k.clone(), *v))
                 .collect(),
@@ -142,7 +182,7 @@ fn zone_for_keycode(code: u32) -> Option<Zone> {
     }
 }
 
-fn compute_frame(zone: Zone, app_id: &str, output_w: i32, output_h: i32) -> FrameUpdate {
+fn compute_frame(zone: Zone, window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
     let (xp, yp, wp, hp) = zone.rect();
     let usable_h = output_h - MENUBAR_HEIGHT;
 
@@ -152,8 +192,7 @@ fn compute_frame(zone: Zone, app_id: &str, output_w: i32, output_h: i32) -> Fram
     let h = (hp * usable_h as f64).round() as i32;
 
     FrameUpdate {
-        app_id: app_id.to_string(),
-        title: None,
+        window_id,
         x,
         y,
         width: w,
