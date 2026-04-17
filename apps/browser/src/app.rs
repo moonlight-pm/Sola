@@ -22,7 +22,7 @@ fn config_dir() -> PathBuf {
 
 pub struct BrowserApp {
     pub(crate) chrome: WindowHandle,
-    pub(crate) container: gtk4::Fixed,
+    pub(crate) container: gtk4::Overlay,
     pub(crate) web_context: webkit6::WebContext,
     pub(crate) network_session: webkit6::NetworkSession,
     pub(crate) tabs: Vec<Tab>,
@@ -55,13 +55,20 @@ impl SolaApp for BrowserApp {
             keyboard_target: true,
         });
 
-        // Reparent the chrome WebView into a Fixed so we can add tab
-        // WebView siblings later.
+        // Reparent the chrome WebView into an Overlay so we can add tab
+        // WebView siblings later. The chrome is the Overlay's main child —
+        // GTK auto-fills it to the Overlay's allocation every resize cycle,
+        // which is what we need for compositor-driven zoning. Tab WebViews
+        // are overlays; a `get-child-position` callback computes their
+        // content-area rect from the Overlay's current allocation.
         let chrome_webview = chrome.webview().clone();
         chrome.gtk_window().set_child(None::<&gtk4::Widget>);
-        let container = gtk4::Fixed::new();
-        container.put(&chrome_webview, 0.0, 0.0);
-        chrome_webview.set_size_request(1920, 1080);
+        let container = gtk4::Overlay::new();
+        container.set_child(Some(&chrome_webview));
+        container.connect_get_child_position(|overlay, _child| {
+            let area = chrome::content_area(overlay.width(), overlay.height());
+            Some(gdk4::Rectangle::new(area.x, area.y, area.width, area.height))
+        });
         chrome.gtk_window().set_child(Some(&container));
 
         // Reuse the WebContext from the chrome WebView for tab WebViews so
@@ -112,36 +119,12 @@ impl SolaApp for BrowserApp {
         runtime: Weak<RefCell<AppRuntime<Self>>>,
         _ctx: &mut AppCtx,
     ) {
+        // Publish the runtime weak for webview signal handlers inside
+        // create_tab (title/uri/is-loading/decide-policy). Resize is
+        // handled by the Overlay's get-child-position callback, so no
+        // window-size notify hooks are needed here.
         RUNTIME_WEAK.with(|slot| {
-            *slot.borrow_mut() = Some(runtime.clone());
-        });
-
-        let window = self.chrome.gtk_window().clone();
-
-        window.connect_default_width_notify({
-            let runtime = runtime.clone();
-            move |win| {
-                let (w, h) = (win.width(), win.height());
-                let Some(runtime) = runtime.upgrade() else {
-                    return;
-                };
-                let mut rt = runtime.borrow_mut();
-                let AppRuntime { app, .. } = &mut *rt;
-                app.resize_tabs(w, h);
-            }
-        });
-
-        window.connect_default_height_notify({
-            let runtime = runtime.clone();
-            move |win| {
-                let (w, h) = (win.width(), win.height());
-                let Some(runtime) = runtime.upgrade() else {
-                    return;
-                };
-                let mut rt = runtime.borrow_mut();
-                let AppRuntime { app, .. } = &mut *rt;
-                app.resize_tabs(w, h);
-            }
+            *slot.borrow_mut() = Some(runtime);
         });
     }
 
@@ -299,11 +282,9 @@ impl BrowserApp {
         };
         let webview = build_web_page_view(&self.web_context, &self.network_session, &cfg);
 
-        // Position in content area.
-        let chrome_wv = self.chrome.webview();
-        let area = chrome::content_area(chrome_wv.width(), chrome_wv.height());
-        self.container.put(&webview, area.x as f64, area.y as f64);
-        webview.set_size_request(area.width, area.height);
+        // Add as overlay child — the Overlay's get-child-position callback
+        // sizes/positions it to the content area on every allocation.
+        self.container.add_overlay(&webview);
         webview.set_visible(false);
 
         // Wire signal handlers. Each handler clones the chrome WindowHandle
@@ -321,7 +302,7 @@ impl BrowserApp {
     pub(crate) fn close_tab(&mut self, tab_id: &str) {
         if let Some(pos) = self.tabs.iter().position(|t| t.id == tab_id) {
             let tab = self.tabs.remove(pos);
-            tab.webview.unparent();
+            self.container.remove_overlay(&tab.webview);
 
             if pos < self.tab_store.tabs.len() {
                 self.tab_store.tabs.remove(pos);
@@ -378,16 +359,6 @@ impl BrowserApp {
             if let Some(tab) = self.tabs.iter().find(|t| t.id == id) {
                 tab.webview.reload();
             }
-        }
-    }
-
-    pub(crate) fn resize_tabs(&mut self, width: i32, height: i32) {
-        self.chrome.webview().set_size_request(width, height);
-        let area = chrome::content_area(width, height);
-        for tab in &self.tabs {
-            tab.webview.set_size_request(area.width, area.height);
-            self.container
-                .move_(&tab.webview, area.x as f64, area.y as f64);
         }
     }
 

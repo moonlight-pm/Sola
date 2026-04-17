@@ -116,7 +116,7 @@ pub fn build_web_page_view(
 }
 
 /// Attach the four per-tab signal handlers. Called by `BrowserApp::create_tab`
-/// after the WebView is parented into the Fixed.
+/// after the WebView is added to the Overlay.
 pub fn wire_signals(
     webview: &webkit6::WebView,
     tab_id: &str,
