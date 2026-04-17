@@ -118,16 +118,6 @@ impl SolaApp for TerminalApp {
                     self.main_window
                         .send_to_js(&serde_json::json!({"event": "new_tab"}));
                 }
-                "copy" => {
-                    tracing::info!("menu action: copy");
-                    self.main_window
-                        .send_to_js(&serde_json::json!({"event": "copy"}));
-                }
-                "paste" => {
-                    tracing::info!("menu action: paste");
-                    self.main_window
-                        .send_to_js(&serde_json::json!({"event": "paste"}));
-                }
                 id if id.starts_with("select_tab_") => {
                     if let Ok(index) = id.strip_prefix("select_tab_").unwrap().parse::<usize>() {
                         tracing::info!(index, "menu action: select tab");
@@ -181,25 +171,6 @@ fn terminal_menu() -> AppMenuPayload {
                     disabled: false,
                     checked: false,
                 }],
-            },
-            MenuDefinition {
-                label: "Edit".into(),
-                items: vec![
-                    MenuItem::Action {
-                        id: "copy".into(),
-                        label: "Copy".into(),
-                        shortcut: Some(KeyCode::C.meta()),
-                        disabled: false,
-                        checked: false,
-                    },
-                    MenuItem::Action {
-                        id: "paste".into(),
-                        label: "Paste".into(),
-                        shortcut: Some(KeyCode::V.meta()),
-                        disabled: false,
-                        checked: false,
-                    },
-                ],
             },
             MenuDefinition {
                 label: "Tabs".into(),

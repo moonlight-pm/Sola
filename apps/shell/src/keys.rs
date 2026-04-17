@@ -13,7 +13,7 @@
 //!     acting on its `ChordReleased` event.
 use sola_app::SolaApp;
 use sola_bus::topics::{
-    ChordEvent, FocusTarget, FrameUpdate, RegisteredChord, Topic,
+    ChordEvent, EditRequest, FocusTarget, FrameUpdate, RegisteredChord, Topic,
 };
 use sola_core::{KeyChord, KeyCode};
 
@@ -294,6 +294,33 @@ pub fn handle_chord(
         }
     }
 
+    // Meta+C / Meta+V: global clipboard chords. Dispatched to the
+    // focused window's owning process via the bus; non-Sola clients
+    // aren't subscribers, so Meta+C/V with a foreign focus is a silent
+    // no-op (and in practice doesn't fire at all, because the xkb
+    // profile rebinds Meta→Ctrl when a non-Sola app is focused).
+    if chord.meta
+        && !chord.ctrl
+        && !chord.alt
+        && !chord.shift
+        && matches!(chord.keycode, KeyCode::C | KeyCode::V)
+    {
+        if app.switcher.active {
+            return;
+        }
+        if let Some(window_id) = app.focused_window_id {
+            let topic = if chord.keycode == KeyCode::C {
+                Topic::Copy(EditRequest { window_id })
+            } else {
+                Topic::Paste(EditRequest { window_id })
+            };
+            ctx.emit(topic);
+        } else {
+            tracing::debug!("clipboard chord with no focused window");
+        }
+        return;
+    }
+
     // Shell system shortcuts (e.g. Exit Sola).
     if let Some(action) = app.menus.lookup_shortcut(&chord, ShellApp::APP_ID) {
         tracing::info!(action_id = %action.action_id, "shell shortcut");
@@ -397,6 +424,7 @@ fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
             app.focused_window_id = Some(wid);
             ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
         }
+        app.emit_xkb_profile_for_focus(ctx);
     }
     app.emit_composition(ctx);
 }

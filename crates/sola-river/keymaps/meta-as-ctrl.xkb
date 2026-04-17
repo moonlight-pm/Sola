@@ -1,0 +1,19 @@
+// Meta-as-Ctrl xkb keymap.
+//
+// Same as default.xkb but the Super (Win) keys produce Control_L/R
+// keysyms, so when this profile is active, physical Meta+letter
+// arrives at the focused client as Ctrl+letter. Used by sola-shell
+// to give Mac-style Cmd-C/V/T/W behavior inside non-Sola apps.
+xkb_keymap {
+  xkb_keycodes  { include "evdev+aliases(qwerty)" };
+  xkb_types     { include "complete" };
+  xkb_compat    { include "complete" };
+  xkb_symbols   {
+    include "pc+us+inet(evdev)"
+    replace key <LWIN> { [ Control_L ] };
+    replace key <RWIN> { [ Control_R ] };
+    modifier_map Control { <LWIN>, <RWIN> };
+    modifier_map Mod4    { };
+  };
+  xkb_geometry  { include "pc(pc105)" };
+};

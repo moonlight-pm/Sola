@@ -195,7 +195,7 @@ pub fn run<A: SolaApp>() {
         }
 
         // --- Build AppCtx, run A::new ---
-        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone());
+        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone(), app_id);
         let app = A::new(&mut ctx);
 
         // --- Wrap runtime ---
@@ -259,6 +259,28 @@ pub fn run<A: SolaApp>() {
                         }
                         gtk_app.quit();
                         return glib::ControlFlow::Continue;
+                    }
+                    // Framework-level interception. These topics are
+                    // handled by the framework before the app sees them
+                    // (or in addition to — apps still get on_bus_event).
+                    match &topic {
+                        Topic::Apps(apps) => {
+                            let mut rt = runtime.borrow_mut();
+                            rt.ctx.known_windows = apps.clone();
+                        }
+                        Topic::Copy(req) => {
+                            let rt = runtime.borrow();
+                            if let Some(handle) = rt.ctx.find_window_by_id(req.window_id) {
+                                handle.send_to_js(&serde_json::json!({"event": "copy"}));
+                            }
+                        }
+                        Topic::Paste(req) => {
+                            let rt = runtime.borrow();
+                            if let Some(handle) = rt.ctx.find_window_by_id(req.window_id) {
+                                handle.send_to_js(&serde_json::json!({"event": "paste"}));
+                            }
+                        }
+                        _ => {}
                     }
                     let mut rt = runtime.borrow_mut();
                     let AppRuntime { app, ctx } = &mut *rt;

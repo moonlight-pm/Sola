@@ -5,7 +5,7 @@ use gtk4::prelude::*;
 use webkit6::prelude::*;
 
 use sola_bus::BusClient;
-use sola_bus::topics::Topic;
+use sola_bus::topics::{App, Topic};
 
 use crate::assets;
 use crate::webview;
@@ -17,17 +17,24 @@ pub struct AppCtx {
     pub(crate) bus: Rc<RefCell<BusClient>>,
     pub(crate) gtk_app: gtk4::Application,
     pub(crate) windows: Vec<WindowHandle>,
+    pub(crate) app_id: &'static str,
+    /// Latest `Apps` sticky snapshot, used by the framework to correlate
+    /// window_ids in bus topics (e.g. Copy/Paste) back to a `WindowHandle`.
+    pub(crate) known_windows: Vec<App>,
 }
 
 impl AppCtx {
     pub(crate) fn new(
         bus: Rc<RefCell<BusClient>>,
         gtk_app: gtk4::Application,
+        app_id: &'static str,
     ) -> Self {
         Self {
             bus,
             gtk_app,
             windows: Vec::new(),
+            app_id,
+            known_windows: Vec::new(),
         }
     }
 
@@ -116,4 +123,20 @@ impl AppCtx {
         let _ = self.bus.borrow_mut().emit_sticky(topic);
     }
 
+    /// Resolve a `window_id` (as seen on the bus) to one of *this process's*
+    /// owned `WindowHandle`s. Returns `None` if the id doesn't belong to us.
+    ///
+    /// Matching is by `(app_id, title)` pulled from the latest `Apps` sticky
+    /// snapshot. `app_id` guards against a coincidental title collision with
+    /// another Sola app.
+    pub(crate) fn find_window_by_id(&self, window_id: u32) -> Option<&WindowHandle> {
+        let entry = self
+            .known_windows
+            .iter()
+            .find(|a| a.window_id == window_id)?;
+        if entry.app_id != self.app_id {
+            return None;
+        }
+        self.windows.iter().find(|w| w.title() == entry.title)
+    }
 }

@@ -107,6 +107,22 @@ pub struct MouseClickedPayload {
     pub window_id: u32,
 }
 
+/// Request that a specific window perform an edit action (copy or paste).
+/// Emitted by the shell when a global clipboard chord fires; consumed by
+/// the sola-app framework in the owning process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditRequest {
+    pub window_id: u32,
+}
+
+/// Named xkb keymap profile for the seat, emitted by the shell when
+/// focus moves between Sola and non-Sola apps. Consumed by sola-river,
+/// which pushes the corresponding keymap to River.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XkbProfilePayload {
+    pub profile: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
     Left,
@@ -164,6 +180,13 @@ define_topics! {
 
     // Browser
     OpenUrl(OpenUrlRequest),
+
+    // Global clipboard chords (shell → focused sola-app)
+    Copy(EditRequest),
+    Paste(EditRequest),
+
+    // Focus-driven xkb profile (shell → sola-river, sticky)
+    XkbProfile(XkbProfilePayload),
 
     // Lifecycle
     Shutdown,

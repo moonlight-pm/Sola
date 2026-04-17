@@ -4,6 +4,27 @@ let nextId = 1;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
 const listeners = new Map<string, Set<EventCallback>>();
 
+// Framework defaults for specific events — used when the app has not
+// registered its own handler. Apps that want custom behavior call
+// on("copy", ...) / on("paste", ...), which takes precedence.
+const defaults = new Map<string, EventCallback>([
+  ["copy", () => {
+    const sel = window.getSelection()?.toString();
+    if (sel) {
+      navigator.clipboard.writeText(sel).catch((e) => {
+        console.error("default copy failed", e);
+      });
+    }
+  }],
+  ["paste", () => {
+    navigator.clipboard.readText().then((text) => {
+      if (text) document.execCommand("insertText", false, text);
+    }).catch((e) => {
+      console.error("default paste failed", e);
+    });
+  }],
+]);
+
 // Called from Rust via evaluate_javascript to deliver responses and events.
 (window as any).__solaRecv = (json: string) => {
   const msg = JSON.parse(json);
@@ -19,8 +40,11 @@ const listeners = new Map<string, Set<EventCallback>>();
     }
   } else if (msg.event) {
     const cbs = listeners.get(msg.event);
-    if (cbs) {
+    if (cbs && cbs.size > 0) {
       for (const cb of cbs) cb(msg);
+    } else {
+      const def = defaults.get(msg.event);
+      if (def) def(msg);
     }
   }
 };
