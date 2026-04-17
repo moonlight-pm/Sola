@@ -68,6 +68,9 @@ interface Session {
    *  session's task dir. Such sessions are read-only in this UI to avoid
    *  fighting with the terminal for stdin. */
   terminalActive: boolean;
+  /** ms since epoch — mirrors SessionMeta.updated_at. Drives Recent +
+   *  In-Terminal sort order and the date line in each sidebar row. */
+  updatedAt: number | null;
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -116,6 +119,22 @@ function isReadOnly(): boolean {
 function truncate(s: string | null, n: number): string {
   if (!s) return '';
   return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function formatRelative(ms: number | null): string {
+  if (!ms) return '';
+  const now = Date.now();
+  const delta = now - ms;
+  if (delta < 60_000) return 'just now';
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
+  if (delta < 7 * 86_400_000) return `${Math.floor(delta / 86_400_000)}d ago`;
+  const d = new Date(ms);
+  const thisYear = new Date(now).getFullYear();
+  const label = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return d.getFullYear() === thisYear ? label : `${label}, ${d.getFullYear()}`;
 }
 
 function saveUi(): void {
@@ -213,6 +232,7 @@ function upsertSession(patch: Partial<Session> & { id: string }): Session {
     if ((patch as any).model !== undefined) existing.model = (patch as any).model;
     if ((patch as any).effort !== undefined) existing.effort = (patch as any).effort;
     if (patch.terminalActive !== undefined) existing.terminalActive = patch.terminalActive;
+    if (patch.updatedAt !== undefined) existing.updatedAt = patch.updatedAt;
     return existing;
   }
   const fresh: Session = {
@@ -227,6 +247,7 @@ function upsertSession(patch: Partial<Session> & { id: string }): Session {
     model: ((patch as any).model || 'opus') as ModelChoice,
     effort: ((patch as any).effort || 'high') as EffortLevel,
     terminalActive: patch.terminalActive ?? false,
+    updatedAt: patch.updatedAt ?? null,
   };
   // Reassign rather than push: triggers the outer state's set trap, which
   // is the idiom the rest of this codebase uses (see apps/terminal).
@@ -268,6 +289,7 @@ function ingestConversations(conversations: any[]): void {
       model: c.model || undefined,
       effort: c.effort || undefined,
       terminalActive: !!c.active,
+      updatedAt: typeof c.updated_at === 'number' ? c.updated_at : null,
     } as any);
   }
 }
@@ -653,7 +675,10 @@ function sessionRow(s: Session, group: string) {
       }}"
     >
       <span class="${() => s.terminalActive ? 'dot terminal' : 'dot ' + s.status}"></span>
-      <span class="convo-name">${() => s.name || truncate(s.firstPrompt, 30) || 'New session'}</span>
+      <div class="convo-text">
+        <div class="convo-name">${() => s.name || truncate(s.firstPrompt, 30) || 'New session'}</div>
+        <div class="convo-date">${() => formatRelative(s.updatedAt)}</div>
+      </div>
       <button class="${() => 'btn-del' + (del.confirming ? ' confirm' : '')}" @click="${onDeleteClick}" @mousedown="${(e: MouseEvent) => e.stopPropagation()}"><span class="${() => del.confirming ? 'icon icon-check' : 'icon icon-x'}"></span></button>
     </div>
   `.key(s.id);
@@ -801,17 +826,16 @@ function sidebarTemplate() {
         ${() => {
           const all = filterSessions();
           const pinnedSet = new Set(state.pinnedIds);
-          const terminal = all.filter((s: Session) => s.terminalActive);
+          const byUpdated = (a: Session, b: Session) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+          const terminal = all.filter((s: Session) => s.terminalActive).sort(byUpdated);
           const terminalSet = new Set(terminal.map((s: Session) => s.id));
+          // Pinned stays in the user-defined order from state.pinnedIds.
           const pinned = state.pinnedIds
             .map((id: string) => all.find((s: Session) => s.id === id))
             .filter((s): s is Session => !!s && !terminalSet.has(s.id));
           const recent = all
             .filter((s: Session) => !pinnedSet.has(s.id) && !terminalSet.has(s.id))
-            .sort((a: Session, b: Session) => {
-              const w = (s: Session) => s.status === 'running' ? 0 : s.status === 'idle' || s.status === 'error' ? 1 : 2;
-              return w(a) - w(b);
-            });
+            .sort(byUpdated);
           const items: any[] = [];
           if (terminal.length) {
             items.push(html`<div class="group-label" data-group="terminal">In terminal</div>`.key('g-term'));

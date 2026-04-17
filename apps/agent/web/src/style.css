@@ -323,8 +323,15 @@ html, body {
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-.convo-name {
+.convo-text {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.convo-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -332,6 +339,14 @@ html, body {
   font-weight: 500;
   color: var(--text-secondary);
 }
+
+.convo-date {
+  font-size: 10px;
+  color: var(--text-ghost);
+  letter-spacing: 0.02em;
+}
+
+.convo-item.active .convo-date { color: var(--text-muted); }
 
 .convo-item.active .convo-name { color: var(--text-primary); }
 
