@@ -126,6 +126,8 @@ function setActive(id: string): void {
   state.activeId = id;
   saveUi();
   loadMcps(id);
+  // Session switch — always start pinned to the bottom of the new log.
+  scrollToBottom(true);
 }
 
 const mcpLoading = reactive({ active: false });
@@ -174,13 +176,30 @@ function focusInput(): void {
   });
 }
 
-function scrollToBottom(): void {
+// Log-tail scroll behavior: pinned to bottom by default. The listener
+// on #msg-log updates this on any scroll (user or programmatic); when
+// the user scrolls up, stickyBottom becomes false and we stop chasing
+// the tail. When the user scrolls back to the bottom, it becomes true
+// and auto-follow resumes.
+let stickyBottom = true;
+const STICKY_THRESHOLD = 32;
+
+function scrollToBottom(force = false): void {
   requestAnimationFrame(() => {
     const el = document.getElementById('msg-log');
     if (!el) return;
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    if (near) el.scrollTop = el.scrollHeight;
+    if (force) stickyBottom = true;
+    if (stickyBottom) el.scrollTop = el.scrollHeight;
   });
+}
+
+function bindMsgLogScroll(): void {
+  const el = document.getElementById('msg-log');
+  if (!el || (el as any)._stickyBound) return;
+  (el as any)._stickyBound = true;
+  el.addEventListener('scroll', () => {
+    stickyBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICKY_THRESHOLD;
+  }, { passive: true });
 }
 
 function upsertSession(patch: Partial<Session> & { id: string }): Session {
@@ -358,6 +377,7 @@ on('session_loaded', (ev: any) => {
   setActive(ev.session_id);
   focusInput();
   requestAnimationFrame(flushMd);
+  scrollToBottom(true);
 });
 
 on('message_start', (ev: any) => {
@@ -1075,6 +1095,8 @@ html`
     ${statsTemplate()}
   </div>
 `(document.getElementById('app')!);
+
+bindMsgLogScroll();
 
 // Load saved sessions. Read the reply directly — the old event-based path
 // went through an mpsc + glib timer bridge that proved fragile.
