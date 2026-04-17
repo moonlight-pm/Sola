@@ -23,12 +23,31 @@ pub fn handle_manage_start(state: &mut AppData) {
     state.pending.manage_dirty = false;
     state.pending.manage.clear();
 
+    // `focus_window` / `clear_focus` are manage-sequence requests per
+    // river-window-management-v1.xml — calling them in render_start is a
+    // protocol error. Apply pending focus here.
+    if let Some(focus) = state.pending.focus.take() {
+        if let Some(seat) = state.seat.as_ref() {
+            match focus {
+                FocusAction::Window(id) => {
+                    if let Some(proxy) = state.windows_by_id.get(&id) {
+                        seat.focus_window(proxy);
+                    }
+                }
+                FocusAction::None => seat.clear_focus(),
+            }
+        }
+    }
+
     wm.manage_finish();
     info!(pending_count, "manage_finish sent");
 }
 
 pub fn handle_render_start(state: &mut AppData) {
     let Some(wm) = state.wm.clone() else { return };
+
+    let composition_len = state.pending.composition.as_ref().map(|c| c.len()).unwrap_or(0);
+    let positions_len = state.pending.render_positions.len();
 
     if let Some(order) = state.pending.composition.take() {
         for &window_id in &order {
@@ -45,21 +64,6 @@ pub fn handle_render_start(state: &mut AppData) {
     }
     state.pending.render_positions.clear();
 
-    if let Some(focus) = state.pending.focus.take() {
-        if let Some(seat) = state.seat.as_ref() {
-            match focus {
-                FocusAction::Window(id) => {
-                    if let Some(proxy) = state.windows_by_id.get(&id) {
-                        seat.focus_window(proxy);
-                    }
-                }
-                FocusAction::None => seat.clear_focus(),
-            }
-        }
-    }
-
-    let composition_len = state.pending.composition.as_ref().map(|c| c.len()).unwrap_or(0);
-    let positions_len = state.pending.render_positions.len();
     state.pending.render_dirty = false;
     wm.render_finish();
     info!(composition_len, positions_len, "render_finish sent");
