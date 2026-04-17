@@ -301,6 +301,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "calloop-wayland-source"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "138efcf0940a02ebf0cc8d1eff41a1682a46b431630f4c52450d6265876021fa"
+dependencies = [
+ "calloop",
+ "rustix 1.1.4",
+ "wayland-backend",
+ "wayland-client",
+]
+
+[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2385,6 +2397,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-river"
+version = "0.1.0"
+dependencies = [
+ "calloop",
+ "calloop-wayland-source",
+ "libc",
+ "sola-bus",
+ "sola-core",
+ "thiserror",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
 name = "sola-shell"
 version = "0.1.0"
 dependencies = [
@@ -3368,6 +3398,18 @@ dependencies = [
  "rustix 1.1.4",
  "smallvec",
  "wayland-sys",
+]
+
+[[package]]
+name = "wayland-client"
+version = "0.31.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "645c7c96bb74690c3189b5c9cb4ca1627062bb23693a4fad9d8c3de958260144"
+dependencies = [
+ "bitflags 2.11.0",
+ "rustix 1.1.4",
+ "wayland-backend",
+ "wayland-scanner",
 ]
 
 [[package]]

@@ -1,0 +1,22 @@
+[package]
+name = "sola-river"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "sola-river"
+path = "src/main.rs"
+
+[dependencies]
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+wayland-client = "0.31"
+wayland-backend = "0.3"
+wayland-scanner = "0.31"
+calloop = "0.14"
+calloop-wayland-source = "0.4"
+libc = "0.2"
+thiserror = "2"
