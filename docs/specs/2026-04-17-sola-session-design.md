@@ -344,7 +344,13 @@ Invariants:
   `app_id` and `window_id: None`; set its `window_id` and apply its
   `zone`. If none exists, push a new entry with the default zone.
 - **On zone change for a live window:** update its entry's `zone`.
-- **On window close:** remove its entry.
+- **On window vanish (without a matching `UserAppExited`):** demote
+  the entry to pending (`window_id = None`). This keeps the entry
+  recoverable when `sola-session` has died and its PDEATHSIG cascade
+  took the windows with it.
+- **On `UserAppExited(app_id)`:** remove one matching entry (prefer
+  the first live entry; fall back to the first pending). This is the
+  authoritative "app is gone" signal.
 - **Persist:** write after any mutation to `session_entries`.
 
 Unclaimed pending entries survive across restarts: if an app crashes
