@@ -12,6 +12,10 @@ pub struct PendingUpdate {
     pub composition: Option<Vec<u32>>,
     /// Pending focus change.
     pub focus: Option<FocusAction>,
+    /// Latest `RegisteredChords` payload to apply in the next manage
+    /// sequence. River requires `enable`/`disable` on bindings during
+    /// a manage sequence.
+    pub chords: Option<Vec<(u32, u32)>>,
     pub manage_dirty: bool,
     pub render_dirty: bool,
 }
@@ -40,11 +44,17 @@ impl PendingUpdate {
         self.render_dirty = true;
     }
 
+    pub fn set_chords(&mut self, chords: Vec<(u32, u32)>) {
+        self.chords = Some(chords);
+        self.manage_dirty = true;
+    }
+
     pub fn clear(&mut self) {
         self.manage.clear();
         self.render_positions.clear();
         self.composition = None;
         self.focus = None;
+        self.chords = None;
         self.manage_dirty = false;
         self.render_dirty = false;
     }

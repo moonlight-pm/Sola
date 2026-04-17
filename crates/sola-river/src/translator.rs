@@ -2,7 +2,7 @@
 //!
 //! Everything here operates on `AppData` directly — this is the only file
 //! in the crate that imports both the bus and wayland sides.
-use sola_bus::topics::{RegisteredChord, Topic};
+use sola_bus::topics::Topic;
 use tracing::info;
 use wayland_client::{Proxy, QueueHandle};
 
@@ -15,25 +15,14 @@ pub fn emit_apps(state: &mut AppData) {
     state.bus.emit_sticky(Topic::Apps(apps));
 }
 
-/// Diff the incoming `RegisteredChords` list against what's currently
-/// registered with River, then `get_xkb_binding`/`enable` the adds and
-/// `disable`/`destroy` the removes.
-pub fn update_registered_chords(state: &mut AppData, new: Vec<RegisteredChord>) {
-    let Some(qh) = state.qh.clone() else {
-        tracing::warn!("update_registered_chords called before QueueHandle ready");
-        return;
-    };
-    let Some(xb) = state.xkb_bindings.clone() else {
-        tracing::warn!("river_xkb_bindings_v1 not yet bound");
-        return;
-    };
-    let Some(river_seat) = state.seat.clone() else {
-        tracing::warn!("river_seat_v1 not yet bound");
-        return;
-    };
+/// Apply a chord-set update from `pending.chords`. MUST be called
+/// during a manage sequence: `xkb_binding_v1.enable` and `disable` are
+/// both manage-sequence requests per River's protocol.
+pub fn apply_pending_chords(state: &mut AppData, new_pairs: Vec<(u32, u32)>) {
+    let Some(qh) = state.qh.clone() else { return };
+    let Some(xb) = state.xkb_bindings.clone() else { return };
+    let Some(river_seat) = state.seat.clone() else { return };
 
-    let new_pairs: Vec<(u32, u32)> =
-        new.iter().map(|c| (c.keysym, c.modifiers)).collect();
     let old_pairs: Vec<(u32, u32)> = state.chords.by_chord.keys().copied().collect();
     let (added, removed) = chord_diff(&old_pairs, &new_pairs);
 

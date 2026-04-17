@@ -128,7 +128,11 @@ pub fn bus_tick(state: &mut AppData) {
                     .set_focus(crate::pending::FocusAction::Window(t.window_id));
             }
             sola_bus::topics::Topic::RegisteredChords(chords) => {
-                crate::translator::update_registered_chords(state, chords);
+                let pairs: Vec<(u32, u32)> = chords
+                    .into_iter()
+                    .map(|c| (c.keysym, c.modifiers))
+                    .collect();
+                state.pending.set_chords(pairs);
             }
             sola_bus::topics::Topic::Shutdown => {
                 info!("shutdown requested via bus");

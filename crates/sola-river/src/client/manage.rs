@@ -41,6 +41,10 @@ pub fn handle_manage_start(state: &mut AppData) {
         }
     }
 
+    if let Some(pairs) = state.pending.chords.take() {
+        crate::translator::apply_pending_chords(state, pairs);
+    }
+
     wm.manage_finish();
     info!(pending_count, "manage_finish sent");
 }
