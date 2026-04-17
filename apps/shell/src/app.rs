@@ -4,8 +4,9 @@ use serde_json::Value;
 use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
-    AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord, MenuDefinition,
-    MenuItem, MouseEnteredPayload, ShellKeyBindingsPayload, Topic, WindowInfo,
+    App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
+    MenuDefinition, MenuItem, MouseClickedPayload, MouseEnteredPayload,
+    RegisteredChord, Topic,
 };
 use sola_core::KeyCode;
 
@@ -33,8 +34,10 @@ pub struct ShellApp {
     pub focused_app_id: Option<String>,
     pub focused_window_id: Option<u32>,
     pub mru_apps: Vec<String>,
-    /// All known windows from the compositor, keyed by window_id.
-    pub known_windows: Vec<WindowInfo>,
+    /// Most-recently-focused window per app, for switcher restore.
+    pub mru_window_by_app: HashMap<String, u32>,
+    /// All known windows from sola-river, keyed by window_id.
+    pub known_windows: Vec<App>,
     /// Maps (app_id, title) to window_id for lookup.
     pub window_id_by_key: HashMap<(String, String), u32>,
     pub applications: ApplicationsConfig,
@@ -108,6 +111,7 @@ impl SolaApp for ShellApp {
             focused_app_id: None,
             focused_window_id: None,
             mru_apps: Vec::new(),
+            mru_window_by_app: HashMap::new(),
             known_windows: Vec::new(),
             window_id_by_key: HashMap::new(),
             applications: ApplicationsConfig::load(),
@@ -124,23 +128,15 @@ impl SolaApp for ShellApp {
             },
         };
 
-        app.emit_shell_key_bindings(ctx);
+        app.emit_registered_chords(ctx);
 
         app
     }
 
-    fn after_runtime_ready(
-        &mut self,
-        runtime: std::rc::Weak<std::cell::RefCell<sola_app::AppRuntime<Self>>>,
-        _ctx: &mut AppCtx,
-    ) {
-        crate::keys::install(self.windows.menubar.clone(), runtime);
-    }
-
     fn on_bus_event(&mut self, topic: &Topic, ctx: &mut AppCtx) {
         match topic {
-            Topic::Windows(windows) => {
-                self.handle_windows_update(windows.clone(), ctx);
+            Topic::Apps(apps) => {
+                self.handle_apps_update(apps.clone(), ctx);
                 if self.switcher.active {
                     let json = self.switcher_apps_json();
                     self.windows.switcher.eval_js(&format!(
@@ -152,7 +148,7 @@ impl SolaApp for ShellApp {
             Topic::SetAppMenu(payload) => {
                 self.menus.set_menu(payload.clone());
 
-                self.emit_shell_key_bindings(ctx);
+                self.emit_registered_chords(ctx);
 
                 if self.focused_app_id.as_deref() == Some(&payload.app_id) {
                     let app_name = payload
@@ -175,30 +171,14 @@ impl SolaApp for ShellApp {
                 self.emit_composition(ctx);
             }
             Topic::MouseEntered(MouseEnteredPayload { window_id }) => {
-                // Look up app_id from the window list.
-                let info = self
-                    .known_windows
-                    .iter()
-                    .find(|w| w.window_id == *window_id);
-                let Some(info) = info else { return };
-
-                // Shell-owned surfaces should not steal app focus.
-                if info.app_id == Self::APP_ID {
-                    return;
-                }
-
-                // Keep menu/switcher interactions stable while overlays are active.
-                if self.menu_open || self.switcher.active || self.launcher.active {
-                    return;
-                }
-
-                let app_id = info.app_id.clone();
-                self.set_focus(&app_id);
-                self.focused_window_id = Some(*window_id);
-                ctx.emit(Topic::Focus(FocusTarget {
-                    window_id: *window_id,
-                }));
-                self.emit_composition(ctx);
+                self.focus_window_from_pointer(*window_id, ctx);
+            }
+            Topic::MouseClicked(MouseClickedPayload { window_id }) => {
+                self.focus_window_from_pointer(*window_id, ctx);
+            }
+            Topic::MouseLeft => {}
+            Topic::Chord(evt) => {
+                crate::keys::handle_chord(self, ctx, evt.clone());
             }
             _ => {}
         }
@@ -292,14 +272,21 @@ impl ShellApp {
         serde_json::to_string(&entries).unwrap_or_default()
     }
 
-    fn emit_shell_key_bindings(&self, ctx: &mut AppCtx) {
-        ctx.emit_sticky(Topic::ShellKeyBindings(ShellKeyBindingsPayload {
-            app_id: Self::APP_ID.into(),
-            bindings: self.shell_key_bindings(),
-        }));
+    fn emit_registered_chords(&self, ctx: &mut AppCtx) {
+        let mut chords: Vec<RegisteredChord> = self
+            .shell_key_chords()
+            .iter()
+            .map(crate::keys::to_registered)
+            .collect();
+        // Ensure Enter and Escape always reach the shell (switcher confirm/cancel).
+        chords.push(crate::keys::to_registered(&KeyCode::ENTER.chord()));
+        chords.push(crate::keys::to_registered(&KeyCode::ESCAPE.chord()));
+        chords.sort_by_key(|c| (c.modifiers, c.keysym));
+        chords.dedup();
+        ctx.emit_sticky(Topic::RegisteredChords(chords));
     }
 
-    fn shell_key_bindings(&self) -> Vec<KeyChord> {
+    fn shell_key_chords(&self) -> Vec<KeyChord> {
         let mut bindings: Vec<KeyChord> = self
             .menus
             .key_bindings()
@@ -307,13 +294,13 @@ impl ShellApp {
             .filter(|b| b.meta)
             .collect();
 
-        // Ensure compositor always routes Meta+Tab for switcher activation.
+        // Meta+Tab activates switcher.
         bindings.push(KeyCode::TAB.meta());
 
-        // Ensure compositor always routes Meta+Space for launcher activation.
+        // Meta+Space toggles launcher.
         bindings.push(KeyCode::SPACE.meta());
 
-        // Ensure compositor routes Meta+Numpad zoning keys.
+        // Meta+Numpad zones a window.
         for &keycode in zoning::ZONING_KEYCODES {
             bindings.push(KeyChord {
                 keycode: keycode.into(),
@@ -321,11 +308,32 @@ impl ShellApp {
             });
         }
 
-        // Keep list de-duplicated and stable.
         bindings.sort_by_key(|b| (b.keycode, b.meta, b.alt, b.ctrl, b.shift));
         bindings.dedup();
 
         bindings
+    }
+
+    fn focus_window_from_pointer(&mut self, window_id: u32, ctx: &mut AppCtx) {
+        let Some(info) = self
+            .known_windows
+            .iter()
+            .find(|w| w.window_id == window_id)
+        else {
+            return;
+        };
+        if info.app_id == Self::APP_ID {
+            return;
+        }
+        if self.menu_open || self.switcher.active || self.launcher.active {
+            return;
+        }
+        let app_id = info.app_id.clone();
+        self.set_focus(&app_id);
+        self.focused_window_id = Some(window_id);
+        self.mru_window_by_app.insert(app_id, window_id);
+        ctx.emit(Topic::Focus(FocusTarget { window_id }));
+        self.emit_composition(ctx);
     }
 
     pub fn set_focus(&mut self, app_id: &str) {
@@ -483,15 +491,15 @@ impl ShellApp {
         }
     }
 
-    /// Handle new/removed windows from the compositor's Windows list.
-    pub fn handle_windows_update(&mut self, windows: Vec<WindowInfo>, ctx: &mut AppCtx) {
+    /// Handle new/removed windows from sola-river's Apps list.
+    pub fn handle_apps_update(&mut self, apps: Vec<App>, ctx: &mut AppCtx) {
         let old_app_ids: HashSet<String> = self
             .known_windows
             .iter()
             .filter(|w| w.app_id != Self::APP_ID)
             .map(|w| w.app_id.clone())
             .collect();
-        let new_app_ids: HashSet<String> = windows
+        let new_app_ids: HashSet<String> = apps
             .iter()
             .filter(|w| w.app_id != Self::APP_ID)
             .map(|w| w.app_id.clone())
@@ -511,12 +519,12 @@ impl ShellApp {
 
         // Rebuild lookup map.
         self.window_id_by_key.clear();
-        for w in &windows {
+        for w in &apps {
             self.window_id_by_key
                 .insert((w.app_id.clone(), w.title.clone()), w.window_id);
         }
 
-        self.known_windows = windows;
+        self.known_windows = apps;
 
         // Rebuild switcher apps (unique app_ids, excluding shell).
         self.switcher.apps = {
@@ -565,6 +573,7 @@ impl ShellApp {
             // Focus the first window of this app.
             if let Some(wid) = self.lookup_any_window_id(id) {
                 self.focused_window_id = Some(wid);
+                self.mru_window_by_app.insert(id.clone(), wid);
                 ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
             }
             self.emit_composition(ctx);

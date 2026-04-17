@@ -1,79 +1,216 @@
-use std::cell::RefCell;
-use std::rc::Weak;
-
-use gtk4::prelude::*;
-use sola_app::{AppRuntime, SolaApp, WindowHandle};
-use sola_bus::topics::{FocusTarget, FrameUpdate, Topic};
+//! Chord-event handling for the shell.
+//!
+//! sola-river registers chords with River's xkb-bindings protocol on our
+//! behalf and emits `Topic::Chord { keysym, modifiers }` when one fires.
+//! This module:
+//!   - Converts a shell-side `KeyChord` into a River `(keysym, modifiers)`
+//!     pair (`to_registered`).
+//!   - Converts the reverse (`from_chord_event`) so the shell can dispatch
+//!     using its existing shortcut-matching logic.
+//!   - Runs the action table (switcher, launcher, zoning, menu shortcuts)
+//!     when a chord fires.
+//!
+//! v1 bus contract has no key-release event — the switcher confirms on a
+//! subsequent chord (Enter) and cancels on Esc.
+use sola_app::SolaApp;
+use sola_bus::topics::{
+    ChordEvent, FocusTarget, FrameUpdate, RegisteredChord, Topic,
+};
 use sola_core::{KeyChord, KeyCode};
 
 use crate::app::ShellApp;
 
-pub fn install(menubar: WindowHandle, runtime: Weak<RefCell<AppRuntime<ShellApp>>>) {
-    let key_ctrl = gtk4::EventControllerKey::new();
-    key_ctrl.set_propagation_phase(gtk4::PropagationPhase::Capture);
+// River modifier bits (from `modifiers` enum in river-window-management-v1.xml).
+const MOD_SHIFT: u32 = 1;
+const MOD_CTRL: u32 = 4;
+const MOD_ALT: u32 = 8; // mod1
+const MOD_SUPER: u32 = 64; // mod4
 
-    key_ctrl.connect_key_pressed({
-        let runtime = runtime.clone();
-        move |_, _keyval, keycode, gtk_modifiers| {
-            // On Linux/Wayland the physical Super key produces SUPER_MASK
-            // (xkb Mod4). META_MASK only fires when an explicit Meta key is
-            // mapped. We treat either as "meta" since Sola's convention is
-            // Meta = Super.
-            let chord = KeyChord {
-                keycode: KeyCode::from(keycode),
-                meta: gtk_modifiers.contains(gdk4::ModifierType::SUPER_MASK)
-                    || gtk_modifiers.contains(gdk4::ModifierType::META_MASK),
-                alt: gtk_modifiers.contains(gdk4::ModifierType::ALT_MASK),
-                ctrl: gtk_modifiers.contains(gdk4::ModifierType::CONTROL_MASK),
-                shift: gtk_modifiers.contains(gdk4::ModifierType::SHIFT_MASK),
-            };
-            tracing::debug!(
-                keycode = chord.keycode.raw(),
-                meta = chord.meta,
-                ctrl = chord.ctrl,
-                alt = chord.alt,
-                shift = chord.shift,
-                "shell key pressed"
-            );
-            let Some(runtime) = runtime.upgrade() else {
-                return glib::Propagation::Proceed;
-            };
-            let mut rt = runtime.borrow_mut();
-            let AppRuntime { app, ctx } = &mut *rt;
-            handle_key_pressed(app, ctx, chord)
-        }
-    });
+// XK_KP_0 .. XK_KP_9 run contiguously starting at 0xFFB0.
+const KEYSYM_KP_0: u32 = 0xFFB0;
 
-    key_ctrl.connect_key_released({
-        let runtime = runtime.clone();
-        move |_, _keyval, keycode, _modifiers| {
-            if keycode != KeyCode::LEFT_META.raw() && keycode != KeyCode::RIGHT_META.raw() {
-                return;
-            }
-            let Some(runtime) = runtime.upgrade() else {
-                return;
-            };
-            let mut rt = runtime.borrow_mut();
-            let AppRuntime { app, ctx } = &mut *rt;
-            handle_meta_released(app, ctx);
-        }
-    });
-
-    menubar.gtk_window().add_controller(key_ctrl);
+pub fn to_registered(chord: &KeyChord) -> RegisteredChord {
+    RegisteredChord {
+        keysym: keycode_to_keysym(chord.keycode),
+        modifiers: river_modifiers(chord),
+    }
 }
 
-fn handle_key_pressed(
+fn river_modifiers(c: &KeyChord) -> u32 {
+    let mut m = 0u32;
+    if c.shift { m |= MOD_SHIFT; }
+    if c.ctrl { m |= MOD_CTRL; }
+    if c.alt { m |= MOD_ALT; }
+    if c.meta { m |= MOD_SUPER; }
+    m
+}
+
+/// Map the shell's evdev-style KeyCode to the xkbcommon keysym River expects.
+fn keycode_to_keysym(k: KeyCode) -> u32 {
+    match k {
+        KeyCode::TAB => 0xFF09,
+        KeyCode::SPACE => 0x20,
+        KeyCode::BACKSPACE => 0xFF08,
+        KeyCode::LEFT => 0xFF51,
+        KeyCode::RIGHT => 0xFF53,
+        KeyCode::ENTER => 0xFF0D,
+        KeyCode::ESCAPE => 0xFF1B,
+        // Zoning uses numpad digits + equal/decimal.
+        KeyCode::KP_0 => KEYSYM_KP_0,
+        KeyCode::KP_2 => KEYSYM_KP_0 + 2,
+        KeyCode::KP_4 => KEYSYM_KP_0 + 4,
+        KeyCode::KP_5 => KEYSYM_KP_0 + 5,
+        KeyCode::KP_6 => KEYSYM_KP_0 + 6,
+        KeyCode::KP_8 => KEYSYM_KP_0 + 8,
+        KeyCode::KP_EQUAL => 0xFFBD,   // XK_KP_Equal
+        KeyCode::KP_DECIMAL => 0xFFAE, // XK_KP_Decimal
+        _ => {
+            if let Some(sym) = letter_keysym(k) {
+                sym
+            } else {
+                // Unknown — pass through so at least sola-river can log.
+                k.raw()
+            }
+        }
+    }
+}
+
+const LETTER_KEYCODES: &[(KeyCode, u8)] = &[
+    (KeyCode::A, b'A'),
+    (KeyCode::B, b'B'),
+    (KeyCode::C, b'C'),
+    (KeyCode::D, b'D'),
+    (KeyCode::E, b'E'),
+    (KeyCode::F, b'F'),
+    (KeyCode::G, b'G'),
+    (KeyCode::H, b'H'),
+    (KeyCode::I, b'I'),
+    (KeyCode::J, b'J'),
+    (KeyCode::K, b'K'),
+    (KeyCode::L, b'L'),
+    (KeyCode::M, b'M'),
+    (KeyCode::N, b'N'),
+    (KeyCode::O, b'O'),
+    (KeyCode::P, b'P'),
+    (KeyCode::Q, b'Q'),
+    (KeyCode::R, b'R'),
+    (KeyCode::S, b'S'),
+    (KeyCode::T, b'T'),
+    (KeyCode::U, b'U'),
+    (KeyCode::V, b'V'),
+    (KeyCode::W, b'W'),
+    (KeyCode::X, b'X'),
+    (KeyCode::Y, b'Y'),
+    (KeyCode::Z, b'Z'),
+];
+
+fn letter_keysym(k: KeyCode) -> Option<u32> {
+    LETTER_KEYCODES
+        .iter()
+        .find(|(code, _)| *code == k)
+        .map(|(_, c)| *c as u32)
+}
+
+/// Inverse of `to_registered`. Returns `None` for keysyms the shell never
+/// registers.
+pub fn from_chord_event(evt: &ChordEvent) -> Option<KeyChord> {
+    let keycode = keysym_to_keycode(evt.keysym)?;
+    Some(KeyChord {
+        keycode,
+        meta: evt.modifiers & MOD_SUPER != 0,
+        alt: evt.modifiers & MOD_ALT != 0,
+        ctrl: evt.modifiers & MOD_CTRL != 0,
+        shift: evt.modifiers & MOD_SHIFT != 0,
+    })
+}
+
+fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
+    match sym {
+        0xFF09 => Some(KeyCode::TAB),
+        0x20 => Some(KeyCode::SPACE),
+        0xFF08 => Some(KeyCode::BACKSPACE),
+        0xFF51 => Some(KeyCode::LEFT),
+        0xFF53 => Some(KeyCode::RIGHT),
+        0xFF0D => Some(KeyCode::ENTER),
+        0xFF1B => Some(KeyCode::ESCAPE),
+        KEYSYM_KP_0 => Some(KeyCode::KP_0),
+        0xFFB2 => Some(KeyCode::KP_2),
+        0xFFB4 => Some(KeyCode::KP_4),
+        0xFFB5 => Some(KeyCode::KP_5),
+        0xFFB6 => Some(KeyCode::KP_6),
+        0xFFB8 => Some(KeyCode::KP_8),
+        0xFFBD => Some(KeyCode::KP_EQUAL),
+        0xFFAE => Some(KeyCode::KP_DECIMAL),
+        0x41..=0x5A => LETTER_KEYCODES
+            .iter()
+            .find(|(_, c)| *c as u32 == sym)
+            .map(|(code, _)| *code),
+        _ => None,
+    }
+}
+
+/// Dispatch a chord event through the shell's action table.
+pub fn handle_chord(
     app: &mut ShellApp,
     ctx: &mut sola_app::AppCtx,
-    chord: KeyChord,
-) -> glib::Propagation {
-    // Shell system shortcuts (highest priority).
+    evt: ChordEvent,
+) {
+    let Some(chord) = from_chord_event(&evt) else {
+        tracing::debug!(
+            keysym = evt.keysym,
+            modifiers = evt.modifiers,
+            "unrecognized chord"
+        );
+        return;
+    };
+
+    tracing::debug!(
+        keycode = chord.keycode.raw(),
+        meta = chord.meta,
+        ctrl = chord.ctrl,
+        alt = chord.alt,
+        shift = chord.shift,
+        "chord fired"
+    );
+
+    // Switcher active: Enter confirms, Esc cancels, Tab/arrows navigate.
+    if app.switcher.active {
+        match chord.keycode {
+            KeyCode::ENTER => {
+                confirm_switcher(app, ctx);
+                return;
+            }
+            KeyCode::ESCAPE => {
+                cancel_switcher(app, ctx);
+                return;
+            }
+            code if code == KeyCode::TAB || code == KeyCode::RIGHT => {
+                app.switcher.select_next();
+                let sel = app.switcher.selected;
+                app.windows
+                    .switcher
+                    .eval_js(&format!("setSelection({sel})"));
+                return;
+            }
+            KeyCode::LEFT => {
+                app.switcher.select_prev();
+                let sel = app.switcher.selected;
+                app.windows
+                    .switcher
+                    .eval_js(&format!("setSelection({sel})"));
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    // Shell system shortcuts (e.g. Exit Sola).
     if let Some(action) = app.menus.lookup_shortcut(&chord, ShellApp::APP_ID) {
         tracing::info!(action_id = %action.action_id, "shell shortcut");
         if action.action_id == "exit" {
             ctx.emit(Topic::Shutdown);
         }
-        return glib::Propagation::Stop;
+        return;
     }
 
     // Meta+Space: toggle launcher.
@@ -83,11 +220,11 @@ fn handle_key_pressed(
         } else {
             app.open_launcher(ctx);
         }
-        return glib::Propagation::Stop;
+        return;
     }
 
-    // Meta+Tab: activate switcher. Close launcher first if open.
-    if chord.keycode == KeyCode::TAB && !app.switcher.active {
+    // Meta+Tab: activate switcher.
+    if chord.meta && chord.keycode == KeyCode::TAB {
         if app.launcher.active {
             app.close_launcher(ctx);
         }
@@ -114,36 +251,13 @@ fn handle_key_pressed(
             }));
         }
         app.emit_composition(ctx);
-        return glib::Propagation::Stop;
-    }
-
-    // Switcher navigation.
-    if app.switcher.active {
-        match chord.keycode {
-            code if code == KeyCode::TAB || code == KeyCode::RIGHT => {
-                app.switcher.select_next();
-                let sel = app.switcher.selected;
-                app.windows
-                    .switcher
-                    .eval_js(&format!("setSelection({sel})"));
-                return glib::Propagation::Stop;
-            }
-            code if code == KeyCode::LEFT => {
-                app.switcher.select_prev();
-                let sel = app.switcher.selected;
-                app.windows
-                    .switcher
-                    .eval_js(&format!("setSelection({sel})"));
-                return glib::Propagation::Stop;
-            }
-            _ => {}
-        }
+        return;
     }
 
     // Zone snapping (Meta+Numpad).
     if let Some(frame) = app.zoning.handle_key(chord.keycode.raw(), app.focused_window_id) {
         ctx.emit(Topic::Frame(frame));
-        return glib::Propagation::Stop;
+        return;
     }
 
     // Focused app menu shortcut lookup.
@@ -155,31 +269,33 @@ fn handle_key_pressed(
                 "menu shortcut matched"
             );
             ctx.emit(Topic::MenuAction(action));
-            return glib::Propagation::Stop;
         }
     }
-
-    glib::Propagation::Proceed
 }
 
-fn handle_meta_released(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
-    if !app.switcher.active {
-        return;
-    }
-
+fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
     let app_id = app.switcher.selected_app_id().map(String::from);
-    tracing::info!(app_id = ?app_id, "deactivating switcher");
-
+    tracing::info!(app_id = ?app_id, "confirming switcher");
     app.switcher.active = false;
     app.windows.switcher.eval_js("clear()");
-
     if let Some(ref app_id) = app_id {
         app.set_focus(app_id);
-        // Focus the first window of this app.
-        if let Some(wid) = app.lookup_any_window_id(app_id) {
+        let wid = app
+            .mru_window_by_app
+            .get(app_id)
+            .copied()
+            .or_else(|| app.lookup_any_window_id(app_id));
+        if let Some(wid) = wid {
             app.focused_window_id = Some(wid);
             ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
         }
     }
+    app.emit_composition(ctx);
+}
+
+fn cancel_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
+    tracing::info!("cancelling switcher");
+    app.switcher.active = false;
+    app.windows.switcher.eval_js("clear()");
     app.emit_composition(ctx);
 }

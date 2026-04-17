@@ -5,7 +5,7 @@ use gtk4::prelude::*;
 use webkit6::prelude::*;
 
 use sola_bus::BusClient;
-use sola_bus::topics::{Topic, WindowPolicy, WindowPolicyPayload};
+use sola_bus::topics::Topic;
 
 use crate::assets;
 use crate::webview;
@@ -17,20 +17,17 @@ pub struct AppCtx {
     pub(crate) bus: Rc<RefCell<BusClient>>,
     pub(crate) gtk_app: gtk4::Application,
     pub(crate) windows: Vec<WindowHandle>,
-    pub(crate) app_id: &'static str,
 }
 
 impl AppCtx {
     pub(crate) fn new(
         bus: Rc<RefCell<BusClient>>,
         gtk_app: gtk4::Application,
-        app_id: &'static str,
     ) -> Self {
         Self {
             bus,
             gtk_app,
             windows: Vec::new(),
-            app_id,
         }
     }
 
@@ -92,10 +89,6 @@ impl AppCtx {
             webview,
             gtk_window: gtk_window.clone(),
             dispatcher: dispatcher_slot,
-            zoned: cfg.zoned,
-            keyboard_target: cfg.keyboard_target,
-            size: cfg.size,
-            position: cfg.position,
         };
 
         gtk_window.present();
@@ -123,29 +116,4 @@ impl AppCtx {
         let _ = self.bus.borrow_mut().emit_sticky(topic);
     }
 
-    /// Build a `SetWindowPolicy` sticky from the windows collected during
-    /// `A::new` and emit it. Called once by `run::<A>()`.
-    pub(crate) fn emit_window_policy(&self) {
-        let windows: Vec<WindowPolicy> = self
-            .windows
-            .iter()
-            .map(|h| WindowPolicy {
-                title: h.inner.title.clone(),
-                zoned: h.inner.zoned,
-                keyboard_target: h.inner.keyboard_target,
-                // Zoned windows are sized by the compositor's zone system,
-                // so skip the hint to match the pre-migration behavior.
-                size: if h.inner.zoned {
-                    None
-                } else {
-                    Some(h.inner.size)
-                },
-                position: h.inner.position,
-            })
-            .collect();
-        self.emit_sticky(Topic::SetWindowPolicy(WindowPolicyPayload {
-            app_id: self.app_id.to_string(),
-            windows,
-        }));
-    }
 }

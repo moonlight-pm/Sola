@@ -30,8 +30,9 @@ pub trait SolaApp: 'static {
     const APP_ID: &'static str;
 
     /// Construct the app. This is where windows are created via
-    /// `ctx.add_window`; they get auto-declared to the compositor via
-    /// `SetWindowPolicy` after `new` returns.
+    /// `ctx.add_window`. sola-river does not receive any policy
+    /// declarations from apps — the shell drives all window geometry,
+    /// focus, and z-order via Frame/Focus/Composition topics.
     fn new(ctx: &mut AppCtx) -> Self
     where
         Self: Sized;
@@ -158,11 +159,8 @@ pub fn run<A: SolaApp>() {
         }
 
         // --- Build AppCtx, run A::new ---
-        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone(), app_id);
+        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone());
         let app = A::new(&mut ctx);
-
-        // --- Auto-emit WindowPolicy for all windows created in new() ---
-        ctx.emit_window_policy();
 
         // --- Wrap runtime ---
         let runtime = Rc::new(RefCell::new(AppRuntime { app, ctx }));

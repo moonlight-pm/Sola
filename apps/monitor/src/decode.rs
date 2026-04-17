@@ -48,17 +48,19 @@ fn decode_payload(msg: &Message) -> (Value, Value) {
 /// Convert a parsed Topic's payload into a JSON value.
 fn topic_to_json(topic: &Topic) -> Value {
     match topic {
-        Topic::Windows(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::Apps(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::LaunchApp(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Composition(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Frame(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Focus(v) => serde_json::to_value(v).unwrap_or_default(),
-        Topic::SetWindowPolicy(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::OutputGeometry(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::MouseEntered(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::MouseLeft => Value::Null,
+        Topic::MouseClicked(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::RegisteredChords(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::Chord(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::SetAppMenu(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::MenuAction(v) => serde_json::to_value(v).unwrap_or_default(),
-        Topic::ShellKeyBindings(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::OpenUrl(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Shutdown => Value::Null,
     }
