@@ -1,8 +1,9 @@
 //! Spawn /usr/bin/river as a child and own its lifecycle.
 //!
-//! `sola-river` cannot do useful work without River. This module encapsulates
-//! that dependency: spawn River with stdio captured to a dedicated log file,
-//! block until its `wayland-0` socket appears, and surface process exit.
+//! River is the wayland compositor every sola wayland client depends on.
+//! This module encapsulates that dependency: spawn River with stdio captured
+//! to a dedicated log file, block until its `wayland-N` socket appears,
+//! publish the socket name and XWayland DISPLAY, and surface process exit.
 use std::collections::HashSet;
 use std::io;
 use std::os::unix::process::CommandExt;
@@ -15,20 +16,17 @@ use tracing::{error, info, warn};
 pub struct RiverSupervisor {
     child: Child,
     runtime_dir: PathBuf,
-    /// Populated after `wait_for_socket` succeeds. Path of whichever
-    /// `wayland-N` socket River actually opened (not necessarily wayland-0).
-    socket_path: Option<PathBuf>,
     /// `/tmp/.X11-unix/X*` entries observed before spawning River.
     /// Anything new that appears afterward is attributed to XWayland.
     pre_x_sockets: HashSet<String>,
 }
 
-/// Filename (inside XDG_RUNTIME_DIR) where sola-river publishes the name
-/// of the live wayland socket so other sola components don't have to
-/// guess. Contents are just the socket name, e.g. `wayland-1`.
+/// Filename (inside XDG_RUNTIME_DIR) where sola publishes the name of
+/// the live wayland socket so sola components don't have to guess.
+/// Contents are just the socket name, e.g. `wayland-1`.
 pub const SOLA_WAYLAND_NAME_FILE: &str = "sola-wayland";
 
-/// Filename (inside XDG_RUNTIME_DIR) where sola-river publishes the X11
+/// Filename (inside XDG_RUNTIME_DIR) where sola publishes the X11
 /// DISPLAY that River's XWayland is serving. Contents look like `:0`.
 /// File is absent when XWayland isn't active.
 pub const SOLA_DISPLAY_NAME_FILE: &str = "sola-display";
@@ -234,7 +232,6 @@ impl RiverSupervisor {
         Ok(Self {
             child,
             runtime_dir,
-            socket_path: None,
             pre_x_sockets,
         })
     }
@@ -289,7 +286,6 @@ impl RiverSupervisor {
             if let Some(name) = find_live_wayland_socket(&self.runtime_dir) {
                 let path = self.runtime_dir.join(&name);
                 info!(path = %path.display(), "river socket is live");
-                self.socket_path = Some(path);
                 publish_socket_name(&self.runtime_dir, &name)?;
                 return Ok(name);
             }
@@ -302,10 +298,6 @@ impl RiverSupervisor {
             std::thread::sleep(delay);
             delay = std::cmp::min(delay * 2, cap);
         }
-    }
-
-    pub fn pid(&self) -> u32 {
-        self.child.id()
     }
 
     pub fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
@@ -337,7 +329,4 @@ impl RiverSupervisor {
         }
     }
 
-    pub fn socket_path(&self) -> Option<&Path> {
-        self.socket_path.as_deref()
-    }
 }

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::exit;
 use std::time::Duration;
 
@@ -8,38 +8,28 @@ use tracing::{error, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use sola_river::{bus, client, supervisor};
+use sola_river::{bus, client};
+
+/// Filename (inside XDG_RUNTIME_DIR) where sola publishes the name of
+/// the live wayland socket. Written by sola once it has spawned River
+/// and confirmed the socket is accepting connections.
+const SOLA_WAYLAND_NAME_FILE: &str = "sola-wayland";
 
 fn main() {
     init_tracing();
     info!("sola-river starting");
 
-    let mut sup = match supervisor::RiverSupervisor::spawn(Path::new("/opt/sola/log/river.log"))
-    {
-        Ok(s) => s,
-        Err(e) => {
-            error!(%e, "failed to spawn river");
+    let socket_name = match read_wayland_socket_name() {
+        Some(n) => n,
+        None => {
+            error!(
+                file = SOLA_WAYLAND_NAME_FILE,
+                "wayland socket name file not populated; is sola running?"
+            );
             exit(1);
         }
     };
 
-    let socket_name = match sup.wait_for_socket() {
-        Ok(n) => n,
-        Err(e) => {
-            error!(%e, "river socket never appeared");
-            sup.shutdown();
-            exit(1);
-        }
-    };
-
-    // River starts XWayland asynchronously after the wayland socket is
-    // live. Poll briefly for the X socket so sola-spawned X apps can pick
-    // up DISPLAY. Absent XWayland → silent no-op.
-    sup.wait_for_xwayland(std::time::Duration::from_secs(3));
-
-    // Point our own wayland-client at whatever socket River actually
-    // opened. The `sola-wayland` file published by `wait_for_socket` is
-    // what our sibling sola processes read.
     // SAFETY: no other threads in sola-river yet — single-threaded main.
     unsafe {
         std::env::set_var("WAYLAND_DISPLAY", &socket_name);
@@ -52,26 +42,9 @@ fn main() {
         Ok(x) => x,
         Err(e) => {
             error!(%e, "wayland connect failed");
-            sup.shutdown();
             exit(1);
         }
     };
-
-    // Background thread polls supervisor for child exit. calloop signalfd
-    // would be cleaner, but a 500ms poll is plenty for exit detection.
-    let river_pid = sup.pid();
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(Duration::from_millis(500));
-            // Send signal 0 to probe existence.
-            // SAFETY: kill(pid, 0) is async-signal-safe and side-effect-free.
-            let alive = unsafe { libc::kill(river_pid as i32, 0) } == 0;
-            if !alive {
-                error!(pid = river_pid, "river process is gone; sola-river exiting");
-                std::process::exit(1);
-            }
-        }
-    });
 
     let mut event_loop: EventLoop<client::AppData> =
         EventLoop::try_new().expect("calloop event loop");
@@ -98,8 +71,21 @@ fn main() {
     if let Err(e) = event_loop.run(Duration::from_millis(500), &mut data, |_| {}) {
         error!(%e, "event loop exited with error");
     }
+}
 
-    sup.shutdown();
+/// Read the wayland socket name sola published to
+/// `$XDG_RUNTIME_DIR/sola-wayland`. Returns the trimmed contents or None
+/// if the file is missing or empty.
+fn read_wayland_socket_name() -> Option<String> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
+    let path = PathBuf::from(runtime_dir).join(SOLA_WAYLAND_NAME_FILE);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let name = raw.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }
 
 fn init_tracing() {

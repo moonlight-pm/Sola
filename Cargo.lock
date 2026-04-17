@@ -1969,7 +1969,6 @@ dependencies = [
  "bitflags 2.11.0",
  "calloop",
  "calloop-wayland-source",
- "libc",
  "sola-bus",
  "sola-core",
  "thiserror",

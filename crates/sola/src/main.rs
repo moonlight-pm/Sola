@@ -1,7 +1,9 @@
+mod river;
 mod watcher;
 
 use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::mpsc;
 use std::thread;
@@ -56,6 +58,28 @@ fn main() {
     all_watched.extend_from_slice(MANAGED);
     let (change_tx, change_rx) = mpsc::channel();
     watcher::watch_binaries(&bin_dir, &all_watched, change_tx);
+
+    // Spawn River first and wait for its wayland socket. Every other
+    // managed process is a wayland client that depends on it; without
+    // this synchronous wait they'd flap through the backoff path until
+    // the socket came up.
+    let mut river_sup = match river::RiverSupervisor::spawn(Path::new("/opt/sola/log/river.log"))
+    {
+        Ok(s) => s,
+        Err(e) => {
+            error!(%e, "failed to spawn river");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = river_sup.wait_for_socket() {
+        error!(%e, "river socket never appeared");
+        river_sup.shutdown();
+        std::process::exit(1);
+    }
+    // River starts XWayland asynchronously after the wayland socket is
+    // live. Poll briefly for the X socket so sola-spawned X apps can
+    // pick up DISPLAY. Absent XWayland → silent no-op.
+    river_sup.wait_for_xwayland(Duration::from_secs(3));
 
     // Launch managed processes
     let mut managed: HashMap<&str, ManagedProcess> = HashMap::new();
@@ -128,6 +152,7 @@ fn main() {
                 Topic::Shutdown => {
                     info!("shutdown requested via bus");
                     shutdown_all(&mut managed);
+                    river_sup.shutdown();
                     std::process::exit(0);
                 }
                 Topic::LaunchApp(command) => {
@@ -135,6 +160,16 @@ fn main() {
                 }
                 _ => {}
             }
+        }
+
+        // Every wayland client (sola-river, sola-shell, sola-terminal,
+        // user apps) depends on River. If River dies, restarting any
+        // individual client won't help — they need a fresh compositor.
+        // Tear the whole session down and let the user re-launch sola.
+        if let Ok(Some(status)) = river_sup.try_wait() {
+            error!(?status, "river exited; shutting down sola");
+            shutdown_all(&mut managed);
+            std::process::exit(1);
         }
 
         reap_user_apps(&mut user_apps);
