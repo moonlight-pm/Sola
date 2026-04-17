@@ -620,7 +620,7 @@ function deleteSession(id: string): void {
   unpinSession(id);
   state.sessions = state.sessions.filter((x: Session) => x.id !== id);
   if (state.activeId === id) {
-    state.activeId = state.sessions.length ? state.sessions[0].id : null;
+    state.activeId = null;
     saveUi();
   }
   invoke('delete_session', { session_id: id });
