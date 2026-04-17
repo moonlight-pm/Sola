@@ -70,12 +70,17 @@ impl RiverSupervisor {
         let log_err = log.try_clone()?;
 
         let mut cmd = Command::new("/usr/bin/river");
-        cmd.args(["-log-level", "info"])
+        // `-c :` runs the shell no-op as River's init, skipping its hunt
+        // for ~/.config/river/init — we drive the session from outside.
+        cmd.args(["-log-level", "info", "-c", ":"])
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
-        // Don't let a WAYLAND_DISPLAY inherited from our parent trick River
-        // into nested-client mode — we're the session compositor.
+        // wlroots picks its backend by env: WAYLAND_DISPLAY → nested wayland,
+        // DISPLAY → X11 (both failed on canto from a bare TTY), otherwise
+        // drm + libinput (what we actually want). Strip both so River falls
+        // through to the DRM backend.
         cmd.env_remove("WAYLAND_DISPLAY");
+        cmd.env_remove("DISPLAY");
         // SAFETY: `child_setup` only invokes async-signal-safe libc calls.
         unsafe {
             cmd.pre_exec(child_setup);
