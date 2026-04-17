@@ -388,11 +388,15 @@ fn resolve_wayland_socket() -> Option<String> {
     read_runtime_name("sola-wayland")
 }
 
-/// Read the X11 display that sola-river's XWayland is serving (e.g. `:0`)
-/// from `$XDG_RUNTIME_DIR/sola-display`. Returns `None` if XWayland isn't
-/// active or the file hasn't been written yet.
+/// Resolve the X11 display user apps should target. Prefers the value
+/// sola-river published to `$XDG_RUNTIME_DIR/sola-display`; if absent
+/// (XWayland started lazily or our startup probe missed it), falls back
+/// to a live probe of `/tmp/.X11-unix/X*` at the time of the call.
 fn resolve_x_display() -> Option<String> {
-    read_runtime_name("sola-display")
+    if let Some(name) = read_runtime_name("sola-display") {
+        return Some(name);
+    }
+    river::probe_live_x_display()
 }
 
 fn read_runtime_name(file: &str) -> Option<String> {
