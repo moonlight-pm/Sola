@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{fs, io};
@@ -10,8 +11,15 @@ use sola_bus::transport;
 
 type ClientId = u64;
 
+/// Per-client outbound queue depth. Large enough to absorb the back-to-back
+/// bursts the shell emits (LaunchApp + RegisteredChords + Composition +
+/// Focus) while still bounding memory if a client goes permanently silent.
+const CLIENT_QUEUE_DEPTH: usize = 256;
+
 struct BusState {
-    clients: HashMap<ClientId, UnixStream>,
+    /// Per-client outbound queue. Writers are owned by dedicated writer
+    /// threads; broadcasters just try_send here and move on.
+    clients: HashMap<ClientId, mpsc::SyncSender<sola_bus::Message>>,
     /// Latest sticky message per (topic, tag), replayed to newly connected clients.
     /// Multiple apps can have independent stickies on the same topic.
     sticky: HashMap<(String, String), sola_bus::Message>,
@@ -62,7 +70,7 @@ fn main() {
                 let id = next_id;
                 next_id += 1;
 
-                let writer = match stream.try_clone() {
+                let writer_stream = match stream.try_clone() {
                     Ok(s) => s,
                     Err(e) => {
                         error!(client = id, "failed to clone stream: {e}");
@@ -70,20 +78,26 @@ fn main() {
                     }
                 };
 
-                // Short write timeout prevents a slow client from
-                // deadlocking the bus. Reads are unaffected (the reader
-                // fd has no timeout set). We can't use set_nonblocking
-                // because dup'd fds share the same file description —
-                // it would make the reader non-blocking too.
-                writer
-                    .set_write_timeout(Some(std::time::Duration::from_millis(5)))
-                    .ok();
+                let (tx, rx) = mpsc::sync_channel::<sola_bus::Message>(CLIENT_QUEUE_DEPTH);
+
+                // Writer thread: blocking writes to this client. Owned
+                // exclusively here so no other thread can stall on this
+                // fd. Reader and broadcasters only interact via `tx`.
+                thread::spawn(move || {
+                    writer_loop(id, writer_stream, rx);
+                });
 
                 let mut bus = state.lock().unwrap();
 
-                replay_sticky(id, &mut bus, &writer);
+                // Replay sticky messages through the queue so they
+                // preserve the connect-time ordering.
+                for msg in bus.sticky.values() {
+                    if tx.try_send(msg.clone()).is_err() {
+                        warn!(client = id, "sticky replay queue full");
+                    }
+                }
 
-                bus.clients.insert(id, writer);
+                bus.clients.insert(id, tx);
                 info!(client = id, "connected");
                 drop(bus);
 
@@ -99,21 +113,25 @@ fn main() {
     }
 }
 
-/// Send all sticky messages to a newly connected client.
-fn replay_sticky(id: ClientId, bus: &mut BusState, writer: &UnixStream) {
-    let mut writer = match writer.try_clone() {
-        Ok(w) => w,
-        Err(e) => {
-            warn!(client = id, "failed to clone writer for sticky replay: {e}");
-            return;
-        }
-    };
-
-    for ((topic, tag), msg) in &bus.sticky {
-        if let Err(e) = transport::write_event(&mut writer, msg) {
-            warn!(client = id, topic = %topic, tag = %tag, "failed to replay sticky message: {e}");
-        } else {
-            tracing::debug!(client = id, topic = %topic, tag = %tag, "replayed sticky message");
+/// Drain the per-client queue and write each message to the socket with
+/// blocking I/O. Exits when `rx` is closed (all senders dropped) or when
+/// a write fails.
+fn writer_loop(
+    id: ClientId,
+    mut stream: UnixStream,
+    rx: mpsc::Receiver<sola_bus::Message>,
+) {
+    while let Ok(msg) = rx.recv() {
+        if let Err(e) = transport::write_event(&mut stream, &msg) {
+            match e.kind() {
+                io::ErrorKind::BrokenPipe
+                | io::ErrorKind::ConnectionReset
+                | io::ErrorKind::UnexpectedEof => {
+                    // Client already gone. Reader thread will clean up.
+                }
+                _ => warn!(client = id, "writer error: {e}"),
+            }
+            break;
         }
     }
 }
@@ -148,6 +166,8 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
         }
     }
 
+    // Dropping the sender causes the writer thread to exit on its next
+    // recv().
     state.lock().unwrap().clients.remove(&id);
 }
 
@@ -183,31 +203,22 @@ fn log_bus_message(client: ClientId, event: &sola_bus::Message) {
 }
 
 fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
-    let mut dead: Vec<ClientId> = Vec::new();
-
-    for (&id, stream) in bus.clients.iter_mut() {
+    for (&id, tx) in bus.clients.iter() {
         if id == sender {
             continue;
         }
-        match transport::write_event(stream, event) {
+        match tx.try_send(event.clone()) {
             Ok(()) => {}
-            Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock
-                    || e.kind() == io::ErrorKind::TimedOut =>
-            {
-                // Client is slow — drop the message rather than blocking
-                // the entire bus. Sticky messages will be replayed on the
-                // next successful write or reconnect.
-                tracing::debug!(client = id, topic = %event.topic, "dropped (client busy)");
+            Err(mpsc::TrySendError::Full(_)) => {
+                // Queue full — client is backed up. Drop to keep the bus
+                // responsive; sticky topics will reconverge on the next
+                // successful delivery or on reconnect.
+                warn!(client = id, topic = %event.topic, "dropped (queue full)");
             }
-            Err(e) => {
-                warn!(client = id, "write error: {e}");
-                dead.push(id);
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                // Writer thread exited; next handle_client cleanup will
+                // remove this entry. Nothing more to do here.
             }
         }
-    }
-
-    for id in dead {
-        bus.clients.remove(&id);
     }
 }
