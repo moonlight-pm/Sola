@@ -1,6 +1,10 @@
 import { reactive, html } from '@arrow-js/core';
 import { invoke, on } from '@sola/ipc';
 import { persist, save } from '@sola/store';
+import { marked } from 'marked';
+
+// Configure marked for inline rendering (no wrapping <p> for single lines).
+marked.setOptions({ breaks: true, gfm: true });
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -318,6 +322,7 @@ on('session_loaded', (ev: any) => {
   session.messages = msgs;
   setActive(ev.session_id);
   focusInput();
+  requestAnimationFrame(flushMd);
 });
 
 on('message_start', (ev: any) => {
@@ -349,6 +354,7 @@ on('message_delta', (ev: any) => {
   } else {
     last.blocks = [...b, { kind: 'text' as const, text: delta }];
   }
+  flushMd();
 });
 
 on('message_end', (ev: any) => {
@@ -358,6 +364,7 @@ on('message_end', (ev: any) => {
   if (!last) return;
   last.streaming = false;
   if (ev.cancelled) last.cancelled = true;
+  flushMd();
 });
 
 on('tool_start', (ev: any) => {
@@ -897,9 +904,36 @@ function toolTemplate(tool: ToolCall) {
   return html`<div class="${() => 'tool-call' + (tool.expanded ? ' expanded' : '')}"><div class="tool-hdr" @click="${() => { tool.expanded = !tool.expanded; }}"><span class="${() => 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '')}"></span><span class="tname">${tool.name}</span><span class="${() => 'tstatus' + (tool.output === null ? '' : tool.isError ? ' error' : ' done')}">${() => tool.output === null ? 'running…' : tool.isError ? 'error' : 'done'}</span></div><div class="${() => 'tool-body' + (tool.expanded ? ' open' : '')}"><div class="tool-label">Input</div><pre>${() => truncate(tool.input, 2000)}</pre>${() => tool.output !== null ? html`<div class="tool-label">Output</div><pre class="${tool.isError ? 'terr' : ''}">${truncate(tool.output, 2000)}</pre>` : html``}</div></div>`.key(tool.id);
 }
 
+const mdSources = new Map<string, () => string>();
+const mdBlockIds = new WeakMap<object, string>();
+let mdIdCounter = 0;
+
+function getMdId(block: object, getText: () => string): string {
+  let id = mdBlockIds.get(block);
+  if (!id) {
+    id = `md${mdIdCounter++}`;
+    mdBlockIds.set(block, id);
+  }
+  mdSources.set(id, getText);
+  return id;
+}
+
+function flushMd(): void {
+  for (const [id, getText] of mdSources) {
+    const el = document.querySelector(`[data-md-id="${id}"]`) as HTMLElement | null;
+    if (!el) { mdSources.delete(id); continue; }
+    const text = getText();
+    if (el.dataset.mdLast === text) continue;
+    el.dataset.mdLast = text;
+    
+    el.innerHTML = marked.parse(text) as string;
+  }
+}
+
 function blockTemplate(block: ContentBlock) {
   if (block.kind === 'text') {
-    return html`<span class="text-block">${() => block.text}</span>`.key('t' + block.text.slice(0, 8));
+    const id = getMdId(block, () => block.text);
+    return html`<div class="md-block" data-md-id="${id}"></div>`.key(id);
   }
   return toolTemplate(block.tool);
 }
@@ -911,11 +945,12 @@ function messageTemplate(msg: Message, idx: number) {
   if (msg.role === 'error') {
     return html`<div class="msg error-msg">${() => msg.content}</div>`.key(`e${idx}`);
   }
-  // Assistant: render interleaved text + tool blocks in order.
-  // For loaded messages (no blocks), fall back to content string.
   return html`<div class="msg assistant">${() => {
     if (msg.blocks.length) return msg.blocks.map(blockTemplate);
-    if (msg.content) return [html`<span class="text-block">${msg.content}</span>`.key('loaded')];
+    if (msg.content) {
+      const id = getMdId(msg, () => msg.content);
+      return [html`<div class="md-block" data-md-id="${id}"></div>`.key(id)];
+    }
     return [];
   }}${() => msg.streaming
     ? html`<span class="cursor"></span>`

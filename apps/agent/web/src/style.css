@@ -529,7 +529,91 @@ html, body {
 
 .tool-body .terr { color: var(--red); }
 
-.text-block { white-space: pre-wrap; }
+/* ── Markdown Rendering ─────────────────────────────────────────────────── */
+.md-block {
+  white-space: normal;
+  line-height: 1.5;
+}
+
+.md-block p { margin: 0.3em 0; }
+.md-block p:first-child { margin-top: 0; }
+.md-block p:last-child { margin-bottom: 0; }
+
+.md-block h1, .md-block h2, .md-block h3, .md-block h4 {
+  color: var(--text-primary);
+  margin: 0.6em 0 0.3em;
+  font-family: var(--font-mono);
+}
+.md-block h1 { font-size: 15px; }
+.md-block h2 { font-size: 14px; }
+.md-block h3 { font-size: 13px; }
+.md-block h4 { font-size: 12px; color: var(--text-secondary); }
+
+.md-block code {
+  background: var(--bg-primary);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--cyan);
+}
+
+.md-block pre {
+  background: var(--bg-primary);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 0.4em 0;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.md-block pre code {
+  background: none;
+  padding: 0;
+  color: var(--text-secondary);
+}
+
+.md-block ul, .md-block ol {
+  margin: 0.3em 0;
+  padding-left: 1.4em;
+}
+
+.md-block li { margin: 0.15em 0; }
+
+.md-block strong { color: var(--text-primary); }
+
+.md-block table {
+  border-collapse: collapse;
+  margin: 0.4em 0;
+  font-size: 12px;
+}
+
+.md-block th, .md-block td {
+  border: 1px solid var(--border-subtle);
+  padding: 3px 8px;
+}
+
+.md-block th {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.md-block blockquote {
+  border-left: 2px solid var(--border-medium);
+  margin: 0.3em 0;
+  padding-left: 10px;
+  color: var(--text-muted);
+}
+
+.md-block hr {
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  margin: 0.5em 0;
+}
+
+.md-block a { color: var(--cyan); text-decoration: none; }
+.md-block a:hover { text-decoration: underline; }
 
 /* ── Streaming Cursor ───────────────────────────────────────────────────── */
 .cursor {

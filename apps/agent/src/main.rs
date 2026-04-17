@@ -15,6 +15,7 @@ static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
     "/src/main.ts" => (include_str!("../web/src/main.ts"), TypeScript),
     "/src/style.css" => (include_str!("../web/src/style.css"), Css),
+    "/vendor/marked.mjs" => (include_str!("../web/vendor/marked.mjs"), JavaScript),
 };
 
 struct AgentApp {
