@@ -1,0 +1,282 @@
+//! Spawn /usr/bin/river as a child and own its lifecycle.
+//!
+//! `sola-river` cannot do useful work without River. This module encapsulates
+//! that dependency: spawn River with stdio captured to a dedicated log file,
+//! block until its `wayland-0` socket appears, and surface process exit.
+use std::io;
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use tracing::{error, info, warn};
+
+pub struct RiverSupervisor {
+    child: Child,
+    runtime_dir: PathBuf,
+    /// Populated after `wait_for_socket` succeeds. Path of whichever
+    /// `wayland-N` socket River actually opened (not necessarily wayland-0).
+    socket_path: Option<PathBuf>,
+}
+
+/// Filename (inside XDG_RUNTIME_DIR) where sola-river publishes the name
+/// of the live wayland socket so other sola components don't have to
+/// guess. Contents are just the socket name, e.g. `wayland-1`.
+pub const SOLA_WAYLAND_NAME_FILE: &str = "sola-wayland";
+
+// Closure runs post-fork in the River child: inherit SIGTERM on parent
+// death, put River in its own process group.
+fn child_setup() -> io::Result<()> {
+    // SAFETY: libc calls in a post-fork child; must be async-signal-safe.
+    unsafe {
+        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+        libc::setsid();
+    }
+    Ok(())
+}
+
+/// SIGKILL any `/usr/bin/river` process running as our uid, then wait
+/// up to 1s for them all to reap — the kernel doesn't immediately
+/// release flock/bind when a signal is sent, it happens after the
+/// process actually exits.
+fn kill_orphan_rivers() {
+    let pids = find_river_pids();
+    if pids.is_empty() {
+        return;
+    }
+    for &pid in &pids {
+        warn!(pid, "killing orphan river");
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < deadline {
+        if find_river_pids().is_empty() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    warn!(remaining = ?find_river_pids(), "river processes still alive after kill");
+}
+
+fn find_river_pids() -> Vec<i32> {
+    let Ok(proc) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let our_uid = unsafe { libc::getuid() };
+    let mut pids = Vec::new();
+    for entry in proc.flatten() {
+        let Some(name) = entry.file_name().to_str().map(String::from) else {
+            continue;
+        };
+        let Ok(pid) = name.parse::<i32>() else { continue };
+        let Ok(target) = std::fs::read_link(entry.path().join("exe")) else {
+            continue;
+        };
+        if target != Path::new("/usr/bin/river") {
+            continue;
+        }
+        let Ok(status) = std::fs::read_to_string(entry.path().join("status")) else {
+            continue;
+        };
+        let owned = status
+            .lines()
+            .find_map(|l| l.strip_prefix("Uid:"))
+            .and_then(|l| l.split_whitespace().next())
+            .and_then(|s| s.parse::<u32>().ok())
+            == Some(our_uid);
+        if owned {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+/// Find the first `wayland-N` (N != 'x*') socket in `runtime_dir` that
+/// accepts a connection. Returns the socket *name* (e.g. `"wayland-1"`),
+/// not the full path.
+fn find_live_wayland_socket(runtime_dir: &Path) -> Option<String> {
+    let dir = std::fs::read_dir(runtime_dir).ok()?;
+    let mut candidates: Vec<String> = dir
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_str()?.to_owned();
+            if !name.starts_with("wayland-") {
+                return None;
+            }
+            if name.starts_with("wayland-x") || name.ends_with(".lock") {
+                return None;
+            }
+            Some(name)
+        })
+        .collect();
+    // Lowest N first so we're deterministic if multiple servers are live.
+    candidates.sort();
+    for name in candidates {
+        let path = runtime_dir.join(&name);
+        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Write the discovered socket name to `$XDG_RUNTIME_DIR/sola-wayland`
+/// so other sola components can find it.
+fn publish_socket_name(runtime_dir: &Path, name: &str) -> io::Result<()> {
+    let path = runtime_dir.join(SOLA_WAYLAND_NAME_FILE);
+    std::fs::write(&path, name)?;
+    info!(path = %path.display(), %name, "published wayland socket name");
+    Ok(())
+}
+
+/// Remove every `wayland-N` / `wayland-N.lock` in the runtime dir that is
+/// not actively held. `wayland-x0` (XWayland) is preserved. Files that a
+/// live process holds via `flock` cannot be cleaned up by file removal
+/// alone, but removing the directory entry at least prevents stale inodes
+/// from fooling our connect probes.
+fn cleanup_stale_sockets(runtime_dir: &Path) {
+    let Ok(dir) = std::fs::read_dir(runtime_dir) else {
+        return;
+    };
+    for entry in dir.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with("wayland-") || name.starts_with("wayland-x") {
+            continue;
+        }
+        let path = entry.path();
+        match std::fs::remove_file(&path) {
+            Ok(()) => info!(path = %path.display(), "removed stale socket"),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => warn!(path = %path.display(), %e, "failed to remove stale socket"),
+        }
+    }
+}
+
+impl RiverSupervisor {
+    /// Spawn `/usr/bin/river`, redirecting stdout/stderr to `log_path`.
+    /// Does not wait for the wayland socket.
+    pub fn spawn(log_path: &Path) -> io::Result<Self> {
+        let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/run/user/1000"));
+
+        // Kill any orphan River process first so we don't fight a previous
+        // instance for socket names. Also delete the stale `sola-wayland`
+        // name file — it'll be rewritten by `publish_socket_name` below.
+        kill_orphan_rivers();
+        cleanup_stale_sockets(&runtime_dir);
+        let _ = std::fs::remove_file(runtime_dir.join(SOLA_WAYLAND_NAME_FILE));
+
+        if let Some(parent) = log_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)?;
+        let log_err = log.try_clone()?;
+
+        let mut cmd = Command::new("/usr/bin/river");
+        // `-c :` runs the shell no-op as River's init, skipping its hunt
+        // for ~/.config/river/init — we drive the session from outside.
+        cmd.args(["-log-level", "info", "-c", ":"])
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(log_err));
+        // wlroots picks its backend by env: WAYLAND_DISPLAY → nested wayland,
+        // DISPLAY → X11 (both failed on canto from a bare TTY), otherwise
+        // drm + libinput (what we actually want). Strip both so River falls
+        // through to the DRM backend.
+        cmd.env_remove("WAYLAND_DISPLAY");
+        cmd.env_remove("DISPLAY");
+        // SAFETY: `child_setup` only invokes async-signal-safe libc calls.
+        unsafe {
+            cmd.pre_exec(child_setup);
+        }
+        let child = cmd.spawn()?;
+
+        info!(pid = child.id(), "spawned river");
+        Ok(Self {
+            child,
+            runtime_dir,
+            socket_path: None,
+        })
+    }
+
+    /// Block (with exponential backoff 10ms → 1s, total cap 30s) until
+    /// River is accepting wayland connections on *some* `wayland-N`.
+    ///
+    /// Returns the name River actually opened (e.g. `wayland-1`). On
+    /// success, also writes that name to `$XDG_RUNTIME_DIR/sola-wayland`
+    /// so other sola components can discover it without guessing.
+    ///
+    /// File existence isn't enough: a stale socket file from a prior
+    /// crashed session looks identical to a fresh one, so we actually
+    /// connect and immediately drop to verify a live listener.
+    pub fn wait_for_socket(&mut self) -> io::Result<String> {
+        let start = Instant::now();
+        let total_cap = Duration::from_secs(30);
+        let mut delay = Duration::from_millis(10);
+        let cap = Duration::from_secs(1);
+        loop {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                return Err(io::Error::other(format!(
+                    "river exited before opening a socket: {status:?}"
+                )));
+            }
+            if let Some(name) = find_live_wayland_socket(&self.runtime_dir) {
+                let path = self.runtime_dir.join(&name);
+                info!(path = %path.display(), "river socket is live");
+                self.socket_path = Some(path);
+                publish_socket_name(&self.runtime_dir, &name)?;
+                return Ok(name);
+            }
+            if start.elapsed() > total_cap {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "no wayland-N socket went live within 30s",
+                ));
+            }
+            std::thread::sleep(delay);
+            delay = std::cmp::min(delay * 2, cap);
+        }
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    /// SIGTERM, wait up to 2s, then SIGKILL.
+    pub fn shutdown(&mut self) {
+        let pid = self.child.id() as i32;
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) if Instant::now() >= deadline => {
+                    warn!(pid, "river did not exit after SIGTERM; sending SIGKILL");
+                    let _ = self.child.kill();
+                    let _ = self.child.wait();
+                    return;
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                Err(e) => {
+                    error!(%e, pid, "error waiting on river");
+                    return;
+                }
+            }
+        }
+    }
+
+    pub fn socket_path(&self) -> Option<&Path> {
+        self.socket_path.as_deref()
+    }
+}

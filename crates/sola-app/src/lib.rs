@@ -30,8 +30,9 @@ pub trait SolaApp: 'static {
     const APP_ID: &'static str;
 
     /// Construct the app. This is where windows are created via
-    /// `ctx.add_window`; they get auto-declared to the compositor via
-    /// `SetWindowPolicy` after `new` returns.
+    /// `ctx.add_window`. sola-river does not receive any policy
+    /// declarations from apps — the shell drives all window geometry,
+    /// focus, and z-order via Frame/Focus/Composition topics.
     fn new(ctx: &mut AppCtx) -> Self
     where
         Self: Sized;
@@ -117,16 +118,52 @@ pub fn run<A: SolaApp>() {
 
     tracing::info!("{app_id} starting");
 
+    /// Resolve the live wayland socket name.
+    ///
+    /// `sola-river` writes the authoritative socket name (e.g. `wayland-1`)
+    /// into `$XDG_RUNTIME_DIR/sola-wayland` once River is up. We poll for
+    /// that file for up to 20s. The name file is preferred over the
+    /// `WAYLAND_DISPLAY` env var because sola inherits its env from the
+    /// user's shell, which may be stale from a prior session.
+    fn resolve_wayland_display(runtime_dir: &std::path::Path) -> String {
+        let name_file = runtime_dir.join("sola-wayland");
+        for attempt in 1..=40 {
+            if let Ok(contents) = std::fs::read_to_string(&name_file) {
+                let name = contents.trim().to_string();
+                if !name.is_empty() {
+                    return name;
+                }
+            }
+            if attempt == 1 {
+                tracing::info!(path = %name_file.display(), "waiting for sola-river to publish wayland socket name");
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+            if !v.is_empty() {
+                tracing::warn!(name = %v, "sola-wayland name file never appeared; using WAYLAND_DISPLAY env");
+                return v;
+            }
+        }
+        tracing::error!("no wayland socket name available; defaulting to wayland-0");
+        "wayland-0".to_string()
+    }
+
     // --- Binary self-watch ---
     watcher::watch_own_binary();
 
     // --- Wayland socket wait ---
-    if std::env::var("WAYLAND_DISPLAY").is_err() {
-        unsafe { std::env::set_var("WAYLAND_DISPLAY", "wayland-0") };
-    }
-    let wayland_display = std::env::var("WAYLAND_DISPLAY").unwrap();
+    //
+    // sola-river writes the live socket name (e.g. `wayland-1`) to
+    // `$XDG_RUNTIME_DIR/sola-wayland`. River's libwayland picks the
+    // first free `wayland-N`, which isn't always `wayland-0`, so
+    // hardcoding would race us against a stale-lock scenario.
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR must be set");
-    let socket_path = std::path::PathBuf::from(&runtime_dir).join(&wayland_display);
+    let runtime_dir = std::path::PathBuf::from(runtime_dir);
+    let wayland_display = resolve_wayland_display(&runtime_dir);
+    unsafe { std::env::set_var("WAYLAND_DISPLAY", &wayland_display) };
+    let socket_path = runtime_dir.join(&wayland_display);
+    // Verify the socket is actually there — merely setting env isn't enough.
     for attempt in 1..=20 {
         if socket_path.exists() {
             tracing::info!(path = %socket_path.display(), "wayland socket ready");
@@ -158,11 +195,8 @@ pub fn run<A: SolaApp>() {
         }
 
         // --- Build AppCtx, run A::new ---
-        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone(), app_id);
+        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone());
         let app = A::new(&mut ctx);
-
-        // --- Auto-emit WindowPolicy for all windows created in new() ---
-        ctx.emit_window_policy();
 
         // --- Wrap runtime ---
         let runtime = Rc::new(RefCell::new(AppRuntime { app, ctx }));

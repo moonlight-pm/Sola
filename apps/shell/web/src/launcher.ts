@@ -7,6 +7,16 @@ type Entry = { app_id: string; label: string; icon: string };
 
 const queryEl = document.getElementById('query') as HTMLInputElement;
 const resultsEl = document.getElementById('results')!;
+const panelEl = document.getElementById('panel')!;
+
+// Click anywhere outside the panel dismisses the launcher. Because the
+// window spans the output, this also absorbs all pointer activity away
+// from whatever's underneath.
+document.addEventListener('mousedown', (e: MouseEvent) => {
+    if (!panelEl.contains(e.target as Node)) {
+        invoke('close', {});
+    }
+});
 
 let entries: Entry[] = [];
 let selected = 0;

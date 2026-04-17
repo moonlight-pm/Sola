@@ -4,15 +4,10 @@ pub use sola_core::KeyChord;
 use crate::define_topics;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowInfo {
+pub struct App {
     pub window_id: u32,
     pub app_id: String,
     pub title: String,
-    /// If this window is a child of another (X11 transient_for), the
-    /// parent's window_id. The shell should not independently frame
-    /// or zone transient windows.
-    #[serde(default)]
-    pub parent_window_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,37 +83,28 @@ pub struct MenuActionPayload {
     pub action_id: String,
 }
 
-/// Declares how an app's windows should be managed by the compositor.
-/// Emitted as sticky by apps at startup, before mapping surfaces.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowPolicyPayload {
-    pub app_id: String,
-    pub windows: Vec<WindowPolicy>,
+/// Keyboard chord the shell wants routed to it by sola-river.
+/// Emitted (as a list) sticky by the shell on startup and whenever
+/// the registered set changes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct RegisteredChord {
+    pub keysym: u32,
+    pub modifiers: u32,
 }
 
+/// A chord press, emitted by sola-river when a previously registered
+/// chord fires on the seat.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowPolicy {
-    /// Matches xdg_toplevel title for surface identification.
-    pub title: String,
-    /// If true, the shell manages position/size via zones.
-    pub zoned: bool,
-    /// If true, compositor routes Meta+key events to this surface.
-    #[serde(default)]
-    pub keyboard_target: bool,
-    /// Fixed size for unzoned windows (width, height).
-    #[serde(default)]
-    pub size: Option<(i32, i32)>,
-    /// Fixed position for unzoned windows (x, y).
-    #[serde(default)]
-    pub position: Option<(i32, i32)>,
+pub struct ChordEvent {
+    pub keysym: u32,
+    pub modifiers: u32,
 }
 
-/// Declares which key chords the shell wants intercepted.
-/// Emitted as sticky by the shell; compositor uses this as a routing allowlist.
+/// Mouse click targeted at a specific window, emitted by sola-river
+/// for `window_interaction` seat events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellKeyBindingsPayload {
-    pub app_id: String,
-    pub bindings: Vec<KeyChord>,
+pub struct MouseClickedPayload {
+    pub window_id: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -150,26 +136,31 @@ impl Zone {
 }
 
 define_topics! {
-    // Window management list
-    Windows(Vec<WindowInfo>),
+    // Window management list (sticky)
+    Apps(Vec<App>),
     LaunchApp(String),
 
-    // Composition authority (shell → compositor)
+    // Composition authority (shell → sola-river)
     Composition(Vec<CompositionEntry>),
     Frame(FrameUpdate),
     Focus(FocusTarget),
 
-    // Window management
-    SetWindowPolicy(WindowPolicyPayload),
+    // Output
     OutputGeometry(OutputGeometry),
+
+    // Mouse events (sola-river → shell)
     MouseEntered(MouseEnteredPayload),
+    MouseLeft,
+    MouseClicked(MouseClickedPayload),
+
+    // Keyboard (shell ↔ sola-river)
+    RegisteredChords(Vec<RegisteredChord>),
+    Chord(ChordEvent),
+    ChordReleased(ChordEvent),
 
     // Menus
     SetAppMenu(AppMenuPayload),
     MenuAction(MenuActionPayload),
-
-    // Shell input routing
-    ShellKeyBindings(ShellKeyBindingsPayload),
 
     // Browser
     OpenUrl(OpenUrlRequest),
@@ -194,18 +185,17 @@ mod tests {
 
     #[test]
     fn payload_topic_roundtrip() {
-        let windows = vec![WindowInfo {
+        let apps = vec![App {
             window_id: 1,
             app_id: "zen".into(),
             title: "Browser".into(),
-            parent_window_id: None,
         }];
-        let msg = Topic::Windows(windows).to_message();
-        assert_eq!(msg.topic, "Windows");
+        let msg = Topic::Apps(apps).to_message();
+        assert_eq!(msg.topic, "Apps");
 
         let parsed = Topic::parse(&msg).unwrap();
         match parsed {
-            Topic::Windows(decoded) => {
+            Topic::Apps(decoded) => {
                 assert_eq!(decoded.len(), 1);
                 assert_eq!(decoded[0].app_id, "zen");
                 assert_eq!(decoded[0].window_id, 1);
