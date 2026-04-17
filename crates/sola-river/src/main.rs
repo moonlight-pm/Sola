@@ -111,4 +111,11 @@ fn init_tracing() {
         .with(stderr_layer)
         .with(file_layer)
         .init();
+
+    // Route panics through tracing so they land in sola-river.log, not just
+    // stderr (which sola captures less faithfully).
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        tracing::error!(%info, "sola-river panicked\n{backtrace}");
+    }));
 }

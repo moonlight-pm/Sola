@@ -49,11 +49,6 @@ fn setup_logging() {
 }
 
 fn resolve_wayland_display(runtime_dir: &std::path::Path) -> String {
-    if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
-        if !v.is_empty() {
-            return v;
-        }
-    }
     let name_file = runtime_dir.join("sola-wayland");
     for attempt in 1..=40 {
         if let Ok(contents) = std::fs::read_to_string(&name_file) {
@@ -67,7 +62,13 @@ fn resolve_wayland_display(runtime_dir: &std::path::Path) -> String {
         }
         std::thread::sleep(Duration::from_millis(500));
     }
-    tracing::warn!("sola-wayland name file never appeared; falling back to wayland-0");
+    if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+        if !v.is_empty() {
+            tracing::warn!(name = %v, "sola-wayland name file never appeared; using WAYLAND_DISPLAY env");
+            return v;
+        }
+    }
+    tracing::error!("no wayland socket name available; defaulting to wayland-0");
     "wayland-0".to_string()
 }
 
