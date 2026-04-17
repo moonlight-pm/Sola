@@ -85,6 +85,7 @@ const state = reactive({
   editingTitle: false,
   statsWidth: 240,
   pinnedIds: [] as string[],
+  sync: { active: false, current: 0, total: 0 },
 });
 
 persist(state, 'agent-ui', ['activeId', 'statsWidth', 'pinnedIds']);
@@ -251,6 +252,21 @@ function ingestConversations(conversations: any[]): void {
     } as any);
   }
 }
+
+on('sync_start', (ev: any) => {
+  state.sync = { active: true, current: 0, total: ev.total || 0 };
+});
+
+on('session_updated', (ev: any) => {
+  ingestConversations([ev]);
+  if (ev.total) {
+    state.sync = { active: true, current: ev.current || 0, total: ev.total };
+  }
+});
+
+on('sync_complete', () => {
+  state.sync = { active: false, current: 0, total: 0 };
+});
 
 on('active_sessions', (ev: any) => {
   const live = new Set<string>(ev.ids || []);
@@ -756,6 +772,10 @@ function sidebarTemplate() {
         <button class="btn-new" @click="${showNewDialog}">
           <span class="icon icon-plus"></span>
         </button>
+      </div>
+      <div class="sync-indicator" style="${() => state.sync.active ? '' : 'display:none'}">
+        <span class="sync-dot"></span>
+        <span class="sync-text">${() => `Syncing ${state.sync.current}/${state.sync.total}…`}</span>
       </div>
       <div class="convo-list" @mousedown="${onMouseDown}">
         ${() => {

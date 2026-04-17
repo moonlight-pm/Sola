@@ -180,6 +180,34 @@ html, body {
   background: rgba(0, 168, 255, 0.15);
 }
 
+/* ── Sync Indicator ─────────────────────────────────────────────────────── */
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sync-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan);
+  animation: sync-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes sync-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.sync-text { letter-spacing: 0.02em; }
+
 /* ── Conversation List ──────────────────────────────────────────────────── */
 .convo-list { flex: 1; overflow-y: auto; padding: 4px 0; }
 

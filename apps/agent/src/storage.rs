@@ -23,6 +23,10 @@ pub struct SessionMeta {
     pub model: String,
     #[serde(default = "default_effort")]
     pub effort: String,
+    /// CLI JSONL mtime (ms since epoch) at last view-model rebuild.
+    /// Zero means "never synced"; triggers rebuild.
+    #[serde(default)]
+    pub cli_synced_at: u64,
 }
 
 fn default_model() -> String { "opus".into() }
@@ -69,6 +73,7 @@ pub fn save_meta(
     let metrics = metrics.or_else(|| existing.as_ref().and_then(|e| e.metrics.clone()));
     let model = existing.as_ref().map(|e| e.model.clone()).unwrap_or_else(default_model);
     let effort = existing.as_ref().map(|e| e.effort.clone()).unwrap_or_else(default_effort);
+    let cli_synced_at = existing.as_ref().map(|e| e.cli_synced_at).unwrap_or(0);
 
     let meta = SessionMeta {
         session_id: session_id.to_string(),
@@ -79,6 +84,7 @@ pub fn save_meta(
         metrics,
         model,
         effort,
+        cli_synced_at,
     };
 
     let json = serde_json::to_string_pretty(&meta)?;
@@ -93,6 +99,21 @@ pub fn save_meta_full(meta: &SessionMeta) -> Result<()> {
         .with_context(|| format!("Failed to create {}", dir.display()))?;
     let json = serde_json::to_string_pretty(meta)?;
     std::fs::write(meta_path(&meta.session_id), json)?;
+    Ok(())
+}
+
+/// Overwrite the session's JSONL history with the given messages.
+/// Used by sync when rebuilding a view model from a CLI JSONL.
+pub fn write_history(session_id: &str, messages: &[Value]) -> Result<()> {
+    let dir = sessions_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = history_path(session_id);
+    let mut file = std::fs::File::create(&path)
+        .with_context(|| format!("Failed to create {}", path.display()))?;
+    for msg in messages {
+        let line = serde_json::to_string(msg)?;
+        writeln!(file, "{}", line)?;
+    }
     Ok(())
 }
 

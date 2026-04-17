@@ -235,7 +235,10 @@ impl AgentHandler {
     }
 
     async fn cmd_list_conversations(&self) -> Value {
-        let metas = crate::sync::sync_sessions();
+        // Return whatever view models are already on disk. Sync runs in
+        // the background on startup (see main.rs) and streams updates via
+        // the `session_updated` event channel.
+        let metas = storage::list_all();
         let active = crate::active::detect();
         tracing::info!(count = metas.len(), active = active.len(), "list_conversations");
         let conversations: Vec<Value> = metas
