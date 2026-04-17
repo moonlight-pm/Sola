@@ -180,6 +180,9 @@ impl SolaApp for ShellApp {
             Topic::Chord(evt) => {
                 crate::keys::handle_chord(self, ctx, evt.clone());
             }
+            Topic::ChordReleased(evt) => {
+                crate::keys::handle_chord_released(self, ctx, evt.clone());
+            }
             _ => {}
         }
     }
@@ -278,9 +281,6 @@ impl ShellApp {
             .iter()
             .map(crate::keys::to_registered)
             .collect();
-        // Ensure Enter and Escape always reach the shell (switcher confirm/cancel).
-        chords.push(crate::keys::to_registered(&KeyCode::ENTER.chord()));
-        chords.push(crate::keys::to_registered(&KeyCode::ESCAPE.chord()));
         chords.sort_by_key(|c| (c.modifiers, c.keysym));
         chords.dedup();
         ctx.emit_sticky(Topic::RegisteredChords(chords));

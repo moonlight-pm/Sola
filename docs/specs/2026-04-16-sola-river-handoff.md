@@ -30,9 +30,9 @@
   - Tracks `mru_window_by_app` for switcher restore.
   - Focus-follows-pointer (`MouseEntered`) and focus-on-click
     (`MouseClicked`) both call a shared `focus_window_from_pointer`.
-  - **Switcher UX change** (not covered by design doc): v1 bus contract
-    has no key-release event, so the switcher now confirms on **Enter**
-    and cancels on **Escape** instead of on Meta release.
+  - Switcher behavior preserved: `Topic::ChordReleased` surfaces the
+    `river_xkb_binding_v1.released` event, and Meta+Tab release confirms
+    the selection like the old GTK path did.
 - `sola-app` framework no longer emits `SetWindowPolicy`; `WindowConfig`
   flags stay on the public struct for app-local behavior.
 - `sola-terminal` and `sola-monitor` clean (no `SetWindowPolicy`).
@@ -71,7 +71,6 @@
 - `OutputGeometry` topic is no longer emitted by `sola-river`. The shell
   falls through to its default layout until output handling is added
   (see TODO in `client/window.rs` for `Event::Output`).
-- Key-release events dropped; switcher UX relies on Enter/Escape now.
 - River's `parent` event (child/transient relationships) not surfaced.
 - River's `dimensions` event is acked but not propagated — windows end
   up with whatever River picks, which matches the design doc

@@ -17,9 +17,18 @@ impl Dispatch<RiverXkbBindingV1, (u32, u32)> for AppData {
         _: &QueueHandle<Self>,
     ) {
         use crate::protocol::river_xkb_bindings_v1::river_xkb_binding_v1::Event;
-        if let Event::Pressed = event {
-            tracing::debug!(keysym, modifiers, "chord pressed");
-            state.bus.emit(Topic::Chord(ChordEvent { keysym, modifiers }));
+        match event {
+            Event::Pressed => {
+                tracing::debug!(keysym, modifiers, "chord pressed");
+                state.bus.emit(Topic::Chord(ChordEvent { keysym, modifiers }));
+            }
+            Event::Released => {
+                tracing::debug!(keysym, modifiers, "chord released");
+                state
+                    .bus
+                    .emit(Topic::ChordReleased(ChordEvent { keysym, modifiers }));
+            }
+            _ => {}
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Chord-event handling for the shell.
 //!
 //! sola-river registers chords with River's xkb-bindings protocol on our
-//! behalf and emits `Topic::Chord { keysym, modifiers }` when one fires.
+//! behalf and emits `Topic::Chord` / `Topic::ChordReleased` when they fire.
 //! This module:
 //!   - Converts a shell-side `KeyChord` into a River `(keysym, modifiers)`
 //!     pair (`to_registered`).
@@ -9,9 +9,8 @@
 //!     using its existing shortcut-matching logic.
 //!   - Runs the action table (switcher, launcher, zoning, menu shortcuts)
 //!     when a chord fires.
-//!
-//! v1 bus contract has no key-release event — the switcher confirms on a
-//! subsequent chord (Enter) and cancels on Esc.
+//!   - Preserves Meta-release closes switcher by registering Meta+Tab and
+//!     acting on its `ChordReleased` event.
 use sola_app::SolaApp;
 use sola_bus::topics::{
     ChordEvent, FocusTarget, FrameUpdate, RegisteredChord, Topic,
@@ -173,17 +172,10 @@ pub fn handle_chord(
         "chord fired"
     );
 
-    // Switcher active: Enter confirms, Esc cancels, Tab/arrows navigate.
+    // Switcher active: Meta+Tab (or arrow) cycles; Meta release confirms
+    // (handled in `handle_chord_released`).
     if app.switcher.active {
         match chord.keycode {
-            KeyCode::ENTER => {
-                confirm_switcher(app, ctx);
-                return;
-            }
-            KeyCode::ESCAPE => {
-                cancel_switcher(app, ctx);
-                return;
-            }
             code if code == KeyCode::TAB || code == KeyCode::RIGHT => {
                 app.switcher.select_next();
                 let sel = app.switcher.selected;
@@ -273,6 +265,22 @@ pub fn handle_chord(
     }
 }
 
+/// Entry point invoked on `Topic::ChordReleased`. Mirrors Meta-release
+/// behavior from the old GTK path.
+pub fn handle_chord_released(
+    app: &mut ShellApp,
+    ctx: &mut sola_app::AppCtx,
+    evt: ChordEvent,
+) {
+    let Some(chord) = from_chord_event(&evt) else {
+        return;
+    };
+    // Meta+Tab release — only meaningful while the switcher is active.
+    if app.switcher.active && chord.keycode == KeyCode::TAB && chord.meta {
+        confirm_switcher(app, ctx);
+    }
+}
+
 fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
     let app_id = app.switcher.selected_app_id().map(String::from);
     tracing::info!(app_id = ?app_id, "confirming switcher");
@@ -293,9 +301,3 @@ fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
     app.emit_composition(ctx);
 }
 
-fn cancel_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
-    tracing::info!("cancelling switcher");
-    app.switcher.active = false;
-    app.windows.switcher.eval_js("clear()");
-    app.emit_composition(ctx);
-}

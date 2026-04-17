@@ -59,6 +59,7 @@ fn topic_to_json(topic: &Topic) -> Value {
         Topic::MouseClicked(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::RegisteredChords(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Chord(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::ChordReleased(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::SetAppMenu(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::MenuAction(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::OpenUrl(v) => serde_json::to_value(v).unwrap_or_default(),

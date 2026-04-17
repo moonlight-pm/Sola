@@ -156,6 +156,7 @@ define_topics! {
     // Keyboard (shell ↔ sola-river)
     RegisteredChords(Vec<RegisteredChord>),
     Chord(ChordEvent),
+    ChordReleased(ChordEvent),
 
     // Menus
     SetAppMenu(AppMenuPayload),
