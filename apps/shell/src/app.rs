@@ -276,11 +276,16 @@ impl ShellApp {
     }
 
     fn emit_registered_chords(&self, ctx: &mut AppCtx) {
-        let mut chords: Vec<RegisteredChord> = self
-            .shell_key_chords()
-            .iter()
-            .map(crate::keys::to_registered)
-            .collect();
+        let source = self.shell_key_chords();
+        let mut chords: Vec<RegisteredChord> = Vec::with_capacity(source.len() * 2 + 1);
+        for c in &source {
+            chords.push(crate::keys::to_registered(c));
+            // Numpad keys have a different keysym when NumLock is off;
+            // register both so zoning fires regardless of state.
+            if let Some(alt) = crate::keys::to_registered_alt(c) {
+                chords.push(alt);
+            }
+        }
         // Register bare Super_L with no modifiers so we get a released
         // event when the user lets the Super key go. Used to confirm the
         // app switcher (Meta+Tab opens, Meta release selects).

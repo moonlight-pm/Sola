@@ -25,16 +25,47 @@ const MOD_CTRL: u32 = 4;
 const MOD_ALT: u32 = 8; // mod1
 const MOD_SUPER: u32 = 64; // mod4
 
-// XK_KP_0 .. XK_KP_9 run contiguously starting at 0xFFB0.
+// XK_KP_0 .. XK_KP_9 run contiguously starting at 0xFFB0 (NumLock on).
 const KEYSYM_KP_0: u32 = 0xFFB0;
 // XK_Super_L — the left Super/Meta key on a stock xkb layout.
 pub const KEYSYM_SUPER_L: u32 = 0xFFEB;
+
+// Numpad navigation keysyms (what the keys produce when NumLock is off).
+// Registering these alongside the KP_0..KP_9 digits lets zoning chords
+// fire regardless of NumLock state.
+const KEYSYM_KP_UP: u32 = 0xFF97;
+const KEYSYM_KP_LEFT: u32 = 0xFF96;
+const KEYSYM_KP_RIGHT: u32 = 0xFF98;
+const KEYSYM_KP_DOWN: u32 = 0xFF99;
+const KEYSYM_KP_BEGIN: u32 = 0xFF9D;
+const KEYSYM_KP_INSERT: u32 = 0xFF9E;
+const KEYSYM_KP_DELETE: u32 = 0xFF9F;
 
 pub fn to_registered(chord: &KeyChord) -> RegisteredChord {
     RegisteredChord {
         keysym: keycode_to_keysym(chord.keycode),
         modifiers: river_modifiers(chord),
     }
+}
+
+/// For keycodes whose keysym changes with NumLock state, return the
+/// alternate keysym (NumLock off) so the shell can register both and
+/// fire its action regardless of NumLock state.
+pub fn to_registered_alt(chord: &KeyChord) -> Option<RegisteredChord> {
+    let alt = match chord.keycode {
+        KeyCode::KP_8 => Some(KEYSYM_KP_UP),
+        KeyCode::KP_4 => Some(KEYSYM_KP_LEFT),
+        KeyCode::KP_5 => Some(KEYSYM_KP_BEGIN),
+        KeyCode::KP_6 => Some(KEYSYM_KP_RIGHT),
+        KeyCode::KP_2 => Some(KEYSYM_KP_DOWN),
+        KeyCode::KP_0 => Some(KEYSYM_KP_INSERT),
+        KeyCode::KP_DECIMAL => Some(KEYSYM_KP_DELETE),
+        _ => None,
+    }?;
+    Some(RegisteredChord {
+        keysym: alt,
+        modifiers: river_modifiers(chord),
+    })
 }
 
 fn river_modifiers(c: &KeyChord) -> u32 {
@@ -164,6 +195,14 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
         0xFFB8 => Some(KeyCode::KP_8),
         0xFFBD => Some(KeyCode::KP_EQUAL),
         0xFFAE => Some(KeyCode::KP_DECIMAL),
+        // NumLock-off variants of the zoning numpad keys.
+        KEYSYM_KP_UP => Some(KeyCode::KP_8),
+        KEYSYM_KP_LEFT => Some(KeyCode::KP_4),
+        KEYSYM_KP_BEGIN => Some(KeyCode::KP_5),
+        KEYSYM_KP_RIGHT => Some(KeyCode::KP_6),
+        KEYSYM_KP_DOWN => Some(KeyCode::KP_2),
+        KEYSYM_KP_INSERT => Some(KeyCode::KP_0),
+        KEYSYM_KP_DELETE => Some(KeyCode::KP_DECIMAL),
         0x41..=0x5A => LETTER_KEYCODES
             .iter()
             .find(|(_, c)| *c as u32 == sym)
