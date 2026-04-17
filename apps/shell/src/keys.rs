@@ -27,6 +27,8 @@ const MOD_SUPER: u32 = 64; // mod4
 
 // XK_KP_0 .. XK_KP_9 run contiguously starting at 0xFFB0.
 const KEYSYM_KP_0: u32 = 0xFFB0;
+// XK_Super_L — the left Super/Meta key on a stock xkb layout.
+pub const KEYSYM_SUPER_L: u32 = 0xFFEB;
 
 pub fn to_registered(chord: &KeyChord) -> RegisteredChord {
     RegisteredChord {
@@ -54,6 +56,17 @@ fn keycode_to_keysym(k: KeyCode) -> u32 {
         KeyCode::RIGHT => 0xFF53,
         KeyCode::ENTER => 0xFF0D,
         KeyCode::ESCAPE => 0xFF1B,
+        // Top-row digit keys — ASCII '0'..'9'.
+        KeyCode::KEY_0 => b'0' as u32,
+        KeyCode::KEY_1 => b'1' as u32,
+        KeyCode::KEY_2 => b'2' as u32,
+        KeyCode::KEY_3 => b'3' as u32,
+        KeyCode::KEY_4 => b'4' as u32,
+        KeyCode::KEY_5 => b'5' as u32,
+        KeyCode::KEY_6 => b'6' as u32,
+        KeyCode::KEY_7 => b'7' as u32,
+        KeyCode::KEY_8 => b'8' as u32,
+        KeyCode::KEY_9 => b'9' as u32,
         // Zoning uses numpad digits + equal/decimal.
         KeyCode::KP_0 => KEYSYM_KP_0,
         KeyCode::KP_2 => KEYSYM_KP_0 + 2,
@@ -132,6 +145,17 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
         0xFF53 => Some(KeyCode::RIGHT),
         0xFF0D => Some(KeyCode::ENTER),
         0xFF1B => Some(KeyCode::ESCAPE),
+        // Top-row digits.
+        0x30 => Some(KeyCode::KEY_0),
+        0x31 => Some(KeyCode::KEY_1),
+        0x32 => Some(KeyCode::KEY_2),
+        0x33 => Some(KeyCode::KEY_3),
+        0x34 => Some(KeyCode::KEY_4),
+        0x35 => Some(KeyCode::KEY_5),
+        0x36 => Some(KeyCode::KEY_6),
+        0x37 => Some(KeyCode::KEY_7),
+        0x38 => Some(KeyCode::KEY_8),
+        0x39 => Some(KeyCode::KEY_9),
         KEYSYM_KP_0 => Some(KeyCode::KP_0),
         0xFFB2 => Some(KeyCode::KP_2),
         0xFFB4 => Some(KeyCode::KP_4),
@@ -266,17 +290,17 @@ pub fn handle_chord(
 }
 
 /// Entry point invoked on `Topic::ChordReleased`. Mirrors Meta-release
-/// behavior from the old GTK path.
+/// behavior from the old GTK path: while the switcher is active, the
+/// user confirms by letting go of the Super key.
 pub fn handle_chord_released(
     app: &mut ShellApp,
     ctx: &mut sola_app::AppCtx,
     evt: ChordEvent,
 ) {
-    let Some(chord) = from_chord_event(&evt) else {
-        return;
-    };
-    // Meta+Tab release — only meaningful while the switcher is active.
-    if app.switcher.active && chord.keycode == KeyCode::TAB && chord.meta {
+    // The bare Super_L binding (keysym=Super_L, modifiers=0) fires its
+    // released event exactly when the user lifts the physical Super key.
+    // That's when we commit the switcher selection.
+    if evt.keysym == KEYSYM_SUPER_L && evt.modifiers == 0 && app.switcher.active {
         confirm_switcher(app, ctx);
     }
 }

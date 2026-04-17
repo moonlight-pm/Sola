@@ -281,6 +281,13 @@ impl ShellApp {
             .iter()
             .map(crate::keys::to_registered)
             .collect();
+        // Register bare Super_L with no modifiers so we get a released
+        // event when the user lets the Super key go. Used to confirm the
+        // app switcher (Meta+Tab opens, Meta release selects).
+        chords.push(RegisteredChord {
+            keysym: crate::keys::KEYSYM_SUPER_L,
+            modifiers: 0,
+        });
         chords.sort_by_key(|c| (c.modifiers, c.keysym));
         chords.dedup();
         ctx.emit_sticky(Topic::RegisteredChords(chords));
