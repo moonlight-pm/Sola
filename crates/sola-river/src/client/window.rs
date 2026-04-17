@@ -1,0 +1,95 @@
+//! Dispatch for `river_window_manager_v1` and `river_window_v1`.
+
+use tracing::{error, info, warn};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
+
+use crate::client::AppData;
+use crate::protocol::river_window_management_v1::{
+    river_window_manager_v1::RiverWindowManagerV1,
+    river_window_v1::RiverWindowV1,
+};
+
+impl Dispatch<RiverWindowManagerV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        _wm: &RiverWindowManagerV1,
+        event: <RiverWindowManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::river_window_management_v1::river_window_manager_v1::Event;
+        match event {
+            Event::Window { id: window } => {
+                let wid = state.registry.mint();
+                state.windows_by_object.insert(window.id(), wid);
+                let node = window.get_node(qh, ());
+                state.nodes_by_window.insert(wid, node);
+                state.windows_by_id.insert(wid, window);
+                info!(window_id = wid, "new river window");
+            }
+            Event::ManageStart => {
+                crate::client::manage::handle_manage_start(state);
+            }
+            Event::RenderStart => {
+                crate::client::manage::handle_render_start(state);
+            }
+            Event::Seat { id: seat } => {
+                if state.seat.is_none() {
+                    state.seat = Some(seat);
+                }
+            }
+            Event::Output { id: _ } => {
+                // Output dimensions not surfaced to the bus in v1.
+            }
+            Event::Unavailable => {
+                error!("river_window_manager_v1 unavailable");
+            }
+            Event::Finished => {
+                warn!("river_window_manager_v1 finished");
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<RiverWindowV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        window: &RiverWindowV1,
+        event: <RiverWindowV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::river_window_management_v1::river_window_v1::Event;
+        let Some(&window_id) = state.windows_by_object.get(&window.id()) else {
+            warn!(object = ?window.id(), "event for unknown window object");
+            return;
+        };
+        let mut apps_dirty = false;
+        match event {
+            Event::AppId { app_id } => {
+                state.registry.set_app_id(window_id, app_id.unwrap_or_default());
+                apps_dirty = true;
+            }
+            Event::Title { title } => {
+                state.registry.set_title(window_id, title.unwrap_or_default());
+                apps_dirty = true;
+            }
+            Event::Closed => {
+                info!(window_id, "window closed");
+                state.registry.remove(window_id);
+                state.windows_by_object.retain(|_, v| *v != window_id);
+                state.windows_by_id.remove(&window_id);
+                state.nodes_by_window.remove(&window_id);
+                window.destroy();
+                apps_dirty = true;
+            }
+            _ => {}
+        }
+        if apps_dirty {
+            crate::translator::emit_apps(state);
+        }
+    }
+}

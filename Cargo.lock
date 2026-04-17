@@ -1966,6 +1966,7 @@ dependencies = [
 name = "sola-river"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.11.0",
  "calloop",
  "calloop-wayland-source",
  "libc",

@@ -1,1 +1,304 @@
-// Phase 5 wires the wayland client.
+//! Wayland client state and dispatch.
+//!
+//! A single `AppData` owns every cross-cutting state: bus handle, registries,
+//! pending update, proxy caches, and the `QueueHandle`. Each interface
+//! implements `Dispatch<T, _>` on `AppData`.
+
+use std::collections::HashMap;
+
+use tracing::{error, info, warn};
+use wayland_client::{
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+    backend::ObjectId,
+    protocol::{wl_output, wl_registry, wl_seat},
+};
+
+use crate::bus::BusClient;
+use crate::pending::PendingUpdate;
+use crate::protocol::river_window_management_v1::{
+    river_node_v1::RiverNodeV1,
+    river_output_v1::RiverOutputV1,
+    river_seat_v1::RiverSeatV1,
+    river_window_manager_v1::RiverWindowManagerV1,
+    river_window_v1::RiverWindowV1,
+};
+use crate::protocol::river_xkb_bindings_v1::{
+    river_xkb_bindings_seat_v1::RiverXkbBindingsSeatV1,
+    river_xkb_bindings_v1::RiverXkbBindingsV1,
+};
+use crate::registry::{ChordRegistry, WindowRegistry};
+
+pub mod binding;
+pub mod manage;
+pub mod seat;
+pub mod window;
+
+pub struct AppData {
+    pub wm: Option<RiverWindowManagerV1>,
+    pub xkb_bindings: Option<RiverXkbBindingsV1>,
+    pub seat: Option<RiverSeatV1>,
+    pub wl_seat: Option<wl_seat::WlSeat>,
+    pub registry: WindowRegistry,
+    pub pending: PendingUpdate,
+    pub chords: ChordRegistry,
+    pub bus: BusClient,
+    /// Map from the Wayland object id of a `river_window_v1` to our u32.
+    pub windows_by_object: HashMap<ObjectId, u32>,
+    /// Map from our u32 to the live proxy. Needed for `propose_dimensions`,
+    /// `set_borders`, and `focus_window`.
+    pub windows_by_id: HashMap<u32, RiverWindowV1>,
+    /// Map from our u32 to the per-window `river_node_v1`, created eagerly
+    /// after `river_window_manager_v1::Event::Window` fires.
+    pub nodes_by_window: HashMap<u32, RiverNodeV1>,
+    pub qh: Option<QueueHandle<Self>>,
+}
+
+impl AppData {
+    pub fn new(bus: BusClient) -> Self {
+        Self {
+            wm: None,
+            xkb_bindings: None,
+            seat: None,
+            wl_seat: None,
+            registry: WindowRegistry::new(),
+            pending: PendingUpdate::default(),
+            chords: ChordRegistry::default(),
+            bus,
+            windows_by_object: HashMap::new(),
+            windows_by_id: HashMap::new(),
+            nodes_by_window: HashMap::new(),
+            qh: None,
+        }
+    }
+}
+
+/// Connect to River, bind globals, and return the conn/queue/data triple.
+pub fn connect(
+    bus: BusClient,
+) -> Result<(Connection, EventQueue<AppData>, AppData), Box<dyn std::error::Error>> {
+    let conn = Connection::connect_to_env()?;
+    let display = conn.display();
+    let mut queue = conn.new_event_queue::<AppData>();
+    let qh = queue.handle();
+    let _registry = display.get_registry(&qh, ());
+
+    let mut data = AppData::new(bus);
+    queue.roundtrip(&mut data)?;
+    queue.roundtrip(&mut data)?;
+
+    if data.wm.is_none() {
+        return Err(
+            "river_window_manager_v1 not advertised; is River 0.4.2+ running?".into(),
+        );
+    }
+    data.qh = Some(qh);
+    info!("bound river_window_manager_v1");
+    Ok((conn, queue, data))
+}
+
+/// Called on every bus tick. Drains bus messages, folds them into `pending`,
+/// and if pending is dirty, asks River to start a new manage cycle via
+/// `manage_dirty`.
+pub fn bus_tick(state: &mut AppData) {
+    state.bus.ensure_connected();
+    state.bus.drain_notify();
+    while let Some(msg) = state.bus.try_recv() {
+        let Some(topic) = sola_bus::topics::Topic::parse(&msg) else {
+            continue;
+        };
+        match topic {
+            sola_bus::topics::Topic::Composition(entries) => {
+                let ids: Vec<u32> = entries.into_iter().map(|e| e.window_id).collect();
+                state.pending.set_composition(ids);
+            }
+            sola_bus::topics::Topic::Frame(f) => {
+                state.pending.frame(f.window_id, f.x, f.y, f.width, f.height);
+            }
+            sola_bus::topics::Topic::Focus(t) => {
+                state
+                    .pending
+                    .set_focus(crate::pending::FocusAction::Window(t.window_id));
+            }
+            sola_bus::topics::Topic::RegisteredChords(chords) => {
+                crate::translator::update_registered_chords(state, chords);
+            }
+            sola_bus::topics::Topic::Shutdown => {
+                info!("shutdown requested via bus");
+                std::process::exit(0);
+            }
+            _ => {}
+        }
+    }
+
+    if (state.pending.manage_dirty || state.pending.render_dirty) && state.wm.is_some() {
+        state.wm.as_ref().unwrap().manage_dirty();
+    }
+}
+
+// ---------- Registry dispatch — the only place globals are bound ----------
+
+impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
+            match interface.as_str() {
+                "river_window_manager_v1" => {
+                    let wm: RiverWindowManagerV1 = proxy.bind(name, version.min(4), qh, ());
+                    info!(%version, "bound river_window_manager_v1");
+                    state.wm = Some(wm);
+                }
+                "river_xkb_bindings_v1" => {
+                    let xb: RiverXkbBindingsV1 = proxy.bind(name, version.min(2), qh, ());
+                    info!(%version, "bound river_xkb_bindings_v1");
+                    state.xkb_bindings = Some(xb);
+                }
+                "wl_seat" => {
+                    let s: wl_seat::WlSeat = proxy.bind(name, version.min(7), qh, ());
+                    state.wl_seat = Some(s);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// ---------- Stub dispatches for interfaces where we don't act on events ----------
+
+impl Dispatch<wl_seat::WlSeat, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &wl_seat::WlSeat,
+        _: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &wl_output::WlOutput,
+        _: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<RiverNodeV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &RiverNodeV1,
+        _: <RiverNodeV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<RiverOutputV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &RiverOutputV1,
+        event: <RiverOutputV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        use crate::protocol::river_window_management_v1::river_output_v1::Event;
+        use sola_bus::topics::{OutputGeometry, Topic};
+        if let Event::Dimensions { width, height } = event {
+            // Track the first output we see.
+            _ = (width, height);
+        }
+        let _: Option<OutputGeometry> = None;
+        let _: Option<Topic> = None;
+    }
+}
+
+impl Dispatch<RiverXkbBindingsV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &RiverXkbBindingsV1,
+        _: <RiverXkbBindingsV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<RiverXkbBindingsSeatV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &RiverXkbBindingsSeatV1,
+        _: <RiverXkbBindingsSeatV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+// Shell-surface dispatch: we don't create any in v1 but the scanner may
+// still require the impl to exist if the type is ever referenced.
+use crate::protocol::river_window_management_v1::river_shell_surface_v1::RiverShellSurfaceV1;
+impl Dispatch<RiverShellSurfaceV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &RiverShellSurfaceV1,
+        _: <RiverShellSurfaceV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+use crate::protocol::river_window_management_v1::river_decoration_v1::RiverDecorationV1;
+impl Dispatch<RiverDecorationV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &RiverDecorationV1,
+        _: <RiverDecorationV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+use crate::protocol::river_window_management_v1::river_pointer_binding_v1::RiverPointerBindingV1;
+impl Dispatch<RiverPointerBindingV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &RiverPointerBindingV1,
+        _: <RiverPointerBindingV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+// Emitted via `error!`/`warn!` imports above to keep them used.
+#[allow(dead_code)]
+fn _touch_imports() {
+    error!("unreachable");
+    warn!("unreachable");
+}

@@ -6,6 +6,19 @@
 use std::collections::HashMap;
 
 use sola_bus::topics::App;
+use wayland_client::backend::ObjectId;
+
+use crate::protocol::river_xkb_bindings_v1::river_xkb_binding_v1::RiverXkbBindingV1;
+
+/// Map our `(keysym, modifiers)` chords to their live
+/// `river_xkb_binding_v1` proxies.
+#[derive(Default)]
+pub struct ChordRegistry {
+    pub by_chord: HashMap<(u32, u32), RiverXkbBindingV1>,
+    /// Reverse lookup: binding object id → the pair we registered it for.
+    /// Used when a `pressed` event carries only the binding object.
+    pub by_object: HashMap<ObjectId, (u32, u32)>,
+}
 
 #[derive(Default)]
 pub struct WindowRegistry {

@@ -2,17 +2,13 @@ use std::path::Path;
 use std::process::exit;
 use std::time::Duration;
 
+use calloop::EventLoop;
+use calloop_wayland_source::WaylandSource;
 use tracing::{error, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-mod bus;
-mod client;
-mod pending;
-mod protocol;
-mod registry;
-mod supervisor;
-mod translator;
+use sola_river::{bus, client, supervisor};
 
 fn main() {
     init_tracing();
@@ -33,20 +29,68 @@ fn main() {
         exit(1);
     }
 
-    // Phase 5 replaces this poll loop with the wayland client.
-    loop {
-        match sup.try_wait() {
-            Ok(Some(status)) => {
-                error!(?status, "river exited; sola-river exiting");
-                exit(1);
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(200)),
-            Err(e) => {
-                error!(%e, "try_wait failed");
-                exit(1);
+    // Children of `sola` inherit WAYLAND_DISPLAY from the parent; we set it
+    // explicitly here in case `sola-river` was launched standalone.
+    // SAFETY: no other threads in sola-river yet — single-threaded main.
+    unsafe {
+        std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
+    }
+
+    let mut bus = bus::BusClient::new();
+    bus.ensure_connected();
+
+    let (_conn, queue, mut data) = match client::connect(bus) {
+        Ok(x) => x,
+        Err(e) => {
+            error!(%e, "wayland connect failed");
+            sup.shutdown();
+            exit(1);
+        }
+    };
+
+    // Background thread polls supervisor for child exit. calloop signalfd
+    // would be cleaner, but a 500ms poll is plenty for exit detection.
+    let river_pid = sup.pid();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            // Send signal 0 to probe existence.
+            // SAFETY: kill(pid, 0) is async-signal-safe and side-effect-free.
+            let alive = unsafe { libc::kill(river_pid as i32, 0) } == 0;
+            if !alive {
+                error!(pid = river_pid, "river process is gone; sola-river exiting");
+                std::process::exit(1);
             }
         }
+    });
+
+    let mut event_loop: EventLoop<client::AppData> =
+        EventLoop::try_new().expect("calloop event loop");
+    let handle = event_loop.handle();
+
+    WaylandSource::new(_conn, queue)
+        .insert(handle.clone())
+        .expect("insert wayland source");
+
+    // Bus tick every 20ms. This cadence is low enough to coalesce burst-y
+    // bus updates from the shell (Composition + Frame + Focus fired in
+    // immediate succession on every keypress) into one manage/render cycle.
+    handle
+        .insert_source(
+            calloop::timer::Timer::from_duration(Duration::from_millis(20)),
+            |_, _, state: &mut client::AppData| {
+                client::bus_tick(state);
+                calloop::timer::TimeoutAction::ToDuration(Duration::from_millis(20))
+            },
+        )
+        .expect("bus timer");
+
+    info!("event loop running");
+    if let Err(e) = event_loop.run(Duration::from_millis(500), &mut data, |_| {}) {
+        error!(%e, "event loop exited with error");
     }
+
+    sup.shutdown();
 }
 
 fn init_tracing() {
