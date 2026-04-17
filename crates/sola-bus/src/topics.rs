@@ -126,6 +126,14 @@ pub struct MouseClickedPayload {
     pub window_id: u32,
 }
 
+/// Request that a specific window perform an edit action (copy or paste).
+/// Emitted by the shell when a global clipboard chord fires; consumed by
+/// the sola-app framework in the owning process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditRequest {
+    pub window_id: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
     Left,
@@ -185,6 +193,12 @@ define_topics! {
 
     // Browser
     OpenUrl(OpenUrlRequest),
+
+    // Global clipboard chords. Shell broadcasts when Meta+C/V fires;
+    // sola-app handles for its own windows, sola-river handles for
+    // foreign (non-sola) windows by synthesizing Ctrl+C / Ctrl+V.
+    Copy(EditRequest),
+    Paste(EditRequest),
 
     // Lifecycle
     Shutdown,

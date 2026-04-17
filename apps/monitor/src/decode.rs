@@ -65,6 +65,8 @@ fn topic_to_json(topic: &Topic) -> Value {
         Topic::SetAppMenu(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::MenuAction(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::OpenUrl(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::Copy(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::Paste(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Shutdown => Value::Null,
     }
 }

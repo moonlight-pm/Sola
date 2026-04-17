@@ -390,6 +390,11 @@ impl ShellApp {
         // Meta+Space toggles launcher.
         bindings.push(KeyCode::SPACE.meta());
 
+        // Meta+C / Meta+V: global copy/paste. Routed to the focused
+        // window's owning Sola app via Topic::Copy / Topic::Paste.
+        bindings.push(KeyCode::C.meta());
+        bindings.push(KeyCode::V.meta());
+
         // Meta+Numpad zones a window.
         for &keycode in zoning::ZONING_KEYCODES {
             bindings.push(KeyChord {

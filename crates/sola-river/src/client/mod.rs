@@ -27,6 +27,7 @@ use crate::protocol::river_xkb_bindings_v1::{
     river_xkb_bindings_v1::RiverXkbBindingsV1,
 };
 use crate::protocol::river_libinput_config_v1::river_libinput_config_v1::RiverLibinputConfigV1;
+use crate::protocol::virtual_keyboard_unstable_v1::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use crate::protocol::wlr_output_management_unstable_v1::zwlr_output_manager_v1::ZwlrOutputManagerV1;
 use crate::registry::{ChordRegistry, WindowRegistry};
 
@@ -35,6 +36,7 @@ pub mod input;
 pub mod manage;
 pub mod output_config;
 pub mod seat;
+pub mod virtual_keyboard;
 pub mod window;
 
 pub struct AppData {
@@ -67,6 +69,9 @@ pub struct AppData {
     /// Mode selection state for `zwlr_output_manager_v1` — we use this
     /// protocol to pick the highest resolution ≥60Hz on startup.
     pub output_config: output_config::OutputConfigState,
+    /// `zwp_virtual_keyboard_v1` state — used to synthesize Ctrl+C / Ctrl+V
+    /// into non-Sola clients when the shell's Meta+C/V chords fire.
+    pub virtual_keyboard: virtual_keyboard::VirtualKeyboardState,
     /// Held so its `device` events keep firing; preferences (natural
     /// scroll) are applied in `client/input.rs`.
     pub libinput_config: Option<RiverLibinputConfigV1>,
@@ -95,6 +100,7 @@ impl AppData {
             output_size: None,
             placed: std::collections::HashSet::new(),
             output_config: output_config::OutputConfigState::default(),
+            virtual_keyboard: virtual_keyboard::VirtualKeyboardState::default(),
             libinput_config: None,
             qh: None,
             conn: None,
@@ -121,9 +127,17 @@ pub fn connect(
             "river_window_manager_v1 not advertised; is River 0.4.2+ running?".into(),
         );
     }
-    data.qh = Some(qh);
+    data.qh = Some(qh.clone());
     data.conn = Some(conn.clone());
     info!("bound river_window_manager_v1");
+
+    // Virtual keyboard init needs both wl_seat and the vk manager bound.
+    // Both arrive during the initial roundtrips above; if either is
+    // missing, init_if_ready is a no-op and we'll never be able to
+    // synthesize (logged on first attempt). In practice wlroots
+    // advertises both by default.
+    virtual_keyboard::init_if_ready(&mut data, &qh);
+
     Ok((conn, queue, data))
 }
 
@@ -164,6 +178,12 @@ pub fn bus_tick(state: &mut AppData) {
                     .collect();
                 state.pending.set_chords(pairs);
             }
+            sola_bus::topics::Topic::Copy(req) => {
+                dispatch_clipboard_chord(state, req.window_id, ClipboardAction::Copy);
+            }
+            sola_bus::topics::Topic::Paste(req) => {
+                dispatch_clipboard_chord(state, req.window_id, ClipboardAction::Paste);
+            }
             sola_bus::topics::Topic::Shutdown => {
                 info!("shutdown requested via bus");
                 std::process::exit(0);
@@ -186,6 +206,52 @@ pub fn bus_tick(state: &mut AppData) {
             }
         }
     }
+}
+
+/// Which clipboard chord fired. Determines the evdev keycode synthesized.
+#[derive(Clone, Copy)]
+enum ClipboardAction {
+    Copy,
+    Paste,
+}
+
+impl ClipboardAction {
+    /// Raw Linux evdev keycode from `include/uapi/linux/input-event-codes.h`.
+    fn evdev_keycode(self) -> u32 {
+        match self {
+            ClipboardAction::Copy => 46,  // KEY_C
+            ClipboardAction::Paste => 47, // KEY_V
+        }
+    }
+}
+
+/// Handle `Topic::Copy` / `Topic::Paste` from the shell. The message is
+/// broadcast, not addressed to a specific subscriber — sola-app handles
+/// it for Sola windows; we handle it for foreign (non-sola) windows by
+/// synthesizing Ctrl+C / Ctrl+V at the Wayland seat via the virtual
+/// keyboard. If the window isn't in our registry at all (e.g. the shell
+/// was slightly faster than River's `window` event) we drop silently.
+fn dispatch_clipboard_chord(state: &mut AppData, window_id: u32, action: ClipboardAction) {
+    let Some(app_id) = state
+        .registry
+        .app_id_for(window_id)
+        .map(|s| s.to_string())
+    else {
+        tracing::debug!(window_id, "clipboard chord for unknown window, ignoring");
+        return;
+    };
+    // Sola apps handle Copy/Paste themselves via the sola-app framework.
+    // We only synthesize for foreign clients.
+    if app_id.starts_with("sola-") {
+        return;
+    }
+    tracing::info!(
+        window_id,
+        app_id = %app_id,
+        action = ?(match action { ClipboardAction::Copy => "copy", ClipboardAction::Paste => "paste" }),
+        "synthesizing Ctrl+key for non-sola client"
+    );
+    virtual_keyboard::synthesize_ctrl_plus_evdev_key(state, action.evdev_keycode());
 }
 
 // ---------- Registry dispatch — the only place globals are bound ----------
@@ -225,6 +291,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                         proxy.bind(name, version.min(4), qh, ());
                     info!(%version, "bound zwlr_output_manager_v1");
                     state.output_config.manager = Some(mgr);
+                }
+                "zwp_virtual_keyboard_manager_v1" => {
+                    let mgr: ZwpVirtualKeyboardManagerV1 =
+                        proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound zwp_virtual_keyboard_manager_v1");
+                    state.virtual_keyboard.manager = Some(mgr);
                 }
                 "river_libinput_config_v1" => {
                     // Keep the proxy alive on AppData so its device events
