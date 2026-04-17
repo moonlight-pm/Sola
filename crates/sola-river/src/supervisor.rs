@@ -27,6 +27,22 @@ fn child_setup() -> io::Result<()> {
     Ok(())
 }
 
+/// Remove `wayland-0` and `wayland-0.lock` from `runtime_dir` if they
+/// exist. River refuses to bind a socket name that already has a lockfile;
+/// this unblocks startup after a crashed prior run.
+fn cleanup_stale_sockets(runtime_dir: &Path) {
+    for name in ["wayland-0", "wayland-0.lock"] {
+        let path = runtime_dir.join(name);
+        if let Err(e) = std::fs::remove_file(&path) {
+            if e.kind() != io::ErrorKind::NotFound {
+                warn!(path = %path.display(), %e, "failed to remove stale socket");
+            }
+        } else {
+            info!(path = %path.display(), "removed stale socket");
+        }
+    }
+}
+
 impl RiverSupervisor {
     /// Spawn `/usr/bin/river`, redirecting stdout/stderr to `log_path`.
     /// Does not wait for the wayland socket.
@@ -35,6 +51,13 @@ impl RiverSupervisor {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/run/user/1000"));
         let socket_path = runtime_dir.join("wayland-0");
+
+        // Clean up stale socket + lock so River can bind wayland-0. If a live
+        // compositor is running on wayland-0, this still wouldn't hurt — we
+        // can't connect to a socket with no listener either way, and the
+        // `wait_for_socket` step below probes connectivity, not file
+        // existence, so stale cruft here would have masked the real problem.
+        cleanup_stale_sockets(&runtime_dir);
 
         if let Some(parent) = log_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -50,6 +73,9 @@ impl RiverSupervisor {
         cmd.args(["-log-level", "info"])
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err));
+        // Don't let a WAYLAND_DISPLAY inherited from our parent trick River
+        // into nested-client mode — we're the session compositor.
+        cmd.env_remove("WAYLAND_DISPLAY");
         // SAFETY: `child_setup` only invokes async-signal-safe libc calls.
         unsafe {
             cmd.pre_exec(child_setup);
@@ -61,22 +87,40 @@ impl RiverSupervisor {
     }
 
     /// Block (with exponential backoff 10ms → 1s, total cap 30s) until
-    /// the wayland socket appears.
-    pub fn wait_for_socket(&self) -> io::Result<()> {
+    /// River is accepting wayland connections.
+    ///
+    /// File existence is not enough: a stale socket file from a prior
+    /// crashed session looks identical to a fresh one, so we actually
+    /// connect and immediately drop to verify a live listener.
+    pub fn wait_for_socket(&mut self) -> io::Result<()> {
         let start = Instant::now();
         let total_cap = Duration::from_secs(30);
         let mut delay = Duration::from_millis(10);
         let cap = Duration::from_secs(1);
         loop {
+            // If River exited before the socket came up, bail fast instead
+            // of spinning until the timeout.
+            if let Ok(Some(status)) = self.child.try_wait() {
+                return Err(io::Error::other(format!(
+                    "river exited before opening a socket: {status:?}"
+                )));
+            }
             if self.socket_path.exists() {
-                info!(path = %self.socket_path.display(), "river socket appeared");
-                return Ok(());
+                match std::os::unix::net::UnixStream::connect(&self.socket_path) {
+                    Ok(_) => {
+                        info!(path = %self.socket_path.display(), "river socket is live");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        tracing::trace!(%e, "socket file present but not accepting yet");
+                    }
+                }
             }
             if start.elapsed() > total_cap {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     format!(
-                        "river socket {} did not appear within 30s",
+                        "river socket {} did not become live within 30s",
                         self.socket_path.display()
                     ),
                 ));
