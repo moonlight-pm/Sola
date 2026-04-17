@@ -3,6 +3,7 @@
 //! `sola-river` cannot do useful work without River. This module encapsulates
 //! that dependency: spawn River with stdio captured to a dedicated log file,
 //! block until its `wayland-0` socket appears, and surface process exit.
+use std::collections::HashSet;
 use std::io;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -17,12 +18,22 @@ pub struct RiverSupervisor {
     /// Populated after `wait_for_socket` succeeds. Path of whichever
     /// `wayland-N` socket River actually opened (not necessarily wayland-0).
     socket_path: Option<PathBuf>,
+    /// `/tmp/.X11-unix/X*` entries observed before spawning River.
+    /// Anything new that appears afterward is attributed to XWayland.
+    pre_x_sockets: HashSet<String>,
 }
 
 /// Filename (inside XDG_RUNTIME_DIR) where sola-river publishes the name
 /// of the live wayland socket so other sola components don't have to
 /// guess. Contents are just the socket name, e.g. `wayland-1`.
 pub const SOLA_WAYLAND_NAME_FILE: &str = "sola-wayland";
+
+/// Filename (inside XDG_RUNTIME_DIR) where sola-river publishes the X11
+/// DISPLAY that River's XWayland is serving. Contents look like `:0`.
+/// File is absent when XWayland isn't active.
+pub const SOLA_DISPLAY_NAME_FILE: &str = "sola-display";
+
+const X_UNIX_DIR: &str = "/tmp/.X11-unix";
 
 // Closure runs post-fork in the River child: inherit SIGTERM on parent
 // death, put River in its own process group.
@@ -129,6 +140,27 @@ fn publish_socket_name(runtime_dir: &Path, name: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// List `X<N>` entries in `/tmp/.X11-unix/`. Returned names include the
+/// `X` prefix — strip it to get an X11 display number.
+fn list_x_sockets() -> HashSet<String> {
+    let Ok(dir) = std::fs::read_dir(X_UNIX_DIR) else {
+        return HashSet::new();
+    };
+    dir.flatten()
+        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .filter(|n| n.starts_with('X') && n[1..].chars().all(|c| c.is_ascii_digit()))
+        .collect()
+}
+
+/// Write `:N` to `$XDG_RUNTIME_DIR/sola-display` so other sola components
+/// know which X11 display River's XWayland is serving.
+fn publish_display_name(runtime_dir: &Path, display_name: &str) -> io::Result<()> {
+    let path = runtime_dir.join(SOLA_DISPLAY_NAME_FILE);
+    std::fs::write(&path, display_name)?;
+    info!(path = %path.display(), display = %display_name, "published DISPLAY");
+    Ok(())
+}
+
 /// Remove every `wayland-N` / `wayland-N.lock` in the runtime dir that is
 /// not actively held. `wayland-x0` (XWayland) is preserved. Files that a
 /// live process holds via `flock` cannot be cleaned up by file removal
@@ -167,6 +199,8 @@ impl RiverSupervisor {
         kill_orphan_rivers();
         cleanup_stale_sockets(&runtime_dir);
         let _ = std::fs::remove_file(runtime_dir.join(SOLA_WAYLAND_NAME_FILE));
+        let _ = std::fs::remove_file(runtime_dir.join(SOLA_DISPLAY_NAME_FILE));
+        let pre_x_sockets = list_x_sockets();
 
         if let Some(parent) = log_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -201,7 +235,34 @@ impl RiverSupervisor {
             child,
             runtime_dir,
             socket_path: None,
+            pre_x_sockets,
         })
+    }
+
+    /// Poll `/tmp/.X11-unix/` for a new `X<N>` entry that wasn't present
+    /// before River spawned, for up to `timeout`. On finding one, publish
+    /// the corresponding `:N` to `$XDG_RUNTIME_DIR/sola-display`. Missing
+    /// XWayland is silent — a display file is simply never written.
+    pub fn wait_for_xwayland(&self, timeout: Duration) {
+        let start = Instant::now();
+        loop {
+            let new_sockets: Vec<String> = list_x_sockets()
+                .into_iter()
+                .filter(|n| !self.pre_x_sockets.contains(n))
+                .collect();
+            if let Some(name) = new_sockets.iter().min() {
+                let display = format!(":{}", &name[1..]);
+                if let Err(e) = publish_display_name(&self.runtime_dir, &display) {
+                    warn!(%e, "failed to publish DISPLAY");
+                }
+                return;
+            }
+            if start.elapsed() >= timeout {
+                info!("no XWayland display appeared; skipping DISPLAY publish");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     /// Block (with exponential backoff 10ms → 1s, total cap 30s) until

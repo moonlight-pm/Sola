@@ -32,6 +32,11 @@ fn main() {
         }
     };
 
+    // River starts XWayland asynchronously after the wayland socket is
+    // live. Poll briefly for the X socket so sola-spawned X apps can pick
+    // up DISPLAY. Absent XWayland → silent no-op.
+    sup.wait_for_xwayland(std::time::Duration::from_secs(3));
+
     // Point our own wayland-client at whatever socket River actually
     // opened. The `sola-wayland` file published by `wait_for_socket` is
     // what our sibling sola processes read.
