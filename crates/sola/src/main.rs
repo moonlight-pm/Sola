@@ -175,16 +175,26 @@ fn launch_user_app(command: &str, user_apps: &mut Vec<UserApp>) {
     };
     let args: Vec<&str> = parts.collect();
 
+    let mut cmd = Command::new(program);
+    cmd.args(&args);
+    // Sola launches from a TTY where neither WAYLAND_DISPLAY nor DISPLAY
+    // is set, so user apps would try bare connects and fail. Point them
+    // at the socket sola-river published.
+    if let Some(name) = resolve_wayland_socket() {
+        tracing::debug!(%name, "setting WAYLAND_DISPLAY for user app");
+        cmd.env("WAYLAND_DISPLAY", name);
+    } else {
+        warn!("sola-wayland not populated yet; user app may fail to connect");
+    }
+
     // SAFETY: pre_exec runs in the child after fork. PR_SET_PDEATHSIG asks
     // the kernel to kill the child if sola dies, preventing orphans.
     let result = unsafe {
-        Command::new(program)
-            .args(&args)
-            .pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                Ok(())
-            })
-            .spawn()
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        })
+        .spawn()
     };
     match result {
         Ok(child) => {
@@ -260,4 +270,19 @@ fn shutdown_all(managed: &mut HashMap<&str, ManagedProcess>) {
 /// Only called on binary change events, which are rare.
 fn leak_str(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
+}
+
+/// Read the wayland socket name that sola-river published to
+/// `$XDG_RUNTIME_DIR/sola-wayland`. Returns `None` if the file isn't
+/// there yet (sola-river still starting, or not running).
+fn resolve_wayland_socket() -> Option<String> {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")?;
+    let path = std::path::Path::new(&runtime_dir).join("sola-wayland");
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let name = raw.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }
