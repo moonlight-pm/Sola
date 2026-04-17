@@ -22,13 +22,11 @@ pub mod river_window_management_v1 {
 
 pub mod river_xkb_bindings_v1 {
     use wayland_client;
-    use wayland_client::protocol::*;
 
     // The bindings protocol references `river_seat_v1` from the WM protocol.
     use crate::protocol::river_window_management_v1::*;
 
     pub mod __interfaces {
-        use wayland_client::protocol::__interfaces::*;
         use crate::protocol::river_window_management_v1::__interfaces::*;
         wayland_scanner::generate_interfaces!(
             "protocols/river-xkb-bindings-v1.xml"
