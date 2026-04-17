@@ -396,11 +396,20 @@ impl ShellApp {
         bindings.push(KeyCode::C.meta());
         bindings.push(KeyCode::V.meta());
 
-        // Meta+Numpad zones a window.
+        // Meta+Numpad zones a window. Also register Ctrl+Numpad: when
+        // focus is on a non-Sola app the xkb profile swaps Super→Ctrl,
+        // so physical Meta+Numpad arrives here as Ctrl+Numpad. Numpad
+        // keys with Ctrl aren't used by any real app, so catching both
+        // is safe; the chord handler dispatches zoning on keycode alone
+        // without inspecting the modifier.
         for &keycode in zoning::ZONING_KEYCODES {
             bindings.push(KeyChord {
                 keycode: keycode.into(),
                 ..KeyCode::TAB.meta()
+            });
+            bindings.push(KeyChord {
+                keycode: keycode.into(),
+                ..KeyCode::TAB.ctrl()
             });
         }
 
