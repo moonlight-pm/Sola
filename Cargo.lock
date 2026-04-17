@@ -2317,8 +2317,6 @@ dependencies = [
  "sola-bus",
  "sola-core",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "uuid",
  "webkit6",
 ]
