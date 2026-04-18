@@ -183,7 +183,7 @@ impl SolaApp for ShellApp {
             Topic::ChordReleased(evt) => {
                 crate::keys::handle_chord_released(self, ctx, evt.clone());
             }
-            Topic::LaunchResult(LaunchResultPayload { command, ok, error }) => {
+            Topic::LaunchResult(LaunchResultPayload { app_id, command, ok, error }) => {
                 if *ok {
                     tracing::info!(command = %command, "LaunchResult ok");
                 } else {
@@ -197,6 +197,7 @@ impl SolaApp for ShellApp {
                 }
             }
             Topic::UserAppExited(UserAppExitedPayload {
+                app_id,
                 command,
                 code,
                 signal,
@@ -820,7 +821,10 @@ impl ShellApp {
         tracing::info!(app_id, "launch_and_close");
         if let Some(app) = self.applications.get(app_id) {
             tracing::info!(app_id, command = %app.command, "emitting LaunchApp");
-            ctx.emit(Topic::LaunchApp(app.command.clone()));
+            ctx.emit(Topic::LaunchApp(sola_bus::topics::LaunchAppPayload {
+                app_id: app_id.to_string(),
+                command: app.command.clone(),
+            }));
         } else {
             tracing::warn!(app_id, "launch requested for unknown application");
         }

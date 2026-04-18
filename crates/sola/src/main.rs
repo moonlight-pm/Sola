@@ -155,8 +155,8 @@ fn main() {
                     river_sup.shutdown();
                     std::process::exit(0);
                 }
-                Topic::LaunchApp(command) => {
-                    launch_user_app(&command, &mut user_apps, &mut bus);
+                Topic::LaunchApp(payload) => {
+                    launch_user_app(&payload.app_id, &payload.command, &mut user_apps, &mut bus);
                 }
                 _ => {}
             }
@@ -221,26 +221,28 @@ struct ManagedProcess {
 }
 
 struct UserApp {
+    app_id: String,
     command: String,
     child: Child,
 }
 
 fn launch_user_app(
+    app_id: &str,
     command: &str,
     user_apps: &mut Vec<UserApp>,
     bus: &mut sola_bus::BusClient,
 ) {
     let trimmed = command.trim();
-    info!(command = trimmed, "LaunchApp received");
+    info!(app_id, command = trimmed, "LaunchApp received");
     if trimmed.is_empty() {
         warn!("LaunchApp with empty command, ignoring");
-        emit_launch_result(bus, trimmed, false, Some("empty command".into()));
+        emit_launch_result(bus, app_id, trimmed, false, Some("empty command".into()));
         return;
     }
     let mut parts = trimmed.split_whitespace();
     let Some(program) = parts.next() else {
-        warn!(command, "LaunchApp with no program, ignoring");
-        emit_launch_result(bus, trimmed, false, Some("no program".into()));
+        warn!(app_id, command, "LaunchApp with no program, ignoring");
+        emit_launch_result(bus, app_id, trimmed, false, Some("no program".into()));
         return;
     };
     let args: Vec<&str> = parts.collect();
@@ -272,27 +274,30 @@ fn launch_user_app(
     };
     match result {
         Ok(child) => {
-            info!(command = trimmed, pid = child.id(), "user app launched");
+            info!(app_id, command = trimmed, pid = child.id(), "user app launched");
             user_apps.push(UserApp {
+                app_id: app_id.to_string(),
                 command: trimmed.to_string(),
                 child,
             });
-            emit_launch_result(bus, trimmed, true, None);
+            emit_launch_result(bus, app_id, trimmed, true, None);
         }
         Err(e) => {
-            warn!(command = trimmed, "failed to launch user app: {e}");
-            emit_launch_result(bus, trimmed, false, Some(e.to_string()));
+            warn!(app_id, command = trimmed, "failed to launch user app: {e}");
+            emit_launch_result(bus, app_id, trimmed, false, Some(e.to_string()));
         }
     }
 }
 
 fn emit_launch_result(
     bus: &mut sola_bus::BusClient,
+    app_id: &str,
     command: &str,
     ok: bool,
     error: Option<String>,
 ) {
     let payload = LaunchResultPayload {
+        app_id: app_id.to_string(),
         command: command.to_string(),
         ok,
         error,
@@ -316,6 +321,7 @@ fn reap_user_apps(user_apps: &mut Vec<UserApp>, bus: &mut sola_bus::BusClient) {
                 "user app exited",
             );
             let payload = UserAppExitedPayload {
+                app_id: app.app_id.clone(),
                 command: app.command.clone(),
                 code,
                 signal,
