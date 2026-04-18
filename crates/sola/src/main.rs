@@ -19,7 +19,7 @@ const MANAGED: &[&str] = &[
     "sola-bus",
     "sola-river",
     "sola-shell",
-    "sola-terminal",
+    "sola-session",
 ];
 
 /// Minimum uptime before a restart is considered immediate (triggers backoff).
