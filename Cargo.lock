@@ -2022,6 +2022,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-session"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "sola-bus",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "sola-shell"
 version = "0.1.0"
 dependencies = [
