@@ -71,9 +71,7 @@ mod tests {
     use super::*;
 
     // Simple test type — the registry doesn't care about A's shape.
-    struct TestApp {
-        count: u32,
-    }
+    struct TestApp;
 
     // A stub handler that panics if called — we only test kinds/subscribe_all
     // here. Actual dispatch is covered indirectly via integration tests
