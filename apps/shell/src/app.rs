@@ -494,6 +494,9 @@ impl ShellApp {
         bindings.push(KeyCode::C.meta());
         bindings.push(KeyCode::V.meta());
 
+        // Meta+Q: close focused app.
+        bindings.push(KeyCode::Q.meta());
+
         // Meta+Numpad zones a window.
         for &keycode in zoning::ZONING_KEYCODES {
             bindings.push(KeyChord {
@@ -1028,6 +1031,25 @@ impl ShellApp {
                 session::save(&self.session_entries);
             }
         }
+    }
+
+    /// Emit `CloseApp` for the currently focused window, unless a shell overlay
+    /// is active or the focused surface is the shell itself.
+    pub fn close_focused_app(&mut self, ctx: &mut AppCtx) {
+        if self.launcher.active || self.switcher.active || self.menu_open {
+            return;
+        }
+        let Some(wid) = self.focused_window_id else { return };
+        let Some(win) = self.known_windows.iter().find(|w| w.window_id == wid) else {
+            tracing::warn!(wid, "Meta+Q: focused_window_id not in known_windows");
+            return;
+        };
+        let app_id = win.app_id.clone();
+        if app_id == Self::APP_ID {
+            return;
+        }
+        tracing::info!(%app_id, "Meta+Q — emitting CloseApp");
+        let _ = ctx.emit(Topic::CloseApp(app_id));
     }
 
     /// Show a transient toast message in the menubar.

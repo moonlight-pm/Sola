@@ -344,6 +344,13 @@ pub fn handle_chord(
         return;
     }
 
+    // Meta+Q: close focused app.
+    if chord.meta && chord.keycode == KeyCode::Q {
+        tracing::info!("Meta+Q — close focused app");
+        app.close_focused_app(ctx);
+        return;
+    }
+
     // Meta+Tab: activate switcher.
     if chord.meta && chord.keycode == KeyCode::TAB {
         if app.launcher.active {
