@@ -246,6 +246,18 @@ mod tests {
     }
 
     #[test]
+    fn topic_kind_matches_variant() {
+        let t = Topic::Shutdown;
+        assert_eq!(t.kind(), TopicKind::Shutdown);
+    }
+
+    #[test]
+    fn topic_kind_all_includes_shutdown_and_apps() {
+        assert!(TopicKind::ALL.iter().any(|k| k.as_str() == "Shutdown"));
+        assert!(TopicKind::ALL.iter().any(|k| k.as_str() == "Apps"));
+    }
+
+    #[test]
     fn app_menu_roundtrip() {
         let payload = AppMenuPayload {
             app_id: "test-app".into(),
