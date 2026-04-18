@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -23,6 +23,11 @@ struct BusState {
     /// Latest sticky message per (topic, tag), replayed to newly connected clients.
     /// Multiple apps can have independent stickies on the same topic.
     sticky: HashMap<(String, String), sola_bus::Message>,
+    /// client_id → app_id for clients that have sent `$identify`.
+    roster: HashMap<ClientId, String>,
+    /// client_id → topic kinds the client has subscribed to via `$subscribe`.
+    #[allow(dead_code)]
+    subscriptions: HashMap<ClientId, HashSet<sola_bus::topics::TopicKind>>,
 }
 
 type SharedState = Arc<Mutex<BusState>>;
@@ -61,6 +66,8 @@ fn main() {
     let state: SharedState = Arc::new(Mutex::new(BusState {
         clients: HashMap::new(),
         sticky: HashMap::new(),
+        roster: HashMap::new(),
+        subscriptions: HashMap::new(),
     }));
     let mut next_id: ClientId = 0;
 
@@ -142,14 +149,27 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
             Ok(Some(event)) => {
                 log_bus_message(id, &event);
 
-                let mut bus = state.lock().unwrap();
-
-                if event.sticky {
-                    let key = (event.topic.clone(), event.source.clone());
-                    bus.sticky.insert(key, event.clone());
+                match event.topic.as_str() {
+                    sola_bus::CONTROL_IDENTIFY => {
+                        if let Ok(app_id) =
+                            sola_bus::topic::decode_payload::<String>(&event)
+                        {
+                            handle_identify(id, app_id, state);
+                        }
+                    }
+                    sola_bus::CONTROL_SUBSCRIBE => {
+                        // Task 1.5 implements this. For now, ignore silently so the
+                        // server doesn't try to broadcast the control message.
+                    }
+                    _ => {
+                        let mut bus = state.lock().unwrap();
+                        if event.sticky {
+                            let key = (event.topic.clone(), event.source.clone());
+                            bus.sticky.insert(key, event.clone());
+                        }
+                        broadcast(id, &event, &mut bus);
+                    }
                 }
-
-                broadcast(id, &event, &mut bus);
             }
             Ok(None) => {
                 info!(client = id, "disconnected");
@@ -166,9 +186,13 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
         }
     }
 
-    // Dropping the sender causes the writer thread to exit on its next
-    // recv().
-    state.lock().unwrap().clients.remove(&id);
+    let mut bus = state.lock().unwrap();
+    if let Some(app_id) = bus.roster.remove(&id) {
+        let evt = sola_bus::topics::Topic::ClientDisconnected(app_id).to_message();
+        broadcast(id, &evt, &mut bus);
+    }
+    bus.clients.remove(&id);
+    bus.subscriptions.remove(&id);
 }
 
 /// Append a line to /opt/sola/log/bus.log for every message that flows
@@ -200,6 +224,17 @@ fn log_bus_message(client: ClientId, event: &sola_bus::Message) {
             );
         }
     });
+}
+
+fn handle_identify(id: ClientId, app_id: String, state: &SharedState) {
+    let mut bus = state.lock().unwrap();
+    let prev = bus.roster.insert(id, app_id.clone());
+    if prev.as_ref() == Some(&app_id) {
+        return; // already identified with this id — no broadcast
+    }
+    info!(client = id, %app_id, "identified");
+    let evt = sola_bus::topics::Topic::ClientConnected(app_id).to_message();
+    broadcast(id, &evt, &mut bus);
 }
 
 fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
