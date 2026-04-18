@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 use sola_app::config::JsonConfigIn;
-use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle};
+use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
     App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
     LaunchResultPayload, MenuDefinition, MenuItem, MouseClickedPayload,
-    MouseEnteredPayload, RegisteredChord, Topic, UserAppExitedPayload,
+    MouseEnteredPayload, RegisteredChord, Topic, TopicKind, UserAppExitedPayload,
 };
 use sola_core::KeyCode;
 
@@ -133,90 +133,20 @@ impl SolaApp for ShellApp {
         app
     }
 
-    fn on_bus_event(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        match topic {
-            Topic::Apps(apps) => {
-                self.handle_apps_update(apps.clone(), ctx);
-                if self.switcher.active {
-                    let json = self.switcher_apps_json();
-                    self.windows.switcher.eval_js(&format!(
-                        "renderSwitcher({}, {})",
-                        json, self.switcher.selected
-                    ));
-                }
-            }
-            Topic::SetAppMenu(payload) => {
-                self.menus.set_menu(payload.clone());
-
-                self.emit_registered_chords(ctx);
-
-                if self.focused_app_id.as_deref() == Some(&payload.app_id) {
-                    let app_name = payload
-                        .menus
-                        .first()
-                        .map(|d| d.label.as_str())
-                        .unwrap_or(&payload.app_id);
-                    let menu_labels: Vec<String> =
-                        payload.menus.iter().map(|d| d.label.clone()).collect();
-                    self.windows.menubar.send_to_js(&serde_json::json!({
-                        "event": "focus",
-                        "app_name": app_name,
-                        "menu_labels": menu_labels,
-                    }));
-                }
-            }
-            Topic::OutputGeometry(geo) => {
-                self.zoning.set_output_size(geo);
-                self.emit_all_frames(ctx);
-                self.emit_composition(ctx);
-            }
-            Topic::MouseEntered(MouseEnteredPayload { window_id }) => {
-                self.focus_window_from_pointer(*window_id, ctx);
-            }
-            Topic::MouseClicked(MouseClickedPayload { window_id }) => {
-                self.focus_window_from_pointer(*window_id, ctx);
-            }
-            Topic::MouseLeft => {}
-            Topic::Chord(evt) => {
-                crate::keys::handle_chord(self, ctx, evt.clone());
-            }
-            Topic::ChordReleased(evt) => {
-                crate::keys::handle_chord_released(self, ctx, evt.clone());
-            }
-            Topic::LaunchResult(LaunchResultPayload { app_id: _, command, ok, error }) => {
-                if *ok {
-                    tracing::info!(command = %command, "LaunchResult ok");
-                } else {
-                    tracing::warn!(
-                        command = %command,
-                        error = error.as_deref().unwrap_or(""),
-                        "LaunchResult failed"
-                    );
-                    let err_msg = error.as_deref().unwrap_or("launch failed");
-                    self.push_toast(&format!("{command}: {err_msg}"));
-                }
-            }
-            Topic::UserAppExited(UserAppExitedPayload {
-                app_id: _,
-                command,
-                code,
-                signal,
-            }) => {
-                let detail = match (code, signal) {
-                    (Some(c), _) => format!("exit {c}"),
-                    (_, Some(s)) => format!("signal {s}"),
-                    _ => "exited".to_string(),
-                };
-                tracing::warn!(
-                    command = %command,
-                    code = ?code,
-                    signal = ?signal,
-                    "user app exited"
-                );
-                self.push_toast(&format!("{command} — {detail}"));
-            }
-            _ => {}
-        }
+    fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
+        // Default CloseApp handler is inherited from the trait — don't re-register.
+        bus.on(TopicKind::Apps, Self::on_apps);
+        bus.on(TopicKind::SetAppMenu, Self::on_set_app_menu);
+        bus.on(TopicKind::OutputGeometry, Self::on_output_geometry);
+        bus.on(TopicKind::MouseEntered, Self::on_mouse_entered);
+        bus.on(TopicKind::MouseClicked, Self::on_mouse_clicked);
+        bus.on(TopicKind::MouseLeft, Self::on_mouse_left);
+        bus.on(TopicKind::Chord, Self::on_chord);
+        bus.on(TopicKind::ChordReleased, Self::on_chord_released);
+        bus.on(TopicKind::LaunchResult, Self::on_launch_result);
+        bus.on(TopicKind::UserAppExited, Self::on_user_app_exited);
+        bus.on(TopicKind::ClientConnected, Self::on_client_connected);
+        bus.on(TopicKind::ClientDisconnected, Self::on_client_disconnected);
     }
 
     fn on_js_command(
@@ -305,6 +235,114 @@ impl SolaApp for ShellApp {
 }
 
 impl ShellApp {
+    fn on_apps(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::Apps(apps) = topic else { return };
+        self.handle_apps_update(apps.clone(), ctx);
+        if self.switcher.active {
+            let json = self.switcher_apps_json();
+            self.windows.switcher.eval_js(&format!(
+                "renderSwitcher({}, {})",
+                json, self.switcher.selected
+            ));
+        }
+    }
+
+    fn on_set_app_menu(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::SetAppMenu(payload) = topic else { return };
+        self.menus.set_menu(payload.clone());
+
+        self.emit_registered_chords(ctx);
+
+        if self.focused_app_id.as_deref() == Some(&payload.app_id) {
+            let app_name = payload
+                .menus
+                .first()
+                .map(|d| d.label.as_str())
+                .unwrap_or(&payload.app_id);
+            let menu_labels: Vec<String> =
+                payload.menus.iter().map(|d| d.label.clone()).collect();
+            self.windows.menubar.send_to_js(&serde_json::json!({
+                "event": "focus",
+                "app_name": app_name,
+                "menu_labels": menu_labels,
+            }));
+        }
+    }
+
+    fn on_output_geometry(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::OutputGeometry(geo) = topic else { return };
+        self.zoning.set_output_size(geo);
+        self.emit_all_frames(ctx);
+        self.emit_composition(ctx);
+    }
+
+    fn on_mouse_entered(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::MouseEntered(MouseEnteredPayload { window_id }) = topic else { return };
+        self.focus_window_from_pointer(*window_id, ctx);
+    }
+
+    fn on_mouse_clicked(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::MouseClicked(MouseClickedPayload { window_id }) = topic else { return };
+        self.focus_window_from_pointer(*window_id, ctx);
+    }
+
+    fn on_mouse_left(&mut self, _topic: &Topic, _ctx: &mut AppCtx) {}
+
+    fn on_chord(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::Chord(evt) = topic else { return };
+        crate::keys::handle_chord(self, ctx, evt.clone());
+    }
+
+    fn on_chord_released(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::ChordReleased(evt) = topic else { return };
+        crate::keys::handle_chord_released(self, ctx, evt.clone());
+    }
+
+    fn on_launch_result(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        let Topic::LaunchResult(LaunchResultPayload { app_id: _, command, ok, error }) = topic
+            else { return };
+        if *ok {
+            tracing::info!(command = %command, "LaunchResult ok");
+        } else {
+            tracing::warn!(
+                command = %command,
+                error = error.as_deref().unwrap_or(""),
+                "LaunchResult failed"
+            );
+            let err_msg = error.as_deref().unwrap_or("launch failed");
+            self.push_toast(&format!("{command}: {err_msg}"));
+        }
+    }
+
+    fn on_user_app_exited(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        let Topic::UserAppExited(UserAppExitedPayload {
+            app_id: _,
+            command,
+            code,
+            signal,
+        }) = topic else { return };
+        let detail = match (code, signal) {
+            (Some(c), _) => format!("exit {c}"),
+            (_, Some(s)) => format!("signal {s}"),
+            _ => "exited".to_string(),
+        };
+        tracing::warn!(
+            command = %command,
+            code = ?code,
+            signal = ?signal,
+            "user app exited"
+        );
+        self.push_toast(&format!("{command} — {detail}"));
+    }
+
+    fn on_client_connected(&mut self, _topic: &Topic, _ctx: &mut AppCtx) {
+        // Filled in by Task 6.2 (session restore).
+    }
+
+    fn on_client_disconnected(&mut self, _topic: &Topic, _ctx: &mut AppCtx) {
+        // Filled in by Task 6.2 (session restore).
+    }
+
     /// Look up a configured application by its `app_id`.
     pub fn application(&self, app_id: &str) -> Option<&Application> {
         self.applications.get(app_id)
