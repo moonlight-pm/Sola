@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use sola_app::{AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
-use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Topic, TopicKind};
+use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Topic};
 use sola_core::KeyCode;
 
 mod active;

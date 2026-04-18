@@ -26,6 +26,12 @@ impl BusClient {
         }
     }
 
+    pub fn subscribe(&mut self, kinds: &[TopicKind]) {
+        if let Err(e) = self.inner.subscribe(kinds) {
+            tracing::warn!(%e, "bus subscribe failed");
+        }
+    }
+
     pub fn try_recv(&mut self) -> Option<Message> {
         self.inner.try_recv()
     }
