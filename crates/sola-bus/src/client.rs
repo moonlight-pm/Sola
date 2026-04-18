@@ -12,7 +12,6 @@ use crate::topic::encode_payload;
 use crate::topics::TopicKind;
 use crate::{Message, transport};
 
-#[allow(dead_code)] // wired into BusClient::subscribe in Task 1.7
 fn encode_subscribe(kinds: &[TopicKind]) -> Message {
     Message::with_payload(
         crate::CONTROL_SUBSCRIBE,
@@ -20,7 +19,6 @@ fn encode_subscribe(kinds: &[TopicKind]) -> Message {
     )
 }
 
-#[allow(dead_code)] // wired into BusClient::identify in Task 1.7
 fn encode_identify(app_id: &str) -> Message {
     Message::with_payload(
         crate::CONTROL_IDENTIFY,
@@ -64,8 +62,31 @@ impl BusClient {
     }
 
     /// Set the app identity used to tag sticky messages.
+    ///
+    /// Also sends an Identify to the bus — queued if disconnected, sent
+    /// immediately if connected.
     pub fn set_app_id(&mut self, id: impl Into<String>) {
         self.app_id = id.into();
+        // Queued when disconnected; sent immediately when connected.
+        let _ = self.identify();
+    }
+
+    /// Subscribe to the given topic kinds. Until this is called, the bus
+    /// delivers nothing to this client. May be called repeatedly; the set
+    /// replaces any previous subscription.
+    pub fn subscribe(&mut self, kinds: &[crate::topics::TopicKind]) -> io::Result<()> {
+        let msg = encode_subscribe(kinds);
+        self.send(&msg)
+    }
+
+    /// Send an explicit Identify to the bus. Normally not called directly —
+    /// `set_app_id` sends it automatically.
+    pub fn identify(&mut self) -> io::Result<()> {
+        if self.app_id.is_empty() {
+            return Ok(());
+        }
+        let msg = encode_identify(&self.app_id);
+        self.send(&msg)
     }
 
     /// Attempt to connect to the bus at the default socket path.
