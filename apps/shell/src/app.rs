@@ -14,6 +14,7 @@ use crate::applications::{Application, ApplicationsConfig};
 use crate::launcher::{self, LAUNCHER_ASSETS, LauncherState};
 use crate::menu::{MENU_ASSETS, MenuCache};
 use crate::menubar::setup_menubar;
+use crate::session::{self, SessionEntry};
 use crate::switcher::{SWITCHER_ASSETS, SwitcherState};
 use crate::zoning::{self, ZoningState};
 
@@ -41,6 +42,7 @@ pub struct ShellApp {
     /// Maps (app_id, title) to window_id for lookup.
     pub window_id_by_key: HashMap<(String, String), u32>,
     pub applications: ApplicationsConfig,
+    pub session_entries: Vec<SessionEntry>,
     pub menus: MenuCache,
     pub zoning: ZoningState,
     pub switcher: SwitcherState,
@@ -115,6 +117,7 @@ impl SolaApp for ShellApp {
             known_windows: Vec::new(),
             window_id_by_key: HashMap::new(),
             applications: ApplicationsConfig::load(),
+            session_entries: session::load(),
             menus,
             zoning: ZoningState::new(),
             switcher: SwitcherState::default(),
@@ -335,12 +338,53 @@ impl ShellApp {
         self.push_toast(&format!("{command} — {detail}"));
     }
 
-    fn on_client_connected(&mut self, _topic: &Topic, _ctx: &mut AppCtx) {
-        // Filled in by Task 6.2 (session restore).
+    fn on_client_connected(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::ClientConnected(app_id) = topic else { return };
+        if app_id != "sola-session" {
+            return;
+        }
+
+        // Relaunch pending entries only. Live entries (window_id: Some) stay live.
+        let mut launches: Vec<(String, String)> = Vec::new();
+        self.session_entries.retain(|e| {
+            if e.window_id.is_some() {
+                return true;
+            }
+            match self.applications.get(&e.app_id) {
+                Some(app) => {
+                    launches.push((e.app_id.clone(), app.command.clone()));
+                    true
+                }
+                None => {
+                    tracing::warn!(
+                        app_id = %e.app_id,
+                        "session entry not in applications.json; pruning"
+                    );
+                    false
+                }
+            }
+        });
+
+        for (app_id, command) in launches {
+            tracing::info!(%app_id, "restoring session app");
+            let _ = ctx.emit(Topic::LaunchApp(sola_bus::topics::LaunchAppPayload {
+                app_id,
+                command,
+            }));
+        }
+        session::save(&self.session_entries);
     }
 
-    fn on_client_disconnected(&mut self, _topic: &Topic, _ctx: &mut AppCtx) {
-        // Filled in by Task 6.2 (session restore).
+    fn on_client_disconnected(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        let Topic::ClientDisconnected(app_id) = topic else { return };
+        if app_id != "sola-session" {
+            return;
+        }
+        tracing::warn!("sola-session disconnected; demoting live entries to pending");
+        for e in self.session_entries.iter_mut() {
+            e.window_id = None;
+        }
+        session::save(&self.session_entries);
     }
 
     /// Look up a configured application by its `app_id`.
