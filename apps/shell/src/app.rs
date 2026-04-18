@@ -319,7 +319,7 @@ impl ShellApp {
 
     fn on_user_app_exited(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
         let Topic::UserAppExited(UserAppExitedPayload {
-            app_id: _,
+            app_id,
             command,
             code,
             signal,
@@ -336,6 +336,22 @@ impl ShellApp {
             "user app exited"
         );
         self.push_toast(&format!("{command} — {detail}"));
+
+        // Authoritative "entry gone" signal: remove first matching entry.
+        // Prefer a live one (window already closed); fall back to pending.
+        let idx = self
+            .session_entries
+            .iter()
+            .position(|e| e.app_id == *app_id && e.window_id.is_some())
+            .or_else(|| {
+                self.session_entries
+                    .iter()
+                    .position(|e| e.app_id == *app_id)
+            });
+        if let Some(i) = idx {
+            self.session_entries.remove(i);
+            session::save(&self.session_entries);
+        }
     }
 
     fn on_client_connected(&mut self, topic: &Topic, ctx: &mut AppCtx) {
@@ -757,6 +773,8 @@ impl ShellApp {
             }
             self.emit_composition(ctx);
         }
+
+        self.reconcile_session_entries(ctx);
     }
 
     pub fn open_menu(&mut self, source: &str, menu_index: usize, anchor_x: f64, ctx: &mut AppCtx) {
@@ -917,6 +935,99 @@ impl ShellApp {
         let json = launcher::state::render_json(&self.applications, &self.launcher.filtered_ids);
         let js = format!("renderApps({}, {})", json, self.launcher.selected);
         self.windows.launcher.eval_js(&js);
+    }
+
+    /// Reconcile session entries against the current window set.
+    ///
+    /// - Demotes (does not remove) live entries whose window has vanished.
+    /// - Claims pending entries for newly mapped windows and applies saved zones.
+    /// - Creates new entries for windows with no matching pending entry.
+    fn reconcile_session_entries(&mut self, ctx: &mut AppCtx) {
+        use std::collections::HashSet;
+        use sola_bus::topics::Zone;
+
+        let current: HashSet<(String, u32)> = self
+            .known_windows
+            .iter()
+            .map(|w| (w.app_id.clone(), w.window_id))
+            .collect();
+
+        // Demote (don't remove) live entries whose window has vanished.
+        // Removal is driven by UserAppExited; see on_user_app_exited.
+        for e in self.session_entries.iter_mut() {
+            if let Some(wid) = e.window_id {
+                if !current.contains(&(e.app_id.clone(), wid)) {
+                    e.window_id = None;
+                }
+            }
+        }
+
+        // For each window, claim a pending entry or create a new one.
+        let windows: Vec<(String, u32)> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID)
+            .map(|w| (w.app_id.clone(), w.window_id))
+            .collect();
+
+        let mut frames: Vec<sola_bus::topics::FrameUpdate> = Vec::new();
+
+        for (app_id, window_id) in windows {
+            let already = self
+                .session_entries
+                .iter()
+                .any(|e| e.window_id == Some(window_id));
+            if already {
+                continue;
+            }
+            let pending_idx = self
+                .session_entries
+                .iter()
+                .position(|e| e.app_id == app_id && e.window_id.is_none());
+            match pending_idx {
+                Some(i) => {
+                    self.session_entries[i].window_id = Some(window_id);
+                    let zone = self.session_entries[i].zone;
+                    tracing::info!(%app_id, window_id, ?zone, "session: claimed pending entry");
+                    if let Some(frame) = self.zoning.snap(window_id, zone) {
+                        frames.push(frame);
+                    }
+                }
+                None => {
+                    // No pending entry — new window. Record it with whatever
+                    // zone the existing zoning logic assigned, or a sane default.
+                    let zone = self
+                        .zoning
+                        .current_zone_for_window(window_id)
+                        .unwrap_or(Zone::Top);
+                    self.session_entries.push(SessionEntry {
+                        app_id: app_id.clone(),
+                        zone,
+                        window_id: Some(window_id),
+                    });
+                }
+            }
+        }
+
+        for frame in frames {
+            ctx.emit(Topic::Frame(frame));
+        }
+
+        session::save(&self.session_entries);
+    }
+
+    /// Update a session entry's zone when the user snaps a live window.
+    pub fn update_entry_zone(&mut self, window_id: u32, zone: sola_bus::topics::Zone) {
+        if let Some(e) = self
+            .session_entries
+            .iter_mut()
+            .find(|e| e.window_id == Some(window_id))
+        {
+            if e.zone != zone {
+                e.zone = zone;
+                session::save(&self.session_entries);
+            }
+        }
     }
 
     /// Show a transient toast message in the menubar.

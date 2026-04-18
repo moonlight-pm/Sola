@@ -379,6 +379,11 @@ pub fn handle_chord(
     // Zone snapping (Meta+Numpad).
     if let Some(frame) = app.zoning.handle_key(chord.keycode.raw(), app.focused_window_id) {
         ctx.emit(Topic::Frame(frame));
+        if let Some(window_id) = app.focused_window_id {
+            if let Some(zone) = app.zoning.current_zone_for_window(window_id) {
+                app.update_entry_zone(window_id, zone);
+            }
+        }
         return;
     }
 
