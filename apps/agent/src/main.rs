@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use sola_app::{AppCtx, AsyncDispatcher, SolaApp, WindowConfig, WindowHandle, asset_bundle};
-use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Topic};
+use sola_app::{AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
+use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Topic, TopicKind};
 use sola_core::KeyCode;
 
 mod active;
@@ -84,6 +84,10 @@ impl SolaApp for AgentApp {
             main_window,
             dispatcher,
         }
+    }
+
+    fn register_bus(&mut self, _bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
+        // Default CloseApp handler is inherited from the trait — don't re-register.
     }
 
     fn on_js_command(

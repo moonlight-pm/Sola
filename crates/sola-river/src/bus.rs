@@ -1,14 +1,11 @@
 //! Thin wrapper around `sola_bus::BusClient` that:
 //!   - Sets our app_id.
-//!   - Exposes `ensure_connected` for polling reconnect.
+//!   - Exposes `ensure_connected` and `subscribe` for connection setup.
 //!   - Exposes `try_recv` and `emit*` for the translator.
-//!
-//! The bus is a broadcast channel: there are no topic subscriptions.
-//! Everything ends up in `try_recv` and the translator filters by variant.
 use std::os::unix::io::RawFd;
 
 use sola_bus::Message;
-use sola_bus::topics::Topic;
+use sola_bus::topics::{Topic, TopicKind};
 
 pub struct BusClient {
     inner: sola_bus::BusClient,
