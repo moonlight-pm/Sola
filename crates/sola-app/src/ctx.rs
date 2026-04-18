@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use gtk4::glib::Propagation;
 use gtk4::prelude::*;
 use webkit6::prelude::*;
 
@@ -74,6 +75,10 @@ impl AppCtx {
         gtk_window.set_decorated(cfg.decorated);
         gtk_window.set_default_size(cfg.size.0, cfg.size.1);
         gtk_window.set_title(Some(&cfg.title));
+        // Sola apps exit only via bus CloseApp → on_close_app → ctx.shutdown.
+        // Swallowing xdg_toplevel.close here prevents the compositor's graceful-
+        // close flow for external apps from also taking down sola apps.
+        gtk_window.connect_close_request(|_win| Propagation::Stop);
 
         let webview = webkit6::WebView::builder()
             .web_context(&web_context)
