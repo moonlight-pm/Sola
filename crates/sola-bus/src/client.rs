@@ -118,6 +118,7 @@ impl BusClient {
         // so event-loop callers can watch notify_read instead of polling.
         let (notify_read, notify_write) = UnixStream::pair()?;
         notify_read.set_nonblocking(true)?;
+        notify_write.set_nonblocking(true)?;
 
         info!(path = %path, "connected to bus");
 
@@ -269,7 +270,11 @@ fn read_loop(mut reader: UnixStream, tx: mpsc::Sender<Message>, mut notify: Unix
                 if tx.send(msg).is_err() {
                     break; // receiver dropped
                 }
-                let _ = notify.write_all(&[1u8]);
+                if let Err(e) = notify.write(&[1u8]) {
+                    if e.kind() != io::ErrorKind::WouldBlock {
+                        warn!("notify pipe write error: {e}");
+                    }
+                }
             }
             Ok(None) => {
                 info!("bus connection closed");
@@ -284,6 +289,38 @@ fn read_loop(mut reader: UnixStream, tx: mpsc::Sender<Message>, mut notify: Unix
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod notify_tests {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn nonblocking_write_does_not_deadlock() {
+        let (reader, mut writer) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        writer.set_nonblocking(true).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut written = 0usize;
+        let mut blocked = 0usize;
+        while Instant::now() < deadline && written < 200_000 {
+            match writer.write(&[1u8]) {
+                Ok(_) => written += 1,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => blocked += 1,
+                Err(e) => panic!("unexpected error: {e}"),
+            }
+        }
+
+        // Drain to avoid test noise.
+        let mut buf = [0u8; 1024];
+        let _ = (&reader).read(&mut buf);
+
+        assert!(blocked > 0, "expected some WouldBlock once buffer is full");
+        assert!(written > 0, "expected some writes to succeed");
     }
 }
 
