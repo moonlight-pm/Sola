@@ -8,7 +8,23 @@ use std::thread;
 
 use tracing::{info, warn};
 
+use crate::topic::{decode_payload, encode_payload};
+use crate::topics::TopicKind;
 use crate::{Message, transport};
+
+fn encode_subscribe(kinds: &[TopicKind]) -> Message {
+    Message::with_payload(
+        crate::CONTROL_SUBSCRIBE,
+        encode_payload(&kinds.to_vec()),
+    )
+}
+
+fn encode_identify(app_id: &str) -> Message {
+    Message::with_payload(
+        crate::CONTROL_IDENTIFY,
+        encode_payload(&app_id.to_string()),
+    )
+}
 
 /// A connection to the Sola Bus.
 ///
@@ -245,5 +261,28 @@ fn read_loop(mut reader: UnixStream, tx: mpsc::Sender<Message>, mut notify: Unix
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod control_encoding_tests {
+    use super::*;
+    use crate::topic::decode_payload;
+    use crate::topics::TopicKind;
+
+    #[test]
+    fn subscribe_roundtrip() {
+        let m = encode_subscribe(&[TopicKind::Shutdown, TopicKind::LaunchApp]);
+        assert_eq!(m.topic, crate::CONTROL_SUBSCRIBE);
+        let kinds: Vec<TopicKind> = decode_payload(&m).unwrap();
+        assert_eq!(kinds, vec![TopicKind::Shutdown, TopicKind::LaunchApp]);
+    }
+
+    #[test]
+    fn identify_roundtrip() {
+        let m = encode_identify("sola-shell");
+        assert_eq!(m.topic, crate::CONTROL_IDENTIFY);
+        let id: String = decode_payload(&m).unwrap();
+        assert_eq!(id, "sola-shell");
     }
 }

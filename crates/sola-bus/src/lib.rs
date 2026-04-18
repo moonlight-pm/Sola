@@ -7,7 +7,7 @@ pub mod transport;
 use std::env;
 
 pub use client::BusClient;
-pub use message::Message;
+pub use message::{CONTROL_IDENTIFY, CONTROL_SUBSCRIBE, Message};
 
 /// Returns the bus socket path from `$SOLA_BUS_PATH` or the default
 /// `$XDG_RUNTIME_DIR/sola-bus`.
