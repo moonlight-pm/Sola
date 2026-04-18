@@ -183,7 +183,7 @@ impl SolaApp for ShellApp {
             Topic::ChordReleased(evt) => {
                 crate::keys::handle_chord_released(self, ctx, evt.clone());
             }
-            Topic::LaunchResult(LaunchResultPayload { app_id, command, ok, error }) => {
+            Topic::LaunchResult(LaunchResultPayload { app_id: _, command, ok, error }) => {
                 if *ok {
                     tracing::info!(command = %command, "LaunchResult ok");
                 } else {
@@ -197,7 +197,7 @@ impl SolaApp for ShellApp {
                 }
             }
             Topic::UserAppExited(UserAppExitedPayload {
-                app_id,
+                app_id: _,
                 command,
                 code,
                 signal,
