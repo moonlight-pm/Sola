@@ -26,7 +26,6 @@ struct BusState {
     /// client_id → app_id for clients that have sent `$identify`.
     roster: HashMap<ClientId, String>,
     /// client_id → topic kinds the client has subscribed to via `$subscribe`.
-    #[allow(dead_code)]
     subscriptions: HashMap<ClientId, HashSet<sola_bus::topics::TopicKind>>,
 }
 
@@ -95,15 +94,6 @@ fn main() {
                 });
 
                 let mut bus = state.lock().unwrap();
-
-                // Replay sticky messages through the queue so they
-                // preserve the connect-time ordering.
-                for msg in bus.sticky.values() {
-                    if tx.try_send(msg.clone()).is_err() {
-                        warn!(client = id, "sticky replay queue full");
-                    }
-                }
-
                 bus.clients.insert(id, tx);
                 info!(client = id, "connected");
                 drop(bus);
@@ -158,8 +148,12 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                         }
                     }
                     sola_bus::CONTROL_SUBSCRIBE => {
-                        // Task 1.5 implements this. For now, ignore silently so the
-                        // server doesn't try to broadcast the control message.
+                        if let Ok(kinds) = sola_bus::topic::decode_payload::<
+                            Vec<sola_bus::topics::TopicKind>,
+                        >(&event)
+                        {
+                            handle_subscribe(id, kinds, state);
+                        }
                     }
                     _ => {
                         let mut bus = state.lock().unwrap();
@@ -238,22 +232,71 @@ fn handle_identify(id: ClientId, app_id: String, state: &SharedState) {
 }
 
 fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
+    let kind = match sola_bus::topics::Topic::parse(event) {
+        Some(t) => t.kind(),
+        None => {
+            warn!(topic = %event.topic, "broadcast dropping unknown topic");
+            return;
+        }
+    };
     for (&id, tx) in bus.clients.iter() {
         if id == sender {
+            continue;
+        }
+        let wants = bus
+            .subscriptions
+            .get(&id)
+            .is_some_and(|s| s.contains(&kind));
+        if !wants {
             continue;
         }
         match tx.try_send(event.clone()) {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(_)) => {
-                // Queue full — client is backed up. Drop to keep the bus
-                // responsive; sticky topics will reconverge on the next
-                // successful delivery or on reconnect.
                 warn!(client = id, topic = %event.topic, "dropped (queue full)");
             }
-            Err(mpsc::TrySendError::Disconnected(_)) => {
-                // Writer thread exited; next handle_client cleanup will
-                // remove this entry. Nothing more to do here.
+            Err(mpsc::TrySendError::Disconnected(_)) => {}
+        }
+    }
+}
+
+fn handle_subscribe(
+    id: ClientId,
+    kinds: Vec<sola_bus::topics::TopicKind>,
+    state: &SharedState,
+) {
+    let new_kinds: HashSet<_> = kinds.into_iter().collect();
+    let mut bus = state.lock().unwrap();
+    let prev = bus
+        .subscriptions
+        .insert(id, new_kinds.clone())
+        .unwrap_or_default();
+    let added: HashSet<_> = new_kinds.difference(&prev).copied().collect();
+    info!(
+        client = id,
+        count = new_kinds.len(),
+        added = added.len(),
+        "subscribed"
+    );
+
+    let Some(tx) = bus.clients.get(&id).cloned() else {
+        return;
+    };
+
+    // Replay stickies whose kind is newly subscribed.
+    for msg in bus.sticky.values() {
+        if let Some(kind) = sola_bus::topics::Topic::parse(msg).map(|t| t.kind()) {
+            if added.contains(&kind) {
+                let _ = tx.try_send(msg.clone());
             }
+        }
+    }
+
+    // Roster replay for ClientConnected.
+    if added.contains(&sola_bus::topics::TopicKind::ClientConnected) {
+        for app_id in bus.roster.values() {
+            let evt = sola_bus::topics::Topic::ClientConnected(app_id.clone()).to_message();
+            let _ = tx.try_send(evt);
         }
     }
 }
