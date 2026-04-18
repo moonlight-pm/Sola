@@ -12,3 +12,4 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
+sola-bus = { path = "../sola-bus" }
