@@ -222,7 +222,20 @@ pub fn run<A: SolaApp>() {
         // --- Build BusRegistry and subscribe ---
         let mut registry: BusRegistry<A> = BusRegistry::new();
         app.register_bus(&mut registry, &mut ctx);
-        let subscription_kinds = registry.kinds();
+        // Framework-level topics — the sola-app event loop below intercepts
+        // these independent of the app's registry. They must be subscribed
+        // so the bus actually delivers them.
+        let mut subscription_kinds = registry.kinds();
+        for kind in [
+            TopicKind::Shutdown,
+            TopicKind::Apps,
+            TopicKind::Copy,
+            TopicKind::Paste,
+        ] {
+            if !subscription_kinds.contains(&kind) {
+                subscription_kinds.push(kind);
+            }
+        }
         {
             let mut c = bus.borrow_mut();
             if let Err(e) = c.subscribe(&subscription_kinds) {
