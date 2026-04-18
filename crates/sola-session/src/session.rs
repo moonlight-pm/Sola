@@ -145,7 +145,34 @@ impl Session {
     }
 
     pub fn tick(&mut self) {
-        // Implemented in Tasks 4.4/4.5.
+        self.reap_exited();
+        self.run_close_timers();
+    }
+
+    fn reap_exited(&mut self) {
+        let mut to_emit: Vec<(String, String, std::process::ExitStatus)> = Vec::new();
+        for (_app_id, records) in self.children.iter_mut() {
+            records.retain_mut(|r| match r.child.try_wait() {
+                Ok(Some(status)) => {
+                    to_emit.push((r.app_id.clone(), r.command.clone(), status));
+                    false
+                }
+                Ok(None) => true,
+                Err(e) => {
+                    warn!(app_id = %r.app_id, pid = r.child.id(), %e, "try_wait failed");
+                    true
+                }
+            });
+        }
+        self.children.retain(|_, v| !v.is_empty());
+        for (app_id, command, status) in to_emit {
+            info!(%app_id, ?status, "user app exited");
+            self.emit_exited(&app_id, &command, status);
+        }
+    }
+
+    fn run_close_timers(&mut self) {
+        // Implemented in Task 4.5.
     }
 }
 
