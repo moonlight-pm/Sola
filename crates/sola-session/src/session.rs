@@ -12,6 +12,9 @@ use sola_bus::topics::{
 
 use crate::env;
 
+const GRACEFUL: Duration = Duration::from_secs(5);
+const FORCE_AFTER_TERM: Duration = Duration::from_secs(5);
+
 #[derive(Debug)]
 pub enum CloseState {
     Live,
@@ -24,6 +27,7 @@ pub struct ChildRecord {
     pub app_id: String,
     pub command: String,
     pub child: Child,
+    #[allow(dead_code)]
     pub launched_at: Instant,
     pub state: CloseState,
 }
@@ -140,8 +144,17 @@ impl Session {
         }
     }
 
-    pub fn close(&mut self, _app_id: &str) {
-        // Implemented in Task 4.5.
+    pub fn close(&mut self, app_id: &str) {
+        let Some(records) = self.children.get_mut(app_id) else {
+            info!(%app_id, "CloseApp: no live children");
+            return;
+        };
+        for r in records.iter_mut() {
+            if matches!(r.state, CloseState::Live) {
+                info!(%app_id, pid = r.child.id(), "CloseApp: graceful period started");
+                r.state = CloseState::Closing { since: Instant::now() };
+            }
+        }
     }
 
     pub fn tick(&mut self) {
@@ -172,7 +185,26 @@ impl Session {
     }
 
     fn run_close_timers(&mut self) {
-        // Implemented in Task 4.5.
+        let now = Instant::now();
+        for (_app_id, records) in self.children.iter_mut() {
+            for r in records.iter_mut() {
+                match r.state {
+                    CloseState::Closing { since } if now.duration_since(since) >= GRACEFUL => {
+                        info!(pid = r.child.id(), app_id = %r.app_id, "sending SIGTERM");
+                        unsafe { libc::kill(r.child.id() as i32, libc::SIGTERM); }
+                        r.state = CloseState::Terminated { since: now };
+                    }
+                    CloseState::Terminated { since }
+                        if now.duration_since(since) >= FORCE_AFTER_TERM =>
+                    {
+                        info!(pid = r.child.id(), app_id = %r.app_id, "sending SIGKILL");
+                        unsafe { libc::kill(r.child.id() as i32, libc::SIGKILL); }
+                        r.state = CloseState::Killed;
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }
 
