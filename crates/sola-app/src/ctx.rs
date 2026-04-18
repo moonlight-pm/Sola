@@ -123,6 +123,14 @@ impl AppCtx {
         let _ = self.bus.borrow_mut().emit_sticky(topic);
     }
 
+    /// Trigger a clean shutdown: calls `gtk::Application::quit` so the GTK
+    /// main loop exits. The `on_shutdown` hook is called by the framework
+    /// before this path is reached when coming from `Topic::Shutdown`; for
+    /// `on_close_app`-initiated exits the hook is also invoked before quit.
+    pub fn shutdown(&self) {
+        self.gtk_app.quit();
+    }
+
     /// Resolve a `window_id` (as seen on the bus) to one of *this process's*
     /// owned `WindowHandle`s. Returns `None` if the id doesn't belong to us.
     ///
