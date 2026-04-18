@@ -10,6 +10,7 @@ use sola_bus::topics::Topic;
 pub mod assets;
 pub mod async_dispatch;
 pub mod bridge;
+pub mod bus_registry;
 pub mod config;
 pub mod ctx;
 pub mod strip;
@@ -20,6 +21,7 @@ pub mod window;
 // Re-export for macro use and common consumer paths.
 pub use assets::{Asset, AssetBundle, ContentType};
 pub use async_dispatch::{AppHandler, AsyncDispatcher};
+pub use bus_registry::{BusHandler, BusRegistry};
 pub use ctx::AppCtx;
 pub use window::{WindowConfig, WindowHandle};
 
