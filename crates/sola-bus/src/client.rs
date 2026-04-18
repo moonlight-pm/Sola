@@ -8,10 +8,11 @@ use std::thread;
 
 use tracing::{info, warn};
 
-use crate::topic::{decode_payload, encode_payload};
+use crate::topic::encode_payload;
 use crate::topics::TopicKind;
 use crate::{Message, transport};
 
+#[allow(dead_code)] // wired into BusClient::subscribe in Task 1.7
 fn encode_subscribe(kinds: &[TopicKind]) -> Message {
     Message::with_payload(
         crate::CONTROL_SUBSCRIBE,
@@ -19,6 +20,7 @@ fn encode_subscribe(kinds: &[TopicKind]) -> Message {
     )
 }
 
+#[allow(dead_code)] // wired into BusClient::identify in Task 1.7
 fn encode_identify(app_id: &str) -> Message {
     Message::with_payload(
         crate::CONTROL_IDENTIFY,
