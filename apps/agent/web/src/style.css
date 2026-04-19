@@ -302,6 +302,13 @@ html, body {
   box-shadow: 0 0 6px rgba(0, 255, 136, 0.35);
 }
 
+/* Idle is only a useful signal for the active session ("ready for your
+   next prompt"). On Recent rows it's just noise — render it like saved. */
+.convo-item:not(.active) .dot.idle {
+  background: var(--text-ghost);
+  box-shadow: none;
+}
+
 .dot.error { background: var(--red); }
 .dot.saved { background: var(--text-ghost); }
 .dot.terminal {
