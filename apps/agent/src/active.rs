@@ -17,6 +17,11 @@ struct SessionMarker {
     #[serde(rename = "sessionId")]
     session_id: String,
     kind: String,
+    /// "cli" for terminal sessions, "sdk-cli" for stream-json spawns
+    /// (that's our own agent-spawned processes). Filter those out so
+    /// we don't mark our own live turn as a read-only terminal session.
+    #[serde(default)]
+    entrypoint: String,
 }
 
 /// Returns the set of session IDs currently active in a terminal claude process.
@@ -35,6 +40,7 @@ pub fn detect() -> HashSet<String> {
         let Ok(marker) = serde_json::from_str::<SessionMarker>(&json) else { continue };
 
         if marker.kind != "interactive" { continue; }
+        if marker.entrypoint == "sdk-cli" { continue; }
         if !Path::new(&format!("/proc/{}", marker.pid)).exists() { continue; }
 
         ids.insert(marker.session_id);
