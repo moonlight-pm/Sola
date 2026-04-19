@@ -366,9 +366,17 @@ fn start_stdout_reader(
 
                         send_event(&event_tx, metrics.clone());
 
-                        // Save metrics to our meta file
-                        let cwd = std::env::current_dir().unwrap_or_default().to_string_lossy().to_string();
-                        let _ = storage::save_meta(&sid_for_task, None, &cwd, Some(metrics));
+                        // Save metrics to our meta file, preserving everything
+                        // else (name — which the user may have customized —
+                        // working_dir, model, effort, cli_synced_at).
+                        if let Ok(mut meta) = storage::load_meta(&sid_for_task) {
+                            meta.metrics = Some(metrics);
+                            meta.updated_at = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
+                            let _ = storage::save_meta_full(&meta);
+                        }
 
                         send_event(&event_tx, json!({
                             "event": "message_end", "session_id": sid_for_task,
