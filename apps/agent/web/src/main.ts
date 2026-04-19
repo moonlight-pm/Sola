@@ -579,9 +579,37 @@ function showNewDialog(): void {
   title.textContent = 'New Session';
   d.appendChild(title);
 
+  // Quick-pick: directories currently open in a terminal claude session.
+  // Click to start immediately without typing a path.
+  const liveDirs = Array.from(new Set(
+    state.sessions.filter(s => s.terminalActive && s.workingDir).map(s => s.workingDir as string)
+  )).sort();
+
+  if (liveDirs.length) {
+    const qpLabel = document.createElement('div');
+    qpLabel.className = 'field-label';
+    qpLabel.textContent = 'OPEN IN TERMINAL';
+    d.appendChild(qpLabel);
+
+    const qp = document.createElement('div');
+    qp.className = 'dir-picks';
+    for (const dir of liveDirs) {
+      const b = document.createElement('button');
+      b.className = 'dir-pick';
+      b.type = 'button';
+      b.textContent = dir;
+      b.addEventListener('click', async () => {
+        await createSession(dir);
+        overlay.remove();
+      });
+      qp.appendChild(b);
+    }
+    d.appendChild(qp);
+  }
+
   const label = document.createElement('div');
   label.className = 'field-label';
-  label.textContent = 'WORKING DIRECTORY';
+  label.textContent = liveDirs.length ? 'OR ENTER A PATH' : 'WORKING DIRECTORY';
   d.appendChild(label);
 
   const input = document.createElement('input');

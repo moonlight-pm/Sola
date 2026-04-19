@@ -811,6 +811,35 @@ html, body {
   margin-bottom: 6px;
 }
 
+.dir-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.dir-pick {
+  text-align: left;
+  padding: 7px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font: 12px var(--font-mono);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dir-pick:hover {
+  border-color: rgba(0, 168, 255, 0.35);
+  background: rgba(0, 168, 255, 0.06);
+  color: var(--text-primary);
+}
+
 .dialog input:focus { border-color: rgba(0, 168, 255, 0.35); }
 .dialog input::placeholder { color: var(--text-ghost); }
 
