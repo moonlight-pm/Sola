@@ -219,6 +219,14 @@ function bindMsgLogScroll(): void {
   el.addEventListener('scroll', () => {
     stickyBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICKY_THRESHOLD;
   }, { passive: true });
+  // When Arrow mounts new md-block nodes (session_loaded, session switch),
+  // fill them from mdSources. Without this, assistant text remains blank
+  // whenever flushMd runs before Arrow's DOM commit.
+  const observer = new MutationObserver(() => {
+    flushMd();
+    if (stickyBottom) el.scrollTop = el.scrollHeight;
+  });
+  observer.observe(el, { childList: true, subtree: true });
 }
 
 function upsertSession(patch: Partial<Session> & { id: string }): Session {
