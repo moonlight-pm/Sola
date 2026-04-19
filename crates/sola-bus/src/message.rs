@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Reserved topic names for bus control messages. Prefixed `$` so they
+/// can never collide with a Topic variant (Rust identifiers don't start
+/// with `$`).
+pub const CONTROL_SUBSCRIBE: &str = "$subscribe";
+pub const CONTROL_IDENTIFY: &str = "$identify";
+
 /// A single message on the Sola Bus.
 ///
 /// Every bus message is an event. There are no requests, responses, or RPCs —

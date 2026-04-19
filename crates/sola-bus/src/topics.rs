@@ -16,11 +16,19 @@ pub struct OpenUrlRequest {
     pub activate: bool,
 }
 
+/// Payload for a `LaunchApp` bus message, emitted by the shell.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LaunchAppPayload {
+    pub app_id: String,
+    pub command: String,
+}
+
 /// Outcome of a `LaunchApp` spawn attempt, emitted by `sola`.
 /// `ok=true` means the process was spawned; it does not guarantee the
 /// process stayed alive. `error` is populated when `ok=false`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchResultPayload {
+    pub app_id: String,
     pub command: String,
     pub ok: bool,
     pub error: Option<String>,
@@ -30,6 +38,7 @@ pub struct LaunchResultPayload {
 /// `code` or `signal` is set: `code` on normal exit, `signal` when killed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserAppExitedPayload {
+    pub app_id: String,
     pub command: String,
     pub code: Option<i32>,
     pub signal: Option<i32>,
@@ -165,9 +174,14 @@ impl Zone {
 define_topics! {
     // Window management list (sticky)
     Apps(Vec<App>),
-    LaunchApp(String),
+    LaunchApp(LaunchAppPayload),
     LaunchResult(LaunchResultPayload),
     UserAppExited(UserAppExitedPayload),
+    CloseApp(String),
+
+    // Lifecycle / presence
+    ClientConnected(String),
+    ClientDisconnected(String),
 
     // Composition authority (shell → sola-river)
     Composition(Vec<CompositionEntry>),
@@ -243,6 +257,18 @@ mod tests {
     fn unknown_topic_returns_none() {
         let msg = crate::Message::new("SomeUnknownTopic");
         assert!(Topic::parse(&msg).is_none());
+    }
+
+    #[test]
+    fn topic_kind_matches_variant() {
+        let t = Topic::Shutdown;
+        assert_eq!(t.kind(), TopicKind::Shutdown);
+    }
+
+    #[test]
+    fn topic_kind_all_includes_shutdown_and_apps() {
+        assert!(TopicKind::ALL.iter().any(|k| k.as_str() == "Shutdown"));
+        assert!(TopicKind::ALL.iter().any(|k| k.as_str() == "Apps"));
     }
 
     #[test]

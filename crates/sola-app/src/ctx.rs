@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use gtk4::glib::Propagation;
 use gtk4::prelude::*;
 use webkit6::prelude::*;
 
@@ -74,6 +75,10 @@ impl AppCtx {
         gtk_window.set_decorated(cfg.decorated);
         gtk_window.set_default_size(cfg.size.0, cfg.size.1);
         gtk_window.set_title(Some(&cfg.title));
+        // Sola apps exit only via bus CloseApp → on_close_app → ctx.shutdown.
+        // Swallowing xdg_toplevel.close here prevents the compositor's graceful-
+        // close flow for external apps from also taking down sola apps.
+        gtk_window.connect_close_request(|_win| Propagation::Stop);
 
         let webview = webkit6::WebView::builder()
             .web_context(&web_context)
@@ -121,6 +126,14 @@ impl AppCtx {
     /// Emit a sticky bus event.
     pub fn emit_sticky(&self, topic: Topic) {
         let _ = self.bus.borrow_mut().emit_sticky(topic);
+    }
+
+    /// Trigger a clean shutdown: calls `gtk::Application::quit` so the GTK
+    /// main loop exits. The `on_shutdown` hook is called by the framework
+    /// before this path is reached when coming from `Topic::Shutdown`; for
+    /// `on_close_app`-initiated exits the hook is also invoked before quit.
+    pub fn shutdown(&self) {
+        self.gtk_app.quit();
     }
 
     /// Resolve a `window_id` (as seen on the bus) to one of *this process's*

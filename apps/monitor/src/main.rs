@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sola_app::config::JsonConfig;
-use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle, asset_bundle};
+use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 use sola_bus::Message;
 use sola_bus::topics::{
-    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic,
+    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
 };
 use sola_core::KeyCode;
 
@@ -98,7 +98,14 @@ impl SolaApp for MonitorApp {
         }
     }
 
-    fn on_bus_event(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+    fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
+        bus.subscribe_all();
+        bus.on(TopicKind::MenuAction, Self::on_menu_action);
+    }
+}
+
+impl MonitorApp {
+    fn on_menu_action(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
         if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic {
             if app_id == Self::APP_ID && action_id == "quit" {
                 std::process::exit(0);

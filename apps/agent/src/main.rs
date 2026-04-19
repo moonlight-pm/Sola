@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use sola_app::{AppCtx, AsyncDispatcher, SolaApp, WindowConfig, WindowHandle, asset_bundle};
-use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic};
+use sola_app::{AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
+use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind};
 use sola_core::KeyCode;
 
 mod active;
@@ -94,6 +94,10 @@ impl SolaApp for AgentApp {
         }
     }
 
+    fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
+        bus.on(TopicKind::MenuAction, Self::on_menu_action);
+    }
+
     fn on_js_command(
         &mut self,
         cmd: &str,
@@ -112,7 +116,10 @@ impl SolaApp for AgentApp {
             });
     }
 
-    fn on_bus_event(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+}
+
+impl AgentApp {
+    fn on_menu_action(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
         if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic {
             if app_id == Self::APP_ID && action_id == "quit" {
                 std::process::exit(0);
