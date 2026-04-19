@@ -412,6 +412,7 @@ on('message_start', (ev: any) => {
     streaming: true,
     cancelled: false,
   }];
+  scrollToBottom();
 });
 
 on('message_delta', (ev: any) => {
@@ -432,6 +433,7 @@ on('message_delta', (ev: any) => {
     last.blocks = [...b, { kind: 'text' as const, text: delta }];
   }
   flushMd();
+  scrollToBottom();
 });
 
 on('message_end', (ev: any) => {
@@ -442,6 +444,7 @@ on('message_end', (ev: any) => {
   last.streaming = false;
   if (ev.cancelled) last.cancelled = true;
   flushMd();
+  scrollToBottom();
 });
 
 on('tool_start', (ev: any) => {
@@ -458,6 +461,7 @@ on('tool_start', (ev: any) => {
     expanded: false,
   };
   last.blocks = [...last.blocks, { kind: 'tool' as const, tool }];
+  scrollToBottom();
 });
 
 on('tool_end', (ev: any) => {
@@ -474,6 +478,7 @@ on('tool_end', (ev: any) => {
       break;
     }
   }
+  scrollToBottom();
 });
 
 on('metrics', (ev: any) => {
@@ -527,6 +532,7 @@ async function sendMessage(): Promise<void> {
   ta.value = '';
   ta.style.height = 'auto';
   ta.focus();
+  scrollToBottom(true);
   await invoke('send_message', { session_id: s.id, text, model: s.model, effort: s.effort });
 }
 
