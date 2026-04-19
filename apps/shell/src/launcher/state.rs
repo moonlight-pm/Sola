@@ -1,4 +1,4 @@
-use crate::applications::{Application, ApplicationsConfig};
+use sola_applications::{Application, ApplicationsConfig};
 
 #[derive(Default)]
 pub struct LauncherState {

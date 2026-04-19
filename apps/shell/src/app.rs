@@ -10,7 +10,7 @@ use sola_bus::topics::{
 };
 use sola_core::KeyCode;
 
-use crate::applications::{Application, ApplicationsConfig};
+use sola_applications::{Application, ApplicationsConfig};
 use crate::launcher::{self, LAUNCHER_ASSETS, LauncherState};
 use crate::menu::{MENU_ASSETS, MenuCache};
 use crate::menubar::setup_menubar;

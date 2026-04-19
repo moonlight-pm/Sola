@@ -1,5 +1,4 @@
 mod app;
-mod applications;
 mod config;
 mod keys;
 mod launcher;
