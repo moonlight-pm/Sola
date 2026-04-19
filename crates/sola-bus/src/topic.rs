@@ -78,6 +78,27 @@ macro_rules! _define_topics_inner {
             $( $pname($pty), )*
         }
 
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(serde::Serialize, serde::Deserialize)]
+        pub enum TopicKind {
+            $( $unit, )*
+            $( $pname, )*
+        }
+
+        impl TopicKind {
+            pub const ALL: &'static [TopicKind] = &[
+                $( TopicKind::$unit, )*
+                $( TopicKind::$pname, )*
+            ];
+
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $( TopicKind::$unit => stringify!($unit), )*
+                    $( TopicKind::$pname => stringify!($pname), )*
+                }
+            }
+        }
+
         impl Topic {
             pub fn parse(msg: &$crate::Message) -> Option<Self> {
                 match msg.topic.as_str() {
@@ -96,6 +117,13 @@ macro_rules! _define_topics_inner {
                         stringify!($pname),
                         $crate::topic::encode_payload(payload),
                     ), )*
+                }
+            }
+
+            pub fn kind(&self) -> TopicKind {
+                match self {
+                    $( Topic::$unit => TopicKind::$unit, )*
+                    $( Topic::$pname(_) => TopicKind::$pname, )*
                 }
             }
         }

@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 use webkit6::prelude::*;
 
 use sola_app::config::JsonConfig;
-use sola_app::{AppCtx, AppRuntime, SolaApp, WindowConfig, WindowHandle};
-use sola_bus::topics::{MenuActionPayload, OpenUrlRequest, Topic};
+use sola_app::{AppCtx, AppRuntime, BusRegistry, SolaApp, WindowConfig, WindowHandle};
+use sola_bus::topics::{MenuActionPayload, OpenUrlRequest, Topic, TopicKind};
 
 use crate::chrome;
 use crate::state::{BrowsingHistory, PersistedTab, TabStore};
@@ -154,84 +154,10 @@ impl SolaApp for BrowserApp {
         }
     }
 
-    fn on_bus_event(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        match topic {
-            Topic::MenuAction(MenuActionPayload { app_id, action_id })
-                if app_id == Self::APP_ID =>
-            {
-                match action_id.as_str() {
-                    "new_tab" => {
-                        let tab_id = uuid::Uuid::new_v4().to_string();
-                        self.tab_store.tabs.push(PersistedTab {
-                            url: String::new(),
-                            title: String::new(),
-                            session_state: None,
-                        });
-                        self.create_tab(&tab_id, None, None);
-                        self.switch_tab(&tab_id);
-
-                        self.emit_to_chrome(
-                            "bus_new_tab",
-                            json!({
-                                "tabId": tab_id,
-                                "url": "",
-                                "activate": true,
-                            }),
-                        );
-                        self.chrome.webview().grab_focus();
-                        tracing::debug!("new tab {tab_id}");
-                    }
-                    "close_tab" => {
-                        if let Some(id) = self.active_tab_id.clone() {
-                            self.close_tab(&id);
-                            let next_id = self.tabs.last().map(|t| t.id.clone());
-                            if let Some(ref next) = next_id {
-                                self.switch_tab(next);
-                            }
-                            self.emit_to_chrome(
-                                "tab_closed",
-                                json!({
-                                    "tabId": id,
-                                    "nextTabId": next_id,
-                                }),
-                            );
-                            tracing::debug!("closed tab {id}");
-                        }
-                    }
-                    "focus_address" => {
-                        self.emit_to_chrome("bus_focus_address", json!({}));
-                        self.chrome.webview().grab_focus();
-                        tracing::debug!("focus address bar");
-                    }
-                    "quit" => {
-                        ctx.emit(Topic::Shutdown);
-                    }
-                    _ => {}
-                }
-            }
-            Topic::OpenUrl(OpenUrlRequest { url, activate }) => {
-                let tab_id = uuid::Uuid::new_v4().to_string();
-                self.tab_store.tabs.push(PersistedTab {
-                    url: url.clone(),
-                    title: String::new(),
-                    session_state: None,
-                });
-                self.create_tab(&tab_id, Some(url), None);
-                if *activate {
-                    self.switch_tab(&tab_id);
-                }
-                self.emit_to_chrome(
-                    "bus_new_tab",
-                    json!({
-                        "tabId": tab_id,
-                        "url": url,
-                        "activate": activate,
-                    }),
-                );
-                tracing::info!(url = %url, "OpenUrl: created tab {tab_id}");
-            }
-            _ => {}
-        }
+    fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
+        // Default CloseApp handler is inherited from the trait — don't re-register.
+        bus.on(TopicKind::MenuAction, Self::on_menu_action);
+        bus.on(TopicKind::OpenUrl, Self::on_open_url);
     }
 
     fn on_shutdown(&mut self, _ctx: &mut AppCtx) {
@@ -243,6 +169,89 @@ impl SolaApp for BrowserApp {
 }
 
 impl BrowserApp {
+    fn on_menu_action(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic else {
+            return;
+        };
+        if app_id != "sola-browser" {
+            return;
+        }
+        match action_id.as_str() {
+            "new_tab" => {
+                let tab_id = uuid::Uuid::new_v4().to_string();
+                self.tab_store.tabs.push(PersistedTab {
+                    url: String::new(),
+                    title: String::new(),
+                    session_state: None,
+                });
+                self.create_tab(&tab_id, None, None);
+                self.switch_tab(&tab_id);
+
+                self.emit_to_chrome(
+                    "bus_new_tab",
+                    json!({
+                        "tabId": tab_id,
+                        "url": "",
+                        "activate": true,
+                    }),
+                );
+                self.chrome.webview().grab_focus();
+                tracing::debug!("new tab {tab_id}");
+            }
+            "close_tab" => {
+                if let Some(id) = self.active_tab_id.clone() {
+                    self.close_tab(&id);
+                    let next_id = self.tabs.last().map(|t| t.id.clone());
+                    if let Some(ref next) = next_id {
+                        self.switch_tab(next);
+                    }
+                    self.emit_to_chrome(
+                        "tab_closed",
+                        json!({
+                            "tabId": id,
+                            "nextTabId": next_id,
+                        }),
+                    );
+                    tracing::debug!("closed tab {id}");
+                }
+            }
+            "focus_address" => {
+                self.emit_to_chrome("bus_focus_address", json!({}));
+                self.chrome.webview().grab_focus();
+                tracing::debug!("focus address bar");
+            }
+            "quit" => {
+                ctx.emit(Topic::Shutdown);
+            }
+            _ => {}
+        }
+    }
+
+    fn on_open_url(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        let Topic::OpenUrl(OpenUrlRequest { url, activate }) = topic else {
+            return;
+        };
+        let tab_id = uuid::Uuid::new_v4().to_string();
+        self.tab_store.tabs.push(PersistedTab {
+            url: url.clone(),
+            title: String::new(),
+            session_state: None,
+        });
+        self.create_tab(&tab_id, Some(url), None);
+        if *activate {
+            self.switch_tab(&tab_id);
+        }
+        self.emit_to_chrome(
+            "bus_new_tab",
+            json!({
+                "tabId": tab_id,
+                "url": url,
+                "activate": activate,
+            }),
+        );
+        tracing::info!(url = %url, "OpenUrl: created tab {tab_id}");
+    }
+
     pub(crate) fn emit_to_chrome(&self, event: &str, mut data: Value) {
         if let Some(obj) = data.as_object_mut() {
             obj.insert("event".into(), json!(event));

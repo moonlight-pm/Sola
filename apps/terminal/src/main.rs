@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use sola_app::{AppCtx, AsyncDispatcher, SolaApp, WindowConfig, WindowHandle, asset_bundle};
+use sola_app::{AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 use sola_bus::topics::{
-    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, OpenUrlRequest, Topic,
+    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, OpenUrlRequest, Topic, TopicKind,
 };
 use sola_core::KeyCode;
 
@@ -127,28 +127,34 @@ impl SolaApp for TerminalApp {
             });
     }
 
-    fn on_bus_event(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic {
-            if app_id != Self::APP_ID {
-                return;
+    fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
+        // Default CloseApp handler is inherited from the trait — don't re-register.
+        bus.on(TopicKind::MenuAction, Self::on_menu_action);
+    }
+}
+
+impl TerminalApp {
+    fn on_menu_action(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic else { return };
+        if app_id != Self::APP_ID {
+            return;
+        }
+        match action_id.as_str() {
+            "new_tab" => {
+                tracing::info!("menu action: new tab");
+                self.main_window
+                    .send_to_js(&serde_json::json!({"event": "new_tab"}));
             }
-            match action_id.as_str() {
-                "new_tab" => {
-                    tracing::info!("menu action: new tab");
-                    self.main_window
-                        .send_to_js(&serde_json::json!({"event": "new_tab"}));
+            id if id.starts_with("select_tab_") => {
+                if let Ok(index) = id.strip_prefix("select_tab_").unwrap().parse::<usize>() {
+                    tracing::info!(index, "menu action: select tab");
+                    self.main_window.send_to_js(
+                        &serde_json::json!({"event": "select_tab", "index": index}),
+                    );
                 }
-                id if id.starts_with("select_tab_") => {
-                    if let Ok(index) = id.strip_prefix("select_tab_").unwrap().parse::<usize>() {
-                        tracing::info!(index, "menu action: select tab");
-                        self.main_window.send_to_js(
-                            &serde_json::json!({"event": "select_tab", "index": index}),
-                        );
-                    }
-                }
-                _ => {
-                    tracing::debug!(action_id, "unknown menu action");
-                }
+            }
+            _ => {
+                tracing::debug!(action_id, "unknown menu action");
             }
         }
     }

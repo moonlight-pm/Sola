@@ -8,7 +8,23 @@ use std::thread;
 
 use tracing::{info, warn};
 
+use crate::topic::encode_payload;
+use crate::topics::TopicKind;
 use crate::{Message, transport};
+
+fn encode_subscribe(kinds: &[TopicKind]) -> Message {
+    Message::with_payload(
+        crate::CONTROL_SUBSCRIBE,
+        encode_payload(&kinds.to_vec()),
+    )
+}
+
+fn encode_identify(app_id: &str) -> Message {
+    Message::with_payload(
+        crate::CONTROL_IDENTIFY,
+        encode_payload(&app_id.to_string()),
+    )
+}
 
 /// A connection to the Sola Bus.
 ///
@@ -46,8 +62,31 @@ impl BusClient {
     }
 
     /// Set the app identity used to tag sticky messages.
+    ///
+    /// Also sends an Identify to the bus — queued if disconnected, sent
+    /// immediately if connected.
     pub fn set_app_id(&mut self, id: impl Into<String>) {
         self.app_id = id.into();
+        // Queued when disconnected; sent immediately when connected.
+        let _ = self.identify();
+    }
+
+    /// Subscribe to the given topic kinds. Until this is called, the bus
+    /// delivers nothing to this client. May be called repeatedly; the set
+    /// replaces any previous subscription.
+    pub fn subscribe(&mut self, kinds: &[crate::topics::TopicKind]) -> io::Result<()> {
+        let msg = encode_subscribe(kinds);
+        self.send(&msg)
+    }
+
+    /// Send an explicit Identify to the bus. Normally not called directly —
+    /// `set_app_id` sends it automatically.
+    pub fn identify(&mut self) -> io::Result<()> {
+        if self.app_id.is_empty() {
+            return Ok(());
+        }
+        let msg = encode_identify(&self.app_id);
+        self.send(&msg)
     }
 
     /// Attempt to connect to the bus at the default socket path.
@@ -79,6 +118,7 @@ impl BusClient {
         // so event-loop callers can watch notify_read instead of polling.
         let (notify_read, notify_write) = UnixStream::pair()?;
         notify_read.set_nonblocking(true)?;
+        notify_write.set_nonblocking(true)?;
 
         info!(path = %path, "connected to bus");
 
@@ -230,7 +270,11 @@ fn read_loop(mut reader: UnixStream, tx: mpsc::Sender<Message>, mut notify: Unix
                 if tx.send(msg).is_err() {
                     break; // receiver dropped
                 }
-                let _ = notify.write_all(&[1u8]);
+                if let Err(e) = notify.write(&[1u8]) {
+                    if e.kind() != io::ErrorKind::WouldBlock {
+                        warn!("notify pipe write error: {e}");
+                    }
+                }
             }
             Ok(None) => {
                 info!("bus connection closed");
@@ -245,5 +289,60 @@ fn read_loop(mut reader: UnixStream, tx: mpsc::Sender<Message>, mut notify: Unix
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod notify_tests {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn nonblocking_write_does_not_deadlock() {
+        let (reader, mut writer) = UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        writer.set_nonblocking(true).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut written = 0usize;
+        let mut blocked = 0usize;
+        while Instant::now() < deadline && written < 200_000 {
+            match writer.write(&[1u8]) {
+                Ok(_) => written += 1,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => blocked += 1,
+                Err(e) => panic!("unexpected error: {e}"),
+            }
+        }
+
+        // Drain to avoid test noise.
+        let mut buf = [0u8; 1024];
+        let _ = (&reader).read(&mut buf);
+
+        assert!(blocked > 0, "expected some WouldBlock once buffer is full");
+        assert!(written > 0, "expected some writes to succeed");
+    }
+}
+
+#[cfg(test)]
+mod control_encoding_tests {
+    use super::*;
+    use crate::topic::decode_payload;
+    use crate::topics::TopicKind;
+
+    #[test]
+    fn subscribe_roundtrip() {
+        let m = encode_subscribe(&[TopicKind::Shutdown, TopicKind::LaunchApp]);
+        assert_eq!(m.topic, crate::CONTROL_SUBSCRIBE);
+        let kinds: Vec<TopicKind> = decode_payload(&m).unwrap();
+        assert_eq!(kinds, vec![TopicKind::Shutdown, TopicKind::LaunchApp]);
+    }
+
+    #[test]
+    fn identify_roundtrip() {
+        let m = encode_identify("sola-shell");
+        assert_eq!(m.topic, crate::CONTROL_IDENTIFY);
+        let id: String = decode_payload(&m).unwrap();
+        assert_eq!(id, "sola-shell");
     }
 }

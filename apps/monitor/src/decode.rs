@@ -67,6 +67,9 @@ fn topic_to_json(topic: &Topic) -> Value {
         Topic::OpenUrl(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Copy(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Paste(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::CloseApp(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::ClientConnected(v) => serde_json::to_value(v).unwrap_or_default(),
+        Topic::ClientDisconnected(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Shutdown => Value::Null,
     }
 }

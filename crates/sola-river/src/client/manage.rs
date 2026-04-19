@@ -45,6 +45,18 @@ pub fn handle_manage_start(state: &mut AppData) {
         crate::translator::apply_pending_chords(state, pairs);
     }
 
+    let close_ids: Vec<u32> = std::mem::take(&mut state.pending.close_windows);
+    let mut close_count = 0;
+    for window_id in close_ids {
+        if let Some(proxy) = state.windows_by_id.get(&window_id) {
+            proxy.close();
+            close_count += 1;
+        }
+    }
+    if close_count > 0 {
+        tracing::info!(close_count, "CloseApp: sent river_window_v1.close");
+    }
+
     wm.manage_finish();
     debug!(pending_count, "manage_finish sent");
 }

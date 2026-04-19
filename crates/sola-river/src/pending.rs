@@ -16,6 +16,8 @@ pub struct PendingUpdate {
     /// sequence. River requires `enable`/`disable` on bindings during
     /// a manage sequence.
     pub chords: Option<Vec<(u32, u32)>>,
+    /// Windows to close in the next manage sequence via `river_window_v1.close`.
+    pub close_windows: Vec<u32>,
     pub manage_dirty: bool,
     pub render_dirty: bool,
 }
@@ -52,12 +54,18 @@ impl PendingUpdate {
         self.manage_dirty = true;
     }
 
+    pub fn queue_close(&mut self, window_ids: Vec<u32>) {
+        self.close_windows.extend(window_ids);
+        self.manage_dirty = true;
+    }
+
     pub fn clear(&mut self) {
         self.manage.clear();
         self.render_positions.clear();
         self.composition = None;
         self.focus = None;
         self.chords = None;
+        self.close_windows.clear();
         self.manage_dirty = false;
         self.render_dirty = false;
     }

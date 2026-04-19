@@ -5,11 +5,12 @@ use std::time::Duration;
 use gtk4::prelude::*;
 
 use sola_bus::BusClient;
-use sola_bus::topics::Topic;
+use sola_bus::topics::{Topic, TopicKind};
 
 pub mod assets;
 pub mod async_dispatch;
 pub mod bridge;
+pub mod bus_registry;
 pub mod config;
 pub mod ctx;
 pub mod strip;
@@ -20,6 +21,7 @@ pub mod window;
 // Re-export for macro use and common consumer paths.
 pub use assets::{Asset, AssetBundle, ContentType};
 pub use async_dispatch::{AppHandler, AsyncDispatcher};
+pub use bus_registry::{BusHandler, BusRegistry};
 pub use ctx::AppCtx;
 pub use window::{WindowConfig, WindowHandle};
 
@@ -42,9 +44,28 @@ pub trait SolaApp: 'static {
     /// Default: no-op.
     fn on_raw_bus_message(&mut self, _msg: &sola_bus::Message, _ctx: &mut AppCtx) {}
 
-    /// Dispatch a bus event. Default: ignore.
-    fn on_bus_event(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let _ = (topic, ctx);
+    /// Register per-topic handlers. The set of registered topic kinds
+    /// automatically becomes this app's bus subscription.
+    fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx)
+    where
+        Self: Sized,
+    {
+        bus.on(TopicKind::CloseApp, Self::on_close_app);
+    }
+
+    /// Default CloseApp handler — exits the app when the incoming app_id
+    /// matches `Self::APP_ID`. Apps that need pre-exit logic override
+    /// `on_shutdown`, not this method.
+    fn on_close_app(&mut self, topic: &Topic, ctx: &mut AppCtx)
+    where
+        Self: Sized,
+    {
+        if let Topic::CloseApp(app_id) = topic {
+            if app_id == Self::APP_ID {
+                self.on_shutdown(ctx);
+                ctx.shutdown();
+            }
+        }
     }
 
     /// Dispatch a JS command from a specific window. Default: ignore.
@@ -196,10 +217,35 @@ pub fn run<A: SolaApp>() {
 
         // --- Build AppCtx, run A::new ---
         let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone(), app_id);
-        let app = A::new(&mut ctx);
+        let mut app = A::new(&mut ctx);
+
+        // --- Build BusRegistry and subscribe ---
+        let mut registry: BusRegistry<A> = BusRegistry::new();
+        app.register_bus(&mut registry, &mut ctx);
+        // Framework-level topics — the sola-app event loop below intercepts
+        // these independent of the app's registry. They must be subscribed
+        // so the bus actually delivers them.
+        let mut subscription_kinds = registry.kinds();
+        for kind in [
+            TopicKind::Shutdown,
+            TopicKind::Apps,
+            TopicKind::Copy,
+            TopicKind::Paste,
+        ] {
+            if !subscription_kinds.contains(&kind) {
+                subscription_kinds.push(kind);
+            }
+        }
+        {
+            let mut c = bus.borrow_mut();
+            if let Err(e) = c.subscribe(&subscription_kinds) {
+                tracing::warn!("failed to subscribe: {e}");
+            }
+        }
 
         // --- Wrap runtime ---
         let runtime = Rc::new(RefCell::new(AppRuntime { app, ctx }));
+        let registry = Rc::new(registry);
 
         // --- Install per-window JS dispatchers ---
         let window_handles: Vec<WindowHandle> = runtime.borrow().ctx.windows.clone();
@@ -231,6 +277,7 @@ pub fn run<A: SolaApp>() {
         let notify_fd = bus.borrow().notify_fd();
         if let Some(fd) = notify_fd {
             let runtime = runtime.clone();
+            let registry = registry.clone();
             let gtk_app = gtk_app.clone();
             let bus = bus.clone();
             glib::unix_fd_add_local(fd, glib::IOCondition::IN, move |_fd, _cond| {
@@ -262,7 +309,7 @@ pub fn run<A: SolaApp>() {
                     }
                     // Framework-level interception. These topics are
                     // handled by the framework before the app sees them
-                    // (or in addition to — apps still get on_bus_event).
+                    // (or in addition to — apps still get registry dispatch).
                     match &topic {
                         Topic::Apps(apps) => {
                             let mut rt = runtime.borrow_mut();
@@ -307,7 +354,7 @@ pub fn run<A: SolaApp>() {
                     }
                     let mut rt = runtime.borrow_mut();
                     let AppRuntime { app, ctx } = &mut *rt;
-                    app.on_bus_event(&topic, ctx);
+                    registry.dispatch(&topic, app, ctx);
                 }
                 glib::ControlFlow::Continue
             });

@@ -184,6 +184,22 @@ pub fn bus_tick(state: &mut AppData) {
             sola_bus::topics::Topic::Paste(req) => {
                 dispatch_clipboard_chord(state, req.window_id, ClipboardAction::Paste);
             }
+            sola_bus::topics::Topic::CloseApp(app_id) => {
+                let to_close: Vec<u32> = state
+                    .windows_by_id
+                    .keys()
+                    .copied()
+                    .filter(|&id| {
+                        state
+                            .registry
+                            .app_id_for(id)
+                            .map(|a| a == app_id)
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                tracing::info!(%app_id, count = to_close.len(), "CloseApp: queuing close");
+                state.pending.queue_close(to_close);
+            }
             sola_bus::topics::Topic::Shutdown => {
                 info!("shutdown requested via bus");
                 std::process::exit(0);

@@ -8,6 +8,7 @@ use tracing::{error, info};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
+use sola_bus::topics::TopicKind;
 use sola_river::{bus, client};
 
 /// Filename (inside XDG_RUNTIME_DIR) where sola publishes the name of
@@ -37,6 +38,16 @@ fn main() {
 
     let mut bus = bus::BusClient::new();
     bus.ensure_connected();
+    bus.subscribe(&[
+        TopicKind::Composition,
+        TopicKind::Frame,
+        TopicKind::Focus,
+        TopicKind::RegisteredChords,
+        TopicKind::Copy,
+        TopicKind::Paste,
+        TopicKind::CloseApp,
+        TopicKind::Shutdown,
+    ]);
 
     let (_conn, queue, mut data) = match client::connect(bus) {
         Ok(x) => x,
