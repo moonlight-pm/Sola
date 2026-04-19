@@ -668,11 +668,6 @@ function sessionRow(s: Session, group: string) {
     <div class="${() => 'convo-item' + (state.activeId === s.id ? ' active' : '') + (s.terminalActive ? ' terminal' : '')}"
       data-sid="${s.id}" data-group="${group}"
       @click="${() => selectSession(s.id)}"
-      @dblclick="${() => {
-        if (s.terminalActive) return;
-        const next = prompt('Rename session:', s.name || '');
-        if (next) renameSession(s.id, next);
-      }}"
     >
       <span class="${() => s.terminalActive ? 'dot terminal' : 'dot ' + s.status}"></span>
       <div class="convo-text">
