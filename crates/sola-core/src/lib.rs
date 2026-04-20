@@ -3,6 +3,8 @@
 //! This crate centralizes low-level key primitives used across apps and the
 //! compositor so we avoid scattered magic numbers.
 
+pub mod applications;
+
 use serde::{Deserialize, Serialize};
 
 /// XKB key code wrapper (evdev + 8 in the current stack).

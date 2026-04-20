@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, SolaApp, WindowConfig, WindowHandle, asset_bundle};
-use sola_applications::{Application, ApplicationsConfig};
+use sola_core::applications::{Application, ApplicationsConfig};
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),

@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Post-implementation note:** the plan below calls for a new crate `sola-applications`. In the final shipped refactor this was collapsed: the pure data types and CRUD live in `crates/sola-core/src/applications.rs`, and the `JsonConfigIn` impl (with `APP_DIR = "shell"`, `FILE_NAME = "applications.json"`) lives in `crates/sola-app/src/config.rs`. `sola-app` depends on `sola-core`. Read the code, not the plan, for the current layout.
+
 **Goal:** Ship `sola-settings`, a new Sola app with a sidebar-plus-content layout whose first section edits `~/.config/sola/shell/applications.json` (add / edit / remove).
 
-**Architecture:** New binary `apps/settings` modeled on `apps/monitor`. Extract `ApplicationsConfig` + `Application` from `apps/shell` into a new shared crate `crates/sola-applications` used by both shell and settings. JS front-end is Arrow.js + `@sola/ipc` invoking Rust commands `applications_add`, `applications_update`, `applications_remove`. The shell is not modified beyond its import path — it already reloads `applications.json` when the launcher opens.
+**Architecture:** New binary `apps/settings` modeled on `apps/monitor`. Extract `ApplicationsConfig` + `Application` from `apps/shell` into `crates/sola-core` (shared primitives); `JsonConfigIn` impl lives in `sola-app`. JS front-end is Arrow.js + `@sola/ipc` invoking Rust commands `applications_add`, `applications_update`, `applications_remove`. The shell is not modified beyond its import path — it already reloads `applications.json` when the launcher opens.
 
 **Tech Stack:** Rust 2024 edition, `sola-app` framework, WebKit6 WebView, Arrow.js (`@arrow-js/core`), `@sola/ipc`, `cargo make` build system.
 

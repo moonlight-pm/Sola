@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 sola-bus = { path = "../sola-bus" }
 sola-assets = { path = "../sola-assets" }
+sola-core = { path = "../sola-core" }
 gtk4 = "0.9"
 gdk4 = "0.9"
 glib = "0.20"

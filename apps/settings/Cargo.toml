@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 sola-app = { path = "../../crates/sola-app" }
-sola-applications = { path = "../../crates/sola-applications" }
 sola-bus = { path = "../../crates/sola-bus" }
 sola-core = { path = "../../crates/sola-core" }
 gtk4 = "0.9"

@@ -36,11 +36,11 @@ The shell is untouched. It already reloads `applications.json` when the launcher
 
 ### Shared type
 
-`ApplicationsConfig` and `Application` already live in `apps/shell/src/applications.rs`. To avoid duplication, move these into a small shared crate consumed by both `apps/shell` and `apps/settings`:
+`ApplicationsConfig` and `Application` already live in `apps/shell/src/applications.rs`. To avoid duplication, move the pure data types into the existing shared crate `sola-core`:
 
-- **New crate**: `crates/sola-applications/` with `ApplicationsConfig`, `Application`, and the `JsonConfigIn` impl.
-- `apps/shell` re-points its `use` to `sola_applications::{ApplicationsConfig, Application}`.
-- `apps/settings` depends on the same crate.
+- **Location**: `crates/sola-core/src/applications.rs` holds `ApplicationsConfig`, `Application`, and the CRUD methods. `sola-core` stays dep-light (serde only) so adding compositor-side crates never pulls GTK.
+- **`JsonConfigIn` impl**: lives in `sola-app` (`crates/sola-app/src/config.rs`), since `sola-app` already depends on `sola-core` and owns the trait. Consumers get `.load()` / `.save()` via the trait.
+- `apps/shell` and `apps/settings` both `use sola_core::applications::{ApplicationsConfig, Application}` and pull the trait in scope with `use sola_app::config::JsonConfigIn`.
 
 This keeps "what an application record looks like" in one place — the kind of shared vocabulary that belongs outside any one app.
 

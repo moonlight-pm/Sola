@@ -9,8 +9,8 @@ use sola_bus::topics::{
     MouseEnteredPayload, RegisteredChord, Topic, TopicKind, UserAppExitedPayload,
 };
 use sola_core::KeyCode;
+use sola_core::applications::{Application, ApplicationsConfig};
 
-use sola_applications::{Application, ApplicationsConfig};
 use crate::launcher::{self, LAUNCHER_ASSETS, LauncherState};
 use crate::menu::{MENU_ASSETS, MenuCache};
 use crate::menubar::setup_menubar;

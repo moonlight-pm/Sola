@@ -1,4 +1,4 @@
-use sola_applications::{Application, ApplicationsConfig};
+use sola_core::applications::{Application, ApplicationsConfig};
 
 #[derive(Default)]
 pub struct LauncherState {

@@ -1,5 +1,14 @@
+//! Applications known to the shell.
+//!
+//! `ApplicationsConfig` is the in-memory form of `~/.config/sola/shell/applications.json`.
+//! It is consumed by the shell (for launcher search, switcher icon lookup, session
+//! reconciliation) and written by the settings app. Types live in `sola-core` so
+//! neither side owns the schema.
+//!
+//! The `JsonConfigIn` impl (and therefore `load`/`save`) lives in `sola-app`,
+//! which depends on this crate. `sola-core` stays free of GTK/WebKit.
+
 use serde::{Deserialize, Serialize};
-use sola_app::config::JsonConfigIn;
 
 /// A launchable application known to the shell.
 ///
@@ -24,39 +33,6 @@ pub struct ApplicationsConfig {
     #[serde(default)]
     pub apps: Vec<Application>,
 }
-
-impl JsonConfigIn for ApplicationsConfig {
-    const APP_DIR: &'static str = "shell";
-    const FILE_NAME: &'static str = "applications.json";
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DuplicateAppId(pub String);
-
-impl std::fmt::Display for DuplicateAppId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "app_id already exists: {}", self.0)
-    }
-}
-
-impl std::error::Error for DuplicateAppId {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UpdateError {
-    NotFound(String),
-    Duplicate(DuplicateAppId),
-}
-
-impl std::fmt::Display for UpdateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotFound(id) => write!(f, "no entry with app_id: {id}"),
-            Self::Duplicate(d) => write!(f, "{d}"),
-        }
-    }
-}
-
-impl std::error::Error for UpdateError {}
 
 impl ApplicationsConfig {
     pub fn get(&self, app_id: &str) -> Option<&Application> {
@@ -94,6 +70,34 @@ impl ApplicationsConfig {
         self.apps.retain(|a| a.app_id != app_id);
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateAppId(pub String);
+
+impl std::fmt::Display for DuplicateAppId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "app_id already exists: {}", self.0)
+    }
+}
+
+impl std::error::Error for DuplicateAppId {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateError {
+    NotFound(String),
+    Duplicate(DuplicateAppId),
+}
+
+impl std::fmt::Display for UpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(id) => write!(f, "no entry with app_id: {id}"),
+            Self::Duplicate(d) => write!(f, "{d}"),
+        }
+    }
+}
+
+impl std::error::Error for UpdateError {}
 
 #[cfg(test)]
 mod tests {

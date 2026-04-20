@@ -1919,6 +1919,7 @@ dependencies = [
  "serde_json",
  "sola-assets",
  "sola-bus",
+ "sola-core",
  "swc_common",
  "swc_ts_fast_strip",
  "tokio",
@@ -1976,6 +1977,7 @@ name = "sola-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2031,6 +2033,19 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "sola-settings"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
+ "serde",
+ "serde_json",
+ "sola-app",
+ "sola-bus",
+ "sola-core",
+ "tracing",
 ]
 
 [[package]]

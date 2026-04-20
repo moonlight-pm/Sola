@@ -151,6 +151,11 @@ pub trait JsonConfigIn: Serialize + DeserializeOwned + Default {
     }
 }
 
+impl JsonConfigIn for sola_core::applications::ApplicationsConfig {
+    const APP_DIR: &'static str = "shell";
+    const FILE_NAME: &'static str = "applications.json";
+}
+
 #[derive(Debug)]
 pub enum ConfigError {
     Io {
