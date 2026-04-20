@@ -27,6 +27,11 @@ pub struct SessionMeta {
     /// Zero means "never synced"; triggers rebuild.
     #[serde(default)]
     pub cli_synced_at: u64,
+    /// Bumped when sync.rs's aggregation logic changes so old metrics
+    /// can be detected and rebuilt. Zero = pre-versioning (per-turn
+    /// snapshot metrics) → force rebuild.
+    #[serde(default)]
+    pub metrics_schema: u8,
 }
 
 fn default_model() -> String { "opus".into() }
@@ -74,6 +79,7 @@ pub fn save_meta(
     let model = existing.as_ref().map(|e| e.model.clone()).unwrap_or_else(default_model);
     let effort = existing.as_ref().map(|e| e.effort.clone()).unwrap_or_else(default_effort);
     let cli_synced_at = existing.as_ref().map(|e| e.cli_synced_at).unwrap_or(0);
+    let metrics_schema = existing.as_ref().map(|e| e.metrics_schema).unwrap_or(0);
 
     let meta = SessionMeta {
         session_id: session_id.to_string(),
@@ -85,6 +91,7 @@ pub fn save_meta(
         model,
         effort,
         cli_synced_at,
+        metrics_schema,
     };
 
     let json = serde_json::to_string_pretty(&meta)?;

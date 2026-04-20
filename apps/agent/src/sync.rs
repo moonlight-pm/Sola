@@ -253,10 +253,14 @@ fn cli_mtime_ms(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// Bump whenever aggregation in `aggregate_metrics` changes output so
+/// stale per-turn-snapshot metrics get refreshed.
+const METRICS_SCHEMA: u8 = 1;
+
 fn needs_rebuild(cli: &CliSession) -> bool {
     let cli_mtime = cli_mtime_ms(&cli.jsonl_path);
     match storage::load_meta(&cli.session_id) {
-        Ok(m) => m.cli_synced_at < cli_mtime,
+        Ok(m) => m.cli_synced_at < cli_mtime || m.metrics_schema < METRICS_SCHEMA,
         Err(_) => true,
     }
 }
@@ -289,21 +293,109 @@ fn rebuild(cli: &CliSession) -> anyhow::Result<SessionMeta> {
     let name = existing.as_ref().and_then(|e| e.name.clone())
         .or_else(|| cli.first_prompt.clone());
 
+    // Recompute cumulative metrics from the CLI JSONL for exact totals.
+    // Cost isn't in the JSONL — preserve whatever we had.
+    let metrics = aggregate_metrics(
+        &cli.jsonl_path,
+        existing.as_ref().and_then(|e| e.metrics.clone()),
+    );
+
     let meta = SessionMeta {
         session_id: cli.session_id.clone(),
         name,
         working_dir,
         created_at: existing.as_ref().map(|e| e.created_at).unwrap_or(now),
         updated_at: now,
-        metrics: existing.as_ref().and_then(|e| e.metrics.clone()),
+        metrics,
         model: existing.as_ref().map(|e| e.model.clone()).unwrap_or_else(|| "opus".into()),
         effort: existing.as_ref().map(|e| e.effort.clone()).unwrap_or_else(|| "high".into()),
         cli_synced_at,
+        metrics_schema: METRICS_SCHEMA,
     };
 
     storage::save_meta_full(&meta)?;
     debug!(session_id = %cli.session_id, cli_synced_at, "rebuilt view model");
     Ok(meta)
+}
+
+/// Walk the CLI JSONL and compute exact cumulative metrics:
+/// - input/output/cache_read/cache_creation tokens: sum of message.usage
+///   fields across non-sidechain assistant records.
+/// - duration_ms: sum of system.turn_duration.durationMs records.
+/// - num_turns: count of non-sidechain assistant records (1 LLM iteration each).
+/// - model: latest non-sidechain assistant record's model field.
+/// - context_window: derived from model name ("[1m]" suffix → 1_000_000).
+/// - context_used_pct: latest assistant record's token sum / context_window.
+/// - total_cost_usd: preserved from `existing` (not in JSONL).
+fn aggregate_metrics(path: &Path, existing: Option<Value>) -> Option<Value> {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return existing,
+    };
+    let reader = std::io::BufReader::new(file);
+
+    let mut input = 0u64;
+    let mut output = 0u64;
+    let mut cache_read = 0u64;
+    let mut cache_creation = 0u64;
+    let mut duration = 0u64;
+    let mut iterations = 0u64;
+    let mut model: Option<String> = None;
+    let mut last_turn_total: u64 = 0;
+
+    for line in reader.lines() {
+        let line = match line { Ok(l) => l, Err(_) => continue };
+        let obj: Value = match serde_json::from_str(&line) { Ok(v) => v, Err(_) => continue };
+
+        let t = obj["type"].as_str().unwrap_or("");
+        if t == "system" && obj["subtype"].as_str() == Some("turn_duration") {
+            duration += obj["durationMs"].as_u64().unwrap_or(0);
+            continue;
+        }
+        if t != "assistant" { continue; }
+        if obj["isSidechain"].as_bool() == Some(true) { continue; }
+
+        let usage = &obj["message"]["usage"];
+        let ti = usage["input_tokens"].as_u64().unwrap_or(0);
+        let to = usage["output_tokens"].as_u64().unwrap_or(0);
+        let tcr = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+        let tcc = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+        input += ti;
+        output += to;
+        cache_read += tcr;
+        cache_creation += tcc;
+        iterations += 1;
+        last_turn_total = ti + to + tcr + tcc;
+
+        if let Some(m) = obj["message"]["model"].as_str() {
+            model = Some(m.to_string());
+        }
+    }
+
+    let model_str = model.unwrap_or_else(|| "unknown".to_string());
+    let context_window: u64 = if model_str.contains("[1m]") { 1_000_000 } else { 200_000 };
+    let context_used_pct = if context_window > 0 {
+        (last_turn_total as f64 / context_window as f64 * 100.0).round() as u64
+    } else { 0 };
+
+    let total_cost_usd = existing
+        .as_ref()
+        .and_then(|m| m.get("total_cost_usd"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+
+    Some(json!({
+        "input_tokens": input,
+        "output_tokens": output,
+        "cache_read_tokens": cache_read,
+        "cache_creation_tokens": cache_creation,
+        "duration_ms": duration,
+        "num_turns": iterations,
+        "model": model_str,
+        "context_window": context_window,
+        "context_used_pct": context_used_pct,
+        "total_cost_usd": total_cost_usd,
+    }))
 }
 
 /// Walk the CLI JSONL and produce our display message list.
