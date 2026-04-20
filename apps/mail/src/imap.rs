@@ -383,12 +383,6 @@ impl ImapClient {
         })
     }
 
-    /// Disconnect from the server.
-    pub fn disconnect(mut self) -> anyhow::Result<()> {
-        self.session.logout()?;
-        Ok(())
-    }
-
     /// Ensure the given folder is selected, re-selecting if needed.
     fn ensure_selected(&mut self, folder: &str) -> anyhow::Result<()> {
         if self.selected_folder.as_deref() != Some(folder) {
