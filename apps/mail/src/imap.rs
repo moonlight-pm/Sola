@@ -133,6 +133,56 @@ impl ImapClient {
         })
     }
 
+    /// List INBOX messages, excluding any UID matched by a smart_mailbox rule.
+    pub fn list_inbox_filtered(
+        &mut self,
+        rules: &[MailRule],
+        offset: u32,
+        limit: u32,
+    ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
+        let rules = rules.to_vec();
+        self.with_reconnect(move |s| {
+            s.ensure_selected("INBOX")?;
+            let all_uids = s.session.uid_search("ALL")?;
+            let excluded = smart_mailbox_uids(&mut s.session, &rules);
+            let mut kept: Vec<u32> = all_uids
+                .into_iter()
+                .filter(|uid| !excluded.contains(uid))
+                .collect();
+            kept.sort_unstable_by(|a, b| b.cmp(a));
+            let total = kept.len() as u32;
+            fetch_envelopes(&mut s.session, &kept, offset, limit, total)
+        })
+    }
+
+    /// List INBOX messages matching a single smart_mailbox rule (by name).
+    pub fn list_smart_mailbox(
+        &mut self,
+        rule_name: &str,
+        rules: &[MailRule],
+        offset: u32,
+        limit: u32,
+    ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
+        let Some(rule) = rules
+            .iter()
+            .find(|r| r.action == "smart_mailbox" && r.name == rule_name)
+            .cloned()
+        else {
+            return Ok((Vec::new(), 0));
+        };
+        let query = build_imap_search(&rule.conditions);
+        if query.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        self.with_reconnect(move |s| {
+            s.ensure_selected("INBOX")?;
+            let mut uids: Vec<u32> = s.session.uid_search(&query)?.into_iter().collect();
+            uids.sort_unstable_by(|a, b| b.cmp(a));
+            let total = uids.len() as u32;
+            fetch_envelopes(&mut s.session, &uids, offset, limit, total)
+        })
+    }
+
     /// Search messages in a folder by subject, from, or body text.
     /// Search across multiple folders (INBOX, Sent, Archive) matching
     /// from, to, subject, and body content. Returns deduplicated results.
@@ -659,6 +709,53 @@ pub struct SmartMailboxCounts {
     pub inbox_total_deduction: u32,
     /// Total unique unseen INBOX messages matching any smart mailbox rule.
     pub inbox_unread_deduction: u32,
+}
+
+/// Return the union of UIDs in INBOX matched by any smart_mailbox rule.
+/// Caller must have INBOX selected.
+fn smart_mailbox_uids(session: &mut ImapSession, rules: &[MailRule]) -> HashSet<u32> {
+    let mut union: HashSet<u32> = HashSet::new();
+    for rule in rules.iter().filter(|r| r.action == "smart_mailbox") {
+        let query = build_imap_search(&rule.conditions);
+        if query.is_empty() {
+            continue;
+        }
+        match session.uid_search(&query) {
+            Ok(uids) => union.extend(&uids),
+            Err(e) => warn!("SEARCH failed for smart mailbox {}: {e}", rule.name),
+        }
+    }
+    union
+}
+
+/// Fetch envelope summaries for a paginated slice of a UID list (already sorted desc).
+fn fetch_envelopes(
+    session: &mut ImapSession,
+    uids_desc: &[u32],
+    offset: u32,
+    limit: u32,
+    total: u32,
+) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
+    if limit == 0 || uids_desc.is_empty() {
+        return Ok((Vec::new(), total));
+    }
+    let start = offset as usize;
+    if start >= uids_desc.len() {
+        return Ok((Vec::new(), total));
+    }
+    let end = (start + limit as usize).min(uids_desc.len());
+    let seq = uids_desc[start..end]
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let fetches = session.uid_fetch(
+        &seq,
+        "(UID FLAGS ENVELOPE BODY.PEEK[HEADER.FIELDS (X-Forwarded-For)])",
+    )?;
+    let mut messages: Vec<MessageSummary> = fetches.iter().filter_map(parse_summary).collect();
+    messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
+    Ok((messages, total))
 }
 
 /// Build an IMAP SEARCH query string from mail rule conditions.

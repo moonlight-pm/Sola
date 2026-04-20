@@ -52,7 +52,6 @@ export async function createApp(root: HTMLElement): Promise<void> {
   // loadFolder
   // ---------------------------------------------------------------------------
   async function loadFolder(name: string): Promise<void> {
-    if (name.startsWith('smart:')) return;
     state.searchActive = false;
     state.searchQuery = '';
     state.searchTotal = 0;
@@ -124,9 +123,10 @@ export async function createApp(root: HTMLElement): Promise<void> {
     if (state.bulkInProgress) return;
     state.bulkInProgress = true;
     try {
+      const source = state.selectedFolder.startsWith('smart:') ? 'INBOX' : state.selectedFolder;
       const uids = state.messages.map(m => m.uid);
       for (const uid of uids) {
-        await invokeT('mail_move', { uid, folder: state.selectedFolder, dest });
+        await invokeT('mail_move', { uid, folder: source, dest });
       }
       await loadFolder(state.selectedFolder);
     } catch {

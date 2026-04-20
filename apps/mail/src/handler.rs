@@ -256,20 +256,41 @@ async fn cmd_mail_list_folders(state: &Arc<MailState>) -> Result<Value, String> 
 }
 
 /// List messages in a folder.
+///
+/// "INBOX" hides any message matched by a smart_mailbox rule so it only
+/// appears in its smart folder view. "smart:<name>" returns the messages
+/// matched by that rule (physically still in INBOX).
 async fn cmd_mail_list_messages(state: &Arc<MailState>, args: &Value) -> Result<Value, String> {
     let folder = args["folder"].as_str().unwrap_or("INBOX").to_string();
     let offset = args["offset"].as_u64().unwrap_or(0) as u32;
     let limit = args["limit"].as_u64().unwrap_or(50) as u32;
     let client_arc = get_client(state).await?;
+    let rules = state
+        .config
+        .read()
+        .await
+        .as_ref()
+        .map(|c| c.rules.clone())
+        .unwrap_or_default();
 
     tokio::task::spawn_blocking(move || {
         let mut client = client_arc.lock().unwrap_or_else(|e| {
             tracing::warn!("IMAP mutex was poisoned, recovering");
             e.into_inner()
         });
-        let (messages, total) = client
-            .list_messages(&folder, offset, limit)
-            .map_err(|e| e.to_string())?;
+        let (messages, total) = if folder == "INBOX" {
+            client
+                .list_inbox_filtered(&rules, offset, limit)
+                .map_err(|e| e.to_string())?
+        } else if let Some(name) = folder.strip_prefix("smart:") {
+            client
+                .list_smart_mailbox(name, &rules, offset, limit)
+                .map_err(|e| e.to_string())?
+        } else {
+            client
+                .list_messages(&folder, offset, limit)
+                .map_err(|e| e.to_string())?
+        };
         Ok(json!({ "messages": messages, "total": total }))
     })
     .await
