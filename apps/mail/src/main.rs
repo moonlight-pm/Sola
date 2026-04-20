@@ -27,6 +27,12 @@ static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/src/components/folder-list.css" => (include_str!("../web/src/components/folder-list.css"), Css),
     "/src/components/message-list.ts" => (include_str!("../web/src/components/message-list.ts"), TypeScript),
     "/src/components/message-list.css" => (include_str!("../web/src/components/message-list.css"), Css),
+    "/src/components/message-view.ts" => (include_str!("../web/src/components/message-view.ts"), TypeScript),
+    "/src/components/message-view.css" => (include_str!("../web/src/components/message-view.css"), Css),
+    "/src/components/compose-view.ts" => (include_str!("../web/src/components/compose-view.ts"), TypeScript),
+    "/src/components/compose-view.css" => (include_str!("../web/src/components/compose-view.css"), Css),
+    "/src/components/toast.ts" => (include_str!("../web/src/components/toast.ts"), TypeScript),
+    "/src/components/toast.css" => (include_str!("../web/src/components/toast.css"), Css),
 };
 
 struct MailApp {
