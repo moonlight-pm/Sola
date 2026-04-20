@@ -1,6 +1,9 @@
 mod config;
-mod imap;
 mod rules;
+mod imap;
+mod idle;
+mod sender;
+mod wicket;
 
 fn main() {
     println!("sola-mail stub");
