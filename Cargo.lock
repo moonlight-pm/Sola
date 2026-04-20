@@ -2498,7 +2498,6 @@ dependencies = [
  "sola-bus",
  "sola-core",
  "tokio",
- "toml 0.8.23",
  "tracing",
  "ureq",
 ]

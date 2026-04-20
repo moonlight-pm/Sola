@@ -4,6 +4,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::config::MailConfig;
+use sola_app::config::JsonConfig;
 use crate::idle;
 use crate::imap::ImapClient;
 use crate::rules::MailRule;
@@ -111,7 +112,7 @@ async fn cmd_mail_connect(state: &Arc<MailState>) -> Result<Value, String> {
         tokio::task::spawn_blocking(move || handle.stop());
     }
 
-    let config = MailConfig::load().map_err(|e| e.to_string())?;
+    let config = MailConfig::load();
 
     if config.imap_host.is_empty() {
         return Err("No mail config — configure in Settings".to_string());
