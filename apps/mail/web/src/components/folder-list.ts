@@ -1,6 +1,5 @@
 import { html } from '@arrow-js/core';
 import type { Folder } from '../types.js';
-import './folder-list.css';
 
 export interface FolderListConfig {
   folders: () => Folder[];

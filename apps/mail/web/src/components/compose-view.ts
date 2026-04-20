@@ -1,6 +1,5 @@
 import { html, reactive } from '@arrow-js/core';
 import type { MessageBody } from '../types.js';
-import './compose-view.css';
 
 export interface ComposeViewConfig {
   fromAddresses: () => string[];

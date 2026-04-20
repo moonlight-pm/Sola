@@ -1,5 +1,4 @@
 import { html, watch } from '@arrow-js/core';
-import './toast.css';
 
 export interface ToastConfig {
   message: () => string | null;

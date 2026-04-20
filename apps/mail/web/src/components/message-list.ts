@@ -1,6 +1,5 @@
 import { html, reactive, watch } from '@arrow-js/core';
 import type { MessageSummary } from '../types.js';
-import './message-list.css';
 
 export interface MessageListConfig {
   messages: () => MessageSummary[];
