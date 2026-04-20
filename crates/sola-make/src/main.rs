@@ -109,7 +109,8 @@ fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
 fn build(target: Option<String>, release: bool) {
     build_web_frontends();
 
-    let args = build_args(target.as_deref(), release);
+    let resolved = target.as_deref().map(resolve_crate_name);
+    let args = build_args(resolved.as_deref(), release);
     let status = Command::new("cargo")
         .args(&args)
         .status()

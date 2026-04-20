@@ -123,8 +123,7 @@ fn files_identical(a: &str, b: &str) -> Result<bool, String> {
 /// Otherwise builds and deploys all workspace binaries.
 pub fn deploy(target: &dyn DeployTarget, app: Option<&str>) {
     println!("Building release...");
-    let build_target = app.map(|name| super::resolve_crate_name(name));
-    super::build(build_target, true);
+    super::build(app.map(|s| s.to_string()), true);
 
     println!("Preparing {}...", target.label());
     if let Err(e) = target.ensure_dirs() {
