@@ -56,6 +56,7 @@ impl ClaudeProcessManager {
             .arg("--input-format").arg("stream-json")
             .arg("--verbose")
             .arg("--include-partial-messages")
+            .arg("--replay-user-messages")
             .arg("--dangerously-skip-permissions")
             .arg("--model").arg(&model_arg)
             .arg("--effort").arg(effort);
@@ -298,11 +299,30 @@ fn start_stdout_reader(
                     }
 
                     "user" => {
-                        // Tool results from the CLI
+                        // Two shapes arrive on this channel:
+                        //   1. tool_result blocks (plumbing — we convert to tool_end events)
+                        //   2. replayed user messages (via --replay-user-messages) —
+                        //      the CLI echoes each submitted user prompt back to stdout
+                        //      when it accepts it. For mid-stream injections that's the
+                        //      point the frontend should insert the user bubble.
                         if let Some(content) = parsed.get("message")
                             .and_then(|m| m.get("content"))
                             .and_then(|c| c.as_array())
                         {
+                            // Collect any text content — if present, this is a replay echo.
+                            let text: String = content.iter()
+                                .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))
+                                .filter_map(|b| b.get("text").and_then(|v| v.as_str()))
+                                .collect::<Vec<_>>()
+                                .join("");
+                            if !text.is_empty() {
+                                send_event(&event_tx, json!({
+                                    "event": "user_appended",
+                                    "session_id": sid_for_task,
+                                    "text": text,
+                                }));
+                            }
+
                             for block in content {
                                 if block.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
                                     let tool_use_id = block.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
