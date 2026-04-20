@@ -113,6 +113,33 @@ html, body {
   margin-bottom: 12px;
 }
 
+.section-subhead {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin: 14px 0 6px;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+.badge.missing {
+  background: rgba(248, 81, 73, 0.14);
+  color: var(--red);
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -231,4 +258,39 @@ html, body {
 .btn.add:hover {
   border-color: var(--cyan);
   color: var(--cyan);
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.field-label {
+  flex-shrink: 0;
+  width: 110px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.field-narrow {
+  width: 140px;
+  flex-grow: 0;
+}
+
+.condition-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.condition-row .field {
+  flex: 1;
+}
+
+.empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
 }

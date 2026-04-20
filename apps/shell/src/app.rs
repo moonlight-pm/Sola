@@ -11,6 +11,17 @@ use sola_bus::topics::{
 use sola_core::KeyCode;
 use sola_core::applications::{Application, ApplicationsConfig};
 
+/// Load the apps list and immediately normalize relative commands to
+/// absolute paths. Persists back when anything changed so callers at both
+/// sides (shell, settings) see the same resolved form.
+fn load_applications() -> ApplicationsConfig {
+    let mut cfg = ApplicationsConfig::load();
+    if cfg.normalize() {
+        cfg.save();
+    }
+    cfg
+}
+
 use crate::launcher::{self, LAUNCHER_ASSETS, LauncherState};
 use crate::menu::{MENU_ASSETS, MenuCache};
 use crate::menubar::setup_menubar;
@@ -116,7 +127,7 @@ impl SolaApp for ShellApp {
             mru_window_by_app: HashMap::new(),
             known_windows: Vec::new(),
             window_id_by_key: HashMap::new(),
-            applications: ApplicationsConfig::load(),
+            applications: load_applications(),
             session_entries: session::load(),
             menus,
             zoning: ZoningState::new(),
@@ -860,7 +871,7 @@ impl ShellApp {
         }
 
         // Reload apps from disk so edits take effect without restarting.
-        self.applications = ApplicationsConfig::load();
+        self.applications = load_applications();
 
         // Snapshot the focus target we'll restore on close.
         self.launcher.prior_focus = self.focused_window_id;

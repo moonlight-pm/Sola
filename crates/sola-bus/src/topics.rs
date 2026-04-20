@@ -8,6 +8,10 @@ pub struct App {
     pub window_id: u32,
     pub app_id: String,
     pub title: String,
+    /// PID of the process that owns the surface, as reported by the
+    /// compositor. May be absent for windows where the compositor has no
+    /// way to attribute a process (non-Wayland edge cases, early frames).
+    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,6 +242,7 @@ mod tests {
             window_id: 1,
             app_id: "zen".into(),
             title: "Browser".into(),
+            pid: None,
         }];
         let msg = Topic::Apps(apps).to_message();
         assert_eq!(msg.topic, "Apps");

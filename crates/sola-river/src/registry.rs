@@ -32,6 +32,11 @@ pub struct Entry {
     /// Max-size dimensions hint from `river_window_v1.dimensions_hint`.
     /// Used to center unzoned windows; `0` means "no preference".
     pub max_size: (i32, i32),
+    /// PID from `river_window_v1.unreliable_pid`. Best-effort only — the
+    /// protocol explicitly marks this unreliable (PID reuse, late
+    /// arrival). Forwarded to the bus so shell/settings can look up the
+    /// binary via `/proc/<pid>/…`.
+    pub pid: Option<u32>,
 }
 
 impl WindowRegistry {
@@ -47,6 +52,7 @@ impl WindowRegistry {
                 app_id: None,
                 title: None,
                 max_size: (0, 0),
+                pid: None,
             },
         );
         self.next_id
@@ -79,6 +85,12 @@ impl WindowRegistry {
         }
     }
 
+    pub fn set_pid(&mut self, id: u32, pid: u32) {
+        if let Some(e) = self.by_id.get_mut(&id) {
+            e.pid = Some(pid);
+        }
+    }
+
     pub fn remove(&mut self, id: u32) {
         self.by_id.remove(&id);
     }
@@ -99,6 +111,7 @@ impl WindowRegistry {
                     window_id: *id,
                     app_id,
                     title,
+                    pid: e.pid,
                 })
             })
             .collect();

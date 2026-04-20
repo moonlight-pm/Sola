@@ -8,6 +8,8 @@
 //! The `JsonConfigIn` impl (and therefore `load`/`save`) lives in `sola-app`,
 //! which depends on this crate. `sola-core` stays free of GTK/WebKit.
 
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 /// A launchable application known to the shell.
@@ -69,6 +71,78 @@ impl ApplicationsConfig {
     pub fn remove(&mut self, app_id: &str) {
         self.apps.retain(|a| a.app_id != app_id);
     }
+
+    /// For each entry whose command's first word is a relative name that
+    /// resolves on `PATH`, replace it with the absolute path. Returns
+    /// `true` if any entry changed; callers typically save when so.
+    ///
+    /// Entries whose first word is already absolute, or can't be resolved,
+    /// are left untouched.
+    pub fn normalize(&mut self) -> bool {
+        let mut changed = false;
+        for app in &mut self.apps {
+            if let Some(new_cmd) = normalize_command(&app.command) {
+                app.command = new_cmd;
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
+/// Returns the rewritten command if the first word is a relative name that
+/// resolves on `PATH`; `None` if unchanged or unresolvable.
+fn normalize_command(cmd: &str) -> Option<String> {
+    let mut parts = cmd.split_whitespace();
+    let first = parts.next()?;
+    if Path::new(first).is_absolute() {
+        return None;
+    }
+    let abs = resolve_in_path(first)?;
+    let rest: Vec<&str> = parts.collect();
+    let abs_str = abs.to_string_lossy();
+    Some(if rest.is_empty() {
+        abs_str.into_owned()
+    } else {
+        format!("{} {}", abs_str, rest.join(" "))
+    })
+}
+
+/// True if the command's first word points at an existing executable file,
+/// either directly (absolute path) or via `PATH` lookup.
+pub fn command_exists(cmd: &str) -> bool {
+    let Some(first) = cmd.split_whitespace().next() else {
+        return false;
+    };
+    if Path::new(first).is_absolute() {
+        is_executable(Path::new(first))
+    } else {
+        resolve_in_path(first).is_some()
+    }
+}
+
+fn resolve_in_path(name: &str) -> Option<PathBuf> {
+    let path_env = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_env) {
+        let candidate = dir.join(name);
+        if is_executable(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+#[cfg(unix)]
+fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    p.metadata()
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(p: &Path) -> bool {
+    p.is_file()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -233,5 +307,63 @@ mod tests {
         };
         cfg.remove("nope");
         assert_eq!(cfg.apps.len(), 1);
+    }
+
+    #[test]
+    fn normalize_leaves_absolute_path_unchanged() {
+        let mut cfg = ApplicationsConfig {
+            apps: vec![Application {
+                app_id: "foo".into(),
+                label: "Foo".into(),
+                command: "/opt/sola/bin/sola-settings".into(),
+                icon: "".into(),
+            }],
+        };
+        assert!(!cfg.normalize());
+        assert_eq!(cfg.apps[0].command, "/opt/sola/bin/sola-settings");
+    }
+
+    #[test]
+    fn normalize_leaves_unresolvable_unchanged() {
+        let mut cfg = ApplicationsConfig {
+            apps: vec![Application {
+                app_id: "foo".into(),
+                label: "Foo".into(),
+                command: "definitely-not-a-real-binary-xyz-123".into(),
+                icon: "".into(),
+            }],
+        };
+        assert!(!cfg.normalize());
+        assert_eq!(cfg.apps[0].command, "definitely-not-a-real-binary-xyz-123");
+    }
+
+    #[test]
+    fn normalize_resolves_name_and_preserves_args() {
+        // Pick a binary that's ~universally present on Linux hosts.
+        let name = "sh";
+        let Some(abs) = resolve_in_path(name) else {
+            // CI without /bin on PATH — skip rather than fail.
+            return;
+        };
+        let mut cfg = ApplicationsConfig {
+            apps: vec![Application {
+                app_id: "shell".into(),
+                label: "Shell".into(),
+                command: format!("{name} -c echo"),
+                icon: "".into(),
+            }],
+        };
+        assert!(cfg.normalize());
+        assert_eq!(cfg.apps[0].command, format!("{} -c echo", abs.display()));
+    }
+
+    #[test]
+    fn command_exists_flags_missing_absolute() {
+        assert!(!command_exists("/this/path/does/not/exist/xyz"));
+    }
+
+    #[test]
+    fn command_exists_flags_missing_in_path() {
+        assert!(!command_exists("definitely-not-a-real-binary-xyz-123"));
     }
 }

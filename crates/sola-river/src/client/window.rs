@@ -113,6 +113,12 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     .registry
                     .set_max_size(window_id, max_width, max_height);
             }
+            Event::UnreliablePid { unreliable_pid } => {
+                if unreliable_pid > 0 {
+                    state.registry.set_pid(window_id, unreliable_pid as u32);
+                    apps_dirty = true;
+                }
+            }
             _ => {}
         }
         if apps_dirty {
