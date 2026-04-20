@@ -45,13 +45,19 @@ impl ClaudeProcessManager {
 
         let claude_path = resolve_claude_bin()?;
 
+        // The plain aliases "opus" / "sonnet" map to the 200k-context
+        // variants; appending "[1m]" selects the 1M-context ones. Do this
+        // here so every agent turn runs with the larger window (which is
+        // also what `claude` defaults to for interactive use).
+        let model_arg = if model.contains('[') { model.to_string() } else { format!("{model}[1m]") };
+
         let mut cmd = Command::new(&claude_path);
         cmd.arg("--output-format").arg("stream-json")
             .arg("--input-format").arg("stream-json")
             .arg("--verbose")
             .arg("--include-partial-messages")
             .arg("--dangerously-skip-permissions")
-            .arg("--model").arg(model)
+            .arg("--model").arg(&model_arg)
             .arg("--effort").arg(effort);
 
         // Resume if a CLI session already exists for this ID.
