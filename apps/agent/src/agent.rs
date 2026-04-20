@@ -330,22 +330,33 @@ fn start_stdout_reader(
                         //      the CLI echoes each submitted user prompt back to stdout
                         //      when it accepts it. For mid-stream injections that's the
                         //      point the frontend should insert the user bubble.
+                        //
+                        // Ignore records whose parent_tool_use_id is set — those are
+                        // agent-authored prompts to subagents (Task tool) that the CLI
+                        // emits as user-role plumbing. Treating them as the user's own
+                        // speech paints phantom "you wrote this" bubbles in the UI.
+                        let is_agent_authored = parsed
+                            .get("parent_tool_use_id")
+                            .map(|v| !v.is_null())
+                            .unwrap_or(false);
+
                         if let Some(content) = parsed.get("message")
                             .and_then(|m| m.get("content"))
                             .and_then(|c| c.as_array())
                         {
-                            // Collect any text content — if present, this is a replay echo.
-                            let text: String = content.iter()
-                                .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))
-                                .filter_map(|b| b.get("text").and_then(|v| v.as_str()))
-                                .collect::<Vec<_>>()
-                                .join("");
-                            if !text.is_empty() {
-                                send_event(&event_tx, json!({
-                                    "event": "user_appended",
-                                    "session_id": sid_for_task,
-                                    "text": text,
-                                }));
+                            if !is_agent_authored {
+                                let text: String = content.iter()
+                                    .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))
+                                    .filter_map(|b| b.get("text").and_then(|v| v.as_str()))
+                                    .collect::<Vec<_>>()
+                                    .join("");
+                                if !text.is_empty() {
+                                    send_event(&event_tx, json!({
+                                        "event": "user_appended",
+                                        "session_id": sid_for_task,
+                                        "text": text,
+                                    }));
+                                }
                             }
 
                             for block in content {
