@@ -425,9 +425,18 @@ on('session_loaded', (ev: any) => {
 on('user_appended', (ev: any) => {
   const s = findSession(ev.session_id);
   if (!s) return;
+  // Dedupe against the optimistic push in sendMessage: if the last
+  // message already carries this text, the echo is confirming a submit
+  // we've already rendered. Otherwise this is an injection we didn't
+  // originate (e.g. a queued follow-up CLI accepted after a cancel) —
+  // append at the current tail.
+  const text = ev.text || '';
+  const last = s.messages.length ? s.messages[s.messages.length - 1] : null;
+  if (last && last.role === 'user' && last.content === text) return;
+
   s.messages = [...s.messages, {
     role: 'user',
-    content: ev.text || '',
+    content: text,
     blocks: [],
     streaming: false,
     cancelled: false,
@@ -555,13 +564,20 @@ async function sendMessage(): Promise<void> {
 
   if (!s.firstPrompt) s.firstPrompt = text;
 
-  // Clear the textarea immediately for responsiveness. The user bubble is
-  // appended by the 'user_appended' handler when the CLI echoes the
-  // message back via --replay-user-messages, so it lands at the exact
-  // point where the agent accepted it (important for mid-stream queues).
+  // Show the bubble immediately — the CLI's echo (user_appended) will
+  // arrive shortly after and is deduped against this tail by the handler.
+  s.messages = [...s.messages, {
+    role: 'user',
+    content: text,
+    blocks: [],
+    streaming: false,
+    cancelled: false,
+  }];
+
   ta.value = '';
   ta.style.height = 'auto';
   ta.focus();
+  scrollToBottom(true);
   await invoke('send_message', { session_id: s.id, text, model: s.model, effort: s.effort });
 }
 
