@@ -45,6 +45,12 @@ html, body {
   overflow: hidden;
 }
 
+#folder-list-target,
+#message-list-target {
+  display: flex;
+  align-self: stretch;
+}
+
 #message-view-target,
 #compose-view-target {
   flex: 1;

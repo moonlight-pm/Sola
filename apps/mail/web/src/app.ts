@@ -415,11 +415,17 @@ export async function createApp(root: HTMLElement): Promise<void> {
     );
   }
 
-  // Compose is mounted lazily when state.composing becomes true.
-  // When composing becomes false, Arrow removes the div and composeMounted resets.
+  // Compose toggles the target div between #message-view-target and
+  // #compose-view-target, so the target needs (re)mounting on every
+  // transition. Arrow's reactive setter emits on every write (no equality
+  // check), so we guard against no-op transitions to avoid appending a
+  // duplicate component into the same target.
+  let prevComposing = state.composing;
   watch(() => {
-    if (state.composing) {
-      if (composeMounted) return;
+    const composing = state.composing;
+    if (composing === prevComposing) return;
+    prevComposing = composing;
+    if (composing) {
       requestAnimationFrame(() => {
         const target = root.querySelector<HTMLElement>('#compose-view-target');
         if (!target) return;
@@ -437,7 +443,6 @@ export async function createApp(root: HTMLElement): Promise<void> {
             onClose: () => {
               state.composing = false;
               state.replyTo = null;
-              composeMounted = false;
             },
           },
           target,
@@ -445,7 +450,6 @@ export async function createApp(root: HTMLElement): Promise<void> {
       });
     } else {
       composeMounted = false;
-      // message-view needs remounting if the target div was replaced
       messageViewMounted = false;
       requestAnimationFrame(() => mountMessageView());
     }
