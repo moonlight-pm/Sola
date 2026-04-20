@@ -23,6 +23,8 @@ static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/src/app.ts" => (include_str!("../web/src/app.ts"), TypeScript),
     "/src/types.ts" => (include_str!("../web/src/types.ts"), TypeScript),
     "/src/theme.css" => (include_str!("../web/src/theme.css"), Css),
+    "/src/components/folder-list.ts" => (include_str!("../web/src/components/folder-list.ts"), TypeScript),
+    "/src/components/folder-list.css" => (include_str!("../web/src/components/folder-list.css"), Css),
 };
 
 struct MailApp {
