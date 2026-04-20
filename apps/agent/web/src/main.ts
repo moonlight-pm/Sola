@@ -930,7 +930,13 @@ function headerTemplate() {
           }
           return html`
             <span class="header-title">${() => s.name || 'Untitled'}</span>
-            <button class="header-edit-btn" @click="${() => { state.editingTitle = true; }}">
+            <button class="header-edit-btn" @click="${() => {
+              state.editingTitle = true;
+              requestAnimationFrame(() => {
+                const el = document.querySelector('.header-title-input') as HTMLInputElement | null;
+                if (el) { el.focus(); el.select(); }
+              });
+            }}">
               <span class="icon icon-pencil"></span>
             </button>
           `;
