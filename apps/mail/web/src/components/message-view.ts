@@ -109,42 +109,46 @@ export function createMessageView(cfg: MessageViewConfig, target: HTMLElement): 
               <div class="no-msg-icon">&#9993;</div>
               <div class="no-msg-text">Select a message to read</div>
             </div>
-          `.key('no-message');
+          `;
         }
         const srcdoc = buildSrcdoc(msg);
+        // Nested conditional templates must be wrapped in closures so Arrow
+        // re-patches them when the parent chunk is reused. Plain template
+        // interpolations (${childTemplate}) are mounted once and never
+        // re-bound, which leaves stale DOM on message-to-message swaps.
         return html`
           <div class="msg-header">
             <div class="header-row">
               <span class="header-label">From</span>
-              <span class="header-value">${msg.from}</span>
+              <span class="header-value">${() => msg.from}</span>
             </div>
             <div class="header-row">
               <span class="header-label">To</span>
-              <span class="header-value">${msg.to}</span>
+              <span class="header-value">${() => msg.to}</span>
             </div>
-            ${msg.cc
+            ${() => msg.cc
               ? html`
                   <div class="header-row">
                     <span class="header-label">CC</span>
-                    <span class="header-value">${msg.cc}</span>
+                    <span class="header-value">${() => msg.cc}</span>
                   </div>
                 `
               : html``}
             <div class="header-row subject-row">
               <span class="header-label">Subj</span>
-              <span class="header-value subject">${msg.subject}</span>
+              <span class="header-value subject">${() => msg.subject}</span>
             </div>
           </div>
           <div class="msg-body">
-            ${srcdoc
+            ${() => srcdoc
               ? html`<iframe
                   srcdoc="${srcdoc}"
                   title="email-body"
                   sandbox="allow-same-origin allow-scripts"
                 ></iframe>`
-              : html`<pre class="text-body">${msg.text}</pre>`}
+              : html`<pre class="text-body">${() => msg.text}</pre>`}
           </div>
-        `.key(`msg-${msg.uid}`);
+        `;
       }}
     </div>
   `(target);

@@ -211,15 +211,25 @@ html`<ul>
 
 Re-assign arrays (`state.items = [...state.items, newItem]`) to trigger re-render — mutating in place doesn't always notify.
 
-### Keys
+### Nested templates MUST be in closures
 
-For list items or discrete variants, tag templates with `.key(id)` so Arrow treats them as distinct instances rather than reusing DOM + bindings from a previous render:
+**Critical:** A plain nested template expression — `${childTemplate}` or `${cond ? tplA : tplB}` — is mounted once and **never re-patched** when the parent chunk is reused on a reactive re-render. Only `${() => childTemplate}` (a function expression) installs the update observer that Arrow uses to re-render nested templates.
+
+This is the #1 cause of "the first message shows, but clicking a second message still shows the first" stale-content bugs.
 
 ```ts
-html`<div class="message">…</div>`.key(`msg-${msg.uid}`)
+// ❌ Stale on parent re-render — no update observer installed
+<div>${msg.cc ? html`<div>${msg.cc}</div>` : html``}</div>
+
+// ✅ Re-patched every time the parent closure re-runs
+<div>${() => msg.cc ? html`<div>${() => msg.cc}</div>` : html``}</div>
 ```
 
-Without a key, Arrow may memoize by raw-strings signature and reuse the previous template's bindings, which can show stale data when the underlying object changes.
+The same applies to nested text interpolations that need to follow reactive changes: write `${() => msg.from}`, not `${msg.from}`, when the enclosing template might be reused.
+
+### Keys
+
+Keys aren't needed to force re-patching in reactive single-template contexts — the closure rule above is what you want there. Use `.key(id)` when rendering **lists of templates**: Arrow's list-diffing path consults keys to match items across renders. Single-template reactive expressions go through the `patch` fast-path that reuses the prev chunk by raw-strings signature, so keys are a no-op there.
 
 ### watch()
 
@@ -251,4 +261,4 @@ watch(() => {
 - ❌ `import './x.css'` — use `<link>` in `index.html`
 - ❌ `state.x = x` assuming equality check — Arrow always emits
 - ❌ Mounting `html\`\`(target)` twice — it appends
-- ❌ Expecting memoized templates to pick up new values without `.key()` when the "shape" is identical but the data object changed
+- ❌ Nested `${childTemplate}` or `${cond ? tplA : tplB}` — wrap in `${() => ...}` so Arrow re-patches on parent re-render
