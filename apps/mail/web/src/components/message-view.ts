@@ -73,7 +73,7 @@ export function createMessageView(cfg: MessageViewConfig, target: HTMLElement): 
         <div class="tool-sep"></div>
         <button
           class="tool-btn"
-          ?disabled="${() => !cfg.body()}"
+          disabled="${() => !cfg.body() ? 'disabled' : false}"
           @click="${() => cfg.onReply(false)}"
           title="Reply"
         >
@@ -82,7 +82,7 @@ export function createMessageView(cfg: MessageViewConfig, target: HTMLElement): 
         </button>
         <button
           class="tool-btn"
-          ?disabled="${() => !cfg.body()}"
+          disabled="${() => !cfg.body() ? 'disabled' : false}"
           @click="${() => cfg.onReply(true)}"
           title="Reply all"
         >
@@ -92,7 +92,7 @@ export function createMessageView(cfg: MessageViewConfig, target: HTMLElement): 
         <div class="tool-sep"></div>
         <button
           class="tool-btn danger"
-          ?disabled="${() => !cfg.body()}"
+          disabled="${() => !cfg.body() ? 'disabled' : false}"
           @click="${() => cfg.onDelete()}"
           title="Delete"
         >

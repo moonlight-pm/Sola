@@ -125,12 +125,12 @@ export function createMessageList(cfg: MessageListConfig, target: HTMLElement): 
             <div class="action-bar">
               <button
                 class="action-btn"
-                ?disabled="${() => cfg.isBulkOperating()}"
+                disabled="${() => cfg.isBulkOperating() ? 'disabled' : false}"
                 @click="${() => cfg.onArchiveAll()}"
               >Archive all</button>
               <button
                 class="action-btn danger"
-                ?disabled="${() => cfg.isBulkOperating()}"
+                disabled="${() => cfg.isBulkOperating() ? 'disabled' : false}"
                 @click="${() => cfg.onTrashAll()}"
               >Trash all</button>
             </div>
@@ -140,7 +140,7 @@ export function createMessageList(cfg: MessageListConfig, target: HTMLElement): 
               <div class="action-bar">
                 <button
                   class="action-btn danger"
-                  ?disabled="${() => cfg.isBulkOperating()}"
+                  disabled="${() => cfg.isBulkOperating() ? 'disabled' : false}"
                   @click="${() => cfg.onEmptyFolder()}"
                 >Permanently delete all</button>
               </div>

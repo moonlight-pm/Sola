@@ -117,7 +117,7 @@ export function createComposeView(cfg: ComposeViewConfig, target: HTMLElement): 
         <div class="compose-actions">
           <button
             class="tool-btn send"
-            ?disabled="${() => !local.to.trim() || local.sending}"
+            disabled="${() => !local.to.trim() || local.sending ? 'disabled' : false}"
             @click="${handleSend}"
           >${() => local.sending ? 'Sending...' : 'Send'}</button>
           <button class="tool-btn" @click="${() => cfg.onClose()}">Cancel</button>
