@@ -403,6 +403,18 @@ on('session_loaded', (ev: any) => {
     }
   }
 
+  // Any tool block still without an output at this point never got a
+  // matching tool_result in the JSONL (cancelled, truncated at compact
+  // boundary, etc). Leave output as '' so the template renders a neutral
+  // header instead of a misleading "running…".
+  for (const msg of msgs) {
+    for (const blk of msg.blocks) {
+      if (blk.kind === 'tool' && blk.tool.output === null) {
+        blk.tool.output = '';
+      }
+    }
+  }
+
   session.messages = msgs;
   setActive(ev.session_id);
   focusInput();
@@ -1029,7 +1041,15 @@ function statsTemplate() {
 }
 
 function toolTemplate(tool: ToolCall) {
-  return html`<div class="${() => 'tool-call' + (tool.expanded ? ' expanded' : '')}"><div class="tool-hdr" @click="${() => { tool.expanded = !tool.expanded; }}"><span class="${() => 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '')}"></span><span class="tname">${tool.name}</span><span class="${() => 'tstatus' + (tool.output === null ? '' : tool.isError ? ' error' : ' done')}">${() => tool.output === null ? 'running…' : tool.isError ? 'error' : 'done'}</span></div><div class="${() => 'tool-body' + (tool.expanded ? ' open' : '')}"><div class="tool-label">Input</div><pre>${() => truncate(tool.input, 2000)}</pre>${() => tool.output !== null ? html`<div class="tool-label">Output</div><pre class="${tool.isError ? 'terr' : ''}">${truncate(tool.output, 2000)}</pre>` : html``}</div></div>`.key(tool.id);
+  const statusText = (t: ToolCall) =>
+    t.output === null ? 'running…'
+    : t.output === '' ? ''
+    : t.isError ? 'error' : 'done';
+  const statusClass = (t: ToolCall) =>
+    t.output === null ? ''
+    : t.output === '' ? ''
+    : t.isError ? ' error' : ' done';
+  return html`<div class="${() => 'tool-call' + (tool.expanded ? ' expanded' : '')}"><div class="tool-hdr" @click="${() => { tool.expanded = !tool.expanded; }}"><span class="${() => 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '')}"></span><span class="tname">${tool.name}</span><span class="${() => 'tstatus' + statusClass(tool)}">${() => statusText(tool)}</span></div><div class="${() => 'tool-body' + (tool.expanded ? ' open' : '')}"><div class="tool-label">Input</div><pre>${() => truncate(tool.input, 2000)}</pre>${() => tool.output !== null && tool.output !== '' ? html`<div class="tool-label">Output</div><pre class="${tool.isError ? 'terr' : ''}">${truncate(tool.output, 2000)}</pre>` : html``}</div></div>`.key(tool.id);
 }
 
 // Render markdown into .md-block elements by scanning the DOM.
