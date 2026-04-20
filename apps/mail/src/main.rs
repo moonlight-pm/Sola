@@ -1,4 +1,5 @@
 mod config;
+mod imap;
 mod rules;
 
 fn main() {
