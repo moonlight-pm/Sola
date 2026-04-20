@@ -4,6 +4,7 @@ import { createStore } from '@sola/store';
 import type { Folder, MessageSummary, MessageBody, MailRule } from './types.js';
 import { smartMailboxNames } from './types.js';
 import { createFolderList } from './components/folder-list.js';
+import { createMessageList } from './components/message-list.js';
 
 export async function createApp(root: HTMLElement): Promise<void> {
   const state = createStore({
@@ -33,11 +34,18 @@ export async function createApp(root: HTMLElement): Promise<void> {
 
   async function loadFolder(name: string): Promise<void> {
     if (name.startsWith('smart:')) return;
+    state.searchActive = false;
+    state.searchQuery = '';
+    state.searchTotal = 0;
+    state.selectedUid = null;
     state.folderLoading = true;
     try {
       const res = await invoke('mail_list_messages', { folder: name, offset: 0, limit: 50 });
       state.messages = res.messages ?? [];
       state.totalMessages = res.total ?? 0;
+      if (name === 'INBOX') {
+        state.inboxMessages = state.messages;
+      }
     } catch (e: any) {
       state.toastError = String(e?.message ?? e);
     } finally {
@@ -45,7 +53,85 @@ export async function createApp(root: HTMLElement): Promise<void> {
     }
   }
 
+  async function searchMessages(query: string): Promise<void> {
+    if (!query.trim()) return;
+    state.searchActive = true;
+    state.folderLoading = true;
+    try {
+      const res = await invoke('mail_search', { query });
+      state.messages = res.messages ?? [];
+      state.searchTotal = res.total ?? 0;
+    } catch (e: any) {
+      state.toastError = String(e?.message ?? e);
+    } finally {
+      state.folderLoading = false;
+    }
+  }
+
+  function clearSearch(): void {
+    state.searchActive = false;
+    state.searchQuery = '';
+    state.searchTotal = 0;
+    loadFolder(state.selectedFolder);
+  }
+
+  async function loadMore(): Promise<void> {
+    if (state.isLoadingMore) return;
+    // Search results come back all at once — no pagination on the backend
+    if (state.searchActive) return;
+    state.isLoadingMore = true;
+    try {
+      const offset = state.messages.length;
+      const res = await invoke('mail_list_messages', { folder: state.selectedFolder, offset, limit: 50 });
+      state.messages = [...state.messages, ...(res.messages ?? [])];
+      state.totalMessages = res.total ?? state.totalMessages;
+    } catch (e: any) {
+      state.toastError = String(e?.message ?? e);
+    } finally {
+      state.isLoadingMore = false;
+    }
+  }
+
+  async function bulkMove(dest: string): Promise<void> {
+    if (state.bulkInProgress) return;
+    state.bulkInProgress = true;
+    try {
+      const uids = state.messages.map(m => m.uid);
+      for (const uid of uids) {
+        await invoke('mail_move', { uid, folder: state.selectedFolder, dest });
+      }
+      await loadFolder(state.selectedFolder);
+    } catch (e: any) {
+      state.toastError = String(e?.message ?? e);
+    } finally {
+      state.bulkInProgress = false;
+    }
+  }
+
+  async function emptyFolder(): Promise<void> {
+    if (state.bulkInProgress) return;
+    state.bulkInProgress = true;
+    try {
+      await invoke('mail_empty_folder', { folder: state.selectedFolder });
+      await loadFolder(state.selectedFolder);
+    } catch (e: any) {
+      state.toastError = String(e?.message ?? e);
+    } finally {
+      state.bulkInProgress = false;
+    }
+  }
+
+  function isSmartMailbox(): boolean {
+    return state.selectedFolder.startsWith('smart:');
+  }
+
+  function hasMore(): boolean {
+    if (state.searchActive) return false;
+    return state.messages.length < state.totalMessages;
+  }
+
   let folderListMounted = false;
+  let messageListMounted = false;
 
   html`
     <div class="mail-app">
@@ -56,6 +142,7 @@ export async function createApp(root: HTMLElement): Promise<void> {
           : html`
               <div class="main">
                 <div id="folder-list-target"></div>
+                <div id="message-list-target"></div>
               </div>
             `}
     </div>
@@ -82,6 +169,35 @@ export async function createApp(root: HTMLElement): Promise<void> {
     );
   }
 
+  function mountMessageList(): void {
+    if (messageListMounted) return;
+    const target = root.querySelector<HTMLElement>('#message-list-target');
+    if (!target) return;
+    messageListMounted = true;
+    createMessageList(
+      {
+        messages: () => state.messages,
+        selectedUid: () => state.selectedUid,
+        hasMore,
+        isLoadingMore: () => state.isLoadingMore,
+        folderLoading: () => state.folderLoading,
+        searchActive: () => state.searchActive,
+        searchTotal: () => state.searchTotal,
+        folderName: () => state.selectedFolder,
+        isSmartMailbox,
+        isBulkOperating: () => state.bulkInProgress,
+        onSelect: (uid: number) => { state.selectedUid = uid; /* message-view comes in Task 13 */ },
+        onSearch: (q: string) => { state.searchQuery = q; searchMessages(q); },
+        onClearSearch: clearSearch,
+        onLoadMore: loadMore,
+        onArchiveAll: () => bulkMove('Archive'),
+        onTrashAll: () => bulkMove('Trash'),
+        onEmptyFolder: emptyFolder,
+      },
+      target,
+    );
+  }
+
   try {
     const res = await invoke('mail_connect');
     state.folders = res.folders ?? [];
@@ -89,7 +205,11 @@ export async function createApp(root: HTMLElement): Promise<void> {
     state.fromAddresses = res.from_addresses ?? [];
     state.rules = res.rules ?? [];
     state.loading = false;
-    requestAnimationFrame(mountFolderList);
+    requestAnimationFrame(() => {
+      mountFolderList();
+      mountMessageList();
+      loadFolder('INBOX');
+    });
   } catch (e: any) {
     state.fatalError = String(e?.message ?? e);
     state.loading = false;
