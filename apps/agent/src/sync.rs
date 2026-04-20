@@ -305,7 +305,15 @@ fn rebuild(cli: &CliSession) -> anyhow::Result<SessionMeta> {
         name,
         working_dir,
         created_at: existing.as_ref().map(|e| e.created_at).unwrap_or(now),
-        updated_at: now,
+        // updated_at reflects when the *session* was last active, not
+        // when we rebuilt the view model. The CLI JSONL's mtime is the
+        // authoritative signal; fall back to any existing value before
+        // finally using now (only reachable for a brand-new untouched file).
+        updated_at: if cli_synced_at > 0 {
+            cli_synced_at
+        } else {
+            existing.as_ref().map(|e| e.updated_at).unwrap_or(now)
+        },
         metrics,
         model: existing.as_ref().map(|e| e.model.clone()).unwrap_or_else(|| "opus".into()),
         effort: existing.as_ref().map(|e| e.effort.clone()).unwrap_or_else(|| "high".into()),
