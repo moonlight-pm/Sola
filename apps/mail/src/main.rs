@@ -1,8 +1,10 @@
 mod config;
-mod rules;
-mod imap;
+mod handler;
 mod idle;
+mod imap;
+mod rules;
 mod sender;
+mod state;
 mod wicket;
 
 fn main() {
