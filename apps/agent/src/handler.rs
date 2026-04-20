@@ -104,7 +104,7 @@ impl AgentHandler {
         {
             let mut mgr = self.process_mgr.lock().await;
             if !mgr.is_running(session_id) {
-                if let Err(e) = mgr.start(session_id, &working_dir, model, effort, self.event_tx.clone()) {
+                if let Err(e) = mgr.start(session_id, &working_dir, model, effort, self.event_tx.clone(), self.process_mgr.clone()) {
                     return json!({ "error": format!("Failed to start claude: {e:#}") });
                 }
             }

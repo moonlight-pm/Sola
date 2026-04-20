@@ -31,6 +31,10 @@ impl ClaudeProcessManager {
 
     /// Spawn a new Claude process for a session, or resume an existing one.
     /// Returns immediately; stdout is read in a background thread.
+    ///
+    /// `self_arc` is this same manager behind its mutex — passed to the
+    /// reader so it can clean up its own entry when the CLI exits
+    /// (cancellation via SIGINT, crash, or normal quit).
     pub fn start(
         &mut self,
         session_id: &str,
@@ -38,6 +42,7 @@ impl ClaudeProcessManager {
         model: &str,
         effort: &str,
         event_tx: std::sync::mpsc::Sender<String>,
+        self_arc: std::sync::Arc<tokio::sync::Mutex<Self>>,
     ) -> Result<()> {
         if self.processes.contains_key(session_id) {
             return Ok(()); // already running
@@ -85,7 +90,7 @@ impl ClaudeProcessManager {
 
         // Background stdout reader — relays events to the frontend.
         let sid = session_id.to_string();
-        start_stdout_reader(stdout, child, sid, event_tx);
+        start_stdout_reader(stdout, child, sid, event_tx, self_arc);
 
         Ok(())
     }
@@ -165,6 +170,7 @@ fn start_stdout_reader(
     mut child: Child,
     session_id: String,
     event_tx: std::sync::mpsc::Sender<String>,
+    mgr: std::sync::Arc<tokio::sync::Mutex<ClaudeProcessManager>>,
 ) {
     // Blocking reader thread → std mpsc → tokio task → event_tx
     let (line_tx, line_rx) = std::sync::mpsc::channel::<String>();
@@ -218,12 +224,31 @@ fn start_stdout_reader(
                     continue;
                 };
 
-                // Exit marker
+                // Exit marker — process ended (normal quit, SIGINT cancel,
+                // or crash). Unwind the UI state and drop the stale
+                // manager entry so the next send spawns fresh.
                 if parsed.get("__exit").is_some() {
+                    if in_turn {
+                        send_event(&event_tx, json!({
+                            "event": "message_end",
+                            "session_id": sid_for_task,
+                            "cancelled": true,
+                        }));
+                    }
+                    send_event(&event_tx, json!({
+                        "event": "session_state",
+                        "session_id": sid_for_task,
+                        "status": "idle",
+                    }));
                     send_event(&event_tx, json!({
                         "event": "session_exit", "session_id": sid_for_task,
                         "code": parsed.get("code").cloned().unwrap_or(json!(-1))
                     }));
+                    let mgr_for_cleanup = mgr.clone();
+                    let sid_for_cleanup = sid_for_task.clone();
+                    tokio::spawn(async move {
+                        mgr_for_cleanup.lock().await.remove(&sid_for_cleanup);
+                    });
                     return;
                 }
 
