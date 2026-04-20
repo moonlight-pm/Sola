@@ -5,3 +5,13 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+[workspace.dependencies]
+base64 = "0.22"
+imap = { version = "2", default-features = false }
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "rustls-tls", "hostname"] }
+mail-parser = "0.9"
+rustls = { version = "0.23", features = ["aws_lc_rs"] }
+rustls-connector = { version = "0.21", features = ["native-certs"] }
+toml = "0.8"
+ureq = "3"
