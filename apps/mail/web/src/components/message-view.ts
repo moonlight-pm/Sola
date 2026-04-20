@@ -109,30 +109,30 @@ export function createMessageView(cfg: MessageViewConfig, target: HTMLElement): 
               <div class="no-msg-icon">&#9993;</div>
               <div class="no-msg-text">Select a message to read</div>
             </div>
-          `;
+          `.key('no-message');
         }
         const srcdoc = buildSrcdoc(msg);
         return html`
           <div class="msg-header">
             <div class="header-row">
               <span class="header-label">From</span>
-              <span class="header-value">${() => cfg.body()?.from ?? ''}</span>
+              <span class="header-value">${msg.from}</span>
             </div>
             <div class="header-row">
               <span class="header-label">To</span>
-              <span class="header-value">${() => cfg.body()?.to ?? ''}</span>
+              <span class="header-value">${msg.to}</span>
             </div>
-            ${() => cfg.body()?.cc
+            ${msg.cc
               ? html`
                   <div class="header-row">
                     <span class="header-label">CC</span>
-                    <span class="header-value">${() => cfg.body()?.cc ?? ''}</span>
+                    <span class="header-value">${msg.cc}</span>
                   </div>
                 `
               : html``}
             <div class="header-row subject-row">
               <span class="header-label">Subj</span>
-              <span class="header-value subject">${() => cfg.body()?.subject ?? ''}</span>
+              <span class="header-value subject">${msg.subject}</span>
             </div>
           </div>
           <div class="msg-body">
@@ -142,9 +142,9 @@ export function createMessageView(cfg: MessageViewConfig, target: HTMLElement): 
                   title="email-body"
                   sandbox="allow-same-origin allow-scripts"
                 ></iframe>`
-              : html`<pre class="text-body">${() => cfg.body()?.text ?? ''}</pre>`}
+              : html`<pre class="text-body">${msg.text}</pre>`}
           </div>
-        `;
+        `.key(`msg-${msg.uid}`);
       }}
     </div>
   `(target);
