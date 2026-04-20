@@ -29,7 +29,7 @@ impl sola_app::AppHandler for MailHandler {
             "mail_mark_read" => cmd_mail_mark_read(&self.state, args).await,
             "mail_empty_folder" => cmd_mail_empty_folder(&self.state, args).await,
             "apply_rules" => cmd_apply_rules(&self.state).await,
-            "open_url" => return json!({ "error": "not wired" }),
+            "open_url" => return json!({ "error": "open_url is handled before dispatch" }),
             _ => Err(format!("unknown command: {cmd}")),
         };
 
