@@ -255,7 +255,7 @@ fn cli_mtime_ms(path: &Path) -> u64 {
 
 /// Bump whenever aggregation in `aggregate_metrics` changes output so
 /// stale per-turn-snapshot metrics get refreshed.
-const METRICS_SCHEMA: u8 = 1;
+const METRICS_SCHEMA: u8 = 2;
 
 fn needs_rebuild(cli: &CliSession) -> bool {
     let cli_mtime = cli_mtime_ms(&cli.jsonl_path);
@@ -380,24 +380,54 @@ fn aggregate_metrics(path: &Path, existing: Option<Value>) -> Option<Value> {
         }
     }
 
-    let model_str = model.unwrap_or_else(|| "unknown".to_string());
-    let context_window: u64 = if model_str.contains("[1m]") { 1_000_000 } else { 200_000 };
+    // Model: prefer whatever JSONL said last; fall back to existing meta
+    // (which may carry a "[1m]" variant the JSONL never records).
+    let model_from_meta = existing
+        .as_ref()
+        .and_then(|m| m.get("model"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let model_str = model.or(model_from_meta).unwrap_or_else(|| "unknown".to_string());
+
+    // Context window: JSONL records don't include the "[1m]" qualifier,
+    // so never downgrade from what we already knew. Keep the prior meta
+    // value when it was set; only derive from model name as a fallback.
+    let prev_window = existing
+        .as_ref()
+        .and_then(|m| m.get("context_window"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let derived_window = if model_str.contains("[1m]") { 1_000_000 } else { 200_000 };
+    let context_window = if prev_window > 0 { prev_window } else { derived_window };
+
+    // Last-turn fill as % of window. Clamp to 100 — sum of a single turn's
+    // cache_read + cache_creation + input + output can briefly exceed the
+    // window on tool-use inner iterations, which would render as a
+    // nonsense > 100% reading.
     let context_used_pct = if context_window > 0 {
-        (last_turn_total as f64 / context_window as f64 * 100.0).round() as u64
+        ((last_turn_total as f64 / context_window as f64 * 100.0).round() as u64).min(100)
     } else { 0 };
 
+    // Duration and cost aren't in the JSONL — preserve what we had.
+    // (system.turn_duration records exist in < 10% of sessions.)
     let total_cost_usd = existing
         .as_ref()
         .and_then(|m| m.get("total_cost_usd"))
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
+    let preserved_duration = existing
+        .as_ref()
+        .and_then(|m| m.get("duration_ms"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let duration_final = duration.max(preserved_duration);
 
     Some(json!({
         "input_tokens": input,
         "output_tokens": output,
         "cache_read_tokens": cache_read,
         "cache_creation_tokens": cache_creation,
-        "duration_ms": duration,
+        "duration_ms": duration_final,
         "num_turns": iterations,
         "model": model_str,
         "context_window": context_window,

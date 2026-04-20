@@ -420,9 +420,11 @@ fn start_stdout_reader(
                         // Current-context fill: latest turn's token sum vs window.
                         // Uses only this turn's numbers because the cache_read
                         // already encompasses prior conversation history.
+                        // Clamp to 100 — tool-use inner iterations can push
+                        // the sum briefly above the window.
                         let turn_total = turn_input + turn_cache_read + turn_cache_creation + turn_output;
                         let context_used_pct = if context_window > 0 {
-                            (turn_total as f64 / context_window as f64 * 100.0).round() as u64
+                            ((turn_total as f64 / context_window as f64 * 100.0).round() as u64).min(100)
                         } else { 0 };
 
                         let metrics = json!({
