@@ -1102,7 +1102,11 @@ function getMdId(block: object, getText: () => string): string {
 function flushMd(): void {
   for (const [id, getText] of mdSources) {
     const el = document.querySelector(`[data-md-id="${id}"]`) as HTMLElement | null;
-    if (!el) { mdSources.delete(id); continue; }
+    // Don't drop the source on miss — Arrow's DOM commit may land after
+    // this pass (session switch tears down old nodes before mounting new
+    // ones, and MutationObserver fires mid-way). A later MutationObserver
+    // tick will flush once the node is in the tree.
+    if (!el) continue;
     const text = getText();
     if (el.dataset.mdLast === text) continue;
     el.dataset.mdLast = text;
