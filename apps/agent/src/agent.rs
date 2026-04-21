@@ -5,6 +5,7 @@
 //! via stdin NDJSON. The CLI manages its own session state; we maintain a
 //! separate display JSONL for our frontend.
 
+use crate::meta::MetaStore;
 use crate::storage;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -31,6 +32,10 @@ impl ClaudeProcessManager {
 
     /// Spawn a new Claude process for a session, or resume an existing one.
     /// Returns immediately; stdout is read in a background thread.
+    ///
+    /// `self_arc` is this same manager behind its mutex — passed to the
+    /// reader so it can clean up its own entry when the CLI exits
+    /// (cancellation via SIGINT, crash, or normal quit).
     pub fn start(
         &mut self,
         session_id: &str,
@@ -38,6 +43,8 @@ impl ClaudeProcessManager {
         model: &str,
         effort: &str,
         event_tx: std::sync::mpsc::Sender<String>,
+        self_arc: std::sync::Arc<tokio::sync::Mutex<Self>>,
+        meta_store: std::sync::Arc<MetaStore>,
     ) -> Result<()> {
         if self.processes.contains_key(session_id) {
             return Ok(()); // already running
@@ -45,13 +52,20 @@ impl ClaudeProcessManager {
 
         let claude_path = resolve_claude_bin()?;
 
+        // The plain aliases "opus" / "sonnet" map to the 200k-context
+        // variants; appending "[1m]" selects the 1M-context ones. Do this
+        // here so every agent turn runs with the larger window (which is
+        // also what `claude` defaults to for interactive use).
+        let model_arg = if model.contains('[') { model.to_string() } else { format!("{model}[1m]") };
+
         let mut cmd = Command::new(&claude_path);
         cmd.arg("--output-format").arg("stream-json")
             .arg("--input-format").arg("stream-json")
             .arg("--verbose")
             .arg("--include-partial-messages")
+            .arg("--replay-user-messages")
             .arg("--dangerously-skip-permissions")
-            .arg("--model").arg(model)
+            .arg("--model").arg(&model_arg)
             .arg("--effort").arg(effort);
 
         // Resume if a CLI session already exists for this ID.
@@ -78,7 +92,7 @@ impl ClaudeProcessManager {
 
         // Background stdout reader — relays events to the frontend.
         let sid = session_id.to_string();
-        start_stdout_reader(stdout, child, sid, event_tx);
+        start_stdout_reader(stdout, child, sid, event_tx, self_arc, meta_store);
 
         Ok(())
     }
@@ -158,6 +172,8 @@ fn start_stdout_reader(
     mut child: Child,
     session_id: String,
     event_tx: std::sync::mpsc::Sender<String>,
+    mgr: std::sync::Arc<tokio::sync::Mutex<ClaudeProcessManager>>,
+    meta_store: std::sync::Arc<MetaStore>,
 ) {
     // Blocking reader thread → std mpsc → tokio task → event_tx
     let (line_tx, line_rx) = std::sync::mpsc::channel::<String>();
@@ -211,12 +227,31 @@ fn start_stdout_reader(
                     continue;
                 };
 
-                // Exit marker
+                // Exit marker — process ended (normal quit, SIGINT cancel,
+                // or crash). Unwind the UI state and drop the stale
+                // manager entry so the next send spawns fresh.
                 if parsed.get("__exit").is_some() {
+                    if in_turn {
+                        send_event(&event_tx, json!({
+                            "event": "message_end",
+                            "session_id": sid_for_task,
+                            "cancelled": true,
+                        }));
+                    }
+                    send_event(&event_tx, json!({
+                        "event": "session_state",
+                        "session_id": sid_for_task,
+                        "status": "idle",
+                    }));
                     send_event(&event_tx, json!({
                         "event": "session_exit", "session_id": sid_for_task,
                         "code": parsed.get("code").cloned().unwrap_or(json!(-1))
                     }));
+                    let mgr_for_cleanup = mgr.clone();
+                    let sid_for_cleanup = sid_for_task.clone();
+                    tokio::spawn(async move {
+                        mgr_for_cleanup.lock().await.remove(&sid_for_cleanup);
+                    });
                     return;
                 }
 
@@ -292,11 +327,41 @@ fn start_stdout_reader(
                     }
 
                     "user" => {
-                        // Tool results from the CLI
+                        // Two shapes arrive on this channel:
+                        //   1. tool_result blocks (plumbing — we convert to tool_end events)
+                        //   2. replayed user messages (via --replay-user-messages) —
+                        //      the CLI echoes each submitted user prompt back to stdout
+                        //      when it accepts it. For mid-stream injections that's the
+                        //      point the frontend should insert the user bubble.
+                        //
+                        // Ignore records whose parent_tool_use_id is set — those are
+                        // agent-authored prompts to subagents (Task tool) that the CLI
+                        // emits as user-role plumbing. Treating them as the user's own
+                        // speech paints phantom "you wrote this" bubbles in the UI.
+                        let is_agent_authored = parsed
+                            .get("parent_tool_use_id")
+                            .map(|v| !v.is_null())
+                            .unwrap_or(false);
+
                         if let Some(content) = parsed.get("message")
                             .and_then(|m| m.get("content"))
                             .and_then(|c| c.as_array())
                         {
+                            if !is_agent_authored {
+                                let text: String = content.iter()
+                                    .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))
+                                    .filter_map(|b| b.get("text").and_then(|v| v.as_str()))
+                                    .collect::<Vec<_>>()
+                                    .join("");
+                                if !text.is_empty() {
+                                    send_event(&event_tx, json!({
+                                        "event": "user_appended",
+                                        "session_id": sid_for_task,
+                                        "text": text,
+                                    }));
+                                }
+                            }
+
                             for block in content {
                                 if block.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
                                     let tool_use_id = block.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -335,40 +400,71 @@ fn start_stdout_reader(
                             let _ = storage::append_message(&sid_for_task, &assistant_msg);
                         }
 
-                        // Emit metrics
-                        let mut metrics = json!({"event": "metrics", "session_id": sid_for_task});
-                        if let Some(usage) = parsed.get("usage") {
-                            metrics["input_tokens"] = usage.get("input_tokens").cloned().unwrap_or(json!(0));
-                            metrics["output_tokens"] = usage.get("output_tokens").cloned().unwrap_or(json!(0));
-                            metrics["cache_read_tokens"] = usage.get("cache_read_input_tokens").cloned().unwrap_or(json!(0));
-                            metrics["cache_creation_tokens"] = usage.get("cache_creation_input_tokens").cloned().unwrap_or(json!(0));
-                        }
-                        if let Some(model_usage) = parsed.get("modelUsage") {
-                            if let Some(model_data) = model_usage.as_object().and_then(|m| m.values().next()) {
-                                metrics["context_window"] = model_data.get("contextWindow").cloned().unwrap_or(json!(0));
-                            }
-                        }
-                        metrics["total_cost_usd"] = parsed.get("total_cost_usd").cloned().unwrap_or(json!(0.0));
-                        metrics["duration_ms"] = parsed.get("duration_ms").cloned().unwrap_or(json!(0));
-                        metrics["num_turns"] = parsed.get("num_turns").cloned().unwrap_or(json!(0));
-                        metrics["model"] = parsed.get("modelUsage")
+                        // The CLI's `result` event carries per-turn metrics.
+                        // To present session-level totals, sum the quantitative
+                        // fields across turns; keep latest values for fields
+                        // where "now" is the meaningful reading.
+                        let prev = meta_store.get(&sid_for_task)
+                            .and_then(|m| m.metrics)
+                            .unwrap_or(json!({}));
+                        let prev_u64 = |k: &str| prev.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+                        let prev_f64 = |k: &str| prev.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+                        let usage = parsed.get("usage").cloned().unwrap_or(json!({}));
+                        let turn_input = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let turn_output = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let turn_cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let turn_cache_creation = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let turn_duration = parsed.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let turn_cost = parsed.get("total_cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let turn_iters = parsed.get("num_turns").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                        let context_window = parsed.get("modelUsage")
+                            .and_then(|mu| mu.as_object())
+                            .and_then(|m| m.values().next())
+                            .and_then(|v| v.get("contextWindow"))
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let model = parsed.get("modelUsage")
                             .and_then(|m| m.as_object())
                             .and_then(|m| m.keys().next())
-                            .map(|k| json!(k))
-                            .unwrap_or(json!("unknown"));
+                            .cloned()
+                            .unwrap_or_else(|| "unknown".to_string());
 
-                        let total = metrics["input_tokens"].as_u64().unwrap_or(0)
-                            + metrics["cache_read_tokens"].as_u64().unwrap_or(0)
-                            + metrics["cache_creation_tokens"].as_u64().unwrap_or(0)
-                            + metrics["output_tokens"].as_u64().unwrap_or(0);
-                        let ctx = metrics["context_window"].as_u64().unwrap_or(1);
-                        metrics["context_used_pct"] = json!((total as f64 / ctx as f64 * 100.0).round() as u64);
+                        // Current-context fill: latest turn's token sum vs window.
+                        // Uses only this turn's numbers because the cache_read
+                        // already encompasses prior conversation history.
+                        // Clamp to 100 — tool-use inner iterations can push
+                        // the sum briefly above the window.
+                        let turn_total = turn_input + turn_cache_read + turn_cache_creation + turn_output;
+                        let context_used_pct = if context_window > 0 {
+                            ((turn_total as f64 / context_window as f64 * 100.0).round() as u64).min(100)
+                        } else { 0 };
+
+                        let metrics = json!({
+                            "event": "metrics",
+                            "session_id": sid_for_task,
+                            "input_tokens": prev_u64("input_tokens") + turn_input,
+                            "output_tokens": prev_u64("output_tokens") + turn_output,
+                            "cache_read_tokens": prev_u64("cache_read_tokens") + turn_cache_read,
+                            "cache_creation_tokens": prev_u64("cache_creation_tokens") + turn_cache_creation,
+                            "duration_ms": prev_u64("duration_ms") + turn_duration,
+                            "total_cost_usd": prev_f64("total_cost_usd") + turn_cost,
+                            "num_turns": prev_u64("num_turns") + turn_iters,
+                            "context_window": context_window,
+                            "context_used_pct": context_used_pct,
+                            "model": model,
+                        });
 
                         send_event(&event_tx, metrics.clone());
 
-                        // Save metrics to our meta file
-                        let cwd = std::env::current_dir().unwrap_or_default().to_string_lossy().to_string();
-                        let _ = storage::save_meta(&sid_for_task, None, &cwd, Some(metrics));
+                        // Atomic swap via MetaStore — never touches `name`,
+                        // so a concurrent rename can't be clobbered.
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let _ = meta_store.update_metrics(&sid_for_task, metrics, now);
 
                         send_event(&event_tx, json!({
                             "event": "message_end", "session_id": sid_for_task,
