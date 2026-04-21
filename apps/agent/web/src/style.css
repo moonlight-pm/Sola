@@ -180,6 +180,34 @@ html, body {
   background: rgba(0, 168, 255, 0.15);
 }
 
+/* ── Sync Indicator ─────────────────────────────────────────────────────── */
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sync-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan);
+  animation: sync-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes sync-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.sync-text { letter-spacing: 0.02em; }
+
 /* ── Conversation List ──────────────────────────────────────────────────── */
 .convo-list { flex: 1; overflow-y: auto; padding: 4px 0; }
 
@@ -274,6 +302,13 @@ html, body {
   box-shadow: 0 0 6px rgba(0, 255, 136, 0.35);
 }
 
+/* Idle is only a useful signal for the active session ("ready for your
+   next prompt"). On Recent rows it's just noise — render it like saved. */
+.convo-item:not(.active) .dot.idle {
+  background: var(--text-ghost);
+  box-shadow: none;
+}
+
 .dot.error { background: var(--red); }
 .dot.saved { background: var(--text-ghost); }
 .dot.terminal {
@@ -295,8 +330,15 @@ html, body {
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-.convo-name {
+.convo-text {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.convo-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -304,6 +346,14 @@ html, body {
   font-weight: 500;
   color: var(--text-secondary);
 }
+
+.convo-date {
+  font-size: 10px;
+  color: var(--text-ghost);
+  letter-spacing: 0.02em;
+}
+
+.convo-item.active .convo-date { color: var(--text-muted); }
 
 .convo-item.active .convo-name { color: var(--text-primary); }
 
@@ -759,6 +809,35 @@ html, body {
   font: 13px var(--font-mono);
   outline: none;
   margin-bottom: 6px;
+}
+
+.dir-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.dir-pick {
+  text-align: left;
+  padding: 7px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font: 12px var(--font-mono);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dir-pick:hover {
+  border-color: rgba(0, 168, 255, 0.35);
+  background: rgba(0, 168, 255, 0.06);
+  color: var(--text-primary);
 }
 
 .dialog input:focus { border-color: rgba(0, 168, 255, 0.35); }

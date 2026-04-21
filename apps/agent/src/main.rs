@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use sola_app::{AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
-use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Topic};
+use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind};
 use sola_core::KeyCode;
 
 mod active;
 mod agent;
 mod handler;
+mod meta;
 mod session;
 mod sync;
 mod storage;
@@ -71,11 +72,22 @@ impl SolaApp for AgentApp {
         });
 
         let session_mgr = Arc::new(session::SessionManager::new());
+        let meta_store = Arc::new(meta::MetaStore::new());
         let process_mgr = Arc::new(tokio::sync::Mutex::new(agent::ClaudeProcessManager::new()));
         let dispatcher = AsyncDispatcher::spawn(handler::AgentHandler {
             session_mgr,
-            event_tx,
+            meta_store: meta_store.clone(),
+            event_tx: event_tx.clone(),
             process_mgr,
+        });
+
+        // Background sync of CLI sessions. Rebuilds stale view models
+        // (CLI JSONL newer than our cli_synced_at) and emits progress
+        // events so the frontend can show an indicator.
+        let sync_tx = event_tx.clone();
+        let sync_store = meta_store.clone();
+        std::thread::spawn(move || {
+            sync::run_sync(&sync_tx, &sync_store);
         });
 
         ctx.emit_sticky(Topic::SetAppMenu(agent_menu()));
@@ -86,8 +98,8 @@ impl SolaApp for AgentApp {
         }
     }
 
-    fn register_bus(&mut self, _bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
-        // Default CloseApp handler is inherited from the trait — don't re-register.
+    fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
+        bus.on(TopicKind::MenuAction, Self::on_menu_action);
     }
 
     fn on_js_command(
@@ -106,6 +118,17 @@ impl SolaApp for AgentApp {
                     source.send_to_js(&serde_json::json!({ "id": id, "result": result }));
                 }
             });
+    }
+
+}
+
+impl AgentApp {
+    fn on_menu_action(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic {
+            if app_id == Self::APP_ID && action_id == "quit" {
+                std::process::exit(0);
+            }
+        }
     }
 }
 

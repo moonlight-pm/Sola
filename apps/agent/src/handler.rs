@@ -3,11 +3,13 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::agent;
+use crate::meta::MetaStore;
 use crate::session::SessionManager;
 use crate::storage;
 
 pub struct AgentHandler {
     pub session_mgr: Arc<SessionManager>,
+    pub meta_store: Arc<MetaStore>,
     pub event_tx: std::sync::mpsc::Sender<String>,
     pub process_mgr: Arc<tokio::sync::Mutex<agent::ClaudeProcessManager>>,
 }
@@ -59,8 +61,7 @@ impl AgentHandler {
             .rename_session(&session_id, folder_name.clone())
             .await;
 
-        // Persist immediately so the session survives app restart
-        if let Err(e) = storage::save_meta(&session_id, Some(&folder_name), &expanded, None) {
+        if let Err(e) = self.meta_store.create(&session_id, &expanded, Some(&folder_name)) {
             tracing::warn!("Failed to save new session: {:#}", e);
         }
 
@@ -99,12 +100,21 @@ impl AgentHandler {
             "content": [{"type": "text", "text": text}]
         });
         let _ = storage::append_message(session_id, &user_msg);
+        let _ = self.meta_store.touch(session_id);
 
         // Ensure a Claude process is running for this session.
         {
             let mut mgr = self.process_mgr.lock().await;
             if !mgr.is_running(session_id) {
-                if let Err(e) = mgr.start(session_id, &working_dir, model, effort, self.event_tx.clone()) {
+                if let Err(e) = mgr.start(
+                    session_id,
+                    &working_dir,
+                    model,
+                    effort,
+                    self.event_tx.clone(),
+                    self.process_mgr.clone(),
+                    self.meta_store.clone(),
+                ) {
                     return json!({ "error": format!("Failed to start claude: {e:#}") });
                 }
             }
@@ -150,9 +160,17 @@ impl AgentHandler {
             return json!({ "error": "session_id is required" });
         };
         self.session_mgr.close_session(session_id).await;
-        if let Err(e) = storage::delete_session(session_id) {
+        // If we spawned a claude process for this session, drop it so it
+        // can't keep writing files we're about to remove.
+        {
+            let mut mgr = self.process_mgr.lock().await;
+            let _ = mgr.interrupt(session_id);
+            mgr.remove(session_id);
+        }
+        if let Err(e) = self.meta_store.delete(session_id) {
             tracing::warn!(session_id, "failed to delete session files: {:#}", e);
         }
+        crate::sync::cli_delete_session(session_id);
         json!({ "ok": true })
     }
 
@@ -209,11 +227,7 @@ impl AgentHandler {
         self.session_mgr
             .rename_session(session_id, name.to_string())
             .await;
-
-        // Update saved metadata with new name
-        if let Ok(meta) = storage::load_meta(session_id) {
-            let _ = storage::save_meta(session_id, Some(name), &meta.working_dir, meta.metrics);
-        }
+        let _ = self.meta_store.rename(session_id, name.to_string());
 
         json!({ "ok": true })
     }
@@ -222,20 +236,16 @@ impl AgentHandler {
         let Some(session_id) = args.get("session_id").and_then(|v| v.as_str()) else {
             return json!({ "error": "session_id is required" });
         };
-        if let Ok(mut meta) = storage::load_meta(session_id) {
-            if let Some(model) = args.get("model").and_then(|v| v.as_str()) {
-                meta.model = model.to_string();
-            }
-            if let Some(effort) = args.get("effort").and_then(|v| v.as_str()) {
-                meta.effort = effort.to_string();
-            }
-            let _ = storage::save_meta_full(&meta);
-        }
+        let model = args.get("model").and_then(|v| v.as_str());
+        let effort = args.get("effort").and_then(|v| v.as_str());
+        let _ = self.meta_store.update_config(session_id, model, effort);
         json!({ "ok": true })
     }
 
     async fn cmd_list_conversations(&self) -> Value {
-        let metas = crate::sync::sync_sessions();
+        // Return whatever view models are in memory. Sync runs in the
+        // background on startup and streams updates via `session_updated`.
+        let metas = self.meta_store.list_all();
         let active = crate::active::detect();
         tracing::info!(count = metas.len(), active = active.len(), "list_conversations");
         let conversations: Vec<Value> = metas
@@ -262,9 +272,6 @@ impl AgentHandler {
                 })
             })
             .collect();
-        // Return the conversations directly in the invoke reply; the frontend
-        // reads them from the promise result rather than going through a
-        // separate event channel.
         json!({ "conversations": conversations })
     }
 
@@ -273,9 +280,9 @@ impl AgentHandler {
             return json!({ "error": "session_id is required" });
         };
 
-        let meta = match storage::load_meta(session_id) {
-            Ok(m) => m,
-            Err(e) => return json!({ "error": format!("Failed to load session: {:#}", e) }),
+        let meta = match self.meta_store.get(session_id) {
+            Some(m) => m,
+            None => return json!({ "error": "Session not found" }),
         };
 
         let dir = std::path::PathBuf::from(&meta.working_dir);

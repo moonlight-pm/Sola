@@ -68,6 +68,9 @@ interface Session {
    *  session's task dir. Such sessions are read-only in this UI to avoid
    *  fighting with the terminal for stdin. */
   terminalActive: boolean;
+  /** ms since epoch — mirrors SessionMeta.updated_at. Drives Recent +
+   *  In-Terminal sort order and the date line in each sidebar row. */
+  updatedAt: number | null;
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -85,6 +88,7 @@ const state = reactive({
   editingTitle: false,
   statsWidth: 240,
   pinnedIds: [] as string[],
+  sync: { active: false, current: 0, total: 0 },
 });
 
 persist(state, 'agent-ui', ['activeId', 'statsWidth', 'pinnedIds']);
@@ -117,6 +121,22 @@ function truncate(s: string | null, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function formatRelative(ms: number | null): string {
+  if (!ms) return '';
+  const now = Date.now();
+  const delta = now - ms;
+  if (delta < 60_000) return 'just now';
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
+  if (delta < 7 * 86_400_000) return `${Math.floor(delta / 86_400_000)}d ago`;
+  const d = new Date(ms);
+  const thisYear = new Date(now).getFullYear();
+  const label = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return d.getFullYear() === thisYear ? label : `${label}, ${d.getFullYear()}`;
+}
+
 function saveUi(): void {
   save(state, 'agent-ui', ['activeId', 'statsWidth', 'pinnedIds']);
 }
@@ -125,6 +145,8 @@ function setActive(id: string): void {
   state.activeId = id;
   saveUi();
   loadMcps(id);
+  // Session switch — always start pinned to the bottom of the new log.
+  scrollToBottom(true);
 }
 
 const mcpLoading = reactive({ active: false });
@@ -173,13 +195,38 @@ function focusInput(): void {
   });
 }
 
-function scrollToBottom(): void {
+// Log-tail scroll behavior: pinned to bottom by default. The listener
+// on #msg-log updates this on any scroll (user or programmatic); when
+// the user scrolls up, stickyBottom becomes false and we stop chasing
+// the tail. When the user scrolls back to the bottom, it becomes true
+// and auto-follow resumes.
+let stickyBottom = true;
+const STICKY_THRESHOLD = 32;
+
+function scrollToBottom(force = false): void {
   requestAnimationFrame(() => {
     const el = document.getElementById('msg-log');
     if (!el) return;
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    if (near) el.scrollTop = el.scrollHeight;
+    if (force) stickyBottom = true;
+    if (stickyBottom) el.scrollTop = el.scrollHeight;
   });
+}
+
+function bindMsgLogScroll(): void {
+  const el = document.getElementById('msg-log');
+  if (!el || (el as any)._stickyBound) return;
+  (el as any)._stickyBound = true;
+  el.addEventListener('scroll', () => {
+    stickyBottom = el.scrollHeight - el.scrollTop - el.clientHeight < STICKY_THRESHOLD;
+  }, { passive: true });
+  // When Arrow mounts new md-block nodes (session_loaded, session switch),
+  // fill them from mdSources. Without this, assistant text remains blank
+  // whenever flushMd runs before Arrow's DOM commit.
+  const observer = new MutationObserver(() => {
+    flushMd();
+    if (stickyBottom) el.scrollTop = el.scrollHeight;
+  });
+  observer.observe(el, { childList: true, subtree: true });
 }
 
 function upsertSession(patch: Partial<Session> & { id: string }): Session {
@@ -193,6 +240,7 @@ function upsertSession(patch: Partial<Session> & { id: string }): Session {
     if ((patch as any).model !== undefined) existing.model = (patch as any).model;
     if ((patch as any).effort !== undefined) existing.effort = (patch as any).effort;
     if (patch.terminalActive !== undefined) existing.terminalActive = patch.terminalActive;
+    if (patch.updatedAt !== undefined) existing.updatedAt = patch.updatedAt;
     return existing;
   }
   const fresh: Session = {
@@ -207,6 +255,7 @@ function upsertSession(patch: Partial<Session> & { id: string }): Session {
     model: ((patch as any).model || 'opus') as ModelChoice,
     effort: ((patch as any).effort || 'high') as EffortLevel,
     terminalActive: patch.terminalActive ?? false,
+    updatedAt: patch.updatedAt ?? null,
   };
   // Reassign rather than push: triggers the outer state's set trap, which
   // is the idiom the rest of this codebase uses (see apps/terminal).
@@ -248,9 +297,25 @@ function ingestConversations(conversations: any[]): void {
       model: c.model || undefined,
       effort: c.effort || undefined,
       terminalActive: !!c.active,
+      updatedAt: typeof c.updated_at === 'number' ? c.updated_at : null,
     } as any);
   }
 }
+
+on('sync_start', (ev: any) => {
+  state.sync = { active: true, current: 0, total: ev.total || 0 };
+});
+
+on('session_updated', (ev: any) => {
+  ingestConversations([ev]);
+  if (ev.total) {
+    state.sync = { active: true, current: ev.current || 0, total: ev.total };
+  }
+});
+
+on('sync_complete', () => {
+  state.sync = { active: false, current: 0, total: 0 };
+});
 
 on('active_sessions', (ev: any) => {
   const live = new Set<string>(ev.ids || []);
@@ -338,10 +403,56 @@ on('session_loaded', (ev: any) => {
     }
   }
 
+  // Any tool block still without an output at this point never got a
+  // matching tool_result in the JSONL (cancelled, truncated at compact
+  // boundary, etc). Leave output as '' so the template renders a neutral
+  // header instead of a misleading "running…".
+  for (const msg of msgs) {
+    for (const blk of msg.blocks) {
+      if (blk.kind === 'tool' && blk.tool.output === null) {
+        blk.tool.output = '';
+      }
+    }
+  }
+
   session.messages = msgs;
   setActive(ev.session_id);
   focusInput();
   requestAnimationFrame(flushMd);
+  scrollToBottom(true);
+});
+
+// Texts sendMessage has optimistically rendered but not yet reconciled
+// with the CLI's `--replay-user-messages` echo. A last-message dedupe
+// isn't enough: message_start often lands before the echo, so by the
+// time user_appended fires the tail is the assistant bubble, not the
+// user one. Per-session queue lets echoes consume the right pending
+// push even if they arrive out of order with streaming deltas.
+const pendingEchoes = new Map<string, string[]>();
+
+on('user_appended', (ev: any) => {
+  const s = findSession(ev.session_id);
+  if (!s) return;
+  const text = ev.text || '';
+
+  const pending = pendingEchoes.get(ev.session_id) ?? [];
+  const idx = pending.indexOf(text);
+  if (idx >= 0) {
+    pending.splice(idx, 1);
+    pendingEchoes.set(ev.session_id, pending);
+    return;
+  }
+
+  // Unsolicited injection (e.g. a queued follow-up CLI accepted after a
+  // cancel) — render it at the tail.
+  s.messages = [...s.messages, {
+    role: 'user',
+    content: text,
+    blocks: [],
+    streaming: false,
+    cancelled: false,
+  }];
+  scrollToBottom(true);
 });
 
 on('message_start', (ev: any) => {
@@ -354,6 +465,7 @@ on('message_start', (ev: any) => {
     streaming: true,
     cancelled: false,
   }];
+  scrollToBottom();
 });
 
 on('message_delta', (ev: any) => {
@@ -374,6 +486,7 @@ on('message_delta', (ev: any) => {
     last.blocks = [...b, { kind: 'text' as const, text: delta }];
   }
   flushMd();
+  scrollToBottom();
 });
 
 on('message_end', (ev: any) => {
@@ -384,6 +497,7 @@ on('message_end', (ev: any) => {
   last.streaming = false;
   if (ev.cancelled) last.cancelled = true;
   flushMd();
+  scrollToBottom();
 });
 
 on('tool_start', (ev: any) => {
@@ -400,6 +514,7 @@ on('tool_start', (ev: any) => {
     expanded: false,
   };
   last.blocks = [...last.blocks, { kind: 'tool' as const, tool }];
+  scrollToBottom();
 });
 
 on('tool_end', (ev: any) => {
@@ -416,6 +531,7 @@ on('tool_end', (ev: any) => {
       break;
     }
   }
+  scrollToBottom();
 });
 
 on('metrics', (ev: any) => {
@@ -457,6 +573,11 @@ async function sendMessage(): Promise<void> {
   const s = activeSession();
   if (!text || !s) return;
 
+  if (!s.firstPrompt) s.firstPrompt = text;
+
+  // Show the bubble immediately. The CLI's --replay-user-messages echo
+  // arrives later (often after message_start), so record the text as
+  // pending — user_appended will consume it instead of rendering a dup.
   s.messages = [...s.messages, {
     role: 'user',
     content: text,
@@ -464,11 +585,13 @@ async function sendMessage(): Promise<void> {
     streaming: false,
     cancelled: false,
   }];
-  if (!s.firstPrompt) s.firstPrompt = text;
+  const pending = pendingEchoes.get(s.id) ?? [];
+  pendingEchoes.set(s.id, [...pending, text]);
 
   ta.value = '';
   ta.style.height = 'auto';
   ta.focus();
+  scrollToBottom(true);
   await invoke('send_message', { session_id: s.id, text, model: s.model, effort: s.effort });
 }
 
@@ -515,9 +638,37 @@ function showNewDialog(): void {
   title.textContent = 'New Session';
   d.appendChild(title);
 
+  // Quick-pick: directories currently open in a terminal claude session.
+  // Click to start immediately without typing a path.
+  const liveDirs = Array.from(new Set(
+    state.sessions.filter(s => s.terminalActive && s.workingDir).map(s => s.workingDir as string)
+  )).sort();
+
+  if (liveDirs.length) {
+    const qpLabel = document.createElement('div');
+    qpLabel.className = 'field-label';
+    qpLabel.textContent = 'OPEN IN TERMINAL';
+    d.appendChild(qpLabel);
+
+    const qp = document.createElement('div');
+    qp.className = 'dir-picks';
+    for (const dir of liveDirs) {
+      const b = document.createElement('button');
+      b.className = 'dir-pick';
+      b.type = 'button';
+      b.textContent = dir;
+      b.addEventListener('click', async () => {
+        await createSession(dir);
+        overlay.remove();
+      });
+      qp.appendChild(b);
+    }
+    d.appendChild(qp);
+  }
+
   const label = document.createElement('div');
   label.className = 'field-label';
-  label.textContent = 'WORKING DIRECTORY';
+  label.textContent = liveDirs.length ? 'OR ENTER A PATH' : 'WORKING DIRECTORY';
   d.appendChild(label);
 
   const input = document.createElement('input');
@@ -584,7 +735,7 @@ function deleteSession(id: string): void {
   unpinSession(id);
   state.sessions = state.sessions.filter((x: Session) => x.id !== id);
   if (state.activeId === id) {
-    state.activeId = state.sessions.length ? state.sessions[0].id : null;
+    state.activeId = null;
     saveUi();
   }
   invoke('delete_session', { session_id: id });
@@ -610,14 +761,12 @@ function sessionRow(s: Session, group: string) {
     <div class="${() => 'convo-item' + (state.activeId === s.id ? ' active' : '') + (s.terminalActive ? ' terminal' : '')}"
       data-sid="${s.id}" data-group="${group}"
       @click="${() => selectSession(s.id)}"
-      @dblclick="${() => {
-        if (s.terminalActive) return;
-        const next = prompt('Rename session:', s.name || '');
-        if (next) renameSession(s.id, next);
-      }}"
     >
       <span class="${() => s.terminalActive ? 'dot terminal' : 'dot ' + s.status}"></span>
-      <span class="convo-name">${() => s.name || truncate(s.firstPrompt, 30) || 'New session'}</span>
+      <div class="convo-text">
+        <div class="convo-name">${() => s.name || truncate(s.firstPrompt, 30) || 'New session'}</div>
+        <div class="convo-date">${() => formatRelative(s.updatedAt)}</div>
+      </div>
       <button class="${() => 'btn-del' + (del.confirming ? ' confirm' : '')}" @click="${onDeleteClick}" @mousedown="${(e: MouseEvent) => e.stopPropagation()}"><span class="${() => del.confirming ? 'icon icon-check' : 'icon icon-x'}"></span></button>
     </div>
   `.key(s.id);
@@ -757,21 +906,24 @@ function sidebarTemplate() {
           <span class="icon icon-plus"></span>
         </button>
       </div>
+      <div class="sync-indicator" style="${() => state.sync.active ? '' : 'display:none'}">
+        <span class="sync-dot"></span>
+        <span class="sync-text">${() => `Syncing ${state.sync.current}/${state.sync.total}…`}</span>
+      </div>
       <div class="convo-list" @mousedown="${onMouseDown}">
         ${() => {
           const all = filterSessions();
           const pinnedSet = new Set(state.pinnedIds);
-          const terminal = all.filter((s: Session) => s.terminalActive);
+          const byUpdated = (a: Session, b: Session) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+          const terminal = all.filter((s: Session) => s.terminalActive).sort(byUpdated);
           const terminalSet = new Set(terminal.map((s: Session) => s.id));
+          // Pinned stays in the user-defined order from state.pinnedIds.
           const pinned = state.pinnedIds
             .map((id: string) => all.find((s: Session) => s.id === id))
             .filter((s): s is Session => !!s && !terminalSet.has(s.id));
           const recent = all
             .filter((s: Session) => !pinnedSet.has(s.id) && !terminalSet.has(s.id))
-            .sort((a: Session, b: Session) => {
-              const w = (s: Session) => s.status === 'running' ? 0 : s.status === 'idle' || s.status === 'error' ? 1 : 2;
-              return w(a) - w(b);
-            });
+            .sort(byUpdated);
           const items: any[] = [];
           if (terminal.length) {
             items.push(html`<div class="group-label" data-group="terminal">In terminal</div>`.key('g-term'));
@@ -817,7 +969,13 @@ function headerTemplate() {
           }
           return html`
             <span class="header-title">${() => s.name || 'Untitled'}</span>
-            <button class="header-edit-btn" @click="${() => { state.editingTitle = true; }}">
+            <button class="header-edit-btn" @click="${() => {
+              state.editingTitle = true;
+              requestAnimationFrame(() => {
+                const el = document.querySelector('.header-title-input') as HTMLInputElement | null;
+                if (el) { el.focus(); el.select(); }
+              });
+            }}">
               <span class="icon icon-pencil"></span>
             </button>
           `;
@@ -928,7 +1086,15 @@ function statsTemplate() {
 }
 
 function toolTemplate(tool: ToolCall) {
-  return html`<div class="${() => 'tool-call' + (tool.expanded ? ' expanded' : '')}"><div class="tool-hdr" @click="${() => { tool.expanded = !tool.expanded; }}"><span class="${() => 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '')}"></span><span class="tname">${tool.name}</span><span class="${() => 'tstatus' + (tool.output === null ? '' : tool.isError ? ' error' : ' done')}">${() => tool.output === null ? 'running…' : tool.isError ? 'error' : 'done'}</span></div><div class="${() => 'tool-body' + (tool.expanded ? ' open' : '')}"><div class="tool-label">Input</div><pre>${() => truncate(tool.input, 2000)}</pre>${() => tool.output !== null ? html`<div class="tool-label">Output</div><pre class="${tool.isError ? 'terr' : ''}">${truncate(tool.output, 2000)}</pre>` : html``}</div></div>`.key(tool.id);
+  const statusText = (t: ToolCall) =>
+    t.output === null ? 'running…'
+    : t.output === '' ? ''
+    : t.isError ? 'error' : 'done';
+  const statusClass = (t: ToolCall) =>
+    t.output === null ? ''
+    : t.output === '' ? ''
+    : t.isError ? ' error' : ' done';
+  return html`<div class="${() => 'tool-call' + (tool.expanded ? ' expanded' : '')}"><div class="tool-hdr" @click="${() => { tool.expanded = !tool.expanded; }}"><span class="${() => 'icon icon-chevron-right arrow' + (tool.expanded ? ' open' : '')}"></span><span class="tname">${tool.name}</span><span class="${() => 'tstatus' + statusClass(tool)}">${() => statusText(tool)}</span></div><div class="${() => 'tool-body' + (tool.expanded ? ' open' : '')}"><div class="tool-label">Input</div><pre>${() => truncate(tool.input, 2000)}</pre>${() => tool.output !== null && tool.output !== '' ? html`<div class="tool-label">Output</div><pre class="${tool.isError ? 'terr' : ''}">${truncate(tool.output, 2000)}</pre>` : html``}</div></div>`.key(tool.id);
 }
 
 // Render markdown into .md-block elements by scanning the DOM.
@@ -950,7 +1116,11 @@ function getMdId(block: object, getText: () => string): string {
 function flushMd(): void {
   for (const [id, getText] of mdSources) {
     const el = document.querySelector(`[data-md-id="${id}"]`) as HTMLElement | null;
-    if (!el) { mdSources.delete(id); continue; }
+    // Don't drop the source on miss — Arrow's DOM commit may land after
+    // this pass (session switch tears down old nodes before mounting new
+    // ones, and MutationObserver fires mid-way). A later MutationObserver
+    // tick will flush once the node is in the tree.
+    if (!el) continue;
     const text = getText();
     if (el.dataset.mdLast === text) continue;
     el.dataset.mdLast = text;
@@ -1055,6 +1225,8 @@ html`
     ${statsTemplate()}
   </div>
 `(document.getElementById('app')!);
+
+bindMsgLogScroll();
 
 // Load saved sessions. Read the reply directly — the old event-based path
 // went through an mpsc + glib timer bridge that proved fragile.

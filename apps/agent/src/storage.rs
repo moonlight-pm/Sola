@@ -23,6 +23,15 @@ pub struct SessionMeta {
     pub model: String,
     #[serde(default = "default_effort")]
     pub effort: String,
+    /// CLI JSONL mtime (ms since epoch) at last view-model rebuild.
+    /// Zero means "never synced"; triggers rebuild.
+    #[serde(default)]
+    pub cli_synced_at: u64,
+    /// Bumped when sync.rs's aggregation logic changes so old metrics
+    /// can be detected and rebuilt. Zero = pre-versioning (per-turn
+    /// snapshot metrics) → force rebuild.
+    #[serde(default)]
+    pub metrics_schema: u8,
 }
 
 fn default_model() -> String { "opus".into() }
@@ -46,46 +55,6 @@ fn raw_path(session_id: &str) -> PathBuf {
     sessions_dir().join(format!("{}.ndjson", session_id))
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
-}
-
-/// Save or update session metadata (preserves model/effort from existing).
-pub fn save_meta(
-    session_id: &str,
-    name: Option<&str>,
-    working_dir: &str,
-    metrics: Option<Value>,
-) -> Result<()> {
-    let dir = sessions_dir();
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("Failed to create {}", dir.display()))?;
-
-    let existing = load_meta(session_id).ok();
-    let created_at = existing.as_ref().map(|e| e.created_at).unwrap_or_else(now_ms);
-    let metrics = metrics.or_else(|| existing.as_ref().and_then(|e| e.metrics.clone()));
-    let model = existing.as_ref().map(|e| e.model.clone()).unwrap_or_else(default_model);
-    let effort = existing.as_ref().map(|e| e.effort.clone()).unwrap_or_else(default_effort);
-
-    let meta = SessionMeta {
-        session_id: session_id.to_string(),
-        name: name.map(String::from),
-        working_dir: working_dir.to_string(),
-        created_at,
-        updated_at: now_ms(),
-        metrics,
-        model,
-        effort,
-    };
-
-    let json = serde_json::to_string_pretty(&meta)?;
-    std::fs::write(meta_path(session_id), json)?;
-    Ok(())
-}
-
 /// Save a full SessionMeta struct directly.
 pub fn save_meta_full(meta: &SessionMeta) -> Result<()> {
     let dir = sessions_dir();
@@ -96,7 +65,24 @@ pub fn save_meta_full(meta: &SessionMeta) -> Result<()> {
     Ok(())
 }
 
+/// Overwrite the session's JSONL history with the given messages.
+/// Used by sync when rebuilding a view model from a CLI JSONL.
+pub fn write_history(session_id: &str, messages: &[Value]) -> Result<()> {
+    let dir = sessions_dir();
+    std::fs::create_dir_all(&dir)?;
+    let path = history_path(session_id);
+    let mut file = std::fs::File::create(&path)
+        .with_context(|| format!("Failed to create {}", path.display()))?;
+    for msg in messages {
+        let line = serde_json::to_string(msg)?;
+        writeln!(file, "{}", line)?;
+    }
+    Ok(())
+}
+
 /// Append a message to the session's JSONL history.
+/// Callers must bump `meta.updated_at` via MetaStore — this function
+/// never touches the meta file.
 pub fn append_message(session_id: &str, message: &Value) -> Result<()> {
     let dir = sessions_dir();
     std::fs::create_dir_all(&dir)?;
@@ -110,23 +96,7 @@ pub fn append_message(session_id: &str, message: &Value) -> Result<()> {
 
     let line = serde_json::to_string(message)?;
     writeln!(file, "{}", line)?;
-
-    // Update metadata timestamp
-    if let Ok(mut meta) = load_meta(session_id) {
-        meta.updated_at = now_ms();
-        let json = serde_json::to_string_pretty(&meta)?;
-        std::fs::write(meta_path(session_id), json)?;
-    }
-
     Ok(())
-}
-
-/// Load session metadata.
-pub fn load_meta(session_id: &str) -> Result<SessionMeta> {
-    let path = meta_path(session_id);
-    let json = std::fs::read_to_string(&path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    serde_json::from_str(&json).with_context(|| format!("Failed to parse {}", path.display()))
 }
 
 /// Load conversation history from JSONL.

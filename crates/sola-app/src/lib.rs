@@ -199,6 +199,11 @@ pub fn run<A: SolaApp>() {
 
     unsafe { std::env::set_var("GDK_BACKEND", "wayland") };
     unsafe { std::env::set_var("GTK_A11Y", "none") };
+    // GTK4 defaults to the Vulkan renderer, which drifts into corrupted
+    // swapchain state under rapid invalidation (yellow static, endless
+    // VK_SUBOPTIMAL_KHR warnings) and then stalls the compositor at
+    // shutdown. GL matches WebKit6's compositing path and is stable.
+    unsafe { std::env::set_var("GSK_RENDERER", "gl") };
 
     glib::set_prgname(Some(app_id));
 
