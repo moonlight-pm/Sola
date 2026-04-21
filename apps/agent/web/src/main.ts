@@ -422,18 +422,29 @@ on('session_loaded', (ev: any) => {
   scrollToBottom(true);
 });
 
+// Texts sendMessage has optimistically rendered but not yet reconciled
+// with the CLI's `--replay-user-messages` echo. A last-message dedupe
+// isn't enough: message_start often lands before the echo, so by the
+// time user_appended fires the tail is the assistant bubble, not the
+// user one. Per-session queue lets echoes consume the right pending
+// push even if they arrive out of order with streaming deltas.
+const pendingEchoes = new Map<string, string[]>();
+
 on('user_appended', (ev: any) => {
   const s = findSession(ev.session_id);
   if (!s) return;
-  // Dedupe against the optimistic push in sendMessage: if the last
-  // message already carries this text, the echo is confirming a submit
-  // we've already rendered. Otherwise this is an injection we didn't
-  // originate (e.g. a queued follow-up CLI accepted after a cancel) —
-  // append at the current tail.
   const text = ev.text || '';
-  const last = s.messages.length ? s.messages[s.messages.length - 1] : null;
-  if (last && last.role === 'user' && last.content === text) return;
 
+  const pending = pendingEchoes.get(ev.session_id) ?? [];
+  const idx = pending.indexOf(text);
+  if (idx >= 0) {
+    pending.splice(idx, 1);
+    pendingEchoes.set(ev.session_id, pending);
+    return;
+  }
+
+  // Unsolicited injection (e.g. a queued follow-up CLI accepted after a
+  // cancel) — render it at the tail.
   s.messages = [...s.messages, {
     role: 'user',
     content: text,
@@ -564,8 +575,9 @@ async function sendMessage(): Promise<void> {
 
   if (!s.firstPrompt) s.firstPrompt = text;
 
-  // Show the bubble immediately — the CLI's echo (user_appended) will
-  // arrive shortly after and is deduped against this tail by the handler.
+  // Show the bubble immediately. The CLI's --replay-user-messages echo
+  // arrives later (often after message_start), so record the text as
+  // pending — user_appended will consume it instead of rendering a dup.
   s.messages = [...s.messages, {
     role: 'user',
     content: text,
@@ -573,6 +585,8 @@ async function sendMessage(): Promise<void> {
     streaming: false,
     cancelled: false,
   }];
+  const pending = pendingEchoes.get(s.id) ?? [];
+  pendingEchoes.set(s.id, [...pending, text]);
 
   ta.value = '';
   ta.style.height = 'auto';
