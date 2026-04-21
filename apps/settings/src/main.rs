@@ -10,9 +10,7 @@ use sola_bus::topics::{
 };
 use sola_core::KeyCode;
 use sola_core::applications::{Application, ApplicationsConfig, command_exists};
-
-mod mail;
-use mail::{MailConfig, MailRule, MailRuleCondition};
+use sola_core::mail::{MailConfig, MailRule, MailRuleCondition};
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),

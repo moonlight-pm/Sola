@@ -156,6 +156,10 @@ impl JsonConfigIn for sola_core::applications::ApplicationsConfig {
     const FILE_NAME: &'static str = "applications.json";
 }
 
+impl JsonConfig for sola_core::mail::MailConfig {
+    const FILE_NAME: &'static str = "mail.json";
+}
+
 #[derive(Debug)]
 pub enum ConfigError {
     Io {

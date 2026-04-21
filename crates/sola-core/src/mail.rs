@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
-use sola_app::config::JsonConfig;
+//! Mail config shape shared by `sola-mail` (producer) and `sola-settings`
+//! (editor). The `JsonConfig` impl for `MailConfig` lives in `sola-app`,
+//! since that trait is defined there.
 
-/// Mirrors `apps/mail/src/config.rs` in the sola-mail branch. Kept local
-/// here so the two branches can move independently; hoisting into
-/// `sola-core` is the natural step once sola-mail merges.
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MailConfig {
@@ -30,10 +30,6 @@ impl Default for MailConfig {
             rules: Vec::new(),
         }
     }
-}
-
-impl JsonConfig for MailConfig {
-    const FILE_NAME: &'static str = "mail.json";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
