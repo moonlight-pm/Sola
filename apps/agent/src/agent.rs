@@ -5,6 +5,7 @@
 //! via stdin NDJSON. The CLI manages its own session state; we maintain a
 //! separate display JSONL for our frontend.
 
+use crate::meta::MetaStore;
 use crate::storage;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -43,6 +44,7 @@ impl ClaudeProcessManager {
         effort: &str,
         event_tx: std::sync::mpsc::Sender<String>,
         self_arc: std::sync::Arc<tokio::sync::Mutex<Self>>,
+        meta_store: std::sync::Arc<MetaStore>,
     ) -> Result<()> {
         if self.processes.contains_key(session_id) {
             return Ok(()); // already running
@@ -90,7 +92,7 @@ impl ClaudeProcessManager {
 
         // Background stdout reader — relays events to the frontend.
         let sid = session_id.to_string();
-        start_stdout_reader(stdout, child, sid, event_tx, self_arc);
+        start_stdout_reader(stdout, child, sid, event_tx, self_arc, meta_store);
 
         Ok(())
     }
@@ -171,6 +173,7 @@ fn start_stdout_reader(
     session_id: String,
     event_tx: std::sync::mpsc::Sender<String>,
     mgr: std::sync::Arc<tokio::sync::Mutex<ClaudeProcessManager>>,
+    meta_store: std::sync::Arc<MetaStore>,
 ) {
     // Blocking reader thread → std mpsc → tokio task → event_tx
     let (line_tx, line_rx) = std::sync::mpsc::channel::<String>();
@@ -401,7 +404,7 @@ fn start_stdout_reader(
                         // To present session-level totals, sum the quantitative
                         // fields across turns; keep latest values for fields
                         // where "now" is the meaningful reading.
-                        let prev = storage::load_meta(&sid_for_task).ok()
+                        let prev = meta_store.get(&sid_for_task)
                             .and_then(|m| m.metrics)
                             .unwrap_or(json!({}));
                         let prev_u64 = |k: &str| prev.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
@@ -455,17 +458,13 @@ fn start_stdout_reader(
 
                         send_event(&event_tx, metrics.clone());
 
-                        // Save metrics to our meta file, preserving everything
-                        // else (name — which the user may have customized —
-                        // working_dir, model, effort, cli_synced_at).
-                        if let Ok(mut meta) = storage::load_meta(&sid_for_task) {
-                            meta.metrics = Some(metrics);
-                            meta.updated_at = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_millis() as u64)
-                                .unwrap_or(0);
-                            let _ = storage::save_meta_full(&meta);
-                        }
+                        // Atomic swap via MetaStore — never touches `name`,
+                        // so a concurrent rename can't be clobbered.
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let _ = meta_store.update_metrics(&sid_for_task, metrics, now);
 
                         send_event(&event_tx, json!({
                             "event": "message_end", "session_id": sid_for_task,

@@ -6,11 +6,13 @@
 //!
 //! Emits sync progress events so the frontend can show an indicator.
 
+use crate::meta::MetaStore;
 use crate::storage::{self, SessionMeta};
 use serde_json::{json, Value};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::{debug, info, warn};
 
@@ -25,13 +27,13 @@ struct CliSession {
 /// Run a full sync pass. Intended to be called from a background thread
 /// on startup. Emits `sync_start` / `session_updated` / `sync_complete`
 /// events over `event_tx`.
-pub fn run_sync(event_tx: &Sender<String>) {
+pub fn run_sync(event_tx: &Sender<String>, meta_store: &Arc<MetaStore>) {
     let cli_sessions = scan_cli_sessions();
     info!(count = cli_sessions.len(), "discovered CLI sessions");
 
     let to_rebuild: Vec<&CliSession> = cli_sessions
         .iter()
-        .filter(|cli| needs_rebuild(cli))
+        .filter(|cli| needs_rebuild(cli, meta_store))
         .collect();
 
     let total = to_rebuild.len();
@@ -45,7 +47,7 @@ pub fn run_sync(event_tx: &Sender<String>) {
     send_event(event_tx, json!({"event": "sync_start", "total": total}));
 
     for (idx, cli) in to_rebuild.iter().enumerate() {
-        match rebuild(cli) {
+        match rebuild(cli, meta_store) {
             Ok(meta) => {
                 let first_prompt = first_user_text(&meta.session_id).unwrap_or_default();
                 send_event(event_tx, json!({
@@ -257,11 +259,11 @@ fn cli_mtime_ms(path: &Path) -> u64 {
 /// stale per-turn-snapshot metrics get refreshed.
 const METRICS_SCHEMA: u8 = 2;
 
-fn needs_rebuild(cli: &CliSession) -> bool {
+fn needs_rebuild(cli: &CliSession, meta_store: &MetaStore) -> bool {
     let cli_mtime = cli_mtime_ms(&cli.jsonl_path);
-    match storage::load_meta(&cli.session_id) {
-        Ok(m) => m.cli_synced_at < cli_mtime || m.metrics_schema < METRICS_SCHEMA,
-        Err(_) => true,
+    match meta_store.get(&cli.session_id) {
+        Some(m) => m.cli_synced_at < cli_mtime || m.metrics_schema < METRICS_SCHEMA,
+        None => true,
     }
 }
 
@@ -275,23 +277,19 @@ fn find_cli_jsonl(projects_root: &Path, session_id: &str) -> Option<PathBuf> {
 }
 
 /// Rebuild the view model for a CLI session: rewrite history JSONL from
-/// the CLI JSONL (respecting compact boundaries), then update meta.
-/// Preserves user-editable fields (name override, model, effort, metrics).
-fn rebuild(cli: &CliSession) -> anyhow::Result<SessionMeta> {
+/// the CLI JSONL (respecting compact boundaries), then hand merged
+/// metadata to the store. User-editable fields (name, model, effort) are
+/// preserved by `MetaStore::apply_cli_rebuild`.
+fn rebuild(cli: &CliSession, meta_store: &MetaStore) -> anyhow::Result<SessionMeta> {
     let messages = extract_display_messages(&cli.jsonl_path);
     storage::write_history(&cli.session_id, &messages)?;
 
-    let existing = storage::load_meta(&cli.session_id).ok();
+    let existing = meta_store.get(&cli.session_id);
     let working_dir = cli.cwd.clone().unwrap_or_else(|| {
         existing.as_ref().map(|e| e.working_dir.clone()).unwrap_or_else(|| ".".into())
     });
 
-    let now = now_ms();
     let cli_synced_at = cli_mtime_ms(&cli.jsonl_path);
-
-    // Name: keep any user-set name; otherwise seed from the first prompt.
-    let name = existing.as_ref().and_then(|e| e.name.clone())
-        .or_else(|| cli.first_prompt.clone());
 
     // Recompute cumulative metrics from the CLI JSONL for exact totals.
     // Cost isn't in the JSONL — preserve whatever we had.
@@ -300,28 +298,15 @@ fn rebuild(cli: &CliSession) -> anyhow::Result<SessionMeta> {
         existing.as_ref().and_then(|e| e.metrics.clone()),
     );
 
-    let meta = SessionMeta {
-        session_id: cli.session_id.clone(),
-        name,
+    let meta = meta_store.apply_cli_rebuild(
+        &cli.session_id,
         working_dir,
-        created_at: existing.as_ref().map(|e| e.created_at).unwrap_or(now),
-        // updated_at reflects when the *session* was last active, not
-        // when we rebuilt the view model. The CLI JSONL's mtime is the
-        // authoritative signal; fall back to any existing value before
-        // finally using now (only reachable for a brand-new untouched file).
-        updated_at: if cli_synced_at > 0 {
-            cli_synced_at
-        } else {
-            existing.as_ref().map(|e| e.updated_at).unwrap_or(now)
-        },
-        metrics,
-        model: existing.as_ref().map(|e| e.model.clone()).unwrap_or_else(|| "opus".into()),
-        effort: existing.as_ref().map(|e| e.effort.clone()).unwrap_or_else(|| "high".into()),
+        cli.first_prompt.clone(),
         cli_synced_at,
-        metrics_schema: METRICS_SCHEMA,
-    };
+        METRICS_SCHEMA,
+        metrics,
+    )?;
 
-    storage::save_meta_full(&meta)?;
     debug!(session_id = %cli.session_id, cli_synced_at, "rebuilt view model");
     Ok(meta)
 }
@@ -518,13 +503,6 @@ fn first_user_text(session_id: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
 }
 
 fn send_event(tx: &Sender<String>, value: Value) {

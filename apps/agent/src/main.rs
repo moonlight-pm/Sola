@@ -8,6 +8,7 @@ use sola_core::KeyCode;
 mod active;
 mod agent;
 mod handler;
+mod meta;
 mod session;
 mod sync;
 mod storage;
@@ -71,9 +72,11 @@ impl SolaApp for AgentApp {
         });
 
         let session_mgr = Arc::new(session::SessionManager::new());
+        let meta_store = Arc::new(meta::MetaStore::new());
         let process_mgr = Arc::new(tokio::sync::Mutex::new(agent::ClaudeProcessManager::new()));
         let dispatcher = AsyncDispatcher::spawn(handler::AgentHandler {
             session_mgr,
+            meta_store: meta_store.clone(),
             event_tx: event_tx.clone(),
             process_mgr,
         });
@@ -82,8 +85,9 @@ impl SolaApp for AgentApp {
         // (CLI JSONL newer than our cli_synced_at) and emits progress
         // events so the frontend can show an indicator.
         let sync_tx = event_tx.clone();
+        let sync_store = meta_store.clone();
         std::thread::spawn(move || {
-            sync::run_sync(&sync_tx);
+            sync::run_sync(&sync_tx, &sync_store);
         });
 
         ctx.emit_sticky(Topic::SetAppMenu(agent_menu()));
