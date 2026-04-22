@@ -81,12 +81,21 @@ impl TerminalState {
     }
 
     pub fn load_from_disk() -> Vec<RestoredTab> {
-        let live_sessions: std::collections::HashSet<String> =
-            crate::tmux::list_sessions().into_iter().collect();
-
         let mut saved = PersistedTerminalState::load().tabs;
 
-        // Drop sessions that are no longer alive in tmux.
+        // `None` here means we couldn't positively determine which sessions
+        // are alive (tmux query failed for an unknown reason). In that case,
+        // keep all saved tabs — `spawn_pty` uses `new-session -A` which will
+        // attach if the session exists or create it otherwise. Dropping tabs
+        // on a transient failure would silently destroy the user's workspace.
+        let Some(live) = crate::tmux::list_sessions() else {
+            info!("Loaded {} tabs from state (tmux query failed, keeping all)", saved.len());
+            return saved;
+        };
+
+        let live_sessions: std::collections::HashSet<String> = live.into_iter().collect();
+
+        // Drop sessions tmux confirms are gone.
         saved.retain(|tab| live_sessions.contains(&tab.tmux_session));
 
         // Add any live sessions not already represented.
