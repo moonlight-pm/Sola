@@ -51,21 +51,29 @@ set -g allow-passthrough on
 /// Remove a stale tmux socket left behind by a crashed or killed server.
 /// Without this, all tmux commands fail with "server exited unexpectedly"
 /// until someone manually deletes the socket file.
+///
+/// Only removes the socket when tmux explicitly reports "no server running"
+/// on stderr. Any other failure (tmux not spawnable, unknown error) is left
+/// alone so we don't destroy a healthy server's socket on a transient error.
 pub fn cleanup_stale_socket() {
-    // Check if the server is alive by running a harmless command
-    let alive = tmux_cmd_raw()
-        .args(["ls"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    let output = match tmux_cmd_raw().args(["ls"]).output() {
+        Ok(out) => out,
+        Err(e) => {
+            tracing::warn!("tmux ls failed to spawn, leaving socket alone: {e}");
+            return;
+        }
+    };
 
-    if alive {
+    if output.status.success() {
         return;
     }
 
-    // Server is dead — check for a stale socket and remove it
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("no server running") {
+        tracing::warn!("tmux ls failed unexpectedly, leaving socket alone: {}", stderr.trim());
+        return;
+    }
+
     let uid = unsafe { libc::getuid() };
     let socket_path = PathBuf::from(format!("/tmp/tmux-{uid}/{TMUX_SOCKET}"));
     if socket_path.exists() {
@@ -74,30 +82,38 @@ pub fn cleanup_stale_socket() {
     }
 }
 
-/// Kill any orphaned tmux client processes from a previous Sola run.
-/// Uses `tmux list-clients` to get only client PIDs — never the server.
-/// Previously used `pgrep -f` which matched both client AND server processes
-/// (they share identical command lines), killing the server and destroying
-/// all sessions.
+/// Kill any orphaned tmux client processes from previous Sola runs.
+///
+/// Scans /proc for processes whose kernel-set name is `tmux: client` and whose
+/// cmdline mentions our socket (`-L sola`). `tmux list-clients` misses "ghost"
+/// clients whose server-side connection has already been closed — those are
+/// stuck in poll() forever, invisible to the server, but still alive. Reading
+/// /proc/*/status finds them by name regardless of connection state.
+///
+/// We distinguish clients from the server via the kernel name (`tmux: server`
+/// vs `tmux: client`), so this can never kill the live server.
 pub fn kill_orphaned_clients() {
-    let output = tmux_cmd_raw()
-        .args(["list-clients", "-F", "#{client_pid}"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output();
+    let Ok(entries) = std::fs::read_dir("/proc") else { return };
+    let self_pid = std::process::id() as i32;
 
-    if let Ok(out) = output {
-        let pids: Vec<i32> = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|l| l.trim().parse().ok())
-            .collect();
-        for pid in pids {
-            tracing::info!("Killing orphaned tmux client pid={pid}");
-            unsafe {
-                libc::kill(pid, libc::SIGTERM);
-                libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG);
-            }
-        }
+    for entry in entries.flatten() {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else { continue };
+        if pid == self_pid { continue; }
+
+        let status_path = entry.path().join("status");
+        let Ok(status) = std::fs::read_to_string(&status_path) else { continue };
+        let is_client = status.lines().any(|l| l == "Name:\ttmux: client");
+        if !is_client { continue; }
+
+        let cmdline_path = entry.path().join("cmdline");
+        let Ok(cmdline) = std::fs::read(&cmdline_path) else { continue };
+        // cmdline args are NUL-separated; scan for the socket flag pair.
+        let parts: Vec<&[u8]> = cmdline.split(|&b| b == 0).collect();
+        let matches_socket = parts.windows(2).any(|w| w[0] == b"-L" && w[1] == TMUX_SOCKET.as_bytes());
+        if !matches_socket { continue; }
+
+        tracing::info!("Killing orphaned tmux client pid={pid}");
+        unsafe { libc::kill(pid, libc::SIGTERM); }
     }
 }
 
@@ -145,19 +161,37 @@ pub fn kill_session(session: &str) {
         .status();
 }
 
-pub fn list_sessions() -> Vec<String> {
+/// Return the set of live sola-* tmux session names.
+///
+/// `None` means the query failed in a way we can't distinguish from a dead
+/// server (command couldn't spawn, or tmux exited with an unexpected error).
+/// Callers should treat `None` as "unknown" and NOT drop persisted state on it.
+/// `Some(vec![])` means tmux explicitly reported no sessions running.
+pub fn list_sessions() -> Option<Vec<String>> {
     let output = tmux_cmd()
         .args(["ls", "-F", "#{session_name}"])
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output();
-    match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter(|l| l.starts_with("sola-"))
-            .map(String::from)
-            .collect(),
-        _ => Vec::new(),
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        return Some(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|l| l.starts_with("sola-"))
+                .map(String::from)
+                .collect(),
+        );
+    }
+
+    // Only "no server running" is a confirmed empty-sessions signal.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("no server running") {
+        Some(Vec::new())
+    } else {
+        tracing::warn!("tmux ls failed: {}", stderr.trim());
+        None
     }
 }
 
