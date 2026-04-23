@@ -3,11 +3,30 @@
 //! All logs — process manager, bus, session, river, app — land in
 //! `/opt/sola/log/sola.log` plus stderr. Each binary just calls
 //! `sola_core::log::init("<name>")` at startup.
+//!
+//! ## Format
+//!
+//! stderr (colored, local time):
+//! ```text
+//! 21:46:29  INFO sola           sola process manager starting
+//! 21:46:30  INFO sola::bus      bus listening path=/run/user/1000/sola-bus
+//! ```
+//!
+//! file (plain, UTC with full timestamp):
+//! ```text
+//! 2026-04-23T21:46:29.898397Z  INFO sola           sola process manager starting
+//! ```
 
+use std::fmt::Write;
 use std::fs::OpenOptions;
+use std::io;
 use std::path::Path;
 
+use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 
 /// Directory on disk where all Sola logs are written.
@@ -21,6 +40,9 @@ const MAX_LOG_SIZE: u64 = 100_000;
 
 /// Number of rotated log files to keep (`sola.log.1` … `sola.log.N`).
 const MAX_LOG_FILES: u32 = 10;
+
+/// Fixed width for component labels in log output.
+const LABEL_WIDTH: usize = 14;
 
 /// Initialize tracing for a Sola binary.
 ///
@@ -36,7 +58,9 @@ pub fn init(name: &str) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| default_filter.into());
 
-    let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let stderr_layer = tracing_subscriber::fmt::layer()
+        .event_format(SolaFormat { ansi: true })
+        .with_writer(io::stderr);
     let file_layer = open_file_layer();
 
     tracing_subscriber::registry()
@@ -86,12 +110,19 @@ pub fn rotate() {
     let _ = std::fs::rename(&current, dir.join(format!("{LOG_FILE}.1")));
 }
 
-/// Try to open the shared log file as a non-rotating file appender.
+/// Try to open the shared log file with a plain (no-color) formatter.
 /// Returns `None` if the directory can't be created or the file can't be
 /// opened — callers should still emit to stderr in that case.
-fn open_file_layer<S>() -> Option<tracing_subscriber::fmt::Layer<S, tracing_subscriber::fmt::format::DefaultFields, tracing_subscriber::fmt::format::Format, tracing_appender::rolling::RollingFileAppender>>
+fn open_file_layer<S>() -> Option<
+    tracing_subscriber::fmt::Layer<
+        S,
+        tracing_subscriber::fmt::format::DefaultFields,
+        SolaFormat,
+        tracing_appender::rolling::RollingFileAppender,
+    >,
+>
 where
-    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    S: Subscriber + for<'a> LookupSpan<'a>,
 {
     let _ = std::fs::create_dir_all(LOG_DIR);
     // Probe writability before handing the path to tracing-appender —
@@ -104,7 +135,156 @@ where
     let appender = tracing_appender::rolling::never(LOG_DIR, LOG_FILE);
     Some(
         tracing_subscriber::fmt::layer()
+            .event_format(SolaFormat { ansi: false })
             .with_ansi(false)
             .with_writer(appender),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Custom formatter
+// ---------------------------------------------------------------------------
+
+/// Custom log event formatter for Sola.
+///
+/// When `ansi` is true (stderr), uses short local time and ANSI colors.
+/// When false (file), uses full ISO 8601 UTC timestamps with no color.
+struct SolaFormat {
+    ansi: bool,
+}
+
+impl<S, N> FormatEvent<S, N> for SolaFormat
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> std::fmt::Result {
+        let meta = event.metadata();
+        let level = *meta.level();
+        let target = meta.target();
+        let label = target_label(target);
+
+        if self.ansi {
+            // Dim timestamp
+            write!(writer, "\x1b[2m")?;
+            format_short_time(&mut writer)?;
+            write!(writer, "\x1b[0m ")?;
+
+            // Colored level
+            let (color, text) = level_style(level);
+            write!(writer, "{color}{text}\x1b[0m ")?;
+
+            // Colored, padded label
+            let color = label_color(&label);
+            write!(writer, "{color}{label:<LABEL_WIDTH$}\x1b[0m ")?;
+        } else {
+            format_iso_time(&mut writer)?;
+            write!(writer, " {:>5} {label:<LABEL_WIDTH$} ", level)?;
+        }
+
+        ctx.format_fields(writer.by_ref(), event)?;
+        writeln!(writer)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Label mapping
+// ---------------------------------------------------------------------------
+
+/// Map a tracing target (Rust module path) to a short component label.
+///
+/// - `sola` → `sola`
+/// - `sola::river` → `sola::river` (submodule within process manager)
+/// - `sola_bus::client` → `sola::bus`
+/// - `sola_session::session` → `sola::session`
+fn target_label(target: &str) -> String {
+    let crate_name = target.split("::").next().unwrap_or(target);
+
+    if crate_name == "sola" {
+        // Keep up to two path segments for the sola crate's submodules.
+        let mut parts = target.splitn(3, "::");
+        let first = parts.next().unwrap();
+        match parts.next() {
+            Some(second) => format!("{first}::{second}"),
+            None => first.to_string(),
+        }
+    } else if let Some(suffix) = crate_name.strip_prefix("sola_") {
+        format!("sola::{suffix}")
+    } else {
+        crate_name.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Colors
+// ---------------------------------------------------------------------------
+
+/// ANSI color and right-aligned text for a log level.
+fn level_style(level: Level) -> (&'static str, &'static str) {
+    match level {
+        Level::ERROR => ("\x1b[1;31m", "ERROR"),
+        Level::WARN  => ("\x1b[1;33m", " WARN"),
+        Level::INFO  => ("\x1b[1;32m", " INFO"),
+        Level::DEBUG => ("\x1b[1;34m", "DEBUG"),
+        Level::TRACE => ("\x1b[1;35m", "TRACE"),
+    }
+}
+
+/// ANSI color code for a component label.
+fn label_color(label: &str) -> &'static str {
+    match label {
+        "sola"          => "\x1b[1;36m", // bold cyan
+        "sola::bus"     => "\x1b[1;35m", // bold magenta
+        "sola::river"   => "\x1b[1;34m", // bold blue
+        "sola::session" => "\x1b[1;32m", // bold green
+        "sola::shell"   => "\x1b[1;33m", // bold yellow
+        "sola::core"    => "\x1b[37m",   // white
+        _               => "\x1b[36m",   // cyan (apps and other)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Time formatting
+// ---------------------------------------------------------------------------
+
+/// Write `HH:MM:SS` in local time.
+fn format_short_time(w: &mut impl Write) -> std::fmt::Result {
+    let secs = epoch_secs();
+    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
+    unsafe { libc::localtime_r(&secs, &mut tm) };
+    write!(w, "{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
+}
+
+/// Write full ISO 8601 timestamp in UTC with microsecond precision.
+fn format_iso_time(w: &mut impl Write) -> std::fmt::Result {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs() as libc::time_t;
+    let micros = now.subsec_micros();
+    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
+    unsafe { libc::gmtime_r(&secs, &mut tm) };
+    write!(
+        w,
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec,
+        micros,
+    )
+}
+
+fn epoch_secs() -> libc::time_t {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as libc::time_t
 }
