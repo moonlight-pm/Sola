@@ -209,15 +209,7 @@ pub fn run() {
     let mut session = Session::new();
 
     // Connect (retry until up).
-    loop {
-        match session.bus.connect() {
-            Ok(()) => break,
-            Err(e) => {
-                warn!(%e, "bus connect failed, retrying");
-                std::thread::sleep(Duration::from_secs(1));
-            }
-        }
-    }
+    session.bus.connect_blocking(Duration::from_secs(1));
 
     let _ = session.bus.subscribe(&[
         TopicKind::LaunchApp,

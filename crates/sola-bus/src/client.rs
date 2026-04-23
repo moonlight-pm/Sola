@@ -102,6 +102,27 @@ impl BusClient {
         self.connect_to(&path)
     }
 
+    /// Block until `connect()` succeeds, sleeping `retry_interval`
+    /// between attempts. Logs the first failure once; subsequent failures
+    /// are silent so we don't spam logs while waiting for sola-bus to
+    /// start. Intended for bootstrap code that can't proceed without a
+    /// bus connection.
+    pub fn connect_blocking(&mut self, retry_interval: std::time::Duration) {
+        let mut logged = false;
+        loop {
+            match self.connect() {
+                Ok(()) => return,
+                Err(e) => {
+                    if !logged {
+                        warn!(%e, "bus connect failed, retrying");
+                        logged = true;
+                    }
+                    std::thread::sleep(retry_interval);
+                }
+            }
+        }
+    }
+
     /// Attempt to connect to the bus at a specific socket path.
     pub fn connect_to(&mut self, path: &str) -> io::Result<()> {
         // If the previous reader thread died, drop the half-open state so
