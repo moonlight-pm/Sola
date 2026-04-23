@@ -8,19 +8,20 @@
 //!
 //! stderr (colored, local time):
 //! ```text
-//! 21:46:29  INFO sola           sola process manager starting
-//! 21:46:30  INFO sola::bus      bus listening path=/run/user/1000/sola-bus
+//! 21:46:29  INFO [sola]      sola::core     watching for binary changes path=/opt/sola/bin
+//! 21:46:30  INFO [bus]       sola::bus      bus listening path=/run/user/1000/sola-bus
 //! ```
 //!
 //! file (plain, UTC with full timestamp):
 //! ```text
-//! 2026-04-23T21:46:29.898397Z  INFO sola           sola process manager starting
+//! 2026-04-23T21:46:29Z  INFO [sola]      sola::core     watching for binary changes
 //! ```
 
 use std::fmt::Write;
 use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::fmt::format::Writer;
@@ -41,11 +42,18 @@ const MAX_LOG_SIZE: u64 = 100_000;
 /// Number of rotated log files to keep (`sola.log.1` … `sola.log.N`).
 const MAX_LOG_FILES: u32 = 10;
 
-/// Fixed width for component labels in log output.
+/// Fixed width for `[process]` column (covers `[terminal]`, `[settings]`).
+const PROCESS_WIDTH: usize = 10;
+
+/// Fixed width for target label column (covers `sola::terminal`, `sola::settings`).
 const LABEL_WIDTH: usize = 14;
+
+/// Process name set by `init()`, read by the formatter.
+static PROCESS_NAME: OnceLock<String> = OnceLock::new();
 
 /// Initialize tracing for a Sola binary.
 ///
+/// * Stores the process name (stripped of `sola-` prefix) for log output.
 /// * Creates `/opt/sola/log` if missing.
 /// * Writes to `/opt/sola/log/sola.log` (append, no rotation) and stderr.
 /// * Falls back to stderr-only if the log file can't be opened (e.g. in
@@ -54,6 +62,9 @@ const LABEL_WIDTH: usize = 14;
 /// * Installs a panic hook that routes panics through tracing so they
 ///   end up in the log file, not just on stderr.
 pub fn init(name: &str) {
+    let short = name.strip_prefix("sola-").unwrap_or(name);
+    PROCESS_NAME.get_or_init(|| short.to_string());
+
     let default_filter = format!("{}=info", name.replace('-', "_"));
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| default_filter.into());
@@ -152,6 +163,7 @@ where
 
 /// Custom log event formatter for Sola.
 ///
+/// Each line includes: timestamp, level, `[process]`, target label, message.
 /// When `ansi` is true (stderr), uses short local time and ANSI colors.
 /// When false (file), uses full ISO 8601 UTC timestamps with no color.
 struct SolaFormat {
@@ -173,6 +185,8 @@ where
         let level = *meta.level();
         let target = meta.target();
         let label = target_label(target);
+        let process = PROCESS_NAME.get().map(|s| s.as_str()).unwrap_or("?");
+        let bracketed = format!("[{process}]");
 
         if self.ansi {
             // Dim timestamp
@@ -184,12 +198,20 @@ where
             let (color, text) = level_style(level);
             write!(writer, "{color}{text}\x1b[0m ")?;
 
-            // Colored, padded label
-            let color = label_color(&label);
-            write!(writer, "{color}{label:<LABEL_WIDTH$}\x1b[0m ")?;
+            // Colored process bracket
+            let pcolor = component_color(process);
+            write!(writer, "{pcolor}{bracketed:<PROCESS_WIDTH$}\x1b[0m ")?;
+
+            // Colored target label
+            let lcolor = component_color(&label);
+            write!(writer, "{lcolor}{label:<LABEL_WIDTH$}\x1b[0m ")?;
         } else {
             format_iso_time(&mut writer)?;
-            write!(writer, " {:>5} {label:<LABEL_WIDTH$} ", level)?;
+            write!(
+                writer,
+                " {:>5} {bracketed:<PROCESS_WIDTH$} {label:<LABEL_WIDTH$} ",
+                level
+            )?;
         }
 
         ctx.format_fields(writer.by_ref(), event)?;
@@ -240,16 +262,17 @@ fn level_style(level: Level) -> (&'static str, &'static str) {
     }
 }
 
-/// ANSI color code for a component label.
-fn label_color(label: &str) -> &'static str {
-    match label {
-        "sola" => "\x1b[1;36m",          // bold cyan
-        "sola::bus" => "\x1b[1;35m",     // bold magenta
-        "sola::river" => "\x1b[1;34m",   // bold blue
-        "sola::session" => "\x1b[1;32m", // bold green
-        "sola::shell" => "\x1b[1;33m",   // bold yellow
-        "sola::core" => "\x1b[37m",      // white
-        _ => "\x1b[36m",                 // cyan (apps and other)
+/// ANSI color code for a component name (used for both process brackets
+/// and target labels).
+fn component_color(name: &str) -> &'static str {
+    match name {
+        "sola" => "\x1b[1;36m",                          // bold cyan
+        "bus" | "sola::bus" => "\x1b[1;35m",              // bold magenta
+        "river" | "sola::river" => "\x1b[1;34m",          // bold blue
+        "session" | "sola::session" => "\x1b[1;32m",      // bold green
+        "shell" | "sola::shell" => "\x1b[1;33m",          // bold yellow
+        "core" | "sola::core" => "\x1b[37m",              // white
+        _ => "\x1b[36m",                                  // cyan (apps and other)
     }
 }
 
