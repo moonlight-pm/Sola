@@ -1,7 +1,14 @@
+//! JSON config and state persistence for Sola components.
+//!
+//! Apps declare a config type, implement [`JsonConfig`] (flat) or
+//! [`JsonConfigIn`] (nested under an app directory), and get `load`/`save`
+//! for free. Files land under `$XDG_CONFIG_HOME/sola/` (or
+//! `$HOME/.config/sola/` as fallback), with atomic writes via temp-file +
+//! rename so a crash mid-write can't leave torn JSON.
+
 use std::path::{Path, PathBuf};
 
 use serde::{Serialize, de::DeserializeOwned};
-
 use tracing::{info, warn};
 
 /// Trait for app-owned JSON config/state files persisted under the Sola config directory.
@@ -18,7 +25,7 @@ use tracing::{info, warn};
 ///     zones: std::collections::HashMap<String, sola_bus::topics::Zone>,
 /// }
 ///
-/// impl sola_app::config::JsonConfig for ShellConfig {
+/// impl sola_core::config::JsonConfig for ShellConfig {
 ///     const FILE_NAME: &'static str = "shell.json";
 /// }
 /// ```
@@ -33,8 +40,6 @@ pub trait JsonConfig: Serialize + DeserializeOwned + Default {
         sola_config_file(Self::FILE_NAME)
     }
 
-    /// Load config from disk.
-    ///
     /// Load config from disk, logging success/failure and falling back to default.
     fn load() -> Self {
         match Self::try_load_or_default() {
@@ -149,15 +154,6 @@ pub trait JsonConfigIn: Serialize + DeserializeOwned + Default {
     fn try_save(&self) -> Result<(), ConfigError> {
         save_json(&Self::path(), self)
     }
-}
-
-impl JsonConfigIn for sola_core::applications::ApplicationsConfig {
-    const APP_DIR: &'static str = "shell";
-    const FILE_NAME: &'static str = "applications.json";
-}
-
-impl JsonConfig for sola_core::mail::MailConfig {
-    const FILE_NAME: &'static str = "mail.json";
 }
 
 #[derive(Debug)]
@@ -286,12 +282,27 @@ fn ensure_parent_dir(path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// XDG-style user config root: `$XDG_CONFIG_HOME` if it's an absolute path,
+/// else `$HOME/.config`, else `.config` as a last-ditch relative path.
+fn user_config_dir() -> PathBuf {
+    if let Some(v) = std::env::var_os("XDG_CONFIG_HOME") {
+        let p = PathBuf::from(v);
+        if p.is_absolute() {
+            return p;
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".config");
+    }
+    PathBuf::from(".config")
+}
+
 /// Returns the Sola config directory, creating it if needed.
 ///
-/// This resolves to:
-/// - `glib::user_config_dir()/sola`
+/// Resolves to `<user_config>/sola` where `<user_config>` is
+/// `$XDG_CONFIG_HOME` (if absolute) or `$HOME/.config`.
 pub fn sola_config_dir() -> PathBuf {
-    let dir = glib::user_config_dir().join("sola");
+    let dir = user_config_dir().join("sola");
     let _ = std::fs::create_dir_all(&dir);
     dir
 }

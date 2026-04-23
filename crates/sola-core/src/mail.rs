@@ -1,8 +1,10 @@
 //! Mail config shape shared by `sola-mail` (producer) and `sola-settings`
-//! (editor). The `JsonConfig` impl for `MailConfig` lives in `sola-app`,
-//! since that trait is defined there.
+//! (editor). Persists as `<sola-config>/mail.json` via the
+//! [`crate::config::JsonConfig`] impl at the bottom of this file.
 
 use serde::{Deserialize, Serialize};
+
+use crate::config::JsonConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -47,4 +49,8 @@ pub struct MailRuleCondition {
     #[serde(rename = "match")]
     pub match_type: String,
     pub value: String,
+}
+
+impl JsonConfig for MailConfig {
+    const FILE_NAME: &'static str = "mail.json";
 }

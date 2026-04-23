@@ -5,12 +5,14 @@
 //! reconciliation) and written by the settings app. Types live in `sola-core` so
 //! neither side owns the schema.
 //!
-//! The `JsonConfigIn` impl (and therefore `load`/`save`) lives in `sola-app`,
-//! which depends on this crate. `sola-core` stays free of GTK/WebKit.
+//! Persists via the [`crate::config::JsonConfigIn`] impl at the bottom of
+//! this file — `ApplicationsConfig::load()` / `.save()` work directly.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::config::JsonConfigIn;
 
 /// A launchable application known to the shell.
 ///
@@ -172,6 +174,11 @@ impl std::fmt::Display for UpdateError {
 }
 
 impl std::error::Error for UpdateError {}
+
+impl JsonConfigIn for ApplicationsConfig {
+    const APP_DIR: &'static str = "shell";
+    const FILE_NAME: &'static str = "applications.json";
+}
 
 #[cfg(test)]
 mod tests {
