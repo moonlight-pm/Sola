@@ -89,7 +89,7 @@ fn spawn_and_close_sleep() {
     // Launch a long-running sleep.
     client.emit(Topic::LaunchApp(LaunchAppPayload {
         app_id: "sleep".into(),
-        command: "/usr/bin/sleep 60".into(),
+        command: "sleep 60".into(),
     })).unwrap();
 
     // Expect LaunchResult ok.
