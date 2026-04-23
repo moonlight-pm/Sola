@@ -5,16 +5,16 @@ use std::time::{Duration, Instant};
 
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
-use crate::deploy::DeployTarget;
+use crate::install;
 
 const DEBOUNCE_MS: u64 = 500;
 
-/// Watch app source directories and rebuild+deploy on changes.
+/// Watch app source directories and rebuild+install on changes.
 ///
 /// Watches `apps/<app>/` and `crates/sola-app/` for file changes.
-/// On change: debounce, build the app in release mode, deploy to target.
+/// On change: debounce, build the app, install.
 /// Errors don't kill the watcher — it continues watching.
-pub fn watch_and_deploy(app: &str, target: &dyn DeployTarget) {
+pub fn watch_and_install(app: &str) {
     let app_dir = format!("apps/{app}");
     let framework_dir = "crates/sola-app";
 
@@ -24,14 +24,13 @@ pub fn watch_and_deploy(app: &str, target: &dyn DeployTarget) {
     }
 
     let crate_name = super::resolve_crate_name(app);
-    let label = target.label();
 
     println!("[watch] watching {app_dir}/, {framework_dir}/");
 
-    // Initial build + deploy
-    println!("[watch] initial build + deploy...");
-    if build_and_deploy(&crate_name, target) {
-        println!("[deploy] {crate_name} → {label} ✓");
+    // Initial build + install
+    println!("[watch] initial build + install...");
+    if build_and_install(&crate_name) {
+        println!("[install] {crate_name} ✓");
     }
 
     let (event_tx, event_rx) = mpsc::channel::<notify::Event>();
@@ -86,20 +85,20 @@ pub fn watch_and_deploy(app: &str, target: &dyn DeployTarget) {
         println!("[watch] changed: {changed_file}");
         println!("[watch] building {crate_name}...");
 
-        if build_and_deploy(&crate_name, target) {
-            println!("[deploy] {crate_name} → {label} ✓");
+        if build_and_install(&crate_name) {
+            println!("[install] {crate_name} ✓");
         }
 
         println!("[watch] waiting for changes...");
     }
 }
 
-/// Build a single crate in release mode and deploy to target.
+/// Build a single crate and install locally.
 /// Returns true on success, false on failure (with error printed).
-fn build_and_deploy(crate_name: &str, target: &dyn DeployTarget) -> bool {
+fn build_and_install(crate_name: &str) -> bool {
     // Build
     let status = Command::new("cargo")
-        .args(["build", "-p", crate_name, "--release"])
+        .args(["build", "-p", crate_name])
         .status();
 
     match status {
@@ -114,20 +113,20 @@ fn build_and_deploy(crate_name: &str, target: &dyn DeployTarget) -> bool {
         }
     }
 
-    // Deploy
-    let src = format!("target/release/{crate_name}");
+    // Install
+    let src = format!("target/debug/{crate_name}");
     if !Path::new(&src).exists() {
-        eprintln!("[deploy] FAILED: binary not found: {src}");
+        eprintln!("[install] FAILED: binary not found: {src}");
         return false;
     }
 
-    if let Err(e) = target.ensure_dirs() {
-        eprintln!("[deploy] FAILED: {e}");
+    if let Err(e) = install::ensure_dirs() {
+        eprintln!("[install] FAILED: {e}");
         return false;
     }
 
-    if let Err(e) = target.deploy_binary(&src) {
-        eprintln!("[deploy] FAILED: {e}");
+    if let Err(e) = install::install_binary(&src) {
+        eprintln!("[install] FAILED: {e}");
         return false;
     }
 

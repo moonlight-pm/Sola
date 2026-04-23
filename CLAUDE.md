@@ -42,16 +42,16 @@ docs/
 - Only make code modifications in worktrees. Never commit code changes directly to master.
 - Only merge worktree branches to master with explicit user permission.
 
-### Deploying
-- Only deploy when you have explicit user permission.
-- Deploy target is **canto** (a separate physical machine accessible via SSH).
-- `cargo make deploy --canto` — builds release, rsync's all binaries to `/opt/sola/bin/` on canto.
-- `cargo make deploy <app> --canto` — builds and deploys a single app.
-- `cargo make deploy <app> --canto --watch` — watches for changes, rebuilds, and redeploys automatically.
-- The user launches `sola` manually from a physical TTY on canto. Do not configure auto-start.
+### Installing
+- Only install when you have explicit user permission.
+- Install is local: binaries go to `/opt/sola/bin/`.
+- `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
+- `cargo make install <app>` — builds and installs a single app.
+- `cargo make install <app> --watch` — watches for changes, rebuilds, and reinstalls automatically.
+- The user launches `sola` manually from a physical TTY. Do not configure auto-start.
 
 ### Building
-- Always use `cargo make build` and `cargo make deploy --canto` — never raw `cargo build` or `rsync`.
+- Always use `cargo make build` and `cargo make install` — never raw `cargo build` or `cp`.
 - This ensures our build system stays tested and current.
 
 ### Debugging
@@ -71,9 +71,9 @@ Uses the xtask pattern with a `sola-make` crate:
 ```
 cargo make build                                  # Build everything
 cargo make build <target>                         # Build a specific target
-cargo make deploy --canto                         # Deploy all to canto
-cargo make deploy <app> --canto                   # Deploy one app to canto
-cargo make deploy <app> --canto --watch           # Watch + redeploy on change
+cargo make install                                # Build + install all to /opt/sola/bin
+cargo make install <app>                          # Build + install a single app
+cargo make install <app> --watch                  # Watch + reinstall on change
 ```
 
 Alias configured in `.cargo/config.toml`:
@@ -93,18 +93,17 @@ make = "run -q -p sola-make --"
 
 ### Principles
 - All errors must be diagnosable after the fact. Never lose output to a TTY.
-- Persistent log files at `/opt/sola/log/` on canto. Always write logs there.
+- Persistent log files at `/opt/sola/log/`. Always write logs there.
 - Use `tracing` with structured fields — always include relevant context (device node, connector, crtc, etc.).
 - Errors should explain *what went wrong* and *what was being attempted*. Don't swallow errors silently.
-- When SSH'd to canto, you can run sola on its display for debugging. Use this.
 
-### Remote Debugging Workflow
+### Debugging Workflow
 ```bash
-# SSH to canto, run sola with debug logging, logs go to file AND terminal
-ssh canto "RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log"
+# Run sola from a TTY with debug logging, logs go to file AND terminal
+RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 
 # Check recent logs
-ssh canto "tail -100 /opt/sola/log/sola.log"
+tail -100 /opt/sola/log/sola.log
 ```
 
 ### Log Levels
@@ -114,11 +113,9 @@ ssh canto "tail -100 /opt/sola/log/sola.log"
 - `debug` — detailed flow (event loop ticks, input events, frame timing)
 - `trace` — extremely verbose (every VBlank, every Wayland message)
 
-## Deploy Environment: Canto
+## Runtime Environment
 
-- Separate physical machine with SSH access (`ssh canto`)
-- **Two AMD Radeon R7 370 GPUs** (amdgpu driver), display on card2-DP-10
-- Binaries deploy to `/opt/sola/bin/`
+- Binaries install to `/opt/sola/bin/`
 - Logs go to `/opt/sola/log/`
 - User launches sola manually from a physical TTY — no display manager, no auto-login
 

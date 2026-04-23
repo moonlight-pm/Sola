@@ -1,4 +1,4 @@
-/// Sola build system — orchestrates building and deploying the project.
+/// Sola build system — orchestrates building and installing the project.
 ///
 /// Invoked via `cargo make <command>` (alias configured in `.cargo/config.toml`).
 /// This uses the "xtask" pattern: a Rust binary in the workspace that replaces
@@ -6,7 +6,7 @@
 ///
 /// See: https://github.com/matklad/cargo-xtask
 mod assets;
-mod deploy;
+mod install;
 mod watch;
 
 use std::process::{Command, exit};
@@ -39,19 +39,13 @@ enum Commands {
         action: AssetsAction,
     },
 
-    /// Deploy to a target machine.
-    ///
-    /// Deploys locally by default. Use --canto for remote deploy.
-    Deploy {
-        /// Specific app to deploy (e.g. "terminal").
-        /// Omit to deploy all binaries.
+    /// Install binaries locally to /opt/sola/bin.
+    Install {
+        /// Specific app to install (e.g. "terminal").
+        /// Omit to install all binaries.
         app: Option<String>,
 
-        /// Deploy to canto (remote). Omit for local deploy.
-        #[arg(long)]
-        canto: bool,
-
-        /// Watch for changes and redeploy automatically.
+        /// Watch for changes and reinstall automatically.
         #[arg(long)]
         watch: bool,
     },
@@ -70,20 +64,15 @@ fn main() {
         Commands::Assets { action } => match action {
             AssetsAction::Pull => assets::pull(),
         },
-        Commands::Deploy { app, canto, watch } => {
-            let target: Box<dyn deploy::DeployTarget> = if canto {
-                Box::new(deploy::Remote { host: "canto" })
-            } else {
-                Box::new(deploy::Local)
-            };
+        Commands::Install { app, watch } => {
             if watch && app.is_none() {
                 eprintln!("error: --watch requires an app name");
                 exit(1);
             }
             if watch {
-                watch::watch_and_deploy(&app.unwrap(), target.as_ref());
+                watch::watch_and_install(&app.unwrap());
             } else {
-                deploy::deploy(target.as_ref(), app.as_deref());
+                install::install(app.as_deref());
             }
         }
     }
@@ -170,7 +159,7 @@ pub(crate) fn resolve_crate_name(name: &str) -> String {
     format!("sola-{name}")
 }
 
-/// Discover deployable binary names by scanning workspace member directories.
+/// Discover installable binary names by scanning workspace member directories.
 ///
 /// Looks for `Cargo.toml` files in `crates/` and `apps/` that contain a
 /// `src/main.rs` (i.e. are binary crates), and extracts the package name.
@@ -292,65 +281,32 @@ mod tests {
     }
 
     #[test]
-    fn cli_parses_deploy_canto() {
-        let cli = Cli::try_parse_from(["sola-make", "deploy", "--canto"]).unwrap();
+    fn cli_parses_install() {
+        let cli = Cli::try_parse_from(["sola-make", "install"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Deploy {
+            Commands::Install {
                 app: None,
-                canto: true,
                 watch: false
             }
         ));
     }
 
     #[test]
-    fn cli_parses_deploy_app_canto() {
-        let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal", "--canto"]).unwrap();
+    fn cli_parses_install_app() {
+        let cli = Cli::try_parse_from(["sola-make", "install", "terminal"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Deploy { app: Some(ref a), canto: true, watch: false } if a == "terminal"
+            Commands::Install { app: Some(ref a), watch: false } if a == "terminal"
         ));
     }
 
     #[test]
-    fn cli_parses_deploy_local() {
-        let cli = Cli::try_parse_from(["sola-make", "deploy"]).unwrap();
+    fn cli_parses_install_watch() {
+        let cli = Cli::try_parse_from(["sola-make", "install", "terminal", "--watch"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Deploy {
-                app: None,
-                canto: false,
-                watch: false
-            }
-        ));
-    }
-
-    #[test]
-    fn cli_parses_deploy_app_local() {
-        let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Commands::Deploy { app: Some(ref a), canto: false, watch: false } if a == "terminal"
-        ));
-    }
-
-    #[test]
-    fn cli_parses_deploy_watch() {
-        let cli =
-            Cli::try_parse_from(["sola-make", "deploy", "terminal", "--canto", "--watch"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Commands::Deploy { app: Some(ref a), canto: true, watch: true } if a == "terminal"
-        ));
-    }
-
-    #[test]
-    fn cli_parses_deploy_watch_local() {
-        let cli = Cli::try_parse_from(["sola-make", "deploy", "terminal", "--watch"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Commands::Deploy { app: Some(ref a), canto: false, watch: true } if a == "terminal"
+            Commands::Install { app: Some(ref a), watch: true } if a == "terminal"
         ));
     }
 }
