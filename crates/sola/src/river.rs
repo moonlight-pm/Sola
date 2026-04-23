@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use sola_core::env::{
     SOLA_DISPLAY_NAME_FILE, SOLA_WAYLAND_NAME_FILE, find_live_wayland_socket,
@@ -20,17 +20,6 @@ use sola_core::env::{
 pub struct RiverSupervisor {
     child: Child,
     runtime_dir: PathBuf,
-}
-
-// Closure runs post-fork in the River child: inherit SIGTERM on parent
-// death, put River in its own process group.
-fn child_setup() -> io::Result<()> {
-    // SAFETY: libc calls in a post-fork child; must be async-signal-safe.
-    unsafe {
-        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-        libc::setsid();
-    }
-    Ok(())
 }
 
 /// SIGKILL any `/usr/bin/river` process running as our uid, then wait
@@ -167,9 +156,9 @@ impl RiverSupervisor {
         // through to the DRM backend.
         cmd.env_remove("WAYLAND_DISPLAY");
         cmd.env_remove("DISPLAY");
-        // SAFETY: `child_setup` only invokes async-signal-safe libc calls.
+        // SAFETY: the pre_exec hook only invokes async-signal-safe libc calls.
         unsafe {
-            cmd.pre_exec(child_setup);
+            cmd.pre_exec(sola_core::process::set_pdeathsig_and_leader);
         }
         let child = cmd.spawn()?;
 
@@ -247,27 +236,6 @@ impl RiverSupervisor {
 
     /// SIGTERM, wait up to 2s, then SIGKILL.
     pub fn shutdown(&mut self) {
-        let pid = self.child.id() as i32;
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) if Instant::now() >= deadline => {
-                    warn!(pid, "river did not exit after SIGTERM; sending SIGKILL");
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return;
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-                Err(e) => {
-                    error!(%e, pid, "error waiting on river");
-                    return;
-                }
-            }
-        }
+        sola_core::process::graceful_shutdown(&mut self.child, Duration::from_secs(2));
     }
-
 }

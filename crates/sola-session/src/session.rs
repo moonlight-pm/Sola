@@ -104,13 +104,10 @@ impl Session {
             cmd.env("DISPLAY", display);
         }
 
-        // SAFETY: pre_exec runs in the child after fork. PR_SET_PDEATHSIG asks
-        // the kernel to kill the child if sola-session dies, preventing orphans.
+        // SAFETY: pre_exec runs post-fork in the child before exec; the hook
+        // is async-signal-safe.
         unsafe {
-            cmd.pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                Ok(())
-            });
+            cmd.pre_exec(sola_core::process::set_pdeathsig_sigterm);
         }
 
         match cmd.spawn() {

@@ -7,6 +7,7 @@ pub mod applications;
 pub mod env;
 pub mod log;
 pub mod mail;
+pub mod process;
 
 use serde::{Deserialize, Serialize};
 

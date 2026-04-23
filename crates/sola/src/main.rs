@@ -199,15 +199,11 @@ fn launch<'a>(
     managed: &mut HashMap<&'a str, ManagedProcess>,
 ) {
     let bin = bin_dir.join(name);
-    // SAFETY: pre_exec runs in the child after fork, before exec.
-    // PR_SET_PDEATHSIG asks the kernel to send SIGTERM to this child
-    // when the parent process (sola) dies, preventing orphaned processes.
+    // SAFETY: pre_exec runs post-fork in the child before exec; the hook
+    // is async-signal-safe.
     let result = unsafe {
         Command::new(&bin)
-            .pre_exec(|| {
-                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                Ok(())
-            })
+            .pre_exec(sola_core::process::set_pdeathsig_sigterm)
             .spawn()
     };
     match result {
