@@ -16,6 +16,12 @@ pub const LOG_DIR: &str = "/opt/sola/log";
 /// Single log file shared by every Sola binary.
 pub const LOG_FILE: &str = "sola.log";
 
+/// Maximum size of `sola.log` before rotation (bytes).
+const MAX_LOG_SIZE: u64 = 100_000;
+
+/// Number of rotated log files to keep (`sola.log.1` … `sola.log.N`).
+const MAX_LOG_FILES: u32 = 10;
+
 /// Initialize tracing for a Sola binary.
 ///
 /// * Creates `/opt/sola/log` if missing.
@@ -44,6 +50,40 @@ pub fn init(name: &str) {
         let backtrace = std::backtrace::Backtrace::force_capture();
         tracing::error!(%info, "{name} panicked\n{backtrace}");
     }));
+}
+
+/// Rotate `sola.log` if it exceeds [`MAX_LOG_SIZE`].
+///
+/// Renames `sola.log` → `sola.log.1`, `sola.log.1` → `sola.log.2`, etc.,
+/// deleting anything beyond [`MAX_LOG_FILES`]. Intended to be called once
+/// at startup by the process manager, before any children are spawned.
+///
+/// Errors are silently ignored — rotation is best-effort.
+pub fn rotate() {
+    let dir = Path::new(LOG_DIR);
+    let current = dir.join(LOG_FILE);
+
+    let size = match std::fs::metadata(&current) {
+        Ok(m) => m.len(),
+        Err(_) => return,
+    };
+    if size < MAX_LOG_SIZE {
+        return;
+    }
+
+    // Delete the oldest if it exists.
+    let oldest = dir.join(format!("{LOG_FILE}.{MAX_LOG_FILES}"));
+    let _ = std::fs::remove_file(oldest);
+
+    // Shift N → N+1, starting from the highest.
+    for i in (1..MAX_LOG_FILES).rev() {
+        let from = dir.join(format!("{LOG_FILE}.{i}"));
+        let to = dir.join(format!("{LOG_FILE}.{}", i + 1));
+        let _ = std::fs::rename(from, to);
+    }
+
+    // Current → .1
+    let _ = std::fs::rename(&current, dir.join(format!("{LOG_FILE}.1")));
 }
 
 /// Try to open the shared log file as a non-rotating file appender.

@@ -27,6 +27,7 @@ const MIN_UPTIME: Duration = Duration::from_secs(5);
 const BACKOFF_DELAY: Duration = Duration::from_secs(2);
 
 fn main() {
+    sola_core::log::rotate();
     sola_core::log::init("sola");
 
     info!("sola process manager starting");
