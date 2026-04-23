@@ -7,6 +7,10 @@
 //! rename so a crash mid-write can't leave torn JSON.
 
 pub mod mail;
+pub mod store;
+pub mod value;
+
+pub use value::{ConfigValue, MutateConfigPayload, MutateOp};
 
 use std::path::{Path, PathBuf};
 

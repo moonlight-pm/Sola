@@ -71,5 +71,8 @@ fn topic_to_json(topic: &Topic) -> Value {
         Topic::ClientConnected(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::ClientDisconnected(v) => serde_json::to_value(v).unwrap_or_default(),
         Topic::Shutdown => Value::Null,
+        // Config topics use ConfigValue which doesn't map directly to JSON.
+        // The monitor shows the raw hex for these via the fallback path.
+        _ => Value::Null,
     }
 }

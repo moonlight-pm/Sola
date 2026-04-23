@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 pub use sola_core::KeyChord;
+pub use sola_core::config::{ConfigValue, MutateConfigPayload, MutateOp};
 
 use crate::define_topics;
 
@@ -176,6 +177,10 @@ impl Zone {
 }
 
 define_topics! {
+    // Config (sticky, managed by sola-session)
+    Config(Vec<(String, ConfigValue)>),
+    MutateConfig(MutateConfigPayload),
+
     // Window management list (sticky)
     Windows(Vec<Window>),
     LaunchApp(LaunchAppPayload),
@@ -302,6 +307,42 @@ mod tests {
                 assert_eq!(p.menus[0].items.len(), 2);
             }
             other => panic!("expected SetAppMenu, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn config_topic_roundtrip() {
+        let entries = vec![
+            ("mail.host".into(), ConfigValue::String("imap.example.com".into())),
+            ("mail.port".into(), ConfigValue::Int(993)),
+            ("shell.dark_mode".into(), ConfigValue::Bool(true)),
+        ];
+        let msg = Topic::Config(entries).to_message();
+        assert_eq!(msg.topic, "Config");
+        match Topic::parse(&msg) {
+            Some(Topic::Config(decoded)) => {
+                assert_eq!(decoded.len(), 3);
+                assert_eq!(decoded[0].0, "mail.host");
+                assert_eq!(decoded[0].1, ConfigValue::String("imap.example.com".into()));
+                assert_eq!(decoded[1].1, ConfigValue::Int(993));
+            }
+            other => panic!("expected Config, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mutate_config_roundtrip() {
+        let payload = MutateConfigPayload {
+            key: "mail.imap_port".into(),
+            op: MutateOp::Set(ConfigValue::Int(993)),
+        };
+        let msg = Topic::MutateConfig(payload).to_message();
+        match Topic::parse(&msg) {
+            Some(Topic::MutateConfig(p)) => {
+                assert_eq!(p.key, "mail.imap_port");
+                assert!(matches!(p.op, MutateOp::Set(ConfigValue::Int(993))));
+            }
+            other => panic!("expected MutateConfig, got {other:?}"),
         }
     }
 }
