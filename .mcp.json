@@ -1,17 +1,3 @@
 {
-  "mcpServers": {
-    "gitnexus": {
-      "type": "stdio",
-      "command": "gitnexus",
-      "args": ["mcp"]
-    },
-    "codegraph": {
-      "type": "stdio",
-      "command": "codegraph",
-      "args": [
-        "serve",
-        "--mcp"
-      ]
-    }
-  }
+	"mcpServers": {}
 }
