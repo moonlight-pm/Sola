@@ -4,6 +4,7 @@
 //! compositor so we avoid scattered magic numbers.
 
 pub mod applications;
+pub mod log;
 pub mod mail;
 
 use serde::{Deserialize, Serialize};

@@ -32,24 +32,7 @@ struct BusState {
 type SharedState = Arc<Mutex<BusState>>;
 
 fn main() {
-    let log_dir = "/opt/sola/log";
-    let _ = std::fs::create_dir_all(log_dir);
-    let file_appender = tracing_appender::rolling::never(log_dir, "sola.log");
-
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "sola_bus=info".into());
-
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
-    let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_ansi(false)
-        .with_writer(file_appender);
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(stderr_layer)
-        .with(file_layer)
-        .init();
+    sola_core::log::init("sola-bus");
 
     let socket_path = sola_bus::socket_path();
 
@@ -189,35 +172,17 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
     bus.subscriptions.remove(&id);
 }
 
-/// Append a line to /opt/sola/log/bus.log for every message that flows
-/// through the bus. Separate file to avoid polluting the main sola.log.
+/// Emit a tracing event for every message that flows through the bus.
+/// Lands in the shared sola.log; enable with
+/// `RUST_LOG=sola_bus::traffic=trace` to see the audit stream.
 fn log_bus_message(client: ClientId, event: &sola_bus::Message) {
-    use std::io::Write;
-    thread_local! {
-        static LOG: std::cell::RefCell<Option<fs::File>> = std::cell::RefCell::new(
-            fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/opt/sola/log/bus.log")
-                .ok()
-        );
-    }
-    LOG.with(|f| {
-        if let Some(ref mut file) = *f.borrow_mut() {
-            let elapsed = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            let secs = elapsed.as_secs();
-            let millis = elapsed.subsec_millis();
-            let _ = writeln!(
-                file,
-                "{secs}.{millis:03} c={client} {}{} src={}",
-                event.topic,
-                if event.sticky { " [sticky]" } else { "" },
-                event.source,
-            );
-        }
-    });
+    tracing::trace!(
+        target: "sola_bus::traffic",
+        client,
+        topic = %event.topic,
+        sticky = event.sticky,
+        source = %event.source,
+    );
 }
 
 fn handle_identify(id: ClientId, app_id: String, state: &SharedState) {

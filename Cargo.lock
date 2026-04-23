@@ -2381,9 +2381,8 @@ dependencies = [
  "nix 0.31.2",
  "notify",
  "sola-bus",
+ "sola-core",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2425,8 +2424,6 @@ dependencies = [
  "swc_ts_fast_strip",
  "tokio",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "webkit6",
 ]
 
@@ -2468,8 +2465,6 @@ dependencies = [
  "sola-core",
  "tempfile",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -2479,6 +2474,9 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2540,8 +2538,6 @@ dependencies = [
  "sola-core",
  "thiserror",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "wayland-backend",
  "wayland-client",
  "wayland-scanner",
@@ -2553,10 +2549,9 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "sola-bus",
+ "sola-core",
  "tempfile",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]

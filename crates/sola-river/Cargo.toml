@@ -11,8 +11,6 @@ path = "src/main.rs"
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2"
 wayland-client = "0.31"
 wayland-backend = "0.3"
 wayland-scanner = "0.31"

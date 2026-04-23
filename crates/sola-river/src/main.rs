@@ -5,8 +5,6 @@ use std::time::Duration;
 use calloop::EventLoop;
 use calloop_wayland_source::WaylandSource;
 use tracing::{error, info};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 
 use sola_bus::topics::TopicKind;
 use sola_river::{bus, client};
@@ -17,7 +15,7 @@ use sola_river::{bus, client};
 const SOLA_WAYLAND_NAME_FILE: &str = "sola-wayland";
 
 fn main() {
-    init_tracing();
+    sola_core::log::init("sola-river");
     info!("sola-river starting");
 
     let socket_name = match read_wayland_socket_name() {
@@ -99,25 +97,3 @@ fn read_wayland_socket_name() -> Option<String> {
     }
 }
 
-fn init_tracing() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "sola_river=info".into());
-    let _ = std::fs::create_dir_all("/opt/sola/log");
-    let file_appender = tracing_appender::rolling::never("/opt/sola/log", "sola-river.log");
-    let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_ansi(false)
-        .with_writer(file_appender);
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(stderr_layer)
-        .with(file_layer)
-        .init();
-
-    // Route panics through tracing so they land in sola-river.log, not just
-    // stderr (which sola captures less faithfully).
-    std::panic::set_hook(Box::new(|info| {
-        let backtrace = std::backtrace::Backtrace::force_capture();
-        tracing::error!(%info, "sola-river panicked\n{backtrace}");
-    }));
-}
