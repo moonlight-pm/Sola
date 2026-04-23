@@ -22,13 +22,21 @@ Reference codebase: `../Cogsworth` — Sola is a deliberate rebuild of Cogsworth
 ```
 crates/
   sola/                # Process manager (binary entry point)
-  sola-bus/            # Bus host process + protocol definitions
-  sola-compositor/     # Smithay compositor + XWayland host (bus client)
-  sola-app/            # WebView app framework (Rust host + JS platform lib)
-  sola-make/           # Build/deploy orchestration (xtask)
+  sola-bus/            # IPC bus host + client library
+  sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
+  sola-app/            # WebView app framework (GTK4 + WebKit6)
+  sola-assets/         # Vendored icon/asset bundles
+  sola-make/           # Build/install orchestration (xtask)
+  sola-river/          # River compositor bridge (bus ↔ wayland)
+  sola-session/        # User-app session manager
+  sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
 apps/
-  switcher/            # App switcher (WebView, bus client)
-  terminal/            # Terminal emulator (tmux-backed, xterm.js, bus client)
+  agent/               # AI agent frontend
+  browser/             # WebKit browser
+  mail/                # IMAP/SMTP mail client
+  monitor/             # System monitor / bus audit
+  settings/            # Settings panel
+  terminal/            # Terminal emulator (tmux-backed, xterm.js)
 docs/
   manual/              # Architecture docs, references
   specs/               # Design specs and implementation plans
