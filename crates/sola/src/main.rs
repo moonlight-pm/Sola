@@ -1,5 +1,6 @@
 mod river;
-mod watcher;
+
+use sola_core::watcher;
 
 use std::collections::HashMap;
 use std::os::unix::process::CommandExt;

@@ -7,6 +7,4 @@ edition.workspace = true
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 tracing = "0.1"
-notify = "8"
-nix = { version = "0.31", features = ["process"] }
 libc = "0.2"

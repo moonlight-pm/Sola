@@ -2378,8 +2378,6 @@ name = "sola"
 version = "0.1.0"
 dependencies = [
  "libc",
- "nix 0.31.2",
- "notify",
  "sola-bus",
  "sola-core",
  "tracing",
@@ -2413,8 +2411,6 @@ dependencies = [
  "gio",
  "glib",
  "gtk4",
- "nix 0.31.2",
- "notify",
  "serde",
  "serde_json",
  "sola-assets",
@@ -2473,6 +2469,8 @@ name = "sola-core"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "nix 0.31.2",
+ "notify",
  "serde",
  "serde_json",
  "tracing",

@@ -9,6 +9,7 @@ pub mod env;
 pub mod log;
 pub mod mail;
 pub mod process;
+pub mod watcher;
 
 use serde::{Deserialize, Serialize};
 

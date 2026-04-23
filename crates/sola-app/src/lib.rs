@@ -12,9 +12,11 @@ pub mod async_dispatch;
 pub mod bridge;
 pub mod ctx;
 pub mod strip;
-pub mod watcher;
 pub mod webview;
 pub mod window;
+
+/// Re-export of [`sola_core::watcher`] for backward compatibility.
+pub use sola_core::watcher;
 
 /// Re-export of [`sola_core::config`] for backward compatibility: the
 /// traits used to live here, and downstream apps still write
