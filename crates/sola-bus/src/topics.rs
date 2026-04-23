@@ -4,7 +4,7 @@ pub use sola_core::KeyChord;
 use crate::define_topics;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct App {
+pub struct Window {
     pub window_id: u32,
     pub app_id: String,
     pub title: String,
@@ -177,7 +177,7 @@ impl Zone {
 
 define_topics! {
     // Window management list (sticky)
-    Apps(Vec<App>),
+    Windows(Vec<Window>),
     LaunchApp(LaunchAppPayload),
     LaunchResult(LaunchResultPayload),
     UserAppExited(UserAppExitedPayload),
@@ -238,18 +238,18 @@ mod tests {
 
     #[test]
     fn payload_topic_roundtrip() {
-        let apps = vec![App {
+        let windows = vec![Window {
             window_id: 1,
             app_id: "zen".into(),
             title: "Browser".into(),
             pid: None,
         }];
-        let msg = Topic::Apps(apps).to_message();
-        assert_eq!(msg.topic, "Apps");
+        let msg = Topic::Windows(windows).to_message();
+        assert_eq!(msg.topic, "Windows");
 
         let parsed = Topic::parse(&msg).unwrap();
         match parsed {
-            Topic::Apps(decoded) => {
+            Topic::Windows(decoded) => {
                 assert_eq!(decoded.len(), 1);
                 assert_eq!(decoded[0].app_id, "zen");
                 assert_eq!(decoded[0].window_id, 1);
@@ -271,9 +271,9 @@ mod tests {
     }
 
     #[test]
-    fn topic_kind_all_includes_shutdown_and_apps() {
+    fn topic_kind_all_includes_shutdown_and_windows() {
         assert!(TopicKind::ALL.iter().any(|k| k.as_str() == "Shutdown"));
-        assert!(TopicKind::ALL.iter().any(|k| k.as_str() == "Apps"));
+        assert!(TopicKind::ALL.iter().any(|k| k.as_str() == "Windows"));
     }
 
     #[test]

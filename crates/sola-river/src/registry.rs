@@ -5,7 +5,7 @@
 //! can be unit-tested without a compositor.
 use std::collections::HashMap;
 
-use sola_bus::topics::App;
+use sola_bus::topics::Window;
 use wayland_client::backend::ObjectId;
 
 use crate::protocol::river_xkb_bindings_v1::river_xkb_binding_v1::RiverXkbBindingV1;
@@ -95,11 +95,11 @@ impl WindowRegistry {
         self.by_id.remove(&id);
     }
 
-    /// Snapshot as the bus `App` list, skipping entries that haven't yet
+    /// Snapshot as the bus `Window` list, skipping entries that haven't yet
     /// received both their `app_id` and `title` events — those are still
     /// in flight and would produce spurious sticky transitions.
-    pub fn as_apps(&self) -> Vec<App> {
-        let mut v: Vec<App> = self
+    pub fn as_windows(&self) -> Vec<Window> {
+        let mut v: Vec<Window> = self
             .by_id
             .iter()
             .filter_map(|(id, e)| {
@@ -107,7 +107,7 @@ impl WindowRegistry {
                 else {
                     return None;
                 };
-                Some(App {
+                Some(Window {
                     window_id: *id,
                     app_id,
                     title,
@@ -164,20 +164,20 @@ mod tests {
     }
 
     #[test]
-    fn as_apps_returns_only_fully_populated() {
+    fn as_windows_returns_only_fully_populated() {
         let mut r = WindowRegistry::new();
         let a = r.mint();
         r.set_app_id(a, "zen".into());
         r.set_title(a, "Browser".into());
         let _b = r.mint();
-        let apps = r.as_apps();
+        let apps = r.as_windows();
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].window_id, a);
         assert_eq!(apps[0].app_id, "zen");
     }
 
     #[test]
-    fn as_apps_sorted_by_id() {
+    fn as_windows_sorted_by_id() {
         let mut r = WindowRegistry::new();
         let a = r.mint();
         let b = r.mint();
@@ -185,7 +185,7 @@ mod tests {
         r.set_title(b, "B".into());
         r.set_app_id(a, "a".into());
         r.set_title(a, "A".into());
-        let apps = r.as_apps();
+        let apps = r.as_windows();
         assert_eq!(apps[0].window_id, a);
         assert_eq!(apps[1].window_id, b);
     }

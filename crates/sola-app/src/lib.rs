@@ -219,7 +219,7 @@ pub fn run<A: SolaApp>() {
         let mut subscription_kinds = registry.kinds();
         for kind in [
             TopicKind::Shutdown,
-            TopicKind::Apps,
+            TopicKind::Windows,
             TopicKind::Copy,
             TopicKind::Paste,
         ] {
@@ -302,7 +302,7 @@ pub fn run<A: SolaApp>() {
                     // handled by the framework before the app sees them
                     // (or in addition to — apps still get registry dispatch).
                     match &topic {
-                        Topic::Apps(apps) => {
+                        Topic::Windows(apps) => {
                             let mut rt = runtime.borrow_mut();
                             rt.ctx.known_windows = apps.clone();
                         }

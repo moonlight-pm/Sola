@@ -9,10 +9,10 @@ use wayland_client::{Proxy, QueueHandle};
 use crate::client::AppData;
 use crate::registry::chord_diff;
 
-pub fn emit_apps(state: &mut AppData) {
-    let apps = state.registry.as_apps();
-    debug!(count = apps.len(), "emitting Apps");
-    state.bus.emit_sticky(Topic::Apps(apps));
+pub fn emit_windows(state: &mut AppData) {
+    let windows = state.registry.as_windows();
+    debug!(count = windows.len(), "emitting Windows");
+    state.bus.emit_sticky(Topic::Windows(windows));
 }
 
 /// Apply a chord-set update from `pending.chords`. MUST be called

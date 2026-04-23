@@ -34,7 +34,7 @@ pub struct Message {
     /// Identifies the emitting app. Set automatically by BusClient from
     /// its app_id. Also used as the dedup key for sticky messages:
     /// stickies are keyed by (topic, source).
-    #[serde(default, alias = "sticky_tag")]
+    #[serde(default)]
     pub source: String,
 }
 

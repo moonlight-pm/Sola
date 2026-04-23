@@ -4,7 +4,7 @@ use serde_json::Value;
 use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
-    App, AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
+    AppMenuPayload, Window, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
     LaunchResultPayload, MenuDefinition, MenuItem, MouseClickedPayload,
     MouseEnteredPayload, RegisteredChord, Topic, TopicKind, UserAppExitedPayload,
 };
@@ -49,7 +49,7 @@ pub struct ShellApp {
     /// Most-recently-focused window per app, for switcher restore.
     pub mru_window_by_app: HashMap<String, u32>,
     /// All known windows from sola-river, keyed by window_id.
-    pub known_windows: Vec<App>,
+    pub known_windows: Vec<Window>,
     /// Maps (app_id, title) to window_id for lookup.
     pub window_id_by_key: HashMap<(String, String), u32>,
     pub applications: ApplicationsConfig,
@@ -149,7 +149,7 @@ impl SolaApp for ShellApp {
 
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
         // Default CloseApp handler is inherited from the trait — don't re-register.
-        bus.on(TopicKind::Apps, Self::on_apps);
+        bus.on(TopicKind::Windows, Self::on_windows);
         bus.on(TopicKind::SetAppMenu, Self::on_set_app_menu);
         bus.on(TopicKind::OutputGeometry, Self::on_output_geometry);
         bus.on(TopicKind::MouseEntered, Self::on_mouse_entered);
@@ -249,9 +249,9 @@ impl SolaApp for ShellApp {
 }
 
 impl ShellApp {
-    fn on_apps(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::Apps(apps) = topic else { return };
-        self.handle_apps_update(apps.clone(), ctx);
+    fn on_windows(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::Windows(windows) = topic else { return };
+        self.handle_windows_update(windows.clone(), ctx);
         if self.switcher.active {
             let json = self.switcher_apps_json();
             self.windows.switcher.eval_js(&format!(
@@ -699,16 +699,16 @@ impl ShellApp {
         }
     }
 
-    /// Handle new/removed windows from sola-river's Apps list.
-    pub fn handle_apps_update(&mut self, apps: Vec<App>, ctx: &mut AppCtx) {
-        tracing::info!(count = apps.len(), "shell received Apps");
+    /// Handle new/removed windows from sola-river.
+    pub fn handle_windows_update(&mut self, windows: Vec<Window>, ctx: &mut AppCtx) {
+        tracing::info!(count = windows.len(), "shell received Windows");
         let old_app_ids: HashSet<String> = self
             .known_windows
             .iter()
             .filter(|w| w.app_id != Self::APP_ID)
             .map(|w| w.app_id.clone())
             .collect();
-        let new_app_ids: HashSet<String> = apps
+        let new_app_ids: HashSet<String> = windows
             .iter()
             .filter(|w| w.app_id != Self::APP_ID)
             .map(|w| w.app_id.clone())
@@ -728,12 +728,12 @@ impl ShellApp {
 
         // Rebuild lookup map.
         self.window_id_by_key.clear();
-        for w in &apps {
+        for w in &windows {
             self.window_id_by_key
                 .insert((w.app_id.clone(), w.title.clone()), w.window_id);
         }
 
-        self.known_windows = apps;
+        self.known_windows = windows;
 
         // Rebuild switcher apps (unique app_ids, excluding shell).
         self.switcher.apps = {

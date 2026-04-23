@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use sola_app::config::{JsonConfig, JsonConfigIn};
 use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 use sola_bus::topics::{
-    App as BusApp, AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
+    Window as BusWindow, AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
 };
 use sola_core::KeyCode;
 use sola_core::applications::{Application, ApplicationsConfig, command_exists};
@@ -70,9 +70,9 @@ struct SettingsApp {
     applications: ApplicationsConfig,
     mail: MailConfig,
     main_window: WindowHandle,
-    /// Latest `Apps` snapshot from the bus. Used to compute the list of
+    /// Latest `Windows` snapshot from the bus. Used to compute the list of
     /// running-but-not-configured candidates for the UI.
-    running: Vec<BusApp>,
+    running: Vec<BusWindow>,
 }
 
 impl SolaApp for SettingsApp {
@@ -125,7 +125,7 @@ impl SolaApp for SettingsApp {
 
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
         bus.on(TopicKind::CloseApp, Self::on_close_app);
-        bus.on(TopicKind::Apps, Self::on_apps);
+        bus.on(TopicKind::Windows, Self::on_windows);
         bus.on(TopicKind::MenuAction, Self::on_menu_action);
     }
 
@@ -270,9 +270,9 @@ impl SettingsApp {
         }
     }
 
-    fn on_apps(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::Apps(apps) = topic else { return };
-        self.running = apps.clone();
+    fn on_windows(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        let Topic::Windows(windows) = topic else { return };
+        self.running = windows.clone();
         self.main_window.send_to_js(&json!({
             "event": "state",
             "state": state_payload(&self.applications, &self.running, &self.mail),
@@ -286,7 +286,7 @@ impl SettingsApp {
 
 /// Full view the JS side renders from: configured applications (with
 /// missing/candidate hints) and the mail config.
-fn state_payload(cfg: &ApplicationsConfig, running: &[BusApp], mail: &MailConfig) -> Value {
+fn state_payload(cfg: &ApplicationsConfig, running: &[BusWindow], mail: &MailConfig) -> Value {
     let missing: Vec<&str> = cfg
         .apps
         .iter()

@@ -122,7 +122,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             _ => {}
         }
         if apps_dirty {
-            crate::translator::emit_apps(state);
+            crate::translator::emit_windows(state);
         }
     }
 }

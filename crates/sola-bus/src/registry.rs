@@ -86,10 +86,10 @@ mod tests {
     fn kinds_reflects_registered() {
         let mut reg: BusRegistry<TestApp, TestCtx> = BusRegistry::new();
         reg.on(TopicKind::CloseApp, stub);
-        reg.on(TopicKind::Apps, stub);
+        reg.on(TopicKind::Windows, stub);
         let mut kinds = reg.kinds();
         kinds.sort_by_key(|k| k.as_str());
-        let mut expected = vec![TopicKind::CloseApp, TopicKind::Apps];
+        let mut expected = vec![TopicKind::CloseApp, TopicKind::Windows];
         expected.sort_by_key(|k| k.as_str());
         assert_eq!(kinds, expected);
     }

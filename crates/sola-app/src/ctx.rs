@@ -6,7 +6,7 @@ use gtk4::prelude::*;
 use webkit6::prelude::*;
 
 use sola_bus::BusClient;
-use sola_bus::topics::{App, Topic};
+use sola_bus::topics::{Topic, Window};
 
 use crate::assets;
 use crate::webview;
@@ -19,9 +19,9 @@ pub struct AppCtx {
     pub(crate) gtk_app: gtk4::Application,
     pub(crate) windows: Vec<WindowHandle>,
     pub(crate) app_id: &'static str,
-    /// Latest `Apps` sticky snapshot, used by the framework to correlate
+    /// Latest `Windows` sticky snapshot, used by the framework to correlate
     /// window_ids in bus topics (e.g. Copy/Paste) back to a `WindowHandle`.
-    pub(crate) known_windows: Vec<App>,
+    pub(crate) known_windows: Vec<Window>,
 }
 
 impl AppCtx {
