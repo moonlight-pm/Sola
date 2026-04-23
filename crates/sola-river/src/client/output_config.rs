@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 
 use tracing::{info, warn};
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
 use wayland_client::backend::ObjectId;
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
 
 use crate::client::AppData;
 use crate::protocol::wlr_output_management_unstable_v1::{
@@ -144,9 +144,7 @@ pub fn reconcile(state: &mut AppData, qh: &QueueHandle<AppData>) {
         let cfg_head = config.enable_head(&head_proxy, qh, ());
         if plan.needs_change {
             if let Some(mode_id) = plan.target_mode {
-                if let Some(mode_proxy) =
-                    state.output_config.mode_proxies.get(&mode_id).cloned()
-                {
+                if let Some(mode_proxy) = state.output_config.mode_proxies.get(&mode_id).cloned() {
                     cfg_head.set_mode(&mode_proxy);
                 }
             }
@@ -170,12 +168,7 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for AppData {
         match event {
             zwlr_output_manager_v1::Event::Head { head } => {
                 let id = head.id();
-                state
-                    .output_config
-                    .heads
-                    .entry(id)
-                    .or_default()
-                    .proxy = Some(head);
+                state.output_config.heads.entry(id).or_default().proxy = Some(head);
             }
             zwlr_output_manager_v1::Event::Done { serial } => {
                 state.output_config.last_serial = serial;
@@ -202,7 +195,11 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for AppData {
         _: &QueueHandle<Self>,
     ) {
         let head_id = head.id();
-        let entry = state.output_config.heads.entry(head_id.clone()).or_default();
+        let entry = state
+            .output_config
+            .heads
+            .entry(head_id.clone())
+            .or_default();
         match event {
             zwlr_output_head_v1::Event::Name { name } => {
                 entry.name = name;

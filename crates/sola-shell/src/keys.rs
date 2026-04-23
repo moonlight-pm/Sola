@@ -12,9 +12,7 @@
 //!   - Preserves Meta-release closes switcher by registering Meta+Tab and
 //!     acting on its `ChordReleased` event.
 use sola_app::SolaApp;
-use sola_bus::topics::{
-    ChordEvent, EditRequest, FocusTarget, FrameUpdate, RegisteredChord, Topic,
-};
+use sola_bus::topics::{ChordEvent, EditRequest, FocusTarget, FrameUpdate, RegisteredChord, Topic};
 use sola_core::{KeyChord, KeyCode};
 
 use crate::app::ShellApp;
@@ -71,10 +69,18 @@ pub fn to_registered_alt(chord: &KeyChord) -> Option<RegisteredChord> {
 
 fn river_modifiers(c: &KeyChord) -> u32 {
     let mut m = 0u32;
-    if c.shift { m |= MOD_SHIFT; }
-    if c.ctrl { m |= MOD_CTRL; }
-    if c.alt { m |= MOD_ALT; }
-    if c.meta { m |= MOD_SUPER; }
+    if c.shift {
+        m |= MOD_SHIFT;
+    }
+    if c.ctrl {
+        m |= MOD_CTRL;
+    }
+    if c.alt {
+        m |= MOD_ALT;
+    }
+    if c.meta {
+        m |= MOD_SUPER;
+    }
     m
 }
 
@@ -217,11 +223,7 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
 }
 
 /// Dispatch a chord event through the shell's action table.
-pub fn handle_chord(
-    app: &mut ShellApp,
-    ctx: &mut sola_app::AppCtx,
-    evt: ChordEvent,
-) {
+pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEvent) {
     let Some(chord) = from_chord_event(&evt) else {
         tracing::debug!(
             keysym = evt.keysym,
@@ -384,7 +386,10 @@ pub fn handle_chord(
     }
 
     // Zone snapping (Meta+Numpad).
-    if let Some(frame) = app.zoning.handle_key(chord.keycode.raw(), app.focused_window_id) {
+    if let Some(frame) = app
+        .zoning
+        .handle_key(chord.keycode.raw(), app.focused_window_id)
+    {
         ctx.emit(Topic::Frame(frame));
         if let Some(window_id) = app.focused_window_id {
             if let Some(zone) = app.zoning.current_zone_for_window(window_id) {
@@ -410,11 +415,7 @@ pub fn handle_chord(
 /// Entry point invoked on `Topic::ChordReleased`. Mirrors Meta-release
 /// behavior from the old GTK path: while the switcher is active, the
 /// user confirms by letting go of the Super key.
-pub fn handle_chord_released(
-    app: &mut ShellApp,
-    ctx: &mut sola_app::AppCtx,
-    evt: ChordEvent,
-) {
+pub fn handle_chord_released(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEvent) {
     // The bare Super_L binding (keysym=Super_L, modifiers=0) fires its
     // released event exactly when the user lifts the physical Super key.
     // That's when we commit the switcher selection.
@@ -443,4 +444,3 @@ fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
     }
     app.emit_composition(ctx);
 }
-

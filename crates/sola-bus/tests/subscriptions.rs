@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use sola_bus::topics::{LaunchAppPayload, Topic, TopicKind};
 use sola_bus::BusClient;
+use sola_bus::topics::{LaunchAppPayload, Topic, TopicKind};
 
 fn start_bus(path: PathBuf) -> std::process::Child {
     let exe = env!("CARGO_BIN_EXE_sola-bus");

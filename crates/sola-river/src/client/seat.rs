@@ -22,9 +22,9 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
             Event::PointerEnter { window } => {
                 if let Some(&id) = state.windows_by_object.get(&window.id()) {
                     debug!(window_id = id, "pointer_enter");
-                    state.bus.emit(Topic::MouseEntered(MouseEnteredPayload {
-                        window_id: id,
-                    }));
+                    state
+                        .bus
+                        .emit(Topic::MouseEntered(MouseEnteredPayload { window_id: id }));
                 }
             }
             Event::PointerLeave => {
@@ -34,9 +34,9 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
             Event::WindowInteraction { window } => {
                 if let Some(&id) = state.windows_by_object.get(&window.id()) {
                     debug!(window_id = id, "window_interaction");
-                    state.bus.emit(Topic::MouseClicked(MouseClickedPayload {
-                        window_id: id,
-                    }));
+                    state
+                        .bus
+                        .emit(Topic::MouseClicked(MouseClickedPayload { window_id: id }));
                 }
             }
             _ => {}

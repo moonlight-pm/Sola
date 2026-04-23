@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::agent;
 use crate::meta::MetaStore;
@@ -61,7 +61,10 @@ impl AgentHandler {
             .rename_session(&session_id, folder_name.clone())
             .await;
 
-        if let Err(e) = self.meta_store.create(&session_id, &expanded, Some(&folder_name)) {
+        if let Err(e) = self
+            .meta_store
+            .create(&session_id, &expanded, Some(&folder_name))
+        {
             tracing::warn!("Failed to save new session: {:#}", e);
         }
 
@@ -84,7 +87,10 @@ impl AgentHandler {
             return json!({ "error": "text is required" });
         };
         let model = args.get("model").and_then(|v| v.as_str()).unwrap_or("opus");
-        let effort = args.get("effort").and_then(|v| v.as_str()).unwrap_or("high");
+        let effort = args
+            .get("effort")
+            .and_then(|v| v.as_str())
+            .unwrap_or("high");
 
         let working_dir = {
             let sessions = self.session_mgr.sessions.read().await;
@@ -175,7 +181,10 @@ impl AgentHandler {
     }
 
     async fn cmd_list_mcps(&self, args: &Value) -> Value {
-        let working_dir = args.get("working_dir").and_then(|v| v.as_str()).unwrap_or(".");
+        let working_dir = args
+            .get("working_dir")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
         let claude_bin = match sola_core::process::resolve_binary("claude") {
             Ok(bin) => bin,
             Err(e) => return json!({ "error": format!("{e}") }),
@@ -193,7 +202,9 @@ impl AgentHandler {
         let mut servers = Vec::new();
         for line in text.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with("Checking") { continue; }
+            if line.is_empty() || line.starts_with("Checking") {
+                continue;
+            }
             // Format: "name: command - status"
             let (name, rest) = match line.split_once(':') {
                 Some(pair) => pair,
@@ -204,7 +215,9 @@ impl AgentHandler {
                 Some(pair) => (pair.0.trim(), pair.1.trim()),
                 None => (rest.trim(), ""),
             };
-            if name == "claude.ai Google Drive" { continue; }
+            if name == "claude.ai Google Drive" {
+                continue;
+            }
             let connected = status.contains("Connected");
             let needs_auth = status.contains("authentication");
             servers.push(json!({
@@ -246,12 +259,17 @@ impl AgentHandler {
         // background on startup and streams updates via `session_updated`.
         let metas = self.meta_store.list_all();
         let active = crate::active::detect();
-        tracing::info!(count = metas.len(), active = active.len(), "list_conversations");
+        tracing::info!(
+            count = metas.len(),
+            active = active.len(),
+            "list_conversations"
+        );
         let conversations: Vec<Value> = metas
             .iter()
             .map(|m| {
                 // Peek at first user message from JSONL for the preview
-                let first_prompt = storage::load_history(&m.session_id).ok()
+                let first_prompt = storage::load_history(&m.session_id)
+                    .ok()
                     .and_then(|msgs| {
                         msgs.iter()
                             .find(|msg| msg.get("role").and_then(|v| v.as_str()) == Some("user"))
@@ -285,12 +303,15 @@ impl AgentHandler {
         };
 
         let dir = std::path::PathBuf::from(&meta.working_dir);
-        self.session_mgr.sessions.write().await.insert(
-            session_id.to_string(),
-            crate::session::Session::new(dir),
-        );
+        self.session_mgr
+            .sessions
+            .write()
+            .await
+            .insert(session_id.to_string(), crate::session::Session::new(dir));
         if let Some(ref name) = meta.name {
-            self.session_mgr.rename_session(session_id, name.clone()).await;
+            self.session_mgr
+                .rename_session(session_id, name.clone())
+                .await;
         }
 
         self.send_event(json!({
@@ -305,10 +326,13 @@ impl AgentHandler {
         // (including tool_use, tool_result, thinking) so the frontend can
         // reconstruct the interleaved presentation.
         let history = storage::load_history(session_id).unwrap_or_default();
-        let messages: Vec<Value> = history.iter().map(|m: &Value| {
-            let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("user");
-            json!({ "role": role, "content": m.get("content").cloned().unwrap_or(json!("")) })
-        }).collect();
+        let messages: Vec<Value> = history
+            .iter()
+            .map(|m: &Value| {
+                let role = m.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+                json!({ "role": role, "content": m.get("content").cloned().unwrap_or(json!("")) })
+            })
+            .collect();
 
         self.send_event(json!({
             "event": "session_loaded",
@@ -330,7 +354,8 @@ fn extract_text_content(msg: &Value) -> String {
             return text.to_string();
         }
         if let Some(blocks) = content.as_array() {
-            return blocks.iter()
+            return blocks
+                .iter()
                 .filter_map(|b| {
                     if b.get("type").and_then(|v| v.as_str()) == Some("text") {
                         b.get("text").and_then(|v| v.as_str()).map(String::from)

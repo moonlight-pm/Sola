@@ -159,7 +159,10 @@ where
                 Err(_) => return,
             };
 
-            let Some(name) = event_kind_matches(&event).then(|| predicate(&event)).flatten() else {
+            let Some(name) = event_kind_matches(&event)
+                .then(|| predicate(&event))
+                .flatten()
+            else {
                 continue;
             };
 

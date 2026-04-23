@@ -143,7 +143,10 @@ mod tests {
             entries: entries.iter().map(|e| e.persisted()).collect(),
         };
         let json = serde_json::to_string(&persisted).unwrap();
-        assert!(!json.contains("window_id"), "window_id leaked into persisted JSON: {json}");
+        assert!(
+            !json.contains("window_id"),
+            "window_id leaked into persisted JSON: {json}"
+        );
         assert!(!json.contains("42"));
     }
 }

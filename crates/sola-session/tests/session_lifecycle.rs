@@ -65,11 +65,13 @@ fn spawn_and_close_sleep() {
     let mut client = BusClient::new();
     client.set_app_id("test");
     client.connect_to(&socket).unwrap();
-    client.subscribe(&[
-        TopicKind::LaunchResult,
-        TopicKind::UserAppExited,
-        TopicKind::ClientConnected,
-    ]).unwrap();
+    client
+        .subscribe(&[
+            TopicKind::LaunchResult,
+            TopicKind::UserAppExited,
+            TopicKind::ClientConnected,
+        ])
+        .unwrap();
 
     // Wait for sola-session to be rostered.
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -87,10 +89,12 @@ fn spawn_and_close_sleep() {
     assert!(session_ready, "sola-session never identified on the bus");
 
     // Launch a long-running sleep.
-    client.emit(Topic::LaunchApp(LaunchAppPayload {
-        app_id: "sleep".into(),
-        command: "sleep 60".into(),
-    })).unwrap();
+    client
+        .emit(Topic::LaunchApp(LaunchAppPayload {
+            app_id: "sleep".into(),
+            command: "sleep 60".into(),
+        }))
+        .unwrap();
 
     // Expect LaunchResult ok.
     let deadline = Instant::now() + Duration::from_secs(3);

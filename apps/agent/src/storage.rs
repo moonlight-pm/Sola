@@ -34,8 +34,12 @@ pub struct SessionMeta {
     pub metrics_schema: u8,
 }
 
-fn default_model() -> String { "opus".into() }
-fn default_effort() -> String { "high".into() }
+fn default_model() -> String {
+    "opus".into()
+}
+fn default_effort() -> String {
+    "high".into()
+}
 
 fn sessions_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
@@ -58,8 +62,7 @@ fn raw_path(session_id: &str) -> PathBuf {
 /// Save a full SessionMeta struct directly.
 pub fn save_meta_full(meta: &SessionMeta) -> Result<()> {
     let dir = sessions_dir();
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("Failed to create {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
     let json = serde_json::to_string_pretty(meta)?;
     std::fs::write(meta_path(&meta.session_id), json)?;
     Ok(())
@@ -102,13 +105,15 @@ pub fn append_message(session_id: &str, message: &Value) -> Result<()> {
 /// Load conversation history from JSONL.
 pub fn load_history(session_id: &str) -> Result<Vec<Value>> {
     let path = history_path(session_id);
-    let file = std::fs::File::open(&path)
-        .with_context(|| format!("Failed to open {}", path.display()))?;
+    let file =
+        std::fs::File::open(&path).with_context(|| format!("Failed to open {}", path.display()))?;
     let reader = std::io::BufReader::new(file);
     let mut messages = Vec::new();
     for line in reader.lines() {
         let line = line?;
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         let msg: Value = serde_json::from_str(&line)?;
         messages.push(msg);
     }
@@ -117,7 +122,11 @@ pub fn load_history(session_id: &str) -> Result<Vec<Value>> {
 
 /// Delete session metadata and history files from disk.
 pub fn delete_session(session_id: &str) -> Result<()> {
-    for path in [meta_path(session_id), history_path(session_id), raw_path(session_id)] {
+    for path in [
+        meta_path(session_id),
+        history_path(session_id),
+        raw_path(session_id),
+    ] {
         if path.exists() {
             std::fs::remove_file(&path)
                 .with_context(|| format!("Failed to remove {}", path.display()))?;
@@ -152,4 +161,3 @@ pub fn list_all() -> Vec<SessionMeta> {
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     sessions
 }
-

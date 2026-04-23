@@ -36,7 +36,10 @@ mod tests {
 
     #[test]
     fn uri_is_well_formed() {
-        assert_eq!(uri("lucide", "terminal"), "sola-assets://icons/lucide/terminal.svg");
+        assert_eq!(
+            uri("lucide", "terminal"),
+            "sola-assets://icons/lucide/terminal.svg"
+        );
     }
 
     #[test]

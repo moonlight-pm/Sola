@@ -103,8 +103,7 @@ impl WindowRegistry {
             .by_id
             .iter()
             .filter_map(|(id, e)| {
-                let (Some(app_id), Some(title)) = (e.app_id.clone(), e.title.clone())
-                else {
+                let (Some(app_id), Some(title)) = (e.app_id.clone(), e.title.clone()) else {
                     return None;
                 };
                 Some(Window {
@@ -122,10 +121,7 @@ impl WindowRegistry {
 
 /// Diff two `(keysym, modifiers)` sets. Returns `(added, removed)`, both
 /// sorted for determinism.
-pub fn chord_diff(
-    old: &[(u32, u32)],
-    new: &[(u32, u32)],
-) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
+pub fn chord_diff(old: &[(u32, u32)], new: &[(u32, u32)]) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
     use std::collections::HashSet;
     let old_set: HashSet<(u32, u32)> = old.iter().copied().collect();
     let new_set: HashSet<(u32, u32)> = new.iter().copied().collect();

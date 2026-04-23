@@ -104,9 +104,8 @@ impl ZoningState {
         // are zoned manually each session.
         if app_id.starts_with("sola-") {
             self.app_zone_config.insert(app_id, zone);
-            self.config_applied.insert(
-                self.focused_app_id.clone().unwrap_or_default(),
-            );
+            self.config_applied
+                .insert(self.focused_app_id.clone().unwrap_or_default());
             self.save_session();
         }
 

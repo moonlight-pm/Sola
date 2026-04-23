@@ -5,10 +5,8 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_chi
 
 use crate::client::AppData;
 use crate::protocol::river_window_management_v1::{
-    river_output_v1::RiverOutputV1,
-    river_seat_v1::RiverSeatV1,
-    river_window_manager_v1::RiverWindowManagerV1,
-    river_window_v1::RiverWindowV1,
+    river_output_v1::RiverOutputV1, river_seat_v1::RiverSeatV1,
+    river_window_manager_v1::RiverWindowManagerV1, river_window_v1::RiverWindowV1,
 };
 
 // Opcodes of the events on `river_window_manager_v1` that create new
@@ -87,11 +85,15 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
         let mut apps_dirty = false;
         match event {
             Event::AppId { app_id } => {
-                state.registry.set_app_id(window_id, app_id.unwrap_or_default());
+                state
+                    .registry
+                    .set_app_id(window_id, app_id.unwrap_or_default());
                 apps_dirty = true;
             }
             Event::Title { title } => {
-                state.registry.set_title(window_id, title.unwrap_or_default());
+                state
+                    .registry
+                    .set_title(window_id, title.unwrap_or_default());
                 apps_dirty = true;
             }
             Event::Closed => {

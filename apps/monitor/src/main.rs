@@ -60,15 +60,13 @@ impl SolaApp for MonitorApp {
             app_id: Self::APP_ID.into(),
             menus: vec![MenuDefinition {
                 label: "Monitor".into(),
-                items: vec![
-                    MenuItem::Action {
-                        id: "quit".into(),
-                        label: "Quit Monitor".into(),
-                        shortcut: Some(KeyCode::Q.meta()),
-                        disabled: false,
-                        checked: false,
-                    },
-                ],
+                items: vec![MenuItem::Action {
+                    id: "quit".into(),
+                    label: "Quit Monitor".into(),
+                    shortcut: Some(KeyCode::Q.meta()),
+                    disabled: false,
+                    checked: false,
+                }],
             }],
         }));
 
@@ -92,7 +90,9 @@ impl SolaApp for MonitorApp {
     ) {
         if cmd == "save_sidebar_width" {
             if let Some(w) = args.get("width").and_then(|v| v.as_i64()) {
-                let config = MonitorConfig { sidebar_width: w as i32 };
+                let config = MonitorConfig {
+                    sidebar_width: w as i32,
+                };
                 config.save();
             }
         }

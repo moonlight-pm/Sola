@@ -69,10 +69,7 @@ fn pull_pack(name: &str, pack: &Pack) {
     run("git", &args);
 
     if !pack.rev.is_empty() {
-        run(
-            "git",
-            &["-C", tmp_str, "checkout", "--quiet", &pack.rev],
-        );
+        run("git", &["-C", tmp_str, "checkout", "--quiet", &pack.rev]);
     }
 
     let src = tmp.join(&pack.src_dir);
@@ -148,10 +145,13 @@ fn copy_svgs(src: &Path, dest: &Path) -> usize {
 }
 
 fn run(program: &str, args: &[&str]) {
-    let status = Command::new(program).args(args).status().unwrap_or_else(|e| {
-        eprintln!("failed to run {program}: {e}");
-        exit(1);
-    });
+    let status = Command::new(program)
+        .args(args)
+        .status()
+        .unwrap_or_else(|e| {
+            eprintln!("failed to run {program}: {e}");
+            exit(1);
+        });
     if !status.success() {
         eprintln!(
             "{program} failed with exit code {}",

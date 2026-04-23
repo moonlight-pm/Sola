@@ -16,7 +16,11 @@ pub fn install_assets() -> Result<(), String> {
     run(
         "sudo",
         &[
-            "rsync", "-a", "--checksum", "--delete", ASSETS_SRC,
+            "rsync",
+            "-a",
+            "--checksum",
+            "--delete",
+            ASSETS_SRC,
             &format!("{SHARE_DIR}/"),
         ],
     )

@@ -22,9 +22,11 @@ impl ConfigValue {
             toml::Value::Float(f) => Self::Float(*f),
             toml::Value::Boolean(b) => Self::Bool(*b),
             toml::Value::Array(a) => Self::Array(a.iter().map(Self::from_toml).collect()),
-            toml::Value::Table(t) => {
-                Self::Table(t.iter().map(|(k, v)| (k.clone(), Self::from_toml(v))).collect())
-            }
+            toml::Value::Table(t) => Self::Table(
+                t.iter()
+                    .map(|(k, v)| (k.clone(), Self::from_toml(v)))
+                    .collect(),
+            ),
             toml::Value::Datetime(d) => Self::String(d.to_string()),
         }
     }

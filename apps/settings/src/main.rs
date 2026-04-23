@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 use sola_app::config::{JsonConfig, JsonConfigIn};
 use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 use sola_bus::topics::{
-    Window as BusWindow, AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
+    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
+    Window as BusWindow,
 };
 use sola_core::KeyCode;
 use sola_core::applications::{Application, ApplicationsConfig, command_exists};
@@ -84,8 +85,8 @@ impl SolaApp for SettingsApp {
             applications.save();
         }
         let mail = MailConfig::load();
-        let initial_state = serde_json::to_string(&state_payload(&applications, &[], &mail))
-            .unwrap_or_default();
+        let initial_state =
+            serde_json::to_string(&state_payload(&applications, &[], &mail)).unwrap_or_default();
 
         let main_window = ctx.add_window(WindowConfig {
             title: "Settings".into(),
@@ -232,10 +233,7 @@ impl SettingsApp {
             return json!({ "error": "at least one condition is required" });
         }
         let dest = if args.action == "move" {
-            args.dest
-                .as_ref()
-                .filter(|d| !d.trim().is_empty())
-                .cloned()
+            args.dest.as_ref().filter(|d| !d.trim().is_empty()).cloned()
         } else {
             None
         };
@@ -271,7 +269,9 @@ impl SettingsApp {
     }
 
     fn on_windows(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::Windows(windows) = topic else { return };
+        let Topic::Windows(windows) = topic else {
+            return;
+        };
         self.running = windows.clone();
         self.main_window.send_to_js(&json!({
             "event": "state",

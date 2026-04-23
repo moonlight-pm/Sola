@@ -4,9 +4,9 @@ use serde_json::Value;
 use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
-    AppMenuPayload, Window, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
-    LaunchResultPayload, MenuDefinition, MenuItem, MouseClickedPayload,
-    MouseEnteredPayload, RegisteredChord, Topic, TopicKind, UserAppExitedPayload,
+    AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord, LaunchResultPayload,
+    MenuDefinition, MenuItem, MouseClickedPayload, MouseEnteredPayload, RegisteredChord, Topic,
+    TopicKind, UserAppExitedPayload, Window,
 };
 use sola_core::KeyCode;
 use sola_core::applications::{Application, ApplicationsConfig};
@@ -202,13 +202,9 @@ impl SolaApp for ShellApp {
             ("launcher", "nav") => {
                 let max = self.launcher.filtered_ids.len().saturating_sub(1);
                 let cur = self.launcher.selected;
-                let new_sel = if let Some(idx) =
-                    args.get("index").and_then(|v| v.as_u64())
-                {
+                let new_sel = if let Some(idx) = args.get("index").and_then(|v| v.as_u64()) {
                     (idx as usize).min(max)
-                } else if let Some(dir) =
-                    args.get("dir").and_then(|v| v.as_str())
-                {
+                } else if let Some(dir) = args.get("dir").and_then(|v| v.as_str()) {
                     match dir {
                         "up" => cur.saturating_sub(1),
                         "down" => (cur + 1).min(max),
@@ -250,7 +246,9 @@ impl SolaApp for ShellApp {
 
 impl ShellApp {
     fn on_windows(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::Windows(windows) = topic else { return };
+        let Topic::Windows(windows) = topic else {
+            return;
+        };
         self.handle_windows_update(windows.clone(), ctx);
         if self.switcher.active {
             let json = self.switcher_apps_json();
@@ -262,7 +260,9 @@ impl ShellApp {
     }
 
     fn on_set_app_menu(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::SetAppMenu(payload) = topic else { return };
+        let Topic::SetAppMenu(payload) = topic else {
+            return;
+        };
         self.menus.set_menu(payload.clone());
 
         self.emit_registered_chords(ctx);
@@ -273,8 +273,7 @@ impl ShellApp {
                 .first()
                 .map(|d| d.label.as_str())
                 .unwrap_or(&payload.app_id);
-            let menu_labels: Vec<String> =
-                payload.menus.iter().map(|d| d.label.clone()).collect();
+            let menu_labels: Vec<String> = payload.menus.iter().map(|d| d.label.clone()).collect();
             self.windows.menubar.send_to_js(&serde_json::json!({
                 "event": "focus",
                 "app_name": app_name,
@@ -284,19 +283,25 @@ impl ShellApp {
     }
 
     fn on_output_geometry(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::OutputGeometry(geo) = topic else { return };
+        let Topic::OutputGeometry(geo) = topic else {
+            return;
+        };
         self.zoning.set_output_size(geo);
         self.emit_all_frames(ctx);
         self.emit_composition(ctx);
     }
 
     fn on_mouse_entered(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::MouseEntered(MouseEnteredPayload { window_id }) = topic else { return };
+        let Topic::MouseEntered(MouseEnteredPayload { window_id }) = topic else {
+            return;
+        };
         self.focus_window_from_pointer(*window_id, ctx);
     }
 
     fn on_mouse_clicked(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::MouseClicked(MouseClickedPayload { window_id }) = topic else { return };
+        let Topic::MouseClicked(MouseClickedPayload { window_id }) = topic else {
+            return;
+        };
         self.focus_window_from_pointer(*window_id, ctx);
     }
 
@@ -308,13 +313,22 @@ impl ShellApp {
     }
 
     fn on_chord_released(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::ChordReleased(evt) = topic else { return };
+        let Topic::ChordReleased(evt) = topic else {
+            return;
+        };
         crate::keys::handle_chord_released(self, ctx, evt.clone());
     }
 
     fn on_launch_result(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::LaunchResult(LaunchResultPayload { app_id: _, command, ok, error }) = topic
-            else { return };
+        let Topic::LaunchResult(LaunchResultPayload {
+            app_id: _,
+            command,
+            ok,
+            error,
+        }) = topic
+        else {
+            return;
+        };
         if *ok {
             tracing::info!(command = %command, "LaunchResult ok");
         } else {
@@ -334,7 +348,10 @@ impl ShellApp {
             command,
             code,
             signal,
-        }) = topic else { return };
+        }) = topic
+        else {
+            return;
+        };
         let detail = match (code, signal) {
             (Some(c), _) => format!("exit {c}"),
             (_, Some(s)) => format!("signal {s}"),
@@ -366,7 +383,9 @@ impl ShellApp {
     }
 
     fn on_client_connected(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::ClientConnected(app_id) = topic else { return };
+        let Topic::ClientConnected(app_id) = topic else {
+            return;
+        };
         if app_id != "sola-session" {
             return;
         }
@@ -403,7 +422,9 @@ impl ShellApp {
     }
 
     fn on_client_disconnected(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::ClientDisconnected(app_id) = topic else { return };
+        let Topic::ClientDisconnected(app_id) = topic else {
+            return;
+        };
         if app_id != "sola-session" {
             return;
         }
@@ -523,11 +544,7 @@ impl ShellApp {
     }
 
     fn focus_window_from_pointer(&mut self, window_id: u32, ctx: &mut AppCtx) {
-        let Some(info) = self
-            .known_windows
-            .iter()
-            .find(|w| w.window_id == window_id)
-        else {
+        let Some(info) = self.known_windows.iter().find(|w| w.window_id == window_id) else {
             return;
         };
         if info.app_id == Self::APP_ID {
@@ -587,16 +604,12 @@ impl ShellApp {
             .mru_apps
             .iter()
             .filter(|id| unique_app_ids.contains(id))
-            .map(|id| SwitcherApp {
-                app_id: id.clone(),
-            })
+            .map(|id| SwitcherApp { app_id: id.clone() })
             .collect();
         // Append any known apps not yet in MRU.
         for id in &unique_app_ids {
             if !self.mru_apps.contains(id) {
-                apps.push(SwitcherApp {
-                    app_id: id.clone(),
-                });
+                apps.push(SwitcherApp { app_id: id.clone() });
             }
         }
         apps
@@ -830,9 +843,10 @@ impl ShellApp {
             .eval_js(&format!("showMenu({}, {})", json, anchor_x));
 
         // Full-screen overlay below the menubar — transparent except the dropdown.
-        if let (Some((ow, oh)), Some(wid)) =
-            (self.zoning.output_size, self.lookup_window_id(Self::APP_ID, "menu"))
-        {
+        if let (Some((ow, oh)), Some(wid)) = (
+            self.zoning.output_size,
+            self.lookup_window_id(Self::APP_ID, "menu"),
+        ) {
             ctx.emit(Topic::Frame(FrameUpdate {
                 window_id: wid,
                 x: 0,
@@ -957,8 +971,8 @@ impl ShellApp {
     /// - Claims pending entries for newly mapped windows and applies saved zones.
     /// - Creates new entries for windows with no matching pending entry.
     fn reconcile_session_entries(&mut self, ctx: &mut AppCtx) {
-        use std::collections::HashSet;
         use sola_bus::topics::Zone;
+        use std::collections::HashSet;
 
         let current: HashSet<(String, u32)> = self
             .known_windows
@@ -1050,7 +1064,9 @@ impl ShellApp {
         if self.launcher.active || self.switcher.active || self.menu_open {
             return;
         }
-        let Some(wid) = self.focused_window_id else { return };
+        let Some(wid) = self.focused_window_id else {
+            return;
+        };
         let Some(win) = self.known_windows.iter().find(|w| w.window_id == wid) else {
             tracing::warn!(wid, "Meta+Q: focused_window_id not in known_windows");
             return;
@@ -1071,4 +1087,3 @@ impl ShellApp {
         }));
     }
 }
-

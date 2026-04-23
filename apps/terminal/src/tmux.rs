@@ -70,7 +70,10 @@ pub fn cleanup_stale_socket() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stderr.contains("no server running") {
-        tracing::warn!("tmux ls failed unexpectedly, leaving socket alone: {}", stderr.trim());
+        tracing::warn!(
+            "tmux ls failed unexpectedly, leaving socket alone: {}",
+            stderr.trim()
+        );
         return;
     }
 
@@ -93,27 +96,45 @@ pub fn cleanup_stale_socket() {
 /// We distinguish clients from the server via the kernel name (`tmux: server`
 /// vs `tmux: client`), so this can never kill the live server.
 pub fn kill_orphaned_clients() {
-    let Ok(entries) = std::fs::read_dir("/proc") else { return };
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return;
+    };
     let self_pid = std::process::id() as i32;
 
     for entry in entries.flatten() {
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else { continue };
-        if pid == self_pid { continue; }
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
+            continue;
+        };
+        if pid == self_pid {
+            continue;
+        }
 
         let status_path = entry.path().join("status");
-        let Ok(status) = std::fs::read_to_string(&status_path) else { continue };
+        let Ok(status) = std::fs::read_to_string(&status_path) else {
+            continue;
+        };
         let is_client = status.lines().any(|l| l == "Name:\ttmux: client");
-        if !is_client { continue; }
+        if !is_client {
+            continue;
+        }
 
         let cmdline_path = entry.path().join("cmdline");
-        let Ok(cmdline) = std::fs::read(&cmdline_path) else { continue };
+        let Ok(cmdline) = std::fs::read(&cmdline_path) else {
+            continue;
+        };
         // cmdline args are NUL-separated; scan for the socket flag pair.
         let parts: Vec<&[u8]> = cmdline.split(|&b| b == 0).collect();
-        let matches_socket = parts.windows(2).any(|w| w[0] == b"-L" && w[1] == TMUX_SOCKET.as_bytes());
-        if !matches_socket { continue; }
+        let matches_socket = parts
+            .windows(2)
+            .any(|w| w[0] == b"-L" && w[1] == TMUX_SOCKET.as_bytes());
+        if !matches_socket {
+            continue;
+        }
 
         tracing::info!("Killing orphaned tmux client pid={pid}");
-        unsafe { libc::kill(pid, libc::SIGTERM); }
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
     }
 }
 

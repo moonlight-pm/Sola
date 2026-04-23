@@ -50,24 +50,32 @@ impl ClaudeProcessManager {
             return Ok(()); // already running
         }
 
-        let claude_path = sola_core::process::resolve_binary("claude")
-            .context("claude binary not found")?;
+        let claude_path =
+            sola_core::process::resolve_binary("claude").context("claude binary not found")?;
 
         // The plain aliases "opus" / "sonnet" map to the 200k-context
         // variants; appending "[1m]" selects the 1M-context ones. Do this
         // here so every agent turn runs with the larger window (which is
         // also what `claude` defaults to for interactive use).
-        let model_arg = if model.contains('[') { model.to_string() } else { format!("{model}[1m]") };
+        let model_arg = if model.contains('[') {
+            model.to_string()
+        } else {
+            format!("{model}[1m]")
+        };
 
         let mut cmd = Command::new(&claude_path);
-        cmd.arg("--output-format").arg("stream-json")
-            .arg("--input-format").arg("stream-json")
+        cmd.arg("--output-format")
+            .arg("stream-json")
+            .arg("--input-format")
+            .arg("stream-json")
             .arg("--verbose")
             .arg("--include-partial-messages")
             .arg("--replay-user-messages")
             .arg("--dangerously-skip-permissions")
-            .arg("--model").arg(&model_arg)
-            .arg("--effort").arg(effort);
+            .arg("--model")
+            .arg(&model_arg)
+            .arg("--effort")
+            .arg(effort);
 
         // Resume if a CLI session already exists for this ID.
         if crate::sync::cli_session_exists(session_id) {
@@ -89,7 +97,8 @@ impl ClaudeProcessManager {
 
         tracing::info!(session_id, pid, "started claude process");
 
-        self.processes.insert(session_id.to_string(), ClaudeProcess { stdin, pid });
+        self.processes
+            .insert(session_id.to_string(), ClaudeProcess { stdin, pid });
 
         // Background stdout reader — relays events to the frontend.
         let sid = session_id.to_string();
@@ -100,7 +109,9 @@ impl ClaudeProcessManager {
 
     /// Send a user message to an active session via stdin.
     pub fn send_message(&mut self, session_id: &str, text: &str) -> Result<()> {
-        let proc = self.processes.get_mut(session_id)
+        let proc = self
+            .processes
+            .get_mut(session_id)
             .context("No running process for this session")?;
 
         let msg = json!({
@@ -114,7 +125,9 @@ impl ClaudeProcessManager {
         });
 
         let line = serde_json::to_string(&msg)?;
-        proc.stdin.write_all(line.as_bytes()).context("stdin write")?;
+        proc.stdin
+            .write_all(line.as_bytes())
+            .context("stdin write")?;
         proc.stdin.write_all(b"\n").context("stdin newline")?;
         proc.stdin.flush().context("stdin flush")?;
 
@@ -134,9 +147,13 @@ impl ClaudeProcessManager {
 
     /// Interrupt the current turn via SIGINT.
     pub fn interrupt(&self, session_id: &str) -> Result<()> {
-        let proc = self.processes.get(session_id)
+        let proc = self
+            .processes
+            .get(session_id)
             .context("No running process")?;
-        unsafe { libc::kill(proc.pid as i32, libc::SIGINT); }
+        unsafe {
+            libc::kill(proc.pid as i32, libc::SIGINT);
+        }
         tracing::debug!(session_id, "sent SIGINT");
         Ok(())
     }
@@ -145,12 +162,13 @@ impl ClaudeProcessManager {
 impl Drop for ClaudeProcessManager {
     fn drop(&mut self) {
         for (handle, proc) in &self.processes {
-            unsafe { libc::kill(proc.pid as i32, libc::SIGTERM); }
+            unsafe {
+                libc::kill(proc.pid as i32, libc::SIGTERM);
+            }
             tracing::debug!(handle, "killed claude process on drop");
         }
     }
 }
-
 
 /// Background thread reads stdout NDJSON and forwards as events.
 /// Adapted from Cogsworth's start_stdout_reader.
@@ -171,7 +189,9 @@ fn start_stdout_reader(
         for line in reader.lines() {
             match line {
                 Ok(line) if !line.is_empty() => {
-                    if line_tx.send(line).is_err() { break; }
+                    if line_tx.send(line).is_err() {
+                        break;
+                    }
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -207,7 +227,9 @@ fn start_stdout_reader(
                 batch
             });
 
-            if batch.is_empty() { break; }
+            if batch.is_empty() {
+                break;
+            }
 
             for line in &batch {
                 let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -219,21 +241,30 @@ fn start_stdout_reader(
                 // manager entry so the next send spawns fresh.
                 if parsed.get("__exit").is_some() {
                     if in_turn {
-                        send_event(&event_tx, json!({
-                            "event": "message_end",
-                            "session_id": sid_for_task,
-                            "cancelled": true,
-                        }));
+                        send_event(
+                            &event_tx,
+                            json!({
+                                "event": "message_end",
+                                "session_id": sid_for_task,
+                                "cancelled": true,
+                            }),
+                        );
                     }
-                    send_event(&event_tx, json!({
-                        "event": "session_state",
-                        "session_id": sid_for_task,
-                        "status": "idle",
-                    }));
-                    send_event(&event_tx, json!({
-                        "event": "session_exit", "session_id": sid_for_task,
-                        "code": parsed.get("code").cloned().unwrap_or(json!(-1))
-                    }));
+                    send_event(
+                        &event_tx,
+                        json!({
+                            "event": "session_state",
+                            "session_id": sid_for_task,
+                            "status": "idle",
+                        }),
+                    );
+                    send_event(
+                        &event_tx,
+                        json!({
+                            "event": "session_exit", "session_id": sid_for_task,
+                            "code": parsed.get("code").cloned().unwrap_or(json!(-1))
+                        }),
+                    );
                     let mgr_for_cleanup = mgr.clone();
                     let sid_for_cleanup = sid_for_task.clone();
                     tokio::spawn(async move {
@@ -248,10 +279,13 @@ fn start_stdout_reader(
                     "system" => {
                         // Init event — contains session_id from CLI
                         if parsed.get("subtype").and_then(|v| v.as_str()) == Some("init") {
-                            send_event(&event_tx, json!({
-                                "event": "session_init", "session_id": sid_for_task,
-                                "cli_session_id": parsed.get("session_id").cloned().unwrap_or(json!(null))
-                            }));
+                            send_event(
+                                &event_tx,
+                                json!({
+                                    "event": "session_init", "session_id": sid_for_task,
+                                    "cli_session_id": parsed.get("session_id").cloned().unwrap_or(json!(null))
+                                }),
+                            );
                         }
                     }
 
@@ -260,22 +294,32 @@ fn start_stdout_reader(
                             in_turn = true;
                             text_acc.clear();
                             blocks.clear();
-                            send_event(&event_tx, json!({
-                                "event": "message_start", "session_id": sid_for_task
-                            }));
+                            send_event(
+                                &event_tx,
+                                json!({
+                                    "event": "message_start", "session_id": sid_for_task
+                                }),
+                            );
                         }
                         if let Some(event) = parsed.get("event") {
                             let etype = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
                             if etype == "content_block_delta" {
                                 if let Some(delta) = event.get("delta") {
-                                    if delta.get("type").and_then(|v| v.as_str()) == Some("text_delta") {
-                                        if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                                    if delta.get("type").and_then(|v| v.as_str())
+                                        == Some("text_delta")
+                                    {
+                                        if let Some(text) =
+                                            delta.get("text").and_then(|v| v.as_str())
+                                        {
                                             text_acc.push_str(text);
-                                            send_event(&event_tx, json!({
-                                                "event": "message_delta",
-                                                "session_id": sid_for_task,
-                                                "text": text
-                                            }));
+                                            send_event(
+                                                &event_tx,
+                                                json!({
+                                                    "event": "message_delta",
+                                                    "session_id": sid_for_task,
+                                                    "text": text
+                                                }),
+                                            );
                                         }
                                     }
                                 }
@@ -288,25 +332,39 @@ fn start_stdout_reader(
                             in_turn = true;
                             text_acc.clear();
                             blocks.clear();
-                            send_event(&event_tx, json!({
-                                "event": "message_start", "session_id": sid_for_task
-                            }));
+                            send_event(
+                                &event_tx,
+                                json!({
+                                    "event": "message_start", "session_id": sid_for_task
+                                }),
+                            );
                         }
-                        if let Some(content) = parsed.get("message")
+                        if let Some(content) = parsed
+                            .get("message")
                             .and_then(|m| m.get("content"))
                             .and_then(|c| c.as_array())
                         {
                             for block in content {
-                                let btype = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                                let btype =
+                                    block.get("type").and_then(|v| v.as_str()).unwrap_or("");
                                 if btype == "tool_use" {
-                                    let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                    let input = block.get("input").map(|v| v.to_string()).unwrap_or_default();
-                                    send_event(&event_tx, json!({
-                                        "event": "tool_start",
-                                        "session_id": sid_for_task,
-                                        "tool_name": name,
-                                        "tool_input": input
-                                    }));
+                                    let name = block
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("unknown");
+                                    let input = block
+                                        .get("input")
+                                        .map(|v| v.to_string())
+                                        .unwrap_or_default();
+                                    send_event(
+                                        &event_tx,
+                                        json!({
+                                            "event": "tool_start",
+                                            "session_id": sid_for_task,
+                                            "tool_name": name,
+                                            "tool_input": input
+                                        }),
+                                    );
                                 }
                                 blocks.push(block.clone());
                             }
@@ -330,41 +388,63 @@ fn start_stdout_reader(
                             .map(|v| !v.is_null())
                             .unwrap_or(false);
 
-                        if let Some(content) = parsed.get("message")
+                        if let Some(content) = parsed
+                            .get("message")
                             .and_then(|m| m.get("content"))
                             .and_then(|c| c.as_array())
                         {
                             if !is_agent_authored {
-                                let text: String = content.iter()
-                                    .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some("text"))
+                                let text: String = content
+                                    .iter()
+                                    .filter(|b| {
+                                        b.get("type").and_then(|v| v.as_str()) == Some("text")
+                                    })
                                     .filter_map(|b| b.get("text").and_then(|v| v.as_str()))
                                     .collect::<Vec<_>>()
                                     .join("");
                                 if !text.is_empty() {
-                                    send_event(&event_tx, json!({
-                                        "event": "user_appended",
-                                        "session_id": sid_for_task,
-                                        "text": text,
-                                    }));
+                                    send_event(
+                                        &event_tx,
+                                        json!({
+                                            "event": "user_appended",
+                                            "session_id": sid_for_task,
+                                            "text": text,
+                                        }),
+                                    );
                                 }
                             }
 
                             for block in content {
-                                if block.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
-                                    let tool_use_id = block.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("");
-                                    let name = blocks.iter()
-                                        .find(|b| b.get("id").and_then(|v| v.as_str()) == Some(tool_use_id))
+                                if block.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+                                {
+                                    let tool_use_id = block
+                                        .get("tool_use_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let name = blocks
+                                        .iter()
+                                        .find(|b| {
+                                            b.get("id").and_then(|v| v.as_str())
+                                                == Some(tool_use_id)
+                                        })
                                         .and_then(|b| b.get("name").and_then(|v| v.as_str()))
                                         .unwrap_or("unknown");
-                                    let output = block.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                                    let is_error = block.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
-                                    send_event(&event_tx, json!({
-                                        "event": "tool_end",
-                                        "session_id": sid_for_task,
-                                        "tool_name": name,
-                                        "result": &output[..output.len().min(2000)],
-                                        "is_error": is_error
-                                    }));
+                                    let output =
+                                        block.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                    let is_error = block
+                                        .get("is_error")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+                                    send_event(
+                                        &event_tx,
+                                        json!({
+                                            "event": "tool_end",
+                                            "session_id": sid_for_task,
+                                            "tool_name": name,
+                                            "result": &output[..output.len().min(2000)],
+                                            "is_error": is_error
+                                        }),
+                                    );
                                 }
                             }
                         }
@@ -377,8 +457,11 @@ fn start_stdout_reader(
                                 json!([{"type": "text", "text": text_acc}])
                             } else {
                                 // Filter thinking blocks from display
-                                let display_blocks: Vec<_> = blocks.iter()
-                                    .filter(|b| b.get("type").and_then(|v| v.as_str()) != Some("thinking"))
+                                let display_blocks: Vec<_> = blocks
+                                    .iter()
+                                    .filter(|b| {
+                                        b.get("type").and_then(|v| v.as_str()) != Some("thinking")
+                                    })
                                     .cloned()
                                     .collect();
                                 json!(display_blocks)
@@ -391,28 +474,53 @@ fn start_stdout_reader(
                         // To present session-level totals, sum the quantitative
                         // fields across turns; keep latest values for fields
                         // where "now" is the meaningful reading.
-                        let prev = meta_store.get(&sid_for_task)
+                        let prev = meta_store
+                            .get(&sid_for_task)
                             .and_then(|m| m.metrics)
                             .unwrap_or(json!({}));
                         let prev_u64 = |k: &str| prev.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
-                        let prev_f64 = |k: &str| prev.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let prev_f64 =
+                            |k: &str| prev.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
 
                         let usage = parsed.get("usage").cloned().unwrap_or(json!({}));
-                        let turn_input = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let turn_output = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let turn_cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let turn_cache_creation = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let turn_duration = parsed.get("duration_ms").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let turn_cost = parsed.get("total_cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let turn_iters = parsed.get("num_turns").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let turn_input = usage
+                            .get("input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let turn_output = usage
+                            .get("output_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let turn_cache_read = usage
+                            .get("cache_read_input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let turn_cache_creation = usage
+                            .get("cache_creation_input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let turn_duration = parsed
+                            .get("duration_ms")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let turn_cost = parsed
+                            .get("total_cost_usd")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        let turn_iters = parsed
+                            .get("num_turns")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
 
-                        let context_window = parsed.get("modelUsage")
+                        let context_window = parsed
+                            .get("modelUsage")
                             .and_then(|mu| mu.as_object())
                             .and_then(|m| m.values().next())
                             .and_then(|v| v.get("contextWindow"))
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0);
-                        let model = parsed.get("modelUsage")
+                        let model = parsed
+                            .get("modelUsage")
                             .and_then(|m| m.as_object())
                             .and_then(|m| m.keys().next())
                             .cloned()
@@ -423,10 +531,14 @@ fn start_stdout_reader(
                         // already encompasses prior conversation history.
                         // Clamp to 100 — tool-use inner iterations can push
                         // the sum briefly above the window.
-                        let turn_total = turn_input + turn_cache_read + turn_cache_creation + turn_output;
+                        let turn_total =
+                            turn_input + turn_cache_read + turn_cache_creation + turn_output;
                         let context_used_pct = if context_window > 0 {
-                            ((turn_total as f64 / context_window as f64 * 100.0).round() as u64).min(100)
-                        } else { 0 };
+                            ((turn_total as f64 / context_window as f64 * 100.0).round() as u64)
+                                .min(100)
+                        } else {
+                            0
+                        };
 
                         let metrics = json!({
                             "event": "metrics",
@@ -453,16 +565,22 @@ fn start_stdout_reader(
                             .unwrap_or(0);
                         let _ = meta_store.update_metrics(&sid_for_task, metrics, now);
 
-                        send_event(&event_tx, json!({
-                            "event": "message_end", "session_id": sid_for_task,
-                            "cancelled": false
-                        }));
+                        send_event(
+                            &event_tx,
+                            json!({
+                                "event": "message_end", "session_id": sid_for_task,
+                                "cancelled": false
+                            }),
+                        );
 
                         // Emit idle state
-                        send_event(&event_tx, json!({
-                            "event": "session_state", "session_id": sid_for_task,
-                            "status": "idle"
-                        }));
+                        send_event(
+                            &event_tx,
+                            json!({
+                                "event": "session_state", "session_id": sid_for_task,
+                                "status": "idle"
+                            }),
+                        );
 
                         in_turn = false;
                         text_acc.clear();

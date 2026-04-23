@@ -59,7 +59,12 @@ impl SolaApp for BrowserApp {
         container.set_child(Some(&chrome_webview));
         container.connect_get_child_position(|overlay, _child| {
             let area = chrome::content_area(overlay.width(), overlay.height());
-            Some(gdk4::Rectangle::new(area.x, area.y, area.width, area.height))
+            Some(gdk4::Rectangle::new(
+                area.x,
+                area.y,
+                area.width,
+                area.height,
+            ))
         });
         chrome.gtk_window().set_child(Some(&container));
 
@@ -102,11 +107,7 @@ impl SolaApp for BrowserApp {
         }
     }
 
-    fn after_runtime_ready(
-        &mut self,
-        runtime: Weak<RefCell<AppRuntime<Self>>>,
-        _ctx: &mut AppCtx,
-    ) {
+    fn after_runtime_ready(&mut self, runtime: Weak<RefCell<AppRuntime<Self>>>, _ctx: &mut AppCtx) {
         // Publish the runtime weak for webview signal handlers inside
         // create_tab (title/uri/is-loading/decide-policy). Resize is
         // handled by the Overlay's get-child-position callback, so no
@@ -376,8 +377,7 @@ impl BrowserApp {
                 }
                 if let Some(session) = tab.webview.session_state() {
                     if let Some(bytes) = session.serialize() {
-                        let b64 =
-                            base64::engine::general_purpose::STANDARD.encode(bytes.as_ref());
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes.as_ref());
                         self.tab_store.tabs[i].session_state = Some(b64);
                     }
                 }

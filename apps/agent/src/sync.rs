@@ -8,11 +8,11 @@
 
 use crate::meta::MetaStore;
 use crate::storage::{self, SessionMeta};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 use std::time::SystemTime;
 use tracing::{debug, info, warn};
 
@@ -50,19 +50,22 @@ pub fn run_sync(event_tx: &Sender<String>, meta_store: &Arc<MetaStore>) {
         match rebuild(cli, meta_store) {
             Ok(meta) => {
                 let first_prompt = first_user_text(&meta.session_id).unwrap_or_default();
-                send_event(event_tx, json!({
-                    "event": "session_updated",
-                    "session_id": meta.session_id,
-                    "name": meta.name,
-                    "first_prompt": first_prompt,
-                    "working_dir": meta.working_dir,
-                    "updated_at": meta.updated_at,
-                    "metrics": meta.metrics,
-                    "model": meta.model,
-                    "effort": meta.effort,
-                    "current": idx + 1,
-                    "total": total,
-                }));
+                send_event(
+                    event_tx,
+                    json!({
+                        "event": "session_updated",
+                        "session_id": meta.session_id,
+                        "name": meta.name,
+                        "first_prompt": first_prompt,
+                        "working_dir": meta.working_dir,
+                        "updated_at": meta.updated_at,
+                        "metrics": meta.metrics,
+                        "model": meta.model,
+                        "effort": meta.effort,
+                        "current": idx + 1,
+                        "total": total,
+                    }),
+                );
             }
             Err(e) => {
                 warn!(session_id = %cli.session_id, "rebuild failed: {:#}", e);
@@ -91,13 +94,17 @@ pub fn cli_delete_session(session_id: &str) {
         return;
     }
 
-    let Ok(home) = std::env::var("HOME") else { return };
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
     let claude = PathBuf::from(&home).join(".claude");
 
     // Single-file artifacts.
     let files = [
         claude.join(format!("security_warnings_state_{session_id}.json")),
-        claude.join("todos").join(format!("{session_id}-agent-{session_id}.json")),
+        claude
+            .join("todos")
+            .join(format!("{session_id}-agent-{session_id}.json")),
     ];
     for path in &files {
         remove_file_if_present(path);
@@ -117,7 +124,9 @@ pub fn cli_delete_session(session_id: &str) {
     if let Ok(entries) = std::fs::read_dir(claude.join("projects")) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if !p.is_dir() { continue; }
+            if !p.is_dir() {
+                continue;
+            }
             remove_file_if_present(&p.join(format!("{session_id}.jsonl")));
             remove_dir_if_present(&p.join(session_id));
         }
@@ -125,19 +134,31 @@ pub fn cli_delete_session(session_id: &str) {
 }
 
 fn is_uuid(s: &str) -> bool {
-    if s.len() != 36 { return false; }
+    if s.len() != 36 {
+        return false;
+    }
     let b = s.as_bytes();
     for (i, &c) in b.iter().enumerate() {
         match i {
-            8 | 13 | 18 | 23 => if c != b'-' { return false; },
-            _ => if !c.is_ascii_hexdigit() { return false; },
+            8 | 13 | 18 | 23 => {
+                if c != b'-' {
+                    return false;
+                }
+            }
+            _ => {
+                if !c.is_ascii_hexdigit() {
+                    return false;
+                }
+            }
         }
     }
     true
 }
 
 fn remove_file_if_present(path: &Path) {
-    if !path.exists() { return; }
+    if !path.exists() {
+        return;
+    }
     if let Err(e) = std::fs::remove_file(path) {
         warn!(path = %path.display(), "cli delete failed: {e}");
     } else {
@@ -146,7 +167,9 @@ fn remove_file_if_present(path: &Path) {
 }
 
 fn remove_dir_if_present(path: &Path) {
-    if !path.exists() { return; }
+    if !path.exists() {
+        return;
+    }
     if let Err(e) = std::fs::remove_dir_all(path) {
         warn!(path = %path.display(), "cli delete failed: {e}");
     } else {
@@ -172,7 +195,9 @@ fn scan_cli_sessions() -> Vec<CliSession> {
 
     for dir_entry in dirs.flatten() {
         let dir = dir_entry.path();
-        if !dir.is_dir() { continue; }
+        if !dir.is_dir() {
+            continue;
+        }
 
         let files = match std::fs::read_dir(&dir) {
             Ok(rd) => rd,
@@ -181,8 +206,12 @@ fn scan_cli_sessions() -> Vec<CliSession> {
 
         for entry in files.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
-            if path.to_string_lossy().contains("/subagents/") { continue; }
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            if path.to_string_lossy().contains("/subagents/") {
+                continue;
+            }
 
             let session_id = match path.file_stem().and_then(|s| s.to_str()) {
                 Some(s) => s.to_string(),
@@ -213,11 +242,20 @@ fn parse_cli_head(path: &Path) -> (Option<String>, Option<String>) {
     let mut first_prompt = None;
 
     for line in reader.lines().take(30) {
-        let line = match line { Ok(l) => l, Err(_) => continue };
-        let obj: Value = match serde_json::from_str(&line) { Ok(v) => v, Err(_) => continue };
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let obj: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
 
         if cwd.is_none() {
-            cwd = obj["cwd"].as_str().filter(|s| !s.is_empty()).map(String::from);
+            cwd = obj["cwd"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(String::from);
         }
 
         if first_prompt.is_none()
@@ -239,7 +277,9 @@ fn parse_cli_head(path: &Path) -> (Option<String>, Option<String>) {
             }
         }
 
-        if cwd.is_some() && first_prompt.is_some() { break; }
+        if cwd.is_some() && first_prompt.is_some() {
+            break;
+        }
     }
 
     (cwd, first_prompt)
@@ -271,7 +311,9 @@ fn find_cli_jsonl(projects_root: &Path, session_id: &str) -> Option<PathBuf> {
     let dirs = std::fs::read_dir(projects_root).ok()?;
     for entry in dirs.flatten() {
         let path = entry.path().join(format!("{session_id}.jsonl"));
-        if path.exists() { return Some(path); }
+        if path.exists() {
+            return Some(path);
+        }
     }
     None
 }
@@ -286,7 +328,10 @@ fn rebuild(cli: &CliSession, meta_store: &MetaStore) -> anyhow::Result<SessionMe
 
     let existing = meta_store.get(&cli.session_id);
     let working_dir = cli.cwd.clone().unwrap_or_else(|| {
-        existing.as_ref().map(|e| e.working_dir.clone()).unwrap_or_else(|| ".".into())
+        existing
+            .as_ref()
+            .map(|e| e.working_dir.clone())
+            .unwrap_or_else(|| ".".into())
     });
 
     let cli_synced_at = cli_mtime_ms(&cli.jsonl_path);
@@ -337,16 +382,26 @@ fn aggregate_metrics(path: &Path, existing: Option<Value>) -> Option<Value> {
     let mut last_turn_total: u64 = 0;
 
     for line in reader.lines() {
-        let line = match line { Ok(l) => l, Err(_) => continue };
-        let obj: Value = match serde_json::from_str(&line) { Ok(v) => v, Err(_) => continue };
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let obj: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
 
         let t = obj["type"].as_str().unwrap_or("");
         if t == "system" && obj["subtype"].as_str() == Some("turn_duration") {
             duration += obj["durationMs"].as_u64().unwrap_or(0);
             continue;
         }
-        if t != "assistant" { continue; }
-        if obj["isSidechain"].as_bool() == Some(true) { continue; }
+        if t != "assistant" {
+            continue;
+        }
+        if obj["isSidechain"].as_bool() == Some(true) {
+            continue;
+        }
 
         let usage = &obj["message"]["usage"];
         let ti = usage["input_tokens"].as_u64().unwrap_or(0);
@@ -372,7 +427,9 @@ fn aggregate_metrics(path: &Path, existing: Option<Value>) -> Option<Value> {
         .and_then(|m| m.get("model"))
         .and_then(|v| v.as_str())
         .map(String::from);
-    let model_str = model.or(model_from_meta).unwrap_or_else(|| "unknown".to_string());
+    let model_str = model
+        .or(model_from_meta)
+        .unwrap_or_else(|| "unknown".to_string());
 
     // Context window: JSONL records don't include the "[1m]" qualifier,
     // so never downgrade from what we already knew. Keep the prior meta
@@ -382,8 +439,16 @@ fn aggregate_metrics(path: &Path, existing: Option<Value>) -> Option<Value> {
         .and_then(|m| m.get("context_window"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
-    let derived_window = if model_str.contains("[1m]") { 1_000_000 } else { 200_000 };
-    let context_window = if prev_window > 0 { prev_window } else { derived_window };
+    let derived_window = if model_str.contains("[1m]") {
+        1_000_000
+    } else {
+        200_000
+    };
+    let context_window = if prev_window > 0 {
+        prev_window
+    } else {
+        derived_window
+    };
 
     // Last-turn fill as % of window. Clamp to 100 — sum of a single turn's
     // cache_read + cache_creation + input + output can briefly exceed the
@@ -391,7 +456,9 @@ fn aggregate_metrics(path: &Path, existing: Option<Value>) -> Option<Value> {
     // nonsense > 100% reading.
     let context_used_pct = if context_window > 0 {
         ((last_turn_total as f64 / context_window as f64 * 100.0).round() as u64).min(100)
-    } else { 0 };
+    } else {
+        0
+    };
 
     // Duration and cost aren't in the JSONL — preserve what we had.
     // (system.turn_duration records exist in < 10% of sessions.)
@@ -434,8 +501,14 @@ fn extract_display_messages(path: &Path) -> Vec<Value> {
     let mut messages = Vec::new();
 
     for line in reader.lines() {
-        let line = match line { Ok(l) => l, Err(_) => continue };
-        let obj: Value = match serde_json::from_str(&line) { Ok(v) => v, Err(_) => continue };
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let obj: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
 
         let is_compact = obj["isCompactSummary"].as_bool() == Some(true);
         if is_compact {
@@ -445,15 +518,23 @@ fn extract_display_messages(path: &Path) -> Vec<Value> {
         let msg_type = obj["type"].as_str().unwrap_or("");
         match msg_type {
             "user" => {
-                if !is_compact && obj["isMeta"].as_bool() == Some(true) { continue; }
-                if obj["isSidechain"].as_bool() == Some(true) { continue; }
+                if !is_compact && obj["isMeta"].as_bool() == Some(true) {
+                    continue;
+                }
+                if obj["isSidechain"].as_bool() == Some(true) {
+                    continue;
+                }
 
                 let content = &obj["message"]["content"];
                 // Compact summary content is a string; normalize to a text-block array.
                 let content = if let Some(s) = content.as_str() {
                     json!([{"type": "text", "text": s}])
                 } else if let Some(arr) = content.as_array() {
-                    if !is_compact && arr.iter().all(|b| b["type"].as_str() == Some("tool_result")) {
+                    if !is_compact
+                        && arr
+                            .iter()
+                            .all(|b| b["type"].as_str() == Some("tool_result"))
+                    {
                         continue;
                     }
                     Value::Array(arr.clone())
@@ -464,16 +545,21 @@ fn extract_display_messages(path: &Path) -> Vec<Value> {
                 messages.push(json!({"role": "user", "content": content}));
             }
             "assistant" => {
-                if obj["isSidechain"].as_bool() == Some(true) { continue; }
+                if obj["isSidechain"].as_bool() == Some(true) {
+                    continue;
+                }
                 let content = match obj["message"]["content"].as_array() {
                     Some(c) => c,
                     None => continue,
                 };
-                let display: Vec<Value> = content.iter()
+                let display: Vec<Value> = content
+                    .iter()
                     .filter(|b| b["type"].as_str() != Some("thinking"))
                     .cloned()
                     .collect();
-                if display.is_empty() { continue; }
+                if display.is_empty() {
+                    continue;
+                }
                 messages.push(json!({"role": "assistant", "content": display}));
             }
             _ => {}
@@ -486,7 +572,9 @@ fn extract_display_messages(path: &Path) -> Vec<Value> {
 fn first_user_text(session_id: &str) -> Option<String> {
     let msgs = storage::load_history(session_id).ok()?;
     for m in &msgs {
-        if m["role"].as_str() != Some("user") { continue; }
+        if m["role"].as_str() != Some("user") {
+            continue;
+        }
         let content = &m["content"];
         if let Some(arr) = content.as_array() {
             for b in arr {

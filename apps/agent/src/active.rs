@@ -28,20 +28,36 @@ struct SessionMarker {
 /// Linux-only (relies on /proc for liveness); returns an empty set on failure.
 pub fn detect() -> HashSet<String> {
     let mut ids = HashSet::new();
-    let Ok(home) = std::env::var("HOME") else { return ids };
+    let Ok(home) = std::env::var("HOME") else {
+        return ids;
+    };
     let dir = format!("{home}/.claude/sessions");
 
-    let Ok(entries) = fs::read_dir(&dir) else { return ids };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return ids;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
 
-        let Ok(json) = fs::read_to_string(&path) else { continue };
-        let Ok(marker) = serde_json::from_str::<SessionMarker>(&json) else { continue };
+        let Ok(json) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(marker) = serde_json::from_str::<SessionMarker>(&json) else {
+            continue;
+        };
 
-        if marker.kind != "interactive" { continue; }
-        if marker.entrypoint == "sdk-cli" { continue; }
-        if !Path::new(&format!("/proc/{}", marker.pid)).exists() { continue; }
+        if marker.kind != "interactive" {
+            continue;
+        }
+        if marker.entrypoint == "sdk-cli" {
+            continue;
+        }
+        if !Path::new(&format!("/proc/{}", marker.pid)).exists() {
+            continue;
+        }
 
         ids.insert(marker.session_id);
     }

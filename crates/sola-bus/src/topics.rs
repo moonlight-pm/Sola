@@ -313,7 +313,10 @@ mod tests {
     #[test]
     fn config_topic_roundtrip() {
         let entries = vec![
-            ("mail.host".into(), ConfigValue::String("imap.example.com".into())),
+            (
+                "mail.host".into(),
+                ConfigValue::String("imap.example.com".into()),
+            ),
             ("mail.port".into(), ConfigValue::Int(993)),
             ("shell.dark_mode".into(), ConfigValue::Bool(true)),
         ];

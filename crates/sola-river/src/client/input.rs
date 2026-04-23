@@ -10,9 +10,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_chi
 
 use crate::client::AppData;
 use crate::protocol::river_libinput_config_v1::{
-    river_libinput_config_v1::{
-        self as cfg_iface, RiverLibinputConfigV1,
-    },
+    river_libinput_config_v1::{self as cfg_iface, RiverLibinputConfigV1},
     river_libinput_device_v1::{self, NaturalScrollState, RiverLibinputDeviceV1},
     river_libinput_result_v1::{self, RiverLibinputResultV1},
 };

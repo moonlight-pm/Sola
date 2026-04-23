@@ -20,8 +20,12 @@ pub fn emit_windows(state: &mut AppData) {
 /// both manage-sequence requests per River's protocol.
 pub fn apply_pending_chords(state: &mut AppData, new_pairs: Vec<(u32, u32)>) {
     let Some(qh) = state.qh.clone() else { return };
-    let Some(xb) = state.xkb_bindings.clone() else { return };
-    let Some(river_seat) = state.seat.clone() else { return };
+    let Some(xb) = state.xkb_bindings.clone() else {
+        return;
+    };
+    let Some(river_seat) = state.seat.clone() else {
+        return;
+    };
 
     let old_pairs: Vec<(u32, u32)> = state.chords.by_chord.keys().copied().collect();
     let (added, removed) = chord_diff(&old_pairs, &new_pairs);

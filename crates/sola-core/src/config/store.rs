@@ -6,8 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use super::{ConfigValue, MutateOp};
 use tracing::{info, warn};
@@ -158,11 +158,7 @@ impl ConfigStore {
         }
     }
 
-    fn apply_set(
-        &mut self,
-        segments: &[&str],
-        value: ConfigValue,
-    ) -> Result<(), MutateError> {
+    fn apply_set(&mut self, segments: &[&str], value: ConfigValue) -> Result<(), MutateError> {
         let parent = self.ensure_tables(segments)?;
         let leaf = segments.last().unwrap();
         if let toml::Value::Table(map) = parent {
@@ -201,7 +197,9 @@ impl ConfigStore {
         segments: &[&str],
         op: ArrayOp,
     ) -> Result<(), MutateError> {
-        let node = self.navigate_mut(segments).ok_or(MutateError::NotAnArray(key.into()))?;
+        let node = self
+            .navigate_mut(segments)
+            .ok_or(MutateError::NotAnArray(key.into()))?;
         let arr = match node {
             toml::Value::Array(a) => a,
             _ => return Err(MutateError::NotAnArray(key.into())),
@@ -214,21 +212,33 @@ impl ConfigStore {
             ArrayOp::Insert(index, value) => {
                 let i = index as usize;
                 if i > len {
-                    return Err(MutateError::IndexOutOfBounds { key: key.into(), index, len });
+                    return Err(MutateError::IndexOutOfBounds {
+                        key: key.into(),
+                        index,
+                        len,
+                    });
                 }
                 arr.insert(i, value.to_toml());
             }
             ArrayOp::Remove(index) => {
                 let i = index as usize;
                 if i >= len {
-                    return Err(MutateError::IndexOutOfBounds { key: key.into(), index, len });
+                    return Err(MutateError::IndexOutOfBounds {
+                        key: key.into(),
+                        index,
+                        len,
+                    });
                 }
                 arr.remove(i);
             }
             ArrayOp::Replace(index, value) => {
                 let i = index as usize;
                 if i >= len {
-                    return Err(MutateError::IndexOutOfBounds { key: key.into(), index, len });
+                    return Err(MutateError::IndexOutOfBounds {
+                        key: key.into(),
+                        index,
+                        len,
+                    });
                 }
                 arr[i] = value.to_toml();
             }
@@ -403,11 +413,15 @@ mod tests {
             "#,
         );
         let flat = store.flatten();
-        assert!(flat.iter().any(|(k, v)| k == "mail.host"
-            && *v == ConfigValue::String("imap.example.com".into())));
-        assert!(flat
-            .iter()
-            .any(|(k, v)| k == "mail.port" && *v == ConfigValue::Int(993)));
+        assert!(
+            flat.iter()
+                .any(|(k, v)| k == "mail.host"
+                    && *v == ConfigValue::String("imap.example.com".into()))
+        );
+        assert!(
+            flat.iter()
+                .any(|(k, v)| k == "mail.port" && *v == ConfigValue::Int(993))
+        );
     }
 
     #[test]
@@ -433,7 +447,10 @@ mod tests {
             .mutate("a.b.c", MutateOp::Set(ConfigValue::Int(42)))
             .unwrap();
         let flat = store.flatten();
-        assert!(flat.iter().any(|(k, v)| k == "a.b.c" && *v == ConfigValue::Int(42)));
+        assert!(
+            flat.iter()
+                .any(|(k, v)| k == "a.b.c" && *v == ConfigValue::Int(42))
+        );
     }
 
     #[test]
@@ -443,7 +460,10 @@ mod tests {
             .mutate("mail.port", MutateOp::Set(ConfigValue::Int(993)))
             .unwrap();
         let flat = store.flatten();
-        assert!(flat.iter().any(|(k, v)| k == "mail.port" && *v == ConfigValue::Int(993)));
+        assert!(
+            flat.iter()
+                .any(|(k, v)| k == "mail.port" && *v == ConfigValue::Int(993))
+        );
     }
 
     #[test]
@@ -472,7 +492,11 @@ mod tests {
         let arr = &flat[0].1;
         assert_eq!(
             *arr,
-            ConfigValue::Array(vec![ConfigValue::Int(1), ConfigValue::Int(2), ConfigValue::Int(3)])
+            ConfigValue::Array(vec![
+                ConfigValue::Int(1),
+                ConfigValue::Int(2),
+                ConfigValue::Int(3)
+            ])
         );
     }
 
@@ -491,7 +515,11 @@ mod tests {
         let flat = store.flatten();
         assert_eq!(
             flat[0].1,
-            ConfigValue::Array(vec![ConfigValue::Int(1), ConfigValue::Int(2), ConfigValue::Int(3)])
+            ConfigValue::Array(vec![
+                ConfigValue::Int(1),
+                ConfigValue::Int(2),
+                ConfigValue::Int(3)
+            ])
         );
     }
 
@@ -538,7 +566,11 @@ mod tests {
         let flat = store.flatten();
         assert_eq!(
             flat[0].1,
-            ConfigValue::Array(vec![ConfigValue::Int(1), ConfigValue::Int(99), ConfigValue::Int(3)])
+            ConfigValue::Array(vec![
+                ConfigValue::Int(1),
+                ConfigValue::Int(99),
+                ConfigValue::Int(3)
+            ])
         );
     }
 
@@ -571,13 +603,19 @@ mod tests {
         );
         let new_app = ConfigValue::Table(vec![
             ("app_id".into(), ConfigValue::String("terminal".into())),
-            ("command".into(), ConfigValue::String("sola-terminal".into())),
+            (
+                "command".into(),
+                ConfigValue::String("sola-terminal".into()),
+            ),
         ]);
         store
             .mutate("shell.applications", MutateOp::Append(new_app))
             .unwrap();
         let flat = store.flatten();
-        let apps = flat.iter().find(|(k, _)| k == "shell.applications").unwrap();
+        let apps = flat
+            .iter()
+            .find(|(k, _)| k == "shell.applications")
+            .unwrap();
         match &apps.1 {
             ConfigValue::Array(arr) => assert_eq!(arr.len(), 2),
             other => panic!("expected array, got {other:?}"),
@@ -605,11 +643,22 @@ mod tests {
             port: u16,
         }
         let mut store = store_from_toml("");
-        store.set_from("mail", &Mail { host: "smtp.x.com".into(), port: 587 });
+        store.set_from(
+            "mail",
+            &Mail {
+                host: "smtp.x.com".into(),
+                port: 587,
+            },
+        );
         let flat = store.flatten();
-        assert!(flat.iter().any(|(k, v)| k == "mail.host"
-            && *v == ConfigValue::String("smtp.x.com".into())));
-        assert!(flat.iter().any(|(k, v)| k == "mail.port" && *v == ConfigValue::Int(587)));
+        assert!(
+            flat.iter()
+                .any(|(k, v)| k == "mail.host" && *v == ConfigValue::String("smtp.x.com".into()))
+        );
+        assert!(
+            flat.iter()
+                .any(|(k, v)| k == "mail.port" && *v == ConfigValue::Int(587))
+        );
     }
 
     #[test]
@@ -620,10 +669,22 @@ mod tests {
             port: u16,
         }
         let mut store = store_from_toml("");
-        store.set_from("mail", &Mail { host: "imap.x.com".into(), port: 993 });
+        store.set_from(
+            "mail",
+            &Mail {
+                host: "imap.x.com".into(),
+                port: 993,
+            },
+        );
         let flat = store.flatten();
         let mail: Mail = from_entries(&flat, "mail").unwrap();
-        assert_eq!(mail, Mail { host: "imap.x.com".into(), port: 993 });
+        assert_eq!(
+            mail,
+            Mail {
+                host: "imap.x.com".into(),
+                port: 993
+            }
+        );
     }
 
     #[test]

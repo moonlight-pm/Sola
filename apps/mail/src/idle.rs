@@ -7,8 +7,8 @@ use std::time::Duration;
 use imap::extensions::idle::SetReadTimeout;
 use tracing::{debug, error, warn};
 
-use crate::imap::ImapClient;
 use crate::config::MailConfig;
+use crate::imap::ImapClient;
 
 /// Newtype wrapper so we can implement SetReadTimeout (orphan rule).
 struct IdleTlsStream(rustls_connector::TlsStream<TcpStream>);

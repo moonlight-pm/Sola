@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use sola_app::{AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
-use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind};
+use sola_app::{
+    AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle,
+};
+use sola_bus::topics::{
+    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
+};
 use sola_core::KeyCode;
 
 mod active;
@@ -10,8 +14,8 @@ mod agent;
 mod handler;
 mod meta;
 mod session;
-mod sync;
 mod storage;
+mod sync;
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
@@ -63,8 +67,11 @@ impl SolaApp for AgentApp {
                     let payload = serde_json::json!({
                         "event": "active_sessions",
                         "ids": ids,
-                    }).to_string();
-                    if active_tx.send(payload).is_err() { break; }
+                    })
+                    .to_string();
+                    if active_tx.send(payload).is_err() {
+                        break;
+                    }
                     last = Some(cur);
                 }
                 std::thread::sleep(std::time::Duration::from_secs(2));
@@ -119,7 +126,6 @@ impl SolaApp for AgentApp {
                 }
             });
     }
-
 }
 
 impl AgentApp {
@@ -139,27 +145,25 @@ fn main() {
 fn agent_menu() -> AppMenuPayload {
     AppMenuPayload {
         app_id: AgentApp::APP_ID.into(),
-        menus: vec![
-            MenuDefinition {
-                label: "Agent".into(),
-                items: vec![
-                    MenuItem::Action {
-                        id: "about".into(),
-                        label: "About Agent".into(),
-                        shortcut: None,
-                        disabled: false,
-                        checked: false,
-                    },
-                    MenuItem::Divider,
-                    MenuItem::Action {
-                        id: "quit".into(),
-                        label: "Quit Agent".into(),
-                        shortcut: Some(KeyCode::Q.meta()),
-                        disabled: false,
-                        checked: false,
-                    },
-                ],
-            },
-        ],
+        menus: vec![MenuDefinition {
+            label: "Agent".into(),
+            items: vec![
+                MenuItem::Action {
+                    id: "about".into(),
+                    label: "About Agent".into(),
+                    shortcut: None,
+                    disabled: false,
+                    checked: false,
+                },
+                MenuItem::Divider,
+                MenuItem::Action {
+                    id: "quit".into(),
+                    label: "Quit Agent".into(),
+                    shortcut: Some(KeyCode::Q.meta()),
+                    disabled: false,
+                    checked: false,
+                },
+            ],
+        }],
     }
 }

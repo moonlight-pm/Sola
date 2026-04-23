@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use sola_app::{AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
+use sola_app::{
+    AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle,
+};
 use sola_bus::topics::{MenuActionPayload, OpenUrlRequest, Topic, TopicKind};
 
 mod config;

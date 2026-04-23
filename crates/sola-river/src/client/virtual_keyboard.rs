@@ -169,4 +169,3 @@ impl Dispatch<ZwpVirtualKeyboardV1, ()> for AppData {
         // Virtual keyboard emits no events.
     }
 }
-

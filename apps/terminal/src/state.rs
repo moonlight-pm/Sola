@@ -89,7 +89,10 @@ impl TerminalState {
         // attach if the session exists or create it otherwise. Dropping tabs
         // on a transient failure would silently destroy the user's workspace.
         let Some(live) = crate::tmux::list_sessions() else {
-            info!("Loaded {} tabs from state (tmux query failed, keeping all)", saved.len());
+            info!(
+                "Loaded {} tabs from state (tmux query failed, keeping all)",
+                saved.len()
+            );
             return saved;
         };
 

@@ -65,7 +65,12 @@ pub fn handle_render_start(state: &mut AppData) {
     let Some(wm) = state.wm.clone() else { return };
     use crate::protocol::river_window_management_v1::river_window_v1::Edges;
 
-    let composition_len = state.pending.composition.as_ref().map(|c| c.len()).unwrap_or(0);
+    let composition_len = state
+        .pending
+        .composition
+        .as_ref()
+        .map(|c| c.len())
+        .unwrap_or(0);
     let positions_len = state.pending.render_positions.len();
 
     // Disable borders for any window we've seen but not yet decorated.

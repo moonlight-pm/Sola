@@ -34,7 +34,9 @@ impl MetaStore {
         for meta in storage::list_all() {
             map.insert(meta.session_id.clone(), meta);
         }
-        Self { inner: Mutex::new(map) }
+        Self {
+            inner: Mutex::new(map),
+        }
     }
 
     /// Snapshot of all sessions, sorted by most recently updated.
@@ -51,7 +53,9 @@ impl MetaStore {
     /// Insert a fresh session. No-op if one already exists with this id.
     pub fn create(&self, id: &str, working_dir: &str, name: Option<&str>) -> Result<()> {
         let mut map = self.inner.lock().unwrap();
-        if map.contains_key(id) { return Ok(()); }
+        if map.contains_key(id) {
+            return Ok(());
+        }
         let now = now_ms();
         let meta = SessionMeta {
             session_id: id.to_string(),
@@ -86,8 +90,12 @@ impl MetaStore {
     pub fn update_config(&self, id: &str, model: Option<&str>, effort: Option<&str>) -> Result<()> {
         let mut map = self.inner.lock().unwrap();
         if let Some(meta) = map.get_mut(id) {
-            if let Some(m) = model { meta.model = m.to_string(); }
-            if let Some(e) = effort { meta.effort = e.to_string(); }
+            if let Some(m) = model {
+                meta.model = m.to_string();
+            }
+            if let Some(e) = effort {
+                meta.effort = e.to_string();
+            }
             storage::save_meta_full(meta)?;
         }
         Ok(())
@@ -135,7 +143,10 @@ impl MetaStore {
             session_id: id.to_string(),
             // Seed name from first_prompt only for brand-new entries;
             // keep any user-set name otherwise.
-            name: existing.as_ref().and_then(|e| e.name.clone()).or(first_prompt),
+            name: existing
+                .as_ref()
+                .and_then(|e| e.name.clone())
+                .or(first_prompt),
             working_dir,
             created_at: existing.as_ref().map(|e| e.created_at).unwrap_or(now),
             // updated_at reflects when the session was last active in the
@@ -146,8 +157,14 @@ impl MetaStore {
                 existing.as_ref().map(|e| e.updated_at).unwrap_or(now)
             },
             metrics,
-            model: existing.as_ref().map(|e| e.model.clone()).unwrap_or_else(|| "opus".into()),
-            effort: existing.as_ref().map(|e| e.effort.clone()).unwrap_or_else(|| "high".into()),
+            model: existing
+                .as_ref()
+                .map(|e| e.model.clone())
+                .unwrap_or_else(|| "opus".into()),
+            effort: existing
+                .as_ref()
+                .map(|e| e.effort.clone())
+                .unwrap_or_else(|| "high".into()),
             cli_synced_at,
             metrics_schema,
         };

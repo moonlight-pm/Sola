@@ -20,7 +20,6 @@ impl LauncherState {
         self.filtered_ids = filter(apps, query);
         self.selected = 0;
     }
-
 }
 
 /// Case-insensitive substring match on `label`, preserving config order.
@@ -109,6 +108,9 @@ mod tests {
         state.selected = 2;
         state.apply_query(&apps, "fi");
         assert_eq!(state.selected, 0);
-        assert_eq!(state.filtered_ids.first().map(String::as_str), Some("firefox"));
+        assert_eq!(
+            state.filtered_ids.first().map(String::as_str),
+            Some("firefox")
+        );
     }
 }

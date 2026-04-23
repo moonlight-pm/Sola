@@ -13,17 +13,11 @@ use crate::topics::TopicKind;
 use crate::{Message, transport};
 
 fn encode_subscribe(kinds: &[TopicKind]) -> Message {
-    Message::with_payload(
-        crate::CONTROL_SUBSCRIBE,
-        encode_payload(&kinds.to_vec()),
-    )
+    Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&kinds.to_vec()))
 }
 
 fn encode_identify(app_id: &str) -> Message {
-    Message::with_payload(
-        crate::CONTROL_IDENTIFY,
-        encode_payload(&app_id.to_string()),
-    )
+    Message::with_payload(crate::CONTROL_IDENTIFY, encode_payload(&app_id.to_string()))
 }
 
 /// A connection to the Sola Bus.

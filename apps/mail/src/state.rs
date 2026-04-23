@@ -1,4 +1,4 @@
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
 use crate::config::MailConfig;
 use crate::idle::IdleHandle;

@@ -129,7 +129,12 @@ where
     // `rolling::never` panics on permission errors, which is fatal for
     // tests and local dev where /opt/sola/log may not be writable.
     let probe = Path::new(LOG_DIR).join(LOG_FILE);
-    if OpenOptions::new().create(true).append(true).open(&probe).is_err() {
+    if OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&probe)
+        .is_err()
+    {
         return None;
     }
     let appender = tracing_appender::rolling::never(LOG_DIR, LOG_FILE);
@@ -228,8 +233,8 @@ fn target_label(target: &str) -> String {
 fn level_style(level: Level) -> (&'static str, &'static str) {
     match level {
         Level::ERROR => ("\x1b[1;31m", "ERROR"),
-        Level::WARN  => ("\x1b[1;33m", " WARN"),
-        Level::INFO  => ("\x1b[1;32m", " INFO"),
+        Level::WARN => ("\x1b[1;33m", " WARN"),
+        Level::INFO => ("\x1b[1;32m", " INFO"),
         Level::DEBUG => ("\x1b[1;34m", "DEBUG"),
         Level::TRACE => ("\x1b[1;35m", "TRACE"),
     }
@@ -238,13 +243,13 @@ fn level_style(level: Level) -> (&'static str, &'static str) {
 /// ANSI color code for a component label.
 fn label_color(label: &str) -> &'static str {
     match label {
-        "sola"          => "\x1b[1;36m", // bold cyan
-        "sola::bus"     => "\x1b[1;35m", // bold magenta
-        "sola::river"   => "\x1b[1;34m", // bold blue
+        "sola" => "\x1b[1;36m",          // bold cyan
+        "sola::bus" => "\x1b[1;35m",     // bold magenta
+        "sola::river" => "\x1b[1;34m",   // bold blue
         "sola::session" => "\x1b[1;32m", // bold green
-        "sola::shell"   => "\x1b[1;33m", // bold yellow
-        "sola::core"    => "\x1b[37m",   // white
-        _               => "\x1b[36m",   // cyan (apps and other)
+        "sola::shell" => "\x1b[1;33m",   // bold yellow
+        "sola::core" => "\x1b[37m",      // white
+        _ => "\x1b[36m",                 // cyan (apps and other)
     }
 }
 

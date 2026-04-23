@@ -15,18 +15,14 @@ use wayland_client::{
 
 use crate::bus::BusClient;
 use crate::pending::PendingUpdate;
+use crate::protocol::river_libinput_config_v1::river_libinput_config_v1::RiverLibinputConfigV1;
 use crate::protocol::river_window_management_v1::{
-    river_node_v1::RiverNodeV1,
-    river_output_v1::RiverOutputV1,
-    river_seat_v1::RiverSeatV1,
-    river_window_manager_v1::RiverWindowManagerV1,
-    river_window_v1::RiverWindowV1,
+    river_node_v1::RiverNodeV1, river_output_v1::RiverOutputV1, river_seat_v1::RiverSeatV1,
+    river_window_manager_v1::RiverWindowManagerV1, river_window_v1::RiverWindowV1,
 };
 use crate::protocol::river_xkb_bindings_v1::{
-    river_xkb_bindings_seat_v1::RiverXkbBindingsSeatV1,
-    river_xkb_bindings_v1::RiverXkbBindingsV1,
+    river_xkb_bindings_seat_v1::RiverXkbBindingsSeatV1, river_xkb_bindings_v1::RiverXkbBindingsV1,
 };
-use crate::protocol::river_libinput_config_v1::river_libinput_config_v1::RiverLibinputConfigV1;
 use crate::protocol::virtual_keyboard_unstable_v1::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use crate::protocol::wlr_output_management_unstable_v1::zwlr_output_manager_v1::ZwlrOutputManagerV1;
 use crate::registry::{ChordRegistry, WindowRegistry};
@@ -123,9 +119,7 @@ pub fn connect(
     queue.roundtrip(&mut data)?;
 
     if data.wm.is_none() {
-        return Err(
-            "river_window_manager_v1 not advertised; is River 0.4.2+ running?".into(),
-        );
+        return Err("river_window_manager_v1 not advertised; is River 0.4.2+ running?".into());
     }
     data.qh = Some(qh.clone());
     data.conn = Some(conn.clone());
@@ -164,7 +158,9 @@ pub fn bus_tick(state: &mut AppData) {
                     h = f.height,
                     "got Frame"
                 );
-                state.pending.frame(f.window_id, f.x, f.y, f.width, f.height);
+                state
+                    .pending
+                    .frame(f.window_id, f.x, f.y, f.width, f.height);
             }
             sola_bus::topics::Topic::Focus(t) => {
                 state
@@ -212,7 +208,12 @@ pub fn bus_tick(state: &mut AppData) {
         tracing::debug!(
             manage_items = state.pending.manage.len(),
             render_pos = state.pending.render_positions.len(),
-            composition = state.pending.composition.as_ref().map(|c| c.len()).unwrap_or(0),
+            composition = state
+                .pending
+                .composition
+                .as_ref()
+                .map(|c| c.len())
+                .unwrap_or(0),
             "requesting manage_dirty"
         );
         state.wm.as_ref().unwrap().manage_dirty();
@@ -248,11 +249,7 @@ impl ClipboardAction {
 /// keyboard. If the window isn't in our registry at all (e.g. the shell
 /// was slightly faster than River's `window` event) we drop silently.
 fn dispatch_clipboard_chord(state: &mut AppData, window_id: u32, action: ClipboardAction) {
-    let Some(app_id) = state
-        .registry
-        .app_id_for(window_id)
-        .map(|s| s.to_string())
-    else {
+    let Some(app_id) = state.registry.app_id_for(window_id).map(|s| s.to_string()) else {
         tracing::debug!(window_id, "clipboard chord for unknown window, ignoring");
         return;
     };
@@ -303,14 +300,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     state.wl_seat = Some(s);
                 }
                 "zwlr_output_manager_v1" => {
-                    let mgr: ZwlrOutputManagerV1 =
-                        proxy.bind(name, version.min(4), qh, ());
+                    let mgr: ZwlrOutputManagerV1 = proxy.bind(name, version.min(4), qh, ());
                     info!(%version, "bound zwlr_output_manager_v1");
                     state.output_config.manager = Some(mgr);
                 }
                 "zwp_virtual_keyboard_manager_v1" => {
-                    let mgr: ZwpVirtualKeyboardManagerV1 =
-                        proxy.bind(name, version.min(1), qh, ());
+                    let mgr: ZwpVirtualKeyboardManagerV1 = proxy.bind(name, version.min(1), qh, ());
                     info!(%version, "bound zwp_virtual_keyboard_manager_v1");
                     state.virtual_keyboard.manager = Some(mgr);
                 }
@@ -318,8 +313,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     // Keep the proxy alive on AppData so its device events
                     // keep firing. Events drive the natural-scroll apply in
                     // client/input.rs.
-                    let cfg: RiverLibinputConfigV1 =
-                        proxy.bind(name, version.min(1), qh, ());
+                    let cfg: RiverLibinputConfigV1 = proxy.bind(name, version.min(1), qh, ());
                     info!(%version, "bound river_libinput_config_v1");
                     state.libinput_config = Some(cfg);
                 }
@@ -455,4 +449,3 @@ impl Dispatch<RiverPointerBindingV1, ()> for AppData {
     ) {
     }
 }
-

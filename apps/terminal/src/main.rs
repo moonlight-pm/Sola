@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use sola_app::{AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
+use sola_app::{
+    AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle,
+};
 use sola_bus::topics::{
     AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, OpenUrlRequest, Topic, TopicKind,
 };
@@ -135,7 +137,9 @@ impl SolaApp for TerminalApp {
 
 impl TerminalApp {
     fn on_menu_action(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic else { return };
+        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic else {
+            return;
+        };
         if app_id != Self::APP_ID {
             return;
         }
@@ -148,9 +152,8 @@ impl TerminalApp {
             id if id.starts_with("select_tab_") => {
                 if let Ok(index) = id.strip_prefix("select_tab_").unwrap().parse::<usize>() {
                     tracing::info!(index, "menu action: select tab");
-                    self.main_window.send_to_js(
-                        &serde_json::json!({"event": "select_tab", "index": index}),
-                    );
+                    self.main_window
+                        .send_to_js(&serde_json::json!({"event": "select_tab", "index": index}));
                 }
             }
             _ => {

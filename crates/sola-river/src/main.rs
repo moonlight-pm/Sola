@@ -76,5 +76,3 @@ fn main() {
         error!(%e, "event loop exited with error");
     }
 }
-
-

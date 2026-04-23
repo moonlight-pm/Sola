@@ -96,11 +96,7 @@ fn main() {
 /// Drain the per-client queue and write each message to the socket with
 /// blocking I/O. Exits when `rx` is closed (all senders dropped) or when
 /// a write fails.
-fn writer_loop(
-    id: ClientId,
-    mut stream: UnixStream,
-    rx: mpsc::Receiver<sola_bus::Message>,
-) {
+fn writer_loop(id: ClientId, mut stream: UnixStream, rx: mpsc::Receiver<sola_bus::Message>) {
     while let Ok(msg) = rx.recv() {
         if let Err(e) = transport::write_event(&mut stream, &msg) {
             match e.kind() {
@@ -124,9 +120,7 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
 
                 match event.topic.as_str() {
                     sola_bus::CONTROL_IDENTIFY => {
-                        if let Ok(app_id) =
-                            sola_bus::topic::decode_payload::<String>(&event)
-                        {
+                        if let Ok(app_id) = sola_bus::topic::decode_payload::<String>(&event) {
                             handle_identify(id, app_id, state);
                         }
                     }
@@ -225,11 +219,7 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
     }
 }
 
-fn handle_subscribe(
-    id: ClientId,
-    kinds: Vec<sola_bus::topics::TopicKind>,
-    state: &SharedState,
-) {
+fn handle_subscribe(id: ClientId, kinds: Vec<sola_bus::topics::TopicKind>, state: &SharedState) {
     let new_kinds: HashSet<_> = kinds.into_iter().collect();
     let mut bus = state.lock().unwrap();
     let prev = bus

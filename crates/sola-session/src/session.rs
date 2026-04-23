@@ -45,7 +45,11 @@ impl Session {
         bus.set_app_id("sola-session");
         let config_path = sola_core::config::sola_config_dir().join("sola.toml");
         let config = ConfigStore::load(config_path);
-        Self { bus, children: HashMap::new(), config }
+        Self {
+            bus,
+            children: HashMap::new(),
+            config,
+        }
     }
 
     /// Emit the full config as a sticky bus topic.
@@ -54,13 +58,7 @@ impl Session {
         let _ = self.bus.emit_sticky(Topic::Config(snapshot));
     }
 
-    fn emit_launch_result(
-        &mut self,
-        app_id: &str,
-        command: &str,
-        ok: bool,
-        error: Option<String>,
-    ) {
+    fn emit_launch_result(&mut self, app_id: &str, command: &str, ok: bool, error: Option<String>) {
         let _ = self.bus.emit(Topic::LaunchResult(LaunchResultPayload {
             app_id: app_id.to_string(),
             command: command.to_string(),
@@ -69,12 +67,7 @@ impl Session {
         }));
     }
 
-    fn emit_exited(
-        &mut self,
-        app_id: &str,
-        command: &str,
-        status: std::process::ExitStatus,
-    ) {
+    fn emit_exited(&mut self, app_id: &str, command: &str, status: std::process::ExitStatus) {
         use std::os::unix::process::ExitStatusExt;
         let payload = UserAppExitedPayload {
             app_id: app_id.to_string(),
@@ -146,18 +139,16 @@ impl Session {
         match topic {
             Topic::LaunchApp(p) => self.launch(p),
             Topic::CloseApp(app_id) => self.close(&app_id),
-            Topic::MutateConfig(payload) => {
-                match self.config.mutate(&payload.key, payload.op) {
-                    Ok(()) => {
-                        info!(key = %payload.key, "config mutated");
-                        self.config.save();
-                        self.emit_config();
-                    }
-                    Err(e) => {
-                        warn!(key = %payload.key, %e, "config mutation rejected");
-                    }
+            Topic::MutateConfig(payload) => match self.config.mutate(&payload.key, payload.op) {
+                Ok(()) => {
+                    info!(key = %payload.key, "config mutated");
+                    self.config.save();
+                    self.emit_config();
                 }
-            }
+                Err(e) => {
+                    warn!(key = %payload.key, %e, "config mutation rejected");
+                }
+            },
             Topic::Shutdown => std::process::exit(0),
             _ => {}
         }
@@ -171,7 +162,9 @@ impl Session {
         for r in records.iter_mut() {
             if matches!(r.state, CloseState::Live) {
                 info!(%app_id, pid = r.child.id(), "CloseApp: graceful period started");
-                r.state = CloseState::Closing { since: Instant::now() };
+                r.state = CloseState::Closing {
+                    since: Instant::now(),
+                };
             }
         }
     }
@@ -210,14 +203,18 @@ impl Session {
                 match r.state {
                     CloseState::Closing { since } if now.duration_since(since) >= GRACEFUL => {
                         info!(pid = r.child.id(), app_id = %r.app_id, "sending SIGTERM");
-                        unsafe { libc::kill(r.child.id() as i32, libc::SIGTERM); }
+                        unsafe {
+                            libc::kill(r.child.id() as i32, libc::SIGTERM);
+                        }
                         r.state = CloseState::Terminated { since: now };
                     }
                     CloseState::Terminated { since }
                         if now.duration_since(since) >= FORCE_AFTER_TERM =>
                     {
                         info!(pid = r.child.id(), app_id = %r.app_id, "sending SIGKILL");
-                        unsafe { libc::kill(r.child.id() as i32, libc::SIGKILL); }
+                        unsafe {
+                            libc::kill(r.child.id() as i32, libc::SIGKILL);
+                        }
                         r.state = CloseState::Killed;
                     }
                     _ => {}

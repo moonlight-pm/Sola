@@ -1,15 +1,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::config::MailConfig;
-use sola_app::config::JsonConfig;
 use crate::idle;
 use crate::imap::ImapClient;
 use crate::rules::MailRule;
 use crate::state::MailState;
 use crate::wicket;
+use sola_app::config::JsonConfig;
 
 pub struct MailHandler {
     pub state: Arc<MailState>,
@@ -46,9 +46,7 @@ impl sola_app::AppHandler for MailHandler {
 // ---------------------------------------------------------------------------
 
 /// Get a clone of the client Arc, returning an error if not connected.
-async fn get_client(
-    state: &Arc<MailState>,
-) -> Result<Arc<std::sync::Mutex<ImapClient>>, String> {
+async fn get_client(state: &Arc<MailState>) -> Result<Arc<std::sync::Mutex<ImapClient>>, String> {
     state
         .client
         .lock()
@@ -149,7 +147,9 @@ async fn cmd_mail_connect(state: &Arc<MailState>) -> Result<Value, String> {
     .map_err(|e| format!("join error: {e}"))??;
 
     if let Some(inbox) = folders.iter_mut().find(|f| f.name == "INBOX") {
-        inbox.total = inbox.total.saturating_sub(smart_folders.inbox_total_deduction);
+        inbox.total = inbox
+            .total
+            .saturating_sub(smart_folders.inbox_total_deduction);
         inbox.unread = inbox
             .unread
             .saturating_sub(smart_folders.inbox_unread_deduction);
@@ -162,7 +162,11 @@ async fn cmd_mail_connect(state: &Arc<MailState>) -> Result<Value, String> {
     let email_fallback = config.email.clone();
     let from_addresses = tokio::task::spawn_blocking(move || {
         let addrs = wicket::fetch_from_addresses(&host, &user, &pass);
-        if addrs.is_empty() { vec![email_fallback] } else { addrs }
+        if addrs.is_empty() {
+            vec![email_fallback]
+        } else {
+            addrs
+        }
     })
     .await
     .unwrap_or_else(|_| vec![config.email.clone()]);
@@ -492,11 +496,7 @@ async fn cmd_apply_rules(state: &Arc<MailState>) -> Result<Value, String> {
 
 /// Apply move rules to recent INBOX messages during IDLE.
 /// Returns count of messages that were NOT moved (remaining new).
-fn apply_move_rules_on_idle(
-    client: &mut ImapClient,
-    rules: &[MailRule],
-    new_count: u32,
-) -> u32 {
+fn apply_move_rules_on_idle(client: &mut ImapClient, rules: &[MailRule], new_count: u32) -> u32 {
     let messages = match client.list_messages("INBOX", 0, new_count.max(20)) {
         Ok((msgs, _)) => msgs,
         Err(e) => {

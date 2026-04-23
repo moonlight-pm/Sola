@@ -32,7 +32,10 @@ impl SessionManager {
     pub async fn create_session(&self, working_dir: PathBuf) -> String {
         let session_id = uuid::Uuid::new_v4().to_string();
         let session = Session::new(working_dir);
-        self.sessions.write().await.insert(session_id.clone(), session);
+        self.sessions
+            .write()
+            .await
+            .insert(session_id.clone(), session);
         session_id
     }
 
