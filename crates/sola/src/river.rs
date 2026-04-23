@@ -1,4 +1,4 @@
-//! Spawn /usr/bin/river as a child and own its lifecycle.
+//! Spawn river as a child and own its lifecycle.
 //!
 //! River is the wayland compositor every sola wayland client depends on.
 //! This module encapsulates that dependency: spawn River with stdio captured
@@ -22,7 +22,7 @@ pub struct RiverSupervisor {
     runtime_dir: PathBuf,
 }
 
-/// SIGKILL any `/usr/bin/river` process running as our uid, then wait
+/// SIGKILL any `river` process running as our uid, then wait
 /// up to 1s for them all to reap — the kernel doesn't immediately
 /// release flock/bind when a signal is sent, it happens after the
 /// process actually exits.
@@ -59,7 +59,7 @@ fn find_river_pids() -> Vec<i32> {
         let Ok(target) = std::fs::read_link(entry.path().join("exe")) else {
             continue;
         };
-        if target != Path::new("/usr/bin/river") {
+        if target.file_name().and_then(|n| n.to_str()) != Some("river") {
             continue;
         }
         let Ok(status) = std::fs::read_to_string(entry.path().join("status")) else {
@@ -121,7 +121,7 @@ fn cleanup_stale_sockets(runtime_dir: &Path) {
 }
 
 impl RiverSupervisor {
-    /// Spawn `/usr/bin/river`, redirecting stdout/stderr to `log_path`.
+    /// Spawn `river`, redirecting stdout/stderr to `log_path`.
     /// Does not wait for the wayland socket.
     pub fn spawn(log_path: &Path) -> io::Result<Self> {
         let runtime_dir = sola_core::env::runtime_dir();
@@ -144,7 +144,8 @@ impl RiverSupervisor {
             .open(log_path)?;
         let log_err = log.try_clone()?;
 
-        let mut cmd = Command::new("/usr/bin/river");
+        let river_bin = sola_core::process::resolve_binary("river")?;
+        let mut cmd = Command::new(river_bin);
         // `-c :` runs the shell no-op as River's init, skipping its hunt
         // for ~/.config/river/init — we drive the session from outside.
         cmd.args(["-log-level", "info", "-c", ":"])

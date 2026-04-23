@@ -176,10 +176,9 @@ impl AgentHandler {
 
     async fn cmd_list_mcps(&self, args: &Value) -> Value {
         let working_dir = args.get("working_dir").and_then(|v| v.as_str()).unwrap_or(".");
-        let claude_bin = {
-            let home = std::env::var("HOME").unwrap_or_default();
-            let local = std::path::PathBuf::from(&home).join(".local/bin/claude");
-            if local.exists() { local } else { std::path::PathBuf::from("claude") }
+        let claude_bin = match sola_core::process::resolve_binary("claude") {
+            Ok(bin) => bin,
+            Err(e) => return json!({ "error": format!("{e}") }),
         };
         let output = match tokio::process::Command::new(&claude_bin)
             .args(["mcp", "list"])

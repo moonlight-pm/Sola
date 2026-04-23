@@ -50,7 +50,8 @@ impl ClaudeProcessManager {
             return Ok(()); // already running
         }
 
-        let claude_path = resolve_claude_bin()?;
+        let claude_path = sola_core::process::resolve_binary("claude")
+            .context("claude binary not found")?;
 
         // The plain aliases "opus" / "sonnet" map to the 200k-context
         // variants; appending "[1m]" selects the 1M-context ones. Do this
@@ -148,20 +149,6 @@ impl Drop for ClaudeProcessManager {
             tracing::debug!(handle, "killed claude process on drop");
         }
     }
-}
-
-fn resolve_claude_bin() -> Result<String> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidates = [
-        format!("{home}/.local/bin/claude"),
-        "/usr/local/bin/claude".to_string(),
-    ];
-    for path in &candidates {
-        if std::path::Path::new(path).exists() {
-            return Ok(path.to_string());
-        }
-    }
-    anyhow::bail!("claude binary not found")
 }
 
 

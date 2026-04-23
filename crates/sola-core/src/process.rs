@@ -3,10 +3,21 @@
 //! gracefully with a SIGTERM→SIGKILL escalation.
 
 use std::io;
+use std::path::PathBuf;
 use std::process::Child;
 use std::time::{Duration, Instant};
 
 use tracing::warn;
+
+/// Resolve a binary name to its full path via `$PATH` lookup.
+pub fn resolve_binary(name: &str) -> io::Result<PathBuf> {
+    which::which(name).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{name} not found in PATH"),
+        )
+    })
+}
 
 /// `pre_exec` hook: ask the kernel to send SIGTERM to this child when
 /// its parent dies. Use with [`std::os::unix::process::CommandExt::pre_exec`].
