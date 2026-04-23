@@ -58,14 +58,19 @@ static PROCESS_NAME: OnceLock<String> = OnceLock::new();
 /// * Writes to `/opt/sola/log/sola.log` (append, no rotation) and stderr.
 /// * Falls back to stderr-only if the log file can't be opened (e.g. in
 ///   tests or local dev where /opt/sola/log may not be writable).
-/// * Default `RUST_LOG` filter: `<name_with_underscores>=info`.
+/// * Default `RUST_LOG` filter: binary's own crate + shared sola libs at info.
 /// * Installs a panic hook that routes panics through tracing so they
 ///   end up in the log file, not just on stderr.
 pub fn init(name: &str) {
     let short = name.strip_prefix("sola-").unwrap_or(name);
     PROCESS_NAME.get_or_init(|| short.to_string());
 
-    let default_filter = format!("{}=info", name.replace('-', "_"));
+    // Include the binary's own crate + all shared sola libraries.
+    // Third-party crates (gtk, calloop, etc.) are excluded by default.
+    // Override with RUST_LOG for debug sessions.
+    let own_crate = name.replace('-', "_");
+    let default_filter =
+        format!("{own_crate}=info,sola_core=info,sola_bus=info,sola_app=info,sola_assets=info");
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| default_filter.into());
 
