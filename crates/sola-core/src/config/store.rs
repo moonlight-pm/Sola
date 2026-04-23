@@ -6,6 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
 use super::{ConfigValue, MutateOp};
 use tracing::{info, warn};
 
@@ -87,6 +90,45 @@ impl ConfigStore {
         let mut out = Vec::new();
         flatten_value(&self.tree, &mut String::new(), &mut out);
         out
+    }
+
+    /// Deserialize a subtree into a typed config struct.
+    ///
+    /// `prefix` is a dotted key path (e.g. `"mail"`). Returns `None` if
+    /// the subtree doesn't exist or deserialization fails.
+    pub fn get_as<T: DeserializeOwned>(&self, prefix: &str) -> Option<T> {
+        let node = self.navigate(prefix)?;
+        node.clone().try_into().ok()
+    }
+
+    /// Serialize a typed config struct and merge it into the tree at `prefix`.
+    ///
+    /// Overwrites any existing value at that path.
+    pub fn set_from<T: Serialize>(&mut self, prefix: &str, value: &T) {
+        let toml_val = toml::Value::try_from(value).expect("config type must serialize to TOML");
+        let segments: Vec<&str> = prefix.split('.').collect();
+        if segments.is_empty() {
+            return;
+        }
+        // Ensure parent tables exist, then set the leaf.
+        if let Ok(parent) = self.ensure_tables(&segments) {
+            let leaf = segments.last().unwrap();
+            if let toml::Value::Table(map) = parent {
+                map.insert((*leaf).to_string(), toml_val);
+            }
+        }
+    }
+
+    /// Read-only navigation to an existing node by dotted key path.
+    fn navigate(&self, key: &str) -> Option<&toml::Value> {
+        let mut node = &self.tree;
+        for seg in key.split('.') {
+            match node {
+                toml::Value::Table(map) => node = map.get(seg)?,
+                _ => return None,
+            }
+        }
+        Some(node)
     }
 
     /// Apply a mutation. Returns `Ok(())` on success (caller should then
@@ -248,6 +290,60 @@ enum ArrayOp {
     Insert(u32, ConfigValue),
     Remove(u32),
     Replace(u32, ConfigValue),
+}
+
+/// Reconstruct a typed config from a flat bus snapshot.
+///
+/// Filters entries by `prefix`, rebuilds a `toml::Value::Table`, and
+/// deserializes into `T`. Returns `None` if no entries match or
+/// deserialization fails.
+///
+/// ```ignore
+/// let mail: MailConfig = from_entries(&snapshot, "mail").unwrap_or_default();
+/// ```
+pub fn from_entries<T: DeserializeOwned>(
+    entries: &[(String, ConfigValue)],
+    prefix: &str,
+) -> Option<T> {
+    let dot_prefix = format!("{prefix}.");
+    let mut table = toml::map::Map::new();
+    let mut found = false;
+
+    for (key, value) in entries {
+        if let Some(rest) = key.strip_prefix(&dot_prefix) {
+            insert_dotted(&mut table, rest, value.to_toml());
+            found = true;
+        } else if key == prefix {
+            // The prefix itself is a value (e.g., a table serialized as one entry).
+            let toml_val = value.to_toml();
+            return toml_val.try_into().ok();
+        }
+    }
+
+    if !found {
+        return None;
+    }
+    toml::Value::Table(table).try_into().ok()
+}
+
+/// Insert a value into a TOML map at a dotted path, creating intermediate
+/// tables as needed.
+fn insert_dotted(map: &mut toml::map::Map<String, toml::Value>, key: &str, value: toml::Value) {
+    let mut segments = key.splitn(2, '.');
+    let head = segments.next().unwrap();
+    match segments.next() {
+        None => {
+            map.insert(head.to_string(), value);
+        }
+        Some(rest) => {
+            let child = map
+                .entry(head)
+                .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+            if let toml::Value::Table(child_map) = child {
+                insert_dotted(child_map, rest, value);
+            }
+        }
+    }
 }
 
 /// Recursively flatten a toml::Value into dotted key paths with leaf ConfigValues.
@@ -486,5 +582,54 @@ mod tests {
             ConfigValue::Array(arr) => assert_eq!(arr.len(), 2),
             other => panic!("expected array, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn get_as_typed() {
+        #[derive(Debug, serde::Deserialize, PartialEq)]
+        struct Mail {
+            host: String,
+            port: i64,
+        }
+        let store = store_from_toml("[mail]\nhost = \"imap.x.com\"\nport = 993");
+        let mail: Mail = store.get_as("mail").unwrap();
+        assert_eq!(mail.host, "imap.x.com");
+        assert_eq!(mail.port, 993);
+    }
+
+    #[test]
+    fn set_from_typed() {
+        #[derive(Debug, serde::Serialize)]
+        struct Mail {
+            host: String,
+            port: u16,
+        }
+        let mut store = store_from_toml("");
+        store.set_from("mail", &Mail { host: "smtp.x.com".into(), port: 587 });
+        let flat = store.flatten();
+        assert!(flat.iter().any(|(k, v)| k == "mail.host"
+            && *v == ConfigValue::String("smtp.x.com".into())));
+        assert!(flat.iter().any(|(k, v)| k == "mail.port" && *v == ConfigValue::Int(587)));
+    }
+
+    #[test]
+    fn from_entries_roundtrip() {
+        #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+        struct Mail {
+            host: String,
+            port: u16,
+        }
+        let mut store = store_from_toml("");
+        store.set_from("mail", &Mail { host: "imap.x.com".into(), port: 993 });
+        let flat = store.flatten();
+        let mail: Mail = from_entries(&flat, "mail").unwrap();
+        assert_eq!(mail, Mail { host: "imap.x.com".into(), port: 993 });
+    }
+
+    #[test]
+    fn from_entries_missing_prefix() {
+        let flat = vec![("other.key".into(), ConfigValue::Int(1))];
+        let result: Option<toml::Value> = from_entries(&flat, "mail");
+        assert!(result.is_none());
     }
 }

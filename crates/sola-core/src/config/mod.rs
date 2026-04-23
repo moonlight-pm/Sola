@@ -10,6 +10,7 @@ pub mod mail;
 pub mod store;
 pub mod value;
 
+pub use store::from_entries;
 pub use value::{ConfigValue, MutateConfigPayload, MutateOp};
 
 use std::path::{Path, PathBuf};
