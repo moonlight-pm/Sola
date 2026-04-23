@@ -1,4 +1,4 @@
-pub use sola_core::mail::MailConfig;
+pub use sola_core::config::mail::MailConfig;
 
 #[cfg(test)]
 mod tests {

@@ -6,6 +6,8 @@
 //! `$HOME/.config/sola/` as fallback), with atomic writes via temp-file +
 //! rename so a crash mid-write can't leave torn JSON.
 
+pub mod mail;
+
 use std::path::{Path, PathBuf};
 
 use serde::{Serialize, de::DeserializeOwned};

@@ -1,5 +1,5 @@
 use serde::Serialize;
-pub use sola_core::mail::{MailRule, MailRuleCondition};
+pub use sola_core::config::mail::{MailRule, MailRuleCondition};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Folder {

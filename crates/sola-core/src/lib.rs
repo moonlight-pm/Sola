@@ -8,7 +8,6 @@ pub mod config;
 pub mod env;
 pub mod keys;
 pub mod log;
-pub mod mail;
 pub mod process;
 pub mod watcher;
 

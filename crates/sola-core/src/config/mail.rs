@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::JsonConfig;
+use super::JsonConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
