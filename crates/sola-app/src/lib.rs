@@ -10,7 +10,6 @@ use sola_bus::topics::{Topic, TopicKind};
 pub mod assets;
 pub mod async_dispatch;
 pub mod bridge;
-pub mod bus_registry;
 pub mod config;
 pub mod ctx;
 pub mod strip;
@@ -21,9 +20,15 @@ pub mod window;
 // Re-export for macro use and common consumer paths.
 pub use assets::{Asset, AssetBundle, ContentType};
 pub use async_dispatch::{AppHandler, AsyncDispatcher};
-pub use bus_registry::{BusHandler, BusRegistry};
 pub use ctx::AppCtx;
 pub use window::{WindowConfig, WindowHandle};
+
+/// Per-topic handler registry used by `SolaApp::register_bus`. Aliases
+/// `sola_bus::BusRegistry<A, AppCtx>` so downstream apps still write
+/// `BusRegistry<Self>`.
+pub type BusRegistry<A> = sola_bus::BusRegistry<A, AppCtx>;
+/// Handler signature for `BusRegistry<A>`.
+pub type BusHandler<A> = sola_bus::BusHandler<A, AppCtx>;
 
 /// Trait implemented by every Sola app. Only `APP_ID` and `new` are
 /// required; other methods have default no-op impls so apps opt in to

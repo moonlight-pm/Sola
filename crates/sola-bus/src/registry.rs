@@ -1,21 +1,22 @@
 use std::collections::HashMap;
 
-use sola_bus::topics::{Topic, TopicKind};
+use crate::topics::{Topic, TopicKind};
 
-use crate::ctx::AppCtx;
+/// Handler signature for a registered topic. Receives the app state, the
+/// parsed topic, and an app-supplied context (e.g. a framework's AppCtx).
+pub type BusHandler<A, C> = fn(&mut A, &Topic, &mut C);
 
-/// Handler signature for a registered topic. The full `Topic` is passed
-/// so the handler can destructure the variant it registered for.
-pub type BusHandler<A> = fn(&mut A, &Topic, &mut AppCtx);
-
-/// Per-topic handler registry. The set of registered topic kinds is
-/// the app's bus subscription list.
-pub struct BusRegistry<A> {
-    handlers: HashMap<TopicKind, BusHandler<A>>,
+/// Per-topic handler registry. The set of registered topic kinds is the
+/// app's bus subscription list.
+///
+/// Generic over the app state `A` and an app-supplied context `C` (often
+/// a framework's per-app context, e.g. `sola_app::AppCtx`).
+pub struct BusRegistry<A, C> {
+    handlers: HashMap<TopicKind, BusHandler<A, C>>,
     subscribe_all: bool,
 }
 
-impl<A> BusRegistry<A> {
+impl<A, C> BusRegistry<A, C> {
     pub fn new() -> Self {
         Self {
             handlers: HashMap::new(),
@@ -25,7 +26,7 @@ impl<A> BusRegistry<A> {
 
     /// Register a handler for a topic kind. Registering the same kind
     /// twice is a dev-build panic and a release-build warn-and-skip.
-    pub fn on(&mut self, kind: TopicKind, handler: BusHandler<A>) {
+    pub fn on(&mut self, kind: TopicKind, handler: BusHandler<A, C>) {
         if self.handlers.insert(kind, handler).is_some() {
             if cfg!(debug_assertions) {
                 panic!("duplicate bus handler for {:?}", kind);
@@ -37,7 +38,8 @@ impl<A> BusRegistry<A> {
 
     /// Subscribe to every topic kind. Used by diagnostic apps
     /// (sola-monitor). Handlers still dispatch only for registered kinds;
-    /// everything else falls through to `on_raw_bus_message`.
+    /// everything else falls through to whatever raw-message hook the
+    /// caller exposes.
     pub fn subscribe_all(&mut self) {
         self.subscribe_all = true;
     }
@@ -53,14 +55,14 @@ impl<A> BusRegistry<A> {
 
     /// Dispatch a parsed topic to its registered handler. No-op if no
     /// handler is registered for this kind.
-    pub fn dispatch(&self, topic: &Topic, app: &mut A, ctx: &mut AppCtx) {
+    pub fn dispatch(&self, topic: &Topic, app: &mut A, ctx: &mut C) {
         if let Some(handler) = self.handlers.get(&topic.kind()) {
             handler(app, topic, ctx);
         }
     }
 }
 
-impl<A> Default for BusRegistry<A> {
+impl<A, C> Default for BusRegistry<A, C> {
     fn default() -> Self {
         Self::new()
     }
@@ -70,19 +72,19 @@ impl<A> Default for BusRegistry<A> {
 mod tests {
     use super::*;
 
-    // Simple test type — the registry doesn't care about A's shape.
+    // Simple test types — the registry doesn't care about A's or C's shape.
     struct TestApp;
+    struct TestCtx;
 
     // A stub handler that panics if called — we only test kinds/subscribe_all
-    // here. Actual dispatch is covered indirectly via integration tests
-    // on app conversions in Phase 3.
-    fn stub(_app: &mut TestApp, _topic: &Topic, _ctx: &mut AppCtx) {
+    // here.
+    fn stub(_app: &mut TestApp, _topic: &Topic, _ctx: &mut TestCtx) {
         unreachable!("not dispatched in these tests");
     }
 
     #[test]
     fn kinds_reflects_registered() {
-        let mut reg: BusRegistry<TestApp> = BusRegistry::new();
+        let mut reg: BusRegistry<TestApp, TestCtx> = BusRegistry::new();
         reg.on(TopicKind::CloseApp, stub);
         reg.on(TopicKind::Apps, stub);
         let mut kinds = reg.kinds();
@@ -94,7 +96,7 @@ mod tests {
 
     #[test]
     fn subscribe_all_overrides_registered() {
-        let mut reg: BusRegistry<TestApp> = BusRegistry::new();
+        let mut reg: BusRegistry<TestApp, TestCtx> = BusRegistry::new();
         reg.on(TopicKind::CloseApp, stub);
         reg.subscribe_all();
         let kinds = reg.kinds();
