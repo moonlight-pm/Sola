@@ -127,24 +127,17 @@ pub fn run<A: SolaApp>() {
 
     tracing::info!("{app_id} starting");
 
-    /// Resolve the live wayland socket name.
-    ///
-    /// `sola-river` writes the authoritative socket name (e.g. `wayland-1`)
-    /// into `$XDG_RUNTIME_DIR/sola-wayland` once River is up. We poll for
-    /// that file for up to 20s. The name file is preferred over the
-    /// `WAYLAND_DISPLAY` env var because sola inherits its env from the
-    /// user's shell, which may be stale from a prior session.
-    fn resolve_wayland_display(runtime_dir: &std::path::Path) -> String {
-        let name_file = runtime_dir.join("sola-wayland");
+    /// Poll `$XDG_RUNTIME_DIR/sola-wayland` for up to 20s, falling back to
+    /// `$WAYLAND_DISPLAY` and then `"wayland-0"`. The name file is preferred
+    /// over the env var because sola inherits env from the user's shell,
+    /// which may be stale from a prior session.
+    fn resolve_wayland_display() -> String {
         for attempt in 1..=40 {
-            if let Ok(contents) = std::fs::read_to_string(&name_file) {
-                let name = contents.trim().to_string();
-                if !name.is_empty() {
-                    return name;
-                }
+            if let Some(name) = sola_core::env::wayland_socket() {
+                return name;
             }
             if attempt == 1 {
-                tracing::info!(path = %name_file.display(), "waiting for sola-river to publish wayland socket name");
+                tracing::info!("waiting for sola-river to publish wayland socket name");
             }
             std::thread::sleep(Duration::from_millis(500));
         }
@@ -167,9 +160,8 @@ pub fn run<A: SolaApp>() {
     // `$XDG_RUNTIME_DIR/sola-wayland`. River's libwayland picks the
     // first free `wayland-N`, which isn't always `wayland-0`, so
     // hardcoding would race us against a stale-lock scenario.
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR must be set");
-    let runtime_dir = std::path::PathBuf::from(runtime_dir);
-    let wayland_display = resolve_wayland_display(&runtime_dir);
+    let runtime_dir = sola_core::env::runtime_dir();
+    let wayland_display = resolve_wayland_display();
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &wayland_display) };
     let socket_path = runtime_dir.join(&wayland_display);
     // Verify the socket is actually there — merely setting env isn't enough.

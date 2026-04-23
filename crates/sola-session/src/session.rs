@@ -10,7 +10,7 @@ use sola_bus::topics::{
     LaunchAppPayload, LaunchResultPayload, Topic, TopicKind, UserAppExitedPayload,
 };
 
-use crate::env;
+use sola_core::env;
 
 const GRACEFUL: Duration = Duration::from_secs(5);
 const FORCE_AFTER_TERM: Duration = Duration::from_secs(5);

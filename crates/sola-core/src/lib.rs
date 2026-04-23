@@ -4,6 +4,7 @@
 //! compositor so we avoid scattered magic numbers.
 
 pub mod applications;
+pub mod env;
 pub mod log;
 pub mod mail;
 

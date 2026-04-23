@@ -12,22 +12,15 @@ use std::time::{Duration, Instant};
 
 use tracing::{error, info, warn};
 
+use sola_core::env::{
+    SOLA_DISPLAY_NAME_FILE, SOLA_WAYLAND_NAME_FILE, find_live_wayland_socket,
+    probe_live_x_display,
+};
+
 pub struct RiverSupervisor {
     child: Child,
     runtime_dir: PathBuf,
 }
-
-/// Filename (inside XDG_RUNTIME_DIR) where sola publishes the name of
-/// the live wayland socket so sola components don't have to guess.
-/// Contents are just the socket name, e.g. `wayland-1`.
-pub const SOLA_WAYLAND_NAME_FILE: &str = "sola-wayland";
-
-/// Filename (inside XDG_RUNTIME_DIR) where sola publishes the X11
-/// DISPLAY that River's XWayland is serving. Contents look like `:0`.
-/// File is absent when XWayland isn't active.
-pub const SOLA_DISPLAY_NAME_FILE: &str = "sola-display";
-
-const X_UNIX_DIR: &str = "/tmp/.X11-unix";
 
 // Closure runs post-fork in the River child: inherit SIGTERM on parent
 // death, put River in its own process group.
@@ -96,35 +89,6 @@ fn find_river_pids() -> Vec<i32> {
     pids
 }
 
-/// Find the first `wayland-N` (N != 'x*') socket in `runtime_dir` that
-/// accepts a connection. Returns the socket *name* (e.g. `"wayland-1"`),
-/// not the full path.
-fn find_live_wayland_socket(runtime_dir: &Path) -> Option<String> {
-    let dir = std::fs::read_dir(runtime_dir).ok()?;
-    let mut candidates: Vec<String> = dir
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name().to_str()?.to_owned();
-            if !name.starts_with("wayland-") {
-                return None;
-            }
-            if name.starts_with("wayland-x") || name.ends_with(".lock") {
-                return None;
-            }
-            Some(name)
-        })
-        .collect();
-    // Lowest N first so we're deterministic if multiple servers are live.
-    candidates.sort();
-    for name in candidates {
-        let path = runtime_dir.join(&name);
-        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
-            return Some(name);
-        }
-    }
-    None
-}
-
 /// Write the discovered socket name to `$XDG_RUNTIME_DIR/sola-wayland`
 /// so other sola components can find it.
 fn publish_socket_name(runtime_dir: &Path, name: &str) -> io::Result<()> {
@@ -132,29 +96,6 @@ fn publish_socket_name(runtime_dir: &Path, name: &str) -> io::Result<()> {
     std::fs::write(&path, name)?;
     info!(path = %path.display(), %name, "published wayland socket name");
     Ok(())
-}
-
-/// Return the lowest-numbered X11 display (e.g. `":0"`) whose
-/// `/tmp/.X11-unix/X<N>` socket accepts a connection, or `None` if none
-/// do. We probe liveness rather than trusting the filesystem entry —
-/// X sockets are often left behind by dead X servers.
-pub fn probe_live_x_display() -> Option<String> {
-    let dir = std::fs::read_dir(X_UNIX_DIR).ok()?;
-    let mut candidates: Vec<(u32, PathBuf)> = dir
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_str()?.to_owned();
-            let n = name.strip_prefix('X')?.parse::<u32>().ok()?;
-            Some((n, e.path()))
-        })
-        .collect();
-    candidates.sort_by_key(|(n, _)| *n);
-    for (n, path) in candidates {
-        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
-            return Some(format!(":{n}"));
-        }
-    }
-    None
 }
 
 /// Write `:N` to `$XDG_RUNTIME_DIR/sola-display` so other sola components
@@ -194,9 +135,7 @@ impl RiverSupervisor {
     /// Spawn `/usr/bin/river`, redirecting stdout/stderr to `log_path`.
     /// Does not wait for the wayland socket.
     pub fn spawn(log_path: &Path) -> io::Result<Self> {
-        let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/run/user/1000"));
+        let runtime_dir = sola_core::env::runtime_dir();
 
         // Kill any orphan River process first so we don't fight a previous
         // instance for socket names. Also delete the stale `sola-wayland`

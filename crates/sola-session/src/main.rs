@@ -1,4 +1,3 @@
-mod env;
 mod session;
 
 use tracing::info;
