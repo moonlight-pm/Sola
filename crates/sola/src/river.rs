@@ -13,8 +13,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use sola_core::env::{
-    SOLA_DISPLAY_NAME_FILE, SOLA_WAYLAND_NAME_FILE, find_live_wayland_socket,
-    probe_live_x_display,
+    SOLA_DISPLAY_NAME_FILE, SOLA_WAYLAND_NAME_FILE, find_live_wayland_socket, probe_live_x_display,
 };
 
 pub struct RiverSupervisor {
@@ -55,7 +54,9 @@ fn find_river_pids() -> Vec<i32> {
         let Some(name) = entry.file_name().to_str().map(String::from) else {
             continue;
         };
-        let Ok(pid) = name.parse::<i32>() else { continue };
+        let Ok(pid) = name.parse::<i32>() else {
+            continue;
+        };
         let Ok(target) = std::fs::read_link(entry.path().join("exe")) else {
             continue;
         };
@@ -164,10 +165,7 @@ impl RiverSupervisor {
         let child = cmd.spawn()?;
 
         info!(pid = child.id(), "spawned river");
-        Ok(Self {
-            child,
-            runtime_dir,
-        })
+        Ok(Self { child, runtime_dir })
     }
 
     /// Poll `/tmp/.X11-unix/` for a live X server (one whose socket accepts

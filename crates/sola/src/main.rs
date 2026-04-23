@@ -15,10 +15,10 @@ use tracing::{error, info, warn};
 use sola_bus::topics::Topic;
 
 const MANAGED: &[&str] = &[
-    "sola-bus",
-    "sola-river",
-    "sola-shell",
-    "sola-session",
+    // "sola-bus",
+    // "sola-river",
+    // "sola-shell",
+    // "sola-session",
 ];
 
 /// Minimum uptime before a restart is considered immediate (triggers backoff).
@@ -47,8 +47,7 @@ fn main() {
     // managed process is a wayland client that depends on it; without
     // this synchronous wait they'd flap through the backoff path until
     // the socket came up.
-    let mut river_sup = match river::RiverSupervisor::spawn(Path::new("/opt/sola/log/river.log"))
-    {
+    let mut river_sup = match river::RiverSupervisor::spawn(Path::new("/opt/sola/log/river.log")) {
         Ok(s) => s,
         Err(e) => {
             error!(%e, "failed to spawn river");
@@ -99,9 +98,7 @@ fn main() {
                 }
                 Err(e) => {
                     reconnect_failures += 1;
-                    if reconnect_failures == 1
-                        || reconnect_failures.is_power_of_two()
-                    {
+                    if reconnect_failures == 1 || reconnect_failures.is_power_of_two() {
                         warn!(%e, attempts = reconnect_failures, "bus reconnect failed");
                     }
                 }
@@ -238,4 +235,3 @@ fn shutdown_all(managed: &mut HashMap<&str, ManagedProcess>) {
 fn leak_str(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
 }
-
