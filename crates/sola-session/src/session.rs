@@ -10,6 +10,7 @@ use sola_bus::topics::{
     LaunchAppPayload, LaunchResultPayload, Topic, TopicKind, UserAppExitedPayload,
 };
 
+use sola_core::config::store::ConfigStore;
 use sola_core::env;
 
 const GRACEFUL: Duration = Duration::from_secs(5);
@@ -35,13 +36,22 @@ pub struct ChildRecord {
 pub struct Session {
     bus: BusClient,
     children: HashMap<String, Vec<ChildRecord>>,
+    config: ConfigStore,
 }
 
 impl Session {
     pub fn new() -> Self {
         let mut bus = BusClient::new();
         bus.set_app_id("sola-session");
-        Self { bus, children: HashMap::new() }
+        let config_path = sola_core::config::sola_config_dir().join("sola.toml");
+        let config = ConfigStore::load(config_path);
+        Self { bus, children: HashMap::new(), config }
+    }
+
+    /// Emit the full config as a sticky bus topic.
+    fn emit_config(&mut self) {
+        let snapshot = self.config.flatten();
+        let _ = self.bus.emit_sticky(Topic::Config(snapshot));
     }
 
     fn emit_launch_result(
@@ -136,6 +146,18 @@ impl Session {
         match topic {
             Topic::LaunchApp(p) => self.launch(p),
             Topic::CloseApp(app_id) => self.close(&app_id),
+            Topic::MutateConfig(payload) => {
+                match self.config.mutate(&payload.key, payload.op) {
+                    Ok(()) => {
+                        info!(key = %payload.key, "config mutated");
+                        self.config.save();
+                        self.emit_config();
+                    }
+                    Err(e) => {
+                        warn!(key = %payload.key, %e, "config mutation rejected");
+                    }
+                }
+            }
             Topic::Shutdown => std::process::exit(0),
             _ => {}
         }
@@ -214,10 +236,14 @@ pub fn run() {
     let _ = session.bus.subscribe(&[
         TopicKind::LaunchApp,
         TopicKind::CloseApp,
+        TopicKind::MutateConfig,
         TopicKind::Shutdown,
     ]);
 
     info!("sola-session connected to bus");
+
+    // Emit initial config snapshot so late-connecting apps get it via sticky replay.
+    session.emit_config();
 
     let poll = Duration::from_millis(500);
     loop {
