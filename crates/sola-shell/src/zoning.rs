@@ -4,16 +4,14 @@ use sola_bus::topics::{FrameUpdate, OutputGeometry, Zone};
 use sola_core::KeyCode;
 use tracing::{info, warn};
 
-use crate::config::ShellConfig;
-use sola_app::config::JsonConfig;
-
 pub const MENUBAR_HEIGHT: i32 = 28;
 
 pub struct ZoningState {
     pub output_size: Option<(i32, i32)>,
     pub focused_app_id: Option<String>,
-    /// Persistent zone assignments by app_id. Saved to config.
-    /// Applied to the first window of each app on startup.
+    /// Zone assignments by app_id, owned by the Zones persistent
+    /// topic. Populated on subscription from the bus sticky replay
+    /// and mutated locally when the user snaps a sola-* window.
     app_zone_config: HashMap<String, Zone>,
     /// Runtime zone assignments by window_id. Only windows that have
     /// been explicitly zoned (by the user or from config) are here.
@@ -22,19 +20,41 @@ pub struct ZoningState {
     /// App IDs that have already had their config zone applied to a
     /// window. Prevents auto-zoning every new window of the same app.
     config_applied: HashSet<String>,
+    /// Set by `handle_key` when the user snaps a sola-* window.
+    /// Consumed by `take_zones_update` so the caller knows to emit
+    /// a fresh `Topic::Zones` for persistence.
+    zones_dirty: bool,
 }
 
 impl ZoningState {
     pub fn new() -> Self {
-        let config = ShellConfig::load();
-
         Self {
             output_size: None,
             focused_app_id: None,
-            app_zone_config: config.zones,
+            app_zone_config: HashMap::new(),
             window_zones: HashMap::new(),
             config_applied: HashSet::new(),
+            zones_dirty: false,
         }
+    }
+
+    /// Replace the app→zone map with a snapshot from the bus.
+    /// Clears `config_applied` so `apply_config_zone` re-evaluates
+    /// against the new mapping for each known window.
+    pub fn set_zones(&mut self, zones: HashMap<String, Zone>) {
+        self.app_zone_config = zones;
+        self.config_applied.clear();
+    }
+
+    /// Take the current zone map if the local state has mutated
+    /// since the last call. Returns `None` when nothing changed, so
+    /// the caller can skip the emit/persist cost.
+    pub fn take_zones_update(&mut self) -> Option<HashMap<String, Zone>> {
+        if !self.zones_dirty {
+            return None;
+        }
+        self.zones_dirty = false;
+        Some(self.app_zone_config.clone())
     }
 
     pub fn set_output_size(&mut self, geo: &OutputGeometry) {
@@ -106,7 +126,7 @@ impl ZoningState {
             self.app_zone_config.insert(app_id, zone);
             self.config_applied
                 .insert(self.focused_app_id.clone().unwrap_or_default());
-            self.save_session();
+            self.zones_dirty = true;
         }
 
         Some(frame)
@@ -155,17 +175,6 @@ impl ZoningState {
     /// Return the current zone assigned to a window, if any.
     pub fn current_zone_for_window(&self, window_id: u32) -> Option<Zone> {
         self.window_zones.get(&window_id).copied()
-    }
-
-    fn save_session(&self) {
-        let config = ShellConfig {
-            zones: self
-                .app_zone_config
-                .iter()
-                .map(|(k, v)| (k.clone(), *v))
-                .collect(),
-        };
-        config.save();
     }
 }
 

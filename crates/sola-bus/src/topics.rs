@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 pub use sola_core::KeyChord;
 pub use sola_core::config::{ConfigValue, MutateConfigPayload, MutateOp};
@@ -224,6 +226,11 @@ define_topics! {
     SetAppMenu(AppMenuPayload),
     MenuAction(MenuActionPayload),
 
+    // Zone assignments by app_id. Shell owns the map; emits a fresh
+    // copy after each snap. Persistent so layouts survive restart.
+    #[persistent]
+    Zones(HashMap<String, Zone>),
+
     // Browser
     OpenUrl(OpenUrlRequest),
 
@@ -294,6 +301,8 @@ mod tests {
     #[test]
     fn behavior_reflects_annotations() {
         use crate::topic::Behavior;
+        // Persistent variants
+        assert_eq!(TopicKind::Zones.behavior(), Behavior::Persistent);
         // Sticky variants
         assert_eq!(TopicKind::Windows.behavior(), Behavior::Sticky);
         assert_eq!(TopicKind::OutputGeometry.behavior(), Behavior::Sticky);
@@ -390,9 +399,8 @@ mod tests {
 
     #[test]
     fn to_toml_value_returns_none_for_non_persistent() {
-        // No persistent variants exist yet — every real topic should
-        // return None. This guards the persistent-only gate until
-        // Phase 5 adds the first persistent topic.
+        // Only persistent topics serialize to TOML; everything else
+        // must return None regardless of behavior (ephemeral/sticky).
         let samples: Vec<Topic> = vec![
             Topic::Shutdown,
             Topic::Windows(vec![]),
@@ -408,6 +416,23 @@ mod tests {
                 "expected None for {:?}",
                 t.kind()
             );
+        }
+    }
+
+    #[test]
+    fn zones_roundtrips_via_toml() {
+        let mut zones: HashMap<String, Zone> = HashMap::new();
+        zones.insert("sola-browser".into(), Zone::Left);
+        zones.insert("sola-terminal".into(), Zone::Right);
+
+        let topic = Topic::Zones(zones.clone());
+        let value = topic
+            .to_toml_value()
+            .expect("Zones is persistent; must serialize to TOML");
+
+        match Topic::from_toml_section(TopicKind::Zones, value) {
+            Some(Topic::Zones(back)) => assert_eq!(back, zones),
+            other => panic!("expected Zones, got {other:?}"),
         }
     }
 

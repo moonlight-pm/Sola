@@ -150,6 +150,7 @@ impl SolaApp for ShellApp {
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
         // Default CloseApp handler is inherited from the trait — don't re-register.
         bus.on(TopicKind::Windows, Self::on_windows);
+        bus.on(TopicKind::Zones, Self::on_zones);
         bus.on(TopicKind::SetAppMenu, Self::on_set_app_menu);
         bus.on(TopicKind::OutputGeometry, Self::on_output_geometry);
         bus.on(TopicKind::MouseEntered, Self::on_mouse_entered);
@@ -256,6 +257,28 @@ impl ShellApp {
                 "renderSwitcher({}, {})",
                 json, self.switcher.selected
             ));
+        }
+    }
+
+    fn on_zones(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::Zones(zones) = topic else {
+            return;
+        };
+        tracing::info!(count = zones.len(), "zones updated");
+        self.zoning.set_zones(zones.clone());
+        // Re-apply config zones to any windows already known. New
+        // windows that arrive after this will pick up the mapping via
+        // apply_config_zone in handle_windows_update.
+        let windows: Vec<(String, u32)> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID)
+            .map(|w| (w.app_id.clone(), w.window_id))
+            .collect();
+        for (app_id, wid) in windows {
+            if let Some(frame) = self.zoning.apply_config_zone(&app_id, wid) {
+                ctx.emit(Topic::Frame(frame));
+            }
         }
     }
 

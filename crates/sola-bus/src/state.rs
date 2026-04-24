@@ -190,4 +190,51 @@ anything = "here"
         write_section(&path, &Topic::Shutdown).unwrap();
         assert!(!path.exists());
     }
+
+    #[test]
+    fn zones_round_trip_through_disk() {
+        use crate::topics::Zone;
+        use std::collections::HashMap;
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.toml");
+
+        let mut zones = HashMap::new();
+        zones.insert("sola-browser".to_string(), Zone::Left);
+        zones.insert("sola-terminal".to_string(), Zone::Right);
+
+        write_section(&path, &Topic::Zones(zones.clone())).unwrap();
+        assert!(path.exists(), "write_section should create the file");
+
+        let restored = load(&path);
+        assert_eq!(restored.len(), 1, "exactly one sticky expected");
+        let msg = &restored[0];
+        assert_eq!(msg.topic, "Zones");
+        assert!(msg.sticky);
+        assert_eq!(msg.source, BUS_SOURCE);
+
+        match Topic::parse(msg) {
+            Some(Topic::Zones(map)) => assert_eq!(map, zones),
+            other => panic!("expected Zones, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn write_section_preserves_unrelated_sections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.toml");
+        // Seed the file with a hand-edit that isn't a real topic; the
+        // bus should skip it on load but must not clobber it on write.
+        fs::write(&path, "[ManualNotes]\nkey = \"value\"\n").unwrap();
+
+        let zones = std::collections::HashMap::from([(
+            "sola-browser".to_string(),
+            crate::topics::Zone::Left,
+        )]);
+        write_section(&path, &Topic::Zones(zones)).unwrap();
+
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("[ManualNotes]"), "unrelated section lost");
+        assert!(raw.contains("[Zones]"), "new section missing");
+    }
 }

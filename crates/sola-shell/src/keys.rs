@@ -396,6 +396,9 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEv
                 app.update_entry_zone(window_id, zone);
             }
         }
+        if let Some(zones) = app.zoning.take_zones_update() {
+            ctx.emit(Topic::Zones(zones));
+        }
         return;
     }
 
