@@ -5,13 +5,11 @@
 //! for free. Files land under `$XDG_CONFIG_HOME/sola/` (or
 //! `$HOME/.config/sola/` as fallback), with atomic writes via temp-file +
 //! rename so a crash mid-write can't leave torn JSON.
-
-pub mod mail;
-pub mod store;
-pub mod value;
-
-pub use store::from_entries;
-pub use value::{ConfigValue, MutateConfigPayload, MutateOp};
+//!
+//! This module is being phased out in favor of persistent bus topics
+//! (see `docs/specs/2026-04-24-persistent-bus-design.md`). The JSON
+//! helpers stay for the few remaining holdouts (e.g.
+//! `ApplicationsConfig`) until each migrates to a persistent topic.
 
 use std::path::{Path, PathBuf};
 
