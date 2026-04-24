@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -7,6 +8,8 @@ use std::{fs, io};
 
 use tracing::{error, info, warn};
 
+use sola_bus::state;
+use sola_bus::topics::{Topic, TopicKind};
 use sola_bus::transport;
 
 type ClientId = u64;
@@ -27,6 +30,8 @@ struct BusState {
     roster: HashMap<ClientId, String>,
     /// client_id → topic kinds the client has subscribed to via `$subscribe`.
     subscriptions: HashMap<ClientId, HashSet<sola_bus::topics::TopicKind>>,
+    /// Path to the persistent-sticky file on disk. Set once at startup.
+    state_path: PathBuf,
 }
 
 type SharedState = Arc<Mutex<BusState>>;
@@ -45,11 +50,25 @@ fn main() {
 
     info!(path = %socket_path, "bus listening");
 
+    let state_path = state::state_path();
+    let restored = state::load(&state_path);
+    info!(
+        path = %state_path.display(),
+        count = restored.len(),
+        "persistent stickies loaded",
+    );
+
+    let mut sticky = HashMap::new();
+    for msg in restored {
+        sticky.insert((msg.topic.clone(), msg.source.clone()), msg);
+    }
+
     let state: SharedState = Arc::new(Mutex::new(BusState {
         clients: HashMap::new(),
-        sticky: HashMap::new(),
+        sticky,
         roster: HashMap::new(),
         subscriptions: HashMap::new(),
+        state_path,
     }));
     let mut next_id: ClientId = 0;
 
@@ -139,6 +158,9 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                             bus.sticky.insert(key, event.clone());
                         }
                         broadcast(id, &event, &mut bus);
+                        if event.sticky {
+                            persist_if_needed(&event, &mut bus);
+                        }
                     }
                 }
             }
@@ -219,7 +241,31 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
     }
 }
 
-fn handle_subscribe(id: ClientId, kinds: Vec<sola_bus::topics::TopicKind>, state: &SharedState) {
+/// If `event` is a persistent topic, write its current value to
+/// state.toml and evict any bootstrap entry ("sola-bus"-keyed sticky
+/// restored at startup) that this live emit supersedes.
+///
+/// Called with the bus lock held so the sticky map and disk stay
+/// consistent; disk writes are rare (persistent topics carry config,
+/// not traffic), so holding the lock is acceptable for now.
+fn persist_if_needed(event: &sola_bus::Message, bus: &mut BusState) {
+    let Some(topic) = Topic::parse(event) else {
+        return;
+    };
+    let kind = topic.kind();
+    if !kind.behavior().is_persistent() {
+        return;
+    }
+    if event.source != state::BUS_SOURCE {
+        let bootstrap = (kind.as_str().to_string(), state::BUS_SOURCE.to_string());
+        bus.sticky.remove(&bootstrap);
+    }
+    if let Err(e) = state::write_section(&bus.state_path, &topic) {
+        warn!(topic = kind.as_str(), %e, "persistent write failed");
+    }
+}
+
+fn handle_subscribe(id: ClientId, kinds: Vec<TopicKind>, state: &SharedState) {
     let new_kinds: HashSet<_> = kinds.into_iter().collect();
     let mut bus = state.lock().unwrap();
     let prev = bus

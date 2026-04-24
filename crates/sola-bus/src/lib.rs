@@ -1,6 +1,7 @@
 mod client;
 mod message;
 mod registry;
+pub mod state;
 pub mod topic;
 pub mod topics;
 pub mod transport;
