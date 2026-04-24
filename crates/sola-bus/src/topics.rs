@@ -374,4 +374,118 @@ mod tests {
             other => panic!("expected MutateConfig, got {other:?}"),
         }
     }
+
+    #[test]
+    fn topic_kind_from_str_roundtrip() {
+        for kind in TopicKind::ALL {
+            let name = kind.as_str();
+            assert_eq!(TopicKind::from_str(name), Some(*kind), "kind {name}");
+        }
+    }
+
+    #[test]
+    fn topic_kind_from_str_unknown_is_none() {
+        assert_eq!(TopicKind::from_str("NotARealTopic"), None);
+    }
+
+    #[test]
+    fn to_toml_value_returns_none_for_non_persistent() {
+        // No persistent variants exist yet — every real topic should
+        // return None. This guards the persistent-only gate until
+        // Phase 5 adds the first persistent topic.
+        let samples: Vec<Topic> = vec![
+            Topic::Shutdown,
+            Topic::Windows(vec![]),
+            Topic::OutputGeometry(OutputGeometry {
+                width: 1,
+                height: 1,
+            }),
+            Topic::RegisteredChords(vec![]),
+        ];
+        for t in samples {
+            assert!(
+                t.to_toml_value().is_none(),
+                "expected None for {:?}",
+                t.kind()
+            );
+        }
+    }
+
+    #[test]
+    fn from_toml_section_returns_none_for_non_persistent() {
+        let empty = toml::Value::Table(toml::map::Map::new());
+        assert!(Topic::from_toml_section(TopicKind::Windows, empty.clone()).is_none());
+        assert!(Topic::from_toml_section(TopicKind::Shutdown, empty).is_none());
+    }
+}
+
+/// TOML round-trip tests. Runs its own `define_topics!` invocation
+/// with a `#[persistent]` variant so we can exercise the generated
+/// `to_toml_value` / `from_toml_section` until Phase 5 adds the first
+/// real persistent topic.
+#[cfg(test)]
+mod persistent_toml_tests {
+    #[allow(dead_code)]
+    mod fixture {
+        use serde::{Deserialize, Serialize};
+
+        use crate::define_topics;
+
+        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+        pub struct Zone {
+            pub name: String,
+        }
+
+        define_topics! {
+            Ping,
+            #[persistent]
+            Zones(std::collections::HashMap<String, Zone>),
+        }
+    }
+
+    use fixture::{Topic, TopicKind, Zone};
+    use std::collections::HashMap;
+
+    #[test]
+    fn persistent_payload_roundtrips_via_toml() {
+        let mut zones = HashMap::new();
+        zones.insert(
+            "sola-browser".into(),
+            Zone {
+                name: "Left".into(),
+            },
+        );
+        zones.insert(
+            "sola-terminal".into(),
+            Zone {
+                name: "Right".into(),
+            },
+        );
+
+        let topic = Topic::Zones(zones.clone());
+        let value = topic
+            .to_toml_value()
+            .expect("persistent payload should serialize to TOML");
+
+        let restored =
+            Topic::from_toml_section(TopicKind::Zones, value).expect("section should deserialize");
+
+        match restored {
+            Topic::Zones(decoded) => assert_eq!(decoded, zones),
+            _ => panic!("wrong variant after round-trip"),
+        }
+    }
+
+    #[test]
+    fn non_persistent_kinds_do_not_deserialize() {
+        let value = toml::Value::Table(toml::map::Map::new());
+        assert!(Topic::from_toml_section(TopicKind::Ping, value).is_none());
+    }
+
+    #[test]
+    fn malformed_section_returns_none() {
+        // Wrong shape for a HashMap<String, Zone>: a bare string.
+        let value = toml::Value::String("oops".into());
+        assert!(Topic::from_toml_section(TopicKind::Zones, value).is_none());
+    }
 }

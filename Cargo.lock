@@ -2497,6 +2497,7 @@ dependencies = [
  "serde",
  "sola-core",
  "tempfile",
+ "toml 0.8.23",
  "tracing",
  "uuid",
 ]

@@ -18,6 +18,28 @@ pub fn encode_payload<T: serde::Serialize>(value: &T) -> Vec<u8> {
     postcard::to_allocvec(value).expect("failed to serialize topic payload")
 }
 
+/// Convert a persistent topic's typed payload to a TOML value for
+/// storage in `state.toml`. Returns `None` if the payload can't be
+/// represented in TOML (e.g. non-string map keys). Used by the macro-
+/// generated `Topic::to_toml_value`.
+pub fn payload_to_toml<T: serde::Serialize>(value: &T) -> Option<toml::Value> {
+    toml::Value::try_from(value).ok()
+}
+
+/// Deserialize a `state.toml` section into a topic payload. Returns
+/// `None` on schema mismatch — the bus logs and leaves the topic
+/// unset. Used by the macro-generated `Topic::from_toml_section`.
+pub fn payload_from_toml<T: serde::de::DeserializeOwned>(value: toml::Value) -> Option<T> {
+    value.try_into::<T>().ok()
+}
+
+/// Empty TOML table. Used as the serialized form of a persistent unit
+/// variant (presence-only persistent signal; section exists in the
+/// file but carries no data).
+pub fn empty_toml_section() -> toml::Value {
+    toml::Value::Table(toml::map::Map::new())
+}
+
 /// Delivery behavior for a topic kind.
 ///
 /// - `Ephemeral` — delivered once to current subscribers; nothing retained.
@@ -268,6 +290,21 @@ macro_rules! _define_topics_inner {
                 }
             }
 
+            /// Map a section name (as it appears in `state.toml`) back
+            /// to a `TopicKind`. Returns `None` for unknown sections so
+            /// the bus can log and skip rather than fail to start.
+            pub fn from_str(name: &str) -> Option<TopicKind> {
+                match name {
+                    $( stringify!($eu) => Some(TopicKind::$eu), )*
+                    $( stringify!($ep) => Some(TopicKind::$ep), )*
+                    $( stringify!($su) => Some(TopicKind::$su), )*
+                    $( stringify!($sp) => Some(TopicKind::$sp), )*
+                    $( stringify!($pu) => Some(TopicKind::$pu), )*
+                    $( stringify!($pp) => Some(TopicKind::$pp), )*
+                    _ => None,
+                }
+            }
+
             /// Delivery behavior for this topic kind.
             pub fn behavior(self) -> $crate::topic::Behavior {
                 match self {
@@ -328,6 +365,35 @@ macro_rules! _define_topics_inner {
                     $( Topic::$sp(_) => TopicKind::$sp, )*
                     $( Topic::$pu => TopicKind::$pu, )*
                     $( Topic::$pp(_) => TopicKind::$pp, )*
+                }
+            }
+
+            /// Serialize a persistent topic's payload to a TOML value
+            /// suitable for writing to `state.toml`. Returns `None` for
+            /// non-persistent variants (ephemeral / sticky topics never
+            /// touch disk) and for persistent payloads whose shape
+            /// can't be represented in TOML.
+            #[allow(unreachable_patterns, unused_variables)]
+            pub fn to_toml_value(&self) -> Option<toml::Value> {
+                match self {
+                    $( Topic::$pp(payload) => $crate::topic::payload_to_toml(payload), )*
+                    $( Topic::$pu => Some($crate::topic::empty_toml_section()), )*
+                    _ => None,
+                }
+            }
+
+            /// Deserialize a `state.toml` section into the matching
+            /// persistent topic variant. Returns `None` if `kind` is
+            /// not persistent, or if the TOML value can't be
+            /// deserialized into the expected payload type.
+            #[allow(unreachable_patterns, unused_variables)]
+            pub fn from_toml_section(kind: TopicKind, value: toml::Value) -> Option<Topic> {
+                match kind {
+                    $( TopicKind::$pp => {
+                        $crate::topic::payload_from_toml::<$ppt>(value).map(Topic::$pp)
+                    }, )*
+                    $( TopicKind::$pu => Some(Topic::$pu), )*
+                    _ => None,
                 }
             }
         }

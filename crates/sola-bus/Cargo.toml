@@ -12,6 +12,7 @@ sola-core = { path = "../sola-core" }
 tracing = "0.1"
 postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
+toml = { workspace = true }
 uuid = { version = "1", features = ["v7", "serde"] }
 
 [dev-dependencies]
