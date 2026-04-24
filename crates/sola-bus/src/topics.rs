@@ -177,11 +177,15 @@ impl Zone {
 }
 
 define_topics! {
-    // Config (sticky, managed by sola-session)
+    // Config (sticky, managed by sola-session). To be replaced by
+    // persistent topics in a later phase.
+    #[sticky]
     Config(Vec<(String, ConfigValue)>),
     MutateConfig(MutateConfigPayload),
 
-    // Window management list (sticky)
+    // Window management list. Sticky: latest list from sola-river is
+    // replayed to new subscribers.
+    #[sticky]
     Windows(Vec<Window>),
     LaunchApp(LaunchAppPayload),
     LaunchResult(LaunchResultPayload),
@@ -197,7 +201,9 @@ define_topics! {
     Frame(FrameUpdate),
     Focus(FocusTarget),
 
-    // Output
+    // Output geometry. Sticky so late-joining apps learn the current
+    // resolution without waiting for a hotplug event.
+    #[sticky]
     OutputGeometry(OutputGeometry),
 
     // Mouse events (sola-river → shell)
@@ -205,12 +211,16 @@ define_topics! {
     MouseLeft,
     MouseClicked(MouseClickedPayload),
 
-    // Keyboard (shell ↔ sola-river)
+    // Keyboard (shell ↔ sola-river). Shell emits the registered-chord
+    // set sticky so sola-river can restore bindings after restart.
+    #[sticky]
     RegisteredChords(Vec<RegisteredChord>),
     Chord(ChordEvent),
     ChordReleased(ChordEvent),
 
-    // Menus
+    // App menu. Each app emits its menu sticky on startup so the shell
+    // can restore the menubar after a shell restart.
+    #[sticky]
     SetAppMenu(AppMenuPayload),
     MenuAction(MenuActionPayload),
 
@@ -279,6 +289,22 @@ mod tests {
     fn topic_kind_all_includes_shutdown_and_windows() {
         assert!(TopicKind::ALL.iter().any(|k| k.as_str() == "Shutdown"));
         assert!(TopicKind::ALL.iter().any(|k| k.as_str() == "Windows"));
+    }
+
+    #[test]
+    fn behavior_reflects_annotations() {
+        use crate::topic::Behavior;
+        // Sticky variants
+        assert_eq!(TopicKind::Windows.behavior(), Behavior::Sticky);
+        assert_eq!(TopicKind::OutputGeometry.behavior(), Behavior::Sticky);
+        assert_eq!(TopicKind::RegisteredChords.behavior(), Behavior::Sticky);
+        assert_eq!(TopicKind::SetAppMenu.behavior(), Behavior::Sticky);
+        assert_eq!(TopicKind::Config.behavior(), Behavior::Sticky);
+        // Ephemeral variants
+        assert_eq!(TopicKind::LaunchApp.behavior(), Behavior::Ephemeral);
+        assert_eq!(TopicKind::Frame.behavior(), Behavior::Ephemeral);
+        assert_eq!(TopicKind::Shutdown.behavior(), Behavior::Ephemeral);
+        assert_eq!(TopicKind::MouseLeft.behavior(), Behavior::Ephemeral);
     }
 
     #[test]

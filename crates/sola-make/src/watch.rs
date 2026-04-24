@@ -9,23 +9,22 @@ use crate::install;
 
 const DEBOUNCE_MS: u64 = 500;
 
-/// Watch app source directories and rebuild+install on changes.
+/// Watch a crate's source directory and rebuild+install on changes.
 ///
-/// Watches `apps/<app>/` and `crates/sola-app/` for file changes.
-/// On change: debounce, build the app, install.
+/// Watches `crates/<name>/` for file changes.
+/// On change: debounce, build, install.
 /// Errors don't kill the watcher — it continues watching.
-pub fn watch_and_install(app: &str) {
-    let app_dir = format!("apps/{app}");
-    let framework_dir = "crates/sola-app";
+pub fn watch_and_install(name: &str) {
+    let crate_dir = format!("crates/{name}");
 
-    if !Path::new(&app_dir).exists() {
-        eprintln!("error: app directory not found: {app_dir}");
+    if !Path::new(&crate_dir).exists() {
+        eprintln!("error: crate directory not found: {crate_dir}");
         std::process::exit(1);
     }
 
-    let crate_name = super::resolve_crate_name(app);
+    let crate_name = super::resolve_crate_name(name);
 
-    println!("[watch] watching {app_dir}/, {framework_dir}/");
+    println!("[watch] watching {crate_dir}/");
 
     // Initial build + install
     println!("[watch] initial build + install...");
@@ -46,14 +45,8 @@ pub fn watch_and_install(app: &str) {
     .expect("failed to create file watcher");
 
     watcher
-        .watch(Path::new(&app_dir), RecursiveMode::Recursive)
-        .expect("failed to watch app directory");
-
-    if Path::new(framework_dir).exists() {
-        watcher
-            .watch(Path::new(framework_dir), RecursiveMode::Recursive)
-            .expect("failed to watch sola-app directory");
-    }
+        .watch(Path::new(&crate_dir), RecursiveMode::Recursive)
+        .expect("failed to watch crate directory");
 
     println!("[watch] waiting for changes...");
 

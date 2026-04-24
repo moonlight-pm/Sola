@@ -94,10 +94,7 @@ fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
 }
 
 /// Run `cargo build` with optional crate targeting and release mode.
-/// Builds web frontends first if any apps have a `web/` directory.
 fn build(target: Option<String>, release: bool) {
-    build_web_frontends();
-
     let resolved = target.as_deref().map(resolve_crate_name);
     let args = build_args(resolved.as_deref(), release);
     let status = Command::new("cargo")
@@ -109,49 +106,17 @@ fn build(target: Option<String>, release: bool) {
     }
 }
 
-/// Build web frontends for any app that has a `web/package.json`.
-/// Apps using vendored dependencies + on-demand TS stripping (like terminal)
-/// don't need a build step — their web/ sources are embedded directly.
-fn build_web_frontends() {
-    let entries = match std::fs::read_dir("apps") {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let web_dir = entry.path().join("web");
-        if !web_dir.join("package.json").exists() {
-            continue;
-        }
-        let app_name = entry.file_name();
-        let app_name = app_name.to_string_lossy();
-
-        // Install deps if needed
-        if !web_dir.join("node_modules").exists() {
-            println!("Installing web deps for {app_name}...");
-            run_or_exit("bun", &["install", "--cwd", &web_dir.to_string_lossy()]);
-        }
-
-        println!("Building web frontend for {app_name}...");
-        run_or_exit(
-            "bun",
-            &["run", "--cwd", &web_dir.to_string_lossy(), "build"],
-        );
-    }
-}
-
-/// Resolve a short app name (e.g. "terminal") to the crate's package name
-/// (e.g. "sola-terminal"). Checks both `apps/<name>/Cargo.toml` and
-/// `crates/<name>/Cargo.toml`. Falls back to "sola-<name>" if not found.
+/// Resolve a short crate name (e.g. "shell") to its package name
+/// (e.g. "sola-shell") by reading `crates/<name>/Cargo.toml`.
+/// Falls back to "sola-<name>" if not found.
 pub(crate) fn resolve_crate_name(name: &str) -> String {
-    for prefix in &["apps", "crates"] {
-        let toml_path = format!("{prefix}/{name}/Cargo.toml");
-        if let Ok(contents) = std::fs::read_to_string(&toml_path) {
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.starts_with("name") {
-                    if let Some(pkg_name) = line.split('"').nth(1) {
-                        return pkg_name.to_string();
-                    }
+    let toml_path = format!("crates/{name}/Cargo.toml");
+    if let Ok(contents) = std::fs::read_to_string(&toml_path) {
+        for line in contents.lines() {
+            let line = line.trim();
+            if line.starts_with("name") {
+                if let Some(pkg_name) = line.split('"').nth(1) {
+                    return pkg_name.to_string();
                 }
             }
         }
@@ -159,14 +124,14 @@ pub(crate) fn resolve_crate_name(name: &str) -> String {
     format!("sola-{name}")
 }
 
-/// Discover installable binary names by scanning workspace member directories.
+/// Discover installable binary names by scanning `crates/`.
 ///
-/// Looks for `Cargo.toml` files in `crates/` and `apps/` that contain a
+/// Looks for `Cargo.toml` files in `crates/` that contain a
 /// `src/main.rs` (i.e. are binary crates), and extracts the package name.
 /// Skips sola-make itself since it's the build tool.
 fn discover_binaries() -> Vec<String> {
     let mut binaries = Vec::new();
-    for dir in &["crates", "apps"] {
+    for dir in &["crates"] {
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => continue,
@@ -197,24 +162,6 @@ fn discover_binaries() -> Vec<String> {
     }
     binaries.sort();
     binaries
-}
-
-/// Run an external command, exiting on failure.
-fn run_or_exit(program: &str, args: &[&str]) {
-    let status = Command::new(program)
-        .args(args)
-        .status()
-        .unwrap_or_else(|e| {
-            eprintln!("failed to run {program}: {e}");
-            exit(1);
-        });
-    if !status.success() {
-        eprintln!(
-            "{program} failed with exit code {}",
-            status.code().unwrap_or(1)
-        );
-        exit(status.code().unwrap_or(1));
-    }
 }
 
 #[cfg(test)]

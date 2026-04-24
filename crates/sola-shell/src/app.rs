@@ -504,7 +504,7 @@ impl ShellApp {
         }
         chords.sort_by_key(|c| (c.modifiers, c.keysym));
         chords.dedup();
-        ctx.emit_sticky(Topic::RegisteredChords(chords));
+        ctx.emit(Topic::RegisteredChords(chords));
     }
 
     fn shell_key_chords(&self) -> Vec<KeyChord> {

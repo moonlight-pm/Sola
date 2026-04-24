@@ -118,14 +118,10 @@ impl AppCtx {
         self.windows.retain(|w| w != handle);
     }
 
-    /// Emit a bus event.
+    /// Emit a bus event. Sticky/persistent semantics are determined by
+    /// the topic kind's `Behavior`.
     pub fn emit(&self, topic: Topic) {
         let _ = self.bus.borrow_mut().emit(topic);
-    }
-
-    /// Emit a sticky bus event.
-    pub fn emit_sticky(&self, topic: Topic) {
-        let _ = self.bus.borrow_mut().emit_sticky(topic);
     }
 
     /// Trigger a clean shutdown: calls `gtk::Application::quit` so the GTK

@@ -192,20 +192,14 @@ impl BusClient {
     }
 
     /// Emit a typed topic to the bus, or queue it if not connected.
-    pub fn emit(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
-        let mut message = topic.to_message();
-        message.source = self.app_id.clone();
-        self.send(&message)
-    }
-
-    /// Emit a typed topic as a sticky message.
     ///
-    /// The bus retains the latest sticky per (topic, app_id) and replays
-    /// all stickies to every newly connected client. Multiple apps can
-    /// have independent stickies on the same topic.
-    pub fn emit_sticky(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
+    /// Whether the message is retained as sticky is determined by the
+    /// topic kind's [`Behavior`](crate::topic::Behavior): `Sticky` and
+    /// `Persistent` topics are retained; `Ephemeral` topics are not.
+    pub fn emit(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
+        let kind = topic.kind();
         let mut message = topic.to_message();
-        message.sticky = true;
+        message.sticky = kind.behavior().is_sticky();
         message.source = self.app_id.clone();
         self.send(&message)
     }

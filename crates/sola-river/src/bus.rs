@@ -42,12 +42,6 @@ impl BusClient {
         }
     }
 
-    pub fn emit_sticky(&mut self, topic: Topic) {
-        if let Err(e) = self.inner.emit_sticky(topic) {
-            tracing::warn!(%e, "bus emit_sticky failed");
-        }
-    }
-
     /// File descriptor that becomes readable when messages arrive.
     /// Used to register the bus with calloop.
     pub fn notify_fd(&self) -> Option<RawFd> {

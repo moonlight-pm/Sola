@@ -18,83 +18,265 @@ pub fn encode_payload<T: serde::Serialize>(value: &T) -> Vec<u8> {
     postcard::to_allocvec(value).expect("failed to serialize topic payload")
 }
 
+/// Delivery behavior for a topic kind.
+///
+/// - `Ephemeral` — delivered once to current subscribers; nothing retained.
+/// - `Sticky` — latest value per (kind, emitter) retained in memory and
+///   replayed to new subscribers.
+/// - `Persistent` — sticky + written to disk and restored on bus start.
+///   Persistent implies sticky behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Behavior {
+    Ephemeral,
+    Sticky,
+    Persistent,
+}
+
+impl Behavior {
+    /// True if the latest value should be retained and replayed to new
+    /// subscribers. Both `Sticky` and `Persistent` qualify.
+    pub fn is_sticky(self) -> bool {
+        matches!(self, Behavior::Sticky | Behavior::Persistent)
+    }
+
+    /// True if the latest value should be saved to disk and restored on
+    /// bus start.
+    pub fn is_persistent(self) -> bool {
+        matches!(self, Behavior::Persistent)
+    }
+}
+
 /// Define a Topic enum with typed variants, a parse function, and to_message.
 ///
-/// Two variant forms:
+/// Variant forms:
 /// - Unit: `Shutdown,` — no payload
 /// - Payload: `GrabInput(String),` — carries typed data
+///
+/// Optional per-variant attributes declare delivery behavior:
+/// - no attribute → ephemeral (default)
+/// - `#[sticky]` → latest value retained and replayed to new subscribers
+/// - `#[persistent]` → sticky + saved to disk (not yet wired; Phase 1 only adds metadata)
 ///
 /// # Example
 /// ```ignore
 /// define_topics! {
 ///     Shutdown,
 ///     GrabInput(String),
-///     Apps(Vec<App>),
-/// }
-///
-/// // Sending:
-/// bus.emit(Topic::GrabInput("sola-switcher".into()))?;
-///
-/// // Receiving:
-/// let Some(topic) = Topic::parse(&msg) else { continue };
-/// match topic {
-///     Topic::GrabInput(target) => { ... }
-///     Topic::Shutdown => { ... }
-///     _ => {}
+///     #[sticky]
+///     Windows(Vec<Window>),
+///     #[persistent]
+///     Zones(HashMap<String, Zone>),
 /// }
 /// ```
 #[macro_export]
 macro_rules! define_topics {
-    // Entry: separate unit variants from payload variants using a tt muncher
     ( $($tt:tt)* ) => {
-        $crate::_define_topics_inner!{ [] [] $($tt)* }
+        $crate::_define_topics_inner!{
+            [] []     // ephemeral units, ephemeral payloads
+            [] []     // sticky units, sticky payloads
+            [] []     // persistent units, persistent payloads
+            $($tt)*
+        }
     };
 }
 
 #[macro_export]
 #[doc(hidden)]
 macro_rules! _define_topics_inner {
-    // Payload variant: Name(Type),
-    ( [ $($unit:ident)* ] [ $( $pname:ident($pty:ty) )* ] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
-        $crate::_define_topics_inner!{ [ $($unit)* ] [ $($pname($pty))* $name($payload) ] $($rest)* }
+    // --- #[persistent] payload variants ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      #[persistent] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt))* ]
+            [ $($pu)* ] [ $($pp($ppt))* $name($payload) ]
+            $($rest)*
+        }
     };
-    // Payload variant: Name(Type) (trailing, no comma)
-    ( [ $($unit:ident)* ] [ $( $pname:ident($pty:ty) )* ] $name:ident ( $payload:ty ) ) => {
-        $crate::_define_topics_inner!{ [ $($unit)* ] [ $($pname($pty))* $name($payload) ] }
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      #[persistent] $name:ident ( $payload:ty ) ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt))* ]
+            [ $($pu)* ] [ $($pp($ppt))* $name($payload) ]
+        }
     };
-    // Unit variant: Name,
-    ( [ $($unit:ident)* ] [ $( $pname:ident($pty:ty) )* ] $name:ident, $($rest:tt)* ) => {
-        $crate::_define_topics_inner!{ [ $($unit)* $name ] [ $($pname($pty))* ] $($rest)* }
+
+    // --- #[persistent] unit variants ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      #[persistent] $name:ident, $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt))* ]
+            [ $($pu)* $name ] [ $($pp($ppt))* ]
+            $($rest)*
+        }
     };
-    // Unit variant: Name (trailing, no comma)
-    ( [ $($unit:ident)* ] [ $( $pname:ident($pty:ty) )* ] $name:ident ) => {
-        $crate::_define_topics_inner!{ [ $($unit)* $name ] [ $($pname($pty))* ] }
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      #[persistent] $name:ident ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt))* ]
+            [ $($pu)* $name ] [ $($pp($ppt))* ]
+        }
     };
-    // Terminal: generate everything
-    ( [ $($unit:ident)* ] [ $( $pname:ident($pty:ty) )* ] ) => {
+
+    // --- #[sticky] payload variants ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      #[sticky] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt))* $name($payload) ]
+            [ $($pu)* ] [ $($pp($ppt))* ]
+            $($rest)*
+        }
+    };
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      #[sticky] $name:ident ( $payload:ty ) ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt))* $name($payload) ]
+            [ $($pu)* ] [ $($pp($ppt))* ]
+        }
+    };
+
+    // --- #[sticky] unit variants ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      #[sticky] $name:ident, $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* $name ] [ $($sp($spt))* ]
+            [ $($pu)* ] [ $($pp($ppt))* ]
+            $($rest)*
+        }
+    };
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      #[sticky] $name:ident ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* $name ] [ $($sp($spt))* ]
+            [ $($pu)* ] [ $($pp($ppt))* ]
+        }
+    };
+
+    // --- Ephemeral (unannotated) payload variants ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      $name:ident ( $payload:ty ), $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* $name($payload) ]
+            [ $($su)* ] [ $($sp($spt))* ]
+            [ $($pu)* ] [ $($pp($ppt))* ]
+            $($rest)*
+        }
+    };
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      $name:ident ( $payload:ty ) ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* $name($payload) ]
+            [ $($su)* ] [ $($sp($spt))* ]
+            [ $($pu)* ] [ $($pp($ppt))* ]
+        }
+    };
+
+    // --- Ephemeral (unannotated) unit variants ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      $name:ident, $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* $name ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt))* ]
+            [ $($pu)* ] [ $($pp($ppt))* ]
+            $($rest)*
+        }
+    };
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+      $name:ident ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* $name ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt))* ]
+            [ $($pu)* ] [ $($pp($ppt))* ]
+        }
+    };
+
+    // --- Terminal: generate Topic, TopicKind, Behavior wiring ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty))* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty))* ]
+    ) => {
         #[derive(Debug, Clone)]
         pub enum Topic {
-            $( $unit, )*
-            $( $pname($pty), )*
+            $( $eu, )*
+            $( $ep($ept), )*
+            $( $su, )*
+            $( $sp($spt), )*
+            $( $pu, )*
+            $( $pp($ppt), )*
         }
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         #[derive(serde::Serialize, serde::Deserialize)]
         pub enum TopicKind {
-            $( $unit, )*
-            $( $pname, )*
+            $( $eu, )*
+            $( $ep, )*
+            $( $su, )*
+            $( $sp, )*
+            $( $pu, )*
+            $( $pp, )*
         }
 
         impl TopicKind {
             pub const ALL: &'static [TopicKind] = &[
-                $( TopicKind::$unit, )*
-                $( TopicKind::$pname, )*
+                $( TopicKind::$eu, )*
+                $( TopicKind::$ep, )*
+                $( TopicKind::$su, )*
+                $( TopicKind::$sp, )*
+                $( TopicKind::$pu, )*
+                $( TopicKind::$pp, )*
             ];
 
             pub fn as_str(self) -> &'static str {
                 match self {
-                    $( TopicKind::$unit => stringify!($unit), )*
-                    $( TopicKind::$pname => stringify!($pname), )*
+                    $( TopicKind::$eu => stringify!($eu), )*
+                    $( TopicKind::$ep => stringify!($ep), )*
+                    $( TopicKind::$su => stringify!($su), )*
+                    $( TopicKind::$sp => stringify!($sp), )*
+                    $( TopicKind::$pu => stringify!($pu), )*
+                    $( TopicKind::$pp => stringify!($pp), )*
+                }
+            }
+
+            /// Delivery behavior for this topic kind.
+            pub fn behavior(self) -> $crate::topic::Behavior {
+                match self {
+                    $( TopicKind::$eu => $crate::topic::Behavior::Ephemeral, )*
+                    $( TopicKind::$ep => $crate::topic::Behavior::Ephemeral, )*
+                    $( TopicKind::$su => $crate::topic::Behavior::Sticky, )*
+                    $( TopicKind::$sp => $crate::topic::Behavior::Sticky, )*
+                    $( TopicKind::$pu => $crate::topic::Behavior::Persistent, )*
+                    $( TopicKind::$pp => $crate::topic::Behavior::Persistent, )*
                 }
             }
         }
@@ -102,9 +284,17 @@ macro_rules! _define_topics_inner {
         impl Topic {
             pub fn parse(msg: &$crate::Message) -> Option<Self> {
                 match msg.topic.as_str() {
-                    $( stringify!($unit) => Some(Topic::$unit), )*
-                    $( stringify!($pname) => {
-                        $crate::topic::decode_payload::<$pty>(msg).ok().map(Topic::$pname)
+                    $( stringify!($eu) => Some(Topic::$eu), )*
+                    $( stringify!($ep) => {
+                        $crate::topic::decode_payload::<$ept>(msg).ok().map(Topic::$ep)
+                    }, )*
+                    $( stringify!($su) => Some(Topic::$su), )*
+                    $( stringify!($sp) => {
+                        $crate::topic::decode_payload::<$spt>(msg).ok().map(Topic::$sp)
+                    }, )*
+                    $( stringify!($pu) => Some(Topic::$pu), )*
+                    $( stringify!($pp) => {
+                        $crate::topic::decode_payload::<$ppt>(msg).ok().map(Topic::$pp)
                     }, )*
                     _ => None,
                 }
@@ -112,9 +302,19 @@ macro_rules! _define_topics_inner {
 
             pub fn to_message(&self) -> $crate::Message {
                 match self {
-                    $( Topic::$unit => $crate::Message::new(stringify!($unit)), )*
-                    $( Topic::$pname(payload) => $crate::Message::with_payload(
-                        stringify!($pname),
+                    $( Topic::$eu => $crate::Message::new(stringify!($eu)), )*
+                    $( Topic::$ep(payload) => $crate::Message::with_payload(
+                        stringify!($ep),
+                        $crate::topic::encode_payload(payload),
+                    ), )*
+                    $( Topic::$su => $crate::Message::new(stringify!($su)), )*
+                    $( Topic::$sp(payload) => $crate::Message::with_payload(
+                        stringify!($sp),
+                        $crate::topic::encode_payload(payload),
+                    ), )*
+                    $( Topic::$pu => $crate::Message::new(stringify!($pu)), )*
+                    $( Topic::$pp(payload) => $crate::Message::with_payload(
+                        stringify!($pp),
                         $crate::topic::encode_payload(payload),
                     ), )*
                 }
@@ -122,8 +322,12 @@ macro_rules! _define_topics_inner {
 
             pub fn kind(&self) -> TopicKind {
                 match self {
-                    $( Topic::$unit => TopicKind::$unit, )*
-                    $( Topic::$pname(_) => TopicKind::$pname, )*
+                    $( Topic::$eu => TopicKind::$eu, )*
+                    $( Topic::$ep(_) => TopicKind::$ep, )*
+                    $( Topic::$su => TopicKind::$su, )*
+                    $( Topic::$sp(_) => TopicKind::$sp, )*
+                    $( Topic::$pu => TopicKind::$pu, )*
+                    $( Topic::$pp(_) => TopicKind::$pp, )*
                 }
             }
         }

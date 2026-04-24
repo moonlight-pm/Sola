@@ -12,7 +12,7 @@ use crate::registry::chord_diff;
 pub fn emit_windows(state: &mut AppData) {
     let windows = state.registry.as_windows();
     debug!(count = windows.len(), "emitting Windows");
-    state.bus.emit_sticky(Topic::Windows(windows));
+    state.bus.emit(Topic::Windows(windows));
 }
 
 /// Apply a chord-set update from `pending.chords`. MUST be called

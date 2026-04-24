@@ -380,7 +380,7 @@ impl Dispatch<RiverOutputV1, ()> for AppData {
             state.output_size = Some((width, height));
             state
                 .bus
-                .emit_sticky(Topic::OutputGeometry(OutputGeometry { width, height }));
+                .emit(Topic::OutputGeometry(OutputGeometry { width, height }));
         }
     }
 }

@@ -55,7 +55,7 @@ impl Session {
     /// Emit the full config as a sticky bus topic.
     fn emit_config(&mut self) {
         let snapshot = self.config.flatten();
-        let _ = self.bus.emit_sticky(Topic::Config(snapshot));
+        let _ = self.bus.emit(Topic::Config(snapshot));
     }
 
     fn emit_launch_result(&mut self, app_id: &str, command: &str, ok: bool, error: Option<String>) {
