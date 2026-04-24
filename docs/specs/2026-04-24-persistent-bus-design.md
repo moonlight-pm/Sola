@@ -1,0 +1,359 @@
+# Persistent Bus — Design
+
+**Date:** 2026-04-24
+**Branch:** `persistent-topics`
+**Status:** Phase 1 landed; Phases 2–7 pending
+
+## Problem
+
+The current centralized config story (sola-session's `ConfigStore`,
+`MutateConfig`/`Config` topics, `ConfigValue` enum, dotted-path flat
+representation, and `MutateOp` granular mutations) is ~530 lines of
+machinery that exists to do one thing: turn a typed config tree into
+something the bus can carry, persist, and replay.
+
+That machinery solves problems we created by trying to push typed
+configuration through a bus that knows nothing about persistence. If
+the bus could persist sticky messages itself, the entire
+`MutateConfig` round-trip — apps emit a request, the session validates,
+applies, persists, and re-emits — collapses into "apps emit their state;
+the bus persists it." No central manager, no flat key bridging, no
+granular mutations, no separate ConfigValue type.
+
+We're early enough in development that there's no compatibility cost to
+replacing this primitive.
+
+## Scope
+
+In scope:
+
+- A new bus primitive: **persistent sticky messages**. Topics declare
+  at the type level whether they're ephemeral, sticky, or persistent.
+  Persistent topics' latest values are written to a single TOML file
+  and restored on bus startup.
+- Single-file user-editable state at `~/.config/sola/state.toml` with
+  one section per persistent topic kind.
+- A field-level encryption primitive `Encrypted<T>` for sensitive
+  config (mail passwords etc.). Encryption activates only on
+  human-readable serializers (TOML on disk); binary serializers
+  (postcard on the wire) pass values through as-is.
+- Migration of zone assignments to be the first persistent topic.
+- Removal of `ConfigStore`, `MutateConfig`, `Config`, `ConfigValue`,
+  `MutateOp`, and sola-session's config role.
+
+Out of scope (deferred to per-topic migrations):
+
+- Mail/Applications/Monitor/Browser/Terminal config migrations. Those
+  follow the same pattern but happen as each app is rewritten.
+- OS keyring integration. Local key file is sufficient for now.
+- Schema migrations for persistent topics — handled per-topic by the
+  app that owns each topic, not centrally.
+
+## Architecture
+
+### Topic delivery behavior
+
+Three behaviors, declared per topic variant on the `define_topics!`
+macro:
+
+- **Ephemeral** (default, no annotation) — delivered once to current
+  subscribers; nothing retained.
+- **`#[sticky]`** — latest value per `(kind, emitter)` retained in
+  memory and replayed to new subscribers.
+- **`#[persistent]`** — sticky + saved to disk and restored on bus
+  start. Persistent implies sticky.
+
+The bus is the single authority on delivery semantics. Clients call a
+single `emit(topic)`; the bus inspects `TopicKind::behavior()` to
+decide retention and persistence. There is no per-emit flag.
+
+### Wire vs. disk format
+
+- **Wire:** postcard (unchanged). Compact, lossless, handles every
+  serde type.
+- **Disk:** TOML. Single file, human-editable, one section per
+  persistent topic kind.
+
+The bus owns the conversion because it owns the `Topic`/`TopicKind`
+enums. The `define_topics!` macro generates `to_toml_value(&self) ->
+toml::Value` and `from_toml_section(kind, &toml::Value) ->
+Option<Topic>` so the bus can move topics between formats without
+running app code.
+
+### state.toml layout
+
+Path: `~/.config/sola/state.toml`. Single file, sections per persistent
+topic kind. Section name is `TopicKind::as_str()`.
+
+```toml
+# Persistent bus state. Edited by the bus; safe to hand-edit while sola
+# is not running.
+
+[Zones]
+"sola-browser" = "Left"
+"sola-terminal" = "Right"
+
+[MailConfig]
+imap_host = "imap.example.com"
+imap_port = 993
+username = "user@example.com"
+password = "age1enc:YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0..."
+
+[[MailConfig.rules]]
+name = "Work"
+# ...
+```
+
+Atomic writes: temp file + rename. Read on bus startup; replay each
+section as a sticky on the matching topic.
+
+### Encrypted<T>
+
+A newtype that encrypts at serialize time *only* when the serializer is
+human-readable:
+
+```rust
+pub struct Encrypted<T>(pub T);
+
+impl<T: Serialize> Serialize for Encrypted<T> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        if s.is_human_readable() {
+            // TOML/JSON: encrypt with age, base64, prefix "age1enc:"
+            let clear = serde_json::to_vec(&self.0)?;
+            let cipher = age::encrypt(&bus_key(), &clear)?;
+            s.serialize_str(&format!("age1enc:{}", BASE64.encode(cipher)))
+        } else {
+            // postcard: pass through clear
+            self.0.serialize(s)
+        }
+    }
+}
+
+// Symmetric Deserialize.
+```
+
+`postcard::Serializer::is_human_readable()` returns `false`;
+`toml::Serializer::is_human_readable()` returns `true`. So the same
+topic moves unencrypted over the local Unix socket (other processes
+running as the same user can read it anyway) and lands encrypted in
+state.toml.
+
+### Encryption key
+
+- Path: `~/.config/sola/key` with mode 0600.
+- Auto-generated by the bus on first use of `Encrypted<T>` if missing.
+- Lost key → encrypted fields fail to deserialize; the bus logs once
+  per failed field, the app sees "field unset" and re-prompts.
+- Threat model: grep-safe and accidental-cloud-sync-safe. Not defended
+  against a local attacker — anyone with read access to the key file
+  can decrypt.
+
+Crate: `age` (modern, well-audited, single identity per user).
+
+### Bus host changes
+
+State (`crates/sola-bus/src/main.rs`):
+
+- New: `state_path: PathBuf` (resolves to `~/.config/sola/state.toml`).
+- Existing: `sticky: HashMap<(String, String), Message>` keyed by
+  `(topic, app_id)` — unchanged.
+
+Startup:
+
+1. Read state.toml. Parse top-level table.
+2. For each section, look up `TopicKind::from_str(section_name)`. If
+   unknown (renamed/removed topic), log and skip.
+3. Reject if `kind.behavior() != Persistent` (defends against
+   accidental hand-edits adding non-persistent sections).
+4. Call `Topic::from_toml_section(kind, value)` → `Option<Topic>`.
+5. Convert to `Message` via `topic.to_message()`. Source app_id is
+   `"sola-bus"` (the bus is the emitter on restore — clients can
+   distinguish a restored sticky from a live-emitted one by source if
+   they care, though most don't).
+6. Mark `sticky: true`. Insert into the sticky map. Do not broadcast
+   yet; clients aren't connected.
+
+On `emit` from a client:
+
+1. Existing path: store in sticky map if `message.sticky`.
+2. New: if `message.sticky` and `Topic::parse(&message).map(|t|
+   t.kind().behavior().is_persistent())` is `Some(true)`, also write
+   the topic's current value to state.toml's matching section.
+
+Disk writes are atomic (temp file + rename) and debounced — multiple
+mutations within a short window coalesce into one rewrite. Initial
+implementation can write synchronously per-emit; debouncing is a
+follow-up if it shows up in profiles.
+
+Section update: load state.toml → replace the section → write back.
+For per-topic atomicity, each persistent topic's section is fully
+overwritten on update.
+
+### Client-side changes
+
+Minimal:
+
+- `BusClient::emit()` already sets `message.sticky` based on
+  `kind.behavior().is_sticky()` (Phase 1, landed). No further client
+  changes needed for persistence — the bus handles disk on its end.
+
+## What gets deleted
+
+After the migration completes:
+
+- `Topic::Config(Vec<(String, ConfigValue)>)` — replaced by per-topic
+  persistent stickies.
+- `Topic::MutateConfig(MutateConfigPayload)` — apps emit typed
+  persistent topics directly.
+- `ConfigValue` enum and its `to_toml`/`from_toml` converters
+  (`crates/sola-core/src/config/value.rs`).
+- `MutateOp` enum and `MutateConfigPayload`.
+- `ConfigStore` (`crates/sola-core/src/config/store.rs`) — load, save,
+  flatten, mutate, get_as, set_from, from_entries.
+- sola-session's config handling (~25 lines in `session.rs`).
+- Eventually: `JsonConfig` / `JsonConfigIn` traits in
+  `crates/sola-core/src/config/mod.rs`, as each app migrates to
+  persistent topics.
+- On disk: `~/.config/sola/sola.toml`, `shell.json`, `mail.json`,
+  `monitor.json`, `shell/applications.json` — replaced by sections in
+  `state.toml`.
+
+## Migration phases
+
+Each phase is self-contained, reviewable, and produces a running
+system. Phase 1 has landed; the rest are planned.
+
+### Phase 1 (LANDED)
+
+Topic behavior annotations. Type-level `#[sticky]` / `#[persistent]`
+attributes on `define_topics!`. `Behavior` enum. `TopicKind::behavior()`
+generated. `BusClient::emit_sticky()` removed; `emit()` infers sticky
+from kind. apps/* removed from the workspace until rewritten.
+
+### Phase 2: Encrypted<T>
+
+- New module `crates/sola-core/src/encrypted.rs` (or new
+  `sola-crypto` crate if it grows).
+- `age` dependency.
+- Lazy key initialization in `~/.config/sola/key` (0600).
+- `Serialize`/`Deserialize` impls keyed off `is_human_readable()`.
+- Tests: round-trip through postcard (clear), round-trip through TOML
+  (encrypted), missing key → deserialize error.
+
+No consumers yet. `Encrypted<T>` is just a primitive.
+
+### Phase 3: TOML serialization on topics
+
+Macro extension: `define_topics!` generates `Topic::to_toml_value()`
+and `Topic::from_toml_section(kind, value)`. These work for any
+serde-`Serialize`/`Deserialize` payload that fits TOML's shape
+constraints (most typed structs and unit enums; complex tagged enums
+need `#[serde(tag = "...")]` if persistent).
+
+Audit existing topic shapes for TOML compatibility. The likely
+persistent set (Zones, MailConfig, Applications) is already TOML-
+shaped; transient topics never hit this path so don't need changes.
+
+### Phase 4: Bus host persistent storage
+
+- Read/parse state.toml on startup; populate sticky map.
+- On `emit` of a persistent topic, write its section to state.toml.
+- Atomic writes via temp file + rename.
+- Path: `~/.config/sola/state.toml`.
+- Tests: bus restarts, persistent topics replay; ephemeral topics
+  don't; hand-edits on disk persist across restart.
+
+### Phase 5: First migration — Zones
+
+- Add `Topic::Zones(HashMap<String, Zone>)` with `#[persistent]`.
+- sola-shell subscribes to `Zones`; on receipt, populates
+  `ZoningState::app_zone_config`.
+- On user snap, emit a new `Zones` map with the updated entry.
+- Apply to known windows on Config arrival.
+
+This is the smallest end-to-end test of the new system. Can run before
+deleting old machinery.
+
+### Phase 6: Delete old config machinery
+
+Once Zones works through the new path, remove `ConfigStore`,
+`MutateConfig`/`Config` topics, `ConfigValue`/`MutateOp`, sola-session
+config handling, and the old `shell.json` reader path.
+
+### Phase 7: Per-app migrations (as apps are rewritten)
+
+Each app's config moves from its JSON file to a persistent topic at
+the time it's re-added to the workspace:
+
+- `MailConfig` (with `Encrypted<String>` on password)
+- `Applications` (the registry)
+- `MonitorConfig` (sidebar width)
+- `BrowsingHistory` / `TabStore` / `PersistedTerminalState` if any of
+  those should be persistent state vs. per-app local files (some are
+  app-local runtime state and shouldn't move to the bus).
+
+## Topic shape considerations
+
+For TOML serialization to round-trip cleanly, persistent topic
+payloads should:
+
+- Use unit enums for plain choices (Zone, etc.) — serialize as strings.
+- Use `#[serde(tag = "type")]` on data-carrying enums — TOML's `[[..]]`
+  array-of-tables wants tagged variants.
+- Avoid types that don't TOML-serialize: tuples (use named structs),
+  raw bytes (base64-encode), maps with non-string keys (convert).
+
+Transient topics (Frame, Focus, Composition, Chord, Mouse*) are
+unaffected — they only serialize through postcard.
+
+## Testing strategy
+
+Per-phase test focus:
+
+- **Phase 1**: macro emits correct `behavior()` for each variant
+  (landed; `behavior_reflects_annotations` test).
+- **Phase 2**: `Encrypted<T>` round-trips clear via postcard, encrypted
+  via TOML, ciphertext changes per call (nonce), missing key → clear
+  deserialize error.
+- **Phase 3**: each topic round-trips via TOML; payload-shape audit
+  verified by reflective test that constructs a sample of every
+  persistent topic and serializes it.
+- **Phase 4**: bus restart preserves persistent stickies; ephemeral
+  ones don't survive; hand-edits to state.toml are visible after a
+  restart.
+- **Phase 5**: shell snaps a window, restarts the bus, the zone
+  persists.
+- **Phase 6**: deletion is verified by the workspace continuing to
+  build and tests passing.
+
+## Risks and edge cases
+
+- **State.toml corruption.** Bus startup logs and skips invalid
+  sections. The user can hand-fix or delete the file; bus starts with
+  empty state.
+- **Concurrent emitters.** Two apps emitting the same persistent
+  topic (rare; we don't currently have such a case): last write wins,
+  same as current sticky semantics. Per-app keying could be added if
+  we ever need it.
+- **Schema drift.** A topic shape changes; the old TOML section won't
+  deserialize. The bus logs the failure, treats the topic as unset on
+  startup, and the next emit overwrites it. App-side migration
+  handlers (if needed) live in the app, not the bus.
+- **Encryption key loss.** Encrypted fields fail to decrypt. The app
+  treats the field as unset and prompts the user. Acceptable for a
+  user's own data; documented behavior.
+- **Disk write storms.** Many rapid persistent-topic emits could
+  thrash state.toml. If observed, add a debounce in the bus. Initial
+  implementation writes synchronously.
+
+## Open questions
+
+- **One-file vs. per-topic files.** Single `state.toml` is more
+  ergonomic for users (one file to find, version-control, back up).
+  Per-topic files (`state/Zones.toml`, etc.) are simpler for bus code
+  and atomically isolate writes. Decision: single file. Revisit if
+  contention becomes a real problem.
+- **Encryption library: `age` vs. roll-your-own with `aes-gcm`.**
+  Decision: `age`. Standard format, audited, no key-management foot-guns.
+- **Where does `Encrypted<T>` live.** Decision: `crates/sola-core` for
+  now; promote to its own crate if it grows beyond a single file.
