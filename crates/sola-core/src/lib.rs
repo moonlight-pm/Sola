@@ -5,10 +5,12 @@
 
 pub mod applications;
 pub mod config;
+pub mod encrypted;
 pub mod env;
 pub mod keys;
 pub mod log;
 pub mod process;
 pub mod watcher;
 
+pub use encrypted::Encrypted;
 pub use keys::{KeyChord, KeyCode};
