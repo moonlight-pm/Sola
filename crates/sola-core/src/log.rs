@@ -271,13 +271,13 @@ fn level_style(level: Level) -> (&'static str, &'static str) {
 /// and target labels).
 fn component_color(name: &str) -> &'static str {
     match name {
-        "sola" => "\x1b[1;36m",                          // bold cyan
-        "bus" | "sola::bus" => "\x1b[1;35m",              // bold magenta
-        "river" | "sola::river" => "\x1b[1;34m",          // bold blue
-        "session" | "sola::session" => "\x1b[1;32m",      // bold green
-        "shell" | "sola::shell" => "\x1b[1;33m",          // bold yellow
-        "core" | "sola::core" => "\x1b[37m",              // white
-        _ => "\x1b[36m",                                  // cyan (apps and other)
+        "sola" => "\x1b[1;36m",                      // bold cyan
+        "bus" | "sola::bus" => "\x1b[1;35m",         // bold magenta
+        "river" | "sola::river" => "\x1b[1;34m",     // bold blue
+        "session" | "sola::session" => "\x1b[1;32m", // bold green
+        "shell" | "sola::shell" => "\x1b[1;33m",     // bold yellow
+        "core" | "sola::core" => "\x1b[37m",         // white
+        _ => "\x1b[36m",                             // cyan (apps and other)
     }
 }
 

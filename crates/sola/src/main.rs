@@ -14,12 +14,7 @@ use tracing::{error, info, warn};
 
 use sola_bus::topics::Topic;
 
-const MANAGED: &[&str] = &[
-    // "sola-bus",
-    // "sola-river",
-    // "sola-shell",
-    // "sola-session",
-];
+const MANAGED: &[&str] = &["sola-bus", "sola-river", "sola-shell", "sola-session"];
 
 /// Minimum uptime before a restart is considered immediate (triggers backoff).
 const MIN_UPTIME: Duration = Duration::from_secs(5);
