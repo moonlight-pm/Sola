@@ -1,67 +1,94 @@
 # Sola
 
-Sola is a Wayland desktop shell — a full compositor and desktop environment built in Rust with Smithay, using WebKit6 WebViews for all UI rendering.
+Sola is a Wayland desktop shell — the River compositor hosted under a
+supervisor, with a typed IPC bus coordinating a small set of long-
+running processes and WebKit6 WebView shell apps.
 
 ## System Topology
 
 ```
-┌───────────────────────────────────┐
-│         sola (process manager)    │
-│         Launches & restarts all   │
-└──┬────────┬────────┬────────┬─────┘
-   │        │        │        │
-   ▼        ▼        ▼        ▼
-┌──────┐ ┌────────┐ ┌──────┐ ┌──────────┐
-│sola- │ │sola-   │ │sola- │ │sola-     │
-│bus   │ │river   │ │shell │ │session   │
-└──┬───┘ └───┬────┘ └──┬───┘ └──┬───────┘
-   │         │         │        │
-   └─────────┴─────────┴────────┘
-      Unix socket: sola-bus
+┌────────────────────────────────────┐
+│         sola (process manager)     │
+│         Launches & restarts all    │
+└──┬──────┬──────────┬────────┬──────┘
+   │      │          │        │
+   ▼      ▼          ▼        ▼
+┌──────┐ ┌──────┐ ┌────────┐ ┌────────┐ ┌────────┐
+│River │ │sola- │ │sola-   │ │sola-   │ │sola-   │
+│      │ │bus   │ │river   │ │shell   │ │session │
+└──────┘ └──┬───┘ └───┬────┘ └──┬─────┘ └──┬─────┘
+            │         │         │          │
+            └─────────┴─────────┴──────────┘
+                Unix socket: sola-bus
 ```
 
-River (wlroots compositor) is spawned directly by sola as a prerequisite. All other components are managed processes.
+River is spawned as a direct child of `sola` and is a prerequisite
+for everything else. The remaining processes are managed children;
+each connects to the bus and speaks to River (for wayland) through
+the sola-river bridge.
 
-All components are independently restartable. Shell apps are resilient to bus and compositor restarts.
+All components are independently restartable. Shell apps tolerate
+bus and compositor restarts.
 
 ## Components
 
-| Component | Role | Process |
-|---|---|---|
-| [[sola]] | Process manager | Main binary |
-| [[sola-bus]] | IPC bus + protocol definitions | Separate |
-| sola-river | River ↔ bus bridge (wayland protocols) | Separate |
-| sola-shell | Desktop shell (switcher, launcher, menubar, zoning) | Separate |
-| sola-session | User app session manager + config store | Separate |
-| [[sola-app]] | WebView app framework (GTK4 + WebKit6) | Library |
-| sola-core | Shared primitives (log, env, process, config, keys) | Library |
-| sola-make | Build/install orchestration | Dev tool |
+| Component       | Role                                                    | Process   |
+|-----------------|---------------------------------------------------------|-----------|
+| [[sola]]        | Process manager                                         | Main      |
+| [[sola-bus]]    | IPC bus host + client library + protocol definitions    | Separate  |
+| sola-river      | River ↔ bus bridge (window manager, xkb bindings)       | Separate  |
+| sola-shell      | Desktop shell — launcher, switcher, menubar, zoning     | Separate  |
+| sola-session    | User app session manager (spawn, close, reap)           | Separate  |
+| [[sola-app]]    | WebView app framework (GTK4 + WebKit6)                  | Library   |
+| sola-core       | Shared primitives — log, env, process, keys, encrypted  | Library   |
+| sola-assets     | Vendored icon/asset bundles                             | Library   |
+| [[sola-make]]   | Build/install orchestration (xtask)                     | Dev tool  |
 
 ## Communication
 
-Two communication layers:
+Two layers:
 
-- **[[Sola Bus]]** — events over Unix socket. All Sola components. Control plane: shell events, lifecycle, config, metadata.
-- **Wayland protocol** — surfaces, buffers, input. Data plane: pixels at 60fps.
-
-The bus handles coordination. Wayland handles rendering.
+- **[[Sola Bus|sola-bus]]** — events over a Unix socket. Coordination,
+  lifecycle, persistent config snapshots. Control plane.
+- **Wayland protocol** — surfaces, buffers, input. River delivers
+  pixels; sola-river translates seat/window events into bus topics.
 
 ## Configuration
 
-Centralized config store managed by sola-session:
+State is **not** a central manager anymore. Each owner emits its
+state as a persistent [[Topics#Behavior|sticky]] bus topic, and the
+bus writes those to a single file on disk.
 
-- Persisted as `~/.config/sola/sola.toml`
-- Broadcast on the bus as `Topic::Config` (sticky, flat key-value snapshot)
-- Apps mutate config via `Topic::MutateConfig` (validated by session)
-- See [[Topics]] for details
+- File: `~/.config/sola/state.toml`
+- One `[Section]` per persistent [[Topics|topic kind]]
+- On bus startup the file is parsed and each section is restored as a
+  sticky message tagged `source = "sola-bus"`; new subscribers get
+  the latest value via normal sticky replay
+- Apps never read or write state.toml themselves; they subscribe to
+  the topic and emit updates. The bus owns the disk.
+
+The first migrated persistent topic is `Zones` (shell's zone
+assignments). The spec at
+`docs/specs/2026-04-24-persistent-bus-design.md` has the full
+rationale.
+
+Secrets in persistent topics use `sola_core::Encrypted<T>`, which
+encrypts on human-readable serializers (TOML) and passes through on
+binary (postcard wire). See [[sola-bus#Encrypted payloads]].
 
 ## Key Design Decisions
 
-- [[Process Model]] — every component is a separate process, sola supervises all
-- [[Wire Format]] — Message: id (UUIDv7), topic (String), payload (postcard bytes), sticky, source
-- [[Topics]] — typed via `define_topics!` macro, config types in sola-core
-- Compositor bridge pattern — sola-river translates between River's wayland protocols and the bus
-- Binary resolution via PATH lookup — no hardcoded paths, works on NixOS
+- [[Process Model]] — every component is a separate process under
+  sola's supervision
+- [[Wire Format]] — `Message { id, topic, payload, sticky, source }`;
+  postcard on the socket, length-prefixed
+- [[Topics]] — typed via `define_topics!` with per-variant
+  `#[sticky]` / `#[persistent]` annotations controlling retention
+- River bridge pattern — sola-river speaks River's
+  `river_window_manager_v1` + `river_xkb_bindings_v1` protocols and
+  re-surfaces everything as typed bus topics
+- Binary resolution via `$PATH` — works on NixOS and traditional
+  distros without hardcoding
 
 ## Workspace
 
@@ -69,30 +96,26 @@ Centralized config store managed by sola-session:
 crates/
   sola/                # Process manager
   sola-bus/            # Bus host + client library + protocol
-  sola-core/           # Shared primitives (env, process, config, log, keys, watcher)
+  sola-core/           # Shared primitives (env, process, log, keys, encrypted, watcher)
   sola-app/            # WebView app framework (GTK4 + WebKit6)
   sola-assets/         # Vendored icon/asset bundles
   sola-make/           # Build/install orchestration (xtask)
   sola-river/          # River compositor bridge (bus ↔ wayland)
-  sola-session/        # User-app session manager + config store
+  sola-session/        # User-app session manager (spawn/close/reap)
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
-apps/
-  agent/               # AI agent frontend
-  browser/             # WebKit browser
-  mail/                # IMAP/SMTP mail client
-  monitor/             # System monitor / bus audit
-  settings/            # Settings panel
-  terminal/            # Terminal emulator (tmux-backed, xterm.js)
 docs/
-  manual/              # Architecture docs, references
   specs/               # Design specs and implementation plans
-  vault/               # This vault
+  vault/               # Canonical architecture docs (this vault)
 ```
+
+`apps/*` (browser, mail, terminal, monitor, agent, settings) are
+temporarily excluded from the workspace. They'll be re-added as each
+is rewritten against the new bus model.
 
 ## Runtime Environment
 
-- **Platform:** NixOS (development machine: novus)
+- **Platform:** NixOS, developer launches from a physical TTY
 - **Binaries:** `/opt/sola/bin/`
-- **Logs:** `/opt/sola/log/sola.log` (shared by all processes, rotated at 100KB)
-- **Config:** `~/.config/sola/sola.toml`
-- **Launch:** manually from a physical TTY — no display manager
+- **Logs:** `/opt/sola/log/sola.log` (shared, rotated at 100KB)
+- **Persistent state:** `~/.config/sola/state.toml`
+- **Encryption key:** `~/.config/sola/key` (mode 0600, auto-generated)

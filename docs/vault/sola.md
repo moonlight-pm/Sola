@@ -2,47 +2,63 @@
 
 **Crate:** `crates/sola/`
 **Binary:** `sola`
-**Role:** Pure process supervisor. Launches and manages all other Sola components.
+**Role:** Pure process supervisor. Launches and manages every other
+Sola component.
 
 ## Responsibilities
 
-- Spawns River compositor first, waits for its wayland socket and XWayland display
-- Launches managed processes: sola-bus, sola-river, sola-shell, sola-session
-- Watches for crashes, restarts with backoff (2s delay if crashed within 5s of launch)
-- Watches all managed binaries for changes via inotify, restarts on update
-- Watches own binary, `execv`'s self on update
+- Spawns River first, waits for its wayland socket and XWayland
+  display
+- Launches managed processes: sola-bus, sola-river, sola-shell,
+  sola-session
+- Restarts crashed processes with a 2-second backoff if the crash
+  happened within 5s of launch
+- Watches all managed binaries via inotify and restarts on change
+- Watches its own binary, `execv`'s self on update (which relaunches
+  children under the new instance)
 - Listens on the bus for `Topic::Shutdown`
-- Sets `PR_SET_PDEATHSIG(SIGTERM)` on children so they die if sola is killed
-- Rotates `sola.log` on startup (100KB max, keeps 10 rotated files)
+- Sets `PR_SET_PDEATHSIG(SIGTERM)` on every child so they die if
+  sola is killed
+- Rotates `sola.log` at startup (100KB max, 10 rotated files)
 
 ## River Supervision
 
-River is special — it's not a managed process but a direct child with its own supervisor (`src/river.rs`). River must be running before any wayland clients can start.
+River is the only non-managed child — it's spawned directly by sola
+with its own supervisor (`src/river.rs`). Every Wayland client
+depends on it, so if River dies the whole session exits.
 
-- `RiverSupervisor::spawn()` — kills orphan rivers, cleans stale sockets, spawns river via PATH lookup
-- `wait_for_socket()` — polls until river opens a live `wayland-N` socket (30s timeout)
-- `wait_for_xwayland()` — polls for XWayland display (3s timeout, optional)
-- Publishes socket/display names to `$XDG_RUNTIME_DIR/sola-wayland` and `sola-display`
-- If River dies, the entire session shuts down
+- `RiverSupervisor::spawn()` — kills orphan rivers, cleans stale
+  sockets, spawns river via `$PATH`
+- `wait_for_socket()` — polls until River opens a live `wayland-N`
+  socket (30s timeout)
+- `wait_for_xwayland()` — polls for an XWayland display (3s,
+  optional)
+- Publishes socket/display names to `$XDG_RUNTIME_DIR/sola-wayland`
+  and `sola-display`
 
 ## Binary Resolution
 
-All external binaries (river, etc.) are resolved via `sola_core::process::resolve_binary()` which does `$PATH` lookup. No hardcoded paths — works on NixOS and traditional distros.
+All external binaries (`river`, managed children, etc.) are
+resolved via `sola_core::process::resolve_binary()` which does
+`$PATH` lookup. No hardcoded paths — works on NixOS and traditional
+distros.
 
 ## Design Principle
 
-Almost no logic. Almost never changes. The less it does, the less reason to restart it (which would restart everything).
+Almost no logic. Almost never changes. The less it does, the less
+reason to restart it (which would restart everything).
 
 ## Source Files
 
-| File | Purpose |
-|---|---|
-| `src/main.rs` | Process supervision loop, bus client, binary change handling |
-| `src/river.rs` | River compositor lifecycle — spawn, socket discovery, orphan cleanup, shutdown |
+| File          | Purpose                                                            |
+|---------------|--------------------------------------------------------------------|
+| `src/main.rs` | Process supervision loop, bus client, binary-change handling       |
+| `src/river.rs`| River lifecycle — spawn, socket discovery, orphan cleanup, shutdown|
 
 ## Managed Processes
 
-Defined in `MANAGED` const:
+Defined in the `MANAGED` const in `src/main.rs`:
+
 ```rust
 const MANAGED: &[&str] = &[
     "sola-bus",
@@ -51,4 +67,11 @@ const MANAGED: &[&str] = &[
     "sola-session",
 ];
 ```
-Binaries are discovered relative to the sola binary's own directory.
+
+Binaries are discovered relative to the sola binary's own directory
+(`/opt/sola/bin/` in the installed layout).
+
+## See also
+
+- [[Sola]] — the system overview
+- [[Process Model]] — the supervision model in detail

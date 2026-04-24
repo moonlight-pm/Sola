@@ -23,11 +23,15 @@ make = "run -q -p sola-make --"
 ## Install
 
 `cargo make install`:
-1. Builds entire workspace in debug mode
+1. Builds the entire workspace in debug mode
 2. Creates `/opt/sola/bin/` and `/opt/sola/log/` locally
-3. Auto-discovers all workspace binaries (scans `crates/` and `apps/` for `src/main.rs`)
+3. Auto-discovers all workspace binaries (scans `crates/` for `src/main.rs`)
 4. Copies each binary to `/opt/sola/bin/`
 5. Skips `sola-make` itself
+
+`apps/*` is temporarily outside the workspace while each app is
+rewritten against the new bus; once re-added, the same scanner
+picks them up automatically.
 
 ## Source Files
 

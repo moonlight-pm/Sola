@@ -1,75 +1,114 @@
 # sola-app
 
-Shared crate providing the WebView application framework for all Sola shell apps.
+Shared crate providing the WebView application framework for every
+Sola shell app.
 
-## What It Provides
+## What it provides
 
 **Rust side:**
-- GTK4/WebKit6 window + WebView lifecycle
+- GTK4 / WebKit6 window + WebView lifecycle
 - `app:///` custom URI scheme (no HTTP server, no network)
 - On-demand TypeScript stripping via `swc_ts_fast_strip`
-- WebKit `UserContentManager` message handlers (JS↔Rust IPC)
+- WebKit `UserContentManager` message handlers (JS ↔ Rust IPC)
 - glib↔tokio bridge for async command dispatch
-- [[Sola Bus]] connection + polling
+- [[sola-bus]] connection, subscription derived automatically from
+  the handlers registered in `register_bus`
 - Logging (stderr + `/opt/sola/log/{app_id}.log`)
 - Wayland socket wait
 
 **TypeScript side (served automatically at `/lib/` and `/vendor/`):**
-- `ipc.ts` — `invoke(cmd, args)` and `on(event, cb)` over WebKit `postMessage`
-- `store.ts` — `createStore()` (Arrow.js `reactive()` wrapper), `persist()`, `save()`
+- `ipc.ts` — `invoke(cmd, args)` and `on(event, cb)` over WebKit
+  `postMessage`
+- `store.ts` — `createStore()` (Arrow.js `reactive()` wrapper),
+  `persist()`, `save()`
 - `theme.ts` — CSS custom property application
-- Arrow.js (vendored, served at `/vendor/arrow/`)
+- Arrow.js (vendored at `/vendor/arrow/`)
 
-## App Author API
+## App author API
 
 ```rust
-use sola_app::{SolaApp, AppHandler, embed_web};
+use sola_app::{AppCtx, AssetBundle, BusRegistry, SolaApp, asset_bundle};
+use sola_bus::topics::{Topic, TopicKind};
 
-struct MyApp { ... }
+pub static WEB: &AssetBundle = &asset_bundle! {
+    "/index.html"     => (include_str!("../web/index.html"), Html),
+    "/src/main.ts"    => (include_str!("../web/src/main.ts"), TypeScript),
+    /* ... */
+};
 
-#[async_trait]
-impl AppHandler for MyApp {
-    async fn dispatch(&self, cmd: &str, args: &Value) -> Value {
-        match cmd {
-            "my_command" => { ... }
-            _ => json!({"error": "unknown"})
-        }
+pub struct MyApp { /* ... */ }
+
+impl SolaApp for MyApp {
+    const APP_ID: &'static str = "sola-myapp";
+
+    fn new(ctx: &mut AppCtx) -> Self {
+        ctx.add_window(/* WindowConfig ... */, WEB);
+        MyApp { /* ... */ }
+    }
+
+    fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
+        // Handlers registered here become the app's bus subscription set.
+        // Default CloseApp is inherited from the trait; don't re-register.
+        bus.on(TopicKind::Windows, Self::on_windows);
+        // ...
+    }
+
+    fn on_js_command(
+        &mut self,
+        cmd: &str,
+        args: &serde_json::Value,
+        id: Option<u64>,
+        source: &sola_app::WindowHandle,
+        ctx: &mut AppCtx,
+    ) {
+        // handle invokes from JS
     }
 }
 
 fn main() {
-    SolaApp::builder()
-        .app_id("sola-myapp")
-        .window_size(1920, 1080)
-        .web_assets(embed_web!("web/"))
-        .handler(|event_tx| MyApp::new(event_tx))
-        .run();
+    sola_app::run::<MyApp>();
 }
 ```
 
-## Asset Resolution
+Only `APP_ID` and `new` are required; every other trait method has
+a default no-op so apps opt in to what they need (`on_windows`,
+`on_js_command`, `on_shutdown`, …). See
+`crates/sola-app/src/lib.rs` for the full trait.
+
+## Asset resolution
 
 `app:///` requests check in order:
-1. App assets (from `embed_web!("web/")`)
-2. Platform assets (lib/, vendor/ from sola-app crate)
+
+1. App assets (from `asset_bundle!`)
+2. Platform assets (`/lib/`, `/vendor/arrow/` from sola-app)
 
 Apps own `/src/`, `/index.html`, `/vendor/` (app-specific deps).
 Platform owns `/lib/`, `/vendor/arrow/`.
 
-## IPC Flow
+## IPC flow
 
 ```
 JS: invoke("cmd", {args})
   → postMessage → UserContentManager callback (glib thread)
-  → tokio mpsc → AppHandler::dispatch() (tokio thread)
+  → tokio mpsc → SolaApp::on_js_command (tokio thread)
   → result via std::sync::mpsc → glib poll (2ms)
   → evaluate_javascript("window.__solaRecv(...)") → JS Promise resolves
 ```
 
-Events (Rust→JS) use the same return path: send JSON through the mpsc channel.
+Rust→JS events use the same return path: send JSON through the
+mpsc channel and it flows back into the WebView.
 
-## See Also
+## Relation to `sola-core::config`
 
-- [[Sola Bus]] — IPC bus that sola-app connects to
-- [[sola-compositor]] — Wayland compositor that hosts the WebView windows
+Historically the `JsonConfig` / `JsonConfigIn` traits lived here;
+they now live in `sola-core` and are re-exported as
+`sola_app::config` for backward compatibility with existing app
+code. Apps that want persistence should migrate to a typed
+persistent bus topic rather than continuing to use `JsonConfig` —
+see [[Topics#Behavior]] and [[sola-bus#Persistence]].
+
+## See also
+
+- [[sola-bus]] — IPC bus that sola-app connects to
+- [[Topics]] — message catalog
 - Spec: `docs/specs/2026-04-12-sola-app-crate-design.md`
