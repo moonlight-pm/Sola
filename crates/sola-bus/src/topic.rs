@@ -368,6 +368,29 @@ macro_rules! _define_topics_inner {
                 }
             }
 
+            /// Serialize the topic's payload to a JSON value. Unit
+            /// variants produce `Value::Null`. Used by sola-monitor and
+            /// any other consumer that wants to surface raw bus traffic
+            /// to a WebView. Note: encrypted payload fields (e.g.
+            /// `Encrypted<T>`) serialize as the `age1enc:...` ciphertext
+            /// here — JSON is human-readable.
+            pub fn to_json_value(&self) -> serde_json::Value {
+                match self {
+                    $( Topic::$eu => serde_json::Value::Null, )*
+                    $( Topic::$ep(payload) => {
+                        serde_json::to_value(payload).unwrap_or(serde_json::Value::Null)
+                    }, )*
+                    $( Topic::$su => serde_json::Value::Null, )*
+                    $( Topic::$sp(payload) => {
+                        serde_json::to_value(payload).unwrap_or(serde_json::Value::Null)
+                    }, )*
+                    $( Topic::$pu => serde_json::Value::Null, )*
+                    $( Topic::$pp(payload) => {
+                        serde_json::to_value(payload).unwrap_or(serde_json::Value::Null)
+                    }, )*
+                }
+            }
+
             /// Serialize a persistent topic's payload to a TOML value
             /// suitable for writing to `state.toml`. Returns `None` for
             /// non-persistent variants (ephemeral / sticky topics never

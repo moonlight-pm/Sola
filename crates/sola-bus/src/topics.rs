@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 pub use sola_core::KeyChord;
+use sola_core::Encrypted;
 
 use crate::define_topics;
 
@@ -177,6 +178,54 @@ impl Zone {
     }
 }
 
+/// Mail account + filter rules. Edited by sola-settings, consumed by
+/// sola-mail. Persisted as a sticky bus topic; the password field is
+/// encrypted on disk via [`Encrypted`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailConfig {
+    pub email: String,
+    pub imap_host: String,
+    pub imap_port: u16,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub username: String,
+    pub password: Encrypted<String>,
+    pub rules: Vec<MailRule>,
+}
+
+impl Default for MailConfig {
+    fn default() -> Self {
+        Self {
+            email: String::new(),
+            imap_host: String::new(),
+            imap_port: 993,
+            smtp_host: String::new(),
+            smtp_port: 587,
+            username: String::new(),
+            password: Encrypted(String::new()),
+            rules: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MailRule {
+    pub name: String,
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dest: Option<String>,
+    pub conditions: Vec<MailRuleCondition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MailRuleCondition {
+    pub field: String,
+    #[serde(rename = "match")]
+    pub match_type: String,
+    pub value: String,
+}
+
 define_topics! {
     // Window management list. Sticky: latest list from sola-river is
     // replayed to new subscribers.
@@ -223,6 +272,11 @@ define_topics! {
     // copy after each snap. Persistent so layouts survive restart.
     #[persistent]
     Zones(HashMap<String, Zone>),
+
+    // Mail account + filter rules. Edited by sola-settings, consumed by
+    // sola-mail. Persistent — settings emits whenever the user saves.
+    #[persistent]
+    MailConfig(MailConfig),
 
     // Browser
     OpenUrl(OpenUrlRequest),
@@ -394,6 +448,42 @@ mod tests {
         let empty = toml::Value::Table(toml::map::Map::new());
         assert!(Topic::from_toml_section(TopicKind::Windows, empty.clone()).is_none());
         assert!(Topic::from_toml_section(TopicKind::Shutdown, empty).is_none());
+    }
+
+    #[test]
+    fn mail_config_to_json_serializes_object() {
+        // Regression: monitor's old hand-written `topic_to_json` had no
+        // arm for MailConfig and fell through to Value::Null. The macro-
+        // generated `to_json_value` now covers every variant.
+        let topic = Topic::MailConfig(MailConfig::default());
+        let v = topic.to_json_value();
+        assert!(v.is_object(), "expected object, got {v:?}");
+        assert!(v.get("email").is_some());
+    }
+
+    #[test]
+    fn mail_config_roundtrips_via_postcard_in_clear() {
+        let cfg = MailConfig {
+            email: "u@example.com".into(),
+            imap_host: "imap.example.com".into(),
+            imap_port: 993,
+            smtp_host: "smtp.example.com".into(),
+            smtp_port: 587,
+            username: "u".into(),
+            password: Encrypted("hunter2".into()),
+            rules: vec![],
+        };
+        let topic = Topic::MailConfig(cfg.clone());
+        let msg = topic.to_message();
+        let parsed = Topic::parse(&msg).unwrap();
+        match parsed {
+            Topic::MailConfig(back) => {
+                assert_eq!(back.email, cfg.email);
+                // Password travels in clear over the postcard wire.
+                assert_eq!(back.password.0, "hunter2");
+            }
+            other => panic!("expected MailConfig, got {other:?}"),
+        }
     }
 }
 
