@@ -2,22 +2,15 @@ import { invoke } from '@sola/ipc';
 
 const menuEl = document.getElementById('menu')!;
 
+// Click in the menu window but outside the actual dropdown rect →
+// dismiss. Action clicks inside the dropdown are handled per-item.
+// We deliberately do NOT dismiss on `mouseleave`: macOS keeps the
+// menu up regardless of pointer position; it stays open until the
+// user picks an item, switches menubar labels, or clicks elsewhere.
 document.addEventListener('click', (e: Event) => {
     if (!menuEl.contains(e.target as Node)) {
         invoke('dismiss', {});
     }
-});
-
-// Dismiss the menu when the pointer leaves the dropdown area —
-// except when it exited through the top edge, which means the user
-// is heading back up into the menubar. Keeping the menu open in
-// that case preserves macOS-style hover-to-switch between labels.
-menuEl.addEventListener('mouseleave', (e: MouseEvent) => {
-    const rect = menuEl.getBoundingClientRect();
-    if (e.clientY <= rect.top) {
-        return;
-    }
-    invoke('dismiss', {});
 });
 
 function showMenu(items: any[], anchorX: number): void {

@@ -2,8 +2,34 @@
 <html>
 <head>
 <meta charset="utf-8">
+<!-- Without this, WebKit applies its narrow-viewport shrink-to-fit
+     heuristic to the 220-px-wide menu window and renders text smaller
+     than CSS specifies. Pin the viewport to actual device pixels so
+     CSS px and screen px are 1:1, matching the menubar. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <style>
+    @font-face {
+        font-family: 'Inter';
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: block;
+        src: url('sola-assets://fonts/Inter/InterVariable.woff2') format('woff2');
+    }
+    @font-face {
+        font-family: 'Inter';
+        font-style: italic;
+        font-weight: 100 900;
+        font-display: block;
+        src: url('sola-assets://fonts/Inter/InterVariable-Italic.woff2') format('woff2');
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+        zoom: 1;
+    }
 
     body {
         width: 100vw;
@@ -12,7 +38,9 @@
         overflow: hidden;
         user-select: none;
         -webkit-user-select: none;
-        font-family: system-ui, -apple-system, sans-serif;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        font-size: 15px;
+        font-feature-settings: 'cv11', 'ss01', 'ss03';
     }
 
     #menu {
@@ -23,6 +51,7 @@
         border-radius: 0 0 6px 6px;
         padding: 4px 0;
         box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        font-size: 15px;
     }
 
     #menu.active { display: inline-block; }
@@ -32,15 +61,19 @@
         align-items: center;
         justify-content: space-between;
         padding: 6px 16px;
-        font-size: 13px;
         color: #ccc;
         cursor: default;
         white-space: nowrap;
+        font-size: 15px;
+    }
+
+    .menu-item span {
+        font-size: 15px;
     }
 
     .menu-item:hover { background: rgba(56, 120, 240, 0.7); color: white; }
     .menu-item.disabled { color: #666; pointer-events: none; }
-    .menu-item .shortcut { color: #888; font-size: 11px; margin-left: 24px; }
+    .menu-item .shortcut { color: #888; font-size: 13px; margin-left: 24px; }
     .menu-item:hover .shortcut { color: rgba(255,255,255,0.7); }
 
     .menu-divider {
