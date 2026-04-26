@@ -3,15 +3,15 @@ use std::path::Path;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sola_app::config::{JsonConfig, JsonConfigIn};
+use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 use sola_bus::topics::{
-    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
-    Window as BusWindow,
+    AppMenuPayload, MailConfig, MailRule, MailRuleCondition, MenuActionPayload, MenuDefinition,
+    MenuItem, Topic, TopicKind, Window as BusWindow,
 };
+use sola_core::Encrypted;
 use sola_core::KeyCode;
-use sola_core::applications::{Application, ApplicationsConfig, command_exists};
-use sola_core::config::mail::{MailConfig, MailRule, MailRuleCondition};
+use sola_core::applications::{Application, ApplicationsConfig, command_exists, is_builtin};
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
@@ -84,7 +84,9 @@ impl SolaApp for SettingsApp {
         if applications.normalize() {
             applications.save();
         }
-        let mail = MailConfig::load();
+        // Mail starts at default; the bus replays the persisted
+        // `Topic::MailConfig` sticky to us once we subscribe.
+        let mail = MailConfig::default();
         let initial_state =
             serde_json::to_string(&state_payload(&applications, &[], &mail)).unwrap_or_default();
 
@@ -100,7 +102,7 @@ impl SolaApp for SettingsApp {
             keyboard_target: true,
         });
 
-        ctx.emit_sticky(Topic::SetAppMenu(AppMenuPayload {
+        ctx.emit(Topic::SetAppMenu(AppMenuPayload {
             app_id: Self::APP_ID.into(),
             menus: vec![MenuDefinition {
                 label: "Settings".into(),
@@ -128,6 +130,7 @@ impl SolaApp for SettingsApp {
         bus.on(TopicKind::CloseApp, Self::on_close_app);
         bus.on(TopicKind::Windows, Self::on_windows);
         bus.on(TopicKind::MenuAction, Self::on_menu_action);
+        bus.on(TopicKind::MailConfig, Self::on_mail_config);
     }
 
     fn on_js_command(
@@ -136,15 +139,15 @@ impl SolaApp for SettingsApp {
         args: &Value,
         id: Option<u64>,
         source: &WindowHandle,
-        _ctx: &mut AppCtx,
+        ctx: &mut AppCtx,
     ) {
         let result = match cmd {
             "applications_add" => self.handle_add(args),
             "applications_update" => self.handle_update(args),
             "applications_remove" => self.handle_remove(args),
-            "mail_save_account" => self.handle_mail_save_account(args),
-            "mail_add_rule" => self.handle_mail_add_rule(args),
-            "mail_remove_rule" => self.handle_mail_remove_rule(args),
+            "mail_save_account" => self.handle_mail_save_account(args, ctx),
+            "mail_add_rule" => self.handle_mail_add_rule(args, ctx),
+            "mail_remove_rule" => self.handle_mail_remove_rule(args, ctx),
             _ => {
                 tracing::warn!(cmd, "unknown command");
                 json!({ "error": format!("unknown command: {cmd}") })
@@ -205,7 +208,7 @@ impl SettingsApp {
         self.current_state()
     }
 
-    fn handle_mail_save_account(&mut self, args: &Value) -> Value {
+    fn handle_mail_save_account(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let args: MailAccountArgs = match serde_json::from_value(args.clone()) {
             Ok(a) => a,
             Err(e) => return json!({ "error": e.to_string() }),
@@ -216,12 +219,12 @@ impl SettingsApp {
         self.mail.smtp_host = args.smtp_host;
         self.mail.smtp_port = args.smtp_port;
         self.mail.username = args.username;
-        self.mail.password = args.password;
-        self.mail.save();
+        self.mail.password = Encrypted(args.password);
+        ctx.emit(Topic::MailConfig(self.mail.clone()));
         self.current_state()
     }
 
-    fn handle_mail_add_rule(&mut self, args: &Value) -> Value {
+    fn handle_mail_add_rule(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let args: MailRuleArgs = match serde_json::from_value(args.clone()) {
             Ok(a) => a,
             Err(e) => return json!({ "error": e.to_string() }),
@@ -243,20 +246,31 @@ impl SettingsApp {
             dest,
             conditions: args.conditions,
         });
-        self.mail.save();
+        ctx.emit(Topic::MailConfig(self.mail.clone()));
         self.current_state()
     }
 
-    fn handle_mail_remove_rule(&mut self, args: &Value) -> Value {
+    fn handle_mail_remove_rule(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let args: MailRemoveRuleArgs = match serde_json::from_value(args.clone()) {
             Ok(a) => a,
             Err(e) => return json!({ "error": e.to_string() }),
         };
         if args.index < self.mail.rules.len() {
             self.mail.rules.remove(args.index);
-            self.mail.save();
+            ctx.emit(Topic::MailConfig(self.mail.clone()));
         }
         self.current_state()
+    }
+
+    fn on_mail_config(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        let Topic::MailConfig(cfg) = topic else {
+            return;
+        };
+        self.mail = cfg.clone();
+        self.main_window.send_to_js(&json!({
+            "event": "state",
+            "state": state_payload(&self.applications, &self.running, &self.mail),
+        }));
     }
 
     fn on_menu_action(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
@@ -282,6 +296,23 @@ impl SettingsApp {
     fn current_state(&self) -> Value {
         state_payload(&self.applications, &self.running, &self.mail)
     }
+}
+
+/// View of the mail config that the editor UI receives. The bus-side
+/// `Encrypted<String>` would encrypt on JSON serialization (JSON is
+/// human-readable), but the user just typed the password — they need
+/// to see it. We expose the cleartext explicitly here.
+fn mail_for_js(mail: &MailConfig) -> Value {
+    json!({
+        "email": mail.email,
+        "imap_host": mail.imap_host,
+        "imap_port": mail.imap_port,
+        "smtp_host": mail.smtp_host,
+        "smtp_port": mail.smtp_port,
+        "username": mail.username,
+        "password": mail.password.0,
+        "rules": mail.rules,
+    })
 }
 
 /// Full view the JS side renders from: configured applications (with
@@ -317,7 +348,7 @@ fn state_payload(cfg: &ApplicationsConfig, running: &[BusWindow], mail: &MailCon
             "missing": missing,
             "candidates": candidates,
         },
-        "mail": mail,
+        "mail": mail_for_js(mail),
     })
 }
 
@@ -352,9 +383,10 @@ fn resolve_binary_for_pid(pid: u32) -> Option<String> {
 
 /// App IDs that are part of Sola itself and should never appear as
 /// "running, not configured" candidates — adding them to
-/// `applications.json` would let the launcher spawn duplicates.
+/// `applications.json` would let the launcher spawn duplicates. Covers
+/// the shell itself plus every built-in (Settings, Monitor, ...).
 fn is_system_app(app_id: &str) -> bool {
-    matches!(app_id, "sola-shell")
+    app_id == "sola-shell" || is_builtin(app_id)
 }
 
 fn is_sandbox_runner(name: &str) -> bool {

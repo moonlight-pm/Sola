@@ -29,9 +29,10 @@ make = "run -q -p sola-make --"
 4. Copies each binary to `/opt/sola/bin/`
 5. Skips `sola-make` itself
 
-`apps/*` is temporarily outside the workspace while each app is
-rewritten against the new bus; once re-added, the same scanner
-picks them up automatically.
+Apps come into the workspace as `crates/sola-<name>/` once they're
+rewritten against the new bus (monitor first, then browser, mail,
+etc.). The scanner picks them up automatically — no install-list
+maintenance needed.
 
 ## Source Files
 

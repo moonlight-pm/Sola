@@ -1,6 +1,4 @@
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sola_app::config::JsonConfig;
 use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 use sola_bus::Message;
 use sola_bus::topics::{
@@ -10,21 +8,7 @@ use sola_core::KeyCode;
 
 mod decode;
 
-#[derive(Serialize, Deserialize)]
-#[serde(default)]
-struct MonitorConfig {
-    sidebar_width: i32,
-}
-
-impl Default for MonitorConfig {
-    fn default() -> Self {
-        Self { sidebar_width: 240 }
-    }
-}
-
-impl JsonConfig for MonitorConfig {
-    const FILE_NAME: &'static str = "monitor.json";
-}
+const DEFAULT_SIDEBAR_WIDTH: i32 = 240;
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
@@ -41,8 +25,8 @@ impl SolaApp for MonitorApp {
     const APP_ID: &'static str = "sola-monitor";
 
     fn new(ctx: &mut AppCtx) -> Self {
-        let config = MonitorConfig::load();
-        let initial_state = serde_json::to_string(&config).unwrap_or_default();
+        let initial_state =
+            serde_json::json!({ "sidebar_width": DEFAULT_SIDEBAR_WIDTH }).to_string();
 
         let main_window = ctx.add_window(WindowConfig {
             title: "main".into(),
@@ -56,7 +40,7 @@ impl SolaApp for MonitorApp {
             keyboard_target: false,
         });
 
-        ctx.emit_sticky(Topic::SetAppMenu(AppMenuPayload {
+        ctx.emit(Topic::SetAppMenu(AppMenuPayload {
             app_id: Self::APP_ID.into(),
             menus: vec![MenuDefinition {
                 label: "Monitor".into(),
@@ -89,12 +73,8 @@ impl SolaApp for MonitorApp {
         _ctx: &mut AppCtx,
     ) {
         if cmd == "save_sidebar_width" {
-            if let Some(w) = args.get("width").and_then(|v| v.as_i64()) {
-                let config = MonitorConfig {
-                    sidebar_width: w as i32,
-                };
-                config.save();
-            }
+            // TODO: migrate to persistent Topic::MonitorConfig (Phase 7).
+            let _ = args.get("width").and_then(|v| v.as_i64());
         }
     }
 

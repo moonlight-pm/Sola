@@ -100,17 +100,19 @@ crates/
   sola-app/            # WebView app framework (GTK4 + WebKit6)
   sola-assets/         # Vendored icon/asset bundles
   sola-make/           # Build/install orchestration (xtask)
+  sola-monitor/        # System monitor / bus audit
   sola-river/          # River compositor bridge (bus ↔ wayland)
   sola-session/        # User-app session manager (spawn/close/reap)
+  sola-settings/       # Settings panel
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
 docs/
   specs/               # Design specs and implementation plans
   vault/               # Canonical architecture docs (this vault)
 ```
 
-`apps/*` (browser, mail, terminal, monitor, agent, settings) are
-temporarily excluded from the workspace. They'll be re-added as each
-is rewritten against the new bus model.
+`apps/*` (browser, mail, terminal, agent) are temporarily excluded
+from the workspace. They'll be re-added as each is rewritten against
+the new bus model.
 
 ## Runtime Environment
 

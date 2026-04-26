@@ -9,17 +9,28 @@ use sola_bus::topics::{
     TopicKind, UserAppExitedPayload, Window,
 };
 use sola_core::KeyCode;
-use sola_core::applications::{Application, ApplicationsConfig};
+use sola_core::applications::{Application, ApplicationsConfig, builtin_apps};
 
-/// Load the apps list and immediately normalize relative commands to
-/// absolute paths. Persists back when anything changed so callers at both
-/// sides (shell, settings) see the same resolved form.
+/// Load the apps list, normalize relative commands to absolute paths,
+/// and merge in the built-in apps (Settings, Monitor) ahead of any
+/// user-configured entry that happens to share an app_id. The merged
+/// list is what feeds the launcher; user-only entries are persisted
+/// back to disk if normalization rewrote any commands.
 fn load_applications() -> ApplicationsConfig {
     let mut cfg = ApplicationsConfig::load();
     if cfg.normalize() {
         cfg.save();
     }
-    cfg
+    let mut merged = ApplicationsConfig {
+        apps: builtin_apps(),
+    };
+    for a in cfg.apps {
+        if merged.get(&a.app_id).is_some() {
+            continue;
+        }
+        merged.apps.push(a);
+    }
+    merged
 }
 
 use crate::launcher::{self, LAUNCHER_ASSETS, LauncherState};
@@ -325,6 +336,22 @@ impl ShellApp {
         let Topic::MouseClicked(MouseClickedPayload { window_id }) = topic else {
             return;
         };
+        // While a menubar menu is open we run in macOS-style menu mode:
+        // a click on any non-shell window (i.e. outside the menubar and
+        // dropdown surfaces) dismisses the menu. Clicks landing on the
+        // menu/menubar surfaces are handled by their own JS.
+        if self.menu_open {
+            let on_shell = self
+                .known_windows
+                .iter()
+                .find(|w| w.window_id == *window_id)
+                .map(|w| w.app_id == Self::APP_ID)
+                .unwrap_or(false);
+            if !on_shell {
+                self.close_menu(ctx);
+            }
+            return;
+        }
         self.focus_window_from_pointer(*window_id, ctx);
     }
 

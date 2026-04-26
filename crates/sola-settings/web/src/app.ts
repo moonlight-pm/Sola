@@ -265,7 +265,6 @@ function renderApplications() {
   return html`
     <div class="section">
       <h2>Applications</h2>
-      <p class="section-desc">Entries in <code>~/.config/sola/shell/applications.json</code>. The launcher reloads them each time it opens.</p>
       ${renderCandidates()}
       <div class="section-subhead">Configured</div>
       <div class="list">
@@ -511,7 +510,6 @@ function renderMail() {
   return html`
     <div class="section">
       <h2>Mail</h2>
-      <p class="section-desc">Stored in <code>~/.config/sola/mail.json</code>. Used by <code>sola-mail</code>.</p>
       <div class="section-subhead">Account</div>
       ${renderMailAccount()}
       <div class="section-subhead">Rules</div>

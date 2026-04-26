@@ -180,6 +180,33 @@ impl JsonConfigIn for ApplicationsConfig {
     const FILE_NAME: &'static str = "applications.json";
 }
 
+/// Apps that ship with Sola. The shell merges these into the launcher
+/// list at startup, ahead of any user-configured entries with the same
+/// `app_id` (so a stray duplicate in `applications.json` can't shadow
+/// them). They are not stored on disk and can't be edited from the
+/// settings panel.
+pub fn builtin_apps() -> Vec<Application> {
+    vec![
+        Application {
+            app_id: "sola-settings".into(),
+            label: "Settings".into(),
+            command: "/opt/sola/bin/sola-settings".into(),
+            icon: "lucide/settings".into(),
+        },
+        Application {
+            app_id: "sola-monitor".into(),
+            label: "Monitor".into(),
+            command: "/opt/sola/bin/sola-monitor".into(),
+            icon: "lucide/monitor".into(),
+        },
+    ]
+}
+
+/// True if `app_id` belongs to a built-in shipped via [`builtin_apps`].
+pub fn is_builtin(app_id: &str) -> bool {
+    builtin_apps().iter().any(|a| a.app_id == app_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

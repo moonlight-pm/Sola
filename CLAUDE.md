@@ -25,16 +25,16 @@ crates/
   sola-app/            # WebView app framework (GTK4 + WebKit6)
   sola-assets/         # Vendored icon/asset bundles
   sola-make/           # Build/install orchestration (xtask)
+  sola-monitor/        # System monitor / bus audit
   sola-river/          # River compositor bridge (bus ↔ wayland)
   sola-session/        # User-app session manager
+  sola-settings/       # Settings panel
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
 apps/
-  agent/               # AI agent frontend
-  browser/             # WebKit browser
-  mail/                # IMAP/SMTP mail client
-  monitor/             # System monitor / bus audit
-  settings/            # Settings panel
-  terminal/            # Terminal emulator (tmux-backed, xterm.js)
+  agent/               # AI agent frontend (not in workspace yet)
+  browser/             # WebKit browser (not in workspace yet)
+  mail/                # IMAP/SMTP mail client (not in workspace yet)
+  terminal/            # Terminal emulator (not in workspace yet)
 docs/
   manual/              # Architecture docs, references
   specs/               # Design specs and implementation plans
