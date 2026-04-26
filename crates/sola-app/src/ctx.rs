@@ -54,6 +54,7 @@ impl AppCtx {
         } else {
             html_raw
         };
+        let html = crate::inject_solarecv_bootstrap(&html);
         let html = crate::inject_import_map(&html);
 
         let web_context = webview::create_web_context(cfg.assets, platform, html);
@@ -94,6 +95,25 @@ impl AppCtx {
             webview.set_background_color(&gdk4::RGBA::new(0.0, 0.0, 0.0, 0.0));
         }
         gtk_window.set_child(Some(&webview));
+
+        let loaded: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+        let pending: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        {
+            let loaded = loaded.clone();
+            let pending = pending.clone();
+            let webview_for_drain = webview.clone();
+            webview.connect_load_changed(move |_, event| {
+                if event != webkit6::LoadEvent::Finished {
+                    return;
+                }
+                *loaded.borrow_mut() = true;
+                let queued: Vec<String> = std::mem::take(&mut *pending.borrow_mut());
+                for script in queued {
+                    crate::window::eval_js_now(&webview_for_drain, &script);
+                }
+            });
+        }
+
         webview.load_uri("app:///index.html");
 
         let inner = WindowInner {
@@ -101,6 +121,8 @@ impl AppCtx {
             webview,
             gtk_window: gtk_window.clone(),
             dispatcher: dispatcher_slot,
+            loaded,
+            pending,
         };
 
         gtk_window.present();

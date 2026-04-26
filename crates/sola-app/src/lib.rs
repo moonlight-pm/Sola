@@ -366,6 +366,41 @@ pub fn run<A: SolaApp>() {
     gtk_app.run();
 }
 
+/// Inject a synchronous bootstrap that installs a queueing
+/// `window.__solaRecv` before any module import has had a chance to
+/// load. Without this, Rust calls into JS that race against the
+/// async-loaded `ipc.ts` (which installs the real handler) — typically
+/// when a sticky topic is replayed at subscribe-time and the app's
+/// handler immediately calls `send_to_js`. The real handler in
+/// `ipc.ts` replaces this stub on load and drains
+/// `window.__solaRecvQueue`.
+pub(crate) fn inject_solarecv_bootstrap(html: &str) -> String {
+    const BOOTSTRAP: &str = r#"  <script>
+  (function () {
+    var q = [];
+    window.__solaRecvQueue = q;
+    window.__solaRecv = function (json) { q.push(json); };
+  })();
+  </script>
+"#;
+    if let Some(pos) = html.find("</head>") {
+        let mut result = String::with_capacity(html.len() + BOOTSTRAP.len());
+        result.push_str(&html[..pos]);
+        result.push_str(BOOTSTRAP);
+        result.push_str(&html[pos..]);
+        return result;
+    }
+    // No </head> — fall back to before the first <script>.
+    if let Some(pos) = html.find("<script") {
+        let mut result = String::with_capacity(html.len() + BOOTSTRAP.len());
+        result.push_str(&html[..pos]);
+        result.push_str(BOOTSTRAP);
+        result.push_str(&html[pos..]);
+        return result;
+    }
+    html.to_string()
+}
+
 /// Inject the platform import map into HTML.
 pub(crate) fn inject_import_map(html: &str) -> String {
     let platform_imports = r#""@arrow-js/core": "/vendor/arrow/index.mjs",

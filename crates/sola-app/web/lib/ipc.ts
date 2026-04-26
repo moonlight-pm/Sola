@@ -25,7 +25,10 @@ const defaults = new Map<string, EventCallback>([
 ]);
 
 // Called from Rust via evaluate_javascript to deliver responses and events.
-(window as any).__solaRecv = (json: string) => {
+// A synchronous bootstrap script in <head> (injected by sola-app) installs
+// a queueing stub so messages that arrive before this module loads aren't
+// dropped. We install the real handler here and drain anything queued.
+const recv = (json: string) => {
   const msg = JSON.parse(json);
   if (msg.id !== undefined) {
     const p = pending.get(msg.id);
@@ -47,6 +50,11 @@ const defaults = new Map<string, EventCallback>([
     }
   }
 };
+
+(window as any).__solaRecv = recv;
+const earlyQueue: string[] = (window as any).__solaRecvQueue ?? [];
+delete (window as any).__solaRecvQueue;
+for (const json of earlyQueue) recv(json);
 
 export function invoke(cmd: string, args: Record<string, any> = {}): Promise<any> {
   return new Promise((resolve, reject) => {

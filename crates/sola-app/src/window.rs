@@ -33,6 +33,12 @@ pub(crate) struct WindowInner {
     /// Shared with the UCM handler: the UCM reads from this slot, the
     /// runtime writes into it after `A::new` returns.
     pub(crate) dispatcher: Rc<RefCell<Option<JsDispatcher>>>,
+    /// Set to `true` after WebKit fires `LoadEvent::Finished`. Until
+    /// then, `eval_js` queues into `pending` so messages emitted in
+    /// response to replayed sticky topics aren't lost on a `window`
+    /// that hasn't even parsed our HTML yet.
+    pub(crate) loaded: Rc<RefCell<bool>>,
+    pub(crate) pending: Rc<RefCell<Vec<String>>>,
 }
 
 /// Cheap-clone handle to a window created via `AppCtx::add_window`.
@@ -47,14 +53,15 @@ impl WindowHandle {
     }
 
     pub fn eval_js(&self, script: &str) {
-        use webkit6::prelude::WebViewExt;
-        self.inner.webview.evaluate_javascript(
-            script,
-            None,
-            None,
-            None::<&gio::Cancellable>,
-            |_| {},
-        );
+        if !*self.inner.loaded.borrow() {
+            // WebKit hasn't finished loading index.html yet — running
+            // evaluate_javascript now would target the initial blank
+            // window, where neither our DOM nor the JS bootstrap exist.
+            // Queue and let `connect_load_changed` drain on Finished.
+            self.inner.pending.borrow_mut().push(script.to_string());
+            return;
+        }
+        eval_js_now(&self.inner.webview, script);
     }
 
     /// Send a JSON value to the frontend's `window.__solaRecv`. The frontend
@@ -85,6 +92,14 @@ impl WindowHandle {
     pub fn webview(&self) -> &webkit6::WebView {
         &self.inner.webview
     }
+}
+
+/// Run a script against the WebView immediately. Called from
+/// `WindowHandle::eval_js` once the page has loaded, and from the
+/// `load-changed` handler in `ctx.rs` to drain queued scripts.
+pub(crate) fn eval_js_now(webview: &webkit6::WebView, script: &str) {
+    use webkit6::prelude::WebViewExt;
+    webview.evaluate_javascript(script, None, None, None::<&gio::Cancellable>, |_| {});
 }
 
 impl PartialEq for WindowHandle {
