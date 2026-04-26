@@ -131,6 +131,13 @@ pub fn run<A: SolaApp>() {
     // --- Logging ---
     sola_core::log::init(app_id);
 
+    // Suppress WebKit's "Can't connect to a11y bus" warning. The WebKit
+    // WebProcess looks up org.a11y.Bus on the session bus; an empty
+    // WEBKIT_A11Y_BUS_ADDRESS short-circuits that. (NO_AT_BRIDGE is GTK
+    // 2/3 only; GTK_A11Y=none doesn't reach WebKit's own AT-SPI module.)
+    // SAFETY: single-threaded; this runs before GTK/WebKit init.
+    unsafe { std::env::set_var("WEBKIT_A11Y_BUS_ADDRESS", "") };
+
     tracing::info!("{app_id} starting");
 
     /// Poll `$XDG_RUNTIME_DIR/sola-wayland` for up to 20s, falling back to
