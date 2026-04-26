@@ -39,7 +39,15 @@ pub fn assets_dir() -> PathBuf {
 ///
 /// After registration, WebViews using this context can reference assets as
 /// `<img src="sola-assets://icons/lucide/terminal.svg">`.
+///
+/// The scheme is also marked CORS-enabled so cross-origin loads from
+/// `app://` documents (e.g. `@font-face` and `fetch`) succeed without
+/// hitting the browser's same-origin policy.
 pub fn register_uri_scheme(ctx: &webkit6::WebContext) {
+    if let Some(sm) = ctx.security_manager() {
+        sm.register_uri_scheme_as_cors_enabled("sola-assets");
+    }
+
     ctx.register_uri_scheme("sola-assets", |request| {
         let uri = request.uri().unwrap_or_default().to_string();
         let path = uri

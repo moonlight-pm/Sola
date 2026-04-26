@@ -17,3 +17,24 @@ source   = "github:simple-icons/simple-icons"
 rev      = ""
 src_dir  = "icons"
 category = "icons"
+
+# GNOME Adwaita cursor theme. Pinned because the GitHub mirror of
+# gitlab.gnome.org/GNOME/adwaita-icon-theme has no useful release tags;
+# refresh by bumping the SHA. License: LGPL-3.0 OR CC-BY-SA-3.0.
+[packs.Adwaita]
+source   = "github:GNOME/adwaita-icon-theme"
+rev      = "551245ae75fdc42cde42a8cf24ca2ccab9d3a815"
+src_dir  = "Adwaita/cursors"
+category = "cursors"
+kind     = "cursors"
+
+# Inter — open-source UI font that closely matches Apple's San Francisco
+# (which is license-restricted to Apple platforms). Variable WOFF2
+# covers all weights/italics in two files. License: SIL OFL 1.1.
+[packs.Inter]
+source   = "github:rsms/inter"
+rev      = ""
+src_dir  = "docs/font-files"
+category = "fonts"
+kind     = "fonts"
+files    = ["InterVariable.woff2", "InterVariable-Italic.woff2"]

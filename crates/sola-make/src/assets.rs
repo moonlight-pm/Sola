@@ -26,10 +26,32 @@ struct Pack {
     /// Git ref (branch, tag, or commit). Empty string means default branch.
     #[serde(default)]
     rev: String,
-    /// Path (relative to repo root) containing the `.svg` files.
+    /// Path (relative to repo root) containing the source files.
     src_dir: String,
-    /// Destination category under `assets/` (e.g. "icons").
+    /// Destination category under `assets/` (e.g. "icons", "cursors").
     category: String,
+    /// Pack flavor. Controls which files are copied:
+    /// - `"icons"` (default): flat copy of every `.svg` from `src_dir`.
+    /// - `"cursors"`: copy every file in `src_dir` (skipping `.cur` /
+    ///   `.ani` Windows variants) into `<category>/<name>/cursors/`,
+    ///   plus the repo-root `index.theme` into `<category>/<name>/`.
+    /// - `"fonts"`: copy each filename in `files` from `src_dir` into
+    ///   `<category>/<name>/`.
+    #[serde(default)]
+    kind: PackKind,
+    /// For `kind = "fonts"`: explicit list of filenames to copy from
+    /// `src_dir`. Other kinds ignore this field.
+    #[serde(default)]
+    files: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum PackKind {
+    #[default]
+    Icons,
+    Cursors,
+    Fonts,
 }
 
 pub fn pull() {
@@ -83,8 +105,54 @@ fn pull_pack(name: &str, pack: &Pack) {
 
     let dest = PathBuf::from(ASSETS_ROOT).join(&pack.category).join(name);
     wipe_dir_keep_gitkeep(&dest);
-    let count = copy_svgs(&src, &dest);
-    println!("  {count} SVGs -> {}", dest.display());
+
+    match pack.kind {
+        PackKind::Icons => {
+            let count = copy_svgs(&src, &dest);
+            println!("  {count} SVGs -> {}", dest.display());
+        }
+        PackKind::Fonts => {
+            if pack.files.is_empty() {
+                eprintln!("{name}: kind=fonts requires a non-empty `files` list");
+                exit(1);
+            }
+            fs::create_dir_all(&dest).ok();
+            for file in &pack.files {
+                let from = src.join(file);
+                let to = dest.join(file);
+                if let Err(e) = fs::copy(&from, &to) {
+                    eprintln!("failed to copy {} -> {}: {e}", from.display(), to.display());
+                    exit(1);
+                }
+            }
+            println!("  {} font files -> {}", pack.files.len(), dest.display());
+        }
+        PackKind::Cursors => {
+            let cursors_dest = dest.join("cursors");
+            let count = copy_cursor_files(&src, &cursors_dest);
+            println!("  {count} cursors -> {}", cursors_dest.display());
+            // Cursor themes need an `index.theme` next to `cursors/`.
+            // Adwaita keeps it at the repo root; copy it into place.
+            let theme_src = tmp.join("index.theme");
+            if theme_src.is_file() {
+                let theme_dest = dest.join("index.theme");
+                if let Err(e) = fs::copy(&theme_src, &theme_dest) {
+                    eprintln!(
+                        "failed to copy {} -> {}: {e}",
+                        theme_src.display(),
+                        theme_dest.display()
+                    );
+                    exit(1);
+                }
+                println!("  index.theme -> {}", theme_dest.display());
+            } else {
+                eprintln!(
+                    "{name}: warning: no index.theme at repo root ({})",
+                    theme_src.display()
+                );
+            }
+        }
+    }
 
     let _ = fs::remove_dir_all(&tmp);
 }
@@ -130,6 +198,36 @@ fn copy_svgs(src: &Path, dest: &Path) -> usize {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("svg") {
             continue;
+        }
+        let Some(file_name) = path.file_name() else {
+            continue;
+        };
+        let to = dest.join(file_name);
+        if let Err(e) = fs::copy(&path, &to) {
+            eprintln!("failed to copy {} -> {}: {e}", path.display(), to.display());
+            exit(1);
+        }
+        count += 1;
+    }
+    count
+}
+
+/// Flat copy of every regular file in `src` to `dest`, skipping the
+/// Windows-format `.cur` / `.ani` siblings that GNOME ships alongside
+/// the real XCursor binaries — Sola is Wayland-only and they roughly
+/// double the on-disk footprint.
+fn copy_cursor_files(src: &Path, dest: &Path) -> usize {
+    fs::create_dir_all(dest).ok();
+    let mut count = 0;
+    for entry in fs::read_dir(src).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if ext == "cur" || ext == "ani" {
+                continue;
+            }
         }
         let Some(file_name) = path.file_name() else {
             continue;

@@ -25,6 +25,8 @@ fn main() {
     sola_core::log::rotate();
     sola_core::log::init("sola");
 
+    set_cursor_env();
+
     info!("sola process manager starting");
 
     let bin_dir = std::env::current_exe()
@@ -229,4 +231,27 @@ fn shutdown_all(managed: &mut HashMap<&str, ManagedProcess>) {
 /// Only called on binary change events, which are rare.
 fn leak_str(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
+}
+
+/// Point GTK / Wayland clients at our bundled cursor theme.
+///
+/// `XCURSOR_PATH` prepends `/opt/sola/share/cursors` so a vendored
+/// theme there wins over anything the user might have installed
+/// system-wide. The default fallback (`~/.icons:/usr/share/icons`)
+/// is preserved when `XCURSOR_PATH` was unset.
+///
+/// `XCURSOR_THEME` defaults to `Adwaita` so the user gets the GNOME
+/// look out of the box. Don't override an existing value — the user
+/// may have already picked something explicit.
+fn set_cursor_env() {
+    const BUNDLED: &str = "/opt/sola/share/cursors";
+    let path = match std::env::var_os("XCURSOR_PATH") {
+        Some(existing) => format!("{BUNDLED}:{}", existing.to_string_lossy()),
+        None => format!("{BUNDLED}:~/.icons:/usr/share/icons"),
+    };
+    // SAFETY: single-threaded at startup, before any spawn.
+    unsafe { std::env::set_var("XCURSOR_PATH", path) };
+    if std::env::var_os("XCURSOR_THEME").is_none() {
+        unsafe { std::env::set_var("XCURSOR_THEME", "Adwaita") };
+    }
 }
