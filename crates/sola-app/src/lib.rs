@@ -391,12 +391,6 @@ fn handle_evaluate(
     req: &sola_bus::topics::EvaluatePayload,
     ctx: &mut AppCtx,
 ) {
-    tracing::info!(
-        app_id,
-        window = ?req.window,
-        expr = %req.expr,
-        "Evaluate received"
-    );
     let target = match &req.window {
         Some(title) => ctx.windows.iter().find(|w| w.title() == title).cloned(),
         None => ctx.windows.first().cloned(),
@@ -426,17 +420,11 @@ fn handle_evaluate(
         expr = req.expr,
         cmd = EVALUATION_CMD,
     );
-    tracing::info!(
-        app_id,
-        window = target.title(),
-        "Evaluate dispatching wrapper to window"
-    );
     target.eval_js(&wrapped);
 }
 
 /// Convert an `__evaluation__` JS message into a `Topic::Evaluation`.
 fn emit_evaluation(args: &serde_json::Value, ctx: &mut AppCtx) {
-    tracing::info!(?args, "__evaluation__ JS callback received");
     let result = if let Some(err) = args.get("error").and_then(|v| v.as_str()) {
         Err(err.to_string())
     } else {
