@@ -1,99 +1,79 @@
-//! Screenshot handler. Delegates to `grim`, a small wlroots screenshot
-//! tool. Region targeting (per-window) uses `grim -g "X,Y WxH"` and
-//! the geometry tracked by `WindowRegistry` from inbound `Frame`
-//! topics — so the rect captured is whatever the shell most recently
-//! placed the window at.
+//! Screenshot handler — currently unimplemented.
 //!
-//! Caveat: region capture takes whatever is visually at those screen
-//! coordinates. If another window overlaps the target, the screenshot
-//! will include that overlap. Callers can `Topic::Focus` or otherwise
-//! raise the window first if a clean capture is required.
+//! ## Status
 //!
-//! Requires `grim` on PATH. NixOS: add `pkgs.grim` to
-//! `environment.systemPackages`.
+//! `sola-debug screenshot` will return `"screenshot not yet implemented"`.
+//! The bus protocol (`Topic::CaptureScreen` / `Topic::Screenshot`) and CLI
+//! flags (`--app`, `--window`, `-o`) are wired and ready; only the capture
+//! body is missing.
+//!
+//! ## Why not delegate to `grim`?
+//!
+//! Spawning the `grim` binary works (and was the original approach) but
+//! requires `pkgs.grim` in the system config. We'd rather be self-contained.
+//!
+//! ## Why not use the `grim-rs` crate?
+//!
+//! Tried it. It hardcodes `bytes_per_pixel = 4` throughout its pipeline
+//! (stride, row copy, save_png), so any compositor that advertises a 3-bpp
+//! format like `wl_shm::Format::Bgr888` (which our River instance does)
+//! triggers either a wl_shm `INVALID_STRIDE` rejection or an out-of-bounds
+//! panic in the row-copy loop. Patching grim-rs to track bpp per-format and
+//! generalize the pixel pipeline is a meaningful change worth submitting
+//! upstream, but not on the critical path for sola-debug.
+//!
+//! ## Plan: hand-roll wlr-screencopy
+//!
+//! ~150 LOC, fully under our control:
+//!
+//! 1. Vendor `wlr-screencopy-unstable-v1.xml` in `crates/sola-river/protocols/`,
+//!    add a module to `protocol.rs` (mirrors the existing `wlr-virtual-pointer`
+//!    work).
+//! 2. Bind `zwlr_screencopy_manager_v1` in the registry handler in
+//!    `client/mod.rs`. Bind `wl_shm` (already advertised, currently unbound).
+//! 3. Per request: `manager.capture_output(0, output)` for full output, or
+//!    `capture_output_region(0, output, x, y, w, h)` for `CaptureTarget::Window`.
+//! 4. On the `Buffer { format, width, height, stride }` event, allocate a
+//!    `wl_shm` buffer:
+//!    - `memfd_create` (we already use `rustix::fs::memfd_create` in
+//!      `virtual_keyboard.rs`).
+//!    - `ftruncate` to `stride * height` (use the EVENT's stride, not
+//!      `width * bpp` — see the grim-rs note above).
+//!    - `wl_shm.create_pool(fd, size)` → `wl_shm_pool.create_buffer(...)`
+//!      using the event's exact format / stride.
+//! 5. Call `frame.copy(buffer)`. On `Ready`, mmap the fd, walk pixels into
+//!    RGBA via a per-format dispatch (Bgr888: pack 3 → 4 with α=255;
+//!    Xrgb8888: swap B↔R, α=255; Argb8888: swap B↔R; Xbgr8888/Abgr8888:
+//!    pass-through with optional α=255). On `Failed`, emit
+//!    `Topic::Screenshot { result: Err(...) }`.
+//! 6. PNG-encode the RGBA via the `png` crate (~5 lines, no transitive deps).
+//!
+//! Async coordination: the screencopy events fire on river's existing
+//! event loop. Track in-flight captures keyed by frame proxy id, with
+//! the request's `path` and `target` stashed alongside. When `Ready`
+//! fires, finalize and emit on the bus.
+//!
+//! Existing infrastructure that helps:
+//! - `virtual_keyboard.rs::make_keymap_fd` already shows the
+//!   memfd_create + write + size pattern.
+//! - `WindowRegistry::find_by_app_title` and `Entry::frame` already
+//!   provide the per-window region geometry from inbound `Frame` topics.
+//! - The `CaptureTarget` enum on the bus is already in place.
+//!
+//! ## Until then
+//!
+//! Use a non-Sola screenshot tool (e.g. `grim`) directly; sola-debug
+//! will return a clear error message.
 
-use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use sola_bus::topics::{CaptureScreenPayload, ScreenshotPayload, Topic};
 
-use sola_bus::topics::{
-    CaptureScreenPayload, CaptureTarget, ScreenshotPayload, Topic,
-};
-
-use crate::bus::BusClient;
 use crate::client::AppData;
 
-const SCREENSHOT_DIR: &str = "/tmp/sola/screenshots";
-
-pub fn handle(state: &mut AppData, req: CaptureScreenPayload) {
-    let path = req.path.unwrap_or_else(default_path);
-
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            tracing::warn!(path = %path.display(), %e, "failed to create screenshot dir");
-        }
-    }
-
-    let mut cmd = Command::new("grim");
-    match &req.target {
-        CaptureTarget::FullOutput => {}
-        CaptureTarget::Window { app_id, title } => {
-            let entry = state.registry.find_by_app_title(app_id, title.as_deref());
-            let Some(entry) = entry else {
-                let known: Vec<String> = state
-                    .registry
-                    .as_windows()
-                    .iter()
-                    .map(|w| format!("{}/{}", w.app_id, w.title))
-                    .collect();
-                emit_err(
-                    &mut state.bus,
-                    format!(
-                        "no window for app_id={app_id:?} title={title:?} (known: {})",
-                        known.join(", "),
-                    ),
-                );
-                return;
-            };
-            let Some((x, y, w, h)) = entry.frame else {
-                emit_err(
-                    &mut state.bus,
-                    format!("window {app_id:?} has no recorded frame yet"),
-                );
-                return;
-            };
-            cmd.arg("-g").arg(format!("{x},{y} {w}x{h}"));
-        }
-    }
-    cmd.arg(&path);
-
-    let result = match cmd.output() {
-        Ok(out) if out.status.success() => {
-            tracing::info!(path = %path.display(), target = ?req.target, "screenshot saved");
-            Ok(path)
-        }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            Err(format!("grim exited with status {}: {}", out.status, stderr))
-        }
-        Err(e) => Err(format!(
-            "failed to spawn grim ({e}); install grim and try again"
-        )),
-    };
-
-    state
-        .bus
-        .emit(Topic::Screenshot(ScreenshotPayload { result }));
-}
-
-fn emit_err(bus: &mut BusClient, msg: String) {
-    bus.emit(Topic::Screenshot(ScreenshotPayload { result: Err(msg) }));
-}
-
-fn default_path() -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    PathBuf::from(format!("{SCREENSHOT_DIR}/{ts}.png"))
+pub fn handle(state: &mut AppData, _req: CaptureScreenPayload) {
+    state.bus.emit(Topic::Screenshot(ScreenshotPayload {
+        result: Err(
+            "screenshot not yet implemented; see crates/sola-river/src/client/screenshot.rs"
+                .to_string(),
+        ),
+    }));
 }
