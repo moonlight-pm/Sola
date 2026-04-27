@@ -391,6 +391,32 @@ macro_rules! _define_topics_inner {
                 }
             }
 
+            /// Build a `Topic` from a kind plus a JSON payload value.
+            /// The inverse of `to_json_value`. Unit variants ignore the
+            /// payload (any value is accepted). Payload variants are
+            /// deserialized via `serde_json::from_value`; on schema
+            /// mismatch, returns `None`.
+            ///
+            /// Used by `sola-debug emit` to construct topics from CLI
+            /// arguments without per-variant client-side code.
+            pub fn from_json_kind(kind: TopicKind, value: serde_json::Value) -> Option<Topic> {
+                let _ = &value; // unused for kinds with no payload variants
+                match kind {
+                    $( TopicKind::$eu => Some(Topic::$eu), )*
+                    $( TopicKind::$ep => {
+                        serde_json::from_value::<$ept>(value.clone()).ok().map(Topic::$ep)
+                    }, )*
+                    $( TopicKind::$su => Some(Topic::$su), )*
+                    $( TopicKind::$sp => {
+                        serde_json::from_value::<$spt>(value.clone()).ok().map(Topic::$sp)
+                    }, )*
+                    $( TopicKind::$pu => Some(Topic::$pu), )*
+                    $( TopicKind::$pp => {
+                        serde_json::from_value::<$ppt>(value.clone()).ok().map(Topic::$pp)
+                    }, )*
+                }
+            }
+
             /// Serialize a persistent topic's payload to a TOML value
             /// suitable for writing to `state.toml`. Returns `None` for
             /// non-persistent variants (ephemeral / sticky topics never

@@ -16,6 +16,7 @@ use clap::{Parser, Subcommand};
 
 mod apps;
 mod bus;
+mod emit;
 mod eval;
 mod logs;
 mod screenshot;
@@ -60,6 +61,22 @@ enum Command {
         follow: bool,
     },
 
+    /// Emit a bus topic with a JSON payload. The payload is deserialized
+    /// via the topic's payload type — same shape as `sola-monitor` shows.
+    /// Unit topics (no payload) accept any value, including `null` or `{}`.
+    ///
+    /// Examples:
+    ///   sola-debug emit Shutdown null
+    ///   sola-debug emit LaunchApp '{"app_id":"foo","command":"/opt/sola/bin/foo"}'
+    ///   sola-debug emit Frame '{"window_id":1,"x":0,"y":0,"width":800,"height":600}'
+    Emit {
+        /// Topic kind name (e.g. `Shutdown`, `Frame`, `LaunchApp`). Same
+        /// names as the `Topic` variants in sola-bus.
+        kind: String,
+        /// JSON payload. Use `null` or `{}` for unit topics.
+        payload: String,
+    },
+
     /// Capture the compositor output to a PNG.
     Screenshot {
         /// Path to write the PNG. Defaults to `/tmp/sola/screenshots/<unix-ms>.png`.
@@ -82,6 +99,7 @@ fn main() {
             timeout,
         } => eval::run(&app, window.as_deref(), &expression, timeout),
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
+        Command::Emit { kind, payload } => emit::run(&kind, &payload),
         Command::Screenshot { output, timeout } => screenshot::run(output.as_deref(), timeout),
     };
     std::process::exit(exit);
