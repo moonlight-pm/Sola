@@ -263,6 +263,47 @@ pub struct ScreenshotPayload {
     pub result: Result<PathBuf, String>,
 }
 
+/// Synthesize a pointer event on the seat. Handled by sola-river via
+/// `wlr-virtual-pointer-unstable-v1`. Coordinates are absolute in
+/// compositor space.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulatePointerPayload {
+    pub action: PointerAction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PointerAction {
+    /// Move pointer to absolute (x, y) on the primary output.
+    Move { x: i32, y: i32 },
+    /// Move and click (press + release).
+    Click {
+        button: PointerButton,
+        x: i32,
+        y: i32,
+    },
+    /// Press button at current pointer location.
+    Press { button: PointerButton },
+    /// Release button at current pointer location.
+    Release { button: PointerButton },
+    /// Scroll. Positive `dy` = scroll down. `dx` for horizontal.
+    Scroll { dx: f64, dy: f64 },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum PointerButton {
+    Left,
+    Right,
+    Middle,
+}
+
+/// Synthesize a single keystroke (press + release) with the given
+/// modifiers. Handled by sola-river via the existing virtual-keyboard
+/// protocol.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulateKeyPayload {
+    pub chord: KeyChord,
+}
+
 define_topics! {
     // Window management list. Sticky: latest list from sola-river is
     // replayed to new subscribers.
@@ -331,6 +372,10 @@ define_topics! {
     // Screenshot capture (sola-debug → sola-river).
     CaptureScreen(CaptureScreenPayload),
     Screenshot(ScreenshotPayload),
+
+    // Synthetic input (sola-debug → sola-river).
+    SimulatePointer(SimulatePointerPayload),
+    SimulateKey(SimulateKeyPayload),
 
     // Lifecycle
     Shutdown,

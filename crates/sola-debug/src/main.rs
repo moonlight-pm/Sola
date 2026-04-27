@@ -18,6 +18,7 @@ mod apps;
 mod bus;
 mod emit;
 mod eval;
+mod input;
 mod logs;
 mod screenshot;
 
@@ -77,6 +78,33 @@ enum Command {
         payload: String,
     },
 
+    /// Move the pointer and click at absolute output coordinates.
+    Click {
+        x: i32,
+        y: i32,
+        /// Mouse button: left (default), right, middle.
+        #[arg(short, long, default_value = "left")]
+        button: String,
+    },
+
+    /// Move the pointer to absolute output coordinates.
+    Move { x: i32, y: i32 },
+
+    /// Scroll the pointer wheel. Positive `dy` = scroll down.
+    Scroll {
+        #[arg(short = 'x', long, default_value_t = 0.0)]
+        dx: f64,
+        #[arg(short = 'y', long, default_value_t = 5.0)]
+        dy: f64,
+    },
+
+    /// Synthesize a single keystroke. Chord syntax: `Meta+Tab`, `Ctrl+A`,
+    /// `Shift+Esc`, `Escape`, `Tab`, single letters/digits, etc.
+    Key {
+        /// Key chord, e.g. "Meta+Tab" or "A".
+        chord: String,
+    },
+
     /// Capture the compositor output to a PNG.
     Screenshot {
         /// Path to write the PNG. Defaults to `/tmp/sola/screenshots/<unix-ms>.png`.
@@ -100,6 +128,10 @@ fn main() {
         } => eval::run(&app, window.as_deref(), &expression, timeout),
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
+        Command::Click { x, y, button } => input::click(x, y, &button),
+        Command::Move { x, y } => input::move_to(x, y),
+        Command::Scroll { dx, dy } => input::scroll(dx, dy),
+        Command::Key { chord } => input::key(&chord),
         Command::Screenshot { output, timeout } => screenshot::run(output.as_deref(), timeout),
     };
     std::process::exit(exit);

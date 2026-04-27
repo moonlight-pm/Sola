@@ -40,6 +40,8 @@ fn main() {
         TopicKind::Paste,
         TopicKind::CloseApp,
         TopicKind::CaptureScreen,
+        TopicKind::SimulatePointer,
+        TopicKind::SimulateKey,
         TopicKind::Shutdown,
     ]);
 

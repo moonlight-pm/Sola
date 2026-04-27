@@ -25,6 +25,7 @@ use crate::protocol::river_xkb_bindings_v1::{
 };
 use crate::protocol::virtual_keyboard_unstable_v1::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1;
 use crate::protocol::wlr_output_management_unstable_v1::zwlr_output_manager_v1::ZwlrOutputManagerV1;
+use crate::protocol::wlr_virtual_pointer_unstable_v1::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1;
 use crate::registry::{ChordRegistry, WindowRegistry};
 
 pub mod binding;
@@ -34,6 +35,7 @@ pub mod output_config;
 pub mod screenshot;
 pub mod seat;
 pub mod virtual_keyboard;
+pub mod virtual_pointer;
 pub mod window;
 
 pub struct AppData {
@@ -69,6 +71,9 @@ pub struct AppData {
     /// `zwp_virtual_keyboard_v1` state — used to synthesize Ctrl+C / Ctrl+V
     /// into non-Sola clients when the shell's Meta+C/V chords fire.
     pub virtual_keyboard: virtual_keyboard::VirtualKeyboardState,
+    /// `zwlr_virtual_pointer_v1` state — used by sola-debug to script
+    /// pointer movement and clicks.
+    pub virtual_pointer: virtual_pointer::VirtualPointerState,
     /// Held so its `device` events keep firing; preferences (natural
     /// scroll) are applied in `client/input.rs`.
     pub libinput_config: Option<RiverLibinputConfigV1>,
@@ -99,6 +104,7 @@ impl AppData {
             output_config: output_config::OutputConfigState::default(),
             virtual_keyboard: virtual_keyboard::VirtualKeyboardState::default(),
             libinput_config: None,
+            virtual_pointer: virtual_pointer::VirtualPointerState::default(),
             qh: None,
             conn: None,
         }
@@ -132,6 +138,7 @@ pub fn connect(
     // synthesize (logged on first attempt). In practice wlroots
     // advertises both by default.
     virtual_keyboard::init_if_ready(&mut data, &qh);
+    virtual_pointer::init_if_ready(&mut data, &qh);
 
     Ok((conn, queue, data))
 }
@@ -183,6 +190,12 @@ pub fn bus_tick(state: &mut AppData) {
             }
             sola_bus::topics::Topic::CaptureScreen(req) => {
                 screenshot::handle(&mut state.bus, req);
+            }
+            sola_bus::topics::Topic::SimulatePointer(req) => {
+                virtual_pointer::dispatch(state, &req.action);
+            }
+            sola_bus::topics::Topic::SimulateKey(req) => {
+                virtual_keyboard::synthesize_chord(state, &req.chord);
             }
             sola_bus::topics::Topic::CloseApp(app_id) => {
                 let to_close: Vec<u32> = state
@@ -312,6 +325,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let mgr: ZwpVirtualKeyboardManagerV1 = proxy.bind(name, version.min(1), qh, ());
                     info!(%version, "bound zwp_virtual_keyboard_manager_v1");
                     state.virtual_keyboard.manager = Some(mgr);
+                }
+                "zwlr_virtual_pointer_manager_v1" => {
+                    let mgr: ZwlrVirtualPointerManagerV1 = proxy.bind(name, version.min(2), qh, ());
+                    info!(%version, "bound zwlr_virtual_pointer_manager_v1");
+                    state.virtual_pointer.manager = Some(mgr);
                 }
                 "river_libinput_config_v1" => {
                     // Keep the proxy alive on AppData so its device events

@@ -31,6 +31,12 @@ use crate::protocol::virtual_keyboard_unstable_v1::{
 
 /// xkb real-modifier bitmask: Control is bit 2.
 pub const CTRL_MASK: u32 = 1 << 2;
+/// xkb real-modifier bitmask: Shift is bit 0.
+pub const SHIFT_MASK: u32 = 1 << 0;
+/// xkb real-modifier bitmask: Alt (Mod1) is bit 3.
+pub const ALT_MASK: u32 = 1 << 3;
+/// xkb real-modifier bitmask: Super/Meta (Mod4) is bit 6.
+pub const META_MASK: u32 = 1 << 6;
 
 /// xkb keymap format 1 (text V1).
 const KEYMAP_FORMAT_TEXT_V1: u32 = 1;
@@ -116,6 +122,48 @@ pub fn synthesize_ctrl_plus_evdev_key(state: &AppData, evdev_keycode: u32) {
     if let Some(conn) = state.conn.as_ref() {
         if let Err(e) = conn.flush() {
             warn!(%e, "failed to flush wayland after synthesizing keystroke");
+        }
+    }
+}
+
+/// Synthesize a keystroke for an arbitrary KeyChord. Used by the
+/// `Topic::SimulateKey` handler. The chord's `keycode` is in xkb space
+/// (evdev + 8); we subtract 8 before passing to `kb.key`.
+pub fn synthesize_chord(state: &AppData, chord: &sola_core::KeyChord) {
+    let Some(kb) = state.virtual_keyboard.keyboard.as_ref() else {
+        warn!("SimulateKey received but virtual keyboard not ready");
+        return;
+    };
+    if !state.virtual_keyboard.keymap_set {
+        warn!("virtual keyboard keymap not set; refusing to synthesize");
+        return;
+    }
+
+    let mut mask: u32 = 0;
+    if chord.shift {
+        mask |= SHIFT_MASK;
+    }
+    if chord.ctrl {
+        mask |= CTRL_MASK;
+    }
+    if chord.alt {
+        mask |= ALT_MASK;
+    }
+    if chord.meta {
+        mask |= META_MASK;
+    }
+
+    let evdev = chord.keycode.raw().saturating_sub(8);
+
+    let t = now_ms();
+    kb.modifiers(mask, 0, 0, 0);
+    kb.key(t, evdev, KEY_PRESSED);
+    kb.key(t + 1, evdev, KEY_RELEASED);
+    kb.modifiers(0, 0, 0, 0);
+
+    if let Some(conn) = state.conn.as_ref() {
+        if let Err(e) = conn.flush() {
+            warn!(%e, "failed to flush wayland after synthesizing chord");
         }
     }
 }
