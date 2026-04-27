@@ -1,36 +1,33 @@
 //! `sola-debug screenshot` — capture the compositor output to a PNG.
 //!
-//! Sends `Topic::ScreenshotRequest` and waits for the matching
-//! `Topic::ScreenshotResponse`. The actual capture is performed by
-//! sola-river via the `wlr-screencopy-unstable-v1` Wayland protocol.
+//! Emits `Topic::CaptureScreen` and waits for `Topic::Screenshot` from
+//! sola-river. The actual capture is delegated to `grim`.
 
 use std::path::Path;
 
-use sola_bus::topics::{ScreenshotRequestPayload, Topic, TopicKind};
+use sola_bus::topics::{CaptureScreenPayload, Topic, TopicKind};
 
 use crate::bus;
 
 pub fn run(output: Option<&Path>, timeout_secs: u64) -> i32 {
     let mut client = bus::connect_or_exit();
-    bus::subscribe(&mut client, &[TopicKind::ScreenshotResponse]);
+    bus::subscribe(&mut client, &[TopicKind::Screenshot]);
 
-    let request_id = bus::fresh_request_id();
     bus::emit(
         &mut client,
-        Topic::ScreenshotRequest(ScreenshotRequestPayload {
-            request_id,
+        Topic::CaptureScreen(CaptureScreenPayload {
             path: output.map(|p| p.to_path_buf()),
         }),
     );
 
     let deadline = bus::deadline(timeout_secs);
-    let topic = bus::recv_until(&client, deadline, |t| match t {
-        Topic::ScreenshotResponse(r) => r.request_id == request_id,
+    let topic = bus::recv_until(&client, deadline, |t, source| match t {
+        Topic::Screenshot(_) => source == "sola-river",
         _ => false,
     });
 
     match topic {
-        Some(Topic::ScreenshotResponse(r)) => match r.result {
+        Some(Topic::Screenshot(r)) => match r.result {
             Ok(path) => {
                 println!("{}", path.display());
                 0

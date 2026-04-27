@@ -5,9 +5,7 @@ use std::time::Duration;
 use gtk4::prelude::*;
 
 use sola_bus::BusClient;
-use sola_bus::topics::{
-    DebugOp, DebugResponsePayload, DebugResult, Topic, TopicKind,
-};
+use sola_bus::topics::{EvaluationPayload, Topic, TopicKind};
 
 pub mod assets;
 pub mod async_dispatch;
@@ -231,7 +229,7 @@ pub fn run<A: SolaApp>() {
             TopicKind::Windows,
             TopicKind::Copy,
             TopicKind::Paste,
-            TopicKind::DebugRequest,
+            TopicKind::Evaluate,
         ] {
             if !subscription_kinds.contains(&kind) {
                 subscription_kinds.push(kind);
@@ -258,10 +256,10 @@ pub fn run<A: SolaApp>() {
                     let Some(runtime) = runtime_weak.upgrade() else {
                         return;
                     };
-                    // Framework-internal debug command — never reaches the app.
-                    if cmd == DEBUG_RESULT_CMD {
+                    // Framework-internal evaluation result — never reaches the app.
+                    if cmd == EVALUATION_CMD {
                         let mut rt = runtime.borrow_mut();
-                        emit_debug_result(app_id, args, &mut rt.ctx);
+                        emit_evaluation(args, &mut rt.ctx);
                         return;
                     }
                     let mut rt = runtime.borrow_mut();
@@ -322,9 +320,9 @@ pub fn run<A: SolaApp>() {
                             let mut rt = runtime.borrow_mut();
                             rt.ctx.known_windows = apps.clone();
                         }
-                        Topic::DebugRequest(req) if req.target_app == app_id => {
+                        Topic::Evaluate(req) if req.target_app == app_id => {
                             let mut rt = runtime.borrow_mut();
-                            handle_debug_request(app_id, req, &mut rt.ctx);
+                            handle_evaluate(app_id, req, &mut rt.ctx);
                         }
                         Topic::Copy(req) => {
                             let rt = runtime.borrow();
@@ -379,90 +377,77 @@ pub fn run<A: SolaApp>() {
     gtk_app.run();
 }
 
-/// JS command name reserved for `sola-debug` results. Never reaches the
+/// JS command name reserved for evaluation results. Never reaches the
 /// app's `on_js_command`; the framework intercepts and emits a
-/// `Topic::DebugResponse`.
-const DEBUG_RESULT_CMD: &str = "__debug_result__";
+/// `Topic::Evaluation`. Routing to the originating CLI is by
+/// `Message::source` — the bus tags every emit with the emitting app's
+/// id, so the CLI filters incoming `Evaluation` events by source.
+const EVALUATION_CMD: &str = "__evaluation__";
 
-/// Handle a `Topic::DebugRequest` addressed to this process. Runs in the
+/// Handle a `Topic::Evaluate` addressed to this process. Runs in the
 /// bus event loop, on the GTK main thread.
-fn handle_debug_request(
+fn handle_evaluate(
     app_id: &'static str,
-    req: &sola_bus::topics::DebugRequestPayload,
+    req: &sola_bus::topics::EvaluatePayload,
     ctx: &mut AppCtx,
 ) {
-    match &req.op {
-        DebugOp::ListWindows => {
-            let titles: Vec<String> = ctx
-                .windows
-                .iter()
-                .map(|w| w.title().to_string())
-                .collect();
-            let json = serde_json::to_string(&titles).unwrap_or_else(|_| "[]".to_string());
-            ctx.emit(Topic::DebugResponse(DebugResponsePayload {
-                request_id: req.request_id,
-                source_app: app_id.to_string(),
-                result: DebugResult::Json(json),
-            }));
-        }
-        DebugOp::Eval { window, expr } => {
-            let target = match window {
-                Some(title) => ctx.windows.iter().find(|w| w.title() == title).cloned(),
-                None => ctx.windows.first().cloned(),
-            };
-            let Some(target) = target else {
-                ctx.emit(Topic::DebugResponse(DebugResponsePayload {
-                    request_id: req.request_id,
-                    source_app: app_id.to_string(),
-                    result: DebugResult::Error(format!(
-                        "no window matching {window:?} in {app_id}"
-                    )),
-                }));
-                return;
-            };
-
-            // Inline the expression directly into a wrapper that:
-            //   1. Awaits the expression's value (no-op on non-Promises).
-            //   2. Catches runtime errors and JSON serialization errors.
-            //   3. Posts the result back via the WebKit message handler;
-            //      the per-window dispatcher picks it up and forwards to
-            //      the bus as a `Topic::DebugResponse`.
-            //
-            // Syntax errors in `expr` cause the whole wrapper to fail to
-            // parse, in which case `evaluate_javascript` silently fails
-            // and the CLI hits its timeout. Acceptable for a developer
-            // tool — the user iterates on the expression.
-            let id = req.request_id;
-            let wrapped = format!(
-                "(async () => {{\n  let __value, __err;\n  try {{ __value = await (async () => {{ return ({expr}); }})(); }}\n  catch (e) {{ __err = String(e); }}\n  const __payload = (__err === undefined)\n    ? {{ request_id: {id}, value: __value }}\n    : {{ request_id: {id}, error: __err }};\n  let __body;\n  try {{ __body = JSON.stringify({{ cmd: '{cmd}', args: __payload }}); }}\n  catch (serErr) {{ __body = JSON.stringify({{ cmd: '{cmd}', args: {{ request_id: {id}, error: 'serialize: ' + String(serErr) }} }}); }}\n  window.webkit.messageHandlers.sola.postMessage(__body);\n}})()",
-                cmd = DEBUG_RESULT_CMD,
-            );
-            target.eval_js(&wrapped);
-        }
-    }
-}
-
-/// Convert a `__debug_result__` JS message into a `Topic::DebugResponse`.
-fn emit_debug_result(app_id: &'static str, args: &serde_json::Value, ctx: &mut AppCtx) {
-    let Some(request_id) = args.get("request_id").and_then(|v| v.as_u64()) else {
-        tracing::warn!("__debug_result__ missing request_id");
+    tracing::info!(
+        app_id,
+        window = ?req.window,
+        expr = %req.expr,
+        "Evaluate received"
+    );
+    let target = match &req.window {
+        Some(title) => ctx.windows.iter().find(|w| w.title() == title).cloned(),
+        None => ctx.windows.first().cloned(),
+    };
+    let Some(target) = target else {
+        ctx.emit(Topic::Evaluation(EvaluationPayload {
+            result: Err(format!(
+                "no window matching {:?} in {app_id}",
+                req.window
+            )),
+        }));
         return;
     };
+
+    // Inline the expression into a wrapper that:
+    //   1. Awaits the value (no-op on non-Promises).
+    //   2. Catches runtime errors and JSON serialization errors.
+    //   3. Posts the result back via the WebKit message handler; the
+    //      per-window dispatcher picks it up and forwards via the bus
+    //      as `Topic::Evaluation`.
+    //
+    // Syntax errors in `expr` cause the wrapper to fail to parse and
+    // `evaluate_javascript` silently fails; the CLI hits its timeout.
+    // Acceptable for a developer tool — the user iterates.
+    let wrapped = format!(
+        "(async () => {{\n  let __value, __err;\n  try {{ __value = await (async () => {{ return ({expr}); }})(); }}\n  catch (e) {{ __err = String(e); }}\n  const __payload = (__err === undefined) ? {{ value: __value }} : {{ error: __err }};\n  let __body;\n  try {{ __body = JSON.stringify({{ cmd: '{cmd}', args: __payload }}); }}\n  catch (serErr) {{ __body = JSON.stringify({{ cmd: '{cmd}', args: {{ error: 'serialize: ' + String(serErr) }} }}); }}\n  window.webkit.messageHandlers.sola.postMessage(__body);\n}})()",
+        expr = req.expr,
+        cmd = EVALUATION_CMD,
+    );
+    tracing::info!(
+        app_id,
+        window = target.title(),
+        "Evaluate dispatching wrapper to window"
+    );
+    target.eval_js(&wrapped);
+}
+
+/// Convert an `__evaluation__` JS message into a `Topic::Evaluation`.
+fn emit_evaluation(args: &serde_json::Value, ctx: &mut AppCtx) {
+    tracing::info!(?args, "__evaluation__ JS callback received");
     let result = if let Some(err) = args.get("error").and_then(|v| v.as_str()) {
-        DebugResult::Error(err.to_string())
+        Err(err.to_string())
     } else {
         let value = args
             .get("value")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
-        DebugResult::Json(json)
+        Ok(json)
     };
-    ctx.emit(Topic::DebugResponse(DebugResponsePayload {
-        request_id,
-        source_app: app_id.to_string(),
-        result,
-    }));
+    ctx.emit(Topic::Evaluation(EvaluationPayload { result }));
 }
 
 /// Inject a synchronous bootstrap that installs a queueing

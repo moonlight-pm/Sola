@@ -1,42 +1,38 @@
 //! `sola-debug eval` — evaluate a JS expression in a Sola app's WebView.
 //!
-//! Sends `Topic::DebugRequest`, waits for the matching `Topic::DebugResponse`.
-//! The framework in `sola-app` handles wrapping the expression and
-//! routing the result back.
+//! Emits `Topic::Evaluate` and waits for the next `Topic::Evaluation`
+//! whose `Message::source` matches the target app. The framework in
+//! `sola-app` wraps the expression, runs it, and emits the result.
+//!
+//! Concurrent invocations against the same target race; the bus has no
+//! request_id correlation. `sola-debug` is one-at-a-time by design.
 
-use sola_bus::topics::{
-    DebugOp, DebugRequestPayload, DebugResult, Topic, TopicKind,
-};
+use sola_bus::topics::{EvaluatePayload, Topic, TopicKind};
 
 use crate::bus;
 
 pub fn run(app: &str, window: Option<&str>, expression: &str, timeout_secs: u64) -> i32 {
     let mut client = bus::connect_or_exit();
-    bus::subscribe(&mut client, &[TopicKind::DebugResponse]);
+    bus::subscribe(&mut client, &[TopicKind::Evaluation]);
 
-    let request_id = bus::fresh_request_id();
     bus::emit(
         &mut client,
-        Topic::DebugRequest(DebugRequestPayload {
-            request_id,
+        Topic::Evaluate(EvaluatePayload {
             target_app: app.to_string(),
-            op: DebugOp::Eval {
-                window: window.map(str::to_string),
-                expr: expression.to_string(),
-            },
+            window: window.map(str::to_string),
+            expr: expression.to_string(),
         }),
     );
 
     let deadline = bus::deadline(timeout_secs);
-    let topic = bus::recv_until(&client, deadline, |t| match t {
-        Topic::DebugResponse(r) => r.request_id == request_id,
+    let topic = bus::recv_until(&client, deadline, |t, source| match t {
+        Topic::Evaluation(_) => source == app,
         _ => false,
     });
 
     match topic {
-        Some(Topic::DebugResponse(r)) => match r.result {
-            DebugResult::Json(json) => {
-                // Re-parse + pretty-print so output is human-readable.
+        Some(Topic::Evaluation(r)) => match r.result {
+            Ok(json) => {
                 match serde_json::from_str::<serde_json::Value>(&json) {
                     Ok(v) => {
                         let pretty = serde_json::to_string_pretty(&v).unwrap_or(json);
@@ -46,7 +42,7 @@ pub fn run(app: &str, window: Option<&str>, expression: &str, timeout_secs: u64)
                 }
                 0
             }
-            DebugResult::Error(e) => {
+            Err(e) => {
                 let body = serde_json::json!({ "error": e });
                 println!("{}", serde_json::to_string_pretty(&body).unwrap_or(e));
                 1

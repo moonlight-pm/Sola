@@ -1,20 +1,12 @@
 //! Small helpers around `sola_bus::BusClient` for the CLI's
-//! request/response flow.
+//! emit-and-await-event flow. Routing is by `Message::source` —
+//! responses from a target app are tagged with the target's app_id by
+//! the bus when the target emits.
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use sola_bus::BusClient;
 use sola_bus::topics::{Topic, TopicKind};
-
-/// Generate a request id from the current monotonic-ish nanosecond clock.
-/// Concurrent CLI invocations get different ids; the responder echoes the
-/// id back so cross-talk is impossible.
-pub fn fresh_request_id() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(1)
-}
 
 /// Connect a fresh `BusClient` and identify as `sola-debug`. Exits the
 /// process on failure (the CLI has nothing to do without the bus).
@@ -28,15 +20,15 @@ pub fn connect_or_exit() -> BusClient {
     client
 }
 
-/// Receive messages until a `Topic` matching `pred` arrives, or the deadline
-/// passes. Returns `None` on timeout.
+/// Receive messages until a `(topic, source)` pair satisfies `pred`,
+/// or the deadline passes. Returns `None` on timeout.
 pub fn recv_until<F>(
     client: &BusClient,
     deadline: Instant,
     mut pred: F,
 ) -> Option<Topic>
 where
-    F: FnMut(&Topic) -> bool,
+    F: FnMut(&Topic, &str) -> bool,
 {
     loop {
         let now = Instant::now();
@@ -48,7 +40,7 @@ where
         let Some(topic) = Topic::parse(&msg) else {
             continue;
         };
-        if pred(&topic) {
+        if pred(&topic, &msg.source) {
             return Some(topic);
         }
     }

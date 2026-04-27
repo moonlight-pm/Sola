@@ -227,58 +227,39 @@ pub struct MailRuleCondition {
     pub value: String,
 }
 
-/// Debug introspection request, addressed to a specific Sola app. The
-/// matching app responds with a `DebugResponse` carrying the same
-/// `request_id`. Used by `sola-debug` to query running apps.
+/// Ask a specific Sola app to evaluate a JS expression in one of its
+/// WebViews. The app's framework wraps the expression, runs it, and
+/// emits an `Evaluation` event with the JSON-encoded result. Multiple
+/// concurrent `Evaluate` events to the same app race against each
+/// other — `sola-debug` is a one-at-a-time tool and doesn't try to
+/// correlate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DebugRequestPayload {
-    pub request_id: u64,
+pub struct EvaluatePayload {
     pub target_app: String,
-    pub op: DebugOp,
+    /// Window title; `None` selects the first window.
+    pub window: Option<String>,
+    pub expr: String,
 }
 
+/// Result of an evaluation. Source app is on `Message::source`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DebugOp {
-    /// Evaluate a JS expression in `window` (or the first window if
-    /// None). The expression is wrapped in `(async () => return EXPR)()`,
-    /// `JSON.stringify`d, and returned as `DebugResult::Json`.
-    Eval {
-        window: Option<String>,
-        expr: String,
-    },
-    /// List the app's window titles. Returned as
-    /// `DebugResult::Json("[\"main\", \"menu\", ...]")`.
-    ListWindows,
+pub struct EvaluationPayload {
+    /// `Ok(json)` — the JSON-encoded value. `Err(msg)` — runtime or
+    /// serialization error from the WebView.
+    pub result: Result<String, String>,
 }
 
+/// Ask sola-river to capture the compositor output. Answered with a
+/// `Screenshot` event whose `result` carries the path on disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DebugResponsePayload {
-    pub request_id: u64,
-    pub source_app: String,
-    pub result: DebugResult,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DebugResult {
-    /// Pre-serialized JSON. Held as a `String` so postcard doesn't have
-    /// to round-trip an arbitrary `serde_json::Value` graph.
-    Json(String),
-    Error(String),
-}
-
-/// Request a screenshot of the compositor output. Currently captures the
-/// full primary output. Answered by sola-river.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScreenshotRequestPayload {
-    pub request_id: u64,
+pub struct CaptureScreenPayload {
     /// Where to write the PNG. `None` → auto-generate a path under
     /// `/tmp/sola/screenshots/<unix-ms>.png`.
     pub path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScreenshotResponsePayload {
-    pub request_id: u64,
+pub struct ScreenshotPayload {
     pub result: Result<PathBuf, String>,
 }
 
@@ -344,12 +325,12 @@ define_topics! {
     Paste(EditRequest),
 
     // Debug introspection (sola-debug ↔ apps via sola-app framework).
-    DebugRequest(DebugRequestPayload),
-    DebugResponse(DebugResponsePayload),
+    Evaluate(EvaluatePayload),
+    Evaluation(EvaluationPayload),
 
     // Screenshot capture (sola-debug → sola-river).
-    ScreenshotRequest(ScreenshotRequestPayload),
-    ScreenshotResponse(ScreenshotResponsePayload),
+    CaptureScreen(CaptureScreenPayload),
+    Screenshot(ScreenshotPayload),
 
     // Lifecycle
     Shutdown,

@@ -12,19 +12,14 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sola_bus::topics::{
-    ScreenshotRequestPayload, ScreenshotResponsePayload, Topic,
-};
+use sola_bus::topics::{CaptureScreenPayload, ScreenshotPayload, Topic};
 
 use crate::bus::BusClient;
 
 const SCREENSHOT_DIR: &str = "/tmp/sola/screenshots";
 
-pub fn handle(bus: &mut BusClient, req: ScreenshotRequestPayload) {
-    let path = match req.path.clone() {
-        Some(p) => p,
-        None => default_path(),
-    };
+pub fn handle(bus: &mut BusClient, req: CaptureScreenPayload) {
+    let path = req.path.unwrap_or_else(default_path);
 
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -46,10 +41,7 @@ pub fn handle(bus: &mut BusClient, req: ScreenshotRequestPayload) {
         )),
     };
 
-    bus.emit(Topic::ScreenshotResponse(ScreenshotResponsePayload {
-        request_id: req.request_id,
-        result,
-    }));
+    bus.emit(Topic::Screenshot(ScreenshotPayload { result }));
 }
 
 fn default_path() -> PathBuf {

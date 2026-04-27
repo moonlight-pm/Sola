@@ -39,7 +39,7 @@ fn main() {
         TopicKind::Copy,
         TopicKind::Paste,
         TopicKind::CloseApp,
-        TopicKind::ScreenshotRequest,
+        TopicKind::CaptureScreen,
         TopicKind::Shutdown,
     ]);
 

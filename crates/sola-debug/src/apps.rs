@@ -16,7 +16,7 @@ pub fn run() -> i32 {
     // The bus replays the sticky `Windows` snapshot on subscribe. Wait
     // briefly; if no snapshot arrives, the shell isn't running yet.
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    let topic = bus::recv_until(&client, deadline, |t| matches!(t, Topic::Windows(_)));
+    let topic = bus::recv_until(&client, deadline, |t, _src| matches!(t, Topic::Windows(_)));
 
     let Some(Topic::Windows(windows)) = topic else {
         eprintln!("sola-debug: no Windows snapshot from bus (shell not running?)");

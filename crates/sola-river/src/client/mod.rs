@@ -181,7 +181,7 @@ pub fn bus_tick(state: &mut AppData) {
             sola_bus::topics::Topic::Paste(req) => {
                 dispatch_clipboard_chord(state, req.window_id, ClipboardAction::Paste);
             }
-            sola_bus::topics::Topic::ScreenshotRequest(req) => {
+            sola_bus::topics::Topic::CaptureScreen(req) => {
                 screenshot::handle(&mut state.bus, req);
             }
             sola_bus::topics::Topic::CloseApp(app_id) => {
