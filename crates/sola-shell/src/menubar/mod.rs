@@ -6,6 +6,8 @@ use crate::zoning;
 pub static MENUBAR_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../../web/index.html"), Html),
     "/src/menubar.ts" => (include_str!("../../web/src/menubar.ts"), TypeScript),
+    "/assets/pillars.svg" => (include_str!("../../web/assets/pillars.svg"), Svg),
+    "/assets/flower.svg" => (include_str!("../../web/assets/flower.svg"), Svg),
 };
 
 /// Create and register the menubar window.

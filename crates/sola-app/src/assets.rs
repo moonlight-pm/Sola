@@ -5,6 +5,7 @@ pub enum ContentType {
     Css,
     JavaScript,
     TypeScript,
+    Svg,
 }
 
 impl ContentType {
@@ -21,6 +22,8 @@ impl ContentType {
             Some(Self::JavaScript)
         } else if path.ends_with(".ts") {
             Some(Self::TypeScript)
+        } else if path.ends_with(".svg") {
+            Some(Self::Svg)
         } else {
             None
         }
@@ -31,6 +34,7 @@ impl ContentType {
             Self::Html => "text/html; charset=utf-8",
             Self::Css => "text/css",
             Self::JavaScript | Self::TypeScript => "application/javascript",
+            Self::Svg => "image/svg+xml",
         }
     }
 }

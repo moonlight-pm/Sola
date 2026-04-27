@@ -1,6 +1,20 @@
 import { invoke, on } from '@sola/ipc';
 
+// Pick the system-menu logo here. Available: 'pillars' | 'flower'.
+// Loaded inline so the SVG inherits `color` from CSS via fill="currentColor".
+const SYSTEM_LOGO = 'pillars';
+
 const systemMenuEl = document.getElementById('system-menu')!;
+fetch(`/assets/${SYSTEM_LOGO}.svg`)
+    .then((r) => r.text())
+    .then((svg) => {
+        const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+        const root = doc.documentElement;
+        if (root.tagName.toLowerCase() === 'svg') {
+            systemMenuEl.appendChild(document.adoptNode(root));
+        }
+    });
+
 const appNameEl = document.getElementById('app-name')!;
 const menuLabelsEl = document.getElementById('menu-labels')!;
 const clockEl = document.getElementById('clock')!;
