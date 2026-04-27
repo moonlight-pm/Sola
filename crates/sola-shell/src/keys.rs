@@ -391,11 +391,6 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEv
         .handle_key(chord.keycode.raw(), app.focused_window_id)
     {
         ctx.emit(Topic::Frame(frame));
-        if let Some(window_id) = app.focused_window_id {
-            if let Some(zone) = app.zoning.current_zone_for_window(window_id) {
-                app.update_entry_zone(window_id, zone);
-            }
-        }
         if let Some(zones) = app.zoning.take_zones_update() {
             ctx.emit(Topic::Zones(zones));
         }

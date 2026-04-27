@@ -163,19 +163,6 @@ impl ZoningState {
         let (w, h) = self.output_size?;
         Some(compute_frame(*zone, window_id, w, h))
     }
-
-    /// Assign a zone to a window and return the resulting frame.
-    /// Returns None if output geometry hasn't arrived yet.
-    pub fn snap(&mut self, window_id: u32, zone: Zone) -> Option<FrameUpdate> {
-        let (w, h) = self.output_size?;
-        self.window_zones.insert(window_id, zone);
-        Some(compute_frame(zone, window_id, w, h))
-    }
-
-    /// Return the current zone assigned to a window, if any.
-    pub fn current_zone_for_window(&self, window_id: u32) -> Option<Zone> {
-        self.window_zones.get(&window_id).copied()
-    }
 }
 
 pub const ZONING_KEYCODES: &[u32] = &[
