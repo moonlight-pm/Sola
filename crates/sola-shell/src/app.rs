@@ -34,7 +34,7 @@ fn load_applications() -> ApplicationsConfig {
 }
 
 use crate::launcher::{self, LAUNCHER_ASSETS, LauncherState};
-use crate::menu::{MENU_ASSETS, MenuCache};
+use crate::menu::{MENU_ASSETS, MenuCache, SYNTHESIZED_CLOSE_ACTION, synthesized_menu};
 use crate::menubar::setup_menubar;
 use crate::switcher::{SWITCHER_ASSETS, SwitcherState};
 use crate::zoning::{self, ZoningState};
@@ -193,6 +193,8 @@ impl SolaApp for ShellApp {
                 tracing::info!(app_id, action_id, "menu action");
                 if app_id == Self::APP_ID && action_id == "exit" {
                     ctx.emit(Topic::Shutdown);
+                } else if action_id == SYNTHESIZED_CLOSE_ACTION {
+                    ctx.emit(Topic::CloseApp(app_id.to_string()));
                 } else {
                     ctx.emit(Topic::MenuAction(sola_bus::topics::MenuActionPayload {
                         app_id: app_id.to_string(),
@@ -549,20 +551,39 @@ impl ShellApp {
             self.windows.menu.eval_js("clearMenu()");
         }
 
-        let menu = self.menus.get_menu(app_id);
+        let synthesized;
+        let menu = match self.menus.get_menu(app_id) {
+            Some(m) => m,
+            None => {
+                synthesized = synthesized_menu(app_id, &self.display_label(app_id));
+                &synthesized
+            }
+        };
         let app_name = menu
-            .and_then(|m| m.menus.first())
+            .menus
+            .first()
             .map(|d| d.label.as_str())
             .unwrap_or(app_id);
-        let menu_labels: Vec<String> = menu
-            .map(|m| m.menus.iter().map(|d| d.label.clone()).collect())
-            .unwrap_or_default();
+        let menu_labels: Vec<String> = menu.menus.iter().map(|d| d.label.clone()).collect();
 
         self.windows.menubar.send_to_js(&serde_json::json!({
             "event": "focus",
             "app_name": app_name,
             "menu_labels": menu_labels,
         }));
+    }
+
+    /// Resolve a human-readable label for an app_id. Falls back to the
+    /// app_id itself title-cased if no `applications` entry exists.
+    pub fn display_label(&self, app_id: &str) -> String {
+        if let Some(app) = self.applications.get(app_id) {
+            return app.label.clone();
+        }
+        let mut chars = app_id.chars();
+        match chars.next() {
+            Some(c) => c.to_uppercase().chain(chars).collect(),
+            None => String::new(),
+        }
     }
 
     /// Build a deduplicated list of app_ids for the switcher, ordered by MRU.
@@ -736,8 +757,14 @@ impl ShellApp {
                 .collect()
         };
 
+        let focused_app_was_removed = self
+            .focused_app_id
+            .as_deref()
+            .map(|f| removed.iter().any(|r| r == f))
+            .unwrap_or(false);
         for id in &removed {
             self.mru_apps.retain(|m| m != id);
+            self.mru_window_by_app.remove(id);
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
                 self.focused_window_id = None;
@@ -766,16 +793,45 @@ impl ShellApp {
         self.emit_composition(ctx);
 
         // Focus the newest app so the user can start using it immediately.
+        // If no new app appeared but the focused app was just closed, fall
+        // back to the next MRU app — or clear the menubar entirely if there
+        // are no apps left.
         if let Some(id) = added.first() {
             self.set_focus(id);
-            // Focus the first window of this app.
             if let Some(wid) = self.lookup_any_window_id(id) {
                 self.focused_window_id = Some(wid);
                 self.mru_window_by_app.insert(id.clone(), wid);
                 ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
             }
             self.emit_composition(ctx);
+        } else if focused_app_was_removed {
+            if let Some(next) = self.mru_apps.first().cloned() {
+                self.set_focus(&next);
+                let wid = self
+                    .mru_window_by_app
+                    .get(&next)
+                    .copied()
+                    .or_else(|| self.lookup_any_window_id(&next));
+                if let Some(wid) = wid {
+                    self.focused_window_id = Some(wid);
+                    self.mru_window_by_app.insert(next.clone(), wid);
+                    ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                }
+                self.emit_composition(ctx);
+            } else {
+                self.clear_menubar_focus();
+            }
         }
+    }
+
+    /// Tell the menubar there's no focused app — clears the app name and
+    /// menu labels. Used when the last app closes.
+    fn clear_menubar_focus(&self) {
+        self.windows.menubar.send_to_js(&serde_json::json!({
+            "event": "focus",
+            "app_name": "",
+            "menu_labels": [],
+        }));
     }
 
     pub fn open_menu(&mut self, source: &str, menu_index: usize, anchor_x: f64, ctx: &mut AppCtx) {
@@ -785,9 +841,18 @@ impl ShellApp {
             self.focused_app_id.clone().unwrap_or_default()
         };
 
-        let menu = self.menus.get_menu(&app_id);
-        let menu_def = menu.and_then(|m| m.menus.get(menu_index));
-        let Some(menu_def) = menu_def else { return };
+        let synthesized;
+        let menu = match self.menus.get_menu(&app_id) {
+            Some(m) => m,
+            None if app_id != Self::APP_ID && !app_id.is_empty() => {
+                synthesized = synthesized_menu(&app_id, &self.display_label(&app_id));
+                &synthesized
+            }
+            None => return,
+        };
+        let Some(menu_def) = menu.menus.get(menu_index) else {
+            return;
+        };
 
         let items: Vec<Value> = menu_def
             .items

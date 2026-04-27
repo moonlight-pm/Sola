@@ -1,7 +1,32 @@
 use std::collections::{HashMap, HashSet};
 
-use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuItem};
-use sola_core::KeyChord;
+use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem};
+use sola_core::{KeyChord, KeyCode};
+
+/// Action id used by the synthesized "Quit <App>" item. Routed by the
+/// menu-action handler to `Topic::CloseApp` for any external app that
+/// hasn't shipped its own menu.
+pub const SYNTHESIZED_CLOSE_ACTION: &str = "_close";
+
+/// Build a default menu for an external app that hasn't shipped its own.
+/// Single menu labeled `<label>` containing one item: "Quit <label>" with
+/// the Meta+Q shortcut shown next to it. The chord itself is already
+/// dispatched globally in `keys::handle_chord`.
+pub fn synthesized_menu(app_id: &str, label: &str) -> AppMenuPayload {
+    AppMenuPayload {
+        app_id: app_id.to_string(),
+        menus: vec![MenuDefinition {
+            label: label.to_string(),
+            items: vec![MenuItem::Action {
+                id: SYNTHESIZED_CLOSE_ACTION.to_string(),
+                label: format!("Quit {label}"),
+                shortcut: Some(KeyCode::Q.meta()),
+                disabled: false,
+                checked: false,
+            }],
+        }],
+    }
+}
 
 /// Cached app menus and shortcut reverse-lookup.
 pub struct MenuCache {
