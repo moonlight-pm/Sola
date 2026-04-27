@@ -82,6 +82,12 @@ pub struct AppData {
     /// calloop timer source) can flush outgoing wayland requests. Without
     /// this, `manage_dirty` and friends queue forever.
     pub conn: Option<Connection>,
+    /// Window we last told River to focus via `seat.focus_window`. River
+    /// does not auto-clear `seat.focused` when a window is destroyed, and
+    /// it asserts in `Window.destroy` that no seat is still focused on the
+    /// dying window — so we must clear focus ourselves when this window
+    /// receives a `closed` event.
+    pub focused_window: Option<u32>,
 }
 
 impl AppData {
@@ -107,6 +113,7 @@ impl AppData {
             virtual_pointer: virtual_pointer::VirtualPointerState::default(),
             qh: None,
             conn: None,
+            focused_window: None,
         }
     }
 }

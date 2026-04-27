@@ -98,6 +98,14 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             }
             Event::Closed => {
                 info!(window_id, "window closed");
+                // River asserts in Window.destroy() that no seat is still
+                // focused on the window. The closed event is followed by a
+                // manage_start, so queue clear_focus now and it'll be sent
+                // before river internally tears the Window down.
+                if state.focused_window == Some(window_id) {
+                    state.pending.set_focus(crate::pending::FocusAction::None);
+                    state.focused_window = None;
+                }
                 state.registry.remove(window_id);
                 state.windows_by_object.retain(|_, v| *v != window_id);
                 state.windows_by_id.remove(&window_id);
@@ -120,6 +128,14 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     state.registry.set_pid(window_id, unreliable_pid as u32);
                     apps_dirty = true;
                 }
+            }
+            Event::FullscreenRequested { output: _ } => {
+                info!(window_id, "fullscreen requested");
+                state.pending.queue_fullscreen(window_id);
+            }
+            Event::ExitFullscreenRequested => {
+                info!(window_id, "exit fullscreen requested");
+                state.pending.queue_exit_fullscreen(window_id);
             }
             _ => {}
         }

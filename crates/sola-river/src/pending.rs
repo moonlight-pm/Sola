@@ -18,6 +18,15 @@ pub struct PendingUpdate {
     pub chords: Option<Vec<(u32, u32)>>,
     /// Windows to close in the next manage sequence via `river_window_v1.close`.
     pub close_windows: Vec<u32>,
+    /// Windows whose `fullscreen_requested` event we received and want to
+    /// honor in the next manage sequence via `river_window_v1.fullscreen`.
+    /// Granting the request keeps Xwayland clients on the WM-managed
+    /// surface — without it Wine falls back to spawning a separate
+    /// override-redirect surface that bypasses the WM (no focus, no
+    /// zoning, no input routing).
+    pub fullscreen_requests: Vec<u32>,
+    /// Windows whose `exit_fullscreen_requested` event we received.
+    pub exit_fullscreen_requests: Vec<u32>,
     pub manage_dirty: bool,
     pub render_dirty: bool,
 }
@@ -59,6 +68,16 @@ impl PendingUpdate {
         self.manage_dirty = true;
     }
 
+    pub fn queue_fullscreen(&mut self, window_id: u32) {
+        self.fullscreen_requests.push(window_id);
+        self.manage_dirty = true;
+    }
+
+    pub fn queue_exit_fullscreen(&mut self, window_id: u32) {
+        self.exit_fullscreen_requests.push(window_id);
+        self.manage_dirty = true;
+    }
+
     pub fn clear(&mut self) {
         self.manage.clear();
         self.render_positions.clear();
@@ -66,6 +85,8 @@ impl PendingUpdate {
         self.focus = None;
         self.chords = None;
         self.close_windows.clear();
+        self.fullscreen_requests.clear();
+        self.exit_fullscreen_requests.clear();
         self.manage_dirty = false;
         self.render_dirty = false;
     }

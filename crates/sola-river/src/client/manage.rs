@@ -34,9 +34,13 @@ pub fn handle_manage_start(state: &mut AppData) {
                 FocusAction::Window(id) => {
                     if let Some(proxy) = state.windows_by_id.get(&id) {
                         seat.focus_window(proxy);
+                        state.focused_window = Some(id);
                     }
                 }
-                FocusAction::None => seat.clear_focus(),
+                FocusAction::None => {
+                    seat.clear_focus();
+                    state.focused_window = None;
+                }
             }
         }
     }
@@ -57,8 +61,52 @@ pub fn handle_manage_start(state: &mut AppData) {
         tracing::info!(close_count, "CloseApp: sent river_window_v1.close");
     }
 
+    apply_fullscreen_requests(state);
+
     wm.manage_finish();
     debug!(pending_count, "manage_finish sent");
+}
+
+/// Honor pending fullscreen / exit-fullscreen events from `river_window_v1`.
+///
+/// Granting a fullscreen request keeps Xwayland clients (Wine/Proton games,
+/// SDL apps, etc.) on the WM-managed surface. If we ignore the request, the
+/// X client falls back to creating a separate override-redirect surface
+/// for its fullscreen output — that surface bypasses the WM entirely
+/// (invisible to sola-river, can't be focused or zoned), which manifests
+/// as a "second render" floating above the desktop with no input routing.
+fn apply_fullscreen_requests(state: &mut AppData) {
+    let fullscreen_ids: Vec<u32> = std::mem::take(&mut state.pending.fullscreen_requests);
+    let exit_ids: Vec<u32> = std::mem::take(&mut state.pending.exit_fullscreen_requests);
+
+    if !fullscreen_ids.is_empty() {
+        // The protocol's `output` arg is an optional hint. We use the first
+        // bound `river_output_v1` — sola is single-output today; this
+        // matches the assumption already made in the rest of sola-river
+        // (e.g. `output_size`).
+        let Some(output) = state.outputs.first().cloned() else {
+            tracing::warn!(
+                count = fullscreen_ids.len(),
+                "fullscreen request before any river_output_v1 was bound; dropping"
+            );
+            return;
+        };
+        for window_id in fullscreen_ids {
+            if let Some(proxy) = state.windows_by_id.get(&window_id) {
+                proxy.fullscreen(&output);
+                proxy.inform_fullscreen();
+                tracing::info!(window_id, "granted fullscreen");
+            }
+        }
+    }
+
+    for window_id in exit_ids {
+        if let Some(proxy) = state.windows_by_id.get(&window_id) {
+            proxy.exit_fullscreen();
+            proxy.inform_not_fullscreen();
+            tracing::info!(window_id, "exited fullscreen");
+        }
+    }
 }
 
 pub fn handle_render_start(state: &mut AppData) {
