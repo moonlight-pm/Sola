@@ -8,3 +8,4 @@ sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 tracing = "0.1"
 libc = "0.2"
+signal-hook = "0.3"

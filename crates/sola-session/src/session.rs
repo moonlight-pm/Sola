@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::os::unix::process::CommandExt;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
@@ -12,29 +11,31 @@ use sola_bus::topics::{
 
 use sola_core::env;
 
-const GRACEFUL: Duration = Duration::from_secs(5);
-const FORCE_AFTER_TERM: Duration = Duration::from_secs(5);
+/// Hard ceiling for the per-shutdown poll loop: 5s `TimeoutStopSec` set
+/// on each scope plus 1s slack.
+const SHUTDOWN_POLL_BUDGET: Duration = Duration::from_secs(6);
 
-#[derive(Debug)]
-pub enum CloseState {
-    Live,
-    Closing { since: Instant },
-    Terminated { since: Instant },
-    Killed,
-}
-
-pub struct ChildRecord {
+pub struct AppRecord {
     pub app_id: String,
     pub command: String,
+    /// Transient scope unit owning this app's cgroup, e.g. `sola-app-steam-3.scope`.
+    pub unit: String,
+    /// `systemd-run --scope` client process — sticks around for the
+    /// lifetime of the scope and proxies exit status. `try_wait()` on
+    /// this is how we detect the user app exiting.
     pub child: Child,
     #[allow(dead_code)]
     pub launched_at: Instant,
-    pub state: CloseState,
+    /// True once `systemctl stop` has been issued; suppresses re-stops.
+    pub closing: bool,
 }
 
 pub struct Session {
     bus: BusClient,
-    children: HashMap<String, Vec<ChildRecord>>,
+    children: HashMap<String, Vec<AppRecord>>,
+    /// Monotonic, never reused, so concurrent launches of the same
+    /// app_id get distinct scope unit names.
+    launch_counter: u64,
 }
 
 impl Session {
@@ -44,6 +45,7 @@ impl Session {
         Self {
             bus,
             children: HashMap::new(),
+            launch_counter: 0,
         }
     }
 
@@ -85,8 +87,28 @@ impl Session {
         };
         let args: Vec<&str> = parts.collect();
 
-        let mut cmd = Command::new(program);
+        self.launch_counter += 1;
+        let unit = format!(
+            "sola-app-{}-{}.scope",
+            sanitize_unit_segment(&app_id),
+            self.launch_counter
+        );
+
+        let mut cmd = Command::new("systemd-run");
+        cmd.args([
+            "--user",
+            "--scope",
+            "--quiet",
+            "--collect",
+            &format!("--unit={unit}"),
+            &format!("--description=Sola app: {app_id}"),
+            "--property=TimeoutStopSec=5s",
+            "--property=KillSignal=SIGTERM",
+            "--",
+            program,
+        ]);
         cmd.args(&args);
+
         if let Some(name) = env::wayland_socket() {
             cmd.env("WAYLAND_DISPLAY", name);
         } else {
@@ -96,24 +118,23 @@ impl Session {
             cmd.env("DISPLAY", display);
         }
 
-        // SAFETY: pre_exec runs post-fork in the child before exec; the hook
-        // is async-signal-safe.
-        unsafe {
-            cmd.pre_exec(sola_core::process::set_pdeathsig_sigterm);
-        }
+        // Inherit stdio: systemd-run proxies the scope's stdio to its
+        // own, so this lands in the journal alongside sola-session.
+        cmd.stdin(Stdio::null());
 
         match cmd.spawn() {
             Ok(child) => {
-                info!(%app_id, pid = child.id(), "user app launched");
+                info!(%app_id, %unit, pid = child.id(), "user app launched");
                 self.children
                     .entry(app_id.clone())
                     .or_default()
-                    .push(ChildRecord {
+                    .push(AppRecord {
                         app_id: app_id.clone(),
                         command: command.clone(),
+                        unit,
                         child,
                         launched_at: Instant::now(),
-                        state: CloseState::Live,
+                        closing: false,
                     });
                 self.emit_launch_result(&app_id, &command, true, None);
             }
@@ -128,7 +149,10 @@ impl Session {
         match topic {
             Topic::LaunchApp(p) => self.launch(p),
             Topic::CloseApp(app_id) => self.close(&app_id),
-            Topic::Shutdown => std::process::exit(0),
+            Topic::Shutdown => {
+                self.shutdown_all_apps();
+                std::process::exit(0);
+            }
             _ => {}
         }
     }
@@ -139,18 +163,66 @@ impl Session {
             return;
         };
         for r in records.iter_mut() {
-            if matches!(r.state, CloseState::Live) {
-                info!(%app_id, pid = r.child.id(), "CloseApp: graceful period started");
-                r.state = CloseState::Closing {
-                    since: Instant::now(),
-                };
+            if r.closing {
+                continue;
+            }
+            r.closing = true;
+            info!(%app_id, unit = %r.unit, "CloseApp: stopping scope");
+            stop_scope(&r.unit);
+        }
+    }
+
+    /// Stop every scope, then poll for exit up to [`SHUTDOWN_POLL_BUDGET`].
+    /// Anything still alive after that gets a hard kill on the systemd-run
+    /// client and a second `systemctl stop` on the unit. Belt-and-braces:
+    /// systemd's own SIGTERM→SIGKILL escalation will already have cleared
+    /// the cgroup in practice, but we don't want to wait forever.
+    fn shutdown_all_apps(&mut self) {
+        for records in self.children.values_mut() {
+            for r in records.iter_mut() {
+                if r.closing {
+                    continue;
+                }
+                r.closing = true;
+                info!(app_id = %r.app_id, unit = %r.unit, "shutdown: stopping scope");
+                stop_scope(&r.unit);
+            }
+        }
+
+        let deadline = Instant::now() + SHUTDOWN_POLL_BUDGET;
+        loop {
+            let mut alive = 0usize;
+            for records in self.children.values_mut() {
+                for r in records.iter_mut() {
+                    match r.child.try_wait() {
+                        Ok(Some(_)) => {}
+                        Ok(None) => alive += 1,
+                        Err(e) => {
+                            warn!(app_id = %r.app_id, %e, "shutdown: try_wait failed");
+                        }
+                    }
+                }
+            }
+            if alive == 0 || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        for records in self.children.values_mut() {
+            for r in records.iter_mut() {
+                if let Ok(None) = r.child.try_wait() {
+                    warn!(app_id = %r.app_id, unit = %r.unit, pid = r.child.id(), "shutdown: forcing scope down");
+                    // SAFETY: kill(2) is unconditionally safe to call.
+                    unsafe { libc::kill(r.child.id() as i32, libc::SIGKILL) };
+                    stop_scope(&r.unit);
+                }
             }
         }
     }
 
     pub fn tick(&mut self) {
         self.reap_exited();
-        self.run_close_timers();
     }
 
     fn reap_exited(&mut self) {
@@ -174,33 +246,40 @@ impl Session {
             self.emit_exited(&app_id, &command, status);
         }
     }
+}
 
-    fn run_close_timers(&mut self) {
-        let now = Instant::now();
-        for (_app_id, records) in self.children.iter_mut() {
-            for r in records.iter_mut() {
-                match r.state {
-                    CloseState::Closing { since } if now.duration_since(since) >= GRACEFUL => {
-                        info!(pid = r.child.id(), app_id = %r.app_id, "sending SIGTERM");
-                        unsafe {
-                            libc::kill(r.child.id() as i32, libc::SIGTERM);
-                        }
-                        r.state = CloseState::Terminated { since: now };
-                    }
-                    CloseState::Terminated { since }
-                        if now.duration_since(since) >= FORCE_AFTER_TERM =>
-                    {
-                        info!(pid = r.child.id(), app_id = %r.app_id, "sending SIGKILL");
-                        unsafe {
-                            libc::kill(r.child.id() as i32, libc::SIGKILL);
-                        }
-                        r.state = CloseState::Killed;
-                    }
-                    _ => {}
-                }
-            }
+/// `systemctl --user stop --no-block <unit>`. Returns immediately — we
+/// poll the systemd-run client for the scope's actual exit elsewhere.
+fn stop_scope(unit: &str) {
+    match Command::new("systemctl")
+        .args(["--user", "stop", "--no-block", unit])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(mut child) => {
+            // Reap immediately so we don't leave a zombie. systemctl
+            // with --no-block returns within a few ms.
+            let _ = child.wait();
         }
+        Err(e) => warn!(%unit, %e, "failed to spawn systemctl stop"),
     }
+}
+
+/// Replace anything outside `[A-Za-z0-9_-]` with `_` so the result is a
+/// safe systemd unit-name segment. App IDs are usually plain ASCII
+/// already; this is just defense.
+fn sanitize_unit_segment(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 pub fn run() {

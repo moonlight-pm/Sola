@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -28,6 +30,20 @@ fn main() {
     set_cursor_env();
 
     info!("sola process manager starting");
+
+    // SIGINT (Ctrl-C on the TTY), SIGTERM, and SIGHUP all map to the same
+    // graceful shutdown path the menu's "Quit Sola" already uses. Without
+    // this, Ctrl-C kills sola abruptly and orphans every user app —
+    // sola-session never gets a chance to stop their scope units.
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+    for &sig in &[
+        signal_hook::consts::SIGINT,
+        signal_hook::consts::SIGTERM,
+        signal_hook::consts::SIGHUP,
+    ] {
+        signal_hook::flag::register(sig, Arc::clone(&shutdown_requested))
+            .expect("register signal handler");
+    }
 
     let bin_dir = std::env::current_exe()
         .ok()
@@ -83,6 +99,11 @@ fn main() {
     let mut reconnect_failures: u32 = 0;
 
     loop {
+        if shutdown_requested.load(Ordering::SeqCst) {
+            info!("shutdown requested via signal");
+            do_shutdown(&mut bus, &mut managed, &mut river_sup);
+        }
+
         if !bus.is_connected() && last_reconnect_attempt.elapsed() >= reconnect_interval {
             last_reconnect_attempt = Instant::now();
             match bus.connect() {
@@ -125,9 +146,7 @@ fn main() {
             match topic {
                 Topic::Shutdown => {
                     info!("shutdown requested via bus");
-                    shutdown_all(&mut managed);
-                    river_sup.shutdown();
-                    std::process::exit(0);
+                    do_shutdown(&mut bus, &mut managed, &mut river_sup);
                 }
                 _ => {}
             }
@@ -197,9 +216,16 @@ fn launch<'a>(
     let bin = bin_dir.join(name);
     // SAFETY: pre_exec runs post-fork in the child before exec; the hook
     // is async-signal-safe.
+    //
+    // setsid() puts the child in its own session so a TTY Ctrl-C does
+    // not deliver SIGINT to the whole managed set. Without this,
+    // sola-bus and sola-session die instantly on Ctrl-C, before sola
+    // can broadcast Topic::Shutdown — so sola-session never gets to
+    // stop user-app scopes. pdeathsig still SIGTERMs everyone if sola
+    // dies unexpectedly, so the supervision contract is unchanged.
     let result = unsafe {
         Command::new(&bin)
-            .pre_exec(sola_core::process::set_pdeathsig_sigterm)
+            .pre_exec(sola_core::process::set_pdeathsig_and_leader)
             .spawn()
     };
     match result {
@@ -225,6 +251,27 @@ fn shutdown_all(managed: &mut HashMap<&str, ManagedProcess>) {
         let _ = proc.child.kill();
         let _ = proc.child.wait();
     }
+}
+
+/// Single shutdown path: best-effort broadcast `Topic::Shutdown`, give
+/// subscribers a moment to react (sola-session needs it to stop user-app
+/// scopes), then tear down our managed children and River. Exits the
+/// process — never returns.
+fn do_shutdown(
+    bus: &mut sola_bus::BusClient,
+    managed: &mut HashMap<&str, ManagedProcess>,
+    river_sup: &mut river::RiverSupervisor,
+) -> ! {
+    if bus.is_connected() {
+        let _ = bus.emit(Topic::Shutdown);
+    }
+    // Subscribers tick at 500ms max; 200ms is enough for them to pull
+    // the message off the bus and start their own teardown without
+    // stalling our shutdown noticeably.
+    thread::sleep(Duration::from_millis(200));
+    shutdown_all(managed);
+    river_sup.shutdown();
+    std::process::exit(0);
 }
 
 /// Leak a String to get a &'static str for HashMap keys.

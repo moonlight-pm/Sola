@@ -121,3 +121,31 @@ the new bus model.
 - **Logs:** `/opt/sola/log/sola.log` (shared, rotated at 100KB)
 - **Persistent state:** `~/.config/sola/state.toml`
 - **Encryption key:** `~/.config/sola/key` (mode 0600, auto-generated)
+
+## User-app lifecycle
+
+`sola-session` launches each user app inside a transient systemd
+**scope unit** under the user manager:
+
+```
+sola-app-<app_id>-<n>.scope
+```
+
+The scope is a cgroup that contains the entire process tree, including
+grandchildren that re-`setsid` (Wine, Steam, audio daemons). On
+`CloseApp` and on `Topic::Shutdown` the scope is stopped via
+`systemctl --user stop --no-block`; systemd sends SIGTERM, waits 5s
+(`TimeoutStopSec`), then SIGKILLs the cgroup. Nothing escapes.
+
+Sola's own signal handlers translate `SIGINT`, `SIGTERM`, and `SIGHUP`
+into `Topic::Shutdown` on the bus, so `Ctrl-C` on sola's TTY tears
+everything down the same way the menubar's "Quit Sola" does.
+
+### Recovery after an unclean exit
+
+If sola is SIGKILLed or panics without unwinding, the scope units
+remain owned by user systemd. To reap them all:
+
+```sh
+systemctl --user stop 'sola-app-*'
+```
