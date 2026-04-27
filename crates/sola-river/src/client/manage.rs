@@ -79,18 +79,18 @@ fn apply_fullscreen_requests(state: &mut AppData) {
     let fullscreen_ids: Vec<u32> = std::mem::take(&mut state.pending.fullscreen_requests);
     let exit_ids: Vec<u32> = std::mem::take(&mut state.pending.exit_fullscreen_requests);
 
-    if !fullscreen_ids.is_empty() {
-        // The protocol's `output` arg is an optional hint. We use the first
-        // bound `river_output_v1` — sola is single-output today; this
-        // matches the assumption already made in the rest of sola-river
-        // (e.g. `output_size`).
-        let Some(output) = state.outputs.first().cloned() else {
-            tracing::warn!(
-                count = fullscreen_ids.len(),
-                "fullscreen request before any river_output_v1 was bound; dropping"
-            );
-            return;
-        };
+    // Sola is single-output today; we use the first bound `river_output_v1`,
+    // matching the assumption already made elsewhere in sola-river (e.g.
+    // `output_size`). If no output is bound yet, fullscreen requests are
+    // dropped — but `exit_fullscreen` still runs, since it takes no output.
+    let output = state.outputs.first().cloned();
+    if !fullscreen_ids.is_empty() && output.is_none() {
+        tracing::warn!(
+            count = fullscreen_ids.len(),
+            "fullscreen request before any river_output_v1 was bound; dropping"
+        );
+    }
+    if let Some(output) = output {
         for window_id in fullscreen_ids {
             if let Some(proxy) = state.windows_by_id.get(&window_id) {
                 proxy.fullscreen(&output);
