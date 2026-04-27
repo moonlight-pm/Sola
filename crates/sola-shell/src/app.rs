@@ -765,6 +765,7 @@ impl ShellApp {
         for id in &removed {
             self.mru_apps.retain(|m| m != id);
             self.mru_window_by_app.remove(id);
+            self.zoning.forget_app(id);
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
                 self.focused_window_id = None;

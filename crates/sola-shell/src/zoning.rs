@@ -70,6 +70,13 @@ impl ZoningState {
         self.focused_app_id = Some(app_id);
     }
 
+    /// Forget that this app has been auto-zoned this session, so the next
+    /// window for the same app_id picks up its config zone again. Called
+    /// when an app's last window disappears.
+    pub fn forget_app(&mut self, app_id: &str) {
+        self.config_applied.remove(app_id);
+    }
+
     /// Apply the config zone to a window if its app has a saved zone
     /// and no window for that app has been zoned yet.
     /// Only sola-* apps persist zones — external apps are zoned manually.
