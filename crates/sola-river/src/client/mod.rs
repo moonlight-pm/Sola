@@ -31,6 +31,7 @@ pub mod binding;
 pub mod input;
 pub mod manage;
 pub mod output_config;
+pub mod screenshot;
 pub mod seat;
 pub mod virtual_keyboard;
 pub mod window;
@@ -179,6 +180,9 @@ pub fn bus_tick(state: &mut AppData) {
             }
             sola_bus::topics::Topic::Paste(req) => {
                 dispatch_clipboard_chord(state, req.window_id, ClipboardAction::Paste);
+            }
+            sola_bus::topics::Topic::ScreenshotRequest(req) => {
+                screenshot::handle(&mut state.bus, req);
             }
             sola_bus::topics::Topic::CloseApp(app_id) => {
                 let to_close: Vec<u32> = state
