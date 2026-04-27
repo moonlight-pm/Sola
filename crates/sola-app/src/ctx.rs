@@ -102,7 +102,6 @@ impl AppCtx {
             let loaded = loaded.clone();
             let pending = pending.clone();
             let webview_for_drain = webview.clone();
-            let title_for_drain = cfg.title.clone();
             webview.connect_load_changed(move |webview, event| {
                 if event != webkit6::LoadEvent::Finished {
                     return;
@@ -114,7 +113,6 @@ impl AppCtx {
                 // Setting zoom_level = 1/dpr makes 1 CSS px render at 1
                 // device px, matching across all sola-app windows.
                 let webview_for_zoom = webview.clone();
-                let title_for_zoom = title_for_drain.clone();
                 webview.evaluate_javascript(
                     "window.devicePixelRatio",
                     None,
@@ -132,12 +130,6 @@ impl AppCtx {
                         if (webview_for_zoom.zoom_level() - target_zoom).abs() < 0.005 {
                             return;
                         }
-                        tracing::info!(
-                            window = %title_for_zoom,
-                            dpr,
-                            zoom = target_zoom,
-                            "compensating zoom for non-unit dpr"
-                        );
                         webview_for_zoom.set_zoom_level(target_zoom);
                     },
                 );

@@ -169,6 +169,9 @@ pub fn bus_tick(state: &mut AppData) {
                 state
                     .pending
                     .frame(f.window_id, f.x, f.y, f.width, f.height);
+                state
+                    .registry
+                    .set_frame(f.window_id, f.x, f.y, f.width, f.height);
             }
             sola_bus::topics::Topic::Focus(t) => {
                 state
@@ -189,7 +192,7 @@ pub fn bus_tick(state: &mut AppData) {
                 dispatch_clipboard_chord(state, req.window_id, ClipboardAction::Paste);
             }
             sola_bus::topics::Topic::CaptureScreen(req) => {
-                screenshot::handle(&mut state.bus, req);
+                screenshot::handle(state, req);
             }
             sola_bus::topics::Topic::SimulatePointer(req) => {
                 virtual_pointer::dispatch(state, &req.action);

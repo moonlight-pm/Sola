@@ -256,6 +256,21 @@ pub struct CaptureScreenPayload {
     /// Where to write the PNG. `None` → auto-generate a path under
     /// `/tmp/sola/screenshots/<unix-ms>.png`.
     pub path: Option<PathBuf>,
+    /// What to capture. `FullOutput` (default) captures the whole
+    /// compositor output. `Window { app_id, title? }` captures the
+    /// region currently occupied by that window.
+    #[serde(default)]
+    pub target: CaptureTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum CaptureTarget {
+    #[default]
+    FullOutput,
+    Window {
+        app_id: String,
+        title: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

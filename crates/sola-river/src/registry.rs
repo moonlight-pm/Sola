@@ -37,6 +37,10 @@ pub struct Entry {
     /// arrival). Forwarded to the bus so shell/settings can look up the
     /// binary via `/proc/<pid>/…`.
     pub pid: Option<u32>,
+    /// Last frame received from the shell as `(x, y, width, height)`.
+    /// Used by sola-debug's per-window screenshot to pass a region to
+    /// `grim`. May be stale immediately after a resize but converges.
+    pub frame: Option<(i32, i32, i32, i32)>,
 }
 
 impl WindowRegistry {
@@ -53,6 +57,7 @@ impl WindowRegistry {
                 title: None,
                 max_size: (0, 0),
                 pid: None,
+                frame: None,
             },
         );
         self.next_id
@@ -89,6 +94,25 @@ impl WindowRegistry {
         if let Some(e) = self.by_id.get_mut(&id) {
             e.pid = Some(pid);
         }
+    }
+
+    pub fn set_frame(&mut self, id: u32, x: i32, y: i32, w: i32, h: i32) {
+        if let Some(e) = self.by_id.get_mut(&id) {
+            e.frame = Some((x, y, w, h));
+        }
+    }
+
+    /// Find a window matching `app_id` and (optionally) `title`. If
+    /// `title` is `None`, returns the first window for that app. Used by
+    /// `sola-debug screenshot --app/--window`.
+    pub fn find_by_app_title(&self, app_id: &str, title: Option<&str>) -> Option<&Entry> {
+        self.by_id
+            .values()
+            .filter(|e| e.app_id.as_deref() == Some(app_id))
+            .find(|e| match title {
+                Some(t) => e.title.as_deref() == Some(t),
+                None => true,
+            })
     }
 
     pub fn remove(&mut self, id: u32) {

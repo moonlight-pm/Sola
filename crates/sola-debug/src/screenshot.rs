@@ -5,18 +5,32 @@
 
 use std::path::Path;
 
-use sola_bus::topics::{CaptureScreenPayload, Topic, TopicKind};
+use sola_bus::topics::{CaptureScreenPayload, CaptureTarget, Topic, TopicKind};
 
 use crate::bus;
 
-pub fn run(output: Option<&Path>, timeout_secs: u64) -> i32 {
+pub fn run(
+    output: Option<&Path>,
+    app: Option<&str>,
+    window: Option<&str>,
+    timeout_secs: u64,
+) -> i32 {
     let mut client = bus::connect_or_exit();
     bus::subscribe(&mut client, &[TopicKind::Screenshot]);
+
+    let target = match app {
+        Some(app_id) => CaptureTarget::Window {
+            app_id: app_id.to_string(),
+            title: window.map(str::to_string),
+        },
+        None => CaptureTarget::FullOutput,
+    };
 
     bus::emit(
         &mut client,
         Topic::CaptureScreen(CaptureScreenPayload {
             path: output.map(|p| p.to_path_buf()),
+            target,
         }),
     );
 

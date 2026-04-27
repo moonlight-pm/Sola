@@ -105,11 +105,21 @@ enum Command {
         chord: String,
     },
 
-    /// Capture the compositor output to a PNG.
+    /// Capture the compositor output to a PNG. With `--app`, captures
+    /// only the region currently occupied by that app's window. The
+    /// region capture takes whatever is visually at those screen
+    /// coordinates — if another window overlaps the target you'll see
+    /// the overlap; raise the window first if you want a clean shot.
     Screenshot {
         /// Path to write the PNG. Defaults to `/tmp/sola/screenshots/<unix-ms>.png`.
         #[arg(short, long)]
         output: Option<std::path::PathBuf>,
+        /// Capture only this app's window region.
+        #[arg(short, long)]
+        app: Option<String>,
+        /// Window title within the app. Defaults to the first window.
+        #[arg(short, long)]
+        window: Option<String>,
         /// Timeout in seconds.
         #[arg(short, long, default_value_t = 10)]
         timeout: u64,
@@ -132,7 +142,12 @@ fn main() {
         Command::Move { x, y } => input::move_to(x, y),
         Command::Scroll { dx, dy } => input::scroll(dx, dy),
         Command::Key { chord } => input::key(&chord),
-        Command::Screenshot { output, timeout } => screenshot::run(output.as_deref(), timeout),
+        Command::Screenshot {
+            output,
+            app,
+            window,
+            timeout,
+        } => screenshot::run(output.as_deref(), app.as_deref(), window.as_deref(), timeout),
     };
     std::process::exit(exit);
 }
