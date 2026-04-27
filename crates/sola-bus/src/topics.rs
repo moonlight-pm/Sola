@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 pub use sola_core::KeyChord;
@@ -226,6 +227,61 @@ pub struct MailRuleCondition {
     pub value: String,
 }
 
+/// Debug introspection request, addressed to a specific Sola app. The
+/// matching app responds with a `DebugResponse` carrying the same
+/// `request_id`. Used by `sola-debug` to query running apps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugRequestPayload {
+    pub request_id: u64,
+    pub target_app: String,
+    pub op: DebugOp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DebugOp {
+    /// Evaluate a JS expression in `window` (or the first window if
+    /// None). The expression is wrapped in `(async () => return EXPR)()`,
+    /// `JSON.stringify`d, and returned as `DebugResult::Json`.
+    Eval {
+        window: Option<String>,
+        expr: String,
+    },
+    /// List the app's window titles. Returned as
+    /// `DebugResult::Json("[\"main\", \"menu\", ...]")`.
+    ListWindows,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugResponsePayload {
+    pub request_id: u64,
+    pub source_app: String,
+    pub result: DebugResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DebugResult {
+    /// Pre-serialized JSON. Held as a `String` so postcard doesn't have
+    /// to round-trip an arbitrary `serde_json::Value` graph.
+    Json(String),
+    Error(String),
+}
+
+/// Request a screenshot of the compositor output. Currently captures the
+/// full primary output. Answered by sola-river.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenshotRequestPayload {
+    pub request_id: u64,
+    /// Where to write the PNG. `None` → auto-generate a path under
+    /// `/tmp/sola/screenshots/<unix-ms>.png`.
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenshotResponsePayload {
+    pub request_id: u64,
+    pub result: Result<PathBuf, String>,
+}
+
 define_topics! {
     // Window management list. Sticky: latest list from sola-river is
     // replayed to new subscribers.
@@ -286,6 +342,14 @@ define_topics! {
     // foreign (non-sola) windows by synthesizing Ctrl+C / Ctrl+V.
     Copy(EditRequest),
     Paste(EditRequest),
+
+    // Debug introspection (sola-debug ↔ apps via sola-app framework).
+    DebugRequest(DebugRequestPayload),
+    DebugResponse(DebugResponsePayload),
+
+    // Screenshot capture (sola-debug → sola-river).
+    ScreenshotRequest(ScreenshotRequestPayload),
+    ScreenshotResponse(ScreenshotResponsePayload),
 
     // Lifecycle
     Shutdown,
