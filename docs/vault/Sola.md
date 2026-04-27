@@ -122,6 +122,9 @@ the new bus model.
 - **Persistent state:** `~/.config/sola/state.toml`
 - **Encryption key:** `~/.config/sola/key` (mode 0600, auto-generated)
 
+For host-system requirements (River version, patches we carry,
+Steam compatibility), see [[Distribution]].
+
 ## User-app lifecycle
 
 `sola-session` launches each user app inside a transient systemd
