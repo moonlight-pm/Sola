@@ -22,7 +22,6 @@ impl sola_app::AppHandler for TerminalHandler {
             "resize_pty" => self.cmd_resize_pty(args).await,
             "close_pty" => self.cmd_close_pty(args).await,
             "reconnect_pty" => self.cmd_reconnect_pty(args).await,
-            "rename_tab" => self.cmd_rename_tab(args).await,
             "update_cwd" => self.cmd_update_cwd(args).await,
             "reorder_tabs" => self.cmd_reorder_tabs(args).await,
             _ => json!({ "error": format!("unknown command: {cmd}") }),
@@ -58,20 +57,11 @@ impl TerminalHandler {
             }
         };
 
-        let title = self
-            .state
-            .custom_titles
-            .read()
-            .await
-            .get(&tmux_session_name)
-            .cloned();
-
         {
             let mut tabs = self.state.tabs.write().await;
             tabs.push(TabEntry {
                 pty_id: pty_id.clone(),
                 tmux_session: tmux_session_name.clone(),
-                custom_title: title.clone(),
                 cwd,
             });
         }
@@ -84,7 +74,6 @@ impl TerminalHandler {
         json!({
             "pty_id": pty_id,
             "tmux_session": tmux_session_name,
-            "title": title,
         })
     }
 
@@ -168,34 +157,6 @@ impl TerminalHandler {
             Ok(scrollback) => json!({ "scrollback": scrollback }),
             Err(e) => json!({ "error": e }),
         }
-    }
-
-    async fn cmd_rename_tab(&self, args: &Value) -> Value {
-        let tmux_session = match args.get("tmux_session").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => return json!({ "error": "missing tmux_session" }),
-        };
-        let title = match args.get("title").and_then(|v| v.as_str()) {
-            Some(t) => t.to_string(),
-            None => return json!({ "error": "missing title" }),
-        };
-
-        {
-            let tabs = self.state.tabs.read().await;
-            if !tabs.iter().any(|t| t.tmux_session == tmux_session) {
-                return json!({ "error": format!("no tab for session: {tmux_session}") });
-            }
-        }
-
-        self.state
-            .custom_titles
-            .write()
-            .await
-            .insert(tmux_session.to_string(), title);
-
-        self.state.persist_to_disk().await;
-
-        json!("ok")
     }
 
     async fn cmd_update_cwd(&self, args: &Value) -> Value {

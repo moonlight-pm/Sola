@@ -12,8 +12,6 @@ pub struct TabEntry {
     pub pty_id: String,
     pub tmux_session: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom_title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
 }
 
@@ -21,8 +19,6 @@ pub struct TabEntry {
 #[serde(rename_all = "camelCase")]
 pub struct RestoredTab {
     pub tmux_session: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
 }
@@ -39,7 +35,6 @@ impl JsonConfig for PersistedTerminalState {
 
 pub struct TerminalState {
     pub tabs: RwLock<Vec<TabEntry>>,
-    pub custom_titles: RwLock<HashMap<String, String>>,
     pub pty_manager: Mutex<PtyManager>,
 }
 
@@ -47,16 +42,13 @@ impl TerminalState {
     pub fn new() -> Self {
         Self {
             tabs: RwLock::new(Vec::new()),
-            custom_titles: RwLock::new(HashMap::new()),
             pty_manager: Mutex::new(PtyManager::new()),
         }
     }
 
     pub async fn persist_to_disk(&self) {
         let tabs = self.tabs.read().await;
-        let titles = self.custom_titles.read().await;
 
-        // Query live CWDs from tmux — these take priority over stored CWD.
         let live_paths: HashMap<String, String> =
             crate::tmux::list_session_paths().into_iter().collect();
 
@@ -64,10 +56,6 @@ impl TerminalState {
             .iter()
             .map(|tab| RestoredTab {
                 tmux_session: tab.tmux_session.clone(),
-                custom_title: titles
-                    .get(&tab.tmux_session)
-                    .cloned()
-                    .or_else(|| tab.custom_title.clone()),
                 cwd: live_paths
                     .get(&tab.tmux_session)
                     .cloned()
@@ -83,11 +71,6 @@ impl TerminalState {
     pub fn load_from_disk() -> Vec<RestoredTab> {
         let mut saved = PersistedTerminalState::load().tabs;
 
-        // `None` here means we couldn't positively determine which sessions
-        // are alive (tmux query failed for an unknown reason). In that case,
-        // keep all saved tabs — `spawn_pty` uses `new-session -A` which will
-        // attach if the session exists or create it otherwise. Dropping tabs
-        // on a transient failure would silently destroy the user's workspace.
         let Some(live) = crate::tmux::list_sessions() else {
             info!(
                 "Loaded {} tabs from state (tmux query failed, keeping all)",
@@ -97,11 +80,8 @@ impl TerminalState {
         };
 
         let live_sessions: std::collections::HashSet<String> = live.into_iter().collect();
-
-        // Drop sessions tmux confirms are gone.
         saved.retain(|tab| live_sessions.contains(&tab.tmux_session));
 
-        // Add any live sessions not already represented.
         let known: std::collections::HashSet<&str> =
             saved.iter().map(|t| t.tmux_session.as_str()).collect();
         let orphaned_live: Vec<String> = live_sessions
@@ -112,7 +92,6 @@ impl TerminalState {
         for session in orphaned_live {
             saved.push(RestoredTab {
                 tmux_session: session,
-                custom_title: None,
                 cwd: None,
             });
         }
