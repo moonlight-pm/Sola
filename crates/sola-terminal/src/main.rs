@@ -42,9 +42,14 @@ struct TerminalApp {
     dispatcher: AsyncDispatcher,
     state: Arc<state::TerminalState>,
     config: TerminalConfig,
-    /// Live tmux sessions, queried lazily on the first replayed
-    /// `TerminalSession`. `None` until the first replay arrives.
-    live_tmux: Option<HashSet<String>>,
+    /// Snapshot of live tmux sessions at startup, used to retract any
+    /// persisted `TerminalSession` whose tmux peer is gone. `Some(set)`
+    /// is authoritative; `None` means the tmux query failed for an
+    /// unknown reason — we admit everything to be safe rather than
+    /// nuking the user's tabs because of a transient tmux glitch.
+    /// Only consulted during initial sticky replay; the bus doesn't
+    /// echo our own emits back, so steady-state deliveries don't exist.
+    live_tmux_at_startup: Option<HashSet<String>>,
 }
 
 impl SolaApp for TerminalApp {
@@ -111,12 +116,17 @@ impl SolaApp for TerminalApp {
         ctx.emit(Topic::SetAppMenu(menu::terminal_menu(0)));
         tracing::info!("registered terminal menu");
 
+        // Snapshot live tmux sessions before the bus replays any
+        // persisted tabs into our handler. Cached for the lifetime of
+        // the process — the only consumer is initial sticky replay.
+        let live_tmux_at_startup = tmux::list_sessions().map(|v| v.into_iter().collect());
+
         Self {
             main_window,
             dispatcher,
             state: terminal_state,
             config: TerminalConfig::default(),
-            live_tmux: None,
+            live_tmux_at_startup,
         }
     }
 
@@ -234,21 +244,20 @@ impl TerminalApp {
             return;
         }
 
-        // Lazy tmux reconciliation: query live sessions on the first
-        // non-retract delivery, then for each replayed tab whose tmux
-        // session is gone, retract it instead of admitting it.
-        let live = self
-            .live_tmux
-            .get_or_insert_with(|| tmux::list_sessions().unwrap_or_default().into_iter().collect());
-
-        if !live.is_empty() && !live.contains(&session.tmux_session) {
-            tracing::info!(
-                id = %session.id,
-                tmux = %session.tmux_session,
-                "retracting stale tab (tmux session gone)"
-            );
-            ctx.retract(Topic::TerminalSession(session.clone()));
-            return;
+        // Reconcile against the startup tmux snapshot. `Some(set)` is
+        // authoritative — admit only tabs whose tmux peer is alive,
+        // retract the rest. `None` means tmux was unreachable and we
+        // can't tell, so admit everything.
+        if let Some(live) = &self.live_tmux_at_startup {
+            if !live.contains(&session.tmux_session) {
+                tracing::info!(
+                    id = %session.id,
+                    tmux = %session.tmux_session,
+                    "retracting stale tab (tmux session gone)"
+                );
+                ctx.retract(Topic::TerminalSession(session.clone()));
+                return;
+            }
         }
 
         self.upsert_tab(session.clone());

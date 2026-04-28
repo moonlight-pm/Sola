@@ -206,9 +206,13 @@ pub fn list_sessions() -> Option<Vec<String>> {
         );
     }
 
-    // Only "no server running" is a confirmed empty-sessions signal.
+    // "no server running" and "error connecting to <socket>" both mean
+    // the tmux server doesn't exist — no live sessions either way. The
+    // socket-missing path fires after `cleanup_stale_socket` deletes the
+    // socket on startup; without this, reconciliation can't tell the
+    // difference between "tmux is gone" and "tmux is broken."
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("no server running") {
+    if stderr.contains("no server running") || stderr.contains("error connecting to") {
         Some(Vec::new())
     } else {
         tracing::warn!("tmux ls failed: {}", stderr.trim());
