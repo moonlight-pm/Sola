@@ -57,7 +57,7 @@ pub fn load(path: &Path) -> Vec<Message> {
         }
     };
 
-    let mut out = Vec::with_capacity(table.len());
+    let mut out = Vec::new();
     for (section, value) in table {
         let Some(kind) = TopicKind::from_str(&section) else {
             warn!(section = %section, "unknown persistent topic; skipping");
@@ -67,15 +67,36 @@ pub fn load(path: &Path) -> Vec<Message> {
             warn!(section = %section, "section is not a persistent topic; skipping");
             continue;
         }
-        let Some(topic) = Topic::from_toml_section(kind, value) else {
-            warn!(section = %section, "failed to deserialize section; skipping");
-            continue;
-        };
-        let mut msg = topic.to_message();
-        msg.sticky = true;
-        msg.source = BUS_SOURCE.to_string();
-        info!(section = %section, "restored persistent sticky");
-        out.push(msg);
+
+        if kind.has_keys() {
+            // Expect an array of tables: `[[Section]]`. Each entry is a
+            // separate record with its own keys.
+            let toml::Value::Array(entries) = value else {
+                warn!(section = %section, "keyed topic expects array of tables; skipping");
+                continue;
+            };
+            for entry in entries {
+                let Some(topic) = Topic::from_toml_section(kind, entry) else {
+                    warn!(section = %section, "failed to deserialize keyed entry; skipping");
+                    continue;
+                };
+                let mut msg = topic.to_message();
+                msg.sticky = true;
+                msg.source = BUS_SOURCE.to_string();
+                info!(section = %section, keys = ?msg.keys, "restored keyed sticky");
+                out.push(msg);
+            }
+        } else {
+            let Some(topic) = Topic::from_toml_section(kind, value) else {
+                warn!(section = %section, "failed to deserialize section; skipping");
+                continue;
+            };
+            let mut msg = topic.to_message();
+            msg.sticky = true;
+            msg.source = BUS_SOURCE.to_string();
+            info!(section = %section, "restored persistent sticky");
+            out.push(msg);
+        }
     }
     out
 }
