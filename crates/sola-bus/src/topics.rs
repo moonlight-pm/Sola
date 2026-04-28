@@ -227,6 +227,24 @@ pub struct MailRuleCondition {
     pub value: String,
 }
 
+/// Per-window UI preferences for sola-terminal. Persistent so they
+/// survive across terminal restarts and bus restarts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TerminalConfig {
+    pub sidebar_width: u32,
+    pub sidebar_collapsed: bool,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            sidebar_width: 220,
+            sidebar_collapsed: false,
+        }
+    }
+}
+
 /// Ask a specific Sola app to evaluate a JS expression in one of its
 /// WebViews. The app's framework wraps the expression, runs it, and
 /// emits an `Evaluation` event with the JSON-encoded result. Multiple
@@ -370,6 +388,11 @@ define_topics! {
     // sola-mail. Persistent — settings emits whenever the user saves.
     #[persistent]
     MailConfig(MailConfig),
+
+    // Terminal UI preferences (sidebar width / collapsed). Persistent
+    // so terminal restarts restore the user's layout.
+    #[persistent]
+    TerminalConfig(TerminalConfig),
 
     // Browser
     OpenUrl(OpenUrlRequest),
@@ -564,6 +587,45 @@ mod tests {
         let v = topic.to_json_value();
         assert!(v.is_object(), "expected object, got {v:?}");
         assert!(v.get("email").is_some());
+    }
+
+    #[test]
+    fn terminal_config_roundtrips_via_postcard() {
+        let cfg = TerminalConfig {
+            sidebar_width: 312,
+            sidebar_collapsed: true,
+        };
+        let topic = Topic::TerminalConfig(cfg.clone());
+        let msg = topic.to_message();
+        let parsed = Topic::parse(&msg).unwrap();
+        match parsed {
+            Topic::TerminalConfig(back) => {
+                assert_eq!(back.sidebar_width, 312);
+                assert!(back.sidebar_collapsed);
+            }
+            other => panic!("expected TerminalConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_config_roundtrips_via_toml() {
+        let cfg = TerminalConfig {
+            sidebar_width: 240,
+            sidebar_collapsed: false,
+        };
+        let topic = Topic::TerminalConfig(cfg);
+        let value = topic
+            .to_toml_value()
+            .expect("persistent payload should serialize to TOML");
+        let restored = Topic::from_toml_section(TopicKind::TerminalConfig, value)
+            .expect("section should deserialize");
+        match restored {
+            Topic::TerminalConfig(back) => {
+                assert_eq!(back.sidebar_width, 240);
+                assert!(!back.sidebar_collapsed);
+            }
+            other => panic!("expected TerminalConfig, got {other:?}"),
+        }
     }
 
     #[test]
