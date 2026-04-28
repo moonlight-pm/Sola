@@ -77,7 +77,17 @@ impl Behavior {
 /// Optional per-variant attributes declare delivery behavior:
 /// - no attribute → ephemeral (default)
 /// - `#[sticky]` → latest value retained and replayed to new subscribers
-/// - `#[persistent]` → sticky + saved to disk (not yet wired; Phase 1 only adds metadata)
+/// - `#[persistent]` → sticky + saved to disk
+///
+/// `#[sticky]` and `#[persistent]` payload variants may also declare
+/// one or more **key fields** (unquoted idents, in declaration order):
+/// - `#[sticky(keys = [field])]`
+/// - `#[persistent(keys = [field_a, field_b])]`
+///
+/// Key fields are extracted from the payload via `Display` and used by
+/// the bus to address sticky records as `(topic, keys)`. A keyed topic
+/// kind can have many concurrent stickies; an unkeyed sticky/persistent
+/// kind has at most one.
 ///
 /// # Example
 /// ```ignore
@@ -86,6 +96,8 @@ impl Behavior {
 ///     GrabInput(String),
 ///     #[sticky]
 ///     Windows(Vec<Window>),
+///     #[sticky(keys = [app_id])]
+///     SetAppMenu(AppMenuPayload),
 ///     #[persistent]
 ///     Zones(HashMap<String, Zone>),
 /// }
