@@ -263,16 +263,3 @@ html, body {
   border-top: 2px solid var(--cyan);
   padding-top: 4px;
 }
-
-.tab-rename-input {
-  flex: 1;
-  min-width: 0;
-  background: var(--bg-primary);
-  border: 1px solid var(--cyan);
-  border-radius: 3px;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 1px 4px;
-  outline: none;
-}
