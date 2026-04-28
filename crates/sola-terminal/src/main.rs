@@ -1,12 +1,13 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
+use serde::Serialize;
 use serde_json::{Value, json};
 use sola_app::{
     AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle,
 };
 use sola_bus::topics::{
-    MenuActionPayload, OpenUrlRequest, TerminalConfig, TerminalSessions, TerminalTab, Topic,
-    TopicKind,
+    MenuActionPayload, OpenUrlRequest, TerminalConfig, TerminalSession, Topic, TopicKind,
 };
 
 mod commands;
@@ -14,6 +15,14 @@ mod menu;
 mod pty;
 mod state;
 mod tmux;
+
+/// Channel ops drained from the async PTY thread back to the GTK loop.
+/// Retract is its own variant so closes turn into bus retractions
+/// rather than bulk re-emits.
+pub enum BusOp {
+    Emit(Topic),
+    Retract(Topic),
+}
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
@@ -33,7 +42,9 @@ struct TerminalApp {
     dispatcher: AsyncDispatcher,
     state: Arc<state::TerminalState>,
     config: TerminalConfig,
-    sessions_synced: bool,
+    /// Live tmux sessions, queried lazily on the first replayed
+    /// `TerminalSession`. `None` until the first replay arrives.
+    live_tmux: Option<HashSet<String>>,
 }
 
 impl SolaApp for TerminalApp {
@@ -47,9 +58,9 @@ impl SolaApp for TerminalApp {
         let terminal_state = Arc::new(state::TerminalState::new());
 
         // Initial JS state: empty tabs + default config. The bus replays
-        // the persisted TerminalConfig and TerminalSessions into our
-        // handlers a few ms after subscription, and we push the real
-        // state to JS at that point.
+        // the persisted TerminalConfig and per-tab TerminalSession entries
+        // into our handlers a few ms after subscription, and we push the
+        // real state to JS at that point.
         let initial_state = serde_json::to_string(&state_payload(&[], &TerminalConfig::default()))
             .unwrap_or_default();
 
@@ -75,15 +86,18 @@ impl SolaApp for TerminalApp {
             gtk4::glib::ControlFlow::Continue
         });
 
-        // Bridge dispatcher → bus for topic emits. AppCtx is GTK-thread-bound
-        // (Rc<RefCell<BusClient>>), so we can't share it with the tokio
-        // runtime. Instead, the handler sends Topics through this channel
-        // and the GTK main loop drains them via ctx.emit.
-        let (emit_tx, emit_rx) = std::sync::mpsc::channel::<Topic>();
+        // Bridge dispatcher → bus for topic emits + retracts. AppCtx is
+        // GTK-thread-bound (Rc<RefCell<BusClient>>), so we can't share it
+        // with the tokio runtime. The handler sends BusOps through this
+        // channel and the GTK main loop drains them via ctx.{emit,retract}.
+        let (bus_tx, bus_rx) = std::sync::mpsc::channel::<BusOp>();
         let ctx_proxy = ctx.bus_proxy();
         gtk4::glib::timeout_add_local(std::time::Duration::from_millis(5), move || {
-            while let Ok(topic) = emit_rx.try_recv() {
-                ctx_proxy.emit(topic);
+            while let Ok(op) = bus_rx.try_recv() {
+                match op {
+                    BusOp::Emit(topic) => ctx_proxy.emit(topic),
+                    BusOp::Retract(topic) => ctx_proxy.retract(topic),
+                }
             }
             gtk4::glib::ControlFlow::Continue
         });
@@ -91,7 +105,7 @@ impl SolaApp for TerminalApp {
         let dispatcher = AsyncDispatcher::spawn(commands::TerminalHandler {
             state: terminal_state.clone(),
             event_tx,
-            emit_tx,
+            bus_tx,
         });
 
         ctx.emit(Topic::SetAppMenu(menu::terminal_menu(0)));
@@ -102,7 +116,7 @@ impl SolaApp for TerminalApp {
             dispatcher,
             state: terminal_state,
             config: TerminalConfig::default(),
-            sessions_synced: false,
+            live_tmux: None,
         }
     }
 
@@ -172,13 +186,13 @@ impl SolaApp for TerminalApp {
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
         bus.on(TopicKind::MenuAction, Self::on_menu_action);
         bus.on(TopicKind::TerminalConfig, Self::on_terminal_config);
-        bus.on(TopicKind::TerminalSessions, Self::on_terminal_sessions);
+        bus.on(TopicKind::TerminalSession, Self::on_terminal_session);
     }
 }
 
 impl TerminalApp {
-    fn on_menu_action(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic else {
+    fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = delivery.topic else {
             return;
         };
         if app_id != Self::APP_ID {
@@ -201,76 +215,98 @@ impl TerminalApp {
         }
     }
 
-    fn on_terminal_config(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::TerminalConfig(cfg) = topic else {
+    fn on_terminal_config(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        let Topic::TerminalConfig(cfg) = delivery.topic else {
             return;
         };
         self.config = cfg.clone();
         self.push_state_to_js();
     }
 
-    fn on_terminal_sessions(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::TerminalSessions(sessions) = topic else {
+    fn on_terminal_session(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::TerminalSession(session) = delivery.topic else {
             return;
         };
 
-        // First replay: reconcile against live tmux. Drop tabs whose tmux
-        // session is gone; preserve ordering and cwds for survivors. Re-emit
-        // the cleaned set (only on this first replay) so the disk record
-        // converges with reality.
-        let reconciled: Vec<TerminalTab> = if !self.sessions_synced {
-            self.sessions_synced = true;
-            let live: std::collections::HashSet<String> = tmux::list_sessions()
-                .map(|v| v.into_iter().collect())
-                .unwrap_or_default();
-            let kept: Vec<TerminalTab> = sessions
-                .tabs
-                .iter()
-                .filter(|t| live.is_empty() || live.contains(&t.tmux_session))
-                .cloned()
-                .collect();
-            if kept.len() != sessions.tabs.len() {
-                ctx.emit(Topic::TerminalSessions(TerminalSessions {
-                    tabs: kept.clone(),
-                }));
-            }
-            kept
-        } else {
-            sessions.tabs.clone()
-        };
-
-        // Sync to in-memory TerminalState mirror.
-        let entries: Vec<state::TabEntry> = reconciled
-            .iter()
-            .map(|t| state::TabEntry {
-                pty_id: t.id.clone(),
-                tmux_session: t.tmux_session.clone(),
-                cwd: t.cwd.clone(),
-            })
-            .collect();
-        match self.state.tabs.try_write() {
-            Ok(mut tabs) => *tabs = entries,
-            Err(_) => tracing::warn!(
-                "skipped state mirror sync (tabs locked); next event will refresh"
-            ),
+        if delivery.retracted {
+            self.remove_tab(&session.id);
+            self.refresh_view(ctx);
+            return;
         }
 
-        // Re-emit menu reflecting the reconciled count.
-        ctx.emit(Topic::SetAppMenu(menu::terminal_menu(reconciled.len())));
+        // Lazy tmux reconciliation: query live sessions on the first
+        // non-retract delivery, then for each replayed tab whose tmux
+        // session is gone, retract it instead of admitting it.
+        let live = self
+            .live_tmux
+            .get_or_insert_with(|| tmux::list_sessions().unwrap_or_default().into_iter().collect());
 
-        // Push fresh state to JS.
-        let payload = state_payload(&reconciled, &self.config);
-        self.main_window
-            .send_to_js(&json!({ "event": "state", "state": payload }));
+        if !live.is_empty() && !live.contains(&session.tmux_session) {
+            tracing::info!(
+                id = %session.id,
+                tmux = %session.tmux_session,
+                "retracting stale tab (tmux session gone)"
+            );
+            ctx.retract(Topic::TerminalSession(session.clone()));
+            return;
+        }
+
+        self.upsert_tab(session.clone());
+        self.refresh_view(ctx);
+    }
+
+    /// Replace or insert a tab by id, keeping the in-memory mirror sorted
+    /// by ordinal. Caller-provided ordinal wins (gaps are fine).
+    fn upsert_tab(&mut self, session: TerminalSession) {
+        let Ok(mut tabs) = self.state.tabs.try_write() else {
+            tracing::warn!(
+                id = %session.id,
+                "skipped tab upsert (tabs locked); next event will refresh"
+            );
+            return;
+        };
+        if let Some(existing) = tabs.iter_mut().find(|t| t.pty_id == session.id) {
+            existing.tmux_session = session.tmux_session;
+            existing.cwd = session.cwd;
+            existing.ordinal = session.ordinal;
+        } else {
+            tabs.push(state::TabEntry {
+                pty_id: session.id,
+                tmux_session: session.tmux_session,
+                cwd: session.cwd,
+                ordinal: session.ordinal,
+            });
+        }
+        tabs.sort_by_key(|t| t.ordinal);
+    }
+
+    fn remove_tab(&mut self, id: &str) {
+        let Ok(mut tabs) = self.state.tabs.try_write() else {
+            tracing::warn!(id, "skipped tab remove (tabs locked); next event will refresh");
+            return;
+        };
+        tabs.retain(|t| t.pty_id != id);
+    }
+
+    /// Re-emit the app menu (whose tab count changed) and push state to JS.
+    fn refresh_view(&self, ctx: &mut AppCtx) {
+        let count = self
+            .state
+            .tabs
+            .try_read()
+            .map(|t| t.len())
+            .unwrap_or_default();
+        ctx.emit(Topic::SetAppMenu(menu::terminal_menu(count)));
+        self.push_state_to_js();
     }
 
     fn push_state_to_js(&self) {
         let Ok(tabs) = self.state.tabs.try_read() else {
             return;
         };
-        let mapped: Vec<TerminalTab> = tabs
+        let mapped: Vec<JsTab> = tabs
             .iter()
-            .map(|t| TerminalTab {
+            .map(|t| JsTab {
                 id: t.pty_id.clone(),
                 tmux_session: t.tmux_session.clone(),
                 cwd: t.cwd.clone(),
@@ -283,7 +319,18 @@ impl TerminalApp {
     }
 }
 
-fn state_payload(tabs: &[TerminalTab], config: &TerminalConfig) -> Value {
+/// JS-facing tab shape. Mirrors the old `TerminalTab` so the frontend
+/// keeps consuming `{id, tmux_session, cwd}` arrays — `ordinal` lives
+/// only on the bus side.
+#[derive(Serialize)]
+struct JsTab {
+    id: String,
+    tmux_session: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
+}
+
+fn state_payload(tabs: &[JsTab], config: &TerminalConfig) -> Value {
     json!({
         "tabs": tabs,
         "config": {

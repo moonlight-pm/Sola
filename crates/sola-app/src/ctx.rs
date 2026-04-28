@@ -228,4 +228,8 @@ impl BusProxy {
     pub fn emit(&self, topic: Topic) {
         let _ = self.bus.borrow_mut().emit(topic);
     }
+
+    pub fn retract(&self, topic: Topic) {
+        let _ = self.bus.borrow_mut().retract(topic);
+    }
 }

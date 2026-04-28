@@ -9,6 +9,7 @@ pub struct TabEntry {
     pub tmux_session: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    pub ordinal: u32,
 }
 
 pub struct TerminalState {

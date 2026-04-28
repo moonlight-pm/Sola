@@ -2,19 +2,20 @@ use std::sync::Arc;
 
 use base64::Engine;
 use serde_json::{Value, json};
-use sola_bus::topics::{TerminalSessions, TerminalTab, Topic};
+use sola_bus::topics::{TerminalSession, Topic};
 use tokio::sync::mpsc;
 
+use crate::BusOp;
 use crate::pty::PtyEvent;
 use crate::state::{TabEntry, TerminalState};
 
 /// Terminal command handler implementing the sola-app AppHandler trait.
-/// Emits bus topics by sending them through `emit_tx`; the main thread
-/// drains and calls `ctx.emit`.
+/// Emits/retracts bus topics by sending `BusOp`s through `bus_tx`; the
+/// main thread drains and calls `ctx.emit`/`ctx.retract`.
 pub struct TerminalHandler {
     pub state: Arc<TerminalState>,
     pub event_tx: std::sync::mpsc::Sender<String>,
-    pub emit_tx: std::sync::mpsc::Sender<Topic>,
+    pub bus_tx: std::sync::mpsc::Sender<BusOp>,
 }
 
 #[async_trait::async_trait]
@@ -61,19 +62,29 @@ impl TerminalHandler {
             }
         };
 
-        {
+        let new_session = {
             let mut tabs = self.state.tabs.write().await;
-            tabs.push(TabEntry {
+            let ordinal = tabs.iter().map(|t| t.ordinal).max().map_or(0, |m| m + 1);
+            let entry = TabEntry {
                 pty_id: pty_id.clone(),
                 tmux_session: tmux_session_name.clone(),
                 cwd,
-            });
-        }
+                ordinal,
+            };
+            tabs.push(entry.clone());
+            TerminalSession {
+                id: entry.pty_id,
+                tmux_session: entry.tmux_session,
+                cwd: entry.cwd,
+                ordinal: entry.ordinal,
+            }
+        };
 
         let tx = self.event_tx.clone();
         tokio::spawn(forward_pty_events(pty_id.clone(), pty_event_rx, tx));
 
-        self.emit_sessions().await;
+        self.emit_session(new_session).await;
+        self.emit_menu().await;
 
         json!({
             "pty_id": pty_id,
@@ -140,12 +151,16 @@ impl TerminalHandler {
             }
         }
 
-        {
+        let removed = {
             let mut tabs = self.state.tabs.write().await;
-            tabs.retain(|t| t.pty_id != pty_id);
-        }
+            let pos = tabs.iter().position(|t| t.pty_id == pty_id);
+            pos.map(|i| tabs.remove(i))
+        };
 
-        self.emit_sessions().await;
+        if let Some(entry) = removed {
+            self.retract_session(entry).await;
+            self.emit_menu().await;
+        }
 
         json!("ok")
     }
@@ -173,22 +188,27 @@ impl TerminalHandler {
             None => return json!({ "error": "missing cwd" }),
         };
 
-        let changed = {
+        let updated = {
             let mut tabs = self.state.tabs.write().await;
-            if let Some(tab) = tabs.iter_mut().find(|t| t.pty_id == pty_id) {
-                if tab.cwd.as_deref() == Some(cwd.as_str()) {
-                    false
-                } else {
-                    tab.cwd = Some(cwd);
-                    true
-                }
-            } else {
-                false
-            }
+            tabs.iter_mut()
+                .find(|t| t.pty_id == pty_id)
+                .and_then(|tab| {
+                    if tab.cwd.as_deref() == Some(cwd.as_str()) {
+                        None
+                    } else {
+                        tab.cwd = Some(cwd);
+                        Some(TerminalSession {
+                            id: tab.pty_id.clone(),
+                            tmux_session: tab.tmux_session.clone(),
+                            cwd: tab.cwd.clone(),
+                            ordinal: tab.ordinal,
+                        })
+                    }
+                })
         };
 
-        if changed {
-            self.emit_sessions().await;
+        if let Some(session) = updated {
+            self.emit_session(session).await;
         }
 
         json!("ok")
@@ -203,43 +223,72 @@ impl TerminalHandler {
             None => return json!({ "error": "missing pty_ids" }),
         };
 
-        {
+        // Renumber by the requested order. Any tabs absent from the
+        // request keep their previous ordinal — they'll trail the
+        // reordered set since their ordinal is unchanged.
+        let changed: Vec<TerminalSession> = {
             let mut tabs = self.state.tabs.write().await;
-            let mut reordered = Vec::with_capacity(pty_ids.len());
-            for id in &pty_ids {
-                if let Some(tab) = tabs.iter().find(|t| &t.pty_id == id).cloned() {
-                    reordered.push(tab);
+            let mut out = Vec::new();
+            for (new_ord, id) in pty_ids.iter().enumerate() {
+                let new_ord = new_ord as u32;
+                if let Some(tab) = tabs.iter_mut().find(|t| &t.pty_id == id) {
+                    if tab.ordinal != new_ord {
+                        tab.ordinal = new_ord;
+                        out.push(TerminalSession {
+                            id: tab.pty_id.clone(),
+                            tmux_session: tab.tmux_session.clone(),
+                            cwd: tab.cwd.clone(),
+                            ordinal: tab.ordinal,
+                        });
+                    }
                 }
             }
-            *tabs = reordered;
-        }
+            tabs.sort_by_key(|t| t.ordinal);
+            out
+        };
 
-        self.emit_sessions().await;
+        for session in changed {
+            self.emit_session(session).await;
+        }
 
         json!("ok")
     }
 
-    async fn emit_sessions(&self) {
-        let tabs = self.state.tabs.read().await;
-        let count = tabs.len();
-        let payload = TerminalSessions {
-            tabs: tabs
-                .iter()
-                .map(|t| TerminalTab {
-                    id: t.pty_id.clone(),
-                    tmux_session: t.tmux_session.clone(),
-                    cwd: t.cwd.clone(),
-                })
-                .collect(),
-        };
-        drop(tabs);
-        if self.emit_tx.send(Topic::TerminalSessions(payload)).is_err() {
-            tracing::warn!("emit channel closed; sessions topic dropped");
-            return;
+    async fn emit_session(&self, session: TerminalSession) {
+        if self
+            .bus_tx
+            .send(BusOp::Emit(Topic::TerminalSession(session)))
+            .is_err()
+        {
+            tracing::warn!("bus channel closed; TerminalSession emit dropped");
         }
+    }
+
+    async fn retract_session(&self, entry: TabEntry) {
+        let session = TerminalSession {
+            id: entry.pty_id,
+            tmux_session: entry.tmux_session,
+            cwd: entry.cwd,
+            ordinal: entry.ordinal,
+        };
+        if self
+            .bus_tx
+            .send(BusOp::Retract(Topic::TerminalSession(session)))
+            .is_err()
+        {
+            tracing::warn!("bus channel closed; TerminalSession retract dropped");
+        }
+    }
+
+    async fn emit_menu(&self) {
+        let count = self.state.tabs.read().await.len();
         let menu = crate::menu::terminal_menu(count);
-        if self.emit_tx.send(Topic::SetAppMenu(menu)).is_err() {
-            tracing::warn!("emit channel closed; menu topic dropped");
+        if self
+            .bus_tx
+            .send(BusOp::Emit(Topic::SetAppMenu(menu)))
+            .is_err()
+        {
+            tracing::warn!("bus channel closed; SetAppMenu emit dropped");
         }
     }
 }

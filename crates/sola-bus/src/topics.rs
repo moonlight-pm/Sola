@@ -246,22 +246,17 @@ impl Default for TerminalConfig {
 }
 
 /// One terminal tab as persisted on the bus. The `tmux_session` is the
-/// authoritative identifier for the live PTY; `id` is a stable handle
-/// used by the JS side. `cwd` is a hint, refreshed via OSC 7.
+/// authoritative identifier for the live PTY; `id` is the sticky key —
+/// each tab has its own `(TerminalSession, [id])` slot. `cwd` is a
+/// hint, refreshed via OSC 7. `ordinal` determines display order in
+/// the tab strip — gaps are fine, JS sorts by ordinal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TerminalTab {
+pub struct TerminalSession {
     pub id: String,
     pub tmux_session: String,
     #[serde(default)]
     pub cwd: Option<String>,
-}
-
-/// Live tab list for sola-terminal. Persistent so tabs survive across
-/// terminal/bus restarts; reconciled against live tmux on startup.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
-pub struct TerminalSessions {
-    pub tabs: Vec<TerminalTab>,
+    pub ordinal: u32,
 }
 
 /// Ask a specific Sola app to evaluate a JS expression in one of its
@@ -415,10 +410,12 @@ define_topics! {
     #[persistent]
     TerminalConfig(TerminalConfig),
 
-    // Live tab list for sola-terminal. Persistent so tabs survive
-    // terminal-app and bus restarts.
-    #[persistent]
-    TerminalSessions(TerminalSessions),
+    // One terminal tab as persisted on the bus. Keyed by `id` so each
+    // tab has its own `(TerminalSession, [id])` slot — add a tab by
+    // emitting; remove by retracting; reorder by re-emitting with new
+    // ordinals.
+    #[persistent(keys = [id])]
+    TerminalSession(TerminalSession),
 
     // Browser
     OpenUrl(OpenUrlRequest),
@@ -655,48 +652,51 @@ mod tests {
     }
 
     #[test]
-    fn terminal_sessions_roundtrip_via_postcard() {
-        let sessions = TerminalSessions {
-            tabs: vec![
-                TerminalTab {
-                    id: "tab-1".into(),
-                    tmux_session: "sola-tab-1".into(),
-                    cwd: Some("/home/joshua".into()),
-                },
-                TerminalTab {
-                    id: "tab-2".into(),
-                    tmux_session: "sola-tab-2".into(),
-                    cwd: None,
-                },
-            ],
+    fn terminal_session_roundtrip_via_postcard() {
+        let session = TerminalSession {
+            id: "tab-1".into(),
+            tmux_session: "sola-tab-1".into(),
+            cwd: Some("/home/joshua".into()),
+            ordinal: 0,
         };
-        let topic = Topic::TerminalSessions(sessions.clone());
+        let topic = Topic::TerminalSession(session.clone());
         let msg = topic.to_message();
         let parsed = Topic::parse(&msg).unwrap();
         match parsed {
-            Topic::TerminalSessions(back) => assert_eq!(back, sessions),
-            other => panic!("expected TerminalSessions, got {other:?}"),
+            Topic::TerminalSession(back) => assert_eq!(back, session),
+            other => panic!("expected TerminalSession, got {other:?}"),
         }
     }
 
     #[test]
-    fn terminal_sessions_roundtrip_via_toml() {
-        let sessions = TerminalSessions {
-            tabs: vec![TerminalTab {
-                id: "x".into(),
-                tmux_session: "sola-x".into(),
-                cwd: Some("/tmp".into()),
-            }],
+    fn terminal_session_emits_id_as_key() {
+        let session = TerminalSession {
+            id: "abc-123".into(),
+            tmux_session: "sola-x".into(),
+            cwd: None,
+            ordinal: 7,
         };
-        let topic = Topic::TerminalSessions(sessions.clone());
+        let topic = Topic::TerminalSession(session);
+        assert_eq!(topic.keys_for(), vec!["abc-123".to_string()]);
+    }
+
+    #[test]
+    fn terminal_session_roundtrip_via_toml() {
+        let session = TerminalSession {
+            id: "x".into(),
+            tmux_session: "sola-x".into(),
+            cwd: Some("/tmp".into()),
+            ordinal: 3,
+        };
+        let topic = Topic::TerminalSession(session.clone());
         let value = topic
             .to_toml_value()
             .expect("persistent payload should serialize to TOML");
-        let restored = Topic::from_toml_section(TopicKind::TerminalSessions, value)
+        let restored = Topic::from_toml_section(TopicKind::TerminalSession, value)
             .expect("section should deserialize");
         match restored {
-            Topic::TerminalSessions(back) => assert_eq!(back, sessions),
-            other => panic!("expected TerminalSessions, got {other:?}"),
+            Topic::TerminalSession(back) => assert_eq!(back, session),
+            other => panic!("expected TerminalSession, got {other:?}"),
         }
     }
 
