@@ -199,6 +199,7 @@ fn log_bus_message(client: ClientId, event: &sola_bus::Message) {
         topic = %event.topic,
         sticky = event.sticky,
         source = %event.source,
+        keys = ?event.keys,
     );
 }
 

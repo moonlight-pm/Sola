@@ -26,13 +26,11 @@ pub struct Message {
     pub payload: Option<Vec<u8>>,
 
     /// If true, the bus retains this message and replays it to newly
-    /// connected clients. Keyed by (topic, source) so multiple apps
-    /// can have independent stickies on the same topic.
+    /// connected clients, addressed by `(topic, keys)`.
     pub sticky: bool,
 
     /// Identifies the emitting app. Set automatically by BusClient from
-    /// its app_id. Also used as the dedup key for sticky messages:
-    /// stickies are keyed by (topic, source).
+    /// its app_id. Provenance metadata only — not part of sticky identity.
     pub source: String,
 
     /// Sticky-message keys: stringified key field values declared on a
