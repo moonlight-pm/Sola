@@ -123,7 +123,7 @@ pub fn command_exists(cmd: &str) -> bool {
     }
 }
 
-fn resolve_in_path(name: &str) -> Option<PathBuf> {
+pub fn resolve_in_path(name: &str) -> Option<PathBuf> {
     let path_env = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path_env) {
         let candidate = dir.join(name);

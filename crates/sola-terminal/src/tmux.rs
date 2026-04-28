@@ -206,23 +206,6 @@ pub fn kill_session(session: &str) {
 /// Idempotent: skips if the unit is already active. Without this,
 /// tmux daemonizes inside the sola-app scope's cgroup, and systemd
 /// reaps it (and every shell inside) when the scope stops.
-/// Walk a small list of well-known absolute paths and return the
-/// first one that exists. Falls back to bare `sleep` (PATH lookup) so
-/// non-NixOS systems aren't broken — but on NixOS the bare form
-/// would silently fail, hence the explicit search.
-fn find_sleep() -> String {
-    for path in &[
-        "/run/current-system/sw/bin/sleep",
-        "/usr/bin/sleep",
-        "/bin/sleep",
-    ] {
-        if std::path::Path::new(path).exists() {
-            return (*path).to_string();
-        }
-    }
-    "sleep".to_string()
-}
-
 pub fn ensure_server_running() {
     let active = std::process::Command::new("systemctl")
         .args(["--user", "is-active", "--quiet", "sola-tmux.service"])
@@ -237,7 +220,9 @@ pub fn ensure_server_running() {
     // an empty PATH. Without this, the pane exits 127 immediately, tmux
     // sees an empty session, and (with default `exit-empty=on`) the
     // server self-terminates within milliseconds of starting.
-    let sleep_path = find_sleep();
+    let sleep_path = sola_core::applications::resolve_in_path("sleep")
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "sleep".to_string());
 
     let status = std::process::Command::new("systemd-run")
         .args([
