@@ -58,6 +58,7 @@ impl SolaApp for TerminalApp {
     fn new(ctx: &mut AppCtx) -> Self {
         tmux::cleanup_stale_socket();
         tmux::kill_orphaned_clients();
+        tmux::ensure_server_running();
         tmux::reload_config();
 
         let terminal_state = Arc::new(state::TerminalState::new());

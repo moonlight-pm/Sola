@@ -7,6 +7,10 @@ interface TerminalPaneOptions {
   tabId: string;
   tmuxSession?: string;
   initialCwd?: string;
+  /// When set, ask Rust to spawn the PTY under this exact pty_id —
+  /// the bus already has the entry, so cmd_spawn_pty skips the mirror
+  /// push + topic emit.
+  restorePtyId?: string;
   onExit: () => void;
   onTitleChange: (title: string) => void;
   onCwdChange: (cwd: string) => void;
@@ -212,6 +216,7 @@ export class TerminalPane {
         rows: this.terminal.rows,
         ...(this.options.tmuxSession ? { tmuxSession: this.options.tmuxSession } : {}),
         ...(this.options.initialCwd ? { cwd: this.options.initialCwd } : {}),
+        ...(this.options.restorePtyId ? { pty_id: this.options.restorePtyId } : {}),
       }) as { pty_id: string; tmux_session: string; title?: string };
       this.ptyId = result.pty_id;
       this.options.onPtyReady(result.pty_id);

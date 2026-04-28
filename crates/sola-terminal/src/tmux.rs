@@ -188,6 +188,58 @@ pub fn kill_session(session: &str) {
 /// server (command couldn't spawn, or tmux exited with an unexpected error).
 /// Callers should treat `None` as "unknown" and NOT drop persisted state on it.
 /// `Some(vec![])` means tmux explicitly reported no sessions running.
+/// Start the tmux server in its own systemd user service so it
+/// survives the sola-terminal scope being torn down on Meta+Q. The
+/// `_keepalive` session running `sleep infinity` keeps the server
+/// alive between `tmux new-session` invocations and is filtered out
+/// of `list_sessions()` by the `sola-` prefix check.
+///
+/// Idempotent: skips if the unit is already active. Without this,
+/// tmux daemonizes inside the sola-app scope's cgroup, and systemd
+/// reaps it (and every shell inside) when the scope stops.
+pub fn ensure_server_running() {
+    let active = std::process::Command::new("systemctl")
+        .args(["--user", "is-active", "--quiet", "sola-tmux.service"])
+        .status();
+    if matches!(active, Ok(s) if s.success()) {
+        return;
+    }
+
+    let status = std::process::Command::new("systemd-run")
+        .args([
+            "--user",
+            "--quiet",
+            "--collect",
+            "--unit=sola-tmux.service",
+            "--description=tmux daemon for sola-terminal",
+            "--property=Type=oneshot",
+            "--property=RemainAfterExit=yes",
+            "--",
+            "tmux",
+            "-L",
+            TMUX_SOCKET,
+            "new-session",
+            "-d",
+            "-s",
+            "_keepalive",
+            "sleep",
+            "infinity",
+        ])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            tracing::info!("started sola-tmux.service");
+        }
+        Ok(s) => {
+            tracing::warn!("systemd-run sola-tmux.service exited with {:?}", s.code());
+        }
+        Err(e) => {
+            tracing::warn!("failed to start sola-tmux.service: {e}");
+        }
+    }
+}
+
 pub fn list_sessions() -> Option<Vec<String>> {
     let output = tmux_cmd()
         .args(["ls", "-F", "#{session_name}"])

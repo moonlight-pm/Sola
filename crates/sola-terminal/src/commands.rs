@@ -43,8 +43,24 @@ impl TerminalHandler {
             .and_then(|v| v.as_str())
             .map(String::from);
         let cwd = args.get("cwd").and_then(|v| v.as_str()).map(String::from);
+        let provided_pty_id = args
+            .get("pty_id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
-        let pty_id = uuid::Uuid::new_v4().to_string();
+        // Restore path: JS passed the persisted pty_id of a tab the bus
+        // already replayed into our mirror. Spawn the PTY (which attaches
+        // to the existing tmux session) but skip mirror push + bus emit
+        // — both already exist.
+        let is_restore = match &provided_pty_id {
+            Some(id) => {
+                let tabs = self.state.tabs.read().await;
+                tabs.iter().any(|t| &t.pty_id == id)
+            }
+            None => false,
+        };
+
+        let pty_id = provided_pty_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let (pty_event_tx, pty_event_rx) = mpsc::unbounded_channel::<PtyEvent>();
 
         let tmux_session_name = {
@@ -62,29 +78,30 @@ impl TerminalHandler {
             }
         };
 
-        let new_session = {
-            let mut tabs = self.state.tabs.write().await;
-            let ordinal = tabs.iter().map(|t| t.ordinal).max().map_or(0, |m| m + 1);
-            let entry = TabEntry {
-                pty_id: pty_id.clone(),
-                tmux_session: tmux_session_name.clone(),
-                cwd,
-                ordinal,
-            };
-            tabs.push(entry.clone());
-            TerminalSession {
-                id: entry.pty_id,
-                tmux_session: entry.tmux_session,
-                cwd: entry.cwd,
-                ordinal: entry.ordinal,
-            }
-        };
-
         let tx = self.event_tx.clone();
         tokio::spawn(forward_pty_events(pty_id.clone(), pty_event_rx, tx));
 
-        self.emit_session(new_session).await;
-        self.emit_menu().await;
+        if !is_restore {
+            let new_session = {
+                let mut tabs = self.state.tabs.write().await;
+                let ordinal = tabs.iter().map(|t| t.ordinal).max().map_or(0, |m| m + 1);
+                let entry = TabEntry {
+                    pty_id: pty_id.clone(),
+                    tmux_session: tmux_session_name.clone(),
+                    cwd,
+                    ordinal,
+                };
+                tabs.push(entry.clone());
+                TerminalSession {
+                    id: entry.pty_id,
+                    tmux_session: entry.tmux_session,
+                    cwd: entry.cwd,
+                    ordinal: entry.ordinal,
+                }
+            };
+            self.emit_session(new_session).await;
+            self.emit_menu().await;
+        }
 
         json!({
             "pty_id": pty_id,

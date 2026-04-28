@@ -46,8 +46,8 @@ let terminalArea: HTMLElement;
 
 // --- Tab management ---
 
-function createTab(tmuxSession?: string, cwd?: string): string {
-  const tabId = `tab-${nextTabNum++}`;
+function createTab(tmuxSession?: string, cwd?: string, restoreId?: string): string {
+  const tabId = restoreId ?? `tab-${nextTabNum++}`;
   const tab: Tab = { id: tabId, title: '', cwd: cwd || '', tmuxSession };
   state.tabs = [...state.tabs, tab];
   state.activeTabId = tabId;
@@ -64,6 +64,7 @@ function createTab(tmuxSession?: string, cwd?: string): string {
     tabId,
     tmuxSession,
     initialCwd: cwd,
+    restorePtyId: restoreId,
     onExit: () => removeTab(tabId),
     onTitleChange: (title) => {
       state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, title } : t);
@@ -200,14 +201,41 @@ export async function createApp(root: HTMLElement) {
     onReorder: handleReorder,
   }, sidebarTarget);
 
-  // Restore tabs from the initial snapshot.
-  if (initial.tabs.length > 0) {
-    for (const t of initial.tabs) {
-      createTab(t.tmux_session, t.cwd);
+  // Defer the first-tab decision until the bus replay settles. The
+  // bus delivers each persisted `TerminalSession` as its own state
+  // event, so we debounce: every state event resets a 100ms timer,
+  // and when it expires we restore the latest payload's tabs (or
+  // spawn fresh if it's empty). A 500ms grace-period fallback covers
+  // the case where no state event arrives at all.
+  let initialized = false;
+  let restoreTimer: number | null = null;
+  let pendingRestore: TabSnapshot[] = [];
+
+  function performInitialDecision() {
+    if (initialized) return;
+    initialized = true;
+    if (restoreTimer !== null) {
+      clearTimeout(restoreTimer);
+      restoreTimer = null;
     }
-  } else {
-    createTab();
+    if (pendingRestore.length > 0) {
+      for (const t of pendingRestore) {
+        createTab(t.tmux_session, t.cwd, t.id);
+      }
+    } else {
+      createTab();
+    }
   }
+
+  function scheduleRestore(tabs: TabSnapshot[]) {
+    pendingRestore = tabs;
+    if (restoreTimer !== null) clearTimeout(restoreTimer);
+    restoreTimer = window.setTimeout(performInitialDecision, 100);
+  }
+
+  setTimeout(() => {
+    if (!initialized) performInitialDecision();
+  }, 500);
 
   // Bus events
   on('new_tab', () => {
@@ -244,14 +272,17 @@ export async function createApp(root: HTMLElement) {
       if (state.activeTabId) panes.get(state.activeTabId)?.refit();
     });
 
-    // Tabs: only act if the bus's set differs from ours by id.
-    // This handles the post-reconcile re-emit (Rust dropped a dead tab)
-    // and any future case where another agent edits the topic. We do
-    // NOT auto-spawn TerminalPanes for unknown tabs — those came from
-    // a prior session and need user-initiated reconnect anyway.
+    // Pre-init: debounce the restore decision off the bus replay.
+    if (!initialized) {
+      scheduleRestore(payload.tabs);
+      return;
+    }
+
+    // Post-init: only act if the bus's set differs from ours by id.
+    // This handles the reconcile retract (Rust dropped a dead tab) and
+    // any future case where another agent edits the topic.
     const incomingIds = new Set(payload.tabs.map(t => t.id));
     if (state.tabs.some(t => !incomingIds.has(t.id))) {
-      // Rust dropped a tab; remove from UI.
       for (const t of [...state.tabs]) {
         if (!incomingIds.has(t.id)) removeTab(t.id);
       }
