@@ -221,6 +221,7 @@ impl TerminalHandler {
 
     async fn emit_sessions(&self) {
         let tabs = self.state.tabs.read().await;
+        let count = tabs.len();
         let payload = TerminalSessions {
             tabs: tabs
                 .iter()
@@ -231,8 +232,14 @@ impl TerminalHandler {
                 })
                 .collect(),
         };
+        drop(tabs);
         if self.emit_tx.send(Topic::TerminalSessions(payload)).is_err() {
-            tracing::warn!("emit channel closed; topic dropped");
+            tracing::warn!("emit channel closed; sessions topic dropped");
+            return;
+        }
+        let menu = crate::menu::terminal_menu(count);
+        if self.emit_tx.send(Topic::SetAppMenu(menu)).is_err() {
+            tracing::warn!("emit channel closed; menu topic dropped");
         }
     }
 }

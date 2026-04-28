@@ -247,10 +247,12 @@ impl TerminalApp {
                 cwd: t.cwd.clone(),
             })
             .collect();
-        let state = self.state.clone();
-        gtk4::glib::MainContext::default().spawn_local(async move {
-            *state.tabs.write().await = entries;
-        });
+        match self.state.tabs.try_write() {
+            Ok(mut tabs) => *tabs = entries,
+            Err(_) => tracing::warn!(
+                "skipped state mirror sync (tabs locked); next event will refresh"
+            ),
+        }
 
         // Re-emit menu reflecting the reconciled count.
         ctx.emit(Topic::SetAppMenu(menu::terminal_menu(reconciled.len())));
