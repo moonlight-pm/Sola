@@ -7,10 +7,6 @@ interface TerminalPaneOptions {
   tabId: string;
   tmuxSession?: string;
   initialCwd?: string;
-  /// When set, ask Rust to spawn the PTY under this exact pty_id —
-  /// the bus already has the entry, so cmd_spawn_pty skips the mirror
-  /// push + topic emit.
-  restorePtyId?: string;
   onExit: () => void;
   onTitleChange: (title: string) => void;
   onCwdChange: (cwd: string) => void;
@@ -211,12 +207,15 @@ export class TerminalPane {
 
   private async spawnPty(): Promise<boolean> {
     try {
+      // The tab id is the canonical pty id on both sides; Rust's mirror
+      // lookup decides whether this becomes a fresh spawn or attaches
+      // to the tmux session of an already-persisted entry.
       const result = await invoke('spawn_pty', {
         cols: this.terminal.cols,
         rows: this.terminal.rows,
+        pty_id: this.options.tabId,
         ...(this.options.tmuxSession ? { tmuxSession: this.options.tmuxSession } : {}),
         ...(this.options.initialCwd ? { cwd: this.options.initialCwd } : {}),
-        ...(this.options.restorePtyId ? { pty_id: this.options.restorePtyId } : {}),
       }) as { pty_id: string; tmux_session: string; title?: string };
       this.ptyId = result.pty_id;
       this.options.onPtyReady(result.pty_id);

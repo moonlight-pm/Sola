@@ -52,7 +52,7 @@ function createTab(tmuxSession?: string, cwd?: string, id?: string): string {
   // already has the id (replay path) it attaches to the existing
   // tmux session and skips the topic emit; otherwise it creates fresh.
   const tabId = id ?? crypto.randomUUID();
-  const tab: Tab = { id: tabId, title: '', cwd: cwd || '', tmuxSession, ptyId: tabId };
+  const tab: Tab = { id: tabId, title: '', cwd: cwd || '', tmuxSession };
   state.tabs = [...state.tabs, tab];
   state.activeTabId = tabId;
 
@@ -68,7 +68,6 @@ function createTab(tmuxSession?: string, cwd?: string, id?: string): string {
     tabId,
     tmuxSession,
     initialCwd: cwd,
-    restorePtyId: tabId,
     onExit: () => removeTab(tabId),
     onTitleChange: (title) => {
       state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, title } : t);
