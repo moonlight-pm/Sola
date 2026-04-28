@@ -2,9 +2,20 @@ use std::collections::HashMap;
 
 use crate::topics::{Topic, TopicKind};
 
+/// A bus delivery to a subscriber. Wraps the parsed `Topic` with a
+/// `retracted` flag so handlers for `#[sticky]` / `#[persistent]` topic
+/// kinds can branch on add/remove. For ephemeral topic kinds,
+/// `retracted` is always `false`.
+#[derive(Debug)]
+pub struct Delivery<'a> {
+    pub topic: &'a Topic,
+    pub retracted: bool,
+}
+
 /// Handler signature for a registered topic. Receives the app state, the
-/// parsed topic, and an app-supplied context (e.g. a framework's AppCtx).
-pub type BusHandler<A, C> = fn(&mut A, &Topic, &mut C);
+/// delivery (parsed topic + retracted flag), and an app-supplied context
+/// (e.g. a framework's AppCtx).
+pub type BusHandler<A, C> = fn(&mut A, &Delivery, &mut C);
 
 /// Per-topic handler registry. The set of registered topic kinds is the
 /// app's bus subscription list.
@@ -53,11 +64,11 @@ impl<A, C> BusRegistry<A, C> {
         }
     }
 
-    /// Dispatch a parsed topic to its registered handler. No-op if no
+    /// Dispatch a parsed delivery to its registered handler. No-op if no
     /// handler is registered for this kind.
-    pub fn dispatch(&self, topic: &Topic, app: &mut A, ctx: &mut C) {
-        if let Some(handler) = self.handlers.get(&topic.kind()) {
-            handler(app, topic, ctx);
+    pub fn dispatch(&self, delivery: &Delivery, app: &mut A, ctx: &mut C) {
+        if let Some(handler) = self.handlers.get(&delivery.topic.kind()) {
+            handler(app, delivery, ctx);
         }
     }
 }
@@ -73,13 +84,28 @@ mod tests {
     use super::*;
 
     // Simple test types — the registry doesn't care about A's or C's shape.
-    struct TestApp;
+    struct TestApp {
+        last: Option<TopicKind>,
+        last_retracted: bool,
+    }
     struct TestCtx;
 
     // A stub handler that panics if called — we only test kinds/subscribe_all
     // here.
-    fn stub(_app: &mut TestApp, _topic: &Topic, _ctx: &mut TestCtx) {
+    fn stub(_app: &mut TestApp, _delivery: &Delivery, _ctx: &mut TestCtx) {
         unreachable!("not dispatched in these tests");
+    }
+
+    fn record(app: &mut TestApp, delivery: &Delivery, _ctx: &mut TestCtx) {
+        app.last = Some(delivery.topic.kind());
+        app.last_retracted = delivery.retracted;
+    }
+
+    fn empty_app() -> TestApp {
+        TestApp {
+            last: None,
+            last_retracted: false,
+        }
     }
 
     #[test]
@@ -101,5 +127,36 @@ mod tests {
         reg.subscribe_all();
         let kinds = reg.kinds();
         assert_eq!(kinds.len(), TopicKind::ALL.len());
+    }
+
+    #[test]
+    fn dispatch_routes_to_registered_handler() {
+        let mut reg: BusRegistry<TestApp, TestCtx> = BusRegistry::new();
+        reg.on(TopicKind::Shutdown, record);
+        let mut app = empty_app();
+        let mut ctx = TestCtx;
+        let topic = Topic::Shutdown;
+        let delivery = Delivery {
+            topic: &topic,
+            retracted: false,
+        };
+        reg.dispatch(&delivery, &mut app, &mut ctx);
+        assert_eq!(app.last, Some(TopicKind::Shutdown));
+        assert!(!app.last_retracted);
+    }
+
+    #[test]
+    fn dispatch_passes_retracted_flag() {
+        let mut reg: BusRegistry<TestApp, TestCtx> = BusRegistry::new();
+        reg.on(TopicKind::Shutdown, record);
+        let mut app = empty_app();
+        let mut ctx = TestCtx;
+        let topic = Topic::Shutdown;
+        let delivery = Delivery {
+            topic: &topic,
+            retracted: true,
+        };
+        reg.dispatch(&delivery, &mut app, &mut ctx);
+        assert!(app.last_retracted);
     }
 }

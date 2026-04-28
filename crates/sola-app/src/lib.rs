@@ -67,11 +67,11 @@ pub trait SolaApp: 'static {
     /// Default CloseApp handler — exits the app when the incoming app_id
     /// matches `Self::APP_ID`. Apps that need pre-exit logic override
     /// `on_shutdown`, not this method.
-    fn on_close_app(&mut self, topic: &Topic, ctx: &mut AppCtx)
+    fn on_close_app(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx)
     where
         Self: Sized,
     {
-        if let Topic::CloseApp(app_id) = topic {
+        if let Topic::CloseApp(app_id) = delivery.topic {
             if app_id == Self::APP_ID {
                 self.on_shutdown(ctx);
                 ctx.shutdown();
@@ -363,7 +363,9 @@ pub fn run<A: SolaApp>() {
                     }
                     let mut rt = runtime.borrow_mut();
                     let AppRuntime { app, ctx } = &mut *rt;
-                    registry.dispatch(&topic, app, ctx);
+                    let retracted = topic.kind().behavior().is_sticky() && !msg.sticky;
+                    let delivery = sola_bus::Delivery { topic: &topic, retracted };
+                    registry.dispatch(&delivery, app, ctx);
                 }
                 glib::ControlFlow::Continue
             });

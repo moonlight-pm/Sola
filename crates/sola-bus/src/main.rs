@@ -23,9 +23,10 @@ struct BusState {
     /// Per-client outbound queue. Writers are owned by dedicated writer
     /// threads; broadcasters just try_send here and move on.
     clients: HashMap<ClientId, mpsc::SyncSender<sola_bus::Message>>,
-    /// Latest sticky message per (topic, tag), replayed to newly connected clients.
-    /// Multiple apps can have independent stickies on the same topic.
-    sticky: HashMap<(String, String), sola_bus::Message>,
+    /// Latest sticky message per (topic, keys), replayed to newly connected clients.
+    /// `keys` is empty for unkeyed topics — at most one such sticky exists per topic kind.
+    /// Keyed topics may have many concurrent stickies, addressed by their key values.
+    sticky: HashMap<(String, Vec<String>), sola_bus::Message>,
     /// client_id → app_id for clients that have sent `$identify`.
     roster: HashMap<ClientId, String>,
     /// client_id → topic kinds the client has subscribed to via `$subscribe`.
@@ -60,7 +61,7 @@ fn main() {
 
     let mut sticky = HashMap::new();
     for msg in restored {
-        sticky.insert((msg.topic.clone(), msg.source.clone()), msg);
+        sticky.insert((msg.topic.clone(), msg.keys.clone()), msg);
     }
 
     let state: SharedState = Arc::new(Mutex::new(BusState {
@@ -153,9 +154,25 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                     }
                     _ => {
                         let mut bus = state.lock().unwrap();
+                        let kind = sola_bus::topics::Topic::parse(&event).map(|t| t.kind());
+                        let is_sticky_kind = kind.is_some_and(|k| k.behavior().is_sticky());
                         if event.sticky {
-                            let key = (event.topic.clone(), event.source.clone());
+                            let key = (event.topic.clone(), event.keys.clone());
                             bus.sticky.insert(key, event.clone());
+                        } else if is_sticky_kind {
+                            // Retract: client signals removal by sending sticky=false on a
+                            // sticky/persistent topic kind. Evict from in-memory map and,
+                            // if persistent, from disk.
+                            let key = (event.topic.clone(), event.keys.clone());
+                            bus.sticky.remove(&key);
+                            if let Some(k) = kind {
+                                if k.behavior().is_persistent() {
+                                    if let Err(e) = state::retract_section(&bus.state_path, &event)
+                                    {
+                                        warn!(topic = %event.topic, %e, "persistent retract failed");
+                                    }
+                                }
+                            }
                         }
                         broadcast(id, &event, &mut bus);
                         if event.sticky {
@@ -198,6 +215,7 @@ fn log_bus_message(client: ClientId, event: &sola_bus::Message) {
         topic = %event.topic,
         sticky = event.sticky,
         source = %event.source,
+        keys = ?event.keys,
     );
 }
 
@@ -242,8 +260,7 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
 }
 
 /// If `event` is a persistent topic, write its current value to
-/// state.toml and evict any bootstrap entry ("sola-bus"-keyed sticky
-/// restored at startup) that this live emit supersedes.
+/// state.toml.
 ///
 /// Called with the bus lock held so the sticky map and disk stay
 /// consistent; disk writes are rare (persistent topics carry config,
@@ -255,10 +272,6 @@ fn persist_if_needed(event: &sola_bus::Message, bus: &mut BusState) {
     let kind = topic.kind();
     if !kind.behavior().is_persistent() {
         return;
-    }
-    if event.source != state::BUS_SOURCE {
-        let bootstrap = (kind.as_str().to_string(), state::BUS_SOURCE.to_string());
-        bus.sticky.remove(&bootstrap);
     }
     if let Err(e) = state::write_section(&bus.state_path, &topic) {
         warn!(topic = kind.as_str(), %e, "persistent write failed");

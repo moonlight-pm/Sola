@@ -8,7 +8,7 @@ pub mod transport;
 
 pub use client::BusClient;
 pub use message::{CONTROL_IDENTIFY, CONTROL_SUBSCRIBE, Message};
-pub use registry::{BusHandler, BusRegistry};
+pub use registry::{BusHandler, BusRegistry, Delivery};
 
 /// Returns the bus socket path from `$SOLA_BUS_PATH` or the default
 /// `$XDG_RUNTIME_DIR/sola-bus`.
