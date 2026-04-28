@@ -204,6 +204,24 @@ impl BusClient {
         self.send(&message)
     }
 
+    /// Retract a sticky topic. Symmetric to [`emit`](Self::emit): the bus
+    /// removes the entry under `(topic, keys)` from its sticky map (and
+    /// from disk if persistent) and broadcasts the message so subscribers
+    /// can drop their local copy. No-op on the wire if the topic kind is
+    /// ephemeral (logs a warning) — ephemeral topics have no sticky map
+    /// entry to retract.
+    pub fn retract(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
+        let kind = topic.kind();
+        if !kind.behavior().is_sticky() {
+            tracing::warn!(?kind, "retract on ephemeral topic kind; ignoring");
+            return Ok(());
+        }
+        let mut message = topic.to_message();
+        message.sticky = false;
+        message.source = self.app_id.clone();
+        self.send(&message)
+    }
+
     /// Returns a raw fd that becomes readable when bus messages arrive.
     ///
     /// Event-loop callers (glib, calloop) watch this fd instead of polling

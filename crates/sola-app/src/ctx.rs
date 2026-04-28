@@ -173,6 +173,14 @@ impl AppCtx {
         let _ = self.bus.borrow_mut().emit(topic);
     }
 
+    /// Retract a sticky bus event. Symmetric to [`emit`](Self::emit):
+    /// the bus removes the entry under `(topic, keys)` from its sticky
+    /// map and broadcasts the retraction. No-op for ephemeral topic
+    /// kinds (logged by `BusClient::retract`).
+    pub fn retract(&self, topic: Topic) {
+        let _ = self.bus.borrow_mut().retract(topic);
+    }
+
     /// Trigger a clean shutdown: calls `gtk::Application::quit` so the GTK
     /// main loop exits. The `on_shutdown` hook is called by the framework
     /// before this path is reached when coming from `Topic::Shutdown`; for
