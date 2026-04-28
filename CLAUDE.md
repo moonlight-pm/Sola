@@ -49,7 +49,8 @@ docs/
 - Only merge worktree branches to master with explicit user permission.
 
 ### Installing
-- Only install when you have explicit user permission.
+- **NEVER run `cargo make install` (or any variant) without express user permission for that specific install.** This applies to subagents too — if you delegate work, your prompt MUST tell the subagent not to install. Permission for one install is not permission for the next; ask each time.
+- Use `cargo make build` (or `cargo build`) to verify a change compiles. Stop there. Do not install just because a plan or task description says "install and smoke" — that step is for the user to run.
 - Install is local: binaries go to `/opt/sola/bin/`.
 - `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
 - `cargo make install <app>` — builds and installs a single app.
@@ -57,8 +58,9 @@ docs/
 - The user launches `sola` manually from a physical TTY. Do not configure auto-start.
 
 ### Building
-- Always use `cargo make build` and `cargo make install` — never raw `cargo build` or `cp`.
+- Always use `cargo make build` — never raw `cargo build` or `cp`.
 - This ensures our build system stays tested and current.
+- Building is fine to do without permission. Installing is not — see the Installing rule above.
 
 ### Debugging
 - Before adding debug logging or guessing at fixes, look up how reference implementations handle the same problem. Check niri, anvil, cosmic-comp, or Smithay docs first.
