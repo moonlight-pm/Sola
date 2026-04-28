@@ -139,7 +139,7 @@ Items:
 - `SolaApp::APP_ID = "sola-terminal"` (unchanged).
 - `SolaApp::register_bus`:
   - `TopicKind::TerminalConfig` handler — update in-memory copy, push state to JS via `send_to_js`. Does **not** re-emit `SetAppMenu`.
-  - `TopicKind::TerminalSessions` handler — update in-memory copy, push state to JS. Does **not** re-emit `SetAppMenu`. (We emit this topic ourselves from command handlers, and the bus echoes our own emits back — re-emitting here would double the menu emission. Menu re-emits are owned exclusively by the command handlers in `commands.rs`.)
+  - `TopicKind::TerminalSessions` handler — update in-memory copy, push state to JS, re-emit `SetAppMenu` reflecting the replayed count. The bus skips the sender during fanout, so we never see our own emits in steady state; this handler runs only on the first sticky-replay (right after subscription) and on truly external mutations to the topic. Steady-state `SetAppMenu` emission is owned by command handlers in `commands.rs`, which emit `TerminalSessions` and `SetAppMenu` together on every tab change.
   - `TopicKind::MenuAction` handler — existing dispatch logic.
 - `SolaApp::new`:
   - `ctx.add_window(...)` with `initial_state = Some({ tabs: [], sidebar_width: default, sidebar_collapsed: false })`. The window mounts immediately; the JS side renders an empty terminal until state arrives.
