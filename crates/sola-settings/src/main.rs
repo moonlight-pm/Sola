@@ -262,8 +262,8 @@ impl SettingsApp {
         self.current_state()
     }
 
-    fn on_mail_config(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::MailConfig(cfg) = topic else {
+    fn on_mail_config(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        let Topic::MailConfig(cfg) = delivery.topic else {
             return;
         };
         self.mail = cfg.clone();
@@ -273,8 +273,8 @@ impl SettingsApp {
         }));
     }
 
-    fn on_menu_action(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic
+    fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = delivery.topic
             && app_id == Self::APP_ID
             && action_id == "quit"
         {
@@ -282,8 +282,8 @@ impl SettingsApp {
         }
     }
 
-    fn on_windows(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::Windows(windows) = topic else {
+    fn on_windows(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        let Topic::Windows(windows) = delivery.topic else {
             return;
         };
         self.running = windows.clone();

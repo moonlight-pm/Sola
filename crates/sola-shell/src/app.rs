@@ -254,8 +254,8 @@ impl SolaApp for ShellApp {
 }
 
 impl ShellApp {
-    fn on_windows(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::Windows(windows) = topic else {
+    fn on_windows(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::Windows(windows) = delivery.topic else {
             return;
         };
         self.handle_windows_update(windows.clone(), ctx);
@@ -268,8 +268,8 @@ impl ShellApp {
         }
     }
 
-    fn on_zones(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::Zones(zones) = topic else {
+    fn on_zones(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::Zones(zones) = delivery.topic else {
             return;
         };
         tracing::info!(count = zones.len(), "zones updated");
@@ -290,8 +290,8 @@ impl ShellApp {
         }
     }
 
-    fn on_set_app_menu(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::SetAppMenu(payload) = topic else {
+    fn on_set_app_menu(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::SetAppMenu(payload) = delivery.topic else {
             return;
         };
         self.menus.set_menu(payload.clone());
@@ -313,8 +313,8 @@ impl ShellApp {
         }
     }
 
-    fn on_output_geometry(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::OutputGeometry(geo) = topic else {
+    fn on_output_geometry(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::OutputGeometry(geo) = delivery.topic else {
             return;
         };
         self.zoning.set_output_size(geo);
@@ -322,15 +322,15 @@ impl ShellApp {
         self.emit_composition(ctx);
     }
 
-    fn on_mouse_entered(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::MouseEntered(MouseEnteredPayload { window_id }) = topic else {
+    fn on_mouse_entered(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::MouseEntered(MouseEnteredPayload { window_id }) = delivery.topic else {
             return;
         };
         self.focus_window_from_pointer(*window_id, ctx);
     }
 
-    fn on_mouse_clicked(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::MouseClicked(MouseClickedPayload { window_id }) = topic else {
+    fn on_mouse_clicked(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::MouseClicked(MouseClickedPayload { window_id }) = delivery.topic else {
             return;
         };
         // While a menubar menu is open we run in macOS-style menu mode:
@@ -352,27 +352,27 @@ impl ShellApp {
         self.focus_window_from_pointer(*window_id, ctx);
     }
 
-    fn on_mouse_left(&mut self, _topic: &Topic, _ctx: &mut AppCtx) {}
+    fn on_mouse_left(&mut self, _delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {}
 
-    fn on_chord(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::Chord(evt) = topic else { return };
+    fn on_chord(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::Chord(evt) = delivery.topic else { return };
         crate::keys::handle_chord(self, ctx, evt.clone());
     }
 
-    fn on_chord_released(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::ChordReleased(evt) = topic else {
+    fn on_chord_released(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::ChordReleased(evt) = delivery.topic else {
             return;
         };
         crate::keys::handle_chord_released(self, ctx, evt.clone());
     }
 
-    fn on_launch_result(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+    fn on_launch_result(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
         let Topic::LaunchResult(LaunchResultPayload {
             app_id: _,
             command,
             ok,
             error,
-        }) = topic
+        }) = delivery.topic
         else {
             return;
         };
@@ -389,13 +389,13 @@ impl ShellApp {
         }
     }
 
-    fn on_user_app_exited(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+    fn on_user_app_exited(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
         let Topic::UserAppExited(UserAppExitedPayload {
             app_id: _,
             command,
             code,
             signal,
-        }) = topic
+        }) = delivery.topic
         else {
             return;
         };

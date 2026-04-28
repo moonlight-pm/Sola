@@ -85,8 +85,8 @@ impl SolaApp for MonitorApp {
 }
 
 impl MonitorApp {
-    fn on_menu_action(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic {
+    fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        if let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = delivery.topic {
             if app_id == Self::APP_ID && action_id == "quit" {
                 std::process::exit(0);
             }
