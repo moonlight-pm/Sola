@@ -2,15 +2,19 @@ use std::sync::Arc;
 
 use base64::Engine;
 use serde_json::{Value, json};
+use sola_bus::topics::{TerminalSessions, TerminalTab, Topic};
 use tokio::sync::mpsc;
 
 use crate::pty::PtyEvent;
 use crate::state::{TabEntry, TerminalState};
 
 /// Terminal command handler implementing the sola-app AppHandler trait.
+/// Emits bus topics by sending them through `emit_tx`; the main thread
+/// drains and calls `ctx.emit`.
 pub struct TerminalHandler {
     pub state: Arc<TerminalState>,
     pub event_tx: std::sync::mpsc::Sender<String>,
+    pub emit_tx: std::sync::mpsc::Sender<Topic>,
 }
 
 #[async_trait::async_trait]
@@ -69,7 +73,7 @@ impl TerminalHandler {
         let tx = self.event_tx.clone();
         tokio::spawn(forward_pty_events(pty_id.clone(), pty_event_rx, tx));
 
-        self.state.persist_to_disk().await;
+        self.emit_sessions().await;
 
         json!({
             "pty_id": pty_id,
@@ -141,7 +145,7 @@ impl TerminalHandler {
             tabs.retain(|t| t.pty_id != pty_id);
         }
 
-        self.state.persist_to_disk().await;
+        self.emit_sessions().await;
 
         json!("ok")
     }
@@ -169,14 +173,23 @@ impl TerminalHandler {
             None => return json!({ "error": "missing cwd" }),
         };
 
-        {
+        let changed = {
             let mut tabs = self.state.tabs.write().await;
             if let Some(tab) = tabs.iter_mut().find(|t| t.pty_id == pty_id) {
-                tab.cwd = Some(cwd);
+                if tab.cwd.as_deref() == Some(cwd.as_str()) {
+                    false
+                } else {
+                    tab.cwd = Some(cwd);
+                    true
+                }
+            } else {
+                false
             }
-        }
+        };
 
-        self.state.persist_to_disk().await;
+        if changed {
+            self.emit_sessions().await;
+        }
 
         json!("ok")
     }
@@ -201,9 +214,26 @@ impl TerminalHandler {
             *tabs = reordered;
         }
 
-        self.state.persist_to_disk().await;
+        self.emit_sessions().await;
 
         json!("ok")
+    }
+
+    async fn emit_sessions(&self) {
+        let tabs = self.state.tabs.read().await;
+        let payload = TerminalSessions {
+            tabs: tabs
+                .iter()
+                .map(|t| TerminalTab {
+                    id: t.pty_id.clone(),
+                    tmux_session: t.tmux_session.clone(),
+                    cwd: t.cwd.clone(),
+                })
+                .collect(),
+        };
+        if self.emit_tx.send(Topic::TerminalSessions(payload)).is_err() {
+            tracing::warn!("emit channel closed; topic dropped");
+        }
     }
 }
 
@@ -216,20 +246,16 @@ async fn forward_pty_events(
 
     while let Some(event) = event_rx.recv().await {
         let msg = match event {
-            PtyEvent::Data { pty_id, data } => {
-                json!({
-                    "event": "pty:data",
-                    "pty_id": pty_id,
-                    "data": b64.encode(&data),
-                })
-            }
-            PtyEvent::Scrollback { pty_id, data } => {
-                json!({
-                    "event": "pty:scrollback",
-                    "pty_id": pty_id,
-                    "data": b64.encode(&data),
-                })
-            }
+            PtyEvent::Data { pty_id, data } => json!({
+                "event": "pty:data",
+                "pty_id": pty_id,
+                "data": b64.encode(&data),
+            }),
+            PtyEvent::Scrollback { pty_id, data } => json!({
+                "event": "pty:scrollback",
+                "pty_id": pty_id,
+                "data": b64.encode(&data),
+            }),
             PtyEvent::Exit { pty_id } => {
                 let msg = json!({
                     "event": "pty:exit",

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use sola_app::{
     AppCtx, AsyncDispatcher, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle,
 };
 use sola_bus::topics::{
-    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, OpenUrlRequest, Topic, TopicKind,
+    MenuActionPayload, OpenUrlRequest, TerminalConfig, TerminalSessions, TerminalTab, Topic,
+    TopicKind,
 };
-use sola_core::KeyCode;
 
 mod commands;
 mod pty;
@@ -30,8 +30,9 @@ static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
 struct TerminalApp {
     main_window: WindowHandle,
     dispatcher: AsyncDispatcher,
-    #[allow(dead_code)]
     state: Arc<state::TerminalState>,
+    config: TerminalConfig,
+    sessions_synced: bool,
 }
 
 impl SolaApp for TerminalApp {
@@ -42,10 +43,14 @@ impl SolaApp for TerminalApp {
         tmux::kill_orphaned_clients();
         tmux::reload_config();
 
-        let restored_tabs = state::TerminalState::load_from_disk();
-        let restored_json = serde_json::to_string(&restored_tabs).unwrap_or_default();
-
         let terminal_state = Arc::new(state::TerminalState::new());
+
+        // Initial JS state: empty tabs + default config. The bus replays
+        // the persisted TerminalConfig and TerminalSessions into our
+        // handlers a few ms after subscription, and we push the real
+        // state to JS at that point.
+        let initial_state = serde_json::to_string(&state_payload(&[], &TerminalConfig::default()))
+            .unwrap_or_default();
 
         let main_window = ctx.add_window(WindowConfig {
             title: "main".into(),
@@ -54,12 +59,12 @@ impl SolaApp for TerminalApp {
             decorated: false,
             transparent: false,
             assets: APP_ASSETS,
-            initial_state: Some(restored_json),
+            initial_state: Some(initial_state),
             zoned: true,
             keyboard_target: true,
         });
 
-        // Bridge TerminalHandler's mpsc event channel to the main window's JS.
+        // Bridge dispatcher → JS for PTY events.
         let (event_tx, event_rx) = std::sync::mpsc::channel::<String>();
         let mw_for_events = main_window.clone();
         gtk4::glib::timeout_add_local(std::time::Duration::from_millis(5), move || {
@@ -69,19 +74,34 @@ impl SolaApp for TerminalApp {
             gtk4::glib::ControlFlow::Continue
         });
 
+        // Bridge dispatcher → bus for topic emits. AppCtx is GTK-thread-bound
+        // (Rc<RefCell<BusClient>>), so we can't share it with the tokio
+        // runtime. Instead, the handler sends Topics through this channel
+        // and the GTK main loop drains them via ctx.emit.
+        let (emit_tx, emit_rx) = std::sync::mpsc::channel::<Topic>();
+        let ctx_proxy = ctx.bus_proxy();
+        gtk4::glib::timeout_add_local(std::time::Duration::from_millis(5), move || {
+            while let Ok(topic) = emit_rx.try_recv() {
+                ctx_proxy.emit(topic);
+            }
+            gtk4::glib::ControlFlow::Continue
+        });
+
         let dispatcher = AsyncDispatcher::spawn(commands::TerminalHandler {
             state: terminal_state.clone(),
             event_tx,
+            emit_tx,
         });
 
-        // Register the terminal's app menu.
-        ctx.emit(Topic::SetAppMenu(terminal_menu()));
+        ctx.emit(Topic::SetAppMenu(menu::terminal_menu(0)));
         tracing::info!("registered terminal menu");
 
         Self {
             main_window,
             dispatcher,
             state: terminal_state,
+            config: TerminalConfig::default(),
+            sessions_synced: false,
         }
     }
 
@@ -93,37 +113,65 @@ impl SolaApp for TerminalApp {
         _source: &WindowHandle,
         ctx: &mut AppCtx,
     ) {
-        if cmd == "open_url" {
-            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            if url.is_empty() {
-                tracing::warn!("open_url command with empty url");
-                return;
-            }
-            let activate = args
-                .get("activate")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            tracing::info!(url, activate, "open_url");
-            ctx.emit(Topic::OpenUrl(OpenUrlRequest {
-                url: url.to_string(),
-                activate,
-            }));
-            return;
-        }
-
-        let source = self.main_window.clone();
-        let args = args.clone();
-        self.dispatcher
-            .dispatch(cmd.to_string(), args, move |result| {
-                if let Some(id) = id {
-                    source.send_to_js(&serde_json::json!({ "id": id, "result": result }));
+        match cmd {
+            "open_url" => {
+                let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                if url.is_empty() {
+                    tracing::warn!("open_url command with empty url");
+                    return;
                 }
-            });
+                let activate = args
+                    .get("activate")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                ctx.emit(Topic::OpenUrl(OpenUrlRequest {
+                    url: url.to_string(),
+                    activate,
+                }));
+                if let Some(id) = id {
+                    self.main_window
+                        .send_to_js(&json!({ "id": id, "result": "ok" }));
+                }
+            }
+            "set_sidebar" => {
+                let width = args
+                    .get("width")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+                    .unwrap_or(self.config.sidebar_width);
+                let collapsed = args
+                    .get("collapsed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(self.config.sidebar_collapsed);
+                if width != self.config.sidebar_width
+                    || collapsed != self.config.sidebar_collapsed
+                {
+                    self.config.sidebar_width = width;
+                    self.config.sidebar_collapsed = collapsed;
+                    ctx.emit(Topic::TerminalConfig(self.config.clone()));
+                }
+                if let Some(id) = id {
+                    self.main_window
+                        .send_to_js(&json!({ "id": id, "result": "ok" }));
+                }
+            }
+            _ => {
+                let source = self.main_window.clone();
+                let args = args.clone();
+                self.dispatcher
+                    .dispatch(cmd.to_string(), args, move |result| {
+                        if let Some(id) = id {
+                            source.send_to_js(&json!({ "id": id, "result": result }));
+                        }
+                    });
+            }
+        }
     }
 
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
-        // Default CloseApp handler is inherited from the trait — don't re-register.
         bus.on(TopicKind::MenuAction, Self::on_menu_action);
+        bus.on(TopicKind::TerminalConfig, Self::on_terminal_config);
+        bus.on(TopicKind::TerminalSessions, Self::on_terminal_sessions);
     }
 }
 
@@ -137,86 +185,189 @@ impl TerminalApp {
         }
         match action_id.as_str() {
             "new_tab" => {
-                tracing::info!("menu action: new tab");
-                self.main_window
-                    .send_to_js(&serde_json::json!({"event": "new_tab"}));
+                self.main_window.send_to_js(&json!({"event": "new_tab"}));
             }
             id if id.starts_with("select_tab_") => {
                 if let Ok(index) = id.strip_prefix("select_tab_").unwrap().parse::<usize>() {
-                    tracing::info!(index, "menu action: select tab");
                     self.main_window
-                        .send_to_js(&serde_json::json!({"event": "select_tab", "index": index}));
+                        .send_to_js(&json!({"event": "select_tab", "index": index}));
                 }
             }
+            "quit" => std::process::exit(0),
             _ => {
                 tracing::debug!(action_id, "unknown menu action");
             }
         }
     }
+
+    fn on_terminal_config(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
+        let Topic::TerminalConfig(cfg) = topic else {
+            return;
+        };
+        self.config = cfg.clone();
+        self.push_state_to_js();
+    }
+
+    fn on_terminal_sessions(&mut self, topic: &Topic, ctx: &mut AppCtx) {
+        let Topic::TerminalSessions(sessions) = topic else {
+            return;
+        };
+
+        // First replay: reconcile against live tmux. Drop tabs whose tmux
+        // session is gone; preserve ordering and cwds for survivors. Re-emit
+        // the cleaned set (only on this first replay) so the disk record
+        // converges with reality.
+        let reconciled: Vec<TerminalTab> = if !self.sessions_synced {
+            self.sessions_synced = true;
+            let live: std::collections::HashSet<String> = tmux::list_sessions()
+                .map(|v| v.into_iter().collect())
+                .unwrap_or_default();
+            let kept: Vec<TerminalTab> = sessions
+                .tabs
+                .iter()
+                .filter(|t| live.is_empty() || live.contains(&t.tmux_session))
+                .cloned()
+                .collect();
+            if kept.len() != sessions.tabs.len() {
+                ctx.emit(Topic::TerminalSessions(TerminalSessions {
+                    tabs: kept.clone(),
+                }));
+            }
+            kept
+        } else {
+            sessions.tabs.clone()
+        };
+
+        // Sync to in-memory TerminalState mirror.
+        let entries: Vec<state::TabEntry> = reconciled
+            .iter()
+            .map(|t| state::TabEntry {
+                pty_id: t.id.clone(),
+                tmux_session: t.tmux_session.clone(),
+                cwd: t.cwd.clone(),
+            })
+            .collect();
+        let state = self.state.clone();
+        gtk4::glib::MainContext::default().spawn_local(async move {
+            *state.tabs.write().await = entries;
+        });
+
+        // Re-emit menu reflecting the reconciled count.
+        ctx.emit(Topic::SetAppMenu(menu::terminal_menu(reconciled.len())));
+
+        // Push fresh state to JS.
+        let payload = state_payload(&reconciled, &self.config);
+        self.main_window
+            .send_to_js(&json!({ "event": "state", "state": payload }));
+    }
+
+    fn push_state_to_js(&self) {
+        let Ok(tabs) = self.state.tabs.try_read() else {
+            return;
+        };
+        let mapped: Vec<TerminalTab> = tabs
+            .iter()
+            .map(|t| TerminalTab {
+                id: t.pty_id.clone(),
+                tmux_session: t.tmux_session.clone(),
+                cwd: t.cwd.clone(),
+            })
+            .collect();
+        drop(tabs);
+        let payload = state_payload(&mapped, &self.config);
+        self.main_window
+            .send_to_js(&json!({ "event": "state", "state": payload }));
+    }
+}
+
+fn state_payload(tabs: &[TerminalTab], config: &TerminalConfig) -> Value {
+    json!({
+        "tabs": tabs,
+        "config": {
+            "sidebar_width": config.sidebar_width,
+            "sidebar_collapsed": config.sidebar_collapsed,
+        },
+    })
+}
+
+mod menu {
+    use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem};
+    use sola_core::KeyCode;
+
+    use crate::TerminalApp;
+    use sola_app::SolaApp;
+
+    /// Build the terminal app menu reflecting the actual tab count.
+    /// Tabs 1-9 get Cmd+N shortcuts; tabs 10+ have no shortcut.
+    pub fn terminal_menu(tab_count: usize) -> AppMenuPayload {
+        AppMenuPayload {
+            app_id: TerminalApp::APP_ID.into(),
+            menus: vec![
+                MenuDefinition {
+                    label: "Terminal".into(),
+                    items: vec![
+                        MenuItem::Action {
+                            id: "about".into(),
+                            label: "About Terminal".into(),
+                            shortcut: None,
+                            disabled: false,
+                            checked: false,
+                        },
+                        MenuItem::Divider,
+                        MenuItem::Action {
+                            id: "quit".into(),
+                            label: "Quit Terminal".into(),
+                            shortcut: Some(KeyCode::Q.meta()),
+                            disabled: false,
+                            checked: false,
+                        },
+                    ],
+                },
+                MenuDefinition {
+                    label: "Shell".into(),
+                    items: vec![MenuItem::Action {
+                        id: "new_tab".into(),
+                        label: "New Tab".into(),
+                        shortcut: Some(KeyCode::T.meta()),
+                        disabled: false,
+                        checked: false,
+                    }],
+                },
+                MenuDefinition {
+                    label: "Tabs".into(),
+                    items: (0..tab_count).map(tab_item).collect(),
+                },
+            ],
+        }
+    }
+
+    fn tab_item(index: usize) -> MenuItem {
+        MenuItem::Action {
+            id: format!("select_tab_{index}"),
+            label: format!("Tab {}", index + 1),
+            shortcut: tab_shortcut(index),
+            disabled: false,
+            checked: false,
+        }
+    }
+
+    fn tab_shortcut(index: usize) -> Option<sola_core::KeyChord> {
+        let key = match index {
+            0 => KeyCode::KEY_1,
+            1 => KeyCode::KEY_2,
+            2 => KeyCode::KEY_3,
+            3 => KeyCode::KEY_4,
+            4 => KeyCode::KEY_5,
+            5 => KeyCode::KEY_6,
+            6 => KeyCode::KEY_7,
+            7 => KeyCode::KEY_8,
+            8 => KeyCode::KEY_9,
+            _ => return None,
+        };
+        Some(key.meta())
+    }
 }
 
 fn main() {
     sola_app::run::<TerminalApp>();
-}
-
-fn terminal_menu() -> AppMenuPayload {
-    AppMenuPayload {
-        app_id: TerminalApp::APP_ID.into(),
-        menus: vec![
-            MenuDefinition {
-                label: "Terminal".into(),
-                items: vec![
-                    MenuItem::Action {
-                        id: "about".into(),
-                        label: "About Terminal".into(),
-                        shortcut: None,
-                        disabled: false,
-                        checked: false,
-                    },
-                    MenuItem::Divider,
-                    MenuItem::Action {
-                        id: "quit".into(),
-                        label: "Quit Terminal".into(),
-                        shortcut: Some(KeyCode::Q.meta()),
-                        disabled: false,
-                        checked: false,
-                    },
-                ],
-            },
-            MenuDefinition {
-                label: "Shell".into(),
-                items: vec![MenuItem::Action {
-                    id: "new_tab".into(),
-                    label: "New Tab".into(),
-                    shortcut: Some(KeyCode::T.meta()),
-                    disabled: false,
-                    checked: false,
-                }],
-            },
-            MenuDefinition {
-                label: "Tabs".into(),
-                items: vec![
-                    tab_item(0, "Tab 1", KeyCode::KEY_1),
-                    tab_item(1, "Tab 2", KeyCode::KEY_2),
-                    tab_item(2, "Tab 3", KeyCode::KEY_3),
-                    tab_item(3, "Tab 4", KeyCode::KEY_4),
-                    tab_item(4, "Tab 5", KeyCode::KEY_5),
-                    tab_item(5, "Tab 6", KeyCode::KEY_6),
-                    tab_item(6, "Tab 7", KeyCode::KEY_7),
-                    tab_item(7, "Tab 8", KeyCode::KEY_8),
-                    tab_item(8, "Tab 9", KeyCode::KEY_9),
-                ],
-            },
-        ],
-    }
-}
-
-fn tab_item(index: usize, label: &str, key: KeyCode) -> MenuItem {
-    MenuItem::Action {
-        id: format!("select_tab_{index}"),
-        label: label.into(),
-        shortcut: Some(key.meta()),
-        disabled: false,
-        checked: false,
-    }
 }
