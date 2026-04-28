@@ -28,19 +28,18 @@ pub struct Message {
     /// If true, the bus retains this message and replays it to newly
     /// connected clients. Keyed by (topic, source) so multiple apps
     /// can have independent stickies on the same topic.
-    #[serde(default)]
     pub sticky: bool,
 
     /// Identifies the emitting app. Set automatically by BusClient from
     /// its app_id. Also used as the dedup key for sticky messages:
     /// stickies are keyed by (topic, source).
-    #[serde(default)]
     pub source: String,
 
-    /// Optional sticky-message keys. When non-empty on a sticky message,
-    /// the bus dedupes per `(topic, source, key)` instead of `(topic, source)`,
-    /// allowing a single source to retain multiple stickies on the same topic.
-    #[serde(default)]
+    /// Sticky-message keys: stringified key field values declared on a
+    /// `#[sticky(keys = ...)]` or `#[persistent(keys = ...)]` topic. The
+    /// bus stores stickies under `(topic, keys)` so a single topic kind
+    /// can have many concurrent records, addressed by these values.
+    /// Empty for unkeyed topics.
     pub keys: Vec<String>,
 }
 
