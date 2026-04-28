@@ -104,6 +104,18 @@ pub fn write_section(path: &Path, topic: &Topic) -> io::Result<()> {
     atomic_write(path, content.as_bytes())
 }
 
+/// Remove the matching record from the persistent topic's section in
+/// state.toml. For keyed kinds, removes the entry whose key fields
+/// match `event.keys`; if it was the last entry, drops the section.
+/// For unkeyed kinds, drops the section.
+///
+/// Filled in by Task 10 of the keyed-stickies plan; this stub keeps the
+/// build green.
+pub fn retract_section(path: &Path, event: &Message) -> io::Result<()> {
+    let _ = (path, event);
+    Ok(())
+}
+
 fn atomic_write(path: &Path, content: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

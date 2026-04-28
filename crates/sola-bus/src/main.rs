@@ -154,9 +154,25 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                     }
                     _ => {
                         let mut bus = state.lock().unwrap();
+                        let kind = sola_bus::topics::Topic::parse(&event).map(|t| t.kind());
+                        let is_sticky_kind = kind.is_some_and(|k| k.behavior().is_sticky());
                         if event.sticky {
                             let key = (event.topic.clone(), event.keys.clone());
                             bus.sticky.insert(key, event.clone());
+                        } else if is_sticky_kind {
+                            // Retract: client signals removal by sending sticky=false on a
+                            // sticky/persistent topic kind. Evict from in-memory map and,
+                            // if persistent, from disk.
+                            let key = (event.topic.clone(), event.keys.clone());
+                            bus.sticky.remove(&key);
+                            if let Some(k) = kind {
+                                if k.behavior().is_persistent() {
+                                    if let Err(e) = state::retract_section(&bus.state_path, &event)
+                                    {
+                                        warn!(topic = %event.topic, %e, "persistent retract failed");
+                                    }
+                                }
+                            }
                         }
                         broadcast(id, &event, &mut bus);
                         if event.sticky {
