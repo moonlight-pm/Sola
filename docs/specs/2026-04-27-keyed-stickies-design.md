@@ -56,24 +56,24 @@ Existing form (still works for single-record topics):
 Zones(HashMap<String, Zone>),
 ```
 
-New form for keyed stickies on a persistent topic:
+New form for keyed stickies on a persistent topic (key field names are unquoted idents — declarative macros can't lift literals to identifiers, so the macro takes them as ident lists):
 
 ```rust
-#[persistent(keys = ["id"])]
+#[persistent(keys = [id])]
 TerminalSession(TerminalSession),
 ```
 
 Same form on an in-memory sticky topic:
 
 ```rust
-#[sticky(keys = ["app_id"])]
+#[sticky(keys = [app_id])]
 Windows(WindowList),
 ```
 
 Multiple keys allowed (works on both `#[sticky]` and `#[persistent]`):
 
 ```rust
-#[persistent(keys = ["window_id", "menu_id"])]
+#[persistent(keys = [window_id, menu_id])]
 WindowMenu(WindowMenu),
 ```
 
@@ -221,7 +221,7 @@ pub struct TerminalSession {
 
 define_topics! {
     // ...
-    #[persistent(keys = ["id"])]
+    #[persistent(keys = [id])]
     TerminalSession(TerminalSession),
 }
 ```

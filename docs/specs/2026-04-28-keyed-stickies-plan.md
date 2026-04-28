@@ -17,7 +17,7 @@
 **Modify:**
 - `crates/sola-bus/src/message.rs` — add `keys` field + constructors
 - `crates/sola-bus/src/topic.rs` — extend `define_topics!` macro to accept `keys = [...]`; generate `Topic::keys_for` and `TopicKind::has_keys`
-- `crates/sola-bus/src/topics.rs` — re-key `SetAppMenu` to `#[sticky(keys = ["app_id"])]`
+- `crates/sola-bus/src/topics.rs` — re-key `SetAppMenu` to `#[sticky(keys = [app_id])]`
 - `crates/sola-bus/src/registry.rs` — change `BusHandler` type alias and `dispatch` signature
 - `crates/sola-bus/src/client.rs` — add `BusClient::retract(topic)`
 - `crates/sola-bus/src/main.rs` — change sticky map type; drop bootstrap eviction; add retract handling; wire disk retract
@@ -1597,7 +1597,7 @@ git commit -m "feat(sola-bus): write [[Section]] for keyed topics; implement ret
 **Files:**
 - Modify: `crates/sola-bus/src/topics.rs`
 
-`SetAppMenu` today is `#[sticky]` with multiple emitters (4+ apps each pushing their own menu). Under the new `(topic, keys)` map, those emitters would clobber each other. Convert it to `#[sticky(keys = ["app_id"])]` so per-app menus remain independent. The payload `AppMenuPayload` already carries `app_id` (verified during exploration).
+`SetAppMenu` today is `#[sticky]` with multiple emitters (4+ apps each pushing their own menu). Under the new `(topic, keys)` map, those emitters would clobber each other. Convert it to `#[sticky(keys = [app_id])]` so per-app menus remain independent. The payload `AppMenuPayload` already carries `app_id` (verified during exploration).
 
 Other sticky topics (`Windows`, `OutputGeometry`, `RegisteredChords`) have a single emitter each (sola-river or sola-shell), so they stay unkeyed.
 
@@ -1619,7 +1619,7 @@ SetAppMenu(AppMenuPayload),
 to:
 
 ```rust
-#[sticky(keys = ["app_id"])]
+#[sticky(keys = [app_id])]
 SetAppMenu(AppMenuPayload),
 ```
 
