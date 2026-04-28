@@ -8,9 +8,9 @@ name = "sola-terminal"
 path = "src/main.rs"
 
 [dependencies]
-sola-app = { path = "../../crates/sola-app" }
-sola-bus = { path = "../../crates/sola-bus" }
-sola-core = { path = "../../crates/sola-core" }
+sola-app = { path = "../sola-app" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
 gtk4 = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "macros"] }
 nix = { version = "0.30", features = ["process", "term", "signal"] }
