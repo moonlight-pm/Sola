@@ -36,6 +36,12 @@ pub struct Message {
     /// stickies are keyed by (topic, source).
     #[serde(default)]
     pub source: String,
+
+    /// Optional sticky-message keys. When non-empty on a sticky message,
+    /// the bus dedupes per `(topic, source, key)` instead of `(topic, source)`,
+    /// allowing a single source to retain multiple stickies on the same topic.
+    #[serde(default)]
+    pub keys: Vec<String>,
 }
 
 impl Message {
@@ -47,6 +53,7 @@ impl Message {
             payload: None,
             sticky: false,
             source: String::new(),
+            keys: Vec::new(),
         }
     }
 
@@ -58,6 +65,7 @@ impl Message {
             payload: Some(payload),
             sticky: false,
             source: String::new(),
+            keys: Vec::new(),
         }
     }
 
@@ -123,5 +131,26 @@ mod tests {
         let a = Message::new("shell:test");
         let b = Message::new("shell:test");
         assert!(b.id > a.id);
+    }
+
+    #[test]
+    fn message_keys_default_empty_and_roundtrips() {
+        let mut msg = Message::new("Foo");
+        msg.keys = vec!["abc".to_string(), "def".to_string()];
+        let bytes = postcard::to_allocvec(&msg).unwrap();
+        let back: Message = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(back.keys, vec!["abc".to_string(), "def".to_string()]);
+    }
+
+    #[test]
+    fn message_new_starts_with_empty_keys() {
+        let msg = Message::new("Foo");
+        assert!(msg.keys.is_empty());
+    }
+
+    #[test]
+    fn message_with_payload_starts_with_empty_keys() {
+        let msg = Message::with_payload("Foo", vec![1, 2, 3]);
+        assert!(msg.keys.is_empty());
     }
 }
