@@ -194,11 +194,14 @@ pub fn kill_session(session: &str) {
 /// alive between `tmux new-session` invocations and is filtered out
 /// of `list_sessions()` by the `sola-` prefix check.
 ///
-/// Uses `Type=forking` + `KillMode=process` so systemd tracks the
-/// forked daemon as the main PID and only signals it on explicit
-/// stop (which we don't do). With `Type=oneshot` the default
-/// `KillMode=control-group` would SIGTERM the daemon as soon as
-/// ExecStart returned — exactly what killed our previous attempt.
+/// Uses `Type=oneshot` + `RemainAfterExit=yes` + `KillMode=none`.
+/// The first two keep the unit "active" after ExecStart exits;
+/// `KillMode=none` is the only way to stop systemd from SIGTERMing
+/// the forked daemon (the default `control-group` kills it on
+/// ExecStart completion, and `process` for some reason still loses
+/// it). We never explicitly stop this unit, so KillMode=none is
+/// safe — logout/reboot tears down the user manager and the daemon
+/// with it.
 ///
 /// Idempotent: skips if the unit is already active. Without this,
 /// tmux daemonizes inside the sola-app scope's cgroup, and systemd
@@ -218,8 +221,9 @@ pub fn ensure_server_running() {
             "--collect",
             "--unit=sola-tmux.service",
             "--description=tmux daemon for sola-terminal",
-            "--property=Type=forking",
-            "--property=KillMode=process",
+            "--property=Type=oneshot",
+            "--property=RemainAfterExit=yes",
+            "--property=KillMode=none",
             "--",
             "tmux",
             "-L",
