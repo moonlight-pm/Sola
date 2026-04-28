@@ -216,33 +216,6 @@ pub fn list_sessions() -> Option<Vec<String>> {
     }
 }
 
-/// Return all sola session names with their pane's current working directory.
-pub fn list_session_paths() -> Vec<(String, String)> {
-    let output = tmux_cmd_raw()
-        .args([
-            "list-sessions",
-            "-F",
-            "#{session_name} #{pane_current_path}",
-        ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output();
-    match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                if !line.starts_with("sola-") {
-                    return None;
-                }
-                let idx = line.find(' ')?;
-                Some((line[..idx].to_string(), line[idx + 1..].to_string()))
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
 pub fn resize_window(session: &str, cols: u16, rows: u16) {
     let _ = tmux_cmd()
         .args([

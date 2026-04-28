@@ -10,6 +10,7 @@ use sola_bus::topics::{
 };
 
 mod commands;
+mod menu;
 mod pty;
 mod state;
 mod tmux;
@@ -290,84 +291,6 @@ fn state_payload(tabs: &[TerminalTab], config: &TerminalConfig) -> Value {
             "sidebar_collapsed": config.sidebar_collapsed,
         },
     })
-}
-
-mod menu {
-    use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem};
-    use sola_core::KeyCode;
-
-    use crate::TerminalApp;
-    use sola_app::SolaApp;
-
-    /// Build the terminal app menu reflecting the actual tab count.
-    /// Tabs 1-9 get Cmd+N shortcuts; tabs 10+ have no shortcut.
-    pub fn terminal_menu(tab_count: usize) -> AppMenuPayload {
-        AppMenuPayload {
-            app_id: TerminalApp::APP_ID.into(),
-            menus: vec![
-                MenuDefinition {
-                    label: "Terminal".into(),
-                    items: vec![
-                        MenuItem::Action {
-                            id: "about".into(),
-                            label: "About Terminal".into(),
-                            shortcut: None,
-                            disabled: false,
-                            checked: false,
-                        },
-                        MenuItem::Divider,
-                        MenuItem::Action {
-                            id: "quit".into(),
-                            label: "Quit Terminal".into(),
-                            shortcut: Some(KeyCode::Q.meta()),
-                            disabled: false,
-                            checked: false,
-                        },
-                    ],
-                },
-                MenuDefinition {
-                    label: "Shell".into(),
-                    items: vec![MenuItem::Action {
-                        id: "new_tab".into(),
-                        label: "New Tab".into(),
-                        shortcut: Some(KeyCode::T.meta()),
-                        disabled: false,
-                        checked: false,
-                    }],
-                },
-                MenuDefinition {
-                    label: "Tabs".into(),
-                    items: (0..tab_count).map(tab_item).collect(),
-                },
-            ],
-        }
-    }
-
-    fn tab_item(index: usize) -> MenuItem {
-        MenuItem::Action {
-            id: format!("select_tab_{index}"),
-            label: format!("Tab {}", index + 1),
-            shortcut: tab_shortcut(index),
-            disabled: false,
-            checked: false,
-        }
-    }
-
-    fn tab_shortcut(index: usize) -> Option<sola_core::KeyChord> {
-        let key = match index {
-            0 => KeyCode::KEY_1,
-            1 => KeyCode::KEY_2,
-            2 => KeyCode::KEY_3,
-            3 => KeyCode::KEY_4,
-            4 => KeyCode::KEY_5,
-            5 => KeyCode::KEY_6,
-            6 => KeyCode::KEY_7,
-            7 => KeyCode::KEY_8,
-            8 => KeyCode::KEY_9,
-            _ => return None,
-        };
-        Some(key.meta())
-    }
 }
 
 fn main() {
