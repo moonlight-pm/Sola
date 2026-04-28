@@ -6,7 +6,6 @@ import { createSidebar, type TabItem } from './components/sidebar.js';
 
 interface RestoredTab {
   tmuxSession: string;
-  customTitle?: string;
   cwd?: string;
 }
 
@@ -35,9 +34,9 @@ let terminalArea: HTMLElement;
 
 // --- Tab management ---
 
-function createTab(tmuxSession?: string, customTitle?: string, cwd?: string): string {
+function createTab(tmuxSession?: string, cwd?: string): string {
   const tabId = `tab-${nextTabNum++}`;
-  const tab: Tab = { id: tabId, title: '', cwd: cwd || '', tmuxSession, customTitle };
+  const tab: Tab = { id: tabId, title: '', cwd: cwd || '', tmuxSession };
   state.tabs = [...state.tabs, tab];
   state.activeTabId = tabId;
 
@@ -131,15 +130,6 @@ function handleReorder(fromIndex: number, toIndex: number) {
   });
 }
 
-function handleRename(tabId: string, title: string) {
-  const tab = state.tabs.find(t => t.id === tabId);
-  const customTitle = title || undefined;
-  state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, customTitle } : t);
-  if (tab?.tmuxSession) {
-    invoke('rename_tab', { tmux_session: tab.tmuxSession, title });
-  }
-}
-
 function handleToggleCollapse() {
   state.sidebarCollapsed = !state.sidebarCollapsed;
   save(state, 'terminal-sidebar', ['sidebarCollapsed', 'sidebarWidth']);
@@ -181,12 +171,11 @@ export async function createApp(root: HTMLElement) {
     onClose: closeTab,
     onCreate: () => {
       const activeCwd = state.tabs.find(t => t.id === state.activeTabId)?.cwd;
-      createTab(undefined, undefined, activeCwd || undefined);
+      createTab(undefined, activeCwd || undefined);
     },
     onToggleCollapse: handleToggleCollapse,
     onResize: handleSidebarResize,
     onReorder: handleReorder,
-    onRename: handleRename,
   }, sidebarTarget);
 
   // Restore tabs
@@ -194,7 +183,7 @@ export async function createApp(root: HTMLElement) {
 
   if (restoredTabs.length > 0) {
     for (const rt of restoredTabs) {
-      createTab(rt.tmuxSession, rt.customTitle, rt.cwd);
+      createTab(rt.tmuxSession, rt.cwd);
     }
   } else {
     createTab();
@@ -203,7 +192,7 @@ export async function createApp(root: HTMLElement) {
   // Bus events
   on('new_tab', () => {
     const activeCwd = state.tabs.find(t => t.id === state.activeTabId)?.cwd;
-    createTab(undefined, undefined, activeCwd || undefined);
+    createTab(undefined, activeCwd || undefined);
   });
 
   on('select_tab', ({ index }: { index: number }) => {
