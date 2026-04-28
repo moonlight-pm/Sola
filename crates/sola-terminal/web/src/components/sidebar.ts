@@ -16,6 +16,7 @@ export interface SidebarConfig {
   onCreate: () => void;
   onToggleCollapse: () => void;
   onResize: (width: number) => void;
+  onResizeEnd: () => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
 }
 
@@ -97,7 +98,9 @@ export function createSidebar(config: SidebarConfig, target: HTMLElement): void 
   }
 
   function onMouseUp() {
+    const wasResizing = ui.resizing;
     if (ui.resizing) ui.resizing = false;
+    if (wasResizing) config.onResizeEnd();
     if (ui.isDragging && ui.dragTabIndex !== null && ui.dropTargetIndex !== null) {
       config.onReorder(ui.dragTabIndex, ui.dropTargetIndex);
     }
