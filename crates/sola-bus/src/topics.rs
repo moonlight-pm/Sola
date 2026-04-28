@@ -356,8 +356,10 @@ define_topics! {
     ChordReleased(ChordEvent),
 
     // App menu. Each app emits its menu sticky on startup so the shell
-    // can restore the menubar after a shell restart.
-    #[sticky]
+    // can restore the menubar after a shell restart. Keyed by `app_id` so
+    // each app has its own sticky slot — `(topic, [app_id])` — instead of
+    // racing with other apps for a single shared SetAppMenu sticky.
+    #[sticky(keys = [app_id])]
     SetAppMenu(AppMenuPayload),
     MenuAction(MenuActionPayload),
 
