@@ -51,7 +51,7 @@ Unchanged from the existing terminal. The runtime tmux config write to `~/.confi
 
 ## Bus topics
 
-Two new persistent topics in `crates/sola-bus/src/topics.rs`, both `#[sticky]`, modelled on `MailConfig`:
+Two new disk-persistent topics in `crates/sola-bus/src/topics.rs`, both `#[persistent]`, modelled on `MailConfig`. (`#[persistent]` = replayed to new subscribers AND written to `~/.config/sola/state.toml`; `#[sticky]` would only be in-memory.)
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,7 +68,6 @@ impl Default for TerminalConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TerminalTab {
     pub id: String,
     pub tmux_session: String,
@@ -76,7 +75,6 @@ pub struct TerminalTab {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TerminalSessions {
     pub tabs: Vec<TerminalTab>,
 }
@@ -85,9 +83,9 @@ pub struct TerminalSessions {
 Added to the `Topic` enum:
 
 ```rust
-#[sticky]
+#[persistent]
 TerminalConfig(TerminalConfig),
-#[sticky]
+#[persistent]
 TerminalSessions(TerminalSessions),
 ```
 
@@ -145,7 +143,7 @@ Items:
   - `TopicKind::MenuAction` handler — existing dispatch logic.
 - `SolaApp::new`:
   - `ctx.add_window(...)` with `initial_state = Some({ tabs: [], sidebar_width: default, sidebar_collapsed: false })`. The window mounts immediately; the JS side renders an empty terminal until state arrives.
-  - Subscribe to bus topics. The bus replays sticky `TerminalConfig` and `TerminalSessions` into our handlers; the handlers do the in-memory + push-to-JS update.
+  - Subscribe to bus topics. The bus replays persistent `TerminalConfig` and `TerminalSessions` into our handlers; the handlers do the in-memory + push-to-JS update.
   - On the first `TerminalSessions` replay, reconcile against live tmux (drop tabs whose tmux session is gone; keep ordering and cwds for survivors), then emit the reconciled `Topic::TerminalSessions(...)` and the matching `Topic::SetAppMenu(terminal_menu(tab_count))`. A small "did first reconcile yet" boolean guards this so subsequent replays don't redo it.
 
 ### `src/commands.rs`
@@ -167,7 +165,7 @@ Items:
 Three changes from existing `apps/terminal/web/`:
 
 1. **Remove rename UX** from `web/src/components/sidebar.ts`: drop `renamingTabId`, `renameValue`, the rename input element, and its event handlers. Drop `config.onRename`. Tab label is always derived (CWD basename → `tmux session id`).
-2. **Remove localStorage `persist()`** in `web/src/app.ts`. `sidebarCollapsed` and `sidebarWidth` come from `__RESTORED_STATE__`. Mutations `invoke('set_sidebar', { width, collapsed })`. State updates from Rust (`event: 'state'`) re-sync the store.
+2. **Remove localStorage `persist()`** in `web/src/app.ts`. `sidebarCollapsed` and `sidebarWidth` come from `window.RESTORED_STATE` (renamed from `RESTORED_TABS`, now `{tabs, config}` shape). Mutations `invoke('set_sidebar', { width, collapsed })`. State updates from Rust (`event: 'state'`) re-sync the store. Sidebar resize debounces to drag-end via a new `onResizeEnd` callback so we don't spam the bus mid-drag.
 3. **Remove `rename_tab` invocation** and `displayTitle`'s custom-title branch in `app.ts` / `sidebar.ts`.
 
 ## Data flow
@@ -199,7 +197,7 @@ Bus → app TerminalConfig / TerminalSessions handler
 
 - Bus emit is fire-and-forget; existing tracing remains.
 - PTY/tmux errors continue to surface as JS command result errors and `tracing` warnings.
-- Sticky topic decode failures fall back to `Default::default()` (this is the bus's existing behavior for sticky sections).
+- Persistent topic decode failures fall back to `Default::default()` (this is the bus's existing behavior for malformed `state.toml` sections).
 
 ## Testing
 
