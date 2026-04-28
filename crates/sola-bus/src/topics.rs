@@ -245,6 +245,25 @@ impl Default for TerminalConfig {
     }
 }
 
+/// One terminal tab as persisted on the bus. The `tmux_session` is the
+/// authoritative identifier for the live PTY; `id` is a stable handle
+/// used by the JS side. `cwd` is a hint, refreshed via OSC 7.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalTab {
+    pub id: String,
+    pub tmux_session: String,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// Live tab list for sola-terminal. Persistent so tabs survive across
+/// terminal/bus restarts; reconciled against live tmux on startup.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TerminalSessions {
+    pub tabs: Vec<TerminalTab>,
+}
+
 /// Ask a specific Sola app to evaluate a JS expression in one of its
 /// WebViews. The app's framework wraps the expression, runs it, and
 /// emits an `Evaluation` event with the JSON-encoded result. Multiple
@@ -393,6 +412,11 @@ define_topics! {
     // so terminal restarts restore the user's layout.
     #[persistent]
     TerminalConfig(TerminalConfig),
+
+    // Live tab list for sola-terminal. Persistent so tabs survive
+    // terminal-app and bus restarts.
+    #[persistent]
+    TerminalSessions(TerminalSessions),
 
     // Browser
     OpenUrl(OpenUrlRequest),
@@ -625,6 +649,52 @@ mod tests {
                 assert!(!back.sidebar_collapsed);
             }
             other => panic!("expected TerminalConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_sessions_roundtrip_via_postcard() {
+        let sessions = TerminalSessions {
+            tabs: vec![
+                TerminalTab {
+                    id: "tab-1".into(),
+                    tmux_session: "sola-tab-1".into(),
+                    cwd: Some("/home/joshua".into()),
+                },
+                TerminalTab {
+                    id: "tab-2".into(),
+                    tmux_session: "sola-tab-2".into(),
+                    cwd: None,
+                },
+            ],
+        };
+        let topic = Topic::TerminalSessions(sessions.clone());
+        let msg = topic.to_message();
+        let parsed = Topic::parse(&msg).unwrap();
+        match parsed {
+            Topic::TerminalSessions(back) => assert_eq!(back, sessions),
+            other => panic!("expected TerminalSessions, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_sessions_roundtrip_via_toml() {
+        let sessions = TerminalSessions {
+            tabs: vec![TerminalTab {
+                id: "x".into(),
+                tmux_session: "sola-x".into(),
+                cwd: Some("/tmp".into()),
+            }],
+        };
+        let topic = Topic::TerminalSessions(sessions.clone());
+        let value = topic
+            .to_toml_value()
+            .expect("persistent payload should serialize to TOML");
+        let restored = Topic::from_toml_section(TopicKind::TerminalSessions, value)
+            .expect("section should deserialize");
+        match restored {
+            Topic::TerminalSessions(back) => assert_eq!(back, sessions),
+            other => panic!("expected TerminalSessions, got {other:?}"),
         }
     }
 
