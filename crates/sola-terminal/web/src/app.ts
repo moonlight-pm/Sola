@@ -39,16 +39,20 @@ const state = createStore({
 
 // --- Terminal pane tracking (imperative, not reactive) ---
 
-let nextTabNum = 1;
 const panes = new Map<string, TerminalPane>();
 const paneContainers = new Map<string, HTMLElement>();
 let terminalArea: HTMLElement;
 
 // --- Tab management ---
 
-function createTab(tmuxSession?: string, cwd?: string, restoreId?: string): string {
-  const tabId = restoreId ?? `tab-${nextTabNum++}`;
-  const tab: Tab = { id: tabId, title: '', cwd: cwd || '', tmuxSession };
+function createTab(tmuxSession?: string, cwd?: string, id?: string): string {
+  // The same id is used JS-side, Rust-side, and on the bus. For fresh
+  // tabs we mint a uuid client-side; for restores the caller passes
+  // the persisted id. Rust treats `pty_id` as a hint: if its mirror
+  // already has the id (replay path) it attaches to the existing
+  // tmux session and skips the topic emit; otherwise it creates fresh.
+  const tabId = id ?? crypto.randomUUID();
+  const tab: Tab = { id: tabId, title: '', cwd: cwd || '', tmuxSession, ptyId: tabId };
   state.tabs = [...state.tabs, tab];
   state.activeTabId = tabId;
 
@@ -64,7 +68,7 @@ function createTab(tmuxSession?: string, cwd?: string, restoreId?: string): stri
     tabId,
     tmuxSession,
     initialCwd: cwd,
-    restorePtyId: restoreId,
+    restorePtyId: tabId,
     onExit: () => removeTab(tabId),
     onTitleChange: (title) => {
       state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, title } : t);
@@ -201,42 +205,6 @@ export async function createApp(root: HTMLElement) {
     onReorder: handleReorder,
   }, sidebarTarget);
 
-  // Defer the first-tab decision until the bus replay settles. The
-  // bus delivers each persisted `TerminalSession` as its own state
-  // event, so we debounce: every state event resets a 100ms timer,
-  // and when it expires we restore the latest payload's tabs (or
-  // spawn fresh if it's empty). A 500ms grace-period fallback covers
-  // the case where no state event arrives at all.
-  let initialized = false;
-  let restoreTimer: number | null = null;
-  let pendingRestore: TabSnapshot[] = [];
-
-  function performInitialDecision() {
-    if (initialized) return;
-    initialized = true;
-    if (restoreTimer !== null) {
-      clearTimeout(restoreTimer);
-      restoreTimer = null;
-    }
-    if (pendingRestore.length > 0) {
-      for (const t of pendingRestore) {
-        createTab(t.tmux_session, t.cwd, t.id);
-      }
-    } else {
-      createTab();
-    }
-  }
-
-  function scheduleRestore(tabs: TabSnapshot[]) {
-    pendingRestore = tabs;
-    if (restoreTimer !== null) clearTimeout(restoreTimer);
-    restoreTimer = window.setTimeout(performInitialDecision, 100);
-  }
-
-  setTimeout(() => {
-    if (!initialized) performInitialDecision();
-  }, 500);
-
   // Bus events
   on('new_tab', () => {
     const activeCwd = state.tabs.find(t => t.id === state.activeTabId)?.cwd;
@@ -264,27 +232,28 @@ export async function createApp(root: HTMLElement) {
     if (pane) pane.paste(msg.text);
   });
 
+  // The bus is the source of truth for the tab set: every `state`
+  // event delivers the current TerminalSession map. Reconcile by id
+  // — add what's in the payload but not local, remove what's local
+  // but not in the payload. Idempotent, so it doesn't matter which
+  // event arrives first or how many we get during sticky replay.
   on('state', (payload: { tabs: TabSnapshot[]; config: { sidebar_width: number; sidebar_collapsed: boolean } }) => {
-    // Sidebar prefs always re-sync.
     state.sidebarWidth = payload.config.sidebar_width;
     state.sidebarCollapsed = payload.config.sidebar_collapsed;
     requestAnimationFrame(() => {
       if (state.activeTabId) panes.get(state.activeTabId)?.refit();
     });
 
-    // Pre-init: debounce the restore decision off the bus replay.
-    if (!initialized) {
-      scheduleRestore(payload.tabs);
-      return;
+    const incomingIds = new Set(payload.tabs.map(t => t.id));
+    const existingIds = new Set(state.tabs.map(t => t.id));
+
+    for (const t of [...state.tabs]) {
+      if (!incomingIds.has(t.id)) removeTab(t.id);
     }
 
-    // Post-init: only act if the bus's set differs from ours by id.
-    // This handles the reconcile retract (Rust dropped a dead tab) and
-    // any future case where another agent edits the topic.
-    const incomingIds = new Set(payload.tabs.map(t => t.id));
-    if (state.tabs.some(t => !incomingIds.has(t.id))) {
-      for (const t of [...state.tabs]) {
-        if (!incomingIds.has(t.id)) removeTab(t.id);
+    for (const t of payload.tabs) {
+      if (!existingIds.has(t.id)) {
+        createTab(t.tmux_session, t.cwd, t.id);
       }
     }
   });
