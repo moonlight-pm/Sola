@@ -83,7 +83,7 @@ impl SolaApp for TerminalApp {
         });
 
         // Register the terminal's app menu.
-        ctx.emit_sticky(Topic::SetAppMenu(terminal_menu()));
+        ctx.emit(Topic::SetAppMenu(terminal_menu()));
         tracing::info!("registered terminal menu");
 
         Self {
