@@ -323,9 +323,14 @@ impl TerminalApp {
             })
             .collect();
         drop(tabs);
-        let payload = state_payload(&mapped, &self.config);
-        self.main_window
-            .send_to_js(&json!({ "event": "state", "state": payload }));
+        self.main_window.send_to_js(&json!({
+            "event": "state",
+            "tabs": mapped,
+            "config": {
+                "sidebar_width": self.config.sidebar_width,
+                "sidebar_collapsed": self.config.sidebar_collapsed,
+            },
+        }));
     }
 }
 
