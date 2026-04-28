@@ -109,7 +109,8 @@ pub fn write_section(path: &Path, topic: &Topic) -> io::Result<()> {
     let Some(value) = topic.to_toml_value() else {
         return Ok(());
     };
-    let section = topic.kind().as_str().to_string();
+    let kind = topic.kind();
+    let section = kind.as_str().to_string();
 
     let mut table = match fs::read_to_string(path) {
         Ok(s) => s.parse::<toml::Table>().unwrap_or_else(|e| {
@@ -119,7 +120,22 @@ pub fn write_section(path: &Path, topic: &Topic) -> io::Result<()> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => toml::Table::new(),
         Err(e) => return Err(e),
     };
-    table.insert(section, value);
+
+    if kind.has_keys() {
+        // Keyed: upsert into `[[Section]]` array by key match.
+        let keys = topic.keys_for();
+        let existing = table.remove(&section);
+        let mut entries = match existing {
+            Some(toml::Value::Array(arr)) => arr,
+            _ => Vec::new(),
+        };
+        // Remove any entry whose key fields match.
+        entries.retain(|entry| !entry_matches_keys(kind, entry, &keys));
+        entries.push(value);
+        table.insert(section, toml::Value::Array(entries));
+    } else {
+        table.insert(section, value);
+    }
 
     let content = toml::to_string_pretty(&table).expect("top-level toml table always serializes");
     atomic_write(path, content.as_bytes())
@@ -129,12 +145,50 @@ pub fn write_section(path: &Path, topic: &Topic) -> io::Result<()> {
 /// state.toml. For keyed kinds, removes the entry whose key fields
 /// match `event.keys`; if it was the last entry, drops the section.
 /// For unkeyed kinds, drops the section.
-///
-/// Filled in by Task 10 of the keyed-stickies plan; this stub keeps the
-/// build green.
 pub fn retract_section(path: &Path, event: &Message) -> io::Result<()> {
-    let _ = (path, event);
-    Ok(())
+    let Some(kind) = TopicKind::from_str(&event.topic) else {
+        return Ok(());
+    };
+    if !kind.behavior().is_persistent() {
+        return Ok(());
+    }
+
+    let mut table = match fs::read_to_string(path) {
+        Ok(s) => s.parse::<toml::Table>().unwrap_or_else(|e| {
+            warn!(path = %path.display(), %e, "state.toml parse failed during retract; rewriting from empty");
+            toml::Table::new()
+        }),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+
+    let section = kind.as_str().to_string();
+
+    if kind.has_keys() {
+        if let Some(toml::Value::Array(mut entries)) = table.remove(&section) {
+            entries.retain(|entry| !entry_matches_keys(kind, entry, &event.keys));
+            if !entries.is_empty() {
+                table.insert(section, toml::Value::Array(entries));
+            }
+        }
+    } else {
+        table.remove(&section);
+    }
+
+    let content = toml::to_string_pretty(&table).expect("top-level toml table always serializes");
+    atomic_write(path, content.as_bytes())
+}
+
+/// True if the TOML entry's serialized payload, when parsed back through
+/// the topic's `from_toml_section`, would produce a `Topic` whose
+/// `keys_for()` matches `keys`. We do the round-trip rather than
+/// inspecting raw TOML so the key-extraction logic stays in one place
+/// (the macro-generated `keys_for`).
+fn entry_matches_keys(kind: TopicKind, entry: &toml::Value, keys: &[String]) -> bool {
+    let Some(topic) = Topic::from_toml_section(kind, entry.clone()) else {
+        return false;
+    };
+    topic.keys_for() == keys
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> io::Result<()> {
@@ -269,5 +323,33 @@ anything = "here"
         let raw = fs::read_to_string(&path).unwrap();
         assert!(raw.contains("[ManualNotes]"), "unrelated section lost");
         assert!(raw.contains("[Zones]"), "new section missing");
+    }
+
+    #[test]
+    fn retract_unkeyed_drops_section_entirely() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.toml");
+
+        let mut zones = std::collections::HashMap::new();
+        zones.insert("sola-browser".to_string(), crate::topics::Zone::Left);
+        write_section(&path, &Topic::Zones(zones)).unwrap();
+        assert!(path.exists());
+
+        // Construct a synthetic Zones retract message.
+        let mut msg = Topic::Zones(std::collections::HashMap::new()).to_message();
+        msg.sticky = false;
+        retract_section(&path, &msg).unwrap();
+
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("[Zones]"), "Zones section should be gone");
+    }
+
+    #[test]
+    fn retract_on_missing_file_is_noop() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.toml");
+        let msg = Topic::Zones(std::collections::HashMap::new()).to_message();
+        retract_section(&path, &msg).unwrap();
+        assert!(!path.exists(), "retract should not create the file");
     }
 }
