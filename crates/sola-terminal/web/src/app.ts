@@ -216,6 +216,10 @@ export async function createApp(root: HTMLElement) {
     }
   });
 
+  on('close_tab', () => {
+    if (state.activeTabId) closeTab(state.activeTabId);
+  });
+
   on('copy', () => {
     if (!state.activeTabId) return;
     const text = panes.get(state.activeTabId)?.getSelection();

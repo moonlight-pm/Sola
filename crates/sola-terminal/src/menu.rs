@@ -32,13 +32,22 @@ pub fn terminal_menu(tab_count: usize) -> AppMenuPayload {
             },
             MenuDefinition {
                 label: "Shell".into(),
-                items: vec![MenuItem::Action {
-                    id: "new_tab".into(),
-                    label: "New Tab".into(),
-                    shortcut: Some(KeyCode::T.meta()),
-                    disabled: false,
-                    checked: false,
-                }],
+                items: vec![
+                    MenuItem::Action {
+                        id: "new_tab".into(),
+                        label: "New Tab".into(),
+                        shortcut: Some(KeyCode::T.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Action {
+                        id: "close_tab".into(),
+                        label: "Close Tab".into(),
+                        shortcut: Some(KeyCode::W.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                ],
             },
             MenuDefinition {
                 label: "Tabs".into(),

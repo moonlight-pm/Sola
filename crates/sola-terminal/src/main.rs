@@ -213,6 +213,9 @@ impl TerminalApp {
             "new_tab" => {
                 self.main_window.send_to_js(&json!({"event": "new_tab"}));
             }
+            "close_tab" => {
+                self.main_window.send_to_js(&json!({"event": "close_tab"}));
+            }
             id if id.starts_with("select_tab_") => {
                 if let Ok(index) = id.strip_prefix("select_tab_").unwrap().parse::<usize>() {
                     self.main_window
