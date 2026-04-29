@@ -32,6 +32,14 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                 let node = window.get_node(qh, ());
                 state.nodes_by_window.insert(wid, node);
                 state.windows_by_id.insert(wid, window);
+                // Per `river-window-management-v1`, a window is not displayed
+                // until `propose_dimensions` (or `fullscreen`) runs in a manage
+                // sequence and the matching render sequence finishes. Seed
+                // `(0, 0)` so the client self-sizes; an inbound `Frame` topic
+                // for zoned or sola-* default-framed windows will overwrite
+                // this with real dimensions before the next manage_start.
+                state.pending.manage.entry(wid).or_insert((0, 0));
+                state.pending.manage_dirty = true;
                 info!(window_id = wid, "new river window");
             }
             Event::ManageStart => {
