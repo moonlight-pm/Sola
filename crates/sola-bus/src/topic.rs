@@ -102,6 +102,17 @@ impl Behavior {
 ///     Zones(HashMap<String, Zone>),
 /// }
 /// ```
+/// Internal helper for the `define_topics!` namespace match arm.
+/// Captures the `ns=()` (no namespace) and `ns=("…")` (namespace literal)
+/// shapes carried through the macro accumulator and converts them into
+/// `Option<&'static str>`.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ns_or_none {
+    ( () ) => { None };
+    ( ($ns:literal) ) => { Some($ns) };
+}
+
 #[macro_export]
 macro_rules! define_topics {
     ( $($tt:tt)* ) => {
@@ -117,194 +128,241 @@ macro_rules! define_topics {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! _define_topics_inner {
-    // --- #[persistent(keys = [...])] payload variants ---
+    // --- #[persistent(keys = [...], namespace = "...")] payload variants ---
+    // (Order: keys first, namespace second when both are present.)
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
-      #[persistent(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(keys = [ $($k:ident),+ $(,)? ], namespace = $ns:literal)] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* $name($payload) keys=[$($k)*] ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[$($k)*] ns=($ns) ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(keys = [ $($k:ident),+ $(,)? ], namespace = $ns:literal)] $name:ident ( $payload:ty ) ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[$($k)*] ns=($ns) ]
+        }
+    };
+
+    // --- #[persistent(namespace = "...")] payload variants (no keys) ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(namespace = $ns:literal)] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[] ns=($ns) ]
+            $($rest)*
+        }
+    };
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(namespace = $ns:literal)] $name:ident ( $payload:ty ) ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[] ns=($ns) ]
+        }
+    };
+
+    // --- #[persistent(keys = [...])] payload variants ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[$($k)*] ns=() ]
+            $($rest)*
+        }
+    };
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* $name($payload) keys=[$($k)*] ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[$($k)*] ns=() ]
         }
     };
 
     // --- #[persistent] payload variants (no keys) ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* $name($payload) keys=[] ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[] ns=() ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent] $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* $name($payload) keys=[] ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[] ns=() ]
         }
     };
 
     // --- #[persistent] unit variants (keys not allowed on units) ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent] $name:ident, $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* $name ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* $name ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent] $name:ident ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* $name ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* $name ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- #[sticky(keys = [...])] payload variants ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* $name($payload) keys=[$($k)*] ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* $name($payload) keys=[$($k)*] ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- #[sticky] payload variants (no keys) ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* $name($payload) keys=[] ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky] $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* $name($payload) keys=[] ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- #[sticky] unit variants ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky] $name:ident, $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* $name ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky] $name:ident ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* $name ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- Ephemeral payload variants ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* $name($payload) ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* $name($payload) ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- Ephemeral unit variants ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       $name:ident, $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* $name ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       $name:ident ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* $name ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- Terminal: generate Topic, TopicKind, Behavior wiring ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
     ) => {
         #[derive(Debug, Clone)]
         pub enum Topic {
@@ -385,6 +443,31 @@ macro_rules! _define_topics_inner {
                     $( TopicKind::$sp => { let _ = stringify!($($spk)*); !stringify!($($spk)*).is_empty() }, )*
                     $( TopicKind::$pp => { let _ = stringify!($($ppk)*); !stringify!($($ppk)*).is_empty() }, )*
                     _ => false,
+                }
+            }
+
+            /// Path-namespace template declared via
+            /// `#[persistent(namespace = "...")]`. Returns `None` for
+            /// unnamespaced and non-persistent kinds. The string may
+            /// contain `:keyname` placeholders that interpolate from
+            /// `keys_for()` at runtime — see `Topic::path_for`.
+            #[allow(unused_variables)]
+            pub fn namespace(self) -> Option<&'static str> {
+                match self {
+                    $( TopicKind::$pp => $crate::__ns_or_none!($ppns), )*
+                    _ => None,
+                }
+            }
+
+            /// Names of the key fields declared on this topic kind, in
+            /// declaration order. Empty slice for unkeyed kinds. Used
+            /// alongside `Topic::keys_for()` to interpolate `:keyname`
+            /// placeholders in a namespace template.
+            pub fn key_names(self) -> &'static [&'static str] {
+                match self {
+                    $( TopicKind::$sp => &[ $( stringify!($spk), )* ], )*
+                    $( TopicKind::$pp => &[ $( stringify!($ppk), )* ], )*
+                    _ => &[],
                 }
             }
         }
@@ -558,6 +641,12 @@ mod tests {
         Single(StickyKeyed),
         #[persistent(keys = [window_id, menu_id])]
         Multi(StickyMultiKey),
+        #[persistent]
+        UnnamedSingleton(StickyKeyed),
+        #[persistent(namespace = "ns/single")]
+        NamespacedSingleton(StickyKeyed),
+        #[persistent(keys = [id], namespace = "ns/keyed/:id")]
+        NamespacedKeyed(StickyKeyed),
     }
 
     #[test]
@@ -586,5 +675,28 @@ mod tests {
         assert!(!TopicKind::Bare.has_keys());
         assert!(TopicKind::Single.has_keys());
         assert!(TopicKind::Multi.has_keys());
+    }
+
+    #[test]
+    fn namespace_returns_some_only_when_declared() {
+        assert_eq!(TopicKind::UnnamedSingleton.namespace(), None);
+        assert_eq!(TopicKind::NamespacedSingleton.namespace(), Some("ns/single"));
+        assert_eq!(TopicKind::NamespacedKeyed.namespace(), Some("ns/keyed/:id"));
+        // Non-persistent kinds always None.
+        assert_eq!(TopicKind::Plain.namespace(), None);
+        assert_eq!(TopicKind::Bare.namespace(), None);
+        assert_eq!(TopicKind::Single.namespace(), None);
+        // Existing persistent without namespace.
+        assert_eq!(TopicKind::Multi.namespace(), None);
+    }
+
+    #[test]
+    fn key_names_in_declaration_order() {
+        assert!(TopicKind::Plain.key_names().is_empty());
+        assert!(TopicKind::UnnamedSingleton.key_names().is_empty());
+        assert!(TopicKind::NamespacedSingleton.key_names().is_empty());
+        assert_eq!(TopicKind::Single.key_names(), &["id"]);
+        assert_eq!(TopicKind::NamespacedKeyed.key_names(), &["id"]);
+        assert_eq!(TopicKind::Multi.key_names(), &["window_id", "menu_id"]);
     }
 }
