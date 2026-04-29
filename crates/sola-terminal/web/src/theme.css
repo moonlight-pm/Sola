@@ -1,3 +1,32 @@
+@font-face {
+  font-family: 'IosevkaTermSlab';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('sola-assets://fonts/IosevkaTermSlab/IosevkaTermSlab-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IosevkaTermSlab';
+  font-style: italic;
+  font-weight: 400;
+  font-display: block;
+  src: url('sola-assets://fonts/IosevkaTermSlab/IosevkaTermSlab-Italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IosevkaTermSlab';
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url('sola-assets://fonts/IosevkaTermSlab/IosevkaTermSlab-Bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IosevkaTermSlab';
+  font-style: italic;
+  font-weight: 700;
+  font-display: block;
+  src: url('sola-assets://fonts/IosevkaTermSlab/IosevkaTermSlab-BoldItalic.woff2') format('woff2');
+}
+
 :root {
   --bg-primary: #0a0b0d;
   --bg-secondary: #101216;
@@ -10,7 +39,7 @@
   --cyan-dim: rgba(0, 168, 255, 0.15);
   --red: #ff3d5a;
   --green: #00ff88;
-  --font-mono: 'Fira Code', 'JetBrains Mono', 'SF Mono', monospace;
+  --font-mono: 'IosevkaTermSlab', monospace;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -262,17 +291,4 @@ html, body {
 .tab.drag-over {
   border-top: 2px solid var(--cyan);
   padding-top: 4px;
-}
-
-.tab-rename-input {
-  flex: 1;
-  min-width: 0;
-  background: var(--bg-primary);
-  border: 1px solid var(--cyan);
-  border-radius: 3px;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 1px 4px;
-  outline: none;
 }

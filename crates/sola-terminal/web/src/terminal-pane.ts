@@ -32,7 +32,7 @@ export class TerminalPane {
     this.terminal = new Terminal({
       cursorBlink: true,
       fontSize: 14,
-      fontFamily: "'Fira Code', 'JetBrains Mono', 'SF Mono', monospace",
+      fontFamily: "'IosevkaTermSlab', monospace",
       theme: {
         background: '#0a0b0d',
         foreground: '#f0f2f5',
@@ -69,6 +69,11 @@ export class TerminalPane {
   }
 
   async init(): Promise<void> {
+    // xterm.js measures the character cell once at open(); if our
+    // @font-face hasn't loaded yet it locks the cell to the fallback
+    // (proportional) font and never re-measures. Wait for the actual
+    // family to be available before opening.
+    await document.fonts.load('14px IosevkaTermSlab');
     await this.waitForLayout();
     if (this.destroyed) return;
 
@@ -207,9 +212,13 @@ export class TerminalPane {
 
   private async spawnPty(): Promise<boolean> {
     try {
+      // The tab id is the canonical pty id on both sides; Rust's mirror
+      // lookup decides whether this becomes a fresh spawn or attaches
+      // to the tmux session of an already-persisted entry.
       const result = await invoke('spawn_pty', {
         cols: this.terminal.cols,
         rows: this.terminal.rows,
+        pty_id: this.options.tabId,
         ...(this.options.tmuxSession ? { tmuxSession: this.options.tmuxSession } : {}),
         ...(this.options.initialCwd ? { cwd: this.options.initialCwd } : {}),
       }) as { pty_id: string; tmux_session: string; title?: string };

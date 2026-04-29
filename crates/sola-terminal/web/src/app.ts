@@ -1,43 +1,58 @@
 import { html } from '@arrow-js/core';
 import { invoke, on } from '@sola/ipc';
-import { createStore, persist, save } from '@sola/store';
+import { createStore } from '@sola/store';
 import { TerminalPane } from './terminal-pane.js';
 import { createSidebar, type TabItem } from './components/sidebar.js';
-
-interface RestoredTab {
-  tmuxSession: string;
-  customTitle?: string;
-  cwd?: string;
-}
 
 interface Tab extends TabItem {
   tmuxSession?: string;
   ptyId?: string;
 }
 
+interface TabSnapshot {
+  id: string;
+  tmux_session: string;
+  cwd?: string;
+}
+
+interface RestoredState {
+  tabs: TabSnapshot[];
+  config: {
+    sidebar_width: number;
+    sidebar_collapsed: boolean;
+  };
+}
+
+const initial: RestoredState = (window as any).RESTORED_STATE ?? {
+  tabs: [],
+  config: { sidebar_width: 220, sidebar_collapsed: false },
+};
+
 // --- Reactive state ---
 
 const state = createStore({
   tabs: [] as Tab[],
   activeTabId: null as string | null,
-  sidebarCollapsed: false,
-  sidebarWidth: 160,
+  sidebarCollapsed: initial.config.sidebar_collapsed,
+  sidebarWidth: initial.config.sidebar_width,
 });
-
-persist(state, 'terminal-sidebar', ['sidebarCollapsed', 'sidebarWidth']);
 
 // --- Terminal pane tracking (imperative, not reactive) ---
 
-let nextTabNum = 1;
 const panes = new Map<string, TerminalPane>();
 const paneContainers = new Map<string, HTMLElement>();
 let terminalArea: HTMLElement;
 
 // --- Tab management ---
 
-function createTab(tmuxSession?: string, customTitle?: string, cwd?: string): string {
-  const tabId = `tab-${nextTabNum++}`;
-  const tab: Tab = { id: tabId, title: '', cwd: cwd || '', tmuxSession, customTitle };
+function createTab(tmuxSession?: string, cwd?: string, id?: string): string {
+  // The same id is used JS-side, Rust-side, and on the bus. For fresh
+  // tabs we mint a uuid client-side; for restores the caller passes
+  // the persisted id. Rust treats `pty_id` as a hint: if its mirror
+  // already has the id (replay path) it attaches to the existing
+  // tmux session and skips the topic emit; otherwise it creates fresh.
+  const tabId = id ?? crypto.randomUUID();
+  const tab: Tab = { id: tabId, title: '', cwd: cwd || '', tmuxSession };
   state.tabs = [...state.tabs, tab];
   state.activeTabId = tabId;
 
@@ -131,18 +146,12 @@ function handleReorder(fromIndex: number, toIndex: number) {
   });
 }
 
-function handleRename(tabId: string, title: string) {
-  const tab = state.tabs.find(t => t.id === tabId);
-  const customTitle = title || undefined;
-  state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, customTitle } : t);
-  if (tab?.tmuxSession) {
-    invoke('rename_tab', { tmux_session: tab.tmuxSession, title });
-  }
-}
-
 function handleToggleCollapse() {
   state.sidebarCollapsed = !state.sidebarCollapsed;
-  save(state, 'terminal-sidebar', ['sidebarCollapsed', 'sidebarWidth']);
+  invoke('set_sidebar', {
+    width: state.sidebarWidth,
+    collapsed: state.sidebarCollapsed,
+  });
   requestAnimationFrame(() => {
     if (state.activeTabId) panes.get(state.activeTabId)?.refit();
   });
@@ -150,9 +159,15 @@ function handleToggleCollapse() {
 
 function handleSidebarResize(width: number) {
   state.sidebarWidth = width;
-  save(state, 'terminal-sidebar', ['sidebarCollapsed', 'sidebarWidth']);
   requestAnimationFrame(() => {
     if (state.activeTabId) panes.get(state.activeTabId)?.refit();
+  });
+}
+
+function handleSidebarResizeEnd() {
+  invoke('set_sidebar', {
+    width: state.sidebarWidth,
+    collapsed: state.sidebarCollapsed,
   });
 }
 
@@ -181,35 +196,28 @@ export async function createApp(root: HTMLElement) {
     onClose: closeTab,
     onCreate: () => {
       const activeCwd = state.tabs.find(t => t.id === state.activeTabId)?.cwd;
-      createTab(undefined, undefined, activeCwd || undefined);
+      createTab(undefined, activeCwd || undefined);
     },
     onToggleCollapse: handleToggleCollapse,
     onResize: handleSidebarResize,
+    onResizeEnd: handleSidebarResizeEnd,
     onReorder: handleReorder,
-    onRename: handleRename,
   }, sidebarTarget);
-
-  // Restore tabs
-  const restoredTabs = ((window as any).RESTORED_TABS || []) as RestoredTab[];
-
-  if (restoredTabs.length > 0) {
-    for (const rt of restoredTabs) {
-      createTab(rt.tmuxSession, rt.customTitle, rt.cwd);
-    }
-  } else {
-    createTab();
-  }
 
   // Bus events
   on('new_tab', () => {
     const activeCwd = state.tabs.find(t => t.id === state.activeTabId)?.cwd;
-    createTab(undefined, undefined, activeCwd || undefined);
+    createTab(undefined, activeCwd || undefined);
   });
 
   on('select_tab', ({ index }: { index: number }) => {
     if (index >= 0 && index < state.tabs.length) {
       switchTab(state.tabs[index].id);
     }
+  });
+
+  on('close_tab', () => {
+    if (state.activeTabId) closeTab(state.activeTabId);
   });
 
   on('copy', () => {
@@ -225,5 +233,31 @@ export async function createApp(root: HTMLElement) {
     if (!state.activeTabId || !msg.text) return;
     const pane = panes.get(state.activeTabId);
     if (pane) pane.paste(msg.text);
+  });
+
+  // The bus is the source of truth for the tab set: every `state`
+  // event delivers the current TerminalSession map. Reconcile by id
+  // — add what's in the payload but not local, remove what's local
+  // but not in the payload. Idempotent, so it doesn't matter which
+  // event arrives first or how many we get during sticky replay.
+  on('state', (payload: { tabs: TabSnapshot[]; config: { sidebar_width: number; sidebar_collapsed: boolean } }) => {
+    state.sidebarWidth = payload.config.sidebar_width;
+    state.sidebarCollapsed = payload.config.sidebar_collapsed;
+    requestAnimationFrame(() => {
+      if (state.activeTabId) panes.get(state.activeTabId)?.refit();
+    });
+
+    const incomingIds = new Set(payload.tabs.map(t => t.id));
+    const existingIds = new Set(state.tabs.map(t => t.id));
+
+    for (const t of [...state.tabs]) {
+      if (!incomingIds.has(t.id)) removeTab(t.id);
+    }
+
+    for (const t of payload.tabs) {
+      if (!existingIds.has(t.id)) {
+        createTab(t.tmux_session, t.cwd, t.id);
+      }
+    }
   });
 }

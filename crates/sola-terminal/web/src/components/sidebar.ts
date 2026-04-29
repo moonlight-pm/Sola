@@ -1,10 +1,9 @@
-import { html, reactive, watch } from '@arrow-js/core';
+import { html, reactive } from '@arrow-js/core';
 
 export interface TabItem {
   id: string;
   title: string;
   cwd: string;
-  customTitle?: string;
 }
 
 export interface SidebarConfig {
@@ -17,8 +16,8 @@ export interface SidebarConfig {
   onCreate: () => void;
   onToggleCollapse: () => void;
   onResize: (width: number) => void;
+  onResizeEnd: () => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
-  onRename: (id: string, title: string) => void;
 }
 
 const COLLAPSED_WIDTH = 36;
@@ -33,17 +32,15 @@ function cwdBasename(cwd: string): string {
 }
 
 function displayTitle(tab: TabItem): string {
-  return tab.customTitle || cwdBasename(tab.cwd) || 'shell';
+  return cwdBasename(tab.cwd) || 'shell';
 }
 
 export function createSidebar(config: SidebarConfig, target: HTMLElement): void {
-  // Local UI state for drag and rename interactions
+  // Local UI state for drag interactions
   const ui = reactive({
     dragTabIndex: null as number | null,
     dropTargetIndex: null as number | null,
     isDragging: false,
-    renamingTabId: null as string | null,
-    renameValue: '',
     resizing: false,
   });
 
@@ -69,24 +66,6 @@ export function createSidebar(config: SidebarConfig, target: HTMLElement): void 
     ui.dragTabIndex = index;
     dragStartY = e.clientY;
     ui.isDragging = false;
-  }
-
-  // --- Tab rename ---
-
-  function startRename(tab: TabItem) {
-    ui.renamingTabId = tab.id;
-    ui.renameValue = displayTitle(tab);
-  }
-
-  function commitRename() {
-    if (ui.renamingTabId) {
-      config.onRename(ui.renamingTabId, ui.renameValue.trim());
-      ui.renamingTabId = null;
-    }
-  }
-
-  function cancelRename() {
-    ui.renamingTabId = null;
   }
 
   // --- Window-level mouse handlers ---
@@ -119,7 +98,9 @@ export function createSidebar(config: SidebarConfig, target: HTMLElement): void 
   }
 
   function onMouseUp() {
+    const wasResizing = ui.resizing;
     if (ui.resizing) ui.resizing = false;
+    if (wasResizing) config.onResizeEnd();
     if (ui.isDragging && ui.dragTabIndex !== null && ui.dropTargetIndex !== null) {
       config.onReorder(ui.dragTabIndex, ui.dropTargetIndex);
     }
@@ -130,15 +111,6 @@ export function createSidebar(config: SidebarConfig, target: HTMLElement): void 
 
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
-
-  // Focus rename input after it appears
-  watch(() => {
-    if (ui.renamingTabId) {
-      requestAnimationFrame(() => {
-        target.querySelector<HTMLInputElement>('.tab-rename-input')?.focus();
-      });
-    }
-  });
 
   // --- Template helpers ---
 
@@ -165,21 +137,6 @@ export function createSidebar(config: SidebarConfig, target: HTMLElement): void 
 
   function tabContent(tab: TabItem) {
     if (config.collapsed()) return html``;
-
-    if (ui.renamingTabId === tab.id) {
-      return html`<input
-        class="tab-rename-input"
-        type="text"
-        value="${ui.renameValue}"
-        @input="${(e: Event) => { ui.renameValue = (e.target as HTMLInputElement).value; }}"
-        @blur="${commitRename}"
-        @keydown="${(e: KeyboardEvent) => {
-          if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
-          else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
-        }}"
-        @mousedown="${(e: MouseEvent) => e.stopPropagation()}"
-      />`;
-    }
 
     return html`
       <div class="tab-info">
@@ -212,7 +169,6 @@ export function createSidebar(config: SidebarConfig, target: HTMLElement): void 
               else if (e.button === 1) { e.preventDefault(); config.onClose(tab.id); }
               handleDragMouseDown(e, i);
             }}"
-            @dblclick="${() => { if (!config.collapsed()) startRename(tab); }}"
           >
             <span class="tab-number">${() => String(i + 1)}</span>
             ${() => tabContent(tab)}

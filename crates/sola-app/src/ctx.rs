@@ -205,4 +205,31 @@ impl AppCtx {
         }
         self.windows.iter().find(|w| w.title() == entry.title)
     }
+
+    /// Return a Clone-able handle to the bus client. Use this when you need
+    /// to emit topics from a GTK timeout/idle closure that outlives the
+    /// `&mut AppCtx` borrow. The handle is not Send — it must run on the
+    /// GTK main thread.
+    pub fn bus_proxy(&self) -> BusProxy {
+        BusProxy {
+            bus: self.bus.clone(),
+        }
+    }
+}
+
+/// Cheap clone of the bus client, usable from any GTK-thread closure
+/// (not Send — runs on the GTK main loop).
+#[derive(Clone)]
+pub struct BusProxy {
+    bus: Rc<RefCell<BusClient>>,
+}
+
+impl BusProxy {
+    pub fn emit(&self, topic: Topic) {
+        let _ = self.bus.borrow_mut().emit(topic);
+    }
+
+    pub fn retract(&self, topic: Topic) {
+        let _ = self.bus.borrow_mut().retract(topic);
+    }
 }

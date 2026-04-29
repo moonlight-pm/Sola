@@ -188,6 +188,78 @@ pub fn kill_session(session: &str) {
 /// server (command couldn't spawn, or tmux exited with an unexpected error).
 /// Callers should treat `None` as "unknown" and NOT drop persisted state on it.
 /// `Some(vec![])` means tmux explicitly reported no sessions running.
+/// Start the tmux server in its own systemd user service so it
+/// survives the sola-terminal scope being torn down on Meta+Q. The
+/// `_keepalive` session running `sleep infinity` keeps the server
+/// alive between `tmux new-session` invocations and is filtered out
+/// of `list_sessions()` by the `sola-` prefix check.
+///
+/// Uses `Type=oneshot` + `RemainAfterExit=yes` + `KillMode=none`.
+/// The first two keep the unit "active" after ExecStart exits;
+/// `KillMode=none` is the only way to stop systemd from SIGTERMing
+/// the forked daemon (the default `control-group` kills it on
+/// ExecStart completion, and `process` for some reason still loses
+/// it). We never explicitly stop this unit, so KillMode=none is
+/// safe — logout/reboot tears down the user manager and the daemon
+/// with it.
+///
+/// Idempotent: skips if the unit is already active. Without this,
+/// tmux daemonizes inside the sola-app scope's cgroup, and systemd
+/// reaps it (and every shell inside) when the scope stops.
+pub fn ensure_server_running() {
+    let active = std::process::Command::new("systemctl")
+        .args(["--user", "is-active", "--quiet", "sola-tmux.service"])
+        .status();
+    if matches!(active, Ok(s) if s.success()) {
+        return;
+    }
+
+    // Resolve `sleep` to an absolute path. Systemd transient services
+    // get a minimal environment, and the `_keepalive` pane spawns its
+    // command via the user's login shell — which can't find `sleep` in
+    // an empty PATH. Without this, the pane exits 127 immediately, tmux
+    // sees an empty session, and (with default `exit-empty=on`) the
+    // server self-terminates within milliseconds of starting.
+    let sleep_path = sola_core::applications::resolve_in_path("sleep")
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "sleep".to_string());
+
+    let status = std::process::Command::new("systemd-run")
+        .args([
+            "--user",
+            "--quiet",
+            "--collect",
+            "--unit=sola-tmux.service",
+            "--description=tmux daemon for sola-terminal",
+            "--property=Type=oneshot",
+            "--property=RemainAfterExit=yes",
+            "--property=KillMode=none",
+            "--",
+            "tmux",
+            "-L",
+            TMUX_SOCKET,
+            "new-session",
+            "-d",
+            "-s",
+            "_keepalive",
+            &sleep_path,
+            "infinity",
+        ])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            tracing::info!("started sola-tmux.service");
+        }
+        Ok(s) => {
+            tracing::warn!("systemd-run sola-tmux.service exited with {:?}", s.code());
+        }
+        Err(e) => {
+            tracing::warn!("failed to start sola-tmux.service: {e}");
+        }
+    }
+}
+
 pub fn list_sessions() -> Option<Vec<String>> {
     let output = tmux_cmd()
         .args(["ls", "-F", "#{session_name}"])
@@ -206,40 +278,17 @@ pub fn list_sessions() -> Option<Vec<String>> {
         );
     }
 
-    // Only "no server running" is a confirmed empty-sessions signal.
+    // "no server running" and "error connecting to <socket>" both mean
+    // the tmux server doesn't exist — no live sessions either way. The
+    // socket-missing path fires after `cleanup_stale_socket` deletes the
+    // socket on startup; without this, reconciliation can't tell the
+    // difference between "tmux is gone" and "tmux is broken."
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("no server running") {
+    if stderr.contains("no server running") || stderr.contains("error connecting to") {
         Some(Vec::new())
     } else {
         tracing::warn!("tmux ls failed: {}", stderr.trim());
         None
-    }
-}
-
-/// Return all sola session names with their pane's current working directory.
-pub fn list_session_paths() -> Vec<(String, String)> {
-    let output = tmux_cmd_raw()
-        .args([
-            "list-sessions",
-            "-F",
-            "#{session_name} #{pane_current_path}",
-        ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output();
-    match output {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                if !line.starts_with("sola-") {
-                    return None;
-                }
-                let idx = line.find(' ')?;
-                Some((line[..idx].to_string(), line[idx + 1..].to_string()))
-            })
-            .collect(),
-        _ => Vec::new(),
     }
 }
 

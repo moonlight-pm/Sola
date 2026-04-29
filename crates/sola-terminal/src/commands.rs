@@ -2,15 +2,20 @@ use std::sync::Arc;
 
 use base64::Engine;
 use serde_json::{Value, json};
+use sola_bus::topics::{TerminalSession, Topic};
 use tokio::sync::mpsc;
 
+use crate::BusOp;
 use crate::pty::PtyEvent;
 use crate::state::{TabEntry, TerminalState};
 
 /// Terminal command handler implementing the sola-app AppHandler trait.
+/// Emits/retracts bus topics by sending `BusOp`s through `bus_tx`; the
+/// main thread drains and calls `ctx.emit`/`ctx.retract`.
 pub struct TerminalHandler {
     pub state: Arc<TerminalState>,
     pub event_tx: std::sync::mpsc::Sender<String>,
+    pub bus_tx: std::sync::mpsc::Sender<BusOp>,
 }
 
 #[async_trait::async_trait]
@@ -22,7 +27,6 @@ impl sola_app::AppHandler for TerminalHandler {
             "resize_pty" => self.cmd_resize_pty(args).await,
             "close_pty" => self.cmd_close_pty(args).await,
             "reconnect_pty" => self.cmd_reconnect_pty(args).await,
-            "rename_tab" => self.cmd_rename_tab(args).await,
             "update_cwd" => self.cmd_update_cwd(args).await,
             "reorder_tabs" => self.cmd_reorder_tabs(args).await,
             _ => json!({ "error": format!("unknown command: {cmd}") }),
@@ -39,8 +43,24 @@ impl TerminalHandler {
             .and_then(|v| v.as_str())
             .map(String::from);
         let cwd = args.get("cwd").and_then(|v| v.as_str()).map(String::from);
+        let provided_pty_id = args
+            .get("pty_id")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
-        let pty_id = uuid::Uuid::new_v4().to_string();
+        // Restore path: JS passed the persisted pty_id of a tab the bus
+        // already replayed into our mirror. Spawn the PTY (which attaches
+        // to the existing tmux session) but skip mirror push + bus emit
+        // — both already exist.
+        let is_restore = match &provided_pty_id {
+            Some(id) => {
+                let tabs = self.state.tabs.read().await;
+                tabs.iter().any(|t| &t.pty_id == id)
+            }
+            None => false,
+        };
+
+        let pty_id = provided_pty_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let (pty_event_tx, pty_event_rx) = mpsc::unbounded_channel::<PtyEvent>();
 
         let tmux_session_name = {
@@ -58,33 +78,34 @@ impl TerminalHandler {
             }
         };
 
-        let title = self
-            .state
-            .custom_titles
-            .read()
-            .await
-            .get(&tmux_session_name)
-            .cloned();
-
-        {
-            let mut tabs = self.state.tabs.write().await;
-            tabs.push(TabEntry {
-                pty_id: pty_id.clone(),
-                tmux_session: tmux_session_name.clone(),
-                custom_title: title.clone(),
-                cwd,
-            });
-        }
-
         let tx = self.event_tx.clone();
         tokio::spawn(forward_pty_events(pty_id.clone(), pty_event_rx, tx));
 
-        self.state.persist_to_disk().await;
+        if !is_restore {
+            let new_session = {
+                let mut tabs = self.state.tabs.write().await;
+                let ordinal = tabs.iter().map(|t| t.ordinal).max().map_or(0, |m| m + 1);
+                let entry = TabEntry {
+                    pty_id: pty_id.clone(),
+                    tmux_session: tmux_session_name.clone(),
+                    cwd,
+                    ordinal,
+                };
+                tabs.push(entry.clone());
+                TerminalSession {
+                    id: entry.pty_id,
+                    tmux_session: entry.tmux_session,
+                    cwd: entry.cwd,
+                    ordinal: entry.ordinal,
+                }
+            };
+            self.emit_session(new_session).await;
+            self.emit_menu().await;
+        }
 
         json!({
             "pty_id": pty_id,
             "tmux_session": tmux_session_name,
-            "title": title,
         })
     }
 
@@ -147,12 +168,16 @@ impl TerminalHandler {
             }
         }
 
-        {
+        let removed = {
             let mut tabs = self.state.tabs.write().await;
-            tabs.retain(|t| t.pty_id != pty_id);
-        }
+            let pos = tabs.iter().position(|t| t.pty_id == pty_id);
+            pos.map(|i| tabs.remove(i))
+        };
 
-        self.state.persist_to_disk().await;
+        if let Some(entry) = removed {
+            self.retract_session(entry).await;
+            self.emit_menu().await;
+        }
 
         json!("ok")
     }
@@ -170,34 +195,6 @@ impl TerminalHandler {
         }
     }
 
-    async fn cmd_rename_tab(&self, args: &Value) -> Value {
-        let tmux_session = match args.get("tmux_session").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => return json!({ "error": "missing tmux_session" }),
-        };
-        let title = match args.get("title").and_then(|v| v.as_str()) {
-            Some(t) => t.to_string(),
-            None => return json!({ "error": "missing title" }),
-        };
-
-        {
-            let tabs = self.state.tabs.read().await;
-            if !tabs.iter().any(|t| t.tmux_session == tmux_session) {
-                return json!({ "error": format!("no tab for session: {tmux_session}") });
-            }
-        }
-
-        self.state
-            .custom_titles
-            .write()
-            .await
-            .insert(tmux_session.to_string(), title);
-
-        self.state.persist_to_disk().await;
-
-        json!("ok")
-    }
-
     async fn cmd_update_cwd(&self, args: &Value) -> Value {
         let pty_id = match args.get("pty_id").and_then(|v| v.as_str()) {
             Some(id) => id,
@@ -208,14 +205,28 @@ impl TerminalHandler {
             None => return json!({ "error": "missing cwd" }),
         };
 
-        {
+        let updated = {
             let mut tabs = self.state.tabs.write().await;
-            if let Some(tab) = tabs.iter_mut().find(|t| t.pty_id == pty_id) {
-                tab.cwd = Some(cwd);
-            }
-        }
+            tabs.iter_mut()
+                .find(|t| t.pty_id == pty_id)
+                .and_then(|tab| {
+                    if tab.cwd.as_deref() == Some(cwd.as_str()) {
+                        None
+                    } else {
+                        tab.cwd = Some(cwd);
+                        Some(TerminalSession {
+                            id: tab.pty_id.clone(),
+                            tmux_session: tab.tmux_session.clone(),
+                            cwd: tab.cwd.clone(),
+                            ordinal: tab.ordinal,
+                        })
+                    }
+                })
+        };
 
-        self.state.persist_to_disk().await;
+        if let Some(session) = updated {
+            self.emit_session(session).await;
+        }
 
         json!("ok")
     }
@@ -229,20 +240,73 @@ impl TerminalHandler {
             None => return json!({ "error": "missing pty_ids" }),
         };
 
-        {
+        // Renumber by the requested order. Any tabs absent from the
+        // request keep their previous ordinal — they'll trail the
+        // reordered set since their ordinal is unchanged.
+        let changed: Vec<TerminalSession> = {
             let mut tabs = self.state.tabs.write().await;
-            let mut reordered = Vec::with_capacity(pty_ids.len());
-            for id in &pty_ids {
-                if let Some(tab) = tabs.iter().find(|t| &t.pty_id == id).cloned() {
-                    reordered.push(tab);
+            let mut out = Vec::new();
+            for (new_ord, id) in pty_ids.iter().enumerate() {
+                let new_ord = new_ord as u32;
+                if let Some(tab) = tabs.iter_mut().find(|t| &t.pty_id == id) {
+                    if tab.ordinal != new_ord {
+                        tab.ordinal = new_ord;
+                        out.push(TerminalSession {
+                            id: tab.pty_id.clone(),
+                            tmux_session: tab.tmux_session.clone(),
+                            cwd: tab.cwd.clone(),
+                            ordinal: tab.ordinal,
+                        });
+                    }
                 }
             }
-            *tabs = reordered;
+            tabs.sort_by_key(|t| t.ordinal);
+            out
+        };
+
+        for session in changed {
+            self.emit_session(session).await;
         }
 
-        self.state.persist_to_disk().await;
-
         json!("ok")
+    }
+
+    async fn emit_session(&self, session: TerminalSession) {
+        if self
+            .bus_tx
+            .send(BusOp::Emit(Topic::TerminalSession(session)))
+            .is_err()
+        {
+            tracing::warn!("bus channel closed; TerminalSession emit dropped");
+        }
+    }
+
+    async fn retract_session(&self, entry: TabEntry) {
+        let session = TerminalSession {
+            id: entry.pty_id,
+            tmux_session: entry.tmux_session,
+            cwd: entry.cwd,
+            ordinal: entry.ordinal,
+        };
+        if self
+            .bus_tx
+            .send(BusOp::Retract(Topic::TerminalSession(session)))
+            .is_err()
+        {
+            tracing::warn!("bus channel closed; TerminalSession retract dropped");
+        }
+    }
+
+    async fn emit_menu(&self) {
+        let count = self.state.tabs.read().await.len();
+        let menu = crate::menu::terminal_menu(count);
+        if self
+            .bus_tx
+            .send(BusOp::Emit(Topic::SetAppMenu(menu)))
+            .is_err()
+        {
+            tracing::warn!("bus channel closed; SetAppMenu emit dropped");
+        }
     }
 }
 
@@ -255,20 +319,16 @@ async fn forward_pty_events(
 
     while let Some(event) = event_rx.recv().await {
         let msg = match event {
-            PtyEvent::Data { pty_id, data } => {
-                json!({
-                    "event": "pty:data",
-                    "pty_id": pty_id,
-                    "data": b64.encode(&data),
-                })
-            }
-            PtyEvent::Scrollback { pty_id, data } => {
-                json!({
-                    "event": "pty:scrollback",
-                    "pty_id": pty_id,
-                    "data": b64.encode(&data),
-                })
-            }
+            PtyEvent::Data { pty_id, data } => json!({
+                "event": "pty:data",
+                "pty_id": pty_id,
+                "data": b64.encode(&data),
+            }),
+            PtyEvent::Scrollback { pty_id, data } => json!({
+                "event": "pty:scrollback",
+                "pty_id": pty_id,
+                "data": b64.encode(&data),
+            }),
             PtyEvent::Exit { pty_id } => {
                 let msg = json!({
                     "event": "pty:exit",

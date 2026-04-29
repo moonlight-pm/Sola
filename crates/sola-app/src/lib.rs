@@ -26,7 +26,7 @@ pub use sola_core::config;
 // Re-export for macro use and common consumer paths.
 pub use assets::{Asset, AssetBundle, ContentType};
 pub use async_dispatch::{AppHandler, AsyncDispatcher};
-pub use ctx::AppCtx;
+pub use ctx::{AppCtx, BusProxy};
 pub use window::{WindowConfig, WindowHandle};
 
 /// Per-topic handler registry used by `SolaApp::register_bus`. Aliases

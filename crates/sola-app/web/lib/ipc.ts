@@ -3,6 +3,10 @@ type EventCallback = (data: any) => void;
 let nextId = 1;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
 const listeners = new Map<string, Set<EventCallback>>();
+// Per-event buffer for messages that arrive before any listener is
+// registered. Drained on the next `on(event, ...)` call so events
+// delivered during page-load or sticky replay aren't silently lost.
+const orphanBuffer = new Map<string, any[]>();
 
 // Framework defaults for specific events — used when the app has not
 // registered its own handler. Apps that want custom behavior call
@@ -46,7 +50,16 @@ const recv = (json: string) => {
       for (const cb of cbs) cb(msg);
     } else {
       const def = defaults.get(msg.event);
-      if (def) def(msg);
+      if (def) {
+        def(msg);
+      } else {
+        let buf = orphanBuffer.get(msg.event);
+        if (!buf) {
+          buf = [];
+          orphanBuffer.set(msg.event, buf);
+        }
+        buf.push(msg);
+      }
     }
   }
 };
@@ -71,5 +84,12 @@ export function on(event: string, callback: EventCallback): () => void {
     listeners.set(event, new Set());
   }
   listeners.get(event)!.add(callback);
+  // Drain any messages that arrived before the first listener for this
+  // event was registered.
+  const buffered = orphanBuffer.get(event);
+  if (buffered && buffered.length > 0) {
+    orphanBuffer.delete(event);
+    for (const msg of buffered) callback(msg);
+  }
   return () => { listeners.get(event)?.delete(callback); };
 }

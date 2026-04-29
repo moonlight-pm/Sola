@@ -1,3 +1,7 @@
 /target
 /.worktrees
 /.superpowers
+
+# Vendored fonts that are too large to commit. Repopulate with
+# `cargo make assets pull` (see crates/sola-assets/upstream.toml).
+/crates/sola-assets/assets/fonts/IosevkaTermSlab/

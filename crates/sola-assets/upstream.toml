@@ -1,7 +1,14 @@
 # Pinned upstream sources for vendored asset packs.
 #
-# Run `cargo make assets pull` to refresh. The fetched files are committed
-# to the repo so clean clones build offline.
+# Run `cargo make assets pull` to refresh. Most fetched files are committed
+# so clean clones build offline; packs that are too large to commit (e.g.
+# nerd-fonts) live behind a `.gitignore` and need a `pull` after a clean
+# clone before the affected app will work.
+#
+# Sources:
+# - `github:<owner>/<repo>` — git clone (honors `rev`).
+# - `nix-pkg:<attr>` — `nix-build '<nixos>' -A <attr>`; uses the resulting
+#   store path. Pinned by the system's nixpkgs channel (no `rev`).
 #
 # Leave `rev` empty to track the default branch; set to a tag or commit SHA
 # to pin.
@@ -38,3 +45,22 @@ src_dir  = "docs/font-files"
 category = "fonts"
 kind     = "fonts"
 files    = ["InterVariable.woff2", "InterVariable-Italic.woff2"]
+
+# Iosevka Term Slab (Nerd Font Mono variant) — the terminal font.
+# Sourced from nixpkgs because upstream release zips bundle every
+# weight/width permutation (~240 MB); the nixpkgs derivation ships only
+# the four core styles we need. Each source TTF is ~13 MB so the
+# converted WOFF2s (~2.5 MB each) are gitignored — rerun
+# `cargo make assets pull` after a clean clone to repopulate.
+# License: SIL OFL 1.1.
+[packs.IosevkaTermSlab]
+source   = "nix-pkg:nerd-fonts.iosevka-term-slab"
+src_dir  = "share/fonts/truetype/NerdFonts/IosevkaTermSlab"
+category = "fonts"
+kind     = "fonts"
+files = [
+  { from = "IosevkaTermSlabNerdFontMono-Regular.ttf",    to = "IosevkaTermSlab-Regular.woff2",    transform = "ttf-to-woff2" },
+  { from = "IosevkaTermSlabNerdFontMono-Italic.ttf",     to = "IosevkaTermSlab-Italic.woff2",     transform = "ttf-to-woff2" },
+  { from = "IosevkaTermSlabNerdFontMono-Bold.ttf",       to = "IosevkaTermSlab-Bold.woff2",       transform = "ttf-to-woff2" },
+  { from = "IosevkaTermSlabNerdFontMono-BoldItalic.ttf", to = "IosevkaTermSlab-BoldItalic.woff2", transform = "ttf-to-woff2" },
+]
