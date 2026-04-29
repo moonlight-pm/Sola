@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -52,10 +52,15 @@ fn main() {
     info!(path = %socket_path, "bus listening");
 
     let state_path = state::state_path();
-    let restored = state::load(&state_path);
+    let cfg_dir = sola_core::config::sola_config_dir();
+    let mut restored = state::load(&state_path);
+    let restored_shared = restored.len();
+    restored.extend(state::load_namespaced_all(&cfg_dir));
     info!(
         path = %state_path.display(),
-        count = restored.len(),
+        shared = restored_shared,
+        namespaced = restored.len() - restored_shared,
+        total = restored.len(),
         "persistent stickies loaded",
     );
 
@@ -167,10 +172,7 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                             bus.sticky.remove(&key);
                             if let Some(k) = kind {
                                 if k.behavior().is_persistent() {
-                                    if let Err(e) = state::retract_section(&bus.state_path, &event)
-                                    {
-                                        warn!(topic = %event.topic, %e, "persistent retract failed");
-                                    }
+                                    retract_persistent(&bus.state_path, k, &event);
                                 }
                             }
                         }
@@ -259,8 +261,9 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
     }
 }
 
-/// If `event` is a persistent topic, write its current value to
-/// state.toml.
+/// If `event` is a persistent topic, write its current value to disk.
+/// Routes by `Topic::path_for()` — namespaced topics land in their own
+/// dedicated file, others go to the shared state.toml.
 ///
 /// Called with the bus lock held so the sticky map and disk stay
 /// consistent; disk writes are rare (persistent topics carry config,
@@ -273,8 +276,45 @@ fn persist_if_needed(event: &sola_bus::Message, bus: &mut BusState) {
     if !kind.behavior().is_persistent() {
         return;
     }
-    if let Err(e) = state::write_section(&bus.state_path, &topic) {
+    if kind.namespace().is_some() {
+        let path = match topic.path_for_safe() {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(topic = kind.as_str(), %e, "namespaced path resolution failed");
+                return;
+            }
+        };
+        if let Err(e) = state::write_namespaced(&path, &topic) {
+            warn!(topic = kind.as_str(), %e, "namespaced persistent write failed");
+        }
+    } else if let Err(e) = state::write_section(&bus.state_path, &topic) {
         warn!(topic = kind.as_str(), %e, "persistent write failed");
+    }
+}
+
+/// Retract a persistent topic from disk. For namespaced topics, unlinks
+/// the per-topic file (interpolating any `:placeholder` from the event's
+/// keys). For unnamespaced topics, drops the section from state.toml.
+fn retract_persistent(state_path: &Path, kind: TopicKind, event: &sola_bus::Message) {
+    if let Some(template) = kind.namespace() {
+        let cfg = sola_core::config::sola_config_dir();
+        let resolved = match sola_bus::topic::interpolate_namespace(
+            template,
+            kind.key_names(),
+            &event.keys,
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(topic = kind.as_str(), %e, "namespaced retract path failed");
+                return;
+            }
+        };
+        let path = cfg.join(format!("{resolved}.toml"));
+        if let Err(e) = state::retract_namespaced(&path) {
+            warn!(topic = kind.as_str(), path = %path.display(), %e, "namespaced retract failed");
+        }
+    } else if let Err(e) = state::retract_section(state_path, event) {
+        warn!(topic = %event.topic, %e, "persistent retract failed");
     }
 }
 

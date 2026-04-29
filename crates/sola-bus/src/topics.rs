@@ -270,7 +270,7 @@ pub struct BrowserTab {
     pub url: String,
     pub title: String,
     pub ordinal: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub session_state: Option<String>,
 }
 
@@ -278,7 +278,7 @@ pub struct BrowserTab {
 /// search engine, zoom default, etc.) without breaking the schema.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub active_tab_id: Option<String>,
 }
 
