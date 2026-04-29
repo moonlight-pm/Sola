@@ -276,35 +276,28 @@ impl BrowserApp {
     }
 
     fn on_browser_tab(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
-        // Self-echo: every local mutation (cmd_create_tab, close_tab,
-        // capture_tab_session_state, etc.) already updates tabs_by_id /
-        // tabs / WebView visibility synchronously before emitting. The
-        // echo carries the same payload back; ignoring it avoids
-        // redundant tab_url_changed events that can clobber the
-        // user-facing address bar mid-typing.
-        if delivery.source == Self::APP_ID {
-            return;
-        }
+        // Idempotent merge. Every local mutation (cmd_create_tab,
+        // capture_tab_session_state, ...) updates tabs_by_id
+        // synchronously before emitting, so the echo's payload matches
+        // the current local state and produces no chrome events.
+        // External deliveries — sticky restoration on startup, or any
+        // future external writer — create or update local state and
+        // surface only the actual diff to the strip.
         let Topic::BrowserTab(tab) = delivery.topic else {
             return;
         };
         if delivery.retracted {
-            self.tabs_by_id.remove(&tab.id);
-            self.destroy_webview(&tab.id);
-            self.emit_to_chrome(
-                "tab_closed",
-                json!({
-                    "tabId": tab.id,
-                    "nextTabId": Value::Null,
-                }),
-            );
+            if self.tabs_by_id.remove(&tab.id).is_some() {
+                self.destroy_webview(&tab.id);
+                self.emit_to_chrome(
+                    "tab_closed",
+                    json!({ "tabId": tab.id, "nextTabId": Value::Null }),
+                );
+            }
         } else {
-            // External delivery (typically sticky restoration with
-            // source = "sola-bus", or a future external writer). Merge
-            // into local state and materialize / surface to the strip.
-            let was_present = self.tabs_by_id.contains_key(&tab.id);
+            let prev = self.tabs_by_id.get(&tab.id).cloned();
             self.tabs_by_id.insert(tab.id.clone(), tab.clone());
-            if !was_present {
+            if prev.is_none() {
                 self.create_webview_for_tab(tab);
                 self.emit_to_chrome(
                     "bus_new_tab",
@@ -316,28 +309,30 @@ impl BrowserApp {
                     }),
                 );
             }
-            self.emit_to_chrome(
-                "tab_url_changed",
-                json!({ "tabId": tab.id, "url": tab.url }),
-            );
-            self.emit_to_chrome(
-                "tab_title_changed",
-                json!({ "tabId": tab.id, "title": tab.title }),
-            );
+            // Only surface URL/title diffs that actually move the value.
+            if prev.as_ref().map(|p| &p.url) != Some(&tab.url) {
+                self.emit_to_chrome(
+                    "tab_url_changed",
+                    json!({ "tabId": tab.id, "url": tab.url }),
+                );
+            }
+            if prev.as_ref().map(|p| &p.title) != Some(&tab.title) {
+                self.emit_to_chrome(
+                    "tab_title_changed",
+                    json!({ "tabId": tab.id, "title": tab.title }),
+                );
+            }
         }
         self.realize_active(ctx);
     }
 
     fn on_browser_config(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
-        // Self-echo: set_active_tab already updated config + called
-        // realize_active synchronously. The echo would just re-run the
-        // same idempotent work.
-        if delivery.source == Self::APP_ID {
-            return;
-        }
         let Topic::BrowserConfig(cfg) = delivery.topic else {
             return;
         };
+        if self.config == *cfg {
+            return;
+        }
         self.config = cfg.clone();
         self.realize_active(ctx);
     }
@@ -451,31 +446,22 @@ impl BrowserApp {
         }
     }
 
-    /// Close a tab: drop it locally (so the echo is a no-op under the
-    /// self-echo filter), retract its `BrowserTab` to unlink the bus
-    /// file, and pick a fallback active tab if the closed one was active.
+    /// Close a tab: retract its `BrowserTab` (which the echo handler
+    /// will clean up locally and surface to the strip) and pick a
+    /// fallback active tab if the closed one was active.
     pub(crate) fn close_tab(&mut self, tab_id: &str, ctx: &mut AppCtx) {
-        let Some(tab) = self.tabs_by_id.remove(tab_id) else {
+        let Some(tab) = self.tabs_by_id.get(tab_id).cloned() else {
             return;
         };
-        self.destroy_webview(tab_id);
-        self.emit_to_chrome(
-            "tab_closed",
-            json!({ "tabId": tab_id, "nextTabId": Value::Null }),
-        );
         ctx.retract(Topic::BrowserTab(tab));
         if self.config.active_tab_id.as_deref() == Some(tab_id) {
             let fallback = self
                 .tabs_by_id
                 .values()
+                .filter(|t| t.id != tab_id)
                 .min_by_key(|t| t.ordinal)
                 .map(|t| t.id.clone());
             self.set_active_tab(fallback, ctx);
-        } else {
-            // The closed tab wasn't active, but realize_active still
-            // wants to run in case the destroyed WebView was the
-            // currently-realized one (defensive — shouldn't happen).
-            self.realize_active(ctx);
         }
     }
 
