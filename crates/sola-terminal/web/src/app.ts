@@ -72,9 +72,6 @@ function createTab(tmuxSession?: string, cwd?: string, id?: string): string {
     onTitleChange: (title) => {
       state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, title } : t);
     },
-    onCwdChange: (newCwd) => {
-      state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, cwd: newCwd } : t);
-    },
     onPtyReady: (ptyId) => {
       state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, ptyId } : t);
     },
@@ -218,6 +215,14 @@ export async function createApp(root: HTMLElement) {
 
   on('close_tab', () => {
     if (state.activeTabId) closeTab(state.activeTabId);
+  });
+
+  // Server-side cwd update (tmux poll). Tabs whose shell never emits
+  // OSC 7 still get a live cwd via this path. Field is `pty_id`, not
+  // `id`, because the IPC recv routes any top-level `id` as an invoke
+  // response.
+  on('cwd_update', ({ pty_id, cwd }: { pty_id: string; cwd: string }) => {
+    state.tabs = state.tabs.map(t => t.id === pty_id ? { ...t, cwd } : t);
   });
 
   on('copy', () => {

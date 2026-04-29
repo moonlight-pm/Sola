@@ -12,7 +12,7 @@ sola-app = { path = "../sola-app" }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 gtk4 = "0.9"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "macros", "time"] }
 nix = { version = "0.30", features = ["process", "term", "signal"] }
 libc = "0.2"
 base64 = "0.22"

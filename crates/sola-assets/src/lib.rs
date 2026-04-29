@@ -1,8 +1,10 @@
 //! Shared on-disk assets (icons, fonts, ...) for Sola.
 //!
-//! Serves files from `<assets_dir>/<path>` via a `sola-assets://<path>` WebKit
-//! URI scheme. Resolves to `/opt/sola/share/` when present (deployed), else
-//! `<workspace>/crates/sola-assets/assets/` (dev mode).
+//! Every third-party asset lives at `/opt/sola/share/<category>/<pack>/...`
+//! and is populated by `cargo make assets pull`. Nothing is committed to
+//! the repo; nothing is rsynced by `install`. A clean clone runs `pull`
+//! once and is good for every subsequent build (see also the staleness
+//! check in `cargo make install`).
 //!
 //! Nothing is compiled into consumer binaries — all data is read from disk.
 
@@ -10,29 +12,14 @@ use std::path::{Path, PathBuf};
 
 pub mod icons;
 
-/// Deployed location of shared assets on canto.
-pub const DEPLOYED_DIR: &str = "/opt/sola/share";
+pub const ASSETS_DIR: &str = "/opt/sola/share";
 
-/// Dev-mode location (relative to this crate's manifest).
-const DEV_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
-
-/// Returns the active assets root — `DEPLOYED_DIR` if it exists, else `DEV_DIR`.
-///
-/// Logs a warning and returns `DEV_DIR` (even if missing) when neither exists.
-pub fn assets_dir() -> PathBuf {
-    let deployed = Path::new(DEPLOYED_DIR);
-    if deployed.is_dir() {
-        return deployed.to_path_buf();
-    }
-    let dev = PathBuf::from(DEV_DIR);
-    if !dev.is_dir() {
-        tracing::warn!(
-            deployed = DEPLOYED_DIR,
-            dev = DEV_DIR,
-            "sola-assets: neither deployed nor dev asset dir exists"
-        );
-    }
-    dev
+/// Resolve a relative asset path to a real file under `ASSETS_DIR`.
+/// Returns `None` when the file is missing — callers handle that via
+/// 404 paths (URI scheme) or `Option`-returning helpers (icons).
+pub fn resolve(path: &str) -> Option<PathBuf> {
+    let candidate = Path::new(ASSETS_DIR).join(path);
+    candidate.is_file().then_some(candidate)
 }
 
 /// Register the `sola-assets://` URI scheme on a WebKit `WebContext`.
@@ -66,14 +53,13 @@ pub fn register_uri_scheme(ctx: &webkit6::WebContext) {
             return;
         }
 
-        let full = assets_dir().join(path);
-        match std::fs::read(&full) {
-            Ok(bytes) => {
+        match resolve(path).and_then(|p| std::fs::read(&p).ok().map(|b| (p, b))) {
+            Some((full, bytes)) => {
                 let mime = mime_for(&full);
                 serve_bytes(request, bytes, mime);
             }
-            Err(_) => {
-                tracing::warn!(path = %full.display(), "sola-assets: 404");
+            None => {
+                tracing::warn!(path, "sola-assets: 404");
                 serve_not_found(request);
             }
         }

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use base64::Engine;
 use serde_json::{Value, json};
@@ -8,6 +9,11 @@ use tokio::sync::mpsc;
 use crate::BusOp;
 use crate::pty::PtyEvent;
 use crate::state::{TabEntry, TerminalState};
+
+/// Quiet window between the user pressing Enter and our cwd query — gives
+/// `cd` (a shell builtin) time to finish updating the shell's cwd before
+/// tmux walks /proc/<pid>/cwd for us.
+const CWD_REFRESH_DELAY: Duration = Duration::from_millis(150);
 
 /// Terminal command handler implementing the sola-app AppHandler trait.
 /// Emits/retracts bus topics by sending `BusOp`s through `bus_tx`; the
@@ -27,7 +33,6 @@ impl sola_app::AppHandler for TerminalHandler {
             "resize_pty" => self.cmd_resize_pty(args).await,
             "close_pty" => self.cmd_close_pty(args).await,
             "reconnect_pty" => self.cmd_reconnect_pty(args).await,
-            "update_cwd" => self.cmd_update_cwd(args).await,
             "reorder_tabs" => self.cmd_reorder_tabs(args).await,
             _ => json!({ "error": format!("unknown command: {cmd}") }),
         }
@@ -123,8 +128,27 @@ impl TerminalHandler {
             Err(e) => return json!({ "error": format!("base64 decode failed: {e}") }),
         };
 
-        let mgr = self.state.pty_manager.lock().await;
-        match mgr.write_pty(pty_id, &data) {
+        let result = {
+            let mgr = self.state.pty_manager.lock().await;
+            mgr.write_pty(pty_id, &data)
+        };
+
+        // Enter (CR) marks a command boundary. Fire a delayed tmux cwd
+        // query so the sidebar label tracks `cd` without polling. Bursts
+        // of CRs spawn redundant tasks; refresh_cwd is idempotent (no-ops
+        // when the path matches) so we don't bother debouncing.
+        if result.is_ok() && data.contains(&b'\r') {
+            let pty_id = pty_id.to_string();
+            let state = self.state.clone();
+            let event_tx = self.event_tx.clone();
+            let bus_tx = self.bus_tx.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(CWD_REFRESH_DELAY).await;
+                refresh_cwd(&pty_id, &state, &event_tx, &bus_tx).await;
+            });
+        }
+
+        match result {
             Ok(()) => json!("ok"),
             Err(e) => json!({ "error": e }),
         }
@@ -193,42 +217,6 @@ impl TerminalHandler {
             Ok(scrollback) => json!({ "scrollback": scrollback }),
             Err(e) => json!({ "error": e }),
         }
-    }
-
-    async fn cmd_update_cwd(&self, args: &Value) -> Value {
-        let pty_id = match args.get("pty_id").and_then(|v| v.as_str()) {
-            Some(id) => id,
-            None => return json!({ "error": "missing pty_id" }),
-        };
-        let cwd = match args.get("cwd").and_then(|v| v.as_str()) {
-            Some(c) => c.to_string(),
-            None => return json!({ "error": "missing cwd" }),
-        };
-
-        let updated = {
-            let mut tabs = self.state.tabs.write().await;
-            tabs.iter_mut()
-                .find(|t| t.pty_id == pty_id)
-                .and_then(|tab| {
-                    if tab.cwd.as_deref() == Some(cwd.as_str()) {
-                        None
-                    } else {
-                        tab.cwd = Some(cwd);
-                        Some(TerminalSession {
-                            id: tab.pty_id.clone(),
-                            tmux_session: tab.tmux_session.clone(),
-                            cwd: tab.cwd.clone(),
-                            ordinal: tab.ordinal,
-                        })
-                    }
-                })
-        };
-
-        if let Some(session) = updated {
-            self.emit_session(session).await;
-        }
-
-        json!("ok")
     }
 
     async fn cmd_reorder_tabs(&self, args: &Value) -> Value {
@@ -307,6 +295,67 @@ impl TerminalHandler {
         {
             tracing::warn!("bus channel closed; SetAppMenu emit dropped");
         }
+    }
+}
+
+/// Query tmux for `pty_id`'s shell cwd and propagate any change to
+/// the JS sidebar (via `event_tx`) and the bus (for persistence).
+/// No-ops when the tmux session is gone or the cwd is unchanged.
+async fn refresh_cwd(
+    pty_id: &str,
+    state: &Arc<TerminalState>,
+    event_tx: &std::sync::mpsc::Sender<String>,
+    bus_tx: &std::sync::mpsc::Sender<BusOp>,
+) {
+    let session = {
+        let tabs = state.tabs.read().await;
+        tabs.iter()
+            .find(|t| t.pty_id == pty_id)
+            .map(|t| t.tmux_session.clone())
+    };
+    let Some(session) = session else { return };
+
+    let path = match tokio::task::spawn_blocking(move || crate::tmux::pane_current_path(&session))
+        .await
+    {
+        Ok(Some(p)) => p,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(?e, "pane_current_path join failed");
+            return;
+        }
+    };
+
+    let updated = {
+        let mut tabs = state.tabs.write().await;
+        tabs.iter_mut()
+            .find(|t| t.pty_id == pty_id)
+            .and_then(|tab| {
+                if tab.cwd.as_deref() == Some(path.as_str()) {
+                    None
+                } else {
+                    tab.cwd = Some(path.clone());
+                    Some(TerminalSession {
+                        id: tab.pty_id.clone(),
+                        tmux_session: tab.tmux_session.clone(),
+                        cwd: tab.cwd.clone(),
+                        ordinal: tab.ordinal,
+                    })
+                }
+            })
+    };
+
+    if let Some(session) = updated {
+        // `pty_id`, not `id` — the IPC recv() treats any top-level `id`
+        // field as an invoke-response correlation id and skips event
+        // dispatch entirely.
+        let event = json!({
+            "event": "cwd_update",
+            "pty_id": session.id,
+            "cwd": path,
+        });
+        let _ = event_tx.send(event.to_string());
+        let _ = bus_tx.send(BusOp::Emit(Topic::TerminalSession(session)));
     }
 }
 

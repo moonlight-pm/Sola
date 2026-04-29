@@ -1,20 +1,24 @@
 //! Asset pack management.
 //!
-//! `cargo make assets pull` refreshes vendored third-party assets (icons, etc.)
-//! from the sources pinned in `crates/sola-assets/upstream.toml`.
-//!
-//! Most fetched packs are committed so clean clones build offline. Packs that
-//! are too large to commit (e.g. nerd-fonts) live behind a `.gitignore` —
-//! re-running `pull` repopulates them.
+//! `cargo make assets pull` fetches every pack listed in
+//! `crates/sola-assets/upstream.toml` and writes it under
+//! `/opt/sola/share/<category>/<pack>/`. Nothing is committed to the
+//! repo — `cargo make install` automatically pulls when packs are
+//! missing or older than [`STALENESS_THRESHOLD`], so a fresh clone
+//! just runs install and it bootstraps itself.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
+use std::time::{Duration, SystemTime};
 
 use serde::Deserialize;
 
-const UPSTREAM_TOML: &str = "crates/sola-assets/upstream.toml";
-const ASSETS_ROOT: &str = "crates/sola-assets/assets";
+pub const UPSTREAM_TOML: &str = "crates/sola-assets/upstream.toml";
+/// Runtime location — mirrors `sola_assets::ASSETS_DIR`.
+const SHARE_ROOT: &str = "/opt/sola/share";
+/// Auto-pull when any pack is older than this (1 week).
+const STALENESS_THRESHOLD: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Debug, Deserialize)]
 struct Upstream {
@@ -34,7 +38,7 @@ struct Pack {
     rev: String,
     /// Path (relative to source root) containing the source files.
     src_dir: String,
-    /// Destination category under `assets/` (e.g. "icons", "cursors").
+    /// Destination category (e.g. "icons", "cursors", "fonts").
     category: String,
     /// Pack flavor. Controls which files are copied:
     /// - `"icons"` (default): flat copy of every `.svg` from `src_dir`.
@@ -77,6 +81,17 @@ enum PackKind {
     Fonts,
 }
 
+fn read_upstream() -> Upstream {
+    let raw = fs::read_to_string(UPSTREAM_TOML).unwrap_or_else(|e| {
+        eprintln!("failed to read {UPSTREAM_TOML}: {e}");
+        exit(1);
+    });
+    toml::from_str(&raw).unwrap_or_else(|e| {
+        eprintln!("failed to parse {UPSTREAM_TOML}: {e}");
+        exit(1);
+    })
+}
+
 /// Result of acquiring a source tree for a pack. Captures whether the
 /// path is owned by us (`Tmp`, must be cleaned up) or external (`Pinned`,
 /// e.g. a nix store path — leave alone).
@@ -102,19 +117,48 @@ impl Drop for SourceRoot {
 }
 
 pub fn pull() {
-    let raw = fs::read_to_string(UPSTREAM_TOML).unwrap_or_else(|e| {
-        eprintln!("failed to read {UPSTREAM_TOML}: {e}");
-        exit(1);
-    });
-    let upstream: Upstream = toml::from_str(&raw).unwrap_or_else(|e| {
-        eprintln!("failed to parse {UPSTREAM_TOML}: {e}");
-        exit(1);
-    });
-
+    let upstream = read_upstream();
     for (name, pack) in &upstream.packs {
         pull_pack(name, pack);
     }
     println!("all packs pulled");
+}
+
+/// Reason a pack needs (re-)pulling, if any. `None` = up to date.
+pub fn pull_reason() -> Option<String> {
+    let upstream = read_upstream();
+    let now = SystemTime::now();
+    let mut missing = Vec::new();
+    let mut stale = Vec::new();
+    for (name, pack) in &upstream.packs {
+        let dest = PathBuf::from(SHARE_ROOT).join(&pack.category).join(name);
+        let populated = fs::read_dir(&dest)
+            .map(|d| d.flatten().next().is_some())
+            .unwrap_or(false);
+        if !populated {
+            missing.push(name.clone());
+            continue;
+        }
+        let stale_dir = fs::metadata(&dest)
+            .and_then(|m| m.modified())
+            .map(|t| {
+                now.duration_since(t)
+                    .map(|d| d > STALENESS_THRESHOLD)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if stale_dir {
+            stale.push(name.clone());
+        }
+    }
+    let mut parts = Vec::new();
+    if !missing.is_empty() {
+        parts.push(format!("missing: {}", missing.join(", ")));
+    }
+    if !stale.is_empty() {
+        parts.push(format!("stale (>7d): {}", stale.join(", ")));
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
 }
 
 fn pull_pack(name: &str, pack: &Pack) {
@@ -131,8 +175,8 @@ fn pull_pack(name: &str, pack: &Pack) {
         exit(1);
     }
 
-    let dest = PathBuf::from(ASSETS_ROOT).join(&pack.category).join(name);
-    wipe_dir_keep_gitkeep(&dest);
+    let dest = PathBuf::from(SHARE_ROOT).join(&pack.category).join(name);
+    wipe_dir(&dest);
 
     match pack.kind {
         PackKind::Icons => {
@@ -335,22 +379,9 @@ fn tempdir_for(name: &str) -> PathBuf {
     base
 }
 
-fn wipe_dir_keep_gitkeep(dir: &Path) {
-    if !dir.is_dir() {
-        fs::create_dir_all(dir).ok();
-        return;
-    }
-    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
-        let path = entry.path();
-        if path.file_name().and_then(|n| n.to_str()) == Some(".gitkeep") {
-            continue;
-        }
-        if path.is_dir() {
-            let _ = fs::remove_dir_all(&path);
-        } else {
-            let _ = fs::remove_file(&path);
-        }
-    }
+fn wipe_dir(dir: &Path) {
+    let _ = fs::remove_dir_all(dir);
+    let _ = fs::create_dir_all(dir);
 }
 
 fn copy_svgs(src: &Path, dest: &Path) -> usize {
