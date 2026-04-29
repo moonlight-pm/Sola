@@ -276,6 +276,15 @@ impl BrowserApp {
     }
 
     fn on_browser_tab(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        // Self-echo: every local mutation (cmd_create_tab, close_tab,
+        // capture_tab_session_state, etc.) already updates tabs_by_id /
+        // tabs / WebView visibility synchronously before emitting. The
+        // echo carries the same payload back; ignoring it avoids
+        // redundant tab_url_changed events that can clobber the
+        // user-facing address bar mid-typing.
+        if delivery.source == Self::APP_ID {
+            return;
+        }
         let Topic::BrowserTab(tab) = delivery.topic else {
             return;
         };
@@ -290,9 +299,9 @@ impl BrowserApp {
                 }),
             );
         } else {
-            // Idempotent upsert: insert or update the metadata mirror.
-            // For new ids (e.g. sticky restoration on startup), we also
-            // need to materialize a WebView so the user sees the page.
+            // External delivery (typically sticky restoration with
+            // source = "sola-bus", or a future external writer). Merge
+            // into local state and materialize / surface to the strip.
             let was_present = self.tabs_by_id.contains_key(&tab.id);
             self.tabs_by_id.insert(tab.id.clone(), tab.clone());
             if !was_present {
@@ -307,27 +316,25 @@ impl BrowserApp {
                     }),
                 );
             }
-            // URL/title changes that arrive via bus updates surface to
-            // the strip without a full reload.
             self.emit_to_chrome(
                 "tab_url_changed",
-                json!({
-                    "tabId": tab.id,
-                    "url": tab.url,
-                }),
+                json!({ "tabId": tab.id, "url": tab.url }),
             );
             self.emit_to_chrome(
                 "tab_title_changed",
-                json!({
-                    "tabId": tab.id,
-                    "title": tab.title,
-                }),
+                json!({ "tabId": tab.id, "title": tab.title }),
             );
         }
         self.realize_active(ctx);
     }
 
     fn on_browser_config(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        // Self-echo: set_active_tab already updated config + called
+        // realize_active synchronously. The echo would just re-run the
+        // same idempotent work.
+        if delivery.source == Self::APP_ID {
+            return;
+        }
         let Topic::BrowserConfig(cfg) = delivery.topic else {
             return;
         };
@@ -444,25 +451,31 @@ impl BrowserApp {
         }
     }
 
-    /// Close a tab: retract its `BrowserTab` and update active config.
-    /// The retract delivery loop will destroy the WebView and pick a
-    /// fallback active tab via `realize_active`.
+    /// Close a tab: drop it locally (so the echo is a no-op under the
+    /// self-echo filter), retract its `BrowserTab` to unlink the bus
+    /// file, and pick a fallback active tab if the closed one was active.
     pub(crate) fn close_tab(&mut self, tab_id: &str, ctx: &mut AppCtx) {
-        let Some(tab) = self.tabs_by_id.get(tab_id).cloned() else {
+        let Some(tab) = self.tabs_by_id.remove(tab_id) else {
             return;
         };
+        self.destroy_webview(tab_id);
+        self.emit_to_chrome(
+            "tab_closed",
+            json!({ "tabId": tab_id, "nextTabId": Value::Null }),
+        );
         ctx.retract(Topic::BrowserTab(tab));
-        // Pick a fallback active id (next-lowest ordinal) and emit the
-        // updated config. realize_active will then activate it once both
-        // the retract and the config update have flowed through.
         if self.config.active_tab_id.as_deref() == Some(tab_id) {
             let fallback = self
                 .tabs_by_id
                 .values()
-                .filter(|t| t.id != tab_id)
                 .min_by_key(|t| t.ordinal)
                 .map(|t| t.id.clone());
             self.set_active_tab(fallback, ctx);
+        } else {
+            // The closed tab wasn't active, but realize_active still
+            // wants to run in case the destroyed WebView was the
+            // currently-realized one (defensive — shouldn't happen).
+            self.realize_active(ctx);
         }
     }
 
