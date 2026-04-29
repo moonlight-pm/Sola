@@ -6,8 +6,10 @@ use serde_json::json;
 use webkit6::prelude::*;
 
 use sola_app::{AppRuntime, WindowHandle};
+use sola_bus::topics::{BrowserTab, Topic};
 
 use crate::app::BrowserApp;
+use crate::state::HistoryOps;
 
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 
@@ -166,11 +168,10 @@ pub fn wire_signals(
                     return;
                 };
                 let mut rt = runtime.borrow_mut();
-                let AppRuntime { app, .. } = &mut *rt;
+                let AppRuntime { app, ctx } = &mut *rt;
                 app.history.record_visit(&url_str, &title);
-                app.persist_history();
-                app.capture_tab_session_state(&tid);
-                app.persist_tabs();
+                ctx.emit(Topic::BrowserHistory(app.history.clone()));
+                app.capture_tab_session_state(&tid, ctx);
             });
         });
     }
@@ -249,14 +250,25 @@ pub fn wire_signals(
                     return;
                 };
                 let mut rt = runtime.borrow_mut();
-                let AppRuntime { app, .. } = &mut *rt;
-                app.tab_store.tabs.push(crate::state::PersistedTab {
+                let AppRuntime { app, ctx } = &mut *rt;
+                let ordinal = app
+                    .tabs_by_id
+                    .values()
+                    .map(|t| t.ordinal)
+                    .max()
+                    .map(|m| m + 1)
+                    .unwrap_or(0);
+                let tab = BrowserTab {
+                    id: new_tab_id.clone(),
                     url: url.clone(),
                     title: String::new(),
+                    ordinal,
                     session_state: None,
-                });
-                app.create_tab(&new_tab_id, Some(&url), None);
-                app.switch_tab(&new_tab_id);
+                };
+                app.tabs_by_id.insert(new_tab_id.clone(), tab.clone());
+                app.create_webview_for_tab(&tab);
+                ctx.emit(Topic::BrowserTab(tab));
+                app.set_active_tab(Some(new_tab_id.clone()), ctx);
                 app.emit_to_chrome(
                     "bus_new_tab",
                     json!({

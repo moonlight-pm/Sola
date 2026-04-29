@@ -2542,6 +2542,7 @@ dependencies = [
  "sola-app",
  "sola-bus",
  "sola-core",
+ "tempfile",
  "tracing",
  "uuid",
  "webkit6",

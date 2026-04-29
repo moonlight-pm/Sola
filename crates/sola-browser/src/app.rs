@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Weak;
 
 use base64::Engine;
@@ -6,12 +7,13 @@ use gtk4::prelude::*;
 use serde_json::{Value, json};
 use webkit6::prelude::*;
 
-use sola_app::config::JsonConfig;
 use sola_app::{AppCtx, AppRuntime, BusRegistry, SolaApp, WindowConfig, WindowHandle};
-use sola_bus::topics::{MenuActionPayload, OpenUrlRequest, Topic, TopicKind};
+use sola_bus::topics::{
+    BrowserConfig, BrowserHistory, BrowserTab, MenuActionPayload, OpenUrlRequest, Topic, TopicKind,
+};
 
 use crate::chrome;
-use crate::state::{BrowsingHistory, PersistedTab, TabStore};
+use crate::state::HistoryOps;
 use crate::tabs::{Tab, build_web_page_view};
 
 pub struct BrowserApp {
@@ -19,10 +21,20 @@ pub struct BrowserApp {
     pub(crate) container: gtk4::Overlay,
     pub(crate) web_context: webkit6::WebContext,
     pub(crate) network_session: webkit6::NetworkSession,
+    /// Live WebViews for each tab; ordered roughly by creation. The
+    /// canonical tab-strip order is `tabs_by_id[*].ordinal`, which JS
+    /// sorts on. This Vec is just for WebView ownership and lookup.
     pub(crate) tabs: Vec<Tab>,
-    pub(crate) active_tab_id: Option<String>,
-    pub(crate) tab_store: TabStore,
-    pub(crate) history: BrowsingHistory,
+    /// Per-tab metadata mirror of the bus state. Authoritative for the
+    /// tab-strip view; updated on every `BrowserTab` delivery.
+    pub(crate) tabs_by_id: HashMap<String, BrowserTab>,
+    /// Singleton browser-wide config, tracked from the bus.
+    pub(crate) config: BrowserConfig,
+    /// Whichever tab WebView is currently visible, or `None` for an
+    /// empty browser. Updated only by `realize_active`.
+    pub(crate) realized_active_tab_id: Option<String>,
+    /// Visit-history aggregate, tracked from the bus.
+    pub(crate) history: BrowserHistory,
 }
 
 impl SolaApp for BrowserApp {
@@ -89,8 +101,18 @@ impl SolaApp for BrowserApp {
             );
         }
 
-        let tab_store = TabStore::load();
-        let history = BrowsingHistory::load();
+        // One-shot legacy JSON migrator: emits BrowserTab/Config/History
+        // for any pre-bus state on disk so the new namespace files get
+        // populated on first run.
+        if let Some(plan) = crate::migrate::compute_migration(&sola_core::config::sola_config_dir())
+        {
+            for tab in plan.tabs {
+                ctx.emit(Topic::BrowserTab(tab));
+            }
+            ctx.emit(Topic::BrowserConfig(plan.config));
+            ctx.emit(Topic::BrowserHistory(plan.history));
+            crate::migrate::mark_migrated(&sola_core::config::sola_config_dir());
+        }
 
         ctx.emit(Topic::SetAppMenu(browser_menu()));
         tracing::info!("registered browser menu");
@@ -101,9 +123,10 @@ impl SolaApp for BrowserApp {
             web_context,
             network_session,
             tabs: Vec::new(),
-            active_tab_id: None,
-            tab_store,
-            history,
+            tabs_by_id: HashMap::new(),
+            config: BrowserConfig::default(),
+            realized_active_tab_id: None,
+            history: BrowserHistory::default(),
         }
     }
 
@@ -126,10 +149,10 @@ impl SolaApp for BrowserApp {
         ctx: &mut AppCtx,
     ) {
         let result: Value = match cmd {
-            "ready" => self.cmd_ready(ctx),
-            "create_tab" => self.cmd_create_tab(args),
-            "close_tab" => self.cmd_close_tab(args),
-            "switch_tab" => self.cmd_switch_tab(args),
+            "ready" => self.cmd_ready(),
+            "create_tab" => self.cmd_create_tab(args, ctx),
+            "close_tab" => self.cmd_close_tab(args, ctx),
+            "switch_tab" => self.cmd_switch_tab(args, ctx),
             "navigate" => self.cmd_navigate(args),
             "go_back" => {
                 self.go_back();
@@ -159,13 +182,14 @@ impl SolaApp for BrowserApp {
         // Default CloseApp handler is inherited from the trait — don't re-register.
         bus.on(TopicKind::MenuAction, Self::on_menu_action);
         bus.on(TopicKind::OpenUrl, Self::on_open_url);
+        bus.on(TopicKind::BrowserTab, Self::on_browser_tab);
+        bus.on(TopicKind::BrowserConfig, Self::on_browser_config);
+        bus.on(TopicKind::BrowserHistory, Self::on_browser_history);
     }
 
-    fn on_shutdown(&mut self, _ctx: &mut AppCtx) {
-        tracing::info!("browser shutdown: flushing state");
-        self.capture_session_state();
-        self.persist_tabs();
-        self.persist_history();
+    fn on_shutdown(&mut self, ctx: &mut AppCtx) {
+        tracing::info!("browser shutdown: capturing per-tab session state");
+        self.capture_all_session_state(ctx);
     }
 }
 
@@ -174,19 +198,24 @@ impl BrowserApp {
         let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = delivery.topic else {
             return;
         };
-        if app_id != "sola-browser" {
+        if app_id != Self::APP_ID {
             return;
         }
         match action_id.as_str() {
             "new_tab" => {
                 let tab_id = uuid::Uuid::new_v4().to_string();
-                self.tab_store.tabs.push(PersistedTab {
+                let ordinal = self.next_ordinal();
+                let tab = BrowserTab {
+                    id: tab_id.clone(),
                     url: String::new(),
                     title: String::new(),
+                    ordinal,
                     session_state: None,
-                });
-                self.create_tab(&tab_id, None, None);
-                self.switch_tab(&tab_id);
+                };
+                self.tabs_by_id.insert(tab_id.clone(), tab.clone());
+                self.create_webview_for_tab(&tab);
+                ctx.emit(Topic::BrowserTab(tab));
+                self.set_active_tab(Some(tab_id.clone()), ctx);
 
                 self.emit_to_chrome(
                     "bus_new_tab",
@@ -200,20 +229,8 @@ impl BrowserApp {
                 tracing::debug!("new tab {tab_id}");
             }
             "close_tab" => {
-                if let Some(id) = self.active_tab_id.clone() {
-                    self.close_tab(&id);
-                    let next_id = self.tabs.last().map(|t| t.id.clone());
-                    if let Some(ref next) = next_id {
-                        self.switch_tab(next);
-                    }
-                    self.emit_to_chrome(
-                        "tab_closed",
-                        json!({
-                            "tabId": id,
-                            "nextTabId": next_id,
-                        }),
-                    );
-                    tracing::debug!("closed tab {id}");
+                if let Some(id) = self.realized_active_tab_id.clone() {
+                    self.close_tab(&id, ctx);
                 }
             }
             "focus_address" => {
@@ -228,19 +245,24 @@ impl BrowserApp {
         }
     }
 
-    fn on_open_url(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+    fn on_open_url(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
         let Topic::OpenUrl(OpenUrlRequest { url, activate }) = delivery.topic else {
             return;
         };
         let tab_id = uuid::Uuid::new_v4().to_string();
-        self.tab_store.tabs.push(PersistedTab {
+        let ordinal = self.next_ordinal();
+        let tab = BrowserTab {
+            id: tab_id.clone(),
             url: url.clone(),
             title: String::new(),
+            ordinal,
             session_state: None,
-        });
-        self.create_tab(&tab_id, Some(url), None);
+        };
+        self.tabs_by_id.insert(tab_id.clone(), tab.clone());
+        self.create_webview_for_tab(&tab);
+        ctx.emit(Topic::BrowserTab(tab));
         if *activate {
-            self.switch_tab(&tab_id);
+            self.set_active_tab(Some(tab_id.clone()), ctx);
         }
         self.emit_to_chrome(
             "bus_new_tab",
@@ -253,6 +275,81 @@ impl BrowserApp {
         tracing::info!(url = %url, "OpenUrl: created tab {tab_id}");
     }
 
+    fn on_browser_tab(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::BrowserTab(tab) = delivery.topic else {
+            return;
+        };
+        if delivery.retracted {
+            self.tabs_by_id.remove(&tab.id);
+            self.destroy_webview(&tab.id);
+            self.emit_to_chrome(
+                "tab_closed",
+                json!({
+                    "tabId": tab.id,
+                    "nextTabId": Value::Null,
+                }),
+            );
+        } else {
+            // Idempotent upsert: insert or update the metadata mirror.
+            // For new ids (e.g. sticky restoration on startup), we also
+            // need to materialize a WebView so the user sees the page.
+            let was_present = self.tabs_by_id.contains_key(&tab.id);
+            self.tabs_by_id.insert(tab.id.clone(), tab.clone());
+            if !was_present {
+                self.create_webview_for_tab(tab);
+                self.emit_to_chrome(
+                    "bus_new_tab",
+                    json!({
+                        "tabId": tab.id,
+                        "url": tab.url,
+                        "title": tab.title,
+                        "activate": false,
+                    }),
+                );
+            }
+            // URL/title changes that arrive via bus updates surface to
+            // the strip without a full reload.
+            self.emit_to_chrome(
+                "tab_url_changed",
+                json!({
+                    "tabId": tab.id,
+                    "url": tab.url,
+                }),
+            );
+            self.emit_to_chrome(
+                "tab_title_changed",
+                json!({
+                    "tabId": tab.id,
+                    "title": tab.title,
+                }),
+            );
+        }
+        self.realize_active(ctx);
+    }
+
+    fn on_browser_config(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::BrowserConfig(cfg) = delivery.topic else {
+            return;
+        };
+        self.config = cfg.clone();
+        self.realize_active(ctx);
+    }
+
+    fn on_browser_history(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        // Skip our own self-echo: only on-disk restoration ("sola-bus")
+        // and external writers (none today, but a future sola-history
+        // service might) are interesting. Idempotent merge would suffice
+        // for correctness, but the explicit filter keeps the local
+        // aggregate untouched on every emit.
+        if delivery.source == Self::APP_ID {
+            return;
+        }
+        let Topic::BrowserHistory(h) = delivery.topic else {
+            return;
+        };
+        self.history = h.clone();
+    }
+
     pub(crate) fn emit_to_chrome(&self, event: &str, mut data: Value) {
         if let Some(obj) = data.as_object_mut() {
             obj.insert("event".into(), json!(event));
@@ -260,76 +357,129 @@ impl BrowserApp {
         self.chrome.send_to_js(&data);
     }
 
-    pub(crate) fn persist_tabs(&self) {
-        self.tab_store.save();
+    /// Apply selection: prefer `config.active_tab_id` when its tab
+    /// exists; otherwise the lowest-ordinal tab; otherwise nothing.
+    /// Idempotent — calls with no resulting change are no-ops.
+    pub(crate) fn realize_active(&mut self, _ctx: &mut AppCtx) {
+        let target = select_active(
+            &self.tabs_by_id,
+            self.config.active_tab_id.as_deref(),
+            self.realized_active_tab_id.as_deref(),
+        );
+        if let Some(target) = target {
+            self.realized_active_tab_id = target.clone();
+            match target {
+                Some(id) => self.show_tab(&id),
+                None => self.hide_all_tabs(),
+            }
+        }
     }
 
-    pub(crate) fn persist_history(&self) {
-        self.history.save();
+    /// Compute the next ordinal: max existing + 1, or 0 if empty.
+    fn next_ordinal(&self) -> u32 {
+        self.tabs_by_id
+            .values()
+            .map(|t| t.ordinal)
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0)
     }
 
-    pub(crate) fn create_tab(
-        &mut self,
-        tab_id: &str,
-        url: Option<&str>,
-        session_state_b64: Option<&str>,
-    ) {
+    /// Create a WebView for a freshly-discovered tab and register signal
+    /// handlers. Does not touch `tabs_by_id` or emit anything — caller
+    /// owns those.
+    pub(crate) fn create_webview_for_tab(&mut self, tab: &BrowserTab) {
+        if self.tabs.iter().any(|t| t.id == tab.id) {
+            return; // already materialized
+        }
         let cfg = crate::tabs::TabConfig {
-            url: url.map(|s| s.to_string()),
-            session_state_b64: session_state_b64.map(|s| s.to_string()),
+            url: if tab.url.is_empty() {
+                None
+            } else {
+                Some(tab.url.clone())
+            },
+            session_state_b64: tab.session_state.clone(),
         };
         let webview = build_web_page_view(&self.web_context, &self.network_session, &cfg);
-
-        // Add as overlay child — the Overlay's get-child-position callback
-        // sizes/positions it to the content area on every allocation.
         self.container.add_overlay(&webview);
         webview.set_visible(false);
-
-        // Wire signal handlers. Each handler clones the chrome WindowHandle
-        // for send_to_js; handlers that mutate state use the runtime weak.
-        crate::tabs::wire_signals(&webview, tab_id, self.chrome.clone(), self.runtime_weak());
-
+        crate::tabs::wire_signals(&webview, &tab.id, self.chrome.clone(), self.runtime_weak());
         self.tabs.push(Tab {
-            id: tab_id.to_string(),
+            id: tab.id.clone(),
             webview,
         });
-
-        self.persist_tabs();
     }
 
-    pub(crate) fn close_tab(&mut self, tab_id: &str) {
+    /// Tear down a tab's WebView. Used on `BrowserTab` retraction.
+    pub(crate) fn destroy_webview(&mut self, tab_id: &str) {
         if let Some(pos) = self.tabs.iter().position(|t| t.id == tab_id) {
             let tab = self.tabs.remove(pos);
             self.container.remove_overlay(&tab.webview);
-
-            if pos < self.tab_store.tabs.len() {
-                self.tab_store.tabs.remove(pos);
-            }
-            if self.active_tab_id.as_deref() == Some(tab_id) {
-                self.active_tab_id = None;
-                self.tab_store.active_tab_id = None;
-            }
-            self.persist_tabs();
+        }
+        if self.realized_active_tab_id.as_deref() == Some(tab_id) {
+            self.realized_active_tab_id = None;
         }
     }
 
-    pub(crate) fn switch_tab(&mut self, tab_id: &str) {
-        if let Some(current_id) = self.active_tab_id.as_ref() {
-            if let Some(tab) = self.tabs.iter().find(|t| t.id == *current_id) {
+    fn show_tab(&self, tab_id: &str) {
+        for tab in &self.tabs {
+            if tab.id == tab_id {
+                tab.webview.set_visible(true);
+                tab.webview.grab_focus();
+            } else {
                 tab.webview.set_visible(false);
             }
         }
-        if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
-            tab.webview.set_visible(true);
-            tab.webview.grab_focus();
+    }
+
+    fn hide_all_tabs(&self) {
+        for tab in &self.tabs {
+            tab.webview.set_visible(false);
         }
-        self.active_tab_id = Some(tab_id.to_string());
-        self.tab_store.active_tab_id = Some(tab_id.to_string());
-        self.persist_tabs();
+    }
+
+    /// Close a tab: retract its `BrowserTab` and update active config.
+    /// The retract delivery loop will destroy the WebView and pick a
+    /// fallback active tab via `realize_active`.
+    pub(crate) fn close_tab(&mut self, tab_id: &str, ctx: &mut AppCtx) {
+        let Some(tab) = self.tabs_by_id.get(tab_id).cloned() else {
+            return;
+        };
+        ctx.retract(Topic::BrowserTab(tab));
+        // Pick a fallback active id (next-lowest ordinal) and emit the
+        // updated config. realize_active will then activate it once both
+        // the retract and the config update have flowed through.
+        if self.config.active_tab_id.as_deref() == Some(tab_id) {
+            let fallback = self
+                .tabs_by_id
+                .values()
+                .filter(|t| t.id != tab_id)
+                .min_by_key(|t| t.ordinal)
+                .map(|t| t.id.clone());
+            self.set_active_tab(fallback, ctx);
+        }
+    }
+
+    /// Set the persisted active tab and emit the updated config. The
+    /// visible WebView change happens in `realize_active` triggered by
+    /// the resulting `BrowserConfig` echo.
+    pub(crate) fn set_active_tab(&mut self, tab_id: Option<String>, ctx: &mut AppCtx) {
+        if self.config.active_tab_id == tab_id {
+            return;
+        }
+        self.config.active_tab_id = tab_id.clone();
+        ctx.emit(Topic::BrowserConfig(self.config.clone()));
+        // Optimistic local realize: update the visible WebView now,
+        // without waiting for the bus echo (still race-free; the echo
+        // either matches or supersedes us).
+        self.realize_active(ctx);
+        if let Some(id) = tab_id {
+            self.emit_to_chrome("active_tab_changed", json!({ "tabId": id }));
+        }
     }
 
     pub(crate) fn navigate_active(&mut self, url: &str) {
-        if let Some(id) = self.active_tab_id.clone() {
+        if let Some(id) = self.realized_active_tab_id.clone() {
             if let Some(tab) = self.tabs.iter().find(|t| t.id == id) {
                 tracing::info!(tab_id = %id, %url, "navigate");
                 tab.webview.load_uri(url);
@@ -342,7 +492,7 @@ impl BrowserApp {
     }
 
     pub(crate) fn go_back(&mut self) {
-        if let Some(id) = self.active_tab_id.clone() {
+        if let Some(id) = self.realized_active_tab_id.clone() {
             if let Some(tab) = self.tabs.iter().find(|t| t.id == id) {
                 tab.webview.go_back();
             }
@@ -350,7 +500,7 @@ impl BrowserApp {
     }
 
     pub(crate) fn go_forward(&mut self) {
-        if let Some(id) = self.active_tab_id.clone() {
+        if let Some(id) = self.realized_active_tab_id.clone() {
             if let Some(tab) = self.tabs.iter().find(|t| t.id == id) {
                 tab.webview.go_forward();
             }
@@ -358,55 +508,69 @@ impl BrowserApp {
     }
 
     pub(crate) fn reload(&mut self) {
-        if let Some(id) = self.active_tab_id.clone() {
+        if let Some(id) = self.realized_active_tab_id.clone() {
             if let Some(tab) = self.tabs.iter().find(|t| t.id == id) {
                 tab.webview.reload();
             }
         }
     }
 
-    /// Capture WebViewSessionState for every tab into `tab_store`.
-    pub(crate) fn capture_session_state(&mut self) {
-        for (i, tab) in self.tabs.iter().enumerate() {
-            if i < self.tab_store.tabs.len() {
-                if let Some(uri) = tab.webview.uri() {
-                    self.tab_store.tabs[i].url = uri.to_string();
-                }
-                if let Some(title) = tab.webview.title() {
-                    self.tab_store.tabs[i].title = title.to_string();
-                }
-                if let Some(session) = tab.webview.session_state() {
-                    if let Some(bytes) = session.serialize() {
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes.as_ref());
-                        self.tab_store.tabs[i].session_state = Some(b64);
-                    }
+    /// Capture WebViewSessionState for every tab and emit `BrowserTab`
+    /// updates for each. Called on shutdown so back/forward state and
+    /// scroll positions persist across browser restarts.
+    pub(crate) fn capture_all_session_state(&mut self, ctx: &mut AppCtx) {
+        let mut updates: Vec<BrowserTab> = Vec::new();
+        for tab in &self.tabs {
+            let Some(meta) = self.tabs_by_id.get(&tab.id) else {
+                continue;
+            };
+            let mut updated = meta.clone();
+            if let Some(uri) = tab.webview.uri() {
+                updated.url = uri.to_string();
+            }
+            if let Some(title) = tab.webview.title() {
+                updated.title = title.to_string();
+            }
+            if let Some(session) = tab.webview.session_state() {
+                if let Some(bytes) = session.serialize() {
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes.as_ref());
+                    updated.session_state = Some(b64);
                 }
             }
+            updates.push(updated);
+        }
+        for tab in updates {
+            self.tabs_by_id.insert(tab.id.clone(), tab.clone());
+            ctx.emit(Topic::BrowserTab(tab));
         }
     }
 
-    /// Snapshot a single tab's session state into `tab_store`. Called from
-    /// the `notify::uri` handler before persisting.
-    pub(crate) fn capture_tab_session_state(&mut self, tab_id: &str) {
-        let Some(pos) = self.tabs.iter().position(|t| t.id == tab_id) else {
+    /// Snapshot a single tab's session state and emit the updated
+    /// `BrowserTab`. Called from the `notify::uri` handler on each
+    /// committed navigation.
+    pub(crate) fn capture_tab_session_state(&mut self, tab_id: &str, ctx: &mut AppCtx) {
+        let Some(tab_pos) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
         };
-        if pos >= self.tab_store.tabs.len() {
+        let Some(meta) = self.tabs_by_id.get(tab_id).cloned() else {
             return;
-        }
-        let wv = &self.tabs[pos].webview;
+        };
+        let wv = &self.tabs[tab_pos].webview;
+        let mut updated = meta;
         if let Some(uri) = wv.uri() {
-            self.tab_store.tabs[pos].url = uri.to_string();
+            updated.url = uri.to_string();
         }
         if let Some(title) = wv.title() {
-            self.tab_store.tabs[pos].title = title.to_string();
+            updated.title = title.to_string();
         }
         if let Some(session) = wv.session_state() {
             if let Some(bytes) = session.serialize() {
                 let b64 = base64::engine::general_purpose::STANDARD.encode(bytes.as_ref());
-                self.tab_store.tabs[pos].session_state = Some(b64);
+                updated.session_state = Some(b64);
             }
         }
+        self.tabs_by_id.insert(tab_id.to_string(), updated.clone());
+        ctx.emit(Topic::BrowserTab(updated));
     }
 
     fn runtime_weak(&self) -> Weak<RefCell<AppRuntime<BrowserApp>>> {
@@ -420,93 +584,72 @@ impl BrowserApp {
 
     // --- JS command handlers ---
 
-    fn cmd_ready(&mut self, _ctx: &mut AppCtx) -> Value {
-        let tab_count = self.tab_store.tabs.len();
-        let tabs_json: Vec<Value> = self
-            .tab_store
-            .tabs
+    fn cmd_ready(&self) -> Value {
+        // Snapshot of current bus-driven state. If sticky restoration
+        // hasn't completed yet, additional `bus_new_tab` events fire as
+        // the bus delivers each `BrowserTab`.
+        let mut tabs: Vec<&BrowserTab> = self.tabs_by_id.values().collect();
+        tabs.sort_by_key(|t| t.ordinal);
+        let tabs_json: Vec<Value> = tabs
             .iter()
-            .enumerate()
-            .map(|(i, t)| {
+            .map(|t| {
                 json!({
-                    "id": format!("restored-{i}"),
+                    "id": t.id,
                     "url": t.url,
                     "title": t.title,
                 })
             })
             .collect();
-
-        // Materialize WebViews for restored tabs. Snapshot the persisted
-        // entries first to avoid borrowing self.tab_store across create_tab.
-        let snapshots: Vec<(String, String, Option<String>)> = self
-            .tab_store
-            .tabs
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                (
-                    format!("restored-{i}"),
-                    t.url.clone(),
-                    t.session_state.clone(),
-                )
-            })
-            .collect();
-        for (tab_id, url, session_state) in snapshots {
-            self.create_tab(&tab_id, Some(&url), session_state.as_deref());
-        }
-
-        let active_id = if tab_count > 0 {
-            let id = "restored-0".to_string();
-            self.switch_tab(&id);
-            id
-        } else {
-            String::new()
-        };
-
+        let active_id = self
+            .realized_active_tab_id
+            .clone()
+            .or_else(|| self.config.active_tab_id.clone())
+            .unwrap_or_default();
         json!({
             "tabs": tabs_json,
             "activeTabId": active_id,
         })
     }
 
-    fn cmd_create_tab(&mut self, args: &Value) -> Value {
+    fn cmd_create_tab(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let Some(tab_id) = args["tabId"].as_str() else {
             return json!({ "error": "missing tabId" });
         };
-        let url = args["url"].as_str();
+        let url = args["url"].as_str().unwrap_or("");
         let activate = args["activate"].as_bool().unwrap_or(true);
         let tab_id = tab_id.to_string();
-
-        // Append to tab_store before create_tab (create_tab persists only;
-        // it no longer mutates the store).
-        self.tab_store.tabs.push(PersistedTab {
-            url: url.unwrap_or("").to_string(),
+        let ordinal = self.next_ordinal();
+        let tab = BrowserTab {
+            id: tab_id.clone(),
+            url: url.to_string(),
             title: String::new(),
+            ordinal,
             session_state: None,
-        });
-        self.create_tab(&tab_id, url, None);
+        };
+        self.tabs_by_id.insert(tab_id.clone(), tab.clone());
+        self.create_webview_for_tab(&tab);
+        ctx.emit(Topic::BrowserTab(tab));
         if activate {
-            self.switch_tab(&tab_id);
+            self.set_active_tab(Some(tab_id), ctx);
         }
-        self.persist_tabs();
         json!("ok")
     }
 
-    fn cmd_close_tab(&mut self, args: &Value) -> Value {
+    fn cmd_close_tab(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let Some(tab_id) = args["tabId"].as_str() else {
             return json!({ "error": "missing tabId" });
         };
         let tab_id = tab_id.to_string();
-        self.close_tab(&tab_id);
+        self.close_tab(&tab_id, ctx);
         json!("ok")
     }
 
-    fn cmd_switch_tab(&mut self, args: &Value) -> Value {
+    fn cmd_switch_tab(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let Some(tab_id) = args["tabId"].as_str() else {
             return json!({ "error": "missing tabId" });
         };
         let tab_id = tab_id.to_string();
-        self.switch_tab(&tab_id);
+        self.set_active_tab(Some(tab_id), ctx);
         json!("ok")
     }
 
@@ -539,10 +682,35 @@ impl BrowserApp {
     }
 }
 
+/// Pure selection function for tests. Returns `Some(target)` to switch
+/// to a new selection (`target` itself may be `None` to clear), or
+/// `None` to indicate "no change needed" (current selection still
+/// matches the desired outcome).
+pub(crate) fn select_active(
+    tabs_by_id: &HashMap<String, BrowserTab>,
+    desired_active_id: Option<&str>,
+    realized: Option<&str>,
+) -> Option<Option<String>> {
+    let target = desired_active_id
+        .filter(|id| tabs_by_id.contains_key(*id))
+        .map(str::to_string)
+        .or_else(|| {
+            tabs_by_id
+                .values()
+                .min_by_key(|t| t.ordinal)
+                .map(|t| t.id.clone())
+        });
+    if target.as_deref() == realized {
+        None
+    } else {
+        Some(target)
+    }
+}
+
 // Stash the runtime weak for use inside signal handlers fired from GTK.
 // This is populated in `after_runtime_ready` and read by the handlers
-// installed inside `create_tab`. Using a thread-local (GTK is single-thread)
-// is simpler than threading the weak through every helper.
+// installed inside `create_webview_for_tab`. Using a thread-local (GTK is
+// single-thread) is simpler than threading the weak through every helper.
 thread_local! {
     pub(crate) static RUNTIME_WEAK: RefCell<Option<Weak<RefCell<AppRuntime<BrowserApp>>>>> =
         const { RefCell::new(None) };
@@ -593,5 +761,79 @@ pub(crate) fn browser_menu() -> sola_bus::topics::AppMenuPayload {
                 }],
             },
         ],
+    }
+}
+
+#[cfg(test)]
+mod realize_tests {
+    use super::*;
+    use sola_bus::topics::BrowserTab;
+    use std::collections::HashMap;
+
+    fn tab(id: &str, ord: u32) -> BrowserTab {
+        BrowserTab {
+            id: id.into(),
+            url: String::new(),
+            title: String::new(),
+            ordinal: ord,
+            session_state: None,
+        }
+    }
+
+    #[test]
+    fn no_change_when_target_matches_realized() {
+        let tabs: HashMap<_, _> = [(String::from("a"), tab("a", 0))].into();
+        assert_eq!(select_active(&tabs, Some("a"), Some("a")), None);
+    }
+
+    #[test]
+    fn switches_to_desired_when_present() {
+        let tabs: HashMap<_, _> = [
+            (String::from("a"), tab("a", 0)),
+            (String::from("b"), tab("b", 1)),
+        ]
+        .into();
+        assert_eq!(
+            select_active(&tabs, Some("b"), Some("a")),
+            Some(Some("b".into()))
+        );
+    }
+
+    #[test]
+    fn falls_back_to_lowest_ordinal_when_desired_missing() {
+        let tabs: HashMap<_, _> = [
+            (String::from("b"), tab("b", 5)),
+            (String::from("c"), tab("c", 1)),
+        ]
+        .into();
+        assert_eq!(
+            select_active(&tabs, Some("a"), None),
+            Some(Some("c".into()))
+        );
+    }
+
+    #[test]
+    fn falls_back_to_lowest_when_no_desired() {
+        let tabs: HashMap<_, _> = [
+            (String::from("z"), tab("z", 9)),
+            (String::from("y"), tab("y", 3)),
+        ]
+        .into();
+        assert_eq!(
+            select_active(&tabs, None, None),
+            Some(Some("y".into()))
+        );
+    }
+
+    #[test]
+    fn clears_when_no_tabs_and_realized_was_set() {
+        let tabs: HashMap<String, BrowserTab> = HashMap::new();
+        assert_eq!(select_active(&tabs, Some("a"), Some("a")), Some(None));
+    }
+
+    #[test]
+    fn no_change_when_no_tabs_and_no_realized() {
+        let tabs: HashMap<String, BrowserTab> = HashMap::new();
+        assert_eq!(select_active(&tabs, None, None), None);
     }
 }

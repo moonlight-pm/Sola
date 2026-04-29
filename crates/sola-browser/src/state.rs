@@ -1,45 +1,28 @@
-use serde::{Deserialize, Serialize};
-use sola_app::config::JsonConfig;
+//! Browser-side operations on the bus-defined persistent topics.
+//!
+//! Tabs, browser config, and visit history all live on the bus as
+//! persistent topics (see `sola_bus::topics::{BrowserTab, BrowserConfig,
+//! BrowserHistory}`). This module attaches local-only operations
+//! (record-visit, search) to those topics via an extension trait so
+//! the browser can mutate the aggregate and re-emit.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistedTab {
-    pub url: String,
-    pub title: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_state: Option<String>,
+use sola_bus::topics::{BrowserHistory, HistoryEntry};
+
+pub const MAX_HISTORY_ENTRIES: usize = 1000;
+
+pub trait HistoryOps {
+    /// Increment the visit counter for `url` (or insert a new entry).
+    /// The visited entry is moved to the front of `entries`. The list
+    /// is capped at `MAX_HISTORY_ENTRIES`.
+    fn record_visit(&mut self, url: &str, title: &str);
+
+    /// Substring match against url+title (case-insensitive). Results
+    /// are ordered by visit count, descending.
+    fn search(&self, query: &str, limit: usize) -> Vec<&HistoryEntry>;
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct TabStore {
-    pub tabs: Vec<PersistedTab>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_tab_id: Option<String>,
-}
-
-impl JsonConfig for TabStore {
-    const FILE_NAME: &'static str = "browser-tabs.json";
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HistoryEntry {
-    pub url: String,
-    pub title: String,
-    pub visits: u32,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct BrowsingHistory {
-    pub entries: Vec<HistoryEntry>,
-}
-
-impl JsonConfig for BrowsingHistory {
-    const FILE_NAME: &'static str = "browser-history.json";
-}
-
-const MAX_HISTORY_ENTRIES: usize = 1000;
-
-impl BrowsingHistory {
-    pub fn record_visit(&mut self, url: &str, title: &str) {
+impl HistoryOps for BrowserHistory {
+    fn record_visit(&mut self, url: &str, title: &str) {
         if let Some(entry) = self.entries.iter_mut().find(|e| e.url == url) {
             entry.title = title.to_string();
             entry.visits += 1;
@@ -50,7 +33,6 @@ impl BrowsingHistory {
                 visits: 1,
             });
         }
-        // Move visited entry to front
         if let Some(pos) = self.entries.iter().position(|e| e.url == url) {
             let entry = self.entries.remove(pos);
             self.entries.insert(0, entry);
@@ -58,19 +40,16 @@ impl BrowsingHistory {
         self.entries.truncate(MAX_HISTORY_ENTRIES);
     }
 
-    pub fn search(&self, query: &str, limit: usize) -> Vec<&HistoryEntry> {
-        let query_lower = query.to_lowercase();
-        let mut matches: Vec<&HistoryEntry> = self
+    fn search(&self, query: &str, limit: usize) -> Vec<&HistoryEntry> {
+        let q = query.to_lowercase();
+        let mut hits: Vec<&HistoryEntry> = self
             .entries
             .iter()
-            .filter(|e| {
-                e.url.to_lowercase().contains(&query_lower)
-                    || e.title.to_lowercase().contains(&query_lower)
-            })
+            .filter(|e| e.url.to_lowercase().contains(&q) || e.title.to_lowercase().contains(&q))
             .collect();
-        matches.sort_by(|a, b| b.visits.cmp(&a.visits));
-        matches.truncate(limit);
-        matches
+        hits.sort_by(|a, b| b.visits.cmp(&a.visits));
+        hits.truncate(limit);
+        hits
     }
 }
 
@@ -80,7 +59,7 @@ mod tests {
 
     #[test]
     fn history_record_and_search() {
-        let mut history = BrowsingHistory::default();
+        let mut history = BrowserHistory::default();
         history.record_visit("https://github.com", "GitHub");
         history.record_visit("https://github.com", "GitHub");
         history.record_visit("https://example.com", "Example");
@@ -95,7 +74,7 @@ mod tests {
 
     #[test]
     fn history_caps_at_max() {
-        let mut history = BrowsingHistory::default();
+        let mut history = BrowserHistory::default();
         for i in 0..1100 {
             history.record_visit(&format!("https://example.com/{i}"), "Test");
         }
