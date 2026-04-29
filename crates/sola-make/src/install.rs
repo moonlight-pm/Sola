@@ -4,26 +4,10 @@ use std::process::Command;
 const BIN_DIR: &str = "/opt/sola/bin";
 const LOG_DIR: &str = "/opt/sola/log";
 const SHARE_DIR: &str = "/opt/sola/share";
-const ASSETS_SRC: &str = "crates/sola-assets/assets/";
 
 /// Ensure install directories exist.
 pub fn ensure_dirs() -> Result<(), String> {
     run("sudo", &["mkdir", "-p", BIN_DIR, LOG_DIR, SHARE_DIR])
-}
-
-/// Sync the shared assets tree to the share directory.
-pub fn install_assets() -> Result<(), String> {
-    run(
-        "sudo",
-        &[
-            "rsync",
-            "-a",
-            "--checksum",
-            "--delete",
-            ASSETS_SRC,
-            &format!("{SHARE_DIR}/"),
-        ],
-    )
 }
 
 /// Copy a binary from `src` to the bin directory.
@@ -65,18 +49,20 @@ fn files_identical(a: &str, b: &str) -> Result<bool, String> {
 /// If `app` is provided, builds and installs only that app.
 /// Otherwise builds and installs all workspace binaries.
 pub fn install(app: Option<&str>) {
+    // Bootstrap third-party assets if any pack is missing or stale.
+    // /opt/sola/share is the single source of truth at runtime; install
+    // never rsyncs it from the source tree (nothing's committed there).
+    if let Some(reason) = super::assets::pull_reason() {
+        println!("Refreshing assets ({reason})...");
+        super::assets::pull();
+    }
+
     println!("Building...");
     super::build(app.map(|s| s.to_string()), false);
 
     println!("Preparing install...");
     if let Err(e) = ensure_dirs() {
         eprintln!("failed to create directories: {e}");
-        std::process::exit(1);
-    }
-
-    println!("Installing shared assets...");
-    if let Err(e) = install_assets() {
-        eprintln!("failed to install assets: {e}");
         std::process::exit(1);
     }
 

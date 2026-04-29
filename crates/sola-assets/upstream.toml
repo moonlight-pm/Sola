@@ -1,9 +1,8 @@
-# Pinned upstream sources for vendored asset packs.
+# Pinned upstream sources for third-party asset packs.
 #
-# Run `cargo make assets pull` to refresh. Most fetched files are committed
-# so clean clones build offline; packs that are too large to commit (e.g.
-# nerd-fonts) live behind a `.gitignore` and need a `pull` after a clean
-# clone before the affected app will work.
+# `cargo make assets pull` writes every pack to /opt/sola/share/<category>/<name>/.
+# Nothing is committed; `cargo make install` auto-pulls when packs are
+# missing or older than ~1 week, so a fresh clone just runs install.
 #
 # Sources:
 # - `github:<owner>/<repo>` — git clone (honors `rev`).
@@ -49,9 +48,8 @@ files    = ["InterVariable.woff2", "InterVariable-Italic.woff2"]
 # Iosevka Term Slab (Nerd Font Mono variant) — the terminal font.
 # Sourced from nixpkgs because upstream release zips bundle every
 # weight/width permutation (~240 MB); the nixpkgs derivation ships only
-# the four core styles we need. Each source TTF is ~13 MB so the
-# converted WOFF2s (~2.5 MB each) are gitignored — rerun
-# `cargo make assets pull` after a clean clone to repopulate.
+# the four core styles we need. The source TTFs are ~13 MB each, and the
+# converted WOFF2s ship to /opt/sola/share/fonts/IosevkaTermSlab/.
 # License: SIL OFL 1.1.
 [packs.IosevkaTermSlab]
 source   = "nix-pkg:nerd-fonts.iosevka-term-slab"

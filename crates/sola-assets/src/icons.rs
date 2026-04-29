@@ -1,19 +1,15 @@
 //! Icon-pack path helpers.
 //!
-//! Icons live at `<assets_dir>/icons/<pack>/<name>.svg`. Use [`path`] to check
-//! whether a named icon is actually present on disk.
+//! Icons live at `/opt/sola/share/icons/<pack>/<name>.svg`. Use [`path`] to
+//! check whether a named icon is actually present on disk.
 
 use std::path::PathBuf;
 
-use crate::assets_dir;
+use crate::resolve;
 
 /// Filesystem path to an icon, if it exists.
 pub fn path(pack: &str, name: &str) -> Option<PathBuf> {
-    let p = assets_dir()
-        .join("icons")
-        .join(pack)
-        .join(format!("{name}.svg"));
-    p.is_file().then_some(p)
+    resolve(&format!("icons/{pack}/{name}.svg"))
 }
 
 /// URI for referencing an icon from a WebView.

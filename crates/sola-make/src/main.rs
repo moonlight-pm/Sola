@@ -33,7 +33,7 @@ enum Commands {
         release: bool,
     },
 
-    /// Manage vendored third-party assets (icons, etc).
+    /// Manage third-party assets (icons, fonts, cursors).
     Assets {
         #[command(subcommand)]
         action: AssetsAction,
@@ -53,7 +53,9 @@ enum Commands {
 
 #[derive(clap::Subcommand, Debug)]
 enum AssetsAction {
-    /// Pull vendored asset packs from their pinned upstream sources.
+    /// Pull asset packs from their pinned upstream sources to /opt/sola/share.
+    /// `cargo make install` calls this automatically when packs are missing
+    /// or older than ~1 week, so manual invocation is rarely needed.
     Pull,
 }
 
