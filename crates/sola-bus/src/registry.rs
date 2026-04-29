@@ -6,10 +6,16 @@ use crate::topics::{Topic, TopicKind};
 /// `retracted` flag so handlers for `#[sticky]` / `#[persistent]` topic
 /// kinds can branch on add/remove. For ephemeral topic kinds,
 /// `retracted` is always `false`.
+///
+/// `source` is the emitter's `app_id`. Restored stickies replayed at
+/// bus startup carry `source = "sola-bus"` (the `BUS_SOURCE` constant
+/// in `state.rs`). Apps that emit and subscribe to the same topic can
+/// filter their own self-echo by comparing `source` to their `APP_ID`.
 #[derive(Debug)]
 pub struct Delivery<'a> {
     pub topic: &'a Topic,
     pub retracted: bool,
+    pub source: &'a str,
 }
 
 /// Handler signature for a registered topic. Receives the app state, the
@@ -87,6 +93,7 @@ mod tests {
     struct TestApp {
         last: Option<TopicKind>,
         last_retracted: bool,
+        last_source: String,
     }
     struct TestCtx;
 
@@ -99,12 +106,14 @@ mod tests {
     fn record(app: &mut TestApp, delivery: &Delivery, _ctx: &mut TestCtx) {
         app.last = Some(delivery.topic.kind());
         app.last_retracted = delivery.retracted;
+        app.last_source = delivery.source.to_string();
     }
 
     fn empty_app() -> TestApp {
         TestApp {
             last: None,
             last_retracted: false,
+            last_source: String::new(),
         }
     }
 
@@ -139,6 +148,7 @@ mod tests {
         let delivery = Delivery {
             topic: &topic,
             retracted: false,
+            source: "test",
         };
         reg.dispatch(&delivery, &mut app, &mut ctx);
         assert_eq!(app.last, Some(TopicKind::Shutdown));
@@ -155,8 +165,25 @@ mod tests {
         let delivery = Delivery {
             topic: &topic,
             retracted: true,
+            source: "test",
         };
         reg.dispatch(&delivery, &mut app, &mut ctx);
         assert!(app.last_retracted);
+    }
+
+    #[test]
+    fn dispatch_passes_source() {
+        let mut reg: BusRegistry<TestApp, TestCtx> = BusRegistry::new();
+        reg.on(TopicKind::Shutdown, record);
+        let mut app = empty_app();
+        let mut ctx = TestCtx;
+        let topic = Topic::Shutdown;
+        let delivery = Delivery {
+            topic: &topic,
+            retracted: false,
+            source: "sola-test",
+        };
+        reg.dispatch(&delivery, &mut app, &mut ctx);
+        assert_eq!(app.last_source, "sola-test");
     }
 }
