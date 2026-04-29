@@ -259,6 +259,46 @@ pub struct TerminalSession {
     pub ordinal: u32,
 }
 
+/// One persisted browser tab. Keyed by `id` (UUIDv4 generated at tab
+/// creation). `ordinal` orders the tab strip; gaps are fine, JS sorts
+/// by ordinal. `session_state` is the base64-encoded WebKit page
+/// session blob (back/forward stack, scroll position, form state) and
+/// is `None` until the tab has been navigated.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserTab {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub ordinal: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_state: Option<String>,
+}
+
+/// Browser-wide singleton config. Headroom for future fields (default
+/// search engine, zoom default, etc.) without breaking the schema.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_tab_id: Option<String>,
+}
+
+/// One visited URL. Cap and MRU policy are enforced by the browser
+/// before emitting `BrowserHistory` (the singleton aggregate).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub url: String,
+    pub title: String,
+    pub visits: u32,
+}
+
+/// Singleton browser history aggregate. The browser owns the cap and
+/// MRU ordering; the bus persists the latest snapshot.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserHistory {
+    #[serde(default)]
+    pub entries: Vec<HistoryEntry>,
+}
+
 /// Ask a specific Sola app to evaluate a JS expression in one of its
 /// WebViews. The app's framework wraps the expression, runs it, and
 /// emits an `Evaluation` event with the JSON-encoded result. Multiple
@@ -416,6 +456,24 @@ define_topics! {
     // ordinals.
     #[persistent(keys = [id])]
     TerminalSession(TerminalSession),
+
+    // Browser singleton config (active tab id, future browser-wide
+    // settings). Lives in its own namespace file so frequent active-tab
+    // changes don't churn the shared state.toml.
+    #[persistent(namespace = "browser")]
+    BrowserConfig(BrowserConfig),
+
+    // Browser visited-URL history aggregate. Singleton; the browser
+    // enforces the cap (1000) and MRU ordering before emitting. Lives
+    // in its own namespace file.
+    #[persistent(namespace = "browser/history")]
+    BrowserHistory(BrowserHistory),
+
+    // One persisted browser tab. Keyed by `id` so each tab has its
+    // own `(BrowserTab, [id])` slot in the namespace
+    // ~/.config/sola/browser/tabs/<id>.toml.
+    #[persistent(keys = [id], namespace = "browser/tabs/:id")]
+    BrowserTab(BrowserTab),
 
     // Browser
     OpenUrl(OpenUrlRequest),
