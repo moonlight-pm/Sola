@@ -292,6 +292,33 @@ pub fn list_sessions() -> Option<Vec<String>> {
     }
 }
 
+/// Best-effort: ask tmux for the foreground process's cwd in this pane.
+///
+/// Tmux derives this by walking the pane's controlling tty's foreground
+/// process group and reading `/proc/<pid>/cwd`, so it works even when the
+/// shell never emits OSC 7 (zsh on NixOS, etc). Returns `None` if the
+/// session is gone or the path is empty.
+pub fn pane_current_path(session: &str) -> Option<String> {
+    let output = tmux_cmd()
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            session,
+            "-F",
+            "#{pane_current_path}",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() { None } else { Some(path) }
+}
+
 pub fn resize_window(session: &str, cols: u16, rows: u16) {
     let _ = tmux_cmd()
         .args([

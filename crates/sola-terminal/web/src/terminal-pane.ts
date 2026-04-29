@@ -9,7 +9,6 @@ interface TerminalPaneOptions {
   initialCwd?: string;
   onExit: () => void;
   onTitleChange: (title: string) => void;
-  onCwdChange: (cwd: string) => void;
   onPtyReady: (ptyId: string) => void;
 }
 
@@ -50,21 +49,6 @@ export class TerminalPane {
     // OSC 0/2: window title
     this.terminal.onTitleChange((title: string) => {
       this.options.onTitleChange(title);
-    });
-
-    // OSC 7: working directory
-    (this.terminal as any).parser.registerOscHandler(7, (data: string) => {
-      try {
-        const url = new URL(data);
-        const cwd = decodeURIComponent(url.pathname);
-        this.options.onCwdChange(cwd);
-        if (this.ptyId) {
-          invoke('update_cwd', { pty_id: this.ptyId, cwd });
-        }
-      } catch {
-        // Ignore malformed OSC 7
-      }
-      return true;
     });
   }
 
