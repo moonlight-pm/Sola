@@ -92,7 +92,7 @@ impl SolaApp for BrowserApp {
         let tab_store = TabStore::load();
         let history = BrowsingHistory::load();
 
-        ctx.emit_sticky(Topic::SetAppMenu(browser_menu()));
+        ctx.emit(Topic::SetAppMenu(browser_menu()));
         tracing::info!("registered browser menu");
 
         Self {
@@ -170,8 +170,8 @@ impl SolaApp for BrowserApp {
 }
 
 impl BrowserApp {
-    fn on_menu_action(&mut self, topic: &Topic, ctx: &mut AppCtx) {
-        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = topic else {
+    fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = delivery.topic else {
             return;
         };
         if app_id != "sola-browser" {
@@ -228,8 +228,8 @@ impl BrowserApp {
         }
     }
 
-    fn on_open_url(&mut self, topic: &Topic, _ctx: &mut AppCtx) {
-        let Topic::OpenUrl(OpenUrlRequest { url, activate }) = topic else {
+    fn on_open_url(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        let Topic::OpenUrl(OpenUrlRequest { url, activate }) = delivery.topic else {
             return;
         };
         let tab_id = uuid::Uuid::new_v4().to_string();

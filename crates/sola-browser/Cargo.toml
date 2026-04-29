@@ -8,9 +8,9 @@ name = "sola-browser"
 path = "src/main.rs"
 
 [dependencies]
-sola-app = { path = "../../crates/sola-app" }
-sola-bus = { path = "../../crates/sola-bus" }
-sola-core = { path = "../../crates/sola-core" }
+sola-app = { path = "../sola-app" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
 gtk4 = "0.9"
 gdk4 = "0.9"
 glib = "0.20"
