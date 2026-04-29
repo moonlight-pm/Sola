@@ -169,8 +169,10 @@ pub fn wire_signals(
                 };
                 let mut rt = runtime.borrow_mut();
                 let AppRuntime { app, ctx } = &mut *rt;
-                app.history.record_visit(&url_str, &title);
-                ctx.emit(Topic::BrowserHistory(app.history.clone()));
+                if !is_blank_url(&url_str) {
+                    app.history.record_visit(&url_str, &title);
+                    ctx.emit(Topic::BrowserHistory(app.history.clone()));
+                }
                 app.capture_tab_session_state(&tid, ctx);
             });
         });
@@ -281,5 +283,25 @@ pub fn wire_signals(
             decision.ignore();
             true
         });
+    }
+}
+
+/// True if `url` is a blank/internal placeholder that shouldn't appear
+/// in the user's visit history.
+fn is_blank_url(url: &str) -> bool {
+    matches!(url, "" | "about:blank" | "about:srcdoc")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blank_urls_are_ignored() {
+        assert!(is_blank_url(""));
+        assert!(is_blank_url("about:blank"));
+        assert!(is_blank_url("about:srcdoc"));
+        assert!(!is_blank_url("https://example.com"));
+        assert!(!is_blank_url("about:config"));
     }
 }

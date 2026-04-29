@@ -17,10 +17,8 @@ const state = createStore({
 
 // --- Tab management (synchronous, fire-and-forget IPC) ---
 
-let nextTabNum = 1;
-
 function createTab(url?: string, activate: boolean = true): string {
-  const tabId = `tab-${nextTabNum++}`;
+  const tabId = crypto.randomUUID();
   state.tabs = [...state.tabs, { id: tabId, url: url || '', title: '', loading: true }];
   if (activate) {
     state.activeTabId = tabId;
@@ -87,11 +85,6 @@ function looksLikeUrl(input: string): boolean {
     || /^[\w-]+\.[\w.-]+/.test(input);
 }
 
-function parseTabNum(id: string): number {
-  const m = id.match(/^tab-(\d+)$/);
-  return m ? Number(m[1]) : 0;
-}
-
 // --- Events from Rust ---
 
 on('tab_title_changed', ({ tabId, title }: any) => {
@@ -108,8 +101,12 @@ on('tab_load_changed', ({ tabId, loading }: any) => {
 });
 
 on('bus_new_tab', (data: any) => {
-  const { tabId, url, activate } = data;
-  state.tabs = [...state.tabs, { id: tabId, url: url || '', title: '', loading: true }];
+  const { tabId, url, title, activate } = data;
+  // Echoes for tabs JS already created locally are idempotent: skip
+  // the append, but still pick up activation/url updates.
+  if (!state.tabs.some(t => t.id === tabId)) {
+    state.tabs = [...state.tabs, { id: tabId, url: url || '', title: title || '', loading: true }];
+  }
   if (activate !== false) {
     state.activeTabId = tabId;
     state.addressValue = url || '';
@@ -124,6 +121,12 @@ on('tab_closed', ({ tabId, nextTabId }: any) => {
     const tab = state.tabs.find(t => t.id === state.activeTabId);
     if (tab) state.addressValue = tab.url;
   }
+});
+
+on('active_tab_changed', ({ tabId }: any) => {
+  state.activeTabId = tabId ?? null;
+  const tab = state.tabs.find(t => t.id === state.activeTabId);
+  state.addressValue = tab?.url || '';
 });
 
 on('bus_focus_address', () => { state.addressFocusNonce++; });
@@ -181,18 +184,15 @@ export async function createApp(root: HTMLElement): Promise<void> {
 
   createToasts({ downloads: () => state.downloads }, toastsTarget);
 
-  // Restore session
+  // Restore session. Tabs may also stream in via `bus_new_tab` events
+  // as the bus delivers persistent stickies; the snapshot here covers
+  // the case where stickies were already drained before JS connected.
+  // If neither path produces tabs, the browser stays empty — the user
+  // opens one with the "+" button or Cmd+T (matches sola-terminal).
   const session = await invoke('ready');
   if (session.tabs && session.tabs.length > 0) {
     state.tabs = session.tabs;
     state.activeTabId = session.activeTabId || session.tabs[0].id;
     state.addressValue = state.tabs.find(t => t.id === state.activeTabId)?.url || '';
-    // Bump nextTabNum past any restored tab numbers so new ids don't collide.
-    for (const t of state.tabs) {
-      nextTabNum = Math.max(nextTabNum, parseTabNum(t.id) + 1);
-    }
-  }
-  if (state.tabs.length === 0) {
-    createTab('about:blank');
   }
 }

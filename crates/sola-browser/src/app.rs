@@ -368,10 +368,16 @@ impl BrowserApp {
         );
         if let Some(target) = target {
             self.realized_active_tab_id = target.clone();
-            match target {
-                Some(id) => self.show_tab(&id),
+            match &target {
+                Some(id) => self.show_tab(id),
                 None => self.hide_all_tabs(),
             }
+            // Notify JS so the strip's active highlight follows.
+            // `null` clears highlight when no tab remains.
+            self.emit_to_chrome(
+                "active_tab_changed",
+                json!({ "tabId": target }),
+            );
         }
     }
 
@@ -461,21 +467,18 @@ impl BrowserApp {
     }
 
     /// Set the persisted active tab and emit the updated config. The
-    /// visible WebView change happens in `realize_active` triggered by
-    /// the resulting `BrowserConfig` echo.
+    /// visible WebView change happens in `realize_active`, which also
+    /// emits `active_tab_changed` to JS.
     pub(crate) fn set_active_tab(&mut self, tab_id: Option<String>, ctx: &mut AppCtx) {
         if self.config.active_tab_id == tab_id {
             return;
         }
-        self.config.active_tab_id = tab_id.clone();
+        self.config.active_tab_id = tab_id;
         ctx.emit(Topic::BrowserConfig(self.config.clone()));
-        // Optimistic local realize: update the visible WebView now,
-        // without waiting for the bus echo (still race-free; the echo
-        // either matches or supersedes us).
+        // Optimistic local realize so the WebView swaps now without
+        // waiting for the bus echo. realize_active is idempotent, so
+        // the echo's call is a no-op.
         self.realize_active(ctx);
-        if let Some(id) = tab_id {
-            self.emit_to_chrome("active_tab_changed", json!({ "tabId": id }));
-        }
     }
 
     pub(crate) fn navigate_active(&mut self, url: &str) {
