@@ -3,7 +3,9 @@
 //! `cargo make assets pull` refreshes vendored third-party assets (icons, etc.)
 //! from the sources pinned in `crates/sola-assets/upstream.toml`.
 //!
-//! The fetched files are committed to the repo so clean clones build offline.
+//! Most fetched packs are committed so clean clones build offline. Packs that
+//! are too large to commit (e.g. nerd-fonts) live behind a `.gitignore` —
+//! re-running `pull` repopulates them.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,12 +23,16 @@ struct Upstream {
 
 #[derive(Debug, Deserialize)]
 struct Pack {
-    /// e.g. "github:lucide-icons/lucide"
+    /// Source format. Supported prefixes:
+    /// - `github:<owner>/<repo>` — git clone
+    /// - `nix-pkg:<attr>` — `nix-build '<nixos>' -A <attr>`, use the
+    ///   resulting store path as the source root (offline after first build)
     source: String,
     /// Git ref (branch, tag, or commit). Empty string means default branch.
+    /// Only honored for `github:` sources.
     #[serde(default)]
     rev: String,
-    /// Path (relative to repo root) containing the source files.
+    /// Path (relative to source root) containing the source files.
     src_dir: String,
     /// Destination category under `assets/` (e.g. "icons", "cursors").
     category: String,
@@ -35,14 +41,31 @@ struct Pack {
     /// - `"cursors"`: copy every file in `src_dir` (skipping `.cur` /
     ///   `.ani` Windows variants) into `<category>/<name>/cursors/`,
     ///   plus the repo-root `index.theme` into `<category>/<name>/`.
-    /// - `"fonts"`: copy each filename in `files` from `src_dir` into
+    /// - `"fonts"`: copy each entry in `files` from `src_dir` into
     ///   `<category>/<name>/`.
     #[serde(default)]
     kind: PackKind,
-    /// For `kind = "fonts"`: explicit list of filenames to copy from
-    /// `src_dir`. Other kinds ignore this field.
+    /// For `kind = "fonts"`: explicit list of entries to copy from
+    /// `src_dir`. Each entry is either a bare filename (copied as-is) or
+    /// a `{ from, to, transform? }` table. `transform = "ttf-to-woff2"`
+    /// runs the input through `woff2_compress` (via nix-shell) and writes
+    /// the result to `to`. Other kinds ignore this field.
     #[serde(default)]
-    files: Vec<String>,
+    files: Vec<FileEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum FileEntry {
+    /// Bare filename — copied verbatim.
+    Plain(String),
+    /// Explicit src→dest mapping with optional transform.
+    Mapped {
+        from: String,
+        to: String,
+        #[serde(default)]
+        transform: Option<String>,
+    },
 }
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
@@ -52,6 +75,30 @@ enum PackKind {
     Icons,
     Cursors,
     Fonts,
+}
+
+/// Result of acquiring a source tree for a pack. Captures whether the
+/// path is owned by us (`Tmp`, must be cleaned up) or external (`Pinned`,
+/// e.g. a nix store path — leave alone).
+enum SourceRoot {
+    Tmp(PathBuf),
+    Pinned(PathBuf),
+}
+
+impl SourceRoot {
+    fn path(&self) -> &Path {
+        match self {
+            SourceRoot::Tmp(p) | SourceRoot::Pinned(p) => p,
+        }
+    }
+}
+
+impl Drop for SourceRoot {
+    fn drop(&mut self) {
+        if let SourceRoot::Tmp(p) = self {
+            let _ = fs::remove_dir_all(p);
+        }
+    }
 }
 
 pub fn pull() {
@@ -73,31 +120,12 @@ pub fn pull() {
 fn pull_pack(name: &str, pack: &Pack) {
     println!("pulling {name} from {}", pack.source);
 
-    let clone_url = resolve_source(&pack.source).unwrap_or_else(|| {
-        eprintln!("unsupported source format: {}", pack.source);
-        exit(1);
-    });
+    let root = fetch_source(name, &pack.source, &pack.rev);
 
-    let tmp = tempdir_for(name);
-    let mut args = vec!["clone", "--quiet", "--no-tags"];
-    if pack.rev.is_empty() {
-        // Fast path for "latest": shallow-clone the default branch.
-        args.push("--depth");
-        args.push("1");
-    }
-    args.push(clone_url.as_str());
-    let tmp_str = tmp.to_str().unwrap();
-    args.push(tmp_str);
-    run("git", &args);
-
-    if !pack.rev.is_empty() {
-        run("git", &["-C", tmp_str, "checkout", "--quiet", &pack.rev]);
-    }
-
-    let src = tmp.join(&pack.src_dir);
+    let src = root.path().join(&pack.src_dir);
     if !src.is_dir() {
         eprintln!(
-            "{name}: source directory {} not found in cloned repo",
+            "{name}: source directory {} not found in source root",
             src.display()
         );
         exit(1);
@@ -117,13 +145,8 @@ fn pull_pack(name: &str, pack: &Pack) {
                 exit(1);
             }
             fs::create_dir_all(&dest).ok();
-            for file in &pack.files {
-                let from = src.join(file);
-                let to = dest.join(file);
-                if let Err(e) = fs::copy(&from, &to) {
-                    eprintln!("failed to copy {} -> {}: {e}", from.display(), to.display());
-                    exit(1);
-                }
+            for entry in &pack.files {
+                process_font_entry(name, entry, &src, &dest);
             }
             println!("  {} font files -> {}", pack.files.len(), dest.display());
         }
@@ -133,7 +156,7 @@ fn pull_pack(name: &str, pack: &Pack) {
             println!("  {count} cursors -> {}", cursors_dest.display());
             // Cursor themes need an `index.theme` next to `cursors/`.
             // Adwaita keeps it at the repo root; copy it into place.
-            let theme_src = tmp.join("index.theme");
+            let theme_src = root.path().join("index.theme");
             if theme_src.is_file() {
                 let theme_dest = dest.join("index.theme");
                 if let Err(e) = fs::copy(&theme_src, &theme_dest) {
@@ -147,20 +170,159 @@ fn pull_pack(name: &str, pack: &Pack) {
                 println!("  index.theme -> {}", theme_dest.display());
             } else {
                 eprintln!(
-                    "{name}: warning: no index.theme at repo root ({})",
+                    "{name}: warning: no index.theme at source root ({})",
                     theme_src.display()
                 );
             }
         }
     }
+}
 
+/// Acquire a source tree for the pack. Returns a path that contains the
+/// upstream content; resource cleanup (if any) is tied to the returned
+/// `SourceRoot` via Drop.
+fn fetch_source(name: &str, source: &str, rev: &str) -> SourceRoot {
+    if let Some(slug) = source.strip_prefix("github:") {
+        let url = format!("https://github.com/{slug}.git");
+        let tmp = tempdir_for(name);
+        let mut args = vec!["clone", "--quiet", "--no-tags"];
+        if rev.is_empty() {
+            args.push("--depth");
+            args.push("1");
+        }
+        args.push(url.as_str());
+        let tmp_str = tmp.to_str().unwrap();
+        args.push(tmp_str);
+        run("git", &args);
+        if !rev.is_empty() {
+            run("git", &["-C", tmp_str, "checkout", "--quiet", rev]);
+        }
+        SourceRoot::Tmp(tmp)
+    } else if let Some(attr) = source.strip_prefix("nix-pkg:") {
+        let output = Command::new("nix-build")
+            .args(["<nixos>", "-A", attr, "--no-out-link"])
+            .output()
+            .unwrap_or_else(|e| {
+                eprintln!("failed to run nix-build for {attr}: {e}");
+                exit(1);
+            });
+        if !output.status.success() {
+            eprintln!(
+                "nix-build failed for {attr}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            exit(1);
+        }
+        let path = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .last()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if path.is_empty() {
+            eprintln!("nix-build for {attr} produced no output path");
+            exit(1);
+        }
+        SourceRoot::Pinned(PathBuf::from(path))
+    } else {
+        eprintln!("{name}: unsupported source format: {source}");
+        exit(1);
+    }
+}
+
+/// Copy or transform a single font entry from `src` to `dest`.
+fn process_font_entry(name: &str, entry: &FileEntry, src: &Path, dest: &Path) {
+    let (from, to, transform) = match entry {
+        FileEntry::Plain(f) => (f.as_str(), f.as_str(), None),
+        FileEntry::Mapped {
+            from,
+            to,
+            transform,
+        } => (from.as_str(), to.as_str(), transform.as_deref()),
+    };
+    let from_path = src.join(from);
+    let to_path = dest.join(to);
+    match transform {
+        None => {
+            if let Err(e) = fs::copy(&from_path, &to_path) {
+                eprintln!(
+                    "{name}: failed to copy {} -> {}: {e}",
+                    from_path.display(),
+                    to_path.display()
+                );
+                exit(1);
+            }
+        }
+        Some("ttf-to-woff2") => ttf_to_woff2(name, &from_path, &to_path),
+        Some(other) => {
+            eprintln!("{name}: unknown transform: {other}");
+            exit(1);
+        }
+    }
+}
+
+/// Compress a TTF/OTF to WOFF2 using `woff2_compress` from nixpkgs.
+/// `woff2_compress` writes `<input>.woff2` next to its input, so we stage
+/// in a tmp dir and move the result into place.
+fn ttf_to_woff2(name: &str, src: &Path, dest: &Path) {
+    let stem = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("font");
+    let tmp = std::env::temp_dir().join(format!(
+        "sola-woff2-{name}-{stem}-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap_or_else(|e| {
+        eprintln!("failed to create {}: {e}", tmp.display());
+        exit(1);
+    });
+    let staged = tmp.join(src.file_name().unwrap_or_else(|| "input".as_ref()));
+    if let Err(e) = fs::copy(src, &staged) {
+        eprintln!(
+            "{name}: failed to stage {} -> {}: {e}",
+            src.display(),
+            staged.display()
+        );
+        exit(1);
+    }
+    let staged_str = staged.to_string_lossy().into_owned();
+    run(
+        "nix-shell",
+        &[
+            "-p",
+            "woff2",
+            "--quiet",
+            "--run",
+            &format!("woff2_compress {}", shell_escape(&staged_str)),
+        ],
+    );
+    let produced = staged.with_extension("woff2");
+    if let Err(e) = fs::rename(&produced, dest).or_else(|_| fs::copy(&produced, dest).map(|_| ())) {
+        eprintln!(
+            "{name}: failed to place {} at {}: {e}",
+            produced.display(),
+            dest.display()
+        );
+        exit(1);
+    }
     let _ = fs::remove_dir_all(&tmp);
 }
 
-fn resolve_source(source: &str) -> Option<String> {
-    source
-        .strip_prefix("github:")
-        .map(|slug| format!("https://github.com/{slug}.git"))
+/// Single-quote a string for safe inclusion in a shell command.
+fn shell_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 fn tempdir_for(name: &str) -> PathBuf {
