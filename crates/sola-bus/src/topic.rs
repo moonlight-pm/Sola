@@ -68,6 +68,87 @@ impl Behavior {
     }
 }
 
+/// Failure modes for namespace path interpolation.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PathError {
+    /// The interpolated key value was empty.
+    Empty(&'static str),
+    /// The interpolated key value contained `/`, `\0`, or a `..` segment.
+    Forbidden(&'static str, String),
+    /// The namespace template referenced a `:placeholder` that doesn't
+    /// match any declared key field.
+    UnknownPlaceholder(String),
+}
+
+impl std::fmt::Display for PathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathError::Empty(name) => write!(f, "namespace key `{name}` is empty"),
+            PathError::Forbidden(name, value) => {
+                write!(f, "namespace key `{name}` contains forbidden characters: {value:?}")
+            }
+            PathError::UnknownPlaceholder(name) => {
+                write!(f, "namespace template references unknown key `{name}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PathError {}
+
+/// Substitute `:keyname` placeholders in `template` with values from
+/// `values`, matched by index against `names`. Each value is validated:
+/// non-empty, no `/`, no `\0`, no `..` segment.
+///
+/// `names[i]` is the declared name of the `i`th key field;
+/// `values[i]` is its `Display`-stringified value at runtime.
+pub fn interpolate_namespace(
+    template: &str,
+    names: &[&'static str],
+    values: &[String],
+) -> Result<String, PathError> {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(idx) = rest.find(':') {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx + 1..];
+        let mut matched: Option<(&'static str, &str)> = None;
+        for (i, name) in names.iter().enumerate() {
+            if after.starts_with(name)
+                && after[name.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_')
+            {
+                let value = values
+                    .get(i)
+                    .ok_or(PathError::UnknownPlaceholder((*name).into()))?;
+                if value.is_empty() {
+                    return Err(PathError::Empty(*name));
+                }
+                if value.contains('/') || value.contains('\0') {
+                    return Err(PathError::Forbidden(*name, value.clone()));
+                }
+                if value == ".." || value.split('/').any(|seg| seg == "..") {
+                    return Err(PathError::Forbidden(*name, value.clone()));
+                }
+                matched = Some((*name, value));
+                break;
+            }
+        }
+        let (name, value) = matched.ok_or_else(|| {
+            let end = after
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(after.len());
+            PathError::UnknownPlaceholder(after[..end].into())
+        })?;
+        out.push_str(value);
+        rest = &after[name.len()..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 /// Define a Topic enum with typed variants, a parse function, and to_message.
 ///
 /// Variant forms:
@@ -536,6 +617,36 @@ macro_rules! _define_topics_inner {
                 }
             }
 
+            /// Resolved on-disk path for this topic's persistent storage.
+            /// For topics without a `namespace` annotation, returns the
+            /// shared `~/.config/sola/state.toml` path. For namespaced
+            /// topics, returns `~/.config/sola/<interpolated>.toml`.
+            ///
+            /// Panics if an interpolated key value is unsafe (slash,
+            /// `..`, empty). Use `path_for_safe` for a typed error.
+            pub fn path_for(&self) -> std::path::PathBuf {
+                self.path_for_safe()
+                    .expect("invalid key segment in namespace interpolation")
+            }
+
+            /// Same as `path_for`, but returns `Err(PathError)` when an
+            /// interpolated key value is unsafe (contains `/`, `\0`,
+            /// `..`, or is empty), or when the namespace template
+            /// references an unknown placeholder.
+            pub fn path_for_safe(&self) -> Result<std::path::PathBuf, $crate::topic::PathError> {
+                let kind = self.kind();
+                let cfg = sola_core::config::sola_config_dir();
+                match kind.namespace() {
+                    None => Ok(cfg.join("state.toml")),
+                    Some(template) => {
+                        let names = kind.key_names();
+                        let values = self.keys_for();
+                        let resolved = $crate::topic::interpolate_namespace(template, names, &values)?;
+                        Ok(cfg.join(format!("{resolved}.toml")))
+                    }
+                }
+            }
+
             /// Serialize the topic's payload to a JSON value. Unit
             /// variants produce `Value::Null`. Used by sola-monitor and
             /// any other consumer that wants to surface raw bus traffic
@@ -698,5 +809,61 @@ mod tests {
         assert_eq!(TopicKind::Single.key_names(), &["id"]);
         assert_eq!(TopicKind::NamespacedKeyed.key_names(), &["id"]);
         assert_eq!(TopicKind::Multi.key_names(), &["window_id", "menu_id"]);
+    }
+
+    #[test]
+    fn path_for_no_namespace_falls_back_to_state_toml() {
+        let t = Topic::UnnamedSingleton(StickyKeyed { id: "x".into(), other: 1 });
+        let p = t.path_for();
+        assert_eq!(p, sola_core::config::sola_config_dir().join("state.toml"));
+    }
+
+    #[test]
+    fn path_for_singleton_namespaced() {
+        let t = Topic::NamespacedSingleton(StickyKeyed { id: "x".into(), other: 1 });
+        let p = t.path_for();
+        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/single.toml"));
+    }
+
+    #[test]
+    fn path_for_keyed_namespaced_interpolates() {
+        let t = Topic::NamespacedKeyed(StickyKeyed { id: "abc".into(), other: 1 });
+        let p = t.path_for();
+        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/keyed/abc.toml"));
+    }
+
+    #[test]
+    fn path_for_safe_rejects_path_traversal() {
+        let t = Topic::NamespacedKeyed(StickyKeyed { id: "../escape".into(), other: 1 });
+        assert!(matches!(t.path_for_safe(), Err(super::PathError::Forbidden(_, _))));
+    }
+
+    #[test]
+    fn path_for_safe_rejects_forward_slash() {
+        let t = Topic::NamespacedKeyed(StickyKeyed { id: "a/b".into(), other: 1 });
+        assert!(matches!(t.path_for_safe(), Err(super::PathError::Forbidden(_, _))));
+    }
+
+    #[test]
+    fn path_for_safe_rejects_empty_key() {
+        let t = Topic::NamespacedKeyed(StickyKeyed { id: "".into(), other: 1 });
+        assert!(matches!(t.path_for_safe(), Err(super::PathError::Empty(_))));
+    }
+
+    #[test]
+    fn interpolate_namespace_passes_through_when_no_placeholder() {
+        let r = super::interpolate_namespace("plain/path", &[], &[]).unwrap();
+        assert_eq!(r, "plain/path");
+    }
+
+    #[test]
+    fn interpolate_namespace_replaces_known_keys() {
+        let r = super::interpolate_namespace(
+            "a/:x/b/:y",
+            &["x", "y"],
+            &["one".into(), "two".into()],
+        )
+        .unwrap();
+        assert_eq!(r, "a/one/b/two");
     }
 }
