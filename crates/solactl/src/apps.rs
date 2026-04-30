@@ -1,4 +1,4 @@
-//! `sola-debug apps` — list running apps and their windows.
+//! `solactl apps` — list running apps and their windows.
 //!
 //! Reads the sticky `Topic::Windows` snapshot and groups by `app_id`.
 
@@ -19,7 +19,7 @@ pub fn run() -> i32 {
     let topic = bus::recv_until(&client, deadline, |t, _src| matches!(t, Topic::Windows(_)));
 
     let Some(Topic::Windows(windows)) = topic else {
-        eprintln!("sola-debug: no Windows snapshot from bus (shell not running?)");
+        eprintln!("solactl: no Windows snapshot from bus (shell not running?)");
         return 3;
     };
 

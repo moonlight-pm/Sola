@@ -2582,16 +2582,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sola-debug"
-version = "0.1.0"
-dependencies = [
- "clap",
- "serde_json",
- "sola-bus",
- "sola-core",
-]
-
-[[package]]
 name = "sola-make"
 version = "0.1.0"
 dependencies = [
@@ -2689,6 +2679,16 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "solactl"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde_json",
+ "sola-bus",
+ "sola-core",
 ]
 
 [[package]]

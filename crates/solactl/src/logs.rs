@@ -1,4 +1,4 @@
-//! `sola-debug logs` — tail an app's log file at /opt/sola/log/<app>.log.
+//! `solactl logs` — tail an app's log file at /opt/sola/log/<app>.log.
 //!
 //! Without `--follow`, prints the existing file content and exits.
 //! With `--follow`, continues to print new lines until interrupted.
@@ -16,7 +16,7 @@ pub fn run(app: Option<&str>, follow: bool) -> i32 {
     let mut file = match std::fs::File::open(&path) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("sola-debug: cannot open {path}: {e}");
+            eprintln!("solactl: cannot open {path}: {e}");
             return 3;
         }
     };
@@ -32,7 +32,7 @@ pub fn run(app: Option<&str>, follow: bool) -> i32 {
                 print!("{line}");
             }
             Err(e) => {
-                eprintln!("sola-debug: read error on {path}: {e}");
+                eprintln!("solactl: read error on {path}: {e}");
                 return 3;
             }
         }

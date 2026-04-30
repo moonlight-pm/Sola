@@ -676,7 +676,7 @@ macro_rules! _define_topics_inner {
             /// deserialized via `serde_json::from_value`; on schema
             /// mismatch, returns `None`.
             ///
-            /// Used by `sola-debug emit` to construct topics from CLI
+            /// Used by `solactl emit` to construct topics from CLI
             /// arguments without per-variant client-side code.
             pub fn from_json_kind(kind: TopicKind, value: serde_json::Value) -> Option<Topic> {
                 let _ = &value; // unused for kinds with no payload variants

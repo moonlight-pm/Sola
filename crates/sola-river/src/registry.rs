@@ -38,7 +38,7 @@ pub struct Entry {
     /// binary via `/proc/<pid>/…`.
     pub pid: Option<u32>,
     /// Last frame received from the shell as `(x, y, width, height)`.
-    /// Used by sola-debug's per-window screenshot to pass a region to
+    /// Used by solactl's per-window screenshot to pass a region to
     /// `grim`. May be stale immediately after a resize but converges.
     pub frame: Option<(i32, i32, i32, i32)>,
 }
@@ -104,7 +104,7 @@ impl WindowRegistry {
 
     /// Find a window matching `app_id` and (optionally) `title`. If
     /// `title` is `None`, returns the first window for that app. Used by
-    /// `sola-debug screenshot --app/--window`.
+    /// `solactl screenshot --app/--window`.
     pub fn find_by_app_title(&self, app_id: &str, title: Option<&str>) -> Option<&Entry> {
         self.by_id
             .values()

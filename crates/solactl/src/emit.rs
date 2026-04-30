@@ -1,4 +1,4 @@
-//! `sola-debug emit` — emit any bus topic with a JSON payload.
+//! `solactl emit` — emit any bus topic with a JSON payload.
 //!
 //! Lets the developer synthesize bus events for testing without writing
 //! a one-off script. Mirrors the JSON shape that `sola-monitor` displays,
@@ -11,7 +11,7 @@ use crate::bus;
 pub fn run(kind: &str, payload: &str) -> i32 {
     let Some(topic_kind) = TopicKind::from_str(kind) else {
         eprintln!(
-            "sola-debug: unknown topic kind '{kind}'. Use one of:\n  {}",
+            "solactl: unknown topic kind '{kind}'. Use one of:\n  {}",
             TopicKind::ALL
                 .iter()
                 .map(|k| k.as_str())
@@ -24,14 +24,14 @@ pub fn run(kind: &str, payload: &str) -> i32 {
     let value: serde_json::Value = match serde_json::from_str(payload) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("sola-debug: invalid JSON payload: {e}");
+            eprintln!("solactl: invalid JSON payload: {e}");
             return 3;
         }
     };
 
     let Some(topic) = Topic::from_json_kind(topic_kind, value) else {
         eprintln!(
-            "sola-debug: payload doesn't match the schema for {kind}. Check `sola-monitor` to see the expected shape.",
+            "solactl: payload doesn't match the schema for {kind}. Check `sola-monitor` to see the expected shape.",
         );
         return 3;
     };

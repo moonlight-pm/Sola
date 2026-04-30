@@ -303,7 +303,7 @@ pub struct BrowserHistory {
 /// WebViews. The app's framework wraps the expression, runs it, and
 /// emits an `Evaluation` event with the JSON-encoded result. Multiple
 /// concurrent `Evaluate` events to the same app race against each
-/// other — `sola-debug` is a one-at-a-time tool and doesn't try to
+/// other — `solactl` is a one-at-a-time tool and doesn't try to
 /// correlate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluatePayload {
@@ -484,15 +484,15 @@ define_topics! {
     Copy(EditRequest),
     Paste(EditRequest),
 
-    // Debug introspection (sola-debug ↔ apps via sola-app framework).
+    // Debug introspection (solactl ↔ apps via sola-app framework).
     Evaluate(EvaluatePayload),
     Evaluation(EvaluationPayload),
 
-    // Screenshot capture (sola-debug → sola-river).
+    // Screenshot capture (solactl → sola-river).
     CaptureScreen(CaptureScreenPayload),
     Screenshot(ScreenshotPayload),
 
-    // Synthetic input (sola-debug → sola-river).
+    // Synthetic input (solactl → sola-river).
     SimulatePointer(SimulatePointerPayload),
     SimulateKey(SimulateKeyPayload),
 

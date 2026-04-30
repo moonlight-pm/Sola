@@ -8,13 +8,13 @@ use std::time::{Duration, Instant};
 use sola_bus::BusClient;
 use sola_bus::topics::{Topic, TopicKind};
 
-/// Connect a fresh `BusClient` and identify as `sola-debug`. Exits the
+/// Connect a fresh `BusClient` and identify as `solactl`. Exits the
 /// process on failure (the CLI has nothing to do without the bus).
 pub fn connect_or_exit() -> BusClient {
     let mut client = BusClient::new();
-    client.set_app_id("sola-debug");
+    client.set_app_id("solactl");
     if let Err(e) = client.connect() {
-        eprintln!("sola-debug: bus connect failed: {e}");
+        eprintln!("solactl: bus connect failed: {e}");
         std::process::exit(3);
     }
     client
@@ -49,7 +49,7 @@ where
 /// Subscribe to a single topic kind, exiting on failure.
 pub fn subscribe(client: &mut BusClient, kinds: &[TopicKind]) {
     if let Err(e) = client.subscribe(kinds) {
-        eprintln!("sola-debug: bus subscribe failed: {e}");
+        eprintln!("solactl: bus subscribe failed: {e}");
         std::process::exit(3);
     }
 }
@@ -57,7 +57,7 @@ pub fn subscribe(client: &mut BusClient, kinds: &[TopicKind]) {
 /// Emit a topic, exiting on failure.
 pub fn emit(client: &mut BusClient, topic: Topic) {
     if let Err(e) = client.emit(topic) {
-        eprintln!("sola-debug: bus emit failed: {e}");
+        eprintln!("solactl: bus emit failed: {e}");
         std::process::exit(3);
     }
 }

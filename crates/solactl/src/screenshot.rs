@@ -1,4 +1,4 @@
-//! `sola-debug screenshot` — capture the compositor output to a PNG.
+//! `solactl screenshot` — capture the compositor output to a PNG.
 //!
 //! Emits `Topic::CaptureScreen` and waits for `Topic::Screenshot` from
 //! sola-river. The actual capture is delegated to `grim`.
@@ -53,7 +53,7 @@ pub fn run(
             }
         },
         _ => {
-            eprintln!("sola-debug: timeout waiting for screenshot (is sola-river running?)");
+            eprintln!("solactl: timeout waiting for screenshot (is sola-river running?)");
             2
         }
     }

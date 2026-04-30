@@ -1,11 +1,11 @@
-//! `sola-debug eval` — evaluate a JS expression in a Sola app's WebView.
+//! `solactl eval` — evaluate a JS expression in a Sola app's WebView.
 //!
 //! Emits `Topic::Evaluate` and waits for the next `Topic::Evaluation`
 //! whose `Message::source` matches the target app. The framework in
 //! `sola-app` wraps the expression, runs it, and emits the result.
 //!
 //! Concurrent invocations against the same target race; the bus has no
-//! request_id correlation. `sola-debug` is one-at-a-time by design.
+//! request_id correlation. `solactl` is one-at-a-time by design.
 
 use sola_bus::topics::{EvaluatePayload, Topic, TopicKind};
 
@@ -50,7 +50,7 @@ pub fn run(app: &str, window: Option<&str>, expression: &str, timeout_secs: u64)
         },
         _ => {
             eprintln!(
-                "sola-debug: timeout waiting for response from {app} (is it running?)"
+                "solactl: timeout waiting for response from {app} (is it running?)"
             );
             2
         }
