@@ -80,6 +80,108 @@ side, GTK4 + WebKitGTK 6.0 are runtime requirements for every
 [[sola-app|WebView app]]. These are normal nixpkgs packages with no
 patches.
 
+## WebKit runtime modules
+
+WebKitGTK is modular: it dynamically loads pieces of the system at
+runtime — TLS, codecs, audio sinks — rather than statically linking
+them. NixOS does not auto-wire those into a WebView's environment, so
+**every WebKit feature has to be both installed and reachable via an
+env var**, or the WebContent process aborts (often with no
+`load-failed` signal — just a silent renderer kill that leaves the tab
+at `about:blank`). [[sola-browser]] catches these via
+`connect_web_process_terminated` and auto-reloads, but the underlying
+fix is to give WebKit what it needs.
+
+Two known-required pieces today, both wired in
+`/etc/nixos/configuration.nix`:
+
+### TLS — `glib-networking`
+
+WebKitGTK's HTTPS goes through GIO's TLS backend, provided by
+`glib-networking` as a GIO module (`libgiognutls.so`). Without it,
+every `https://` URL fails with `TLS support is not available` from
+the load-failed handler.
+
+```nix
+environment.systemPackages = with pkgs; [ glib-networking ];
+environment.sessionVariables = {
+  GIO_EXTRA_MODULES = "${pkgs.glib-networking}/lib/gio/modules";
+};
+```
+
+### Media — GStreamer plugin set
+
+WebKit uses GStreamer for `<audio>`/`<video>`. The first time a page
+constructs a media element, `MediaPlayerPrivateGStreamer::createAudioSink()`
+walks the registry for a usable sink. If none is found,
+`WTFCrashWithInfo` aborts the WebContent process. (Symptom: any page
+that auto-plays or pre-fetches audio kills the tab.)
+
+The minimum set:
+
+| Package | What it provides |
+|---|---|
+| `gstreamer` | Core registry/runtime |
+| `gst-plugins-base` | Base elements (alsasink, decodebin) |
+| `gst-plugins-good` | **`pulsesink` / `pipewiresink` / `autoaudiosink`** — without this, no audio sink exists |
+| `gst-plugins-bad`, `gst-plugins-ugly` | Codecs not in `good` (mpegaudioparse etc.) |
+| `gst-libav` | Actual decoders (mp3, aac, h264) via FFmpeg |
+
+```nix
+environment.systemPackages = with pkgs; [
+  gst_all_1.gstreamer
+  gst_all_1.gst-plugins-base
+  gst_all_1.gst-plugins-good
+  gst_all_1.gst-plugins-bad
+  gst_all_1.gst-plugins-ugly
+  gst_all_1.gst-libav
+];
+environment.sessionVariables = {
+  GST_PLUGIN_SYSTEM_PATH_1_0 = lib.concatMapStringsSep ":"
+    (p: "${p}/lib/gstreamer-1.0")
+    (with pkgs.gst_all_1; [
+      gstreamer.out          # NB: must be `.out`, not `gstreamer`
+      gst-plugins-base
+      gst-plugins-good
+      gst-plugins-bad
+      gst-plugins-ugly
+      gst-libav
+    ]);
+};
+```
+
+> **Watch the gstreamer output.** `pkgs.gst_all_1.gstreamer` (no
+> qualifier) resolves to the `bin` output (tools like `gst-inspect-1.0`),
+> which has no `lib/gstreamer-1.0/` directory — pointing the env var
+> there silently drops core elements like `typefind` and `decodebin`,
+> and WebKit segfaults later inside `createVideoSink`. Use
+> `gstreamer.out` to get the default output that ships
+> `libgstcoreelements.so`. The other `gst-plugins-*` packages don't
+> have this split.
+
+### Diagnosing future "WebView dies on this site" reports
+
+The pattern is the same each time: WebKit tries to load a feature,
+the system can't satisfy it, the WebContent process hard-aborts.
+Recipe to identify the next missing piece:
+
+1. **Reproduce the kill** — e.g., click the breaking link.
+2. **Confirm it's a renderer crash** — look in `/opt/sola/log/sola.log`
+   for the `web-process-terminated; reloading` line. `reason=Crashed`
+   means a real abort (vs `ExceededMemoryLimit` or `TerminatedByApi`).
+3. **Get the stack** — `coredumpctl list --since="10 minutes ago"`
+   will show the WebKitWebProcess core; `coredumpctl info <PID>` (or
+   `journalctl --since`) prints the symbolicated trace. The top
+   non-WTF frame names the WebKit subsystem that aborted —
+   `createAudioSink`, `createNetworkSession`, etc. — which usually
+   maps directly to the missing module.
+4. **Add the module + env var, rebuild, relog** to propagate the
+   updated session vars to a fresh sola process.
+
+After updating session vars, the running sola won't see the change
+(it inherited the old environment). Either log out of the TTY and
+back in, or `source /etc/set-environment && pkill sola` and relaunch.
+
 ## Default browser / URL handler
 
 When a non-Sola app (`xdg-open`, GIO, electron's `shell.openExternal`,
