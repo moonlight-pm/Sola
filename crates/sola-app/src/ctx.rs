@@ -110,8 +110,11 @@ impl AppCtx {
 
                 // Compensate for compositor-assigned surface scales that
                 // make some WebView surfaces have devicePixelRatio != 1.
-                // Setting zoom_level = 1/dpr makes 1 CSS px render at 1
-                // device px, matching across all sola-app windows.
+                // dpr is linear in zoom_level for a fixed surface scale,
+                // so `current_zoom / dpr` is the zoom that makes css-px
+                // == device-px. (The earlier `1.0 / dpr` formula
+                // feedback-looped on reload — zoom 0.5 ⇒ dpr 1.0 ⇒ "fix"
+                // sets zoom 1.0 ⇒ next reload reads dpr 2.0 ⇒ flip.)
                 let webview_for_zoom = webview.clone();
                 webview.evaluate_javascript(
                     "window.devicePixelRatio",
@@ -126,8 +129,9 @@ impl AppCtx {
                         if dpr <= 0.001 {
                             return;
                         }
-                        let target_zoom = 1.0 / dpr;
-                        if (webview_for_zoom.zoom_level() - target_zoom).abs() < 0.005 {
+                        let current = webview_for_zoom.zoom_level();
+                        let target_zoom = current / dpr;
+                        if (current - target_zoom).abs() < 0.005 {
                             return;
                         }
                         webview_for_zoom.set_zoom_level(target_zoom);
