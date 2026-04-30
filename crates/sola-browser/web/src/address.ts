@@ -1,4 +1,4 @@
-import { html, watch } from '@arrow-js/core';
+import { html, reactive, watch } from '@arrow-js/core';
 
 export interface TopBarConfig {
   value: () => string;
@@ -14,6 +14,9 @@ export interface TopBarConfig {
   onInput: (value: string) => void;
   onBlur: () => void;
 }
+
+const local = reactive({ copied: false });
+let copyTimer: number | null = null;
 
 export function createTopBar(config: TopBarConfig, target: HTMLElement): void {
   function onInput(e: Event) {
@@ -48,6 +51,16 @@ export function createTopBar(config: TopBarConfig, target: HTMLElement): void {
     setTimeout(() => config.onBlur(), 200);
   }
 
+  function onCopyUrl() {
+    const url = config.value();
+    if (!url) return;
+    navigator.clipboard.writeText(url).then(() => {
+      local.copied = true;
+      if (copyTimer != null) clearTimeout(copyTimer);
+      copyTimer = window.setTimeout(() => { local.copied = false; copyTimer = null; }, 1200);
+    });
+  }
+
   html`
     <div class="top-bar">
       <button class="nav-btn" @click="${config.onBack}"><span class="icon icon-arrow-left"></span></button>
@@ -76,6 +89,11 @@ export function createTopBar(config: TopBarConfig, target: HTMLElement): void {
           </div>
         ` : html``}
       </div>
+      <button class="nav-btn copy-url-btn tooltip-end"
+        data-tooltip="${() => local.copied ? 'Copied!' : 'Copy URL'}"
+        @mousedown="${(e: MouseEvent) => e.preventDefault()}"
+        @click="${onCopyUrl}"
+      ><span class="${() => local.copied ? 'icon icon-check' : 'icon icon-copy'}"></span></button>
     </div>
   `(target);
 

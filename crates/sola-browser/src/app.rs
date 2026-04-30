@@ -166,6 +166,7 @@ impl SolaApp for BrowserApp {
                 self.reload();
                 json!("ok")
             }
+            "force_reload" => self.cmd_force_reload(args),
             "history_search" => self.cmd_history_search(args),
             other => {
                 tracing::warn!(cmd = other, "unknown js command");
@@ -238,11 +239,35 @@ impl BrowserApp {
                 self.chrome.webview().grab_focus();
                 tracing::debug!("focus address bar");
             }
+            "copy" => self.dispatch_editing_command("Copy"),
+            "cut" => self.dispatch_editing_command("Cut"),
+            "paste" => self.dispatch_editing_command("Paste"),
+            "select_all" => self.dispatch_editing_command("SelectAll"),
             "quit" => {
                 ctx.emit(Topic::Shutdown);
             }
             _ => {}
         }
+    }
+
+    /// Dispatch a WebKit editing command (Copy/Cut/Paste/SelectAll) to
+    /// whichever WebView currently has GTK focus. The shell intercepts
+    /// Cmd+C/X/V/A as menu shortcuts, so this is the path that replaces
+    /// WebKit's normally-native handling. Falls back to the chrome
+    /// WebView when nothing is explicitly focused — that's where the
+    /// address bar lives, which is the most common target.
+    fn dispatch_editing_command(&self, command: &str) {
+        let chrome_wv = self.chrome.webview();
+        let active_tab_wv = self
+            .realized_active_tab_id
+            .as_deref()
+            .and_then(|id| self.tabs.iter().find(|t| t.id == id))
+            .map(|t| &t.webview);
+        let target = match active_tab_wv {
+            Some(wv) if wv.has_focus() => wv,
+            _ => chrome_wv,
+        };
+        target.execute_editing_command(command);
     }
 
     fn on_open_url(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
@@ -446,21 +471,25 @@ impl BrowserApp {
         }
     }
 
-    /// Close a tab: retract its `BrowserTab` (which the echo handler
-    /// will clean up locally and surface to the strip) and pick a
-    /// fallback active tab if the closed one was active.
+    /// Close a tab. Mirrors `cmd_create_tab`'s local-first pattern:
+    /// remove from `tabs_by_id`, tear down the WebView, notify the strip,
+    /// then retract the sticky `BrowserTab` for any other listeners and
+    /// the persistent store. The bus does not echo a sender's own message
+    /// back, so `on_browser_tab`'s retracted branch never fires for our
+    /// own retract — the local cleanup must happen here.
     pub(crate) fn close_tab(&mut self, tab_id: &str, ctx: &mut AppCtx) {
-        let Some(tab) = self.tabs_by_id.get(tab_id).cloned() else {
+        let Some(tab) = self.tabs_by_id.remove(tab_id) else {
             return;
         };
+        self.destroy_webview(tab_id);
+        self.emit_to_chrome(
+            "tab_closed",
+            json!({ "tabId": tab_id, "nextTabId": Value::Null }),
+        );
+        let closed_ord = tab.ordinal;
         ctx.retract(Topic::BrowserTab(tab));
         if self.config.active_tab_id.as_deref() == Some(tab_id) {
-            let fallback = self
-                .tabs_by_id
-                .values()
-                .filter(|t| t.id != tab_id)
-                .min_by_key(|t| t.ordinal)
-                .map(|t| t.id.clone());
+            let fallback = neighbor_after_close(&self.tabs_by_id, closed_ord);
             self.set_active_tab(fallback, ctx);
         }
     }
@@ -646,6 +675,21 @@ impl BrowserApp {
         json!("ok")
     }
 
+    /// Hard-reset a wedged tab: terminate its WebContent process. The
+    /// existing `connect_web_process_terminated` handler then reloads
+    /// the last URI, so this path is "kill + auto-respawn" rather than
+    /// a plain reload.
+    fn cmd_force_reload(&mut self, args: &Value) -> Value {
+        let Some(tab_id) = args["tabId"].as_str() else {
+            return json!({ "error": "missing tabId" });
+        };
+        if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
+            tracing::warn!(%tab_id, "force-reload: terminating WebContent");
+            tab.webview.terminate_web_process();
+        }
+        json!("ok")
+    }
+
     fn cmd_switch_tab(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let Some(tab_id) = args["tabId"].as_str() else {
             return json!({ "error": "missing tabId" });
@@ -682,6 +726,27 @@ impl BrowserApp {
             .collect();
         json!(results)
     }
+}
+
+/// Pick the tab to activate after closing the tab at `closed_ord`.
+/// Prefers the nearest neighbour above (largest ordinal still less than
+/// `closed_ord`); falls back to the nearest neighbour below if none
+/// remains above. Returns `None` only if `tabs_by_id` is empty.
+pub(crate) fn neighbor_after_close(
+    tabs_by_id: &HashMap<String, BrowserTab>,
+    closed_ord: u32,
+) -> Option<String> {
+    tabs_by_id
+        .values()
+        .filter(|t| t.ordinal < closed_ord)
+        .max_by_key(|t| t.ordinal)
+        .or_else(|| {
+            tabs_by_id
+                .values()
+                .filter(|t| t.ordinal > closed_ord)
+                .min_by_key(|t| t.ordinal)
+        })
+        .map(|t| t.id.clone())
 }
 
 /// Pure selection function for tests. Returns `Some(target)` to switch
@@ -754,13 +819,44 @@ pub(crate) fn browser_menu() -> sola_bus::topics::AppMenuPayload {
             },
             MenuDefinition {
                 label: "Edit".into(),
-                items: vec![MenuItem::Action {
-                    id: "focus_address".into(),
-                    label: "Focus Address Bar".into(),
-                    shortcut: Some(KeyCode::L.meta()),
-                    disabled: false,
-                    checked: false,
-                }],
+                items: vec![
+                    MenuItem::Action {
+                        id: "copy".into(),
+                        label: "Copy".into(),
+                        shortcut: Some(KeyCode::C.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Action {
+                        id: "cut".into(),
+                        label: "Cut".into(),
+                        shortcut: Some(KeyCode::X.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Action {
+                        id: "paste".into(),
+                        label: "Paste".into(),
+                        shortcut: Some(KeyCode::V.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Action {
+                        id: "select_all".into(),
+                        label: "Select All".into(),
+                        shortcut: Some(KeyCode::A.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Divider,
+                    MenuItem::Action {
+                        id: "focus_address".into(),
+                        label: "Focus Address Bar".into(),
+                        shortcut: Some(KeyCode::L.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                ],
             },
         ],
     }
@@ -837,5 +933,48 @@ mod realize_tests {
     fn no_change_when_no_tabs_and_no_realized() {
         let tabs: HashMap<String, BrowserTab> = HashMap::new();
         assert_eq!(select_active(&tabs, None, None), None);
+    }
+
+    #[test]
+    fn neighbor_prefers_tab_above() {
+        let tabs: HashMap<_, _> = [
+            (String::from("a"), tab("a", 0)),
+            (String::from("b"), tab("b", 1)),
+            (String::from("c"), tab("c", 2)),
+        ]
+        .into();
+        // Closing "b" (ord 1) should activate "a" (ord 0), not "c".
+        assert_eq!(neighbor_after_close(&tabs, 1), Some("a".into()));
+    }
+
+    #[test]
+    fn neighbor_falls_back_to_below_when_no_above() {
+        let tabs: HashMap<_, _> = [
+            (String::from("b"), tab("b", 1)),
+            (String::from("c"), tab("c", 2)),
+        ]
+        .into();
+        // Closing the topmost (ord 0) leaves only ords 1 & 2 remaining;
+        // the nearest below is ord 1 ("b").
+        assert_eq!(neighbor_after_close(&tabs, 0), Some("b".into()));
+    }
+
+    #[test]
+    fn neighbor_picks_nearest_when_ordinals_have_gaps() {
+        let tabs: HashMap<_, _> = [
+            (String::from("a"), tab("a", 0)),
+            (String::from("c"), tab("c", 5)),
+            (String::from("d"), tab("d", 9)),
+        ]
+        .into();
+        // Closing ord 7 (which doesn't exist, but proves the math):
+        // nearest above is ord 5 ("c"), not ord 0.
+        assert_eq!(neighbor_after_close(&tabs, 7), Some("c".into()));
+    }
+
+    #[test]
+    fn neighbor_none_when_no_tabs_remain() {
+        let tabs: HashMap<String, BrowserTab> = HashMap::new();
+        assert_eq!(neighbor_after_close(&tabs, 3), None);
     }
 }

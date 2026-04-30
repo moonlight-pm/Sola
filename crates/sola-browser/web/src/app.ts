@@ -19,7 +19,7 @@ const state = createStore({
 
 function createTab(url?: string, activate: boolean = true): string {
   const tabId = crypto.randomUUID();
-  state.tabs = [...state.tabs, { id: tabId, url: url || '', title: '', loading: true }];
+  state.tabs = [...state.tabs, { id: tabId, url: url || '', title: '', loading: true, responsive: true }];
   if (activate) {
     state.activeTabId = tabId;
     state.addressValue = url || '';
@@ -68,6 +68,7 @@ function navigate(input: string): void {
 function goBack(): void { invoke('go_back'); }
 function goForward(): void { invoke('go_forward'); }
 function doReload(): void { invoke('reload'); }
+function forceReload(tabId: string): void { invoke('force_reload', { tabId }); }
 
 function searchHistory(value: string): void {
   if (!value || value.length < 2) {
@@ -100,12 +101,16 @@ on('tab_load_changed', ({ tabId, loading }: any) => {
   state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, loading } : t);
 });
 
+on('tab_responsive_changed', ({ tabId, responsive }: any) => {
+  state.tabs = state.tabs.map(t => t.id === tabId ? { ...t, responsive } : t);
+});
+
 on('bus_new_tab', (data: any) => {
   const { tabId, url, title, activate } = data;
   // Echoes for tabs JS already created locally are idempotent: skip
   // the append, but still pick up activation/url updates.
   if (!state.tabs.some(t => t.id === tabId)) {
-    state.tabs = [...state.tabs, { id: tabId, url: url || '', title: title || '', loading: true }];
+    state.tabs = [...state.tabs, { id: tabId, url: url || '', title: title || '', loading: true, responsive: true }];
   }
   if (activate !== false) {
     state.activeTabId = tabId;
@@ -167,6 +172,7 @@ export async function createApp(root: HTMLElement): Promise<void> {
     onSelect: switchTab,
     onClose: closeTab,
     onCreate: () => createTab(),
+    onForceReload: forceReload,
   }, sidebarTarget);
 
   createTopBar({
@@ -191,7 +197,8 @@ export async function createApp(root: HTMLElement): Promise<void> {
   // opens one with the "+" button or Cmd+T (matches sola-terminal).
   const session = await invoke('ready');
   if (session.tabs && session.tabs.length > 0) {
-    state.tabs = session.tabs;
+    // Snapshot from Rust omits transient flags; default them here.
+    state.tabs = session.tabs.map((t: any) => ({ loading: false, responsive: true, ...t }));
     state.activeTabId = session.activeTabId || session.tabs[0].id;
     state.addressValue = state.tabs.find(t => t.id === state.activeTabId)?.url || '';
   }
