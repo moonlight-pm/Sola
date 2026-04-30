@@ -1,4 +1,4 @@
-//! `sola-debug click | move | scroll | key` — synthesized input.
+//! `solactl click | move | scroll | key` — synthesized input.
 //!
 //! Emits `SimulatePointer` / `SimulateKey` topics; sola-river drives the
 //! compositor's wlr-virtual-pointer / virtual-keyboard.
@@ -12,7 +12,7 @@ use crate::bus;
 
 pub fn click(x: i32, y: i32, button: &str) -> i32 {
     let Some(button) = parse_button(button) else {
-        eprintln!("sola-debug: unknown button '{button}'. Use left, right, or middle.");
+        eprintln!("solactl: unknown button '{button}'. Use left, right, or middle.");
         return 3;
     };
     emit_pointer(PointerAction::Click { button, x, y })
@@ -36,7 +36,7 @@ pub fn key(chord_str: &str) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("sola-debug: {e}");
+            eprintln!("solactl: {e}");
             3
         }
     }

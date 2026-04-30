@@ -259,11 +259,51 @@ pub struct TerminalSession {
     pub ordinal: u32,
 }
 
+/// One persisted browser tab. Keyed by `id` (UUIDv4 generated at tab
+/// creation). `ordinal` orders the tab strip; gaps are fine, JS sorts
+/// by ordinal. `session_state` is the base64-encoded WebKit page
+/// session blob (back/forward stack, scroll position, form state) and
+/// is `None` until the tab has been navigated.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserTab {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub ordinal: u32,
+    #[serde(default)]
+    pub session_state: Option<String>,
+}
+
+/// Browser-wide singleton config. Headroom for future fields (default
+/// search engine, zoom default, etc.) without breaking the schema.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserConfig {
+    #[serde(default)]
+    pub active_tab_id: Option<String>,
+}
+
+/// One visited URL. Cap and MRU policy are enforced by the browser
+/// before emitting `BrowserHistory` (the singleton aggregate).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub url: String,
+    pub title: String,
+    pub visits: u32,
+}
+
+/// Singleton browser history aggregate. The browser owns the cap and
+/// MRU ordering; the bus persists the latest snapshot.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserHistory {
+    #[serde(default)]
+    pub entries: Vec<HistoryEntry>,
+}
+
 /// Ask a specific Sola app to evaluate a JS expression in one of its
 /// WebViews. The app's framework wraps the expression, runs it, and
 /// emits an `Evaluation` event with the JSON-encoded result. Multiple
 /// concurrent `Evaluate` events to the same app race against each
-/// other — `sola-debug` is a one-at-a-time tool and doesn't try to
+/// other — `solactl` is a one-at-a-time tool and doesn't try to
 /// correlate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluatePayload {
@@ -417,6 +457,24 @@ define_topics! {
     #[persistent(keys = [id])]
     TerminalSession(TerminalSession),
 
+    // Browser singleton config (active tab id, future browser-wide
+    // settings). Lives in its own namespace file so frequent active-tab
+    // changes don't churn the shared state.toml.
+    #[persistent(namespace = "browser")]
+    BrowserConfig(BrowserConfig),
+
+    // Browser visited-URL history aggregate. Singleton; the browser
+    // enforces the cap (1000) and MRU ordering before emitting. Lives
+    // in its own namespace file.
+    #[persistent(namespace = "browser/history")]
+    BrowserHistory(BrowserHistory),
+
+    // One persisted browser tab. Keyed by `id` so each tab has its
+    // own `(BrowserTab, [id])` slot in the namespace
+    // ~/.config/sola/browser/tabs/<id>.toml.
+    #[persistent(keys = [id], namespace = "browser/tabs/:id")]
+    BrowserTab(BrowserTab),
+
     // Browser
     OpenUrl(OpenUrlRequest),
 
@@ -426,15 +484,15 @@ define_topics! {
     Copy(EditRequest),
     Paste(EditRequest),
 
-    // Debug introspection (sola-debug ↔ apps via sola-app framework).
+    // Debug introspection (solactl ↔ apps via sola-app framework).
     Evaluate(EvaluatePayload),
     Evaluation(EvaluationPayload),
 
-    // Screenshot capture (sola-debug → sola-river).
+    // Screenshot capture (solactl → sola-river).
     CaptureScreen(CaptureScreenPayload),
     Screenshot(ScreenshotPayload),
 
-    // Synthetic input (sola-debug → sola-river).
+    // Synthetic input (solactl → sola-river).
     SimulatePointer(SimulatePointerPayload),
     SimulateKey(SimulateKeyPayload),
 

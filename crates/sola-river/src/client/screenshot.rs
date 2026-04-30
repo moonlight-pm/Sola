@@ -2,7 +2,7 @@
 //!
 //! ## Status
 //!
-//! `sola-debug screenshot` will return `"screenshot not yet implemented"`.
+//! `solactl screenshot` will return `"screenshot not yet implemented"`.
 //! The bus protocol (`Topic::CaptureScreen` / `Topic::Screenshot`) and CLI
 //! flags (`--app`, `--window`, `-o`) are wired and ready; only the capture
 //! body is missing.
@@ -20,7 +20,7 @@
 //! triggers either a wl_shm `INVALID_STRIDE` rejection or an out-of-bounds
 //! panic in the row-copy loop. Patching grim-rs to track bpp per-format and
 //! generalize the pixel pipeline is a meaningful change worth submitting
-//! upstream, but not on the critical path for sola-debug.
+//! upstream, but not on the critical path for solactl.
 //!
 //! ## Plan: hand-roll wlr-screencopy
 //!
@@ -62,7 +62,7 @@
 //!
 //! ## Until then
 //!
-//! Use a non-Sola screenshot tool (e.g. `grim`) directly; sola-debug
+//! Use a non-Sola screenshot tool (e.g. `grim`) directly; solactl
 //! will return a clear error message.
 
 use sola_bus::topics::{CaptureScreenPayload, ScreenshotPayload, Topic};

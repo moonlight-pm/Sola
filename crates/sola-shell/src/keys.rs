@@ -301,6 +301,12 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEv
     // aren't subscribers, so Meta+C/V with a foreign focus is a silent
     // no-op (and in practice doesn't fire at all, because the xkb
     // profile rebinds Meta→Ctrl when a non-Sola app is focused).
+    //
+    // Apps that explicitly bind Meta+C / Meta+V in their own menu opt
+    // out of this global path: the menu shortcut wins so they handle
+    // copy/paste like any other action (e.g. sola-browser's Edit menu
+    // routes to WebKit's editing commands). Otherwise we'd intercept
+    // here and the menu binding would never fire.
     if chord.meta
         && !chord.ctrl
         && !chord.alt
@@ -310,17 +316,24 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEv
         if app.switcher.active {
             return;
         }
-        if let Some(window_id) = app.focused_window_id {
-            let topic = if chord.keycode == KeyCode::C {
-                Topic::Copy(EditRequest { window_id })
+        let app_owns_chord = app
+            .focused_app_id
+            .as_deref()
+            .is_some_and(|focused| app.menus.lookup_shortcut(&chord, focused).is_some());
+        if !app_owns_chord {
+            if let Some(window_id) = app.focused_window_id {
+                let topic = if chord.keycode == KeyCode::C {
+                    Topic::Copy(EditRequest { window_id })
+                } else {
+                    Topic::Paste(EditRequest { window_id })
+                };
+                ctx.emit(topic);
             } else {
-                Topic::Paste(EditRequest { window_id })
-            };
-            ctx.emit(topic);
-        } else {
-            tracing::debug!("clipboard chord with no focused window");
+                tracing::debug!("clipboard chord with no focused window");
+            }
+            return;
         }
-        return;
+        // Fall through to the standard menu-shortcut dispatch below.
     }
 
     // Shell system shortcuts (e.g. Exit Sola).

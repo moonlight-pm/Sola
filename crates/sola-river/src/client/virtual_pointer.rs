@@ -1,7 +1,7 @@
 //! Driver for `wlr-virtual-pointer-unstable-v1`.
 //!
 //! Owns the manager proxy and a single virtual pointer attached to the
-//! seat. Used by `sola-debug` to script pointer movement, clicks, and
+//! seat. Used by `solactl` to script pointer movement, clicks, and
 //! scrolling for debugging and end-to-end testing.
 
 use std::time::{SystemTime, UNIX_EPOCH};

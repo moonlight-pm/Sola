@@ -205,6 +205,12 @@ pub fn builtin_apps() -> Vec<Application> {
             command: "/opt/sola/bin/sola-terminal".into(),
             icon: "lucide/terminal".into(),
         },
+        Application {
+            app_id: "sola-browser".into(),
+            label: "Browser".into(),
+            command: "/opt/sola/bin/sola-browser".into(),
+            icon: "lucide/globe".into(),
+        },
     ]
 }
 

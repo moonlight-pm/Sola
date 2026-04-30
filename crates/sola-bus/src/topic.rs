@@ -68,6 +68,87 @@ impl Behavior {
     }
 }
 
+/// Failure modes for namespace path interpolation.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PathError {
+    /// The interpolated key value was empty.
+    Empty(&'static str),
+    /// The interpolated key value contained `/`, `\0`, or a `..` segment.
+    Forbidden(&'static str, String),
+    /// The namespace template referenced a `:placeholder` that doesn't
+    /// match any declared key field.
+    UnknownPlaceholder(String),
+}
+
+impl std::fmt::Display for PathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathError::Empty(name) => write!(f, "namespace key `{name}` is empty"),
+            PathError::Forbidden(name, value) => {
+                write!(f, "namespace key `{name}` contains forbidden characters: {value:?}")
+            }
+            PathError::UnknownPlaceholder(name) => {
+                write!(f, "namespace template references unknown key `{name}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PathError {}
+
+/// Substitute `:keyname` placeholders in `template` with values from
+/// `values`, matched by index against `names`. Each value is validated:
+/// non-empty, no `/`, no `\0`, no `..` segment.
+///
+/// `names[i]` is the declared name of the `i`th key field;
+/// `values[i]` is its `Display`-stringified value at runtime.
+pub fn interpolate_namespace(
+    template: &str,
+    names: &[&'static str],
+    values: &[String],
+) -> Result<String, PathError> {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(idx) = rest.find(':') {
+        out.push_str(&rest[..idx]);
+        let after = &rest[idx + 1..];
+        let mut matched: Option<(&'static str, &str)> = None;
+        for (i, name) in names.iter().enumerate() {
+            if after.starts_with(name)
+                && after[name.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_')
+            {
+                let value = values
+                    .get(i)
+                    .ok_or(PathError::UnknownPlaceholder((*name).into()))?;
+                if value.is_empty() {
+                    return Err(PathError::Empty(*name));
+                }
+                if value.contains('/') || value.contains('\0') {
+                    return Err(PathError::Forbidden(*name, value.clone()));
+                }
+                if value == ".." || value.split('/').any(|seg| seg == "..") {
+                    return Err(PathError::Forbidden(*name, value.clone()));
+                }
+                matched = Some((*name, value));
+                break;
+            }
+        }
+        let (name, value) = matched.ok_or_else(|| {
+            let end = after
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(after.len());
+            PathError::UnknownPlaceholder(after[..end].into())
+        })?;
+        out.push_str(value);
+        rest = &after[name.len()..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 /// Define a Topic enum with typed variants, a parse function, and to_message.
 ///
 /// Variant forms:
@@ -102,6 +183,17 @@ impl Behavior {
 ///     Zones(HashMap<String, Zone>),
 /// }
 /// ```
+/// Internal helper for the `define_topics!` namespace match arm.
+/// Captures the `ns=()` (no namespace) and `ns=("…")` (namespace literal)
+/// shapes carried through the macro accumulator and converts them into
+/// `Option<&'static str>`.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ns_or_none {
+    ( () ) => { None };
+    ( ($ns:literal) ) => { Some($ns) };
+}
+
 #[macro_export]
 macro_rules! define_topics {
     ( $($tt:tt)* ) => {
@@ -117,194 +209,241 @@ macro_rules! define_topics {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! _define_topics_inner {
-    // --- #[persistent(keys = [...])] payload variants ---
+    // --- #[persistent(keys = [...], namespace = "...")] payload variants ---
+    // (Order: keys first, namespace second when both are present.)
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
-      #[persistent(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(keys = [ $($k:ident),+ $(,)? ], namespace = $ns:literal)] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* $name($payload) keys=[$($k)*] ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[$($k)*] ns=($ns) ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(keys = [ $($k:ident),+ $(,)? ], namespace = $ns:literal)] $name:ident ( $payload:ty ) ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[$($k)*] ns=($ns) ]
+        }
+    };
+
+    // --- #[persistent(namespace = "...")] payload variants (no keys) ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(namespace = $ns:literal)] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[] ns=($ns) ]
+            $($rest)*
+        }
+    };
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(namespace = $ns:literal)] $name:ident ( $payload:ty ) ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[] ns=($ns) ]
+        }
+    };
+
+    // --- #[persistent(keys = [...])] payload variants ---
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
+      #[persistent(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
+        $crate::_define_topics_inner!{
+            [ $($eu)* ] [ $($ep($ept))* ]
+            [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[$($k)*] ns=() ]
+            $($rest)*
+        }
+    };
+    ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
+      [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* $name($payload) keys=[$($k)*] ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[$($k)*] ns=() ]
         }
     };
 
     // --- #[persistent] payload variants (no keys) ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* $name($payload) keys=[] ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[] ns=() ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent] $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* $name($payload) keys=[] ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* $name($payload) keys=[] ns=() ]
         }
     };
 
     // --- #[persistent] unit variants (keys not allowed on units) ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent] $name:ident, $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* $name ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* $name ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[persistent] $name:ident ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* $name ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* $name ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- #[sticky(keys = [...])] payload variants ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* $name($payload) keys=[$($k)*] ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky(keys = [ $($k:ident),+ $(,)? ])] $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* $name($payload) keys=[$($k)*] ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- #[sticky] payload variants (no keys) ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky] $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* $name($payload) keys=[] ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky] $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* $name($payload) keys=[] ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- #[sticky] unit variants ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky] $name:ident, $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* $name ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       #[sticky] $name:ident ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* ]
             [ $($su)* $name ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- Ephemeral payload variants ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       $name:ident ( $payload:ty ), $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* $name($payload) ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       $name:ident ( $payload:ty ) ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* ] [ $($ep($ept))* $name($payload) ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- Ephemeral unit variants ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       $name:ident, $($rest:tt)* ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* $name ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
             $($rest)*
         }
     };
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
       $name:ident ) => {
         $crate::_define_topics_inner!{
             [ $($eu)* $name ] [ $($ep($ept))* ]
             [ $($su)* ] [ $($sp($spt) keys=[$($spk)*])* ]
-            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*])* ]
+            [ $($pu)* ] [ $($pp($ppt) keys=[$($ppk)*] ns=$ppns)* ]
         }
     };
 
     // --- Terminal: generate Topic, TopicKind, Behavior wiring ---
     ( [ $($eu:ident)* ] [ $($ep:ident($ept:ty))* ]
       [ $($su:ident)* ] [ $($sp:ident($spt:ty) keys=[$($spk:ident)*])* ]
-      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*])* ]
+      [ $($pu:ident)* ] [ $($pp:ident($ppt:ty) keys=[$($ppk:ident)*] ns=$ppns:tt)* ]
     ) => {
         #[derive(Debug, Clone)]
         pub enum Topic {
@@ -387,6 +526,31 @@ macro_rules! _define_topics_inner {
                     _ => false,
                 }
             }
+
+            /// Path-namespace template declared via
+            /// `#[persistent(namespace = "...")]`. Returns `None` for
+            /// unnamespaced and non-persistent kinds. The string may
+            /// contain `:keyname` placeholders that interpolate from
+            /// `keys_for()` at runtime — see `Topic::path_for`.
+            #[allow(unused_variables)]
+            pub fn namespace(self) -> Option<&'static str> {
+                match self {
+                    $( TopicKind::$pp => $crate::__ns_or_none!($ppns), )*
+                    _ => None,
+                }
+            }
+
+            /// Names of the key fields declared on this topic kind, in
+            /// declaration order. Empty slice for unkeyed kinds. Used
+            /// alongside `Topic::keys_for()` to interpolate `:keyname`
+            /// placeholders in a namespace template.
+            pub fn key_names(self) -> &'static [&'static str] {
+                match self {
+                    $( TopicKind::$sp => &[ $( stringify!($spk), )* ], )*
+                    $( TopicKind::$pp => &[ $( stringify!($ppk), )* ], )*
+                    _ => &[],
+                }
+            }
         }
 
         impl Topic {
@@ -453,6 +617,36 @@ macro_rules! _define_topics_inner {
                 }
             }
 
+            /// Resolved on-disk path for this topic's persistent storage.
+            /// For topics without a `namespace` annotation, returns the
+            /// shared `~/.config/sola/state.toml` path. For namespaced
+            /// topics, returns `~/.config/sola/<interpolated>.toml`.
+            ///
+            /// Panics if an interpolated key value is unsafe (slash,
+            /// `..`, empty). Use `path_for_safe` for a typed error.
+            pub fn path_for(&self) -> std::path::PathBuf {
+                self.path_for_safe()
+                    .expect("invalid key segment in namespace interpolation")
+            }
+
+            /// Same as `path_for`, but returns `Err(PathError)` when an
+            /// interpolated key value is unsafe (contains `/`, `\0`,
+            /// `..`, or is empty), or when the namespace template
+            /// references an unknown placeholder.
+            pub fn path_for_safe(&self) -> Result<std::path::PathBuf, $crate::topic::PathError> {
+                let kind = self.kind();
+                let cfg = sola_core::config::sola_config_dir();
+                match kind.namespace() {
+                    None => Ok(cfg.join("state.toml")),
+                    Some(template) => {
+                        let names = kind.key_names();
+                        let values = self.keys_for();
+                        let resolved = $crate::topic::interpolate_namespace(template, names, &values)?;
+                        Ok(cfg.join(format!("{resolved}.toml")))
+                    }
+                }
+            }
+
             /// Serialize the topic's payload to a JSON value. Unit
             /// variants produce `Value::Null`. Used by sola-monitor and
             /// any other consumer that wants to surface raw bus traffic
@@ -482,7 +676,7 @@ macro_rules! _define_topics_inner {
             /// deserialized via `serde_json::from_value`; on schema
             /// mismatch, returns `None`.
             ///
-            /// Used by `sola-debug emit` to construct topics from CLI
+            /// Used by `solactl emit` to construct topics from CLI
             /// arguments without per-variant client-side code.
             pub fn from_json_kind(kind: TopicKind, value: serde_json::Value) -> Option<Topic> {
                 let _ = &value; // unused for kinds with no payload variants
@@ -558,6 +752,12 @@ mod tests {
         Single(StickyKeyed),
         #[persistent(keys = [window_id, menu_id])]
         Multi(StickyMultiKey),
+        #[persistent]
+        UnnamedSingleton(StickyKeyed),
+        #[persistent(namespace = "ns/single")]
+        NamespacedSingleton(StickyKeyed),
+        #[persistent(keys = [id], namespace = "ns/keyed/:id")]
+        NamespacedKeyed(StickyKeyed),
     }
 
     #[test]
@@ -586,5 +786,84 @@ mod tests {
         assert!(!TopicKind::Bare.has_keys());
         assert!(TopicKind::Single.has_keys());
         assert!(TopicKind::Multi.has_keys());
+    }
+
+    #[test]
+    fn namespace_returns_some_only_when_declared() {
+        assert_eq!(TopicKind::UnnamedSingleton.namespace(), None);
+        assert_eq!(TopicKind::NamespacedSingleton.namespace(), Some("ns/single"));
+        assert_eq!(TopicKind::NamespacedKeyed.namespace(), Some("ns/keyed/:id"));
+        // Non-persistent kinds always None.
+        assert_eq!(TopicKind::Plain.namespace(), None);
+        assert_eq!(TopicKind::Bare.namespace(), None);
+        assert_eq!(TopicKind::Single.namespace(), None);
+        // Existing persistent without namespace.
+        assert_eq!(TopicKind::Multi.namespace(), None);
+    }
+
+    #[test]
+    fn key_names_in_declaration_order() {
+        assert!(TopicKind::Plain.key_names().is_empty());
+        assert!(TopicKind::UnnamedSingleton.key_names().is_empty());
+        assert!(TopicKind::NamespacedSingleton.key_names().is_empty());
+        assert_eq!(TopicKind::Single.key_names(), &["id"]);
+        assert_eq!(TopicKind::NamespacedKeyed.key_names(), &["id"]);
+        assert_eq!(TopicKind::Multi.key_names(), &["window_id", "menu_id"]);
+    }
+
+    #[test]
+    fn path_for_no_namespace_falls_back_to_state_toml() {
+        let t = Topic::UnnamedSingleton(StickyKeyed { id: "x".into(), other: 1 });
+        let p = t.path_for();
+        assert_eq!(p, sola_core::config::sola_config_dir().join("state.toml"));
+    }
+
+    #[test]
+    fn path_for_singleton_namespaced() {
+        let t = Topic::NamespacedSingleton(StickyKeyed { id: "x".into(), other: 1 });
+        let p = t.path_for();
+        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/single.toml"));
+    }
+
+    #[test]
+    fn path_for_keyed_namespaced_interpolates() {
+        let t = Topic::NamespacedKeyed(StickyKeyed { id: "abc".into(), other: 1 });
+        let p = t.path_for();
+        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/keyed/abc.toml"));
+    }
+
+    #[test]
+    fn path_for_safe_rejects_path_traversal() {
+        let t = Topic::NamespacedKeyed(StickyKeyed { id: "../escape".into(), other: 1 });
+        assert!(matches!(t.path_for_safe(), Err(super::PathError::Forbidden(_, _))));
+    }
+
+    #[test]
+    fn path_for_safe_rejects_forward_slash() {
+        let t = Topic::NamespacedKeyed(StickyKeyed { id: "a/b".into(), other: 1 });
+        assert!(matches!(t.path_for_safe(), Err(super::PathError::Forbidden(_, _))));
+    }
+
+    #[test]
+    fn path_for_safe_rejects_empty_key() {
+        let t = Topic::NamespacedKeyed(StickyKeyed { id: "".into(), other: 1 });
+        assert!(matches!(t.path_for_safe(), Err(super::PathError::Empty(_))));
+    }
+
+    #[test]
+    fn interpolate_namespace_passes_through_when_no_placeholder() {
+        let r = super::interpolate_namespace("plain/path", &[], &[]).unwrap();
+        assert_eq!(r, "plain/path");
+    }
+
+    #[test]
+    fn interpolate_namespace_replaces_known_keys() {
+        let r = super::interpolate_namespace(
+            "a/:x/b/:y",
+            &["x", "y"],
+            &["one".into(), "two".into()],
+        )
+        .unwrap();
+        assert_eq!(r, "a/one/b/two");
     }
 }

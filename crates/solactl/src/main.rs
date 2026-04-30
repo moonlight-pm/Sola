@@ -1,9 +1,12 @@
-//! sola-debug — runtime introspection CLI for Sola apps.
+//! solactl — control + introspection CLI for Sola.
 //!
 //! Subcommands:
 //!   apps        — list running apps and their windows
 //!   eval        — evaluate a JS expression in a WebView, print the result
 //!   logs        — tail an app's log file
+//!   emit        — emit any bus topic with a JSON payload
+//!   open        — open a URL in sola-browser (used as xdg-open handler)
+//!   click/move/scroll/key — synthesized input
 //!   screenshot  — capture the compositor output to a PNG
 //!
 //! All subcommands print JSON or plain text to stdout. Exit codes:
@@ -20,10 +23,11 @@ mod emit;
 mod eval;
 mod input;
 mod logs;
+mod open;
 mod screenshot;
 
 #[derive(Parser, Debug)]
-#[command(name = "sola-debug", about = "Runtime introspection for Sola apps")]
+#[command(name = "solactl", about = "Sola control + introspection CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -67,15 +71,23 @@ enum Command {
     /// Unit topics (no payload) accept any value, including `null` or `{}`.
     ///
     /// Examples:
-    ///   sola-debug emit Shutdown null
-    ///   sola-debug emit LaunchApp '{"app_id":"foo","command":"/opt/sola/bin/foo"}'
-    ///   sola-debug emit Frame '{"window_id":1,"x":0,"y":0,"width":800,"height":600}'
+    ///   solactl emit Shutdown null
+    ///   solactl emit LaunchApp '{"app_id":"foo","command":"/opt/sola/bin/foo"}'
+    ///   solactl emit Frame '{"window_id":1,"x":0,"y":0,"width":800,"height":600}'
     Emit {
         /// Topic kind name (e.g. `Shutdown`, `Frame`, `LaunchApp`). Same
         /// names as the `Topic` variants in sola-bus.
         kind: String,
         /// JSON payload. Use `null` or `{}` for unit topics.
         payload: String,
+    },
+
+    /// Open a URL in sola-browser. Activates the new tab. Used as the
+    /// http/https scheme handler from `sola-browser.desktop`, so any
+    /// xdg-open / GIO / `BROWSER=solactl open` caller routes here.
+    Open {
+        /// URL to open.
+        url: String,
     },
 
     /// Move the pointer and click at absolute output coordinates.
@@ -138,6 +150,7 @@ fn main() {
         } => eval::run(&app, window.as_deref(), &expression, timeout),
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
+        Command::Open { url } => open::run(&url),
         Command::Click { x, y, button } => input::click(x, y, &button),
         Command::Move { x, y } => input::move_to(x, y),
         Command::Scroll { dx, dy } => input::scroll(dx, dy),

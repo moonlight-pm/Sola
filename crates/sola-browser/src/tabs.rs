@@ -6,8 +6,10 @@ use serde_json::json;
 use webkit6::prelude::*;
 
 use sola_app::{AppRuntime, WindowHandle};
+use sola_bus::topics::{BrowserTab, Topic};
 
 use crate::app::BrowserApp;
+use crate::state::HistoryOps;
 
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 
@@ -92,12 +94,19 @@ pub fn build_web_page_view(
         .user_content_manager(&manager)
         .build();
 
-    // Dark background so about:blank isn't a white flash.
-    webview.set_background_color(&gdk4::RGBA::new(0.039, 0.043, 0.051, 1.0));
+    // White background — matches mainstream browser defaults. Pages
+    // without an explicit `body` background inherit it (rather than our
+    // chrome's dark color), so default-black text stays readable.
+    webview.set_background_color(&gdk4::RGBA::new(1.0, 1.0, 1.0, 1.0));
 
     if let Some(settings) = webkit6::prelude::WebViewExt::settings(&webview) {
         settings.set_enable_developer_extras(true);
-        settings.set_media_playback_requires_user_gesture(false);
+        // Match mainstream browser defaults: video/audio with sound only
+        // plays after a user gesture. Pages with multiple autoplay video
+        // embeds (e.g. knowyourmeme) otherwise spin up several
+        // GStreamer pipelines simultaneously, which wedges JSC on
+        // WebKitGTK far more readily than on Blink.
+        settings.set_media_playback_requires_user_gesture(true);
         settings.set_user_agent(Some(USER_AGENT));
     }
 
@@ -108,6 +117,41 @@ pub fn build_web_page_view(
             webview.restore_session_state(&session);
         }
     }
+
+    // Mirror sola-app's chrome-WebView DPR compensation: WebKit honors
+    // the compositor-assigned surface scale, so on a HiDPI surface 1 CSS
+    // px renders to 2 device px and content looks 2× zoomed.
+    //
+    // dpr is linear in zoom_level for a fixed surface scale, so the
+    // zoom that makes css-px == device-px is `current_zoom / dpr`. The
+    // earlier `1.0 / dpr` formula was correct only when starting from
+    // zoom_level == 1.0, and feedback-looped on reload (zoom 0.5 ⇒ dpr
+    // 1.0 ⇒ "fix" sets zoom 1.0 ⇒ next reload reads dpr 2.0 ⇒ flip).
+    webview.connect_load_changed(|wv, event| {
+        if event != webkit6::LoadEvent::Finished {
+            return;
+        }
+        let wv_for_zoom = wv.clone();
+        wv.evaluate_javascript(
+            "window.devicePixelRatio",
+            None,
+            None,
+            None::<&gio::Cancellable>,
+            move |result| {
+                let Ok(jsv) = result else { return };
+                let dpr = jsv.to_double();
+                if dpr <= 0.001 {
+                    return;
+                }
+                let current = wv_for_zoom.zoom_level();
+                let target_zoom = current / dpr;
+                if (current - target_zoom).abs() < 0.005 {
+                    return;
+                }
+                wv_for_zoom.set_zoom_level(target_zoom);
+            },
+        );
+    });
 
     let load_url = cfg.url.as_deref().unwrap_or("about:blank");
     webview.load_uri(load_url);
@@ -166,11 +210,12 @@ pub fn wire_signals(
                     return;
                 };
                 let mut rt = runtime.borrow_mut();
-                let AppRuntime { app, .. } = &mut *rt;
-                app.history.record_visit(&url_str, &title);
-                app.persist_history();
-                app.capture_tab_session_state(&tid);
-                app.persist_tabs();
+                let AppRuntime { app, ctx } = &mut *rt;
+                if !is_blank_url(&url_str) {
+                    app.history.record_visit(&url_str, &title);
+                    ctx.emit(Topic::BrowserHistory(app.history.clone()));
+                }
+                app.capture_tab_session_state(&tid, ctx);
             });
         });
     }
@@ -218,6 +263,55 @@ pub fn wire_signals(
         });
     }
 
+    // web-process-terminated: WebKit2 runs each tab's content in its own
+    // WebContent process. When that process dies, the WebView keeps
+    // existing as a placeholder (URI becomes about:blank, JS context is
+    // gone) but no load-failed fires — so without this signal the crash
+    // is silent. Auto-reload the last known URL to recover; the user
+    // sees a brief blank then the page returns. (Reproduced today on
+    // noagendashow.net link clicks — the audio prefetch on the new page
+    // tickles a media-stack bug that takes the WebContent down.)
+    {
+        let tid = tab_id.to_string();
+        webview.connect_web_process_terminated(move |wv, reason| {
+            let uri = wv.uri().map(|u| u.to_string()).unwrap_or_default();
+            tracing::warn!(
+                tab_id = %tid,
+                uri = %uri,
+                reason = ?reason,
+                "web-process-terminated; reloading"
+            );
+            if !uri.is_empty() && uri != "about:blank" {
+                wv.load_uri(&uri);
+            }
+        });
+    }
+
+    // notify::is-web-process-responsive: WebKit's hang monitor pings the
+    // WebContent process; when it stops responding (busy JS, blocked
+    // syscall, etc.) this flips false. The process is still alive — no
+    // termination signal — so without surfacing this the user has no way
+    // to tell a "frozen" tab from one that simply happens to not be
+    // doing anything. Send to the strip so it can show an indicator and
+    // expose a force-reload affordance.
+    {
+        let chrome = chrome.clone();
+        let tid = tab_id.to_string();
+        webview.connect_notify_local(Some("is-web-process-responsive"), move |wv, _| {
+            let responsive = wv.is_web_process_responsive();
+            tracing::warn!(
+                tab_id = %tid,
+                responsive,
+                "web-process responsiveness changed"
+            );
+            chrome.send_to_js(&json!({
+                "event": "tab_responsive_changed",
+                "tabId": tid,
+                "responsive": responsive,
+            }));
+        });
+    }
+
     // decide-policy: target="_blank" → new tab.
     {
         let runtime = runtime.clone();
@@ -249,14 +343,25 @@ pub fn wire_signals(
                     return;
                 };
                 let mut rt = runtime.borrow_mut();
-                let AppRuntime { app, .. } = &mut *rt;
-                app.tab_store.tabs.push(crate::state::PersistedTab {
+                let AppRuntime { app, ctx } = &mut *rt;
+                let ordinal = app
+                    .tabs_by_id
+                    .values()
+                    .map(|t| t.ordinal)
+                    .max()
+                    .map(|m| m + 1)
+                    .unwrap_or(0);
+                let tab = BrowserTab {
+                    id: new_tab_id.clone(),
                     url: url.clone(),
                     title: String::new(),
+                    ordinal,
                     session_state: None,
-                });
-                app.create_tab(&new_tab_id, Some(&url), None);
-                app.switch_tab(&new_tab_id);
+                };
+                app.tabs_by_id.insert(new_tab_id.clone(), tab.clone());
+                app.create_webview_for_tab(&tab);
+                ctx.emit(Topic::BrowserTab(tab));
+                app.set_active_tab(Some(new_tab_id.clone()), ctx);
                 app.emit_to_chrome(
                     "bus_new_tab",
                     json!({
@@ -269,5 +374,25 @@ pub fn wire_signals(
             decision.ignore();
             true
         });
+    }
+}
+
+/// True if `url` is a blank/internal placeholder that shouldn't appear
+/// in the user's visit history.
+fn is_blank_url(url: &str) -> bool {
+    matches!(url, "" | "about:blank" | "about:srcdoc")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blank_urls_are_ignored() {
+        assert!(is_blank_url(""));
+        assert!(is_blank_url("about:blank"));
+        assert!(is_blank_url("about:srcdoc"));
+        assert!(!is_blank_url("https://example.com"));
+        assert!(!is_blank_url("about:config"));
     }
 }

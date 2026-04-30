@@ -1,5 +1,6 @@
 mod app;
 mod chrome;
+mod migrate;
 mod state;
 mod tabs;
 

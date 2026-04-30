@@ -71,7 +71,7 @@ pub struct AppData {
     /// `zwp_virtual_keyboard_v1` state — used to synthesize Ctrl+C / Ctrl+V
     /// into non-Sola clients when the shell's Meta+C/V chords fire.
     pub virtual_keyboard: virtual_keyboard::VirtualKeyboardState,
-    /// `zwlr_virtual_pointer_v1` state — used by sola-debug to script
+    /// `zwlr_virtual_pointer_v1` state — used by solactl to script
     /// pointer movement and clicks.
     pub virtual_pointer: virtual_pointer::VirtualPointerState,
     /// Held so its `device` events keep firing; preferences (natural

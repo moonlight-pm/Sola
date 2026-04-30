@@ -1,10 +1,10 @@
 [package]
-name = "sola-debug"
+name = "solactl"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "sola-debug"
+name = "solactl"
 path = "src/main.rs"
 
 [dependencies]

@@ -5,6 +5,7 @@ export interface TabItem {
   url: string;
   title: string;
   loading: boolean;
+  responsive: boolean;
 }
 
 export interface TabSidebarConfig {
@@ -13,6 +14,7 @@ export interface TabSidebarConfig {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onCreate: () => void;
+  onForceReload: (id: string) => void;
 }
 
 function displayTitle(tab: TabItem): string {
@@ -25,13 +27,27 @@ function displayTitle(tab: TabItem): string {
 
 export function createTabSidebar(config: TabSidebarConfig, target: HTMLElement): void {
   function tabClass(tab: TabItem): string {
-    return tab.id === config.activeTabId() ? 'tab-item active' : 'tab-item';
+    let cls = 'tab-item';
+    if (tab.id === config.activeTabId()) cls += ' active';
+    if (!tab.responsive) cls += ' unresponsive';
+    return cls;
+  }
+
+  function tabTitleText(tab: TabItem): string {
+    const base = displayTitle(tab);
+    return tab.responsive ? base : `${base} (not responding)`;
   }
 
   function tabContent(tab: TabItem) {
     return html`
-      <span class="tab-item-title">${() => displayTitle(tab)}</span>
-      <button class="tab-item-close" title="Close tab"
+      <span class="tab-item-title">${() => tabTitleText(tab)}</span>
+      ${() => tab.responsive
+        ? html``
+        : html`<button class="tab-item-force-reload"
+            @click="${(e: MouseEvent) => { e.stopPropagation(); config.onForceReload(tab.id); }}"
+            @mousedown="${(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}"
+          ><span class="icon icon-rotate-cw"></span></button>`}
+      <button class="tab-item-close"
         @click="${(e: MouseEvent) => { e.stopPropagation(); config.onClose(tab.id); }}"
         @mousedown="${(e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); }}"
       ><span class="icon icon-x"></span></button>

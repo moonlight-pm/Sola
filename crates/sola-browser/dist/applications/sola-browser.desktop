@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Sola Browser
+GenericName=Web Browser
+Comment=Web browser for the Sola desktop
+Exec=/opt/sola/bin/solactl open %u
+Icon=web-browser
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml;
+StartupNotify=false
+NoDisplay=false

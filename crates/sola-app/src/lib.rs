@@ -364,7 +364,11 @@ pub fn run<A: SolaApp>() {
                     let mut rt = runtime.borrow_mut();
                     let AppRuntime { app, ctx } = &mut *rt;
                     let retracted = topic.kind().behavior().is_sticky() && !msg.sticky;
-                    let delivery = sola_bus::Delivery { topic: &topic, retracted };
+                    let delivery = sola_bus::Delivery {
+                        topic: &topic,
+                        retracted,
+                        source: &msg.source,
+                    };
                     registry.dispatch(&delivery, app, ctx);
                 }
                 glib::ControlFlow::Continue
