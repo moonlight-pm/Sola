@@ -27,6 +27,6 @@ export function form(opts: FormOpts) {
 export function fieldRow(opts: FieldRowOpts) {
   return html`<div class="kit-field-row">
     <label class="kit-field-label">${opts.label}</label>
-    <div class="kit-field-body kit-field-${opts.width ?? 'normal'}">${() => opts.body}</div>
+    <div class="${`kit-field-body kit-field-${opts.width ?? 'normal'}`}">${() => opts.body}</div>
   </div>`;
 }

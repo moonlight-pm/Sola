@@ -16,7 +16,7 @@ export const badgeTokens = [
 
 export function badge(opts: BadgeOpts) {
   const variant = opts.variant ?? 'default';
-  return html`<span class="kit-badge kit-badge-${variant}">${
+  return html`<span class="${`kit-badge kit-badge-${variant}`}">${
     typeof opts.label === 'function' ? opts.label : () => opts.label
   }</span>`;
 }

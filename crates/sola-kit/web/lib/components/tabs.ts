@@ -28,7 +28,7 @@ export const tabsTokens = [
 
 export function tabs(opts: TabsOpts) {
   const o = opts.orientation ?? 'vertical';
-  return html`<div class="kit-tabs kit-tabs-${o}">${() => opts.body}</div>`;
+  return html`<div class="${`kit-tabs kit-tabs-${o}`}">${() => opts.body}</div>`;
 }
 
 export function tab(opts: TabOpts) {

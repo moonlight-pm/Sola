@@ -14,5 +14,5 @@ export const toastTokens = [
 
 export function toast(opts: ToastOpts) {
   const v = opts.variant ?? 'default';
-  return html`<div class="kit-toast kit-toast-${v}">${() => opts.body}</div>`;
+  return html`<div class="${`kit-toast kit-toast-${v}`}">${() => opts.body}</div>`;
 }

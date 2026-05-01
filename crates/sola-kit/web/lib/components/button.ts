@@ -23,7 +23,7 @@ export function button(opts: ButtonOpts) {
     return d ? 'disabled' : false;
   };
   return html`<button
-    class="kit-btn kit-btn-${variant}"
+    class="${`kit-btn kit-btn-${variant}`}"
     disabled="${disabledAttr}"
     @click="${() => opts.onClick && opts.onClick()}"
   >${typeof opts.label === 'function' ? opts.label : () => opts.label}</button>`;
