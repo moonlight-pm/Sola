@@ -353,6 +353,110 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
     ],
   },
 
+  row: {
+    groups: [
+      {
+        id: 'shape',
+        label: 'Shape',
+        description: 'Padding, radius, and the gap between leading slot / label / actions.',
+        roles: [
+          {
+            alias: '--kit-row-pad-y',
+            label: 'Vertical padding',
+            description: 'Inset above and below the row content.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+          {
+            alias: '--kit-row-pad-x',
+            label: 'Horizontal padding',
+            description: 'Inset on the left and right of the row content.',
+            kind: 'spacing',
+            defaultToken: '--space-md',
+          },
+          {
+            alias: '--kit-row-radius',
+            label: 'Corner radius',
+            description: 'Rounding of the row\'s background pill.',
+            kind: 'radius',
+            defaultToken: '--radius-md',
+            allowNone: true,
+          },
+          {
+            alias: '--kit-row-gap',
+            label: 'Inner gap',
+            description: 'Horizontal gap between the leading slot, the label/info column, and the trailing actions.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+        ],
+      },
+      {
+        id: 'surface',
+        label: 'Surface',
+        description: 'Background fill of each row.',
+        roles: [
+          {
+            alias: '--kit-row-bg',
+            label: 'Background',
+            description: 'Fill color of the row pill.',
+            kind: 'color',
+            defaultToken: '--bg-secondary',
+          },
+        ],
+      },
+      {
+        id: 'label',
+        label: 'Label',
+        description: 'The primary, prominent text of the row. Weight is hard-coded at 500.',
+        roles: [
+          {
+            alias: '--kit-row-label-size',
+            label: 'Label size',
+            description: 'Font size of the row label.',
+            kind: 'text-size',
+            defaultToken: '--text-body',
+          },
+          {
+            alias: '--kit-row-label-fg',
+            label: 'Label color',
+            description: 'Color of the row label text.',
+            kind: 'color',
+            defaultToken: '--text-primary',
+          },
+        ],
+      },
+      {
+        id: 'detail',
+        label: 'Detail',
+        description: 'Secondary, subdued text below the label — typically a path, value, or status.',
+        roles: [
+          {
+            alias: '--kit-row-detail-size',
+            label: 'Detail size',
+            description: 'Font size of the secondary text.',
+            kind: 'text-size',
+            defaultToken: '--text-caption',
+          },
+          {
+            alias: '--kit-row-detail-fg',
+            label: 'Detail color',
+            description: 'Color of the secondary text.',
+            kind: 'color',
+            defaultToken: '--text-tertiary',
+          },
+          {
+            alias: '--kit-row-detail-font',
+            label: 'Detail family',
+            description: 'Font family of the secondary text. Defaults to mono so paths and identifiers line up.',
+            kind: 'font',
+            defaultToken: '--font-mono',
+          },
+        ],
+      },
+    ],
+  },
+
   section: {
     groups: [
       {
