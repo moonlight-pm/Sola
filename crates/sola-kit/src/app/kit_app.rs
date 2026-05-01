@@ -95,6 +95,14 @@ impl KitApp {
             "event": "theme",
             "vars": self.theme.to_css_vars(),
         }));
+        // Editor needs the full struct (mirrored in JS as themeState.current)
+        // because the 'theme' event above only carries the flat var map. Without
+        // this, color inputs / swatches in the editor stay stale after reset
+        // or peer updates.
+        self.main_window.send_to_js(&json!({
+            "event": "theme_state",
+            "theme": &self.theme,
+        }));
     }
 
     fn handle_theme_set(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {

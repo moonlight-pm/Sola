@@ -1,6 +1,6 @@
 import { html, reactive } from '@arrow-js/core';
 import { applyTheme, button } from '@sola/kit';
-import { invoke } from '@sola/ipc';
+import { invoke, on } from '@sola/ipc';
 import type { CatalogEntry } from './sidebar';
 
 // Holds the in-progress full Theme as JSON, mirroring the Rust struct
@@ -10,6 +10,14 @@ import type { CatalogEntry } from './sidebar';
 export const themeState = reactive({
   // shape: { colors: {...}, typography: {...}, spacing: {...}, radius: {...} }
   current: (window as unknown as { RESTORED_STATE?: { theme: any } }).RESTORED_STATE?.theme ?? {},
+});
+
+// KitApp pushes 'theme_state' alongside the framework's 'theme' event so
+// our local mirror stays in sync with the persisted Theme on reset / peer
+// updates. Without this, the swatches and color inputs would lag behind
+// :root after a theme_reset or sticky replay.
+on('theme_state', (payload: { theme: unknown }) => {
+  if (payload && payload.theme) themeState.current = payload.theme;
 });
 
 let debounceTimer: number | null = null;
