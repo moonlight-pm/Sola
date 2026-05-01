@@ -98,7 +98,7 @@ function renderChip(varName: string) {
   if (isColor) {
     const valueExpr = (): string => themeState.current?.colors?.[colorField!] ?? '';
     return html`<span class="kit-chip">
-      ${pickerSwatch({
+      ${() => pickerSwatch({
         id: `chip:${varName}`,
         value: valueExpr,
         onChange: (v: string) => setColor(colorField!, v),

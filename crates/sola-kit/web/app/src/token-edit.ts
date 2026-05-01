@@ -77,7 +77,7 @@ export function colorEditor(field: string, varName: string, used: CatalogEntry[]
         <div class="kit-editor-meta">${() => `Used in ${used.length} ${used.length === 1 ? 'component' : 'components'}`}</div>
       </div>
       <div class="kit-editor-row">
-        ${pickerSwatch({
+        ${() => pickerSwatch({
           id: `editor:${field}`,
           value: current,
           onChange: (v: string) => setColor(field, v),
