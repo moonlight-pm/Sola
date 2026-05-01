@@ -479,6 +479,28 @@ pub(crate) fn inject_solarecv_bootstrap(html: &str) -> String {
     html.to_string()
 }
 
+#[cfg(test)]
+mod kit_css_drift {
+    use sola_core::theme::Theme;
+
+    /// kit.css's :root block must declare every var Theme::default() produces,
+    /// with the same value. Catches accidental drift between the Rust source
+    /// of truth and the static CSS apps load before any Topic::Theme arrives.
+    #[test]
+    fn default_to_css_vars_match_kit_css() {
+        let css = include_str!("../web/lib/kit.css");
+        for (var, value) in Theme::default().to_css_vars() {
+            // crude but sufficient: kit.css is hand-maintained, single :root,
+            // each declaration on its own line as `  --name: value;`.
+            let needle = format!("{var}: {value};");
+            assert!(
+                css.contains(&needle),
+                "kit.css missing or wrong value for {var}: expected `{needle}`",
+            );
+        }
+    }
+}
+
 /// Inject the platform import map into HTML.
 pub(crate) fn inject_import_map(html: &str) -> String {
     let platform_imports = r#""@arrow-js/core": "/vendor/arrow/index.mjs",
