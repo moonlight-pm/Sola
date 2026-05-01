@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 pub use sola_core::KeyChord;
 use sola_core::Encrypted;
+pub use sola_core::theme::Theme;
 
 use crate::define_topics;
 
@@ -445,6 +446,12 @@ define_topics! {
     #[persistent]
     MailConfig(MailConfig),
 
+    // Theme tokens edited by sola-kit, consumed by every app's WebView via
+    // the framework-level subscription. Persistent — survives bus restart
+    // and sola sessions; replays on subscribe.
+    #[persistent]
+    Theme(Theme),
+
     // Terminal UI preferences (sidebar width / collapsed). Persistent
     // so terminal restarts restore the user's layout.
     #[persistent]
@@ -755,6 +762,22 @@ mod tests {
         match restored {
             Topic::TerminalSession(back) => assert_eq!(back, session),
             other => panic!("expected TerminalSession, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn theme_roundtrips_via_toml() {
+        // Theme round-trips through the bus' TOML state path.
+        let theme = sola_core::theme::Theme::default();
+        let topic = Topic::Theme(theme.clone());
+        let value = topic
+            .to_toml_value()
+            .expect("Theme is persistent; must serialize to TOML");
+        let restored = Topic::from_toml_section(TopicKind::Theme, value)
+            .expect("section should deserialize");
+        match restored {
+            Topic::Theme(back) => assert_eq!(theme, back),
+            other => panic!("expected Theme, got {other:?}"),
         }
     }
 
