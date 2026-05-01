@@ -58,12 +58,6 @@ impl SolaApp for KitApp {
             keyboard_target: true,
         });
 
-        // Publish current theme so any pre-existing subscribers see something
-        // immediately. The bus persistence layer replays the stored Theme over
-        // this on first subscribe; the order doesn't matter — the persisted
-        // value wins.
-        ctx.emit(Topic::Theme(theme.clone()));
-
         Self { theme, main_window }
     }
 
