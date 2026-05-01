@@ -13,6 +13,8 @@ interface FontPickerOpts {
   value: () => string;
   options: () => string[];
   onChange: (newValue: string) => void;
+  /** Chip-style trigger: borderless, no chevron, sits inline. */
+  compact?: boolean;
 }
 
 const local = reactive<{ openId: string | null; query: string }>({ openId: null, query: '' });
@@ -22,10 +24,7 @@ document.addEventListener('click', (e) => {
   const path = (e.composedPath ? e.composedPath() : []) as EventTarget[];
   const inside = path.some((n) => {
     const el = n as HTMLElement;
-    return el.classList && (
-      el.classList.contains('kit-font-trigger') ||
-      el.classList.contains('kit-font-popover')
-    );
+    return el.classList && el.classList.contains('kit-font-trigger-wrap');
   });
   if (!inside) {
     local.openId = null;
@@ -34,8 +33,12 @@ document.addEventListener('click', (e) => {
 });
 
 export function fontPicker(opts: FontPickerOpts) {
+  return opts.compact ? compactPicker(opts) : fullPicker(opts);
+}
+
+function makeOnTrigger(opts: FontPickerOpts) {
   const isOpen = () => local.openId === opts.id;
-  const onTrigger = (e: Event) => {
+  return (e: Event) => {
     e.stopPropagation();
     if (isOpen()) {
       local.openId = null;
@@ -45,6 +48,11 @@ export function fontPicker(opts: FontPickerOpts) {
       local.query = '';
     }
   };
+}
+
+function fullPicker(opts: FontPickerOpts) {
+  const isOpen = () => local.openId === opts.id;
+  const onTrigger = makeOnTrigger(opts);
   return html`<div class="kit-font-trigger-wrap">
     <button class="kit-font-trigger" @click="${onTrigger}"
       style="${() => `font-family: ${opts.value()}`}">
@@ -53,6 +61,16 @@ export function fontPicker(opts: FontPickerOpts) {
     </button>
     ${() => isOpen() ? renderPanel(opts) : html``}
   </div>`;
+}
+
+function compactPicker(opts: FontPickerOpts) {
+  const isOpen = () => local.openId === opts.id;
+  const onTrigger = makeOnTrigger(opts);
+  return html`<span class="kit-font-trigger-wrap kit-font-trigger-wrap-compact">
+    <span class="kit-font-trigger-compact" @click="${onTrigger}"
+      style="${() => `font-family: ${opts.value()}`}">${() => opts.value() || '— select —'}</span>
+    ${() => isOpen() ? renderPanel(opts) : html``}
+  </span>`;
 }
 
 function renderPanel(opts: FontPickerOpts) {

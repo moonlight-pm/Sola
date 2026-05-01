@@ -4,13 +4,21 @@ import {
   sidebar, navItem, section, row, list, form, fieldRow,
   tabs, tab, toast, empty,
 } from '@sola/kit';
-import { themeState, setColor } from '../token-edit.js';
+import {
+  themeState,
+  setColor, setTypography, setSpacing, setRadius,
+} from '../token-edit.js';
 import { pickerSwatch } from '../color-picker.js';
+import { fontPicker } from '../font-picker.js';
 import type { CatalogEntry } from '../sidebar.js';
 
 interface ViewSpec {
   variants: () => TemplatePartial;
-  notes?: string;
+}
+
+interface FontList { sans: string[]; mono: string[] }
+function fonts(): FontList {
+  return ((window as unknown as { RESTORED_STATE?: { fonts?: FontList } }).RESTORED_STATE?.fonts) ?? { sans: [], mono: [] };
 }
 
 const VIEWS: Record<string, ViewSpec> = {
@@ -20,7 +28,6 @@ const VIEWS: Record<string, ViewSpec> = {
       ${button({ label: 'Default' })}
       ${button({ label: 'Ghost', variant: 'ghost' })}
       ${button({ label: 'Danger', variant: 'danger' })}
-      ${button({ label: '+ Add', variant: 'add' })}
     </div>
   ` },
   field: { variants: () => html`
@@ -82,38 +89,85 @@ export function renderComponent(name: string, catalog: CatalogEntry[]) {
   return html`
     <div class="kit-component-view">
       <div class="kit-section-title-sm">Variants</div>
-      <div class="kit-preview">${view.variants()}</div>
-      <div class="kit-section-title-sm" style="margin-top: var(--space-md)">Tokens this uses · click a chip to edit</div>
+      <div class="kit-preview">${() => view.variants()}</div>
+      <div class="kit-section-title-sm" style="margin-top: var(--space-md)">Tokens this uses</div>
       <div class="kit-chips">
-        ${entry.tokens.map(varName => renderChip(varName))}
+        ${() => entry.tokens.map(varName => renderChip(varName))}
       </div>
     </div>
   `;
 }
 
-function renderChip(varName: string) {
-  // Map var → struct field (e.g. "--accent-dim" → "accent_dim")
-  const colorField = stripPrefix(varName, '--')?.replaceAll('-', '_');
-  const isColor = colorField && themeState.current?.colors && (colorField in themeState.current.colors);
-  if (isColor) {
-    const valueExpr = (): string => themeState.current?.colors?.[colorField!] ?? '';
-    return html`<span class="kit-chip">
-      ${() => pickerSwatch({
-        id: `chip:${varName}`,
-        value: valueExpr,
-        onChange: (v: string) => setColor(colorField!, v),
-        className: 'kit-chip-swatch',
-      })}
-      <span class="kit-chip-name">${varName}</span>
-    </span>`;
+// ----- chip rendering -----
+
+type ChipKind =
+  | { kind: 'color'; field: string }
+  | { kind: 'font'; field: string; isMono: boolean }
+  | { kind: 'size'; group: 'typography' | 'spacing' | 'radius'; field: string };
+
+function classify(varName: string): ChipKind {
+  if (varName.startsWith('--font-')) {
+    return { kind: 'font', field: varName.slice(2).replaceAll('-', '_'), isMono: varName === '--font-mono' };
   }
-  // Non-color tokens (typography, spacing, radius) — show value as text;
-  // editing routes to the token-mode views for now.
-  return html`<span class="kit-chip">
+  if (varName.startsWith('--text-')) {
+    return { kind: 'size', group: 'typography', field: varName.slice(2).replaceAll('-', '_') };
+  }
+  if (varName.startsWith('--space-')) {
+    return { kind: 'size', group: 'spacing', field: varName.slice('--space-'.length) };
+  }
+  if (varName.startsWith('--radius-')) {
+    return { kind: 'size', group: 'radius', field: varName.slice('--radius-'.length) };
+  }
+  return { kind: 'color', field: varName.slice(2).replaceAll('-', '_') };
+}
+
+function renderChip(varName: string) {
+  const k = classify(varName);
+  if (k.kind === 'color') return colorChip(varName, k.field);
+  if (k.kind === 'font')  return fontChip(varName, k.field, k.isMono);
+  return sizeChip(varName, k.group, k.field);
+}
+
+function colorChip(varName: string, field: string) {
+  const value = (): string => themeState.current?.colors?.[field] ?? '';
+  return html`<span class="kit-chip kit-chip-color">
+    ${() => pickerSwatch({
+      id: `chip:${varName}`,
+      value,
+      onChange: (v: string) => setColor(field, v),
+      className: 'kit-chip-swatch',
+    })}
     <span class="kit-chip-name">${varName}</span>
   </span>`;
 }
 
-function stripPrefix(s: string, p: string): string | null {
-  return s.startsWith(p) ? s.slice(p.length) : null;
+function fontChip(varName: string, field: string, isMono: boolean) {
+  const value = (): string => themeState.current?.typography?.[field] ?? '';
+  return html`<span class="kit-chip kit-chip-font">
+    <span class="kit-chip-name">${varName}</span>
+    ${() => fontPicker({
+      id: `chip:${varName}`,
+      value,
+      options: () => isMono ? fonts().mono : fonts().sans,
+      onChange: (v: string) => setTypography(field, v),
+      compact: true,
+    })}
+  </span>`;
+}
+
+function sizeChip(varName: string, group: 'typography' | 'spacing' | 'radius', field: string) {
+  const value = (): string => {
+    const t = themeState.current as Record<string, Record<string, string>> | undefined;
+    return t?.[group]?.[field] ?? '';
+  };
+  const onChange = (v: string) => {
+    if (group === 'typography') setTypography(field, v);
+    else if (group === 'spacing') setSpacing(field, v);
+    else setRadius(field, v);
+  };
+  return html`<span class="kit-chip kit-chip-size">
+    <span class="kit-chip-name">${varName}</span>
+    <input class="kit-chip-input" value="${value}"
+      @input="${(e: Event) => onChange((e.target as HTMLInputElement).value)}">
+  </span>`;
 }

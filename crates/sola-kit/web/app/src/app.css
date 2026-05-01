@@ -188,6 +188,41 @@ html, body {
 }
 .kit-chip-swatch { width: 14px; height: 14px; border-radius: 50%; }
 
+/* Inline value input for size/spacing/radius chips */
+.kit-chip-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+  width: 60px;
+  outline: none;
+  box-sizing: border-box;
+}
+.kit-chip-input:focus { border-color: var(--accent); }
+
+/* Compact font picker trigger (used inside chips) */
+.kit-font-trigger-wrap-compact {
+  position: relative;
+  display: inline-block;
+}
+.kit-font-trigger-compact {
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  font-size: var(--text-caption);
+}
+.kit-font-trigger-compact:hover { color: var(--text-primary); }
+/* Compact popover keeps the standard width even though its anchor is small */
+.kit-font-trigger-wrap-compact .kit-font-popover {
+  left: 0;
+  right: auto;
+  width: 240px;
+}
+
 /* ===== Color picker (bespoke) ===== */
 /* Trigger: every clickable swatch composes this for the popover anchor */
 .kit-swatch-trigger {
