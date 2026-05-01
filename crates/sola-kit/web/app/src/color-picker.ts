@@ -75,10 +75,11 @@ function renderPopover(value: () => string, onChange: (v: string) => void) {
     const r = Math.round(rgb.r);
     const g = Math.round(rgb.g);
     const b = Math.round(rgb.b);
-    const a = Math.round(s.a * 1000) / 1000;
-    const out = a < 1
-      ? `rgba(${r}, ${g}, ${b}, ${a})`
-      : '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
+    const a = s.a;
+    const hex2 = (n: number) => n.toString(16).padStart(2, '0');
+    const out = a >= 1
+      ? '#' + hex2(r) + hex2(g) + hex2(b)
+      : '#' + hex2(r) + hex2(g) + hex2(b) + hex2(Math.round(a * 255));
     onChange(out);
   };
 
@@ -144,17 +145,23 @@ function renderPopover(value: () => string, onChange: (v: string) => void) {
 
 function parseColor(input: string): Rgba | null {
   const s = input.trim();
-  const hex = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  // #RGB, #RGBA, #RRGGBB, #RRGGBBAA
+  const hex = s.match(/^#([0-9a-f]{3,8})$/i);
   if (hex) {
     let h = hex[1];
-    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    if (h.length === 3 || h.length === 4) {
+      h = h.split('').map(c => c + c).join('');
+    }
+    if (h.length !== 6 && h.length !== 8) return null;
     return {
       r: parseInt(h.slice(0, 2), 16),
       g: parseInt(h.slice(2, 4), 16),
       b: parseInt(h.slice(4, 6), 16),
-      a: 1,
+      a: h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1,
     };
   }
+  // rgb(...) and rgba(...) — accepted on input for backwards compat with
+  // any hand-typed values; all picker output is hex.
   const rgba = s.match(/^rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)$/);
   if (rgba) {
     return {
