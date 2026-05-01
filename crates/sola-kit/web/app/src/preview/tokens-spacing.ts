@@ -1,5 +1,5 @@
 import { html } from '@arrow-js/core';
-import { themeState, setSpacing, setRadius } from '../token-edit';
+import { themeState, setSpacing, setRadius } from '../token-edit.js';
 
 const SPACE_FIELDS = ['xs', 'sm', 'md', 'lg', 'xl', 'xxl'];
 const RADIUS_FIELDS = ['sm', 'md', 'lg'];

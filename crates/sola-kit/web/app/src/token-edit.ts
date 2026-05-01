@@ -1,7 +1,7 @@
 import { html, reactive } from '@arrow-js/core';
 import { applyTheme, button } from '@sola/kit';
 import { invoke, on } from '@sola/ipc';
-import type { CatalogEntry } from './sidebar';
+import type { CatalogEntry } from './sidebar.js';
 
 // Holds the in-progress full Theme as JSON, mirroring the Rust struct
 // passed in via initial_state. Mutations propagate to applyTheme(...)

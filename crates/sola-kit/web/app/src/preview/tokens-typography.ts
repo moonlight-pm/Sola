@@ -1,5 +1,5 @@
 import { html } from '@arrow-js/core';
-import { themeState, setTypography } from '../token-edit';
+import { themeState, setTypography } from '../token-edit.js';
 
 const TYPE_FIELDS: Array<{ field: string; var: string; label: string }> = [
   { field: 'font_sans',     var: '--font-sans',     label: 'Sans family' },

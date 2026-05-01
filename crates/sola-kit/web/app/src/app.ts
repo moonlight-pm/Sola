@@ -1,9 +1,9 @@
 import { html, reactive } from '@arrow-js/core';
-import { renderSidebar, type CatalogEntry } from './sidebar';
-import { renderColors } from './preview/tokens-colors';
-import { renderTypography } from './preview/tokens-typography';
-import { renderSpacing } from './preview/tokens-spacing';
-import { renderComponent } from './preview/component-view';
+import { renderSidebar, type CatalogEntry } from './sidebar.js';
+import { renderColors } from './preview/tokens-colors.js';
+import { renderTypography } from './preview/tokens-typography.js';
+import { renderSpacing } from './preview/tokens-spacing.js';
+import { renderComponent } from './preview/component-view.js';
 
 declare global {
   interface Window { RESTORED_STATE?: { catalog: CatalogEntry[]; theme: unknown }; }

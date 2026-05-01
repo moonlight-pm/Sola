@@ -4,8 +4,8 @@ import {
   sidebar, navItem, section, row, list, form, fieldRow,
   tabs, tab, toast, empty,
 } from '@sola/kit';
-import { themeState, setColor } from '../token-edit';
-import type { CatalogEntry } from '../sidebar';
+import { themeState, setColor } from '../token-edit.js';
+import type { CatalogEntry } from '../sidebar.js';
 
 interface ViewSpec {
   variants: () => TemplatePartial;

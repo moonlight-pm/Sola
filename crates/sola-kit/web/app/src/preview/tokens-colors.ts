@@ -1,6 +1,6 @@
 import { html, reactive } from '@arrow-js/core';
-import { themeState, colorEditor } from '../token-edit';
-import type { CatalogEntry } from '../sidebar';
+import { themeState, colorEditor } from '../token-edit.js';
+import type { CatalogEntry } from '../sidebar.js';
 
 const COLOR_FIELDS: Array<{ field: string; var: string }> = [
   { field: 'bg_primary',     var: '--bg-primary' },
