@@ -93,17 +93,37 @@ export function renderComponent(name: string, catalog: CatalogEntry[]) {
   if (!view || !entry) {
     return html`<div class="kit-placeholder">No preview for ${name}</div>`;
   }
-  const slotSpec = ROLE_DEFS[name];
+  const roleSpec = ROLE_DEFS[name];
+
+  // Two distinct outer template literals — one when the component has
+  // role definitions, one for the chip-view fallback. Different
+  // rawStrings → different chunk proto → Arrow's createRenderFn for
+  // the wrapping route slot full-remounts when navigating between a
+  // role-view atom (Button) and a chip-view atom (Field, Badge, …),
+  // instead of trying to swap branches inside a ternary slot. The
+  // ternary path triggered a getNode(prev)→null in Arrow when the
+  // previous role-view chunk's DOM had already been disturbed by a
+  // sibling slot's earlier patch.
+
+  if (roleSpec) {
+    return html`
+      <div class="kit-component-view">
+        <div class="kit-section-title-sm">Variants</div>
+        <div class="kit-preview">${() => view.variants()}</div>
+        <div class="kit-section-title-sm" style="margin-top: var(--space-md)">Roles</div>
+        ${() => renderRoles(roleSpec)}
+      </div>
+    `;
+  }
   return html`
     <div class="kit-component-view">
       <div class="kit-section-title-sm">Variants</div>
       <div class="kit-preview">${() => view.variants()}</div>
-      ${() => slotSpec
-        ? html`<div class="kit-section-title-sm" style="margin-top: var(--space-md)">Slots</div>${() => renderRoles(slotSpec)}`
-        : html`<div class="kit-section-title-sm" style="margin-top: var(--space-md)">Tokens this uses</div>
-            <div class="kit-chips">
-              ${() => entry.tokens.map(varName => renderChip(varName).key(varName))}
-            </div>`}
+      <div class="kit-section-title-sm" style="margin-top: var(--space-md)">Token references</div>
+      <p class="kit-section-hint">Role definitions for this component aren't authored yet — these are the raw token vars its CSS reads.</p>
+      <div class="kit-chips">
+        ${() => entry.tokens.map(varName => renderChip(varName).key(varName))}
+      </div>
     </div>
   `;
 }
