@@ -1,7 +1,10 @@
 //! Sola Kit — design tokens, atoms, components.
 //
-// applyTheme is the one bit needed before Phase 3. Atoms/components and
-// the auto-installed bus listener arrive in later phases.
+// Importing this module installs a bus listener that applies any
+// Topic::Theme broadcasts the framework forwards. Apps don't need to
+// opt in beyond the import.
+
+import { on } from '@sola/ipc';
 
 /** Apply a map of CSS custom properties to :root. */
 export function applyTheme(vars: Record<string, string>): void {
@@ -10,3 +13,8 @@ export function applyTheme(vars: Record<string, string>): void {
     root.style.setProperty(key.startsWith('--') ? key : `--${key}`, value);
   }
 }
+
+// Self-install: framework forwards Topic::Theme as { event: 'theme', vars }.
+on('theme', (payload: { vars: Record<string, string> }) => {
+  if (payload && payload.vars) applyTheme(payload.vars);
+});
