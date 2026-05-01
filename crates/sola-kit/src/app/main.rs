@@ -1,4 +1,5 @@
 mod catalog;
+mod fonts;
 mod kit_app;
 
 fn main() {

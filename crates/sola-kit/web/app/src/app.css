@@ -47,12 +47,131 @@ html, body {
 .kit-section-title-sm { font-size: var(--text-caption); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: var(--space-xs); }
 .kit-empty { font-size: var(--text-caption); color: var(--text-muted); }
 
+/* ===== Spacing/radius rows (still horizontal) ===== */
 .kit-type-row { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-sm); }
 .kit-type-label { width: 180px; flex-shrink: 0; font-size: var(--text-body); color: var(--text-secondary); }
-.kit-type-var { font-family: var(--font-mono); color: var(--text-muted); font-size: var(--text-caption); margin-left: var(--space-xs); }
-.kit-type-sample { flex: 1; color: var(--text-tertiary); }
 .kit-space-sample, .kit-radius-sample { display: inline-block; }
-.kit-spacing, .kit-typography { padding: var(--space-md); background: var(--bg-secondary); border-radius: var(--radius-md); }
+.kit-spacing { padding: var(--space-md); background: var(--bg-secondary); border-radius: var(--radius-md); }
+
+/* ===== Typography cards (vertical: head / control / preview) ===== */
+.kit-typography {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.kit-type-card {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.kit-type-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  justify-content: space-between;
+}
+.kit-type-card-label {
+  font-size: var(--text-body);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.kit-type-card-var {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+}
+.kit-type-card-preview {
+  color: var(--text-tertiary);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--space-xs);
+  word-break: break-word;
+}
+
+/* ===== Font picker ===== */
+.kit-font-trigger-wrap {
+  position: relative;
+  display: block;
+}
+.kit-font-trigger {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--text-body);
+  cursor: pointer;
+  text-align: left;
+}
+.kit-font-trigger:hover { border-color: var(--accent); }
+.kit-font-trigger-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kit-font-trigger-chev {
+  color: var(--text-muted);
+  margin-left: var(--space-sm);
+  font-size: var(--text-caption);
+}
+.kit-font-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.kit-font-search {
+  box-sizing: border-box;
+  width: 100%;
+  font-family: var(--font-sans);
+}
+.kit-font-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+}
+.kit-font-option {
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kit-font-option:hover { background: var(--bg-tertiary); }
+.kit-font-option[data-active="active"] { background: var(--accent-dim); color: var(--accent); }
+.kit-font-empty {
+  padding: var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  text-align: center;
+}
 
 .kit-component-view { padding: 0; }
 .kit-preview { background: var(--bg-secondary); border-radius: var(--radius-md); padding: var(--space-md); margin-bottom: var(--space-md); }

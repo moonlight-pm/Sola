@@ -1,29 +1,64 @@
 import { html } from '@arrow-js/core';
 import { themeState, setTypography } from '../token-edit.js';
+import { fontPicker } from '../font-picker.js';
 
-const TYPE_FIELDS: Array<{ field: string; var: string; label: string }> = [
-  { field: 'font_sans',     var: '--font-sans',     label: 'Sans family' },
-  { field: 'font_mono',     var: '--font-mono',     label: 'Mono family' },
-  { field: 'text_caption',  var: '--text-caption',  label: 'Caption (11)' },
-  { field: 'text_body',     var: '--text-body',     label: 'Body (12)' },
-  { field: 'text_body_lg',  var: '--text-body-lg',  label: 'Body L (13)' },
-  { field: 'text_heading',  var: '--text-heading',  label: 'Heading (16)' },
-  { field: 'text_display',  var: '--text-display',  label: 'Display (20)' },
+interface TypeField {
+  field: string;
+  var: string;
+  label: string;
+  kind: 'sans' | 'mono' | 'size';
+}
+
+const TYPE_FIELDS: TypeField[] = [
+  { field: 'font_sans',     var: '--font-sans',     label: 'Sans family', kind: 'sans' },
+  { field: 'font_mono',     var: '--font-mono',     label: 'Mono family', kind: 'mono' },
+  { field: 'text_caption',  var: '--text-caption',  label: 'Caption',     kind: 'size' },
+  { field: 'text_body',     var: '--text-body',     label: 'Body',        kind: 'size' },
+  { field: 'text_body_lg',  var: '--text-body-lg',  label: 'Large Body',  kind: 'size' },
+  { field: 'text_heading',  var: '--text-heading',  label: 'Heading',     kind: 'size' },
+  { field: 'text_display',  var: '--text-display',  label: 'Display',     kind: 'size' },
 ];
+
+const SPECIMEN = 'The quick brown fox jumps over the lazy dog';
+
+interface FontList { sans: string[]; mono: string[] }
+
+function fonts(): FontList {
+  return ((window as unknown as { RESTORED_STATE?: { fonts?: FontList } }).RESTORED_STATE?.fonts) ?? { sans: [], mono: [] };
+}
 
 export function renderTypography() {
   return html`
     <div class="kit-typography">
-      ${TYPE_FIELDS.map(f => html`
-        <div class="kit-type-row">
-          <div class="kit-type-label">${f.label} <span class="kit-type-var">${f.var}</span></div>
-          <input class="kit-field" value="${() => themeState.current?.typography?.[f.field] ?? ''}"
-            @input="${(e: Event) => setTypography(f.field, (e.target as HTMLInputElement).value)}">
-          <div class="kit-type-sample" style="${() => f.field.startsWith('font_')
-            ? `font-family: ${themeState.current?.typography?.[f.field] ?? 'inherit'};`
-            : `font-size: ${themeState.current?.typography?.[f.field] ?? 'inherit'};`}">The quick brown fox</div>
-        </div>
-      `)}
+      ${TYPE_FIELDS.map(f => renderRow(f))}
+    </div>
+  `;
+}
+
+function renderRow(f: TypeField) {
+  const value = () => themeState.current?.typography?.[f.field] ?? '';
+  const previewStyle = () => {
+    const v = themeState.current?.typography?.[f.field] ?? 'inherit';
+    return f.kind === 'size' ? `font-size: ${v}` : `font-family: ${v}`;
+  };
+  return html`
+    <div class="kit-type-card">
+      <div class="kit-type-card-head">
+        <span class="kit-type-card-label">${f.label}</span>
+        <span class="kit-type-card-var">${f.var}</span>
+      </div>
+      <div class="kit-type-card-control">
+        ${() => f.kind === 'size'
+          ? html`<input class="kit-field" value="${value}"
+              @input="${(e: Event) => setTypography(f.field, (e.target as HTMLInputElement).value)}">`
+          : fontPicker({
+              id: `font:${f.field}`,
+              value,
+              options: () => f.kind === 'mono' ? fonts().mono : fonts().sans,
+              onChange: (v: string) => setTypography(f.field, v),
+            })}
+      </div>
+      <div class="kit-type-card-preview" style="${previewStyle}">${SPECIMEN}</div>
     </div>
   `;
 }

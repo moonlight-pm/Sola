@@ -11,6 +11,7 @@ static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
     "/src/app.css" => (include_str!("../../web/app/src/app.css"), Css),
     "/src/sidebar.ts" => (include_str!("../../web/app/src/sidebar.ts"), TypeScript),
     "/src/color-picker.ts" => (include_str!("../../web/app/src/color-picker.ts"), TypeScript),
+    "/src/font-picker.ts" => (include_str!("../../web/app/src/font-picker.ts"), TypeScript),
     "/src/token-edit.ts" => (include_str!("../../web/app/src/token-edit.ts"), TypeScript),
     "/src/preview/tokens-colors.ts" => (include_str!("../../web/app/src/preview/tokens-colors.ts"), TypeScript),
     "/src/preview/tokens-typography.ts" => (include_str!("../../web/app/src/preview/tokens-typography.ts"), TypeScript),
@@ -42,9 +43,11 @@ impl SolaApp for KitApp {
                 "tokens": e.tokens,
             }))
             .collect();
+        let fonts = super::fonts::discover();
         let initial_state = serde_json::to_string(&serde_json::json!({
             "theme": &theme,
             "catalog": catalog_json,
+            "fonts": fonts,
         })).ok();
 
         let main_window = ctx.add_window(WindowConfig {
