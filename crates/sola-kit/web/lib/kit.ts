@@ -29,3 +29,5 @@ export { icon, iconTokens } from './components/icon';
 export type { IconOpts } from './components/icon';
 export { sidebar, sidebarTokens } from './components/sidebar';
 export type { SidebarOpts } from './components/sidebar';
+export { navItem, navItemTokens } from './components/nav-item';
+export type { NavItemOpts } from './components/nav-item';
