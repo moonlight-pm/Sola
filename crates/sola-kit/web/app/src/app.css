@@ -1,18 +1,17 @@
 html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
+  margin: 0; padding: 0; height: 100%;
   background: var(--bg-primary);
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: var(--text-body-lg);
   overflow: hidden;
 }
-
-#app, .kit-shell {
-  height: 100%;
-}
-
-.kit-shell {
-  padding: var(--space-lg);
+#app, .kit-shell { height: 100%; }
+.kit-shell { display: flex; }
+.kit-shell > .kit-sidebar { width: 200px; flex-shrink: 0; }
+.kit-work { flex: 1; overflow: auto; padding: var(--space-lg) var(--space-xl); }
+.kit-placeholder {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  font-size: var(--text-body);
 }

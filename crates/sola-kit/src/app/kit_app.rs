@@ -9,6 +9,7 @@ static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
     "/src/main.ts" => (include_str!("../../web/app/src/main.ts"), TypeScript),
     "/src/app.ts" => (include_str!("../../web/app/src/app.ts"), TypeScript),
     "/src/app.css" => (include_str!("../../web/app/src/app.css"), Css),
+    "/src/sidebar.ts" => (include_str!("../../web/app/src/sidebar.ts"), TypeScript),
 };
 
 #[derive(Deserialize)]
@@ -26,7 +27,19 @@ impl SolaApp for KitApp {
 
     fn new(ctx: &mut AppCtx) -> Self {
         let theme = Theme::default();
-        let initial_state = serde_json::to_string(&json!({ "theme": &theme })).ok();
+        use super::catalog::{CATALOG, Group};
+        let catalog_json: Vec<serde_json::Value> = CATALOG
+            .iter()
+            .map(|e| serde_json::json!({
+                "name": e.name,
+                "group": match e.group { Group::Atom => "atom", Group::Component => "component" },
+                "tokens": e.tokens,
+            }))
+            .collect();
+        let initial_state = serde_json::to_string(&serde_json::json!({
+            "theme": &theme,
+            "catalog": catalog_json,
+        })).ok();
 
         let main_window = ctx.add_window(WindowConfig {
             title: "Theme".into(),
