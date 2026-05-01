@@ -121,6 +121,11 @@ pub fn platform_assets() -> AssetBundle {
                 content_type: ContentType::TypeScript,
             },
             Asset {
+                path: "/lib/components/section.ts",
+                content: include_str!("../web/lib/components/section.ts"),
+                content_type: ContentType::TypeScript,
+            },
+            Asset {
                 path: "/vendor/arrow/index.mjs",
                 content: include_str!("../web/vendor/arrow/index.mjs"),
                 content_type: ContentType::JavaScript,

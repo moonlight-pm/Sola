@@ -31,3 +31,5 @@ export { sidebar, sidebarTokens } from './components/sidebar';
 export type { SidebarOpts } from './components/sidebar';
 export { navItem, navItemTokens } from './components/nav-item';
 export type { NavItemOpts } from './components/nav-item';
+export { section, sectionTokens } from './components/section';
+export type { SectionOpts } from './components/section';

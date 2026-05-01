@@ -136,3 +136,17 @@
 }
 .kit-nav-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
 .kit-nav-item[data-active="active"] { background: var(--accent-dim); color: var(--accent); }
+
+/* ===== Section ===== */
+.kit-section { margin-bottom: var(--space-lg); }
+.kit-section-title {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--text-heading);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.kit-section-desc {
+  margin: 0 0 var(--space-md);
+  font-size: var(--text-body);
+  color: var(--text-tertiary);
+}
