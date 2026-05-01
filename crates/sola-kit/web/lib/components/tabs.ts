@@ -55,10 +55,10 @@ export function tab(opts: TabOpts) {
     data-active="${activeAttr}"
     @click="${() => opts.onClick && opts.onClick()}"
   >
-    ${leading ? html`<span class="kit-tab-leading">${() => leading}</span>` : html``}
+    ${() => leading ? html`<span class="kit-tab-leading">${() => leading}</span>` : html``}
     <span class="kit-tab-title">${title}</span>
-    ${trailing ? html`<span class="kit-tab-trailing">${() => trailing}</span>` : html``}
-    ${opts.onClose ? html`<button
+    ${() => trailing ? html`<span class="kit-tab-trailing">${() => trailing}</span>` : html``}
+    ${() => opts.onClose ? html`<button
       class="kit-tab-close"
       @click="${(e: Event) => { e.stopPropagation(); opts.onClose && opts.onClose(); }}"
     >×</button>` : html``}

@@ -21,63 +21,68 @@ function fonts(): FontList {
   return ((window as unknown as { RESTORED_STATE?: { fonts?: FontList } }).RESTORED_STATE?.fonts) ?? { sans: [], mono: [] };
 }
 
+// NB: every nested ${child(...)} interpolation MUST be wrapped in
+// ${() => child(...)} — many of these variants share a raw-strings
+// signature (e.g. `<div class="kit-variants">${}${}${}${}</div>`) and
+// Arrow's chunk cache would otherwise reuse the previous view's chunk
+// across navigation and never re-mount the children, leaving stale DOM.
 const VIEWS: Record<string, ViewSpec> = {
   button: { variants: () => html`
     <div class="kit-variants">
-      ${button({ label: 'Primary', variant: 'primary' })}
-      ${button({ label: 'Default' })}
-      ${button({ label: 'Ghost', variant: 'ghost' })}
-      ${button({ label: 'Danger', variant: 'danger' })}
+      ${() => button({ label: 'Primary', variant: 'primary' })}
+      ${() => button({ label: 'Default' })}
+      ${() => button({ label: 'Ghost', variant: 'ghost' })}
+      ${() => button({ label: 'Danger', variant: 'danger' })}
     </div>
   ` },
   field: { variants: () => html`
     <div class="kit-variants kit-variants-stack">
-      ${field({ value: '', placeholder: 'placeholder' })}
-      ${field({ value: 'with value' })}
-      ${field({ value: 'invalid', error: 'oops' })}
+      ${() => field({ value: '', placeholder: 'placeholder' })}
+      ${() => field({ value: 'with value' })}
+      ${() => field({ value: 'invalid', error: 'oops' })}
     </div>
   ` },
   badge: { variants: () => html`
     <div class="kit-variants">
-      ${badge({ label: 'default' })}
-      ${badge({ label: 'accent', variant: 'accent' })}
-      ${badge({ label: 'danger', variant: 'danger' })}
-      ${badge({ label: 'success', variant: 'success' })}
+      ${() => badge({ label: 'default' })}
+      ${() => badge({ label: 'accent', variant: 'accent' })}
+      ${() => badge({ label: 'danger', variant: 'danger' })}
+      ${() => badge({ label: 'success', variant: 'success' })}
     </div>
   ` },
-  icon: { variants: () => html`<div class="kit-variants">${icon({ name: 'lucide/palette', size: 24 })}</div>` },
-  sidebar: { variants: () => html`<div class="kit-variants" style="height: 200px">${sidebar({
+  icon: { variants: () => html`<div class="kit-variants">${() => icon({ name: 'lucide/palette', size: 24 })}</div>` },
+  sidebar: { variants: () => html`<div class="kit-variants" style="height: 200px">${() => sidebar({
     title: 'Title',
-    body: html`${navItem({ label: 'Item A', active: true })}${navItem({ label: 'Item B' })}`,
+    body: html`${() => navItem({ label: 'Item A', active: true })}${() => navItem({ label: 'Item B' })}`,
   })}</div>` },
   'nav-item': { variants: () => html`<div class="kit-variants kit-variants-stack">
-    ${navItem({ label: 'Inactive' })}
-    ${navItem({ label: 'Active', active: true })}
+    ${() => navItem({ label: 'Inactive' })}
+    ${() => navItem({ label: 'Active', active: true })}
   </div>` },
-  section: { variants: () => html`${section({ title: 'A section', description: 'A short description.', body: html`<p>Body content.</p>` })}` },
+  section: { variants: () => html`${() => section({ title: 'A section', description: 'A short description.', body: html`<p>Body content.</p>` })}` },
   row: { variants: () => html`<div class="kit-variants kit-variants-stack">
-    ${row({ label: 'Simple row' })}
-    ${row({ label: 'Row with detail', detail: '/path/to/value' })}
-    ${row({ label: 'Row with actions', actions: html`${button({ label: 'Edit', variant: 'ghost' })}` })}
+    ${() => row({ label: 'Simple row' })}
+    ${() => row({ label: 'Row with detail', detail: '/path/to/value' })}
+    ${() => row({ label: 'Row with actions', actions: html`${() => button({ label: 'Edit', variant: 'ghost' })}` })}
   </div>` },
-  list: { variants: () => html`${list({ body: html`${row({ label: 'one' })}${row({ label: 'two' })}${row({ label: 'three' })}` })}` },
-  form: { variants: () => html`${form({
-    body: html`${fieldRow({ label: 'Email', body: field({ value: 'user@example.com' }) })}${fieldRow({ label: 'Pass', body: field({ value: '', type: 'password' }) })}`,
-    actions: html`${button({ label: 'Save', variant: 'primary' })}${button({ label: 'Cancel', variant: 'ghost' })}`,
+  list: { variants: () => html`${() => list({ body: html`${() => row({ label: 'one' })}${() => row({ label: 'two' })}${() => row({ label: 'three' })}` })}` },
+  form: { variants: () => html`${() => form({
+    body: html`${() => fieldRow({ label: 'Email', body: field({ value: 'user@example.com' }) })}${() => fieldRow({ label: 'Pass', body: field({ value: '', type: 'password' }) })}`,
+    actions: html`${() => button({ label: 'Save', variant: 'primary' })}${() => button({ label: 'Cancel', variant: 'ghost' })}`,
   })}` },
   tabs: { variants: () => html`<div class="kit-variants kit-variants-stack" style="width:240px">
-    ${tabs({ body: html`
-      ${tab({ title: 'one',   variant: 'numbered', index: 1, active: true })}
-      ${tab({ title: 'two',   variant: 'numbered', index: 2 })}
-      ${tab({ title: 'three', variant: 'numbered', index: 3 })}
+    ${() => tabs({ body: html`
+      ${() => tab({ title: 'one',   variant: 'numbered', index: 1, active: true })}
+      ${() => tab({ title: 'two',   variant: 'numbered', index: 2 })}
+      ${() => tab({ title: 'three', variant: 'numbered', index: 3 })}
     ` })}
   </div>` },
   toast: { variants: () => html`<div class="kit-variants kit-variants-stack" style="max-width:360px">
-    ${toast({ body: html`Default toast.` })}
-    ${toast({ variant: 'success', body: html`Saved successfully.` })}
-    ${toast({ variant: 'danger', body: html`Operation failed.` })}
+    ${() => toast({ body: html`Default toast.` })}
+    ${() => toast({ variant: 'success', body: html`Saved successfully.` })}
+    ${() => toast({ variant: 'danger', body: html`Operation failed.` })}
   </div>` },
-  empty: { variants: () => html`${empty({ label: 'Nothing yet', hint: 'Add an item to get started.' })}` },
+  empty: { variants: () => html`${() => empty({ label: 'Nothing yet', hint: 'Add an item to get started.' })}` },
 };
 
 export function renderComponent(name: string, catalog: CatalogEntry[]) {

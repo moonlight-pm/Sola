@@ -20,7 +20,7 @@ export const formTokens = [
 export function form(opts: FormOpts) {
   return html`<div class="kit-form">
     <div class="kit-form-body">${() => opts.body}</div>
-    ${opts.actions ? html`<div class="kit-form-actions">${() => opts.actions}</div>` : html``}
+    ${() => opts.actions ? html`<div class="kit-form-actions">${() => opts.actions}</div>` : html``}
   </div>`;
 }
 

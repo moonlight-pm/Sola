@@ -18,6 +18,6 @@ export function empty(opts: EmptyOpts) {
     : null;
   return html`<div class="kit-empty">
     <div class="kit-empty-label">${label}</div>
-    ${hint ? html`<div class="kit-empty-hint">${hint}</div>` : html``}
+    ${() => hint ? html`<div class="kit-empty-hint">${hint}</div>` : html``}
   </div>`;
 }

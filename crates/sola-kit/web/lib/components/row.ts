@@ -19,11 +19,11 @@ export function row(opts: RowOpts) {
     ? (typeof opts.detail === 'function' ? opts.detail : () => opts.detail as string)
     : null;
   return html`<div class="kit-row">
-    ${opts.leading ? html`<div class="kit-row-leading">${() => opts.leading}</div>` : html``}
+    ${() => opts.leading ? html`<div class="kit-row-leading">${() => opts.leading}</div>` : html``}
     <div class="kit-row-info">
       <div class="kit-row-label">${label}</div>
-      ${detail ? html`<div class="kit-row-detail">${detail}</div>` : html``}
+      ${() => detail ? html`<div class="kit-row-detail">${detail}</div>` : html``}
     </div>
-    ${opts.actions ? html`<div class="kit-row-actions">${() => opts.actions}</div>` : html``}
+    ${() => opts.actions ? html`<div class="kit-row-actions">${() => opts.actions}</div>` : html``}
   </div>`;
 }

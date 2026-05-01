@@ -13,7 +13,7 @@ export const sidebarTokens = [
 
 export function sidebar(opts: SidebarOpts) {
   return html`<aside class="kit-sidebar">
-    ${opts.title ? html`<div class="kit-sidebar-title">${
+    ${() => opts.title ? html`<div class="kit-sidebar-title">${
       typeof opts.title === 'function' ? opts.title : () => opts.title
     }</div>` : html``}
     ${() => opts.body}

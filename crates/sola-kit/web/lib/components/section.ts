@@ -19,7 +19,7 @@ export function section(opts: SectionOpts) {
     : null;
   return html`<section class="kit-section">
     <h2 class="kit-section-title">${title}</h2>
-    ${desc ? html`<p class="kit-section-desc">${desc}</p>` : html``}
+    ${() => desc ? html`<p class="kit-section-desc">${desc}</p>` : html``}
     <div class="kit-section-body">${() => opts.body}</div>
   </section>`;
 }
