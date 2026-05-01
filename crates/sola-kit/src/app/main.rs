@@ -1,3 +1,4 @@
+mod catalog;
 mod kit_app;
 
 fn main() {
