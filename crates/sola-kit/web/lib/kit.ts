@@ -39,3 +39,5 @@ export { list, listTokens } from './components/list';
 export type { ListOpts } from './components/list';
 export { form, fieldRow, formTokens } from './components/form';
 export type { FormOpts, FieldRowOpts } from './components/form';
+export { tabs, tab, tabsTokens } from './components/tabs';
+export type { TabsOpts, TabOpts, TabVariant } from './components/tabs';
