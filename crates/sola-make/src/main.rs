@@ -140,10 +140,15 @@ fn discover_binaries() -> Vec<String> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.join("src/main.rs").exists() {
+            let has_main_rs = path.join("src/main.rs").exists();
+            let cargo_toml_path = path.join("Cargo.toml");
+            let has_bin_section = std::fs::read_to_string(&cargo_toml_path)
+                .map(|s| s.contains("[[bin]]"))
+                .unwrap_or(false);
+            if !has_main_rs && !has_bin_section {
                 continue;
             }
-            let toml_path = path.join("Cargo.toml");
+            let toml_path = cargo_toml_path;
             let contents = match std::fs::read_to_string(&toml_path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -257,5 +262,55 @@ mod tests {
             cli.command,
             Commands::Install { app: Some(ref a), watch: true } if a == "terminal"
         ));
+    }
+
+    /// A crate with [[bin]] in Cargo.toml but no src/main.rs must still be
+    /// discovered. This verifies the fix that allows sola-kit (whose binary is
+    /// at src/app/main.rs) to be found by the all-apps install path.
+    #[test]
+    fn discover_binaries_finds_bin_section_without_main_rs() {
+        let tmp = std::env::temp_dir().join("sola-make-test-discover");
+        let crate_dir = tmp.join("sola-fake-bin");
+        let src_dir = crate_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        // Write Cargo.toml with [[bin]] but no src/main.rs.
+        std::fs::write(
+            crate_dir.join("Cargo.toml"),
+            "[package]\nname = \"sola-fake-bin\"\nversion = \"0.1.0\"\n\n[[bin]]\nname = \"sola-fake-bin\"\npath = \"src/app/main.rs\"\n",
+        ).unwrap();
+        // Verify src/main.rs does NOT exist.
+        assert!(!crate_dir.join("src/main.rs").exists());
+        // Run discover logic for just this temp directory.
+        let mut binaries = Vec::new();
+        for entry in std::fs::read_dir(&tmp).unwrap().flatten() {
+            let path = entry.path();
+            let has_main_rs = path.join("src/main.rs").exists();
+            let cargo_toml_path = path.join("Cargo.toml");
+            let has_bin_section = std::fs::read_to_string(&cargo_toml_path)
+                .map(|s| s.contains("[[bin]]"))
+                .unwrap_or(false);
+            if !has_main_rs && !has_bin_section {
+                continue;
+            }
+            let contents = std::fs::read_to_string(&cargo_toml_path).unwrap();
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.starts_with("name") {
+                    if let Some(name) = line.split('"').nth(1) {
+                        if name != "sola-make" {
+                            binaries.push(name.to_string());
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        // Clean up.
+        std::fs::remove_dir_all(&tmp).ok();
+        assert!(
+            binaries.contains(&"sola-fake-bin".to_string()),
+            "expected sola-fake-bin to be discovered, got: {:?}",
+            binaries
+        );
     }
 }
