@@ -1,6 +1,8 @@
 import { html, reactive } from '@arrow-js/core';
 import { renderSidebar, type CatalogEntry } from './sidebar';
 import { renderColors } from './preview/tokens-colors';
+import { renderTypography } from './preview/tokens-typography';
+import { renderSpacing } from './preview/tokens-spacing';
 
 declare global {
   interface Window { RESTORED_STATE?: { catalog: CatalogEntry[]; theme: unknown }; }
@@ -29,6 +31,8 @@ export function mount(target: HTMLElement) {
 }
 
 function routeWork(selected: string, catalog: CatalogEntry[]) {
-  if (selected === 'tokens.colors') return renderColors(catalog);
+  if (selected === 'tokens.colors')     return renderColors(catalog);
+  if (selected === 'tokens.typography') return renderTypography();
+  if (selected === 'tokens.spacing')    return renderSpacing();
   return html`<div class="kit-placeholder">${selected}</div>`;
 }

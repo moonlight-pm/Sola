@@ -21,6 +21,27 @@ export function setColor(field: string, value: string) {
   scheduleEmit();
 }
 
+export function setTypography(field: string, value: string) {
+  if (!themeState.current.typography) return;
+  themeState.current.typography[field] = value;
+  applyTheme({ [`--${field.replaceAll('_', '-')}`]: value });
+  scheduleEmit();
+}
+
+export function setSpacing(field: string, value: string) {
+  if (!themeState.current.spacing) return;
+  themeState.current.spacing[field] = value;
+  applyTheme({ [`--space-${field}`]: value });
+  scheduleEmit();
+}
+
+export function setRadius(field: string, value: string) {
+  if (!themeState.current.radius) return;
+  themeState.current.radius[field] = value;
+  applyTheme({ [`--radius-${field}`]: value });
+  scheduleEmit();
+}
+
 function scheduleEmit() {
   if (debounceTimer !== null) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {

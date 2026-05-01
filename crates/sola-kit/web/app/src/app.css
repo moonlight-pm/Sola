@@ -43,3 +43,10 @@ html, body {
 .kit-affected-list { margin: 0; padding-left: var(--space-md); color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-body); }
 .kit-section-title-sm { font-size: var(--text-caption); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: var(--space-xs); }
 .kit-empty { font-size: var(--text-caption); color: var(--text-muted); }
+
+.kit-type-row { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-sm); }
+.kit-type-label { width: 180px; flex-shrink: 0; font-size: var(--text-body); color: var(--text-secondary); }
+.kit-type-var { font-family: var(--font-mono); color: var(--text-muted); font-size: var(--text-caption); margin-left: var(--space-xs); }
+.kit-type-sample { flex: 1; color: var(--text-tertiary); }
+.kit-space-sample, .kit-radius-sample { display: inline-block; }
+.kit-spacing, .kit-typography { padding: var(--space-md); background: var(--bg-secondary); border-radius: var(--radius-md); }
