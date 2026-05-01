@@ -137,6 +137,11 @@ pub static CATALOG: &[CatalogEntry] = &[
 ];
 
 /// Reverse index: which components consume the given token?
+///
+/// Currently unused by the storybook (which iterates `CatalogEntry.tokens`
+/// directly). Kept as part of the catalog's public API for future
+/// reverse-index features (e.g. "show me everywhere --accent appears").
+#[allow(dead_code)]
 pub fn consumers_of(token: &str) -> Vec<&'static CatalogEntry> {
     CATALOG.iter().filter(|e| e.tokens.contains(&token)).collect()
 }
