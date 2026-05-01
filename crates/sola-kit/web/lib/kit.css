@@ -150,3 +150,26 @@
   font-size: var(--text-body);
   color: var(--text-tertiary);
 }
+
+/* ===== Row ===== */
+.kit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  gap: var(--space-sm);
+}
+.kit-row-leading { flex-shrink: 0; }
+.kit-row-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.kit-row-label { font-size: var(--text-body); font-weight: 500; color: var(--text-primary); }
+.kit-row-detail {
+  font-size: var(--text-caption);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kit-row-actions { display: flex; gap: var(--space-xs); flex-shrink: 0; }

@@ -33,3 +33,5 @@ export { navItem, navItemTokens } from './components/nav-item';
 export type { NavItemOpts } from './components/nav-item';
 export { section, sectionTokens } from './components/section';
 export type { SectionOpts } from './components/section';
+export { row, rowTokens } from './components/row';
+export type { RowOpts } from './components/row';
