@@ -367,11 +367,17 @@
 .kit-toast-danger  { border-left: 3px solid var(--kit-toast-danger-rule); }
 
 /* ===== Empty ===== */
+:root {
+  --kit-empty-pad:        var(--space-md);
+  --kit-empty-label-size: var(--text-body);
+  --kit-empty-label-fg:   var(--text-muted);
+  --kit-empty-hint-size:  var(--text-caption);
+}
 .kit-empty {
-  padding: var(--space-md);
-  font-size: var(--text-body);
-  color: var(--text-muted);
+  padding: var(--kit-empty-pad);
+  font-size: var(--kit-empty-label-size);
+  color: var(--kit-empty-label-fg);
   font-style: italic;
   text-align: center;
 }
-.kit-empty-hint { font-size: var(--text-caption); margin-top: 4px; font-style: normal; }
+.kit-empty-hint { font-size: var(--kit-empty-hint-size); margin-top: 4px; font-style: normal; }

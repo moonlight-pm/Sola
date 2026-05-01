@@ -353,6 +353,60 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
     ],
   },
 
+  empty: {
+    groups: [
+      {
+        id: 'spacing',
+        label: 'Spacing',
+        description: 'Padding around the entire empty-state block.',
+        roles: [
+          {
+            alias: '--kit-empty-pad',
+            label: 'Padding',
+            description: 'Inset on all sides of the empty-state content.',
+            kind: 'spacing',
+            defaultToken: '--space-md',
+          },
+        ],
+      },
+      {
+        id: 'label',
+        label: 'Primary label',
+        description: 'The main "nothing here yet" text. Italicized; centered.',
+        roles: [
+          {
+            alias: '--kit-empty-label-size',
+            label: 'Label size',
+            description: 'Font size of the primary text.',
+            kind: 'text-size',
+            defaultToken: '--text-body',
+          },
+          {
+            alias: '--kit-empty-label-fg',
+            label: 'Label color',
+            description: 'Color of the primary text. Both label and hint use this color.',
+            kind: 'color',
+            defaultToken: '--text-muted',
+          },
+        ],
+      },
+      {
+        id: 'hint',
+        label: 'Hint',
+        description: 'Optional secondary line below the label, used for next-step copy ("Add an item to get started").',
+        roles: [
+          {
+            alias: '--kit-empty-hint-size',
+            label: 'Hint size',
+            description: 'Font size of the hint text.',
+            kind: 'text-size',
+            defaultToken: '--text-caption',
+          },
+        ],
+      },
+    ],
+  },
+
   toast: {
     groups: [
       {
