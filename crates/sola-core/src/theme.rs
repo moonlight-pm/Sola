@@ -113,47 +113,48 @@ impl Theme {
     /// applies to `:root` in the WebView. Var names are deterministic.
     /// Returns a `BTreeMap` so iteration order is stable for tests.
     pub fn to_css_vars(&self) -> BTreeMap<String, String> {
-        let mut m = BTreeMap::new();
         let c = &self.colors;
-        m.insert("--bg-primary".into(), c.bg_primary.clone());
-        m.insert("--bg-secondary".into(), c.bg_secondary.clone());
-        m.insert("--bg-tertiary".into(), c.bg_tertiary.clone());
-        m.insert("--bg-hover".into(), c.bg_hover.clone());
-        m.insert("--border".into(), c.border.clone());
-        m.insert("--border-subtle".into(), c.border_subtle.clone());
-        m.insert("--text-primary".into(), c.text_primary.clone());
-        m.insert("--text-secondary".into(), c.text_secondary.clone());
-        m.insert("--text-tertiary".into(), c.text_tertiary.clone());
-        m.insert("--text-muted".into(), c.text_muted.clone());
-        m.insert("--text-accent".into(), c.text_accent.clone());
-        m.insert("--accent".into(), c.accent.clone());
-        m.insert("--accent-dim".into(), c.accent_dim.clone());
-        m.insert("--danger".into(), c.danger.clone());
-        m.insert("--success".into(), c.success.clone());
-
         let t = &self.typography;
-        m.insert("--font-sans".into(), t.font_sans.clone());
-        m.insert("--font-mono".into(), t.font_mono.clone());
-        m.insert("--text-caption".into(), t.text_caption.clone());
-        m.insert("--text-body".into(), t.text_body.clone());
-        m.insert("--text-body-lg".into(), t.text_body_lg.clone());
-        m.insert("--text-heading".into(), t.text_heading.clone());
-        m.insert("--text-display".into(), t.text_display.clone());
-
         let s = &self.spacing;
-        m.insert("--space-xs".into(), s.xs.clone());
-        m.insert("--space-sm".into(), s.sm.clone());
-        m.insert("--space-md".into(), s.md.clone());
-        m.insert("--space-lg".into(), s.lg.clone());
-        m.insert("--space-xl".into(), s.xl.clone());
-        m.insert("--space-xxl".into(), s.xxl.clone());
-
         let r = &self.radius;
-        m.insert("--radius-sm".into(), r.sm.clone());
-        m.insert("--radius-md".into(), r.md.clone());
-        m.insert("--radius-lg".into(), r.lg.clone());
-
-        m
+        let pairs: &[(&str, &str)] = &[
+            // colors
+            ("--bg-primary",     &c.bg_primary),
+            ("--bg-secondary",   &c.bg_secondary),
+            ("--bg-tertiary",    &c.bg_tertiary),
+            ("--bg-hover",       &c.bg_hover),
+            ("--border",         &c.border),
+            ("--border-subtle",  &c.border_subtle),
+            ("--text-primary",   &c.text_primary),
+            ("--text-secondary", &c.text_secondary),
+            ("--text-tertiary",  &c.text_tertiary),
+            ("--text-muted",     &c.text_muted),
+            ("--text-accent",    &c.text_accent),
+            ("--accent",         &c.accent),
+            ("--accent-dim",     &c.accent_dim),
+            ("--danger",         &c.danger),
+            ("--success",        &c.success),
+            // typography
+            ("--font-sans",     &t.font_sans),
+            ("--font-mono",     &t.font_mono),
+            ("--text-caption",  &t.text_caption),
+            ("--text-body",     &t.text_body),
+            ("--text-body-lg",  &t.text_body_lg),
+            ("--text-heading",  &t.text_heading),
+            ("--text-display",  &t.text_display),
+            // spacing
+            ("--space-xs",  &s.xs),
+            ("--space-sm",  &s.sm),
+            ("--space-md",  &s.md),
+            ("--space-lg",  &s.lg),
+            ("--space-xl",  &s.xl),
+            ("--space-xxl", &s.xxl),
+            // radius
+            ("--radius-sm", &r.sm),
+            ("--radius-md", &r.md),
+            ("--radius-lg", &r.lg),
+        ];
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 }
 
