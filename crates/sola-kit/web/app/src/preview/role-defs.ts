@@ -241,4 +241,115 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
       },
     ],
   },
+
+  badge: {
+    groups: [
+      {
+        id: 'shape',
+        label: 'Shape',
+        description: 'Padding and rounding. Vertical padding is hard-coded at 1px so the badge always sits flush with adjacent text.',
+        roles: [
+          {
+            alias: '--kit-badge-pad-x',
+            label: 'Horizontal padding',
+            description: 'Inset on each side of the label.',
+            kind: 'spacing',
+            defaultToken: '--space-xs',
+          },
+          {
+            alias: '--kit-badge-radius',
+            label: 'Corner radius',
+            description: 'Border-radius — same value across all variants.',
+            kind: 'radius',
+            defaultToken: '--radius-sm',
+            allowNone: true,
+          },
+        ],
+      },
+      {
+        id: 'type',
+        label: 'Type',
+        description: 'Label sizing. Family is inherited from surrounding text; weight is hard-coded at 500.',
+        roles: [
+          {
+            alias: '--kit-badge-size',
+            label: 'Label size',
+            description: 'Font size of the badge text.',
+            kind: 'text-size',
+            defaultToken: '--text-caption',
+          },
+        ],
+      },
+      {
+        id: 'default',
+        label: 'Default variant',
+        description: 'Neutral background fill. Used for non-semantic markers like counts or generic tags.',
+        roles: [
+          {
+            alias: '--kit-badge-bg',
+            label: 'Background',
+            description: 'Fill color of the default badge.',
+            kind: 'color',
+            defaultToken: '--bg-tertiary',
+          },
+          {
+            alias: '--kit-badge-fg',
+            label: 'Text',
+            description: 'Label color of the default badge.',
+            kind: 'color',
+            defaultToken: '--text-secondary',
+          },
+        ],
+      },
+      {
+        id: 'accent',
+        label: 'Accent variant',
+        description: 'Highlight badge — used for "new", "live", or active markers.',
+        roles: [
+          {
+            alias: '--kit-badge-accent-bg',
+            label: 'Background',
+            description: 'Tinted accent fill.',
+            kind: 'color',
+            defaultToken: '--accent-dim',
+          },
+          {
+            alias: '--kit-badge-accent-fg',
+            label: 'Text',
+            description: 'Label color on the accent fill.',
+            kind: 'color',
+            defaultToken: '--accent',
+          },
+        ],
+      },
+      {
+        id: 'danger',
+        label: 'Danger variant',
+        description: 'Background uses a fixed rgba tint of the danger color; only the foreground is overridable here.',
+        roles: [
+          {
+            alias: '--kit-badge-danger-fg',
+            label: 'Text',
+            description: 'Label color of the danger badge.',
+            kind: 'color',
+            defaultToken: '--danger',
+          },
+        ],
+      },
+      {
+        id: 'success',
+        label: 'Success variant',
+        description: 'Background uses a fixed rgba tint of the success color; only the foreground is overridable here.',
+        roles: [
+          {
+            alias: '--kit-badge-success-fg',
+            label: 'Text',
+            description: 'Label color of the success badge.',
+            kind: 'color',
+            defaultToken: '--success',
+          },
+        ],
+      },
+    ],
+  },
 };
