@@ -224,3 +224,18 @@
   cursor: pointer; padding: 0 var(--space-xs); font-size: var(--text-body-lg);
 }
 .kit-tab-close:hover { color: var(--text-primary); }
+
+/* ===== Toast ===== */
+.kit-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: var(--text-body);
+  box-shadow: 0 4px 16px -8px rgba(0,0,0,0.6);
+}
+.kit-toast-success { border-left: 3px solid var(--success); }
+.kit-toast-danger  { border-left: 3px solid var(--danger); }
