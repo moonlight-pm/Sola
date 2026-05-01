@@ -352,4 +352,26 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
       },
     ],
   },
+
+  // Icon currently has only one tweakable role — opacity. Color tinting
+  // happens via the consumer's text color (see the brightness/saturate
+  // filter in kit.css), so there's no foreground role to expose. Size
+  // is per-call (passed as `size` opt) rather than a theme alias.
+  // Listed for completeness; expand if/when the icon system grows
+  // (e.g. proper fill-color via CSS mask).
+  icon: {
+    groups: [
+      {
+        id: 'appearance',
+        label: 'Appearance',
+        description: 'Visual treatment of the rendered icon. Color is inherited from surrounding text via the brightness filter; size is set per call site.',
+        roles: [
+          // Opacity isn't a token kind we currently support in the role
+          // editor (no opacity-tokens pool), so this is intentionally
+          // left as a placeholder doc note rather than an editable
+          // role. When we add an "opacity" RoleKind, expose it here.
+        ],
+      },
+    ],
+  },
 };

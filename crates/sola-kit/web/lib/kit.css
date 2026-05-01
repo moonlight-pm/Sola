@@ -140,11 +140,14 @@
 .kit-badge-success { background: rgba(63, 185, 80, 0.14); color: var(--kit-badge-success-fg); }
 
 /* ===== Icon ===== */
+:root {
+  --kit-icon-opacity: 0.85;
+}
 .kit-icon {
   display: inline-block;
   vertical-align: middle;
   filter: brightness(0) saturate(100%); /* tint via parent color via CSS mask in future */
-  opacity: 0.85;
+  opacity: var(--kit-icon-opacity);
 }
 
 /* ===== Sidebar ===== */
