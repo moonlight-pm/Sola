@@ -66,3 +66,18 @@
   padding: var(--space-sm);
 }
 .kit-btn-add:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ===== Field ===== */
+.kit-field {
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-body);
+  outline: none;
+}
+.kit-field:focus { border-color: var(--accent); }
+.kit-field[data-error="error"] { border-color: var(--danger); }
