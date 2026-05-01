@@ -204,17 +204,26 @@
 .kit-nav-item[data-active="active"] { background: var(--kit-nav-item-bg-active); color: var(--kit-nav-item-fg-active); }
 
 /* ===== Section ===== */
-.kit-section { margin-bottom: var(--space-lg); }
+:root {
+  --kit-section-gap-bottom: var(--space-lg);
+  --kit-section-title-gap: var(--space-xs);
+  --kit-section-desc-gap:  var(--space-md);
+  --kit-section-title-size: var(--text-heading);
+  --kit-section-title-fg:   var(--text-primary);
+  --kit-section-desc-size:  var(--text-body);
+  --kit-section-desc-fg:    var(--text-tertiary);
+}
+.kit-section { margin-bottom: var(--kit-section-gap-bottom); }
 .kit-section-title {
-  margin: 0 0 var(--space-xs);
-  font-size: var(--text-heading);
+  margin: 0 0 var(--kit-section-title-gap);
+  font-size: var(--kit-section-title-size);
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--kit-section-title-fg);
 }
 .kit-section-desc {
-  margin: 0 0 var(--space-md);
-  font-size: var(--text-body);
-  color: var(--text-tertiary);
+  margin: 0 0 var(--kit-section-desc-gap);
+  font-size: var(--kit-section-desc-size);
+  color: var(--kit-section-desc-fg);
 }
 
 /* ===== Row ===== */

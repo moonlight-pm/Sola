@@ -353,6 +353,81 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
     ],
   },
 
+  section: {
+    groups: [
+      {
+        id: 'spacing',
+        label: 'Spacing',
+        description: 'Vertical rhythm — the section\'s outer bottom margin and the gaps between title / description / body.',
+        roles: [
+          {
+            alias: '--kit-section-gap-bottom',
+            label: 'Section bottom margin',
+            description: 'Space below the section, separating it from whatever follows.',
+            kind: 'spacing',
+            defaultToken: '--space-lg',
+          },
+          {
+            alias: '--kit-section-title-gap',
+            label: 'Title bottom gap',
+            description: 'Space below the title, before the description (or body).',
+            kind: 'spacing',
+            defaultToken: '--space-xs',
+          },
+          {
+            alias: '--kit-section-desc-gap',
+            label: 'Description bottom gap',
+            description: 'Space below the description, before the body.',
+            kind: 'spacing',
+            defaultToken: '--space-md',
+          },
+        ],
+      },
+      {
+        id: 'title',
+        label: 'Title',
+        description: 'Top-level heading of the section. Weight is hard-coded at 600.',
+        roles: [
+          {
+            alias: '--kit-section-title-size',
+            label: 'Title size',
+            description: 'Font size of the section heading.',
+            kind: 'text-size',
+            defaultToken: '--text-heading',
+          },
+          {
+            alias: '--kit-section-title-fg',
+            label: 'Title color',
+            description: 'Color of the section heading text.',
+            kind: 'color',
+            defaultToken: '--text-primary',
+          },
+        ],
+      },
+      {
+        id: 'description',
+        label: 'Description',
+        description: 'Sub-heading paragraph below the title.',
+        roles: [
+          {
+            alias: '--kit-section-desc-size',
+            label: 'Description size',
+            description: 'Font size of the description text.',
+            kind: 'text-size',
+            defaultToken: '--text-body',
+          },
+          {
+            alias: '--kit-section-desc-fg',
+            label: 'Description color',
+            description: 'Color of the description text.',
+            kind: 'color',
+            defaultToken: '--text-tertiary',
+          },
+        ],
+      },
+    ],
+  },
+
   'nav-item': {
     groups: [
       {
