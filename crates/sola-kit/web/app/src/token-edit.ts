@@ -76,9 +76,10 @@ export function colorEditor(field: string, varName: string, used: CatalogEntry[]
         <div class="kit-editor-meta">${() => `Used in ${used.length} ${used.length === 1 ? 'component' : 'components'}`}</div>
       </div>
       <div class="kit-editor-row">
-        <div class="kit-editor-swatch" style="${() => `background: ${current()}`}"></div>
+        <label class="kit-editor-swatch" style="${() => `background: ${current()}`}" title="Click to open color picker">
+          <input type="color" value="${() => normaliseToHex(current())}" @input="${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}">
+        </label>
         <input type="text" class="kit-field" value="${current}" @input="${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}">
-        <input type="color" value="${() => normaliseToHex(current())}" @input="${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}">
         <div class="kit-editor-actions">${button({ label: 'Reset', variant: 'ghost', onClick: resetTheme })}</div>
       </div>
     </div>

@@ -36,7 +36,23 @@ html, body {
 .kit-editor-name { font-family: var(--font-mono); font-size: var(--text-heading); }
 .kit-editor-meta { font-size: var(--text-caption); color: var(--text-tertiary); }
 .kit-editor-row { display: flex; align-items: center; gap: var(--space-sm); }
-.kit-editor-swatch { width: 48px; height: 48px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.kit-editor-swatch {
+  width: 48px; height: 48px;
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  cursor: pointer;
+  display: block;
+  position: relative;
+  flex-shrink: 0;
+}
+.kit-editor-swatch input[type="color"] {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+}
 .kit-editor-actions { margin-left: auto; }
 
 .kit-affected { padding: var(--space-md); background: var(--bg-secondary); border-radius: var(--radius-md); }
