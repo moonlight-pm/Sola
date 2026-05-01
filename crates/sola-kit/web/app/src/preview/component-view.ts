@@ -10,8 +10,8 @@ import {
 } from '../token-edit.js';
 import { pickerSwatch } from '../color-picker.js';
 import { fontPicker } from '../font-picker.js';
-import { renderSlots } from './slot-view.js';
-import { SLOT_DEFS } from './slot-defs.js';
+import { renderRoles } from './role-view.js';
+import { ROLE_DEFS } from './role-defs.js';
 import type { CatalogEntry } from '../sidebar.js';
 
 interface ViewSpec {
@@ -93,13 +93,13 @@ export function renderComponent(name: string, catalog: CatalogEntry[]) {
   if (!view || !entry) {
     return html`<div class="kit-placeholder">No preview for ${name}</div>`;
   }
-  const slotSpec = SLOT_DEFS[name];
+  const slotSpec = ROLE_DEFS[name];
   return html`
     <div class="kit-component-view">
       <div class="kit-section-title-sm">Variants</div>
       <div class="kit-preview">${() => view.variants()}</div>
       ${() => slotSpec
-        ? html`<div class="kit-section-title-sm" style="margin-top: var(--space-md)">Slots</div>${() => renderSlots(slotSpec)}`
+        ? html`<div class="kit-section-title-sm" style="margin-top: var(--space-md)">Slots</div>${() => renderRoles(slotSpec)}`
         : html`<div class="kit-section-title-sm" style="margin-top: var(--space-md)">Tokens this uses</div>
             <div class="kit-chips">
               ${() => entry.tokens.map(varName => renderChip(varName).key(varName))}

@@ -1,18 +1,18 @@
-// Per-component slot definitions. Each entry describes the *roles* the
-// component plays (groups + slots), with a default token mapping per
-// slot. Components not listed here fall back to the chip view in
+// Per-component role definitions. Each entry describes the *roles* the
+// component plays (groups + roles), with a default token mapping per
+// role. Components not listed here fall back to the chip view in
 // component-view.ts.
 
-import type { ComponentSlots } from './slot-view.js';
+import type { ComponentRoles } from './role-view.js';
 
-export const SLOT_DEFS: Record<string, ComponentSlots> = {
+export const ROLE_DEFS: Record<string, ComponentRoles> = {
   button: {
     groups: [
       {
         id: 'shape',
         label: 'Shape',
         description: 'Geometry of the button outline — corner rounding and inset on each axis. Same values across all variants.',
-        slots: [
+        roles: [
           {
             alias: '--kit-btn-radius',
             label: 'Corner radius',
@@ -41,7 +41,7 @@ export const SLOT_DEFS: Record<string, ComponentSlots> = {
         id: 'type',
         label: 'Type',
         description: 'Label sizing. Family is inherited from the surrounding text.',
-        slots: [
+        roles: [
           {
             alias: '--kit-btn-size',
             label: 'Label size',
@@ -55,7 +55,7 @@ export const SLOT_DEFS: Record<string, ComponentSlots> = {
         id: 'default',
         label: 'Default variant',
         description: 'Background and text color when no variant prop is passed (the most common state).',
-        slots: [
+        roles: [
           {
             alias: '--kit-btn-bg',
             label: 'Background',
@@ -83,7 +83,7 @@ export const SLOT_DEFS: Record<string, ComponentSlots> = {
         id: 'primary',
         label: 'Primary variant',
         description: 'Variant used for the dominant call-to-action on a screen.',
-        slots: [
+        roles: [
           {
             alias: '--kit-btn-primary-bg',
             label: 'Background',
@@ -104,7 +104,7 @@ export const SLOT_DEFS: Record<string, ComponentSlots> = {
         id: 'danger',
         label: 'Danger variant',
         description: 'Destructive-action button. Background is transparent so it sits unobtrusively in toolbars until interacted with.',
-        slots: [
+        roles: [
           {
             alias: '--kit-btn-danger-fg',
             label: 'Text',
@@ -118,7 +118,7 @@ export const SLOT_DEFS: Record<string, ComponentSlots> = {
         id: 'add',
         label: 'Add variant',
         description: 'Full-width "+ add item" affordance, dashed outline by default.',
-        slots: [
+        roles: [
           {
             alias: '--kit-btn-add-border',
             label: 'Border',

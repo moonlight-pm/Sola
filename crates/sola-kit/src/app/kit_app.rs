@@ -17,8 +17,8 @@ static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
     "/src/preview/tokens-typography.ts" => (include_str!("../../web/app/src/preview/tokens-typography.ts"), TypeScript),
     "/src/preview/tokens-spacing.ts" => (include_str!("../../web/app/src/preview/tokens-spacing.ts"), TypeScript),
     "/src/preview/component-view.ts" => (include_str!("../../web/app/src/preview/component-view.ts"), TypeScript),
-    "/src/preview/slot-view.ts" => (include_str!("../../web/app/src/preview/slot-view.ts"), TypeScript),
-    "/src/preview/slot-defs.ts" => (include_str!("../../web/app/src/preview/slot-defs.ts"), TypeScript),
+    "/src/preview/role-view.ts" => (include_str!("../../web/app/src/preview/role-view.ts"), TypeScript),
+    "/src/preview/role-defs.ts" => (include_str!("../../web/app/src/preview/role-defs.ts"), TypeScript),
 };
 
 #[derive(Deserialize)]

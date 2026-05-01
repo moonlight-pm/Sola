@@ -10,10 +10,21 @@ html, body {
 .kit-shell { display: flex; }
 .kit-shell > .kit-sidebar { width: 200px; flex-shrink: 0; }
 .kit-work { flex: 1; overflow: auto; padding: var(--space-lg) var(--space-xl); }
+/* Cap content width inside the work area so wide windows don't stretch
+ * editor cards / role groups across the whole pane. */
+.kit-route { max-width: 760px; margin: 0 auto; }
 .kit-placeholder {
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   font-size: var(--text-body);
+}
+.kit-section-hint {
+  font-family: var(--font-sans);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: var(--space-xs);
 }
 
 .kit-colors { display: flex; gap: var(--space-lg); height: 100%; }
@@ -91,13 +102,13 @@ html, body {
   word-break: break-word;
 }
 
-/* ===== Slot view (component editor) ===== */
-.kit-slot-view {
+/* ===== Role view (component editor) ===== */
+.kit-role-view {
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
 }
-.kit-slot-group {
+.kit-role-group {
   background: var(--bg-secondary);
   border-radius: var(--radius-md);
   padding: var(--space-md);
@@ -105,20 +116,20 @@ html, body {
   flex-direction: column;
   gap: var(--space-sm);
 }
-.kit-slot-group-head { display: flex; flex-direction: column; gap: 2px; }
-.kit-slot-group-title {
+.kit-role-group-head { display: flex; flex-direction: column; gap: 2px; }
+.kit-role-group-title {
   margin: 0;
   font-size: var(--text-body-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
-.kit-slot-group-desc {
+.kit-role-group-desc {
   margin: 0;
   font-size: var(--text-caption);
   color: var(--text-tertiary);
   line-height: 1.5;
 }
-.kit-slot-list {
+.kit-role-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
@@ -126,29 +137,29 @@ html, body {
   border-top: 1px solid var(--border-subtle);
   padding-top: var(--space-sm);
 }
-.kit-slot {
+.kit-role {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
 }
-.kit-slot-head {
+.kit-role-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-sm);
 }
-.kit-slot-meta { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.kit-slot-label {
+.kit-role-meta { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.kit-role-label {
   font-size: var(--text-body);
   color: var(--text-primary);
   font-weight: 500;
 }
-.kit-slot-desc {
+.kit-role-desc {
   font-size: var(--text-caption);
   color: var(--text-tertiary);
   line-height: 1.4;
 }
-.kit-slot-reset {
+.kit-role-reset {
   background: none;
   border: none;
   color: var(--text-muted);
@@ -159,20 +170,20 @@ html, body {
   border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
-.kit-slot-reset:hover { color: var(--accent); background: var(--bg-tertiary); }
-.kit-slot-body {
+.kit-role-reset:hover { color: var(--accent); background: var(--bg-tertiary); }
+.kit-role-body {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
 }
 
 /* Token-name picker (compact dropdown) */
-.kit-slot-token-wrap {
+.kit-role-token-wrap {
   position: relative;
   flex: 1;
   min-width: 0;
 }
-.kit-slot-token-trigger {
+.kit-role-token-trigger {
   width: 100%;
   box-sizing: border-box;
   display: flex;
@@ -188,19 +199,19 @@ html, body {
   cursor: pointer;
   text-align: left;
 }
-.kit-slot-token-trigger:hover { border-color: var(--accent); }
-.kit-slot-token-name {
+.kit-role-token-trigger:hover { border-color: var(--accent); }
+.kit-role-token-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.kit-slot-token-chev {
+.kit-role-token-chev {
   color: var(--text-muted);
   margin-left: var(--space-sm);
   font-size: var(--text-caption);
 }
-.kit-slot-token-popover {
+.kit-role-token-popover {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
@@ -217,7 +228,7 @@ html, body {
   max-height: 280px;
   overflow-y: auto;
 }
-.kit-slot-token-option {
+.kit-role-token-option {
   text-align: left;
   background: none;
   border: none;
@@ -228,12 +239,12 @@ html, body {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.kit-slot-token-option:hover { background: var(--bg-tertiary); }
-.kit-slot-token-option[data-active="active"] { background: var(--accent-dim); color: var(--accent); }
-.kit-slot-token-option-none { color: var(--text-muted); font-style: italic; }
+.kit-role-token-option:hover { background: var(--bg-tertiary); }
+.kit-role-token-option[data-active="active"] { background: var(--accent-dim); color: var(--accent); }
+.kit-role-token-option-none { color: var(--text-muted); font-style: italic; }
 
 /* Slot value editor — reused color swatch + text input */
-.kit-slot-value {
+.kit-role-value {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
@@ -241,18 +252,18 @@ html, body {
   min-width: 140px;
   max-width: 200px;
 }
-.kit-slot-swatch {
+.kit-role-swatch {
   width: 24px; height: 24px;
   border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
-.kit-slot-value .kit-field {
+.kit-role-value .kit-field {
   width: 100%;
   box-sizing: border-box;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
 }
-.kit-slot-none {
+.kit-role-none {
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--text-muted);
