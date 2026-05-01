@@ -178,19 +178,30 @@
 }
 
 /* ===== NavItem ===== */
+:root {
+  --kit-nav-item-pad-x:    var(--space-sm);
+  --kit-nav-item-pad-y:    var(--space-xs);
+  --kit-nav-item-radius:   var(--radius-sm);
+  --kit-nav-item-size:     var(--text-body);
+  --kit-nav-item-fg:       var(--text-secondary);
+  --kit-nav-item-fg-hover: var(--text-primary);
+  --kit-nav-item-bg-hover: var(--bg-tertiary);
+  --kit-nav-item-bg-active: var(--accent-dim);
+  --kit-nav-item-fg-active: var(--accent);
+}
 .kit-nav-item {
   background: none;
   border: none;
   text-align: left;
   font: inherit;
   cursor: pointer;
-  color: var(--text-secondary);
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-body);
+  color: var(--kit-nav-item-fg);
+  padding: var(--kit-nav-item-pad-y) var(--kit-nav-item-pad-x);
+  border-radius: var(--kit-nav-item-radius);
+  font-size: var(--kit-nav-item-size);
 }
-.kit-nav-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-.kit-nav-item[data-active="active"] { background: var(--accent-dim); color: var(--accent); }
+.kit-nav-item:hover { background: var(--kit-nav-item-bg-hover); color: var(--kit-nav-item-fg-hover); }
+.kit-nav-item[data-active="active"] { background: var(--kit-nav-item-bg-active); color: var(--kit-nav-item-fg-active); }
 
 /* ===== Section ===== */
 .kit-section { margin-bottom: var(--space-lg); }

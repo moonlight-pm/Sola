@@ -353,6 +353,110 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
     ],
   },
 
+  'nav-item': {
+    groups: [
+      {
+        id: 'shape',
+        label: 'Shape',
+        description: 'Padding and rounding of the nav item button.',
+        roles: [
+          {
+            alias: '--kit-nav-item-pad-y',
+            label: 'Vertical padding',
+            description: 'Inset above and below the label.',
+            kind: 'spacing',
+            defaultToken: '--space-xs',
+          },
+          {
+            alias: '--kit-nav-item-pad-x',
+            label: 'Horizontal padding',
+            description: 'Inset on each side of the label.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+          {
+            alias: '--kit-nav-item-radius',
+            label: 'Corner radius',
+            description: 'Rounding on the hover/active highlight rectangle.',
+            kind: 'radius',
+            defaultToken: '--radius-sm',
+            allowNone: true,
+          },
+        ],
+      },
+      {
+        id: 'type',
+        label: 'Type',
+        description: 'Label sizing.',
+        roles: [
+          {
+            alias: '--kit-nav-item-size',
+            label: 'Label size',
+            description: 'Font size of the nav item label.',
+            kind: 'text-size',
+            defaultToken: '--text-body',
+          },
+        ],
+      },
+      {
+        id: 'rest',
+        label: 'Resting',
+        description: 'Color when the item is neither hovered nor active. Background is transparent.',
+        roles: [
+          {
+            alias: '--kit-nav-item-fg',
+            label: 'Text',
+            description: 'Resting label color.',
+            kind: 'color',
+            defaultToken: '--text-secondary',
+          },
+        ],
+      },
+      {
+        id: 'hover',
+        label: 'Hover',
+        description: 'Treatment when the cursor is over an inactive item.',
+        roles: [
+          {
+            alias: '--kit-nav-item-bg-hover',
+            label: 'Background',
+            description: 'Fill on hover.',
+            kind: 'color',
+            defaultToken: '--bg-tertiary',
+          },
+          {
+            alias: '--kit-nav-item-fg-hover',
+            label: 'Text',
+            description: 'Label color on hover.',
+            kind: 'color',
+            defaultToken: '--text-primary',
+          },
+        ],
+      },
+      {
+        id: 'active',
+        label: 'Active',
+        description: 'Treatment for the currently-selected item (data-active="active").',
+        roles: [
+          {
+            alias: '--kit-nav-item-bg-active',
+            label: 'Background',
+            description: 'Fill of the active item.',
+            kind: 'color',
+            defaultToken: '--accent-dim',
+          },
+          {
+            alias: '--kit-nav-item-fg-active',
+            label: 'Text',
+            description: 'Label color of the active item.',
+            kind: 'color',
+            defaultToken: '--accent',
+          },
+        ],
+      },
+    ],
+  },
+
   sidebar: {
     groups: [
       {
