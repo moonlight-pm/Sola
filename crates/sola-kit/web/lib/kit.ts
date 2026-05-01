@@ -18,3 +18,6 @@ export function applyTheme(vars: Record<string, string>): void {
 on('theme', (payload: { vars: Record<string, string> }) => {
   if (payload && payload.vars) applyTheme(payload.vars);
 });
+
+export { button, buttonTokens } from './components/button';
+export type { ButtonOpts, ButtonVariant } from './components/button';

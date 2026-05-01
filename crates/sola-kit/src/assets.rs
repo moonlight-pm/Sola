@@ -91,6 +91,11 @@ pub fn platform_assets() -> AssetBundle {
                 content_type: ContentType::Css,
             },
             Asset {
+                path: "/lib/components/button.ts",
+                content: include_str!("../web/lib/components/button.ts"),
+                content_type: ContentType::TypeScript,
+            },
+            Asset {
                 path: "/vendor/arrow/index.mjs",
                 content: include_str!("../web/vendor/arrow/index.mjs"),
                 content_type: ContentType::JavaScript,

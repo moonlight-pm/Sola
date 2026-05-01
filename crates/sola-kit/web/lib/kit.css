@@ -41,4 +41,28 @@
   --radius-lg: 6px;
 }
 
-/* Component CSS lands here in Phase 4-5. */
+/* ===== Button ===== */
+.kit-btn {
+  padding: var(--space-xs) var(--space-md);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--text-body);
+  cursor: pointer;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.kit-btn:hover { color: var(--text-primary); }
+.kit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.kit-btn-primary { background: var(--accent-dim); color: var(--accent); }
+.kit-btn-ghost   { background: transparent; }
+.kit-btn-danger  { background: transparent; color: var(--danger); }
+.kit-btn-danger:hover { background: rgba(248, 81, 73, 0.10); }
+.kit-btn-add {
+  background: transparent;
+  border: 1px dashed var(--border-subtle);
+  color: var(--text-secondary);
+  width: 100%;
+  padding: var(--space-sm);
+}
+.kit-btn-add:hover { border-color: var(--accent); color: var(--accent); }
