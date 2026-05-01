@@ -353,6 +353,82 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
     ],
   },
 
+  form: {
+    groups: [
+      {
+        id: 'shape',
+        label: 'Shape',
+        description: 'Padding, rounding, and the gap between fields. Label width controls the form column ratio.',
+        roles: [
+          {
+            alias: '--kit-form-pad',
+            label: 'Padding',
+            description: 'Inset between the form\'s outer surface and its content (same on all sides).',
+            kind: 'spacing',
+            defaultToken: '--space-md',
+          },
+          {
+            alias: '--kit-form-radius',
+            label: 'Corner radius',
+            description: 'Rounding of the form\'s outer surface.',
+            kind: 'radius',
+            defaultToken: '--radius-md',
+            allowNone: true,
+          },
+          {
+            alias: '--kit-form-row-gap',
+            label: 'Row gap',
+            description: 'Vertical gap between consecutive field rows. Also drives the gap between label and field within a row.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+          {
+            alias: '--kit-form-actions-gap',
+            label: 'Actions gap',
+            description: 'Horizontal gap between buttons in the actions row at the bottom.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+        ],
+      },
+      {
+        id: 'surface',
+        label: 'Surface',
+        description: 'Background of the whole form panel.',
+        roles: [
+          {
+            alias: '--kit-form-bg',
+            label: 'Background',
+            description: 'Fill color behind the form fields.',
+            kind: 'color',
+            defaultToken: '--bg-secondary',
+          },
+        ],
+      },
+      {
+        id: 'label',
+        label: 'Label',
+        description: 'The text label that sits to the left of each field.',
+        roles: [
+          {
+            alias: '--kit-form-label-size',
+            label: 'Label size',
+            description: 'Font size of the field label.',
+            kind: 'text-size',
+            defaultToken: '--text-body',
+          },
+          {
+            alias: '--kit-form-label-fg',
+            label: 'Label color',
+            description: 'Color of the field label text.',
+            kind: 'color',
+            defaultToken: '--text-secondary',
+          },
+        ],
+      },
+    ],
+  },
+
   // List has no theme-tweakable roles. Its only style decision — a 1px
   // hairline gap between rows — is intentionally not parameterised
   // (see the comment in kit.css). An empty roles list keeps the role
