@@ -23,6 +23,10 @@ pub use sola_core::watcher;
 /// `sola_kit::config::JsonConfig`.
 pub use sola_core::config;
 
+/// Re-export of [`sola_core::theme`] so apps that depend on sola-kit
+/// can reach `Theme` without an additional direct dependency on sola-core.
+pub use sola_core::theme;
+
 // Re-export for macro use and common consumer paths.
 pub use assets::{Asset, AssetBundle, ContentType};
 pub use async_dispatch::{AppHandler, AsyncDispatcher};
