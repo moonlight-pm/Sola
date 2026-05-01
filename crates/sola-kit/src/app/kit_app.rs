@@ -14,6 +14,7 @@ static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
     "/src/preview/tokens-colors.ts" => (include_str!("../../web/app/src/preview/tokens-colors.ts"), TypeScript),
     "/src/preview/tokens-typography.ts" => (include_str!("../../web/app/src/preview/tokens-typography.ts"), TypeScript),
     "/src/preview/tokens-spacing.ts" => (include_str!("../../web/app/src/preview/tokens-spacing.ts"), TypeScript),
+    "/src/preview/component-view.ts" => (include_str!("../../web/app/src/preview/component-view.ts"), TypeScript),
 };
 
 #[derive(Deserialize)]

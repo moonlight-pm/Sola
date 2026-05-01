@@ -3,6 +3,7 @@ import { renderSidebar, type CatalogEntry } from './sidebar';
 import { renderColors } from './preview/tokens-colors';
 import { renderTypography } from './preview/tokens-typography';
 import { renderSpacing } from './preview/tokens-spacing';
+import { renderComponent } from './preview/component-view';
 
 declare global {
   interface Window { RESTORED_STATE?: { catalog: CatalogEntry[]; theme: unknown }; }
@@ -34,5 +35,7 @@ function routeWork(selected: string, catalog: CatalogEntry[]) {
   if (selected === 'tokens.colors')     return renderColors(catalog);
   if (selected === 'tokens.typography') return renderTypography();
   if (selected === 'tokens.spacing')    return renderSpacing();
+  if (selected.startsWith('atoms.'))     return renderComponent(selected.slice('atoms.'.length), catalog);
+  if (selected.startsWith('components.')) return renderComponent(selected.slice('components.'.length), catalog);
   return html`<div class="kit-placeholder">${selected}</div>`;
 }
