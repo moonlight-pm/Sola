@@ -23,6 +23,7 @@ crates/
   sola-bus/            # IPC bus host + client library
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
   sola-app/            # WebView app framework (GTK4 + WebKit6)
+  sola-kit/            # WebView app framework + design-token kit + storybook (parallel to sola-app)
   sola-assets/         # Vendored icon/asset bundles
   sola-browser/        # WebKit browser
   sola-make/           # Build/install orchestration (xtask)
