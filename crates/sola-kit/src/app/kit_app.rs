@@ -10,6 +10,8 @@ static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
     "/src/app.ts" => (include_str!("../../web/app/src/app.ts"), TypeScript),
     "/src/app.css" => (include_str!("../../web/app/src/app.css"), Css),
     "/src/sidebar.ts" => (include_str!("../../web/app/src/sidebar.ts"), TypeScript),
+    "/src/token-edit.ts" => (include_str!("../../web/app/src/token-edit.ts"), TypeScript),
+    "/src/preview/tokens-colors.ts" => (include_str!("../../web/app/src/preview/tokens-colors.ts"), TypeScript),
 };
 
 #[derive(Deserialize)]
@@ -77,6 +79,7 @@ impl SolaApp for KitApp {
     ) {
         let result = match cmd {
             "theme_set" => self.handle_theme_set(args, ctx),
+            "theme_reset" => self.handle_theme_reset(ctx),
             _ => json!({ "error": format!("unknown command: {cmd}") }),
         };
         if let Some(id) = id {
@@ -103,6 +106,12 @@ impl KitApp {
             Err(e) => return json!({ "error": e.to_string() }),
         };
         self.theme = parsed.theme;
+        ctx.emit(Topic::Theme(self.theme.clone()));
+        json!({ "ok": true })
+    }
+
+    fn handle_theme_reset(&mut self, ctx: &mut AppCtx) -> Value {
+        self.theme = Theme::default();
         ctx.emit(Topic::Theme(self.theme.clone()));
         json!({ "ok": true })
     }

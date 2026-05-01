@@ -15,3 +15,31 @@ html, body {
   color: var(--text-tertiary);
   font-size: var(--text-body);
 }
+
+.kit-colors { display: flex; gap: var(--space-lg); height: 100%; }
+.kit-colors-list { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; gap: 1px; overflow-y: auto; }
+.kit-color-row {
+  display: flex; align-items: center; gap: var(--space-sm);
+  background: none; border: none; text-align: left; padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm); cursor: pointer; color: var(--text-secondary); font: inherit;
+}
+.kit-color-row:hover { background: var(--bg-secondary); }
+.kit-color-row[data-active="active"] { background: var(--accent-dim); color: var(--accent); }
+.kit-color-swatch { width: 18px; height: 18px; border-radius: 3px; flex-shrink: 0; box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.kit-color-name { font-family: var(--font-mono); font-size: var(--text-caption); flex: 1; }
+.kit-color-value { font-family: var(--font-mono); font-size: var(--text-caption); color: var(--text-tertiary); }
+
+.kit-colors-detail { flex: 1; min-width: 0; }
+
+.kit-editor-strip { padding: var(--space-md); background: var(--bg-secondary); border-radius: var(--radius-md); margin-bottom: var(--space-md); }
+.kit-editor-head { display: flex; align-items: baseline; gap: var(--space-sm); margin-bottom: var(--space-sm); }
+.kit-editor-name { font-family: var(--font-mono); font-size: var(--text-heading); }
+.kit-editor-meta { font-size: var(--text-caption); color: var(--text-tertiary); }
+.kit-editor-row { display: flex; align-items: center; gap: var(--space-sm); }
+.kit-editor-swatch { width: 48px; height: 48px; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.kit-editor-actions { margin-left: auto; }
+
+.kit-affected { padding: var(--space-md); background: var(--bg-secondary); border-radius: var(--radius-md); }
+.kit-affected-list { margin: 0; padding-left: var(--space-md); color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-body); }
+.kit-section-title-sm { font-size: var(--text-caption); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: var(--space-xs); }
+.kit-empty { font-size: var(--text-caption); color: var(--text-muted); }

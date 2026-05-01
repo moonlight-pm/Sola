@@ -1,5 +1,6 @@
 import { html, reactive } from '@arrow-js/core';
 import { renderSidebar, type CatalogEntry } from './sidebar';
+import { renderColors } from './preview/tokens-colors';
 
 declare global {
   interface Window { RESTORED_STATE?: { catalog: CatalogEntry[]; theme: unknown }; }
@@ -21,8 +22,13 @@ export function mount(target: HTMLElement) {
         (id: string) => { state.selected = id; },
       )}
       <main class="kit-work">
-        <div class="kit-placeholder">${() => state.selected}</div>
+        ${() => routeWork(state.selected, state.catalog)}
       </main>
     </div>
   `(target);
+}
+
+function routeWork(selected: string, catalog: CatalogEntry[]) {
+  if (selected === 'tokens.colors') return renderColors(catalog);
+  return html`<div class="kit-placeholder">${selected}</div>`;
 }
