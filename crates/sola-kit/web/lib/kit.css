@@ -81,3 +81,17 @@
 }
 .kit-field:focus { border-color: var(--accent); }
 .kit-field[data-error="error"] { border-color: var(--danger); }
+
+/* ===== Badge ===== */
+.kit-badge {
+  display: inline-block;
+  padding: 1px var(--space-xs);
+  font-size: var(--text-caption);
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.kit-badge-accent  { background: var(--accent-dim); color: var(--accent); }
+.kit-badge-danger  { background: rgba(248, 81, 73, 0.14); color: var(--danger); }
+.kit-badge-success { background: rgba(63, 185, 80, 0.14); color: var(--success); }

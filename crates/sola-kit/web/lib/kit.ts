@@ -23,3 +23,5 @@ export { button, buttonTokens } from './components/button';
 export type { ButtonOpts, ButtonVariant } from './components/button';
 export { field, fieldTokens } from './components/field';
 export type { FieldOpts } from './components/field';
+export { badge, badgeTokens } from './components/badge';
+export type { BadgeOpts, BadgeVariant } from './components/badge';
