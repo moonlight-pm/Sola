@@ -230,6 +230,7 @@ pub fn run<A: SolaApp>() {
             TopicKind::Copy,
             TopicKind::Paste,
             TopicKind::Evaluate,
+            TopicKind::Theme,
         ] {
             if !subscription_kinds.contains(&kind) {
                 subscription_kinds.push(kind);
@@ -357,6 +358,18 @@ pub fn run<A: SolaApp>() {
                                         },
                                     );
                                 }
+                            }
+                        }
+                        Topic::Theme(theme) => {
+                            // Forward to every window's WebView. JS-side
+                            // listener (in @sola/kit) will apply the vars.
+                            let payload = serde_json::json!({
+                                "event": "theme",
+                                "vars": theme.to_css_vars(),
+                            });
+                            let rt = runtime.borrow();
+                            for w in &rt.ctx.windows {
+                                w.send_to_js(&payload);
                             }
                         }
                         _ => {}
