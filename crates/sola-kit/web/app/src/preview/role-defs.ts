@@ -137,4 +137,108 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
       },
     ],
   },
+
+  field: {
+    groups: [
+      {
+        id: 'shape',
+        label: 'Shape',
+        description: 'Padding and corner rounding of the input box.',
+        roles: [
+          {
+            alias: '--kit-field-radius',
+            label: 'Corner radius',
+            description: 'Border-radius of the input outline.',
+            kind: 'radius',
+            defaultToken: '--radius-sm',
+            allowNone: true,
+          },
+          {
+            alias: '--kit-field-pad-x',
+            label: 'Horizontal padding',
+            description: 'Inset on the left and right of the value text.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+          {
+            alias: '--kit-field-pad-y',
+            label: 'Vertical padding',
+            description: 'Inset above and below the value text. Drives input height.',
+            kind: 'spacing',
+            defaultToken: '--space-xs',
+          },
+        ],
+      },
+      {
+        id: 'type',
+        label: 'Type',
+        description: 'Text style for the field value. Defaults to mono so values like hex codes and paths line up.',
+        roles: [
+          {
+            alias: '--kit-field-font',
+            label: 'Family',
+            description: 'Font family for the value text. Switch to sans for plain-text fields.',
+            kind: 'font',
+            defaultToken: '--font-mono',
+          },
+          {
+            alias: '--kit-field-size',
+            label: 'Value size',
+            description: 'Font size of the value text.',
+            kind: 'text-size',
+            defaultToken: '--text-body',
+          },
+        ],
+      },
+      {
+        id: 'surface',
+        label: 'Surface',
+        description: 'Background, text, and border colors at rest.',
+        roles: [
+          {
+            alias: '--kit-field-bg',
+            label: 'Background',
+            description: 'Resting background of the input.',
+            kind: 'color',
+            defaultToken: '--bg-primary',
+          },
+          {
+            alias: '--kit-field-fg',
+            label: 'Text',
+            description: 'Resting color of the value text.',
+            kind: 'color',
+            defaultToken: '--text-primary',
+          },
+          {
+            alias: '--kit-field-border',
+            label: 'Border',
+            description: 'Resting outline color.',
+            kind: 'color',
+            defaultToken: '--border-subtle',
+          },
+        ],
+      },
+      {
+        id: 'states',
+        label: 'States',
+        description: 'Outline colors that override the resting border in specific states.',
+        roles: [
+          {
+            alias: '--kit-field-border-focus',
+            label: 'Focused border',
+            description: 'Outline color when the input has keyboard focus.',
+            kind: 'color',
+            defaultToken: '--accent',
+          },
+          {
+            alias: '--kit-field-border-error',
+            label: 'Error border',
+            description: 'Outline color when the field is in an error state (data-error="error").',
+            kind: 'color',
+            defaultToken: '--danger',
+          },
+        ],
+      },
+    ],
+  },
 };

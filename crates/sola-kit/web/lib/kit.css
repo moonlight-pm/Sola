@@ -88,19 +88,31 @@
 .kit-btn-add:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ===== Field ===== */
+:root {
+  --kit-field-pad-y:        var(--space-xs);
+  --kit-field-pad-x:        var(--space-sm);
+  --kit-field-radius:       var(--radius-sm);
+  --kit-field-bg:           var(--bg-primary);
+  --kit-field-border:       var(--border-subtle);
+  --kit-field-border-focus: var(--accent);
+  --kit-field-border-error: var(--danger);
+  --kit-field-fg:           var(--text-primary);
+  --kit-field-font:         var(--font-mono);
+  --kit-field-size:         var(--text-body);
+}
 .kit-field {
   width: 100%;
-  padding: var(--space-xs) var(--space-sm);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: var(--text-body);
+  padding: var(--kit-field-pad-y) var(--kit-field-pad-x);
+  background: var(--kit-field-bg);
+  border: 1px solid var(--kit-field-border);
+  border-radius: var(--kit-field-radius);
+  color: var(--kit-field-fg);
+  font-family: var(--kit-field-font);
+  font-size: var(--kit-field-size);
   outline: none;
 }
-.kit-field:focus { border-color: var(--accent); }
-.kit-field[data-error="error"] { border-color: var(--danger); }
+.kit-field:focus { border-color: var(--kit-field-border-focus); }
+.kit-field[data-error="error"] { border-color: var(--kit-field-border-error); }
 
 /* ===== Badge ===== */
 .kit-badge {
