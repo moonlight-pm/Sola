@@ -20,7 +20,7 @@ export function mount(target: HTMLElement) {
   html`
     <div class="kit-shell">
       ${() => renderSidebar(
-        { selected: state.selected },
+        state,
         state.catalog,
         (id: string) => { state.selected = id; },
       )}
