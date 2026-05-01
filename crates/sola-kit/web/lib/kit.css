@@ -176,3 +176,23 @@
 
 /* ===== List ===== */
 .kit-list { display: flex; flex-direction: column; gap: 1px; }
+
+/* ===== Form ===== */
+.kit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+}
+.kit-form-actions { display: flex; gap: var(--space-sm); }
+.kit-field-row { display: flex; align-items: center; gap: var(--space-sm); }
+.kit-field-label {
+  flex-shrink: 0;
+  width: 110px;
+  font-size: var(--text-body);
+  color: var(--text-secondary);
+}
+.kit-field-body { flex: 1; }
+.kit-field-narrow { flex: 0 0 140px; }
