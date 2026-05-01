@@ -43,3 +43,5 @@ export { tabs, tab, tabsTokens } from './components/tabs';
 export type { TabsOpts, TabOpts, TabVariant } from './components/tabs';
 export { toast, toastTokens } from './components/toast';
 export type { ToastOpts } from './components/toast';
+export { empty, emptyTokens } from './components/empty';
+export type { EmptyOpts } from './components/empty';

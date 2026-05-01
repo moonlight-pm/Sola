@@ -239,3 +239,13 @@
 }
 .kit-toast-success { border-left: 3px solid var(--success); }
 .kit-toast-danger  { border-left: 3px solid var(--danger); }
+
+/* ===== Empty ===== */
+.kit-empty {
+  padding: var(--space-md);
+  font-size: var(--text-body);
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+}
+.kit-empty-hint { font-size: var(--text-caption); margin-top: 4px; font-style: normal; }
