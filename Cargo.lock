@@ -2582,6 +2582,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-kit"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "gdk4",
+ "gio",
+ "glib",
+ "gtk4",
+ "serde",
+ "serde_json",
+ "sola-assets",
+ "sola-bus",
+ "sola-core",
+ "swc_common",
+ "swc_ts_fast_strip",
+ "tokio",
+ "tracing",
+ "webkit6",
+]
+
+[[package]]
 name = "sola-make"
 version = "0.1.0"
 dependencies = [

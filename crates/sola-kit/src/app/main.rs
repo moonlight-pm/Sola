@@ -1,4 +1,5 @@
-//! Scaffolding stub. Replaced in Task 9.
+mod kit_app;
+
 fn main() {
-    eprintln!("sola-kit stub — not yet implemented");
+    sola_kit::run::<kit_app::KitApp>();
 }
