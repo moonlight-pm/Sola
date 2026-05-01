@@ -182,6 +182,66 @@ After updating session vars, the running sola won't see the change
 (it inherited the old environment). Either log out of the TTY and
 back in, or `source /etc/set-environment && pkill sola` and relaunch.
 
+## GSettings schemas
+
+GTK4 and WebKitGTK lazily call `g_settings_new()` for built-in widgets
+(color chooser, font chooser, recent-files manager, drag-and-drop, the
+WebKit `<input type="color">` dialog, etc.). When the matching schema
+isn't reachable, GLib's lookup falls into `g_error()` — a fatal log
+level — and the process aborts with:
+
+```
+GLib-GIO-ERROR **: No GSettings schemas are installed on the system
+zsh: trace trap (core dumped)  sola-...
+```
+
+The signature is distinct from the WebKit renderer crashes above: the
+GTK *host* process dies, not the WebContent process, and the abort
+shows up on the TTY rather than as a `web-process-terminated` line in
+`/opt/sola/log/sola.log`.
+
+NixOS doesn't install a default schema dir; nixpkgs ships compiled
+schemas under each package's `share/gsettings-schemas/<pkg-version>/glib-2.0/schemas/`
+(a namespaced path that does NOT match GLib's default search of
+`<dir>/glib-2.0/schemas/` directly under XDG_DATA_DIRS). The
+`wrapGAppsHook` helper aggregates every dependency's schemas into a
+single dir that it prepends to each wrapped binary's XDG_DATA_DIRS;
+cargo-built binaries skip that wrap entirely.
+
+So on NixOS the fix is two parts: install the schema-providing
+packages AND point `XDG_DATA_DIRS` at the per-package schemas dirs.
+
+```nix
+environment.systemPackages = with pkgs; [
+  # gtk4 / webkit6
+  gtk4
+  gsettings-desktop-schemas
+  webkitgtk_6_0
+  # ...
+];
+
+environment.sessionVariables = {
+  XDG_DATA_DIRS = lib.concatMapStringsSep ":"
+    (p: "${p}/share/gsettings-schemas/${p.name}")
+    [ pkgs.gsettings-desktop-schemas pkgs.gtk4 ];
+};
+```
+
+NixOS merges the `sessionVariables` value with the per-user profile
+prefix paths (`~/.nix-profile/share`, `/run/current-system/sw/share`,
+etc.) when it composes `/etc/set-environment`, so this adds entries
+rather than replacing the user's existing XDG_DATA_DIRS.
+
+Symptoms before the package landed:
+- `sola-kit`'s color picker triggers an immediate process abort when
+  WebKit opens the GTK color chooser dialog.
+- Other Sola apps may abort intermittently when a code path that needs
+  schemas is reached for the first time (e.g. file dialogs).
+
+After `nixos-rebuild switch`, log out of the TTY and back in (or
+otherwise re-source `/etc/set-environment`) before relaunching sola so
+the updated `XDG_DATA_DIRS` is visible to its child processes.
+
 ## Default browser / URL handler
 
 When a non-Sola app (`xdg-open`, GIO, electron's `shell.openExternal`,
