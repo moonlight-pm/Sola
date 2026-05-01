@@ -353,6 +353,104 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
     ],
   },
 
+  toast: {
+    groups: [
+      {
+        id: 'shape',
+        label: 'Shape',
+        description: 'Padding, rounding, and the inner gap between leading icon (if any) and message text.',
+        roles: [
+          {
+            alias: '--kit-toast-pad-y',
+            label: 'Vertical padding',
+            description: 'Inset above and below the toast content.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+          {
+            alias: '--kit-toast-pad-x',
+            label: 'Horizontal padding',
+            description: 'Inset on the left and right of the content.',
+            kind: 'spacing',
+            defaultToken: '--space-md',
+          },
+          {
+            alias: '--kit-toast-gap',
+            label: 'Inner gap',
+            description: 'Gap between sub-elements inside the toast.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+          {
+            alias: '--kit-toast-radius',
+            label: 'Corner radius',
+            description: 'Rounding of the toast surface.',
+            kind: 'radius',
+            defaultToken: '--radius-md',
+            allowNone: true,
+          },
+        ],
+      },
+      {
+        id: 'type',
+        label: 'Type',
+        description: 'Message text sizing.',
+        roles: [
+          {
+            alias: '--kit-toast-size',
+            label: 'Message size',
+            description: 'Font size of the toast message.',
+            kind: 'text-size',
+            defaultToken: '--text-body',
+          },
+        ],
+      },
+      {
+        id: 'surface',
+        label: 'Surface',
+        description: 'Background fill and outline of the default toast. Drop shadow is hard-coded.',
+        roles: [
+          {
+            alias: '--kit-toast-bg',
+            label: 'Background',
+            description: 'Toast background fill.',
+            kind: 'color',
+            defaultToken: '--bg-secondary',
+          },
+          {
+            alias: '--kit-toast-border',
+            label: 'Border',
+            description: 'Toast outline color.',
+            kind: 'color',
+            defaultToken: '--border-subtle',
+            allowNone: true,
+          },
+        ],
+      },
+      {
+        id: 'rules',
+        label: 'Variant accent rule',
+        description: 'Left-edge color rule used by the success and danger variants. The 3px width is hard-coded.',
+        roles: [
+          {
+            alias: '--kit-toast-success-rule',
+            label: 'Success rule',
+            description: 'Left-edge color of the success variant.',
+            kind: 'color',
+            defaultToken: '--success',
+          },
+          {
+            alias: '--kit-toast-danger-rule',
+            label: 'Danger rule',
+            description: 'Left-edge color of the danger variant.',
+            kind: 'color',
+            defaultToken: '--danger',
+          },
+        ],
+      },
+    ],
+  },
+
   tabs: {
     groups: [
       {
