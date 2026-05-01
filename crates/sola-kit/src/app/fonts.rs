@@ -18,6 +18,7 @@ pub struct FontList {
 /// real families. We skip them — sola is a system app and the user
 /// should pick a concrete installed face, not an alias.
 const GENERIC_FAMILIES: &[&str] = &[
+    // CSS generics
     "serif",
     "sans-serif",
     "monospace",
@@ -31,6 +32,12 @@ const GENERIC_FAMILIES: &[&str] = &[
     "math",
     "emoji",
     "fangsong",
+    // Pango/fontconfig short aliases that surface as their own "families"
+    "sans",
+    "serif",       // already above; harmless duplicate
+    "mono",
+    "symbol",
+    "tofu",
 ];
 
 fn is_generic(name: &str) -> bool {
