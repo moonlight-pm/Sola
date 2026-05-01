@@ -353,6 +353,82 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
     ],
   },
 
+  sidebar: {
+    groups: [
+      {
+        id: 'surface',
+        label: 'Surface',
+        description: 'Background and right-edge separator that visually anchor the sidebar to the rest of the layout.',
+        roles: [
+          {
+            alias: '--kit-sidebar-bg',
+            label: 'Background',
+            description: 'Fill color of the sidebar column.',
+            kind: 'color',
+            defaultToken: '--bg-secondary',
+          },
+          {
+            alias: '--kit-sidebar-border',
+            label: 'Right border',
+            description: 'Vertical separator color between the sidebar and the work area.',
+            kind: 'color',
+            defaultToken: '--border-subtle',
+            allowNone: true,
+          },
+        ],
+      },
+      {
+        id: 'spacing',
+        label: 'Spacing',
+        description: 'Outer padding inside the sidebar column and the gap between stacked nav items.',
+        roles: [
+          {
+            alias: '--kit-sidebar-pad-y',
+            label: 'Vertical padding',
+            description: 'Inset above the first item and below the last.',
+            kind: 'spacing',
+            defaultToken: '--space-md',
+          },
+          {
+            alias: '--kit-sidebar-pad-x',
+            label: 'Horizontal padding',
+            description: 'Inset on each side of nav items.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+          {
+            alias: '--kit-sidebar-gap',
+            label: 'Item gap',
+            description: 'Vertical gap between consecutive nav items / titles.',
+            kind: 'spacing',
+            defaultToken: '--space-xs',
+          },
+        ],
+      },
+      {
+        id: 'title',
+        label: 'Section title',
+        description: 'Mini all-caps headers that group nav items (e.g. "Tokens" vs "Atoms").',
+        roles: [
+          {
+            alias: '--kit-sidebar-title-size',
+            label: 'Title size',
+            description: 'Font size of the section title text.',
+            kind: 'text-size',
+            defaultToken: '--text-caption',
+          },
+          {
+            alias: '--kit-sidebar-title-color',
+            label: 'Title color',
+            description: 'Color of the section title text.',
+            kind: 'color',
+            defaultToken: '--text-muted',
+          },
+        ],
+      },
+    ],
+  },
+
   // Icon currently has only one tweakable role — opacity. Color tinting
   // happens via the consumer's text color (see the brightness/saturate
   // filter in kit.css), so there's no foreground role to expose. Size
