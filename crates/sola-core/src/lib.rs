@@ -10,6 +10,7 @@ pub mod env;
 pub mod keys;
 pub mod log;
 pub mod process;
+pub mod theme;
 pub mod watcher;
 
 pub use encrypted::Encrypted;
