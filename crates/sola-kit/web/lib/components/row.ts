@@ -9,7 +9,7 @@ export interface RowOpts {
 
 export const rowTokens = [
   '--bg-secondary', '--text-primary', '--text-tertiary',
-  '--radius-md', '--text-body', '--text-caption',
+  '--radius-md', '--text-body', '--text-caption', '--font-mono',
   '--space-sm', '--space-md',
 ];
 

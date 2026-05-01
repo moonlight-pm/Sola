@@ -22,7 +22,7 @@ export interface TabOpts {
 export const tabsTokens = [
   '--bg-secondary', '--bg-tertiary', '--accent-dim', '--accent',
   '--text-secondary', '--text-primary', '--border-subtle',
-  '--radius-sm', '--text-body', '--text-caption',
+  '--radius-sm', '--text-body', '--text-caption', '--font-mono',
   '--space-xs', '--space-sm',
 ];
 

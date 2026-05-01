@@ -36,7 +36,7 @@ pub static CATALOG: &[CatalogEntry] = &[
         tokens: &[
             "--bg-primary", "--border-subtle", "--accent",
             "--text-primary", "--danger",
-            "--radius-sm", "--text-body", "--space-xs", "--space-sm",
+            "--radius-sm", "--text-body", "--font-mono", "--space-xs", "--space-sm",
         ],
     },
     CatalogEntry {
@@ -87,7 +87,7 @@ pub static CATALOG: &[CatalogEntry] = &[
         group: Group::Component,
         tokens: &[
             "--bg-secondary", "--text-primary", "--text-tertiary",
-            "--radius-md", "--text-body", "--text-caption",
+            "--radius-md", "--text-body", "--text-caption", "--font-mono",
             "--space-sm", "--space-md",
         ],
     },
@@ -111,7 +111,7 @@ pub static CATALOG: &[CatalogEntry] = &[
         tokens: &[
             "--bg-secondary", "--bg-tertiary", "--accent-dim", "--accent",
             "--text-secondary", "--text-primary", "--border-subtle",
-            "--radius-sm", "--text-body", "--text-caption",
+            "--radius-sm", "--text-body", "--text-caption", "--font-mono",
             "--space-xs", "--space-sm",
         ],
     },

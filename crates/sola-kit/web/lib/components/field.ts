@@ -11,7 +11,7 @@ export interface FieldOpts {
 export const fieldTokens = [
   '--bg-primary', '--border-subtle', '--accent',
   '--text-primary', '--danger',
-  '--radius-sm', '--text-body', '--space-xs', '--space-sm',
+  '--radius-sm', '--text-body', '--font-mono', '--space-xs', '--space-sm',
 ];
 
 export function field(opts: FieldOpts) {
