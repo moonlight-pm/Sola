@@ -41,27 +41,47 @@
   --radius-lg: 6px;
 }
 
-/* ===== Button ===== */
-.kit-btn {
-  padding: var(--space-xs) var(--space-md);
-  border: none;
-  border-radius: var(--radius-sm);
-  font-family: inherit;
-  font-size: var(--text-body);
-  cursor: pointer;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
+/* ===== Button =====
+ * Component-level slot aliases (--kit-btn-*) sit one indirection above the
+ * design tokens. The defaults below map each slot to a base token; the
+ * theme editor's slot picker overrides individual aliases at :root to swap
+ * which base token a slot uses. CSS rules read aliases only, never the
+ * base tokens directly.
+ */
+:root {
+  --kit-btn-pad-y:        var(--space-xs);
+  --kit-btn-pad-x:        var(--space-md);
+  --kit-btn-radius:       var(--radius-sm);
+  --kit-btn-size:         var(--text-body);
+  --kit-btn-bg:           var(--bg-tertiary);
+  --kit-btn-fg:           var(--text-secondary);
+  --kit-btn-fg-hover:     var(--text-primary);
+  --kit-btn-primary-bg:   var(--accent-dim);
+  --kit-btn-primary-fg:   var(--accent);
+  --kit-btn-danger-fg:    var(--danger);
+  --kit-btn-add-border:   var(--border-subtle);
+  --kit-btn-add-fg:       var(--text-secondary);
 }
-.kit-btn:hover { color: var(--text-primary); }
+.kit-btn {
+  padding: var(--kit-btn-pad-y) var(--kit-btn-pad-x);
+  border: none;
+  border-radius: var(--kit-btn-radius);
+  font-family: inherit;
+  font-size: var(--kit-btn-size);
+  cursor: pointer;
+  background: var(--kit-btn-bg);
+  color: var(--kit-btn-fg);
+}
+.kit-btn:hover { color: var(--kit-btn-fg-hover); }
 .kit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.kit-btn-primary { background: var(--accent-dim); color: var(--accent); }
+.kit-btn-primary { background: var(--kit-btn-primary-bg); color: var(--kit-btn-primary-fg); }
 .kit-btn-ghost   { background: transparent; }
-.kit-btn-danger  { background: transparent; color: var(--danger); }
+.kit-btn-danger  { background: transparent; color: var(--kit-btn-danger-fg); }
 .kit-btn-danger:hover { background: rgba(248, 81, 73, 0.10); }
 .kit-btn-add {
   background: transparent;
-  border: 1px dashed var(--border-subtle);
-  color: var(--text-secondary);
+  border: 1px dashed var(--kit-btn-add-border);
+  color: var(--kit-btn-add-fg);
   width: 100%;
   padding: var(--space-sm);
 }

@@ -91,6 +91,175 @@ html, body {
   word-break: break-word;
 }
 
+/* ===== Slot view (component editor) ===== */
+.kit-slot-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+.kit-slot-group {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.kit-slot-group-head { display: flex; flex-direction: column; gap: 2px; }
+.kit-slot-group-title {
+  margin: 0;
+  font-size: var(--text-body-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.kit-slot-group-desc {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+.kit-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-sm);
+}
+.kit-slot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.kit-slot-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+.kit-slot-meta { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.kit-slot-label {
+  font-size: var(--text-body);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.kit-slot-desc {
+  font-size: var(--text-caption);
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+.kit-slot-reset {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  padding: 2px var(--space-xs);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.kit-slot-reset:hover { color: var(--accent); background: var(--bg-tertiary); }
+.kit-slot-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* Token-name picker (compact dropdown) */
+.kit-slot-token-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.kit-slot-token-trigger {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: var(--space-xs) var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  cursor: pointer;
+  text-align: left;
+}
+.kit-slot-token-trigger:hover { border-color: var(--accent); }
+.kit-slot-token-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kit-slot-token-chev {
+  color: var(--text-muted);
+  margin-left: var(--space-sm);
+  font-size: var(--text-caption);
+}
+.kit-slot-token-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.kit-slot-token-option {
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.kit-slot-token-option:hover { background: var(--bg-tertiary); }
+.kit-slot-token-option[data-active="active"] { background: var(--accent-dim); color: var(--accent); }
+.kit-slot-token-option-none { color: var(--text-muted); font-style: italic; }
+
+/* Slot value editor — reused color swatch + text input */
+.kit-slot-value {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex: 0 0 auto;
+  min-width: 140px;
+  max-width: 200px;
+}
+.kit-slot-swatch {
+  width: 24px; height: 24px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.kit-slot-value .kit-field {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+.kit-slot-none {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  padding: var(--space-xs) var(--space-sm);
+  font-style: italic;
+}
+
 /* ===== Font picker ===== */
 .kit-font-trigger-wrap {
   position: relative;
