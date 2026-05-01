@@ -261,7 +261,11 @@
 }
 .kit-row-actions { display: flex; gap: var(--space-xs); flex-shrink: 0; }
 
-/* ===== List ===== */
+/* ===== List =====
+ * gap is a literal 1px (a hairline) since list items typically have
+ * their own background and a one-pixel separator reads as a divider
+ * rather than a gap. Not exposed as a role for that reason.
+ */
 .kit-list { display: flex; flex-direction: column; gap: 1px; }
 
 /* ===== Form ===== */

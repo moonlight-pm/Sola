@@ -353,6 +353,21 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
     ],
   },
 
+  // List has no theme-tweakable roles. Its only style decision — a 1px
+  // hairline gap between rows — is intentionally not parameterised
+  // (see the comment in kit.css). An empty roles list keeps the role
+  // view rendering instead of falling back to chips.
+  list: {
+    groups: [
+      {
+        id: 'note',
+        label: 'No tweakable roles',
+        description: 'List is intentionally minimal — a vertical stack with a 1px hairline gap between rows. Theming a list usually means theming Row.',
+        roles: [],
+      },
+    ],
+  },
+
   row: {
     groups: [
       {
