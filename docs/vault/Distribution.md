@@ -182,65 +182,32 @@ After updating session vars, the running sola won't see the change
 (it inherited the old environment). Either log out of the TTY and
 back in, or `source /etc/set-environment && pkill sola` and relaunch.
 
-## GSettings schemas
+## A note on GTK native widgets and GSettings
 
-GTK4 and WebKitGTK lazily call `g_settings_new()` for built-in widgets
-(color chooser, font chooser, recent-files manager, drag-and-drop, the
-WebKit `<input type="color">` dialog, etc.). When the matching schema
-isn't reachable, GLib's lookup falls into `g_error()` — a fatal log
-level — and the process aborts with:
+Anything that opens a stock GTK widget — `GtkColorChooser`,
+`GtkFontChooser`, `GtkPrintDialog`, the file picker, etc. — will lazily
+call `g_settings_new()` and abort the host process if the matching
+schema isn't reachable. Cargo-built binaries (every Sola app today)
+skip nixpkgs' `wrapGAppsHook`, which is what normally aggregates
+package-provided schemas into a per-binary `XDG_DATA_DIRS`.
 
-```
-GLib-GIO-ERROR **: No GSettings schemas are installed on the system
-zsh: trace trap (core dumped)  sola-...
-```
+The pragmatic answer is **don't use stock GTK chooser widgets from a
+Sola WebView**. The `<input type="color">` element, for example,
+spawns the GTK color chooser dialog, which is both visually foreign
+(no token/theme integration) and a crash hazard on a Sola system.
+[[sola-kit]]'s storybook ships a custom HTML/CSS/JS color picker
+(`web/app/src/color-picker.ts`) that stays in-window and uses kit
+tokens; new Sola UIs should follow the same pattern (build the picker
+in the WebView, not invoke a system dialog). Same logic applies to
+font choosers, print dialogs, and file pickers as they come up — host
+the UI inside the app rather than calling out.
 
-The signature is distinct from the WebKit renderer crashes above: the
-GTK *host* process dies, not the WebContent process, and the abort
-shows up on the TTY rather than as a `web-process-terminated` line in
-`/opt/sola/log/sola.log`.
-
-NixOS doesn't install a default schema dir; nixpkgs ships compiled
-schemas under each package's `share/gsettings-schemas/<pkg-version>/glib-2.0/schemas/`
-(a namespaced path that does NOT match GLib's default search of
-`<dir>/glib-2.0/schemas/` directly under XDG_DATA_DIRS). The
-`wrapGAppsHook` helper aggregates every dependency's schemas into a
-single dir that it prepends to each wrapped binary's XDG_DATA_DIRS;
-cargo-built binaries skip that wrap entirely.
-
-So on NixOS the fix is two parts: install the schema-providing
-packages AND point `XDG_DATA_DIRS` at the per-package schemas dirs.
-
-```nix
-environment.systemPackages = with pkgs; [
-  # gtk4 / webkit6
-  gtk4
-  gsettings-desktop-schemas
-  webkitgtk_6_0
-  # ...
-];
-
-environment.sessionVariables = {
-  XDG_DATA_DIRS = lib.concatMapStringsSep ":"
-    (p: "${p}/share/gsettings-schemas/${p.name}")
-    [ pkgs.gsettings-desktop-schemas pkgs.gtk4 ];
-};
-```
-
-NixOS merges the `sessionVariables` value with the per-user profile
-prefix paths (`~/.nix-profile/share`, `/run/current-system/sw/share`,
-etc.) when it composes `/etc/set-environment`, so this adds entries
-rather than replacing the user's existing XDG_DATA_DIRS.
-
-Symptoms before the package landed:
-- `sola-kit`'s color picker triggers an immediate process abort when
-  WebKit opens the GTK color chooser dialog.
-- Other Sola apps may abort intermittently when a code path that needs
-  schemas is reached for the first time (e.g. file dialogs).
-
-After `nixos-rebuild switch`, log out of the TTY and back in (or
-otherwise re-source `/etc/set-environment`) before relaunching sola so
-the updated `XDG_DATA_DIRS` is visible to its child processes.
+If a stock GTK widget genuinely is the right answer for some future
+case, the fix is to either wire `XDG_DATA_DIRS` to point at the
+per-package `share/gsettings-schemas/<pkg-version>/` dirs in
+`environment.sessionVariables`, or wrap the binary the
+nixpkgs-idiomatic way. We'll cross that bridge if the use case
+appears.
 
 ## Default browser / URL handler
 

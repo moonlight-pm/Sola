@@ -5,6 +5,7 @@ import {
   tabs, tab, toast, empty,
 } from '@sola/kit';
 import { themeState, setColor } from '../token-edit.js';
+import { pickerSwatch } from '../color-picker.js';
 import type { CatalogEntry } from '../sidebar.js';
 
 interface ViewSpec {
@@ -96,22 +97,21 @@ function renderChip(varName: string) {
   const isColor = colorField && themeState.current?.colors && (colorField in themeState.current.colors);
   if (isColor) {
     const valueExpr = (): string => themeState.current?.colors?.[colorField!] ?? '';
-    return html`<label class="kit-chip">
-      <span class="kit-chip-swatch" style="${() => `background: ${valueExpr()}`}"></span>
+    return html`<span class="kit-chip">
+      ${pickerSwatch({
+        id: `chip:${varName}`,
+        value: valueExpr,
+        onChange: (v: string) => setColor(colorField!, v),
+        className: 'kit-chip-swatch',
+      })}
       <span class="kit-chip-name">${varName}</span>
-      <input type="color" value="${() => normaliseToHex(valueExpr())}" @input="${(e: Event) => setColor(colorField!, (e.target as HTMLInputElement).value)}">
-    </label>`;
+    </span>`;
   }
   // Non-color tokens (typography, spacing, radius) — show value as text;
   // editing routes to the token-mode views for now.
   return html`<span class="kit-chip">
     <span class="kit-chip-name">${varName}</span>
   </span>`;
-}
-
-function normaliseToHex(value: string): string {
-  if (value.startsWith('#') && (value.length === 7 || value.length === 4)) return value;
-  return '#000000';
 }
 
 function stripPrefix(s: string, p: string): string | null {

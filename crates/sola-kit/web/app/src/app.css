@@ -39,19 +39,6 @@ html, body {
 .kit-editor-swatch {
   width: 48px; height: 48px;
   border-radius: var(--radius-md);
-  box-shadow: inset 0 0 0 1px var(--border-subtle);
-  cursor: pointer;
-  display: block;
-  position: relative;
-  flex-shrink: 0;
-}
-.kit-editor-swatch input[type="color"] {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  opacity: 0;
-  cursor: pointer;
-  border: 0;
-  padding: 0;
 }
 .kit-editor-actions { margin-left: auto; }
 
@@ -81,6 +68,94 @@ html, body {
   color: var(--text-secondary); cursor: pointer;
 }
 .kit-chip-swatch { width: 14px; height: 14px; border-radius: 50%; }
-.kit-chip input[type="color"] {
-  width: 16px; height: 16px; border: none; padding: 0; background: none;
+
+/* ===== Color picker (bespoke) ===== */
+/* Trigger: every clickable swatch composes this for the popover anchor */
+.kit-swatch-trigger {
+  display: inline-block;
+  position: relative;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  vertical-align: middle;
+}
+
+/* Popover */
+.kit-color-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 100;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 240px;
+  cursor: default;
+}
+
+.kit-color-preview {
+  height: 28px;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+
+.kit-slider-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.kit-slider-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.kit-slider-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--text-tertiary);
+  width: 36px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.kit-slider {
+  flex: 1;
+  height: 12px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  outline: none;
+  margin: 0;
+  cursor: pointer;
+}
+
+.kit-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--text-primary);
+  border: 2px solid var(--bg-primary);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.kit-slider-h {
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+
+.kit-color-hex {
+  font-family: var(--font-mono);
+  text-align: center;
 }

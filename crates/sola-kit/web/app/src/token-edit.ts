@@ -1,6 +1,7 @@
 import { html, reactive } from '@arrow-js/core';
 import { applyTheme, button } from '@sola/kit';
 import { invoke, on } from '@sola/ipc';
+import { pickerSwatch } from './color-picker.js';
 import type { CatalogEntry } from './sidebar.js';
 
 // Holds the in-progress full Theme as JSON, mirroring the Rust struct
@@ -76,20 +77,15 @@ export function colorEditor(field: string, varName: string, used: CatalogEntry[]
         <div class="kit-editor-meta">${() => `Used in ${used.length} ${used.length === 1 ? 'component' : 'components'}`}</div>
       </div>
       <div class="kit-editor-row">
-        <label class="kit-editor-swatch" style="${() => `background: ${current()}`}" title="Click to open color picker">
-          <input type="color" value="${() => normaliseToHex(current())}" @input="${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}">
-        </label>
+        ${pickerSwatch({
+          id: `editor:${field}`,
+          value: current,
+          onChange: (v: string) => setColor(field, v),
+          className: 'kit-editor-swatch',
+        })}
         <input type="text" class="kit-field" value="${current}" @input="${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}">
         <div class="kit-editor-actions">${button({ label: 'Reset', variant: 'ghost', onClick: resetTheme })}</div>
       </div>
     </div>
   `;
-}
-
-/** Best-effort hex form for the <input type="color"> element. */
-function normaliseToHex(value: string): string {
-  if (value.startsWith('#') && (value.length === 7 || value.length === 4)) return value;
-  // For rgba(...) / non-hex, fall back to a neutral so the picker isn't
-  // broken; the text input is still authoritative.
-  return '#000000';
 }

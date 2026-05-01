@@ -10,6 +10,7 @@ static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
     "/src/app.ts" => (include_str!("../../web/app/src/app.ts"), TypeScript),
     "/src/app.css" => (include_str!("../../web/app/src/app.css"), Css),
     "/src/sidebar.ts" => (include_str!("../../web/app/src/sidebar.ts"), TypeScript),
+    "/src/color-picker.ts" => (include_str!("../../web/app/src/color-picker.ts"), TypeScript),
     "/src/token-edit.ts" => (include_str!("../../web/app/src/token-edit.ts"), TypeScript),
     "/src/preview/tokens-colors.ts" => (include_str!("../../web/app/src/preview/tokens-colors.ts"), TypeScript),
     "/src/preview/tokens-typography.ts" => (include_str!("../../web/app/src/preview/tokens-typography.ts"), TypeScript),
