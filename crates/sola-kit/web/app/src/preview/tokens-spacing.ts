@@ -12,7 +12,7 @@ export function renderSpacing() {
         <div class="kit-type-row">
           <div class="kit-type-label">--space-${k}</div>
           <input class="kit-field" value="${() => themeState.current?.spacing?.[k] ?? ''}"
-            @input=${(e: Event) => setSpacing(k, (e.target as HTMLInputElement).value)}>
+            @input="${(e: Event) => setSpacing(k, (e.target as HTMLInputElement).value)}">
           <div class="kit-space-sample" style="${() => `width: ${themeState.current?.spacing?.[k] ?? '0'}; height: 12px; background: var(--accent);`}"></div>
         </div>
       `)}
@@ -21,7 +21,7 @@ export function renderSpacing() {
         <div class="kit-type-row">
           <div class="kit-type-label">--radius-${k}</div>
           <input class="kit-field" value="${() => themeState.current?.radius?.[k] ?? ''}"
-            @input=${(e: Event) => setRadius(k, (e.target as HTMLInputElement).value)}>
+            @input="${(e: Event) => setRadius(k, (e.target as HTMLInputElement).value)}">
           <div class="kit-radius-sample" style="${() => `width: 32px; height: 32px; background: var(--accent-dim); border-radius: ${themeState.current?.radius?.[k] ?? '0'};`}"></div>
         </div>
       `)}

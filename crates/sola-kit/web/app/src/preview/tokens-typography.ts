@@ -18,7 +18,7 @@ export function renderTypography() {
         <div class="kit-type-row">
           <div class="kit-type-label">${f.label} <span class="kit-type-var">${f.var}</span></div>
           <input class="kit-field" value="${() => themeState.current?.typography?.[f.field] ?? ''}"
-            @input=${(e: Event) => setTypography(f.field, (e.target as HTMLInputElement).value)}>
+            @input="${(e: Event) => setTypography(f.field, (e.target as HTMLInputElement).value)}">
           <div class="kit-type-sample" style="${() => f.field.startsWith('font_')
             ? `font-family: ${themeState.current?.typography?.[f.field] ?? 'inherit'};`
             : `font-size: ${themeState.current?.typography?.[f.field] ?? 'inherit'};`}">The quick brown fox</div>

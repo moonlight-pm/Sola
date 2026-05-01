@@ -20,6 +20,6 @@ export function navItem(opts: NavItemOpts) {
   return html`<button
     class="kit-nav-item"
     data-active="${activeAttr}"
-    @click=${() => opts.onClick && opts.onClick()}
+    @click="${() => opts.onClick && opts.onClick()}"
   >${typeof opts.label === 'function' ? opts.label : () => opts.label}</button>`;
 }

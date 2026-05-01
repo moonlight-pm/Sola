@@ -99,7 +99,7 @@ function renderChip(varName: string) {
     return html`<label class="kit-chip">
       <span class="kit-chip-swatch" style="${() => `background: ${valueExpr()}`}"></span>
       <span class="kit-chip-name">${varName}</span>
-      <input type="color" value="${() => normaliseToHex(valueExpr())}" @input=${(e: Event) => setColor(colorField!, (e.target as HTMLInputElement).value)}>
+      <input type="color" value="${() => normaliseToHex(valueExpr())}" @input="${(e: Event) => setColor(colorField!, (e.target as HTMLInputElement).value)}">
     </label>`;
   }
   // Non-color tokens (typography, spacing, radius) — show value as text;

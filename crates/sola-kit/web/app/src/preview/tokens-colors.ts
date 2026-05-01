@@ -30,7 +30,7 @@ export function renderColors(catalog: CatalogEntry[]) {
           <button
             class="kit-color-row"
             data-active="${() => local.openVar === f.var ? 'active' : false}"
-            @click=${() => { local.openVar = f.var; }}
+            @click="${() => { local.openVar = f.var; }}"
           >
             <span class="kit-color-swatch" style="${() => `background: ${themeState.current?.colors?.[f.field] ?? ''}`}"></span>
             <span class="kit-color-name">${f.var}</span>

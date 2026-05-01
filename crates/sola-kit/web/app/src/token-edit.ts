@@ -77,8 +77,8 @@ export function colorEditor(field: string, varName: string, used: CatalogEntry[]
       </div>
       <div class="kit-editor-row">
         <div class="kit-editor-swatch" style="${() => `background: ${current()}`}"></div>
-        <input type="text" class="kit-field" value="${current}" @input=${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}>
-        <input type="color" value="${() => normaliseToHex(current())}" @input=${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}>
+        <input type="text" class="kit-field" value="${current}" @input="${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}">
+        <input type="color" value="${() => normaliseToHex(current())}" @input="${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}">
         <div class="kit-editor-actions">${button({ label: 'Reset', variant: 'ghost', onClick: resetTheme })}</div>
       </div>
     </div>

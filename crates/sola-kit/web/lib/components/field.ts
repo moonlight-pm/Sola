@@ -27,6 +27,6 @@ export function field(opts: FieldOpts) {
     data-error="${errorExpr}"
     placeholder="${opts.placeholder ?? ''}"
     value="${valueExpr}"
-    @input=${(e: Event) => opts.onInput && opts.onInput((e.target as HTMLInputElement).value)}
+    @input="${(e: Event) => opts.onInput && opts.onInput((e.target as HTMLInputElement).value)}"
   >`;
 }
