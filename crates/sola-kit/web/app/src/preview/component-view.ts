@@ -97,7 +97,7 @@ export function renderComponent(name: string, catalog: CatalogEntry[]) {
       <div class="kit-preview">${() => view.variants()}</div>
       <div class="kit-section-title-sm" style="margin-top: var(--space-md)">Tokens this uses</div>
       <div class="kit-chips">
-        ${() => entry.tokens.map(varName => renderChip(varName))}
+        ${() => entry.tokens.map(varName => renderChip(varName).key(varName))}
       </div>
     </div>
   `;
@@ -111,19 +111,35 @@ type ChipKind =
   | { kind: 'size'; group: 'typography' | 'spacing' | 'radius'; field: string };
 
 function classify(varName: string): ChipKind {
+  // var name → struct field. e.g. --bg-primary → bg_primary, --text-secondary → text_secondary.
+  const fieldName = varName.slice(2).replaceAll('-', '_');
+
+  // Color check FIRST — `--text-primary`, `--text-secondary`, etc. live in
+  // colors despite the --text- prefix, while `--text-body`/`--text-heading`
+  // etc. live in typography. The struct shape is authoritative.
+  const colors = themeState.current?.colors as Record<string, string> | undefined;
+  if (colors && fieldName in colors) {
+    return { kind: 'color', field: fieldName };
+  }
+
   if (varName.startsWith('--font-')) {
-    return { kind: 'font', field: varName.slice(2).replaceAll('-', '_'), isMono: varName === '--font-mono' };
+    return { kind: 'font', field: fieldName, isMono: varName === '--font-mono' };
   }
-  if (varName.startsWith('--text-')) {
-    return { kind: 'size', group: 'typography', field: varName.slice(2).replaceAll('-', '_') };
+
+  const typo = themeState.current?.typography as Record<string, string> | undefined;
+  if (typo && fieldName in typo) {
+    return { kind: 'size', group: 'typography', field: fieldName };
   }
+
   if (varName.startsWith('--space-')) {
     return { kind: 'size', group: 'spacing', field: varName.slice('--space-'.length) };
   }
   if (varName.startsWith('--radius-')) {
     return { kind: 'size', group: 'radius', field: varName.slice('--radius-'.length) };
   }
-  return { kind: 'color', field: varName.slice(2).replaceAll('-', '_') };
+
+  // Fallback: assume color (the existing colors object will return '' on miss).
+  return { kind: 'color', field: fieldName };
 }
 
 function renderChip(varName: string) {
