@@ -35,3 +35,5 @@ export { section, sectionTokens } from './components/section';
 export type { SectionOpts } from './components/section';
 export { row, rowTokens } from './components/row';
 export type { RowOpts } from './components/row';
+export { list, listTokens } from './components/list';
+export type { ListOpts } from './components/list';

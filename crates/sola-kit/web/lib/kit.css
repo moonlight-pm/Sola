@@ -173,3 +173,6 @@
   white-space: nowrap;
 }
 .kit-row-actions { display: flex; gap: var(--space-xs); flex-shrink: 0; }
+
+/* ===== List ===== */
+.kit-list { display: flex; flex-direction: column; gap: 1px; }
