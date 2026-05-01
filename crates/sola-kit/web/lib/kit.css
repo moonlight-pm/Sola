@@ -299,6 +299,20 @@
 .kit-field-narrow { flex: 0 0 140px; }
 
 /* ===== Tabs ===== */
+:root {
+  --kit-tab-pad-x:        var(--space-sm);
+  --kit-tab-pad-y:        var(--space-xs);
+  --kit-tab-radius:       var(--radius-sm);
+  --kit-tab-size:         var(--text-body);
+  --kit-tab-bg:           var(--bg-secondary);
+  --kit-tab-fg:           var(--text-secondary);
+  --kit-tab-bg-hover:     var(--bg-tertiary);
+  --kit-tab-fg-hover:     var(--text-primary);
+  --kit-tab-bg-active:    var(--accent-dim);
+  --kit-tab-fg-active:    var(--accent);
+  --kit-tab-num-fg:       var(--text-tertiary);
+  --kit-tab-close-fg:     var(--text-tertiary);
+}
 .kit-tabs { display: flex; gap: 1px; }
 .kit-tabs-vertical   { flex-direction: column; }
 .kit-tabs-horizontal { flex-direction: row; align-items: stretch; }
@@ -307,21 +321,21 @@
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-sm);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-body);
+  padding: var(--kit-tab-pad-y) var(--kit-tab-pad-x);
+  background: var(--kit-tab-bg);
+  color: var(--kit-tab-fg);
+  border-radius: var(--kit-tab-radius);
+  font-size: var(--kit-tab-size);
   cursor: pointer;
 }
-.kit-tab:hover { color: var(--text-primary); background: var(--bg-tertiary); }
-.kit-tab[data-active="active"] { background: var(--accent-dim); color: var(--accent); }
+.kit-tab:hover { color: var(--kit-tab-fg-hover); background: var(--kit-tab-bg-hover); }
+.kit-tab[data-active="active"] { background: var(--kit-tab-bg-active); color: var(--kit-tab-fg-active); }
 .kit-tab-leading { display: inline-flex; align-items: center; }
-.kit-tab-num { font-family: var(--font-mono); font-size: var(--text-caption); color: var(--text-tertiary); width: 14px; text-align: center; }
+.kit-tab-num { font-family: var(--font-mono); font-size: var(--text-caption); color: var(--kit-tab-num-fg); width: 14px; text-align: center; }
 .kit-tab-favicon { border-radius: 2px; }
 .kit-tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kit-tab-close {
-  border: none; background: none; color: var(--text-tertiary);
+  border: none; background: none; color: var(--kit-tab-close-fg);
   cursor: pointer; padding: 0 var(--space-xs); font-size: var(--text-body-lg);
 }
 .kit-tab-close:hover { color: var(--text-primary); }

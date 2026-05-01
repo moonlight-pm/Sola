@@ -353,6 +353,138 @@ export const ROLE_DEFS: Record<string, ComponentRoles> = {
     ],
   },
 
+  tabs: {
+    groups: [
+      {
+        id: 'shape',
+        label: 'Shape',
+        description: 'Padding and rounding for each tab. Same values across all states (resting, hover, active).',
+        roles: [
+          {
+            alias: '--kit-tab-pad-y',
+            label: 'Vertical padding',
+            description: 'Inset above and below each tab\'s content.',
+            kind: 'spacing',
+            defaultToken: '--space-xs',
+          },
+          {
+            alias: '--kit-tab-pad-x',
+            label: 'Horizontal padding',
+            description: 'Inset on each side of each tab\'s content.',
+            kind: 'spacing',
+            defaultToken: '--space-sm',
+          },
+          {
+            alias: '--kit-tab-radius',
+            label: 'Corner radius',
+            description: 'Rounding on each tab\'s background pill.',
+            kind: 'radius',
+            defaultToken: '--radius-sm',
+            allowNone: true,
+          },
+        ],
+      },
+      {
+        id: 'type',
+        label: 'Type',
+        description: 'Tab title sizing. Family is inherited from the surrounding text.',
+        roles: [
+          {
+            alias: '--kit-tab-size',
+            label: 'Title size',
+            description: 'Font size of each tab\'s title text.',
+            kind: 'text-size',
+            defaultToken: '--text-body',
+          },
+        ],
+      },
+      {
+        id: 'rest',
+        label: 'Resting',
+        description: 'Background and text color for inactive, non-hovered tabs.',
+        roles: [
+          {
+            alias: '--kit-tab-bg',
+            label: 'Background',
+            description: 'Resting fill of each tab.',
+            kind: 'color',
+            defaultToken: '--bg-secondary',
+          },
+          {
+            alias: '--kit-tab-fg',
+            label: 'Text',
+            description: 'Resting title color.',
+            kind: 'color',
+            defaultToken: '--text-secondary',
+          },
+        ],
+      },
+      {
+        id: 'hover',
+        label: 'Hover',
+        description: 'Treatment when the cursor is over an inactive tab.',
+        roles: [
+          {
+            alias: '--kit-tab-bg-hover',
+            label: 'Background',
+            description: 'Fill on hover.',
+            kind: 'color',
+            defaultToken: '--bg-tertiary',
+          },
+          {
+            alias: '--kit-tab-fg-hover',
+            label: 'Text',
+            description: 'Title color on hover.',
+            kind: 'color',
+            defaultToken: '--text-primary',
+          },
+        ],
+      },
+      {
+        id: 'active',
+        label: 'Active',
+        description: 'Treatment for the currently-selected tab (data-active="active").',
+        roles: [
+          {
+            alias: '--kit-tab-bg-active',
+            label: 'Background',
+            description: 'Fill of the active tab.',
+            kind: 'color',
+            defaultToken: '--accent-dim',
+          },
+          {
+            alias: '--kit-tab-fg-active',
+            label: 'Text',
+            description: 'Title color of the active tab.',
+            kind: 'color',
+            defaultToken: '--accent',
+          },
+        ],
+      },
+      {
+        id: 'extras',
+        label: 'Numbered + close',
+        description: 'Optional sub-elements: the leading-number variant and the close-button trailing affordance.',
+        roles: [
+          {
+            alias: '--kit-tab-num-fg',
+            label: 'Number color',
+            description: 'Color of the leading number when variant="numbered" is set.',
+            kind: 'color',
+            defaultToken: '--text-tertiary',
+          },
+          {
+            alias: '--kit-tab-close-fg',
+            label: 'Close button color',
+            description: 'Color of the × close button when an onClose handler is wired.',
+            kind: 'color',
+            defaultToken: '--text-tertiary',
+          },
+        ],
+      },
+    ],
+  },
+
   form: {
     groups: [
       {
