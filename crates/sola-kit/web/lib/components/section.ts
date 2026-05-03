@@ -1,4 +1,4 @@
-import { html, type TemplatePartial } from '@arrow-js/core';
+import { component, html, type TemplatePartial } from '@arrow-js/core';
 
 export interface SectionOpts {
   title: string | (() => string);
@@ -12,14 +12,12 @@ export const sectionTokens = [
   '--space-xs', '--space-md', '--space-lg',
 ];
 
-export function section(opts: SectionOpts) {
-  const title = typeof opts.title === 'function' ? opts.title : () => opts.title;
-  const desc = opts.description
-    ? (typeof opts.description === 'function' ? opts.description : () => opts.description as string)
-    : null;
+export const section = component((props: SectionOpts) => {
+  const titleFn = () => typeof props.title === 'function' ? (props.title as () => string)() : props.title;
+  const descFn = () => typeof props.description === 'function' ? (props.description as () => string)() : props.description;
   return html`<section class="kit-section">
-    <h2 class="kit-section-title">${title}</h2>
-    ${() => desc ? html`<p class="kit-section-desc">${desc}</p>` : html``}
-    <div class="kit-section-body">${() => opts.body}</div>
+    <h2 class="kit-section-title">${titleFn}</h2>
+    ${() => props.description ? html`<p class="kit-section-desc">${descFn}</p>` : null}
+    <div class="kit-section-body">${() => props.body}</div>
   </section>`;
-}
+});

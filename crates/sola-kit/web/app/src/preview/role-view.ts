@@ -17,7 +17,7 @@
 // topic is a follow-up (would require a component_roles field in the
 // Theme schema).
 
-import { html, reactive, type TemplatePartial } from '@arrow-js/core';
+import { component, html, reactive } from '@arrow-js/core';
 import { themeState, setColor, setSpacing, setRadius, setTypography } from '../token-edit.js';
 import { pickerSwatch } from '../color-picker.js';
 import { fontPicker } from '../font-picker.js';
@@ -161,53 +161,10 @@ function setValueForToken(token: string, kind: RoleKind, v: string) {
   }
 }
 
-// ----- Top-level rendering -----
-
-export function renderRoles(spec: ComponentRoles): TemplatePartial {
-  return html`
-    <div class="kit-role-view">
-      ${spec.groups.map(group => renderGroup(group))}
-    </div>
-  `;
-}
-
-function renderGroup(group: RoleGroup) {
-  return html`
-    <section class="kit-role-group">
-      <header class="kit-role-group-head">
-        <h3 class="kit-role-group-title">${group.label}</h3>
-        <p class="kit-role-group-desc">${group.description}</p>
-      </header>
-      <div class="kit-role-list">
-        ${() => group.roles.map(role => renderRole(role).key(`${group.id}:${role.alias}`))}
-      </div>
-    </section>
-  `;
-}
-
-function renderRole(role: Role) {
-  const isOverridden = () => overrides.map[role.alias] !== undefined;
-  const currentToken = (): string => currentTokenFor(role);
-  return html`
-    <div class="kit-role">
-      <div class="kit-role-head">
-        <div class="kit-role-meta">
-          <div class="kit-role-label">${role.label}</div>
-          <div class="kit-role-desc">${role.description}</div>
-        </div>
-        ${() => isOverridden()
-          ? html`<button class="kit-role-reset" @click="${() => resetRole(role)}">reset</button>`
-          : html``}
-      </div>
-      <div class="kit-role-body">
-        ${() => tokenPicker(role, currentToken)}
-        ${() => valueEditor(role, currentToken)}
-      </div>
-    </div>
-  `;
-}
-
-// ----- Per-role widgets -----
+// ----- Module-local state for the open token-picker popover -----
+//
+// Tracks which role's token-picker popover is open. Module-level so
+// only one popover is open across all roles at a time.
 
 const pickerLocal = reactive<{ openAlias: string | null }>({ openAlias: null });
 
@@ -224,70 +181,114 @@ document.addEventListener('click', (e) => {
   if (!inside) pickerLocal.openAlias = null;
 });
 
-function tokenPicker(role: Role, currentToken: () => string) {
-  const isOpen = () => pickerLocal.openAlias === role.alias;
-  const candidates = candidatesFor(role.kind);
+// ----- Components -----
+
+export const rolesEditor = component((props: ComponentRoles) =>
+  html`<div class="kit-role-view">
+    ${() => props.groups.map(group => roleGroup({ group }).key(group.id))}
+  </div>`
+);
+
+const roleGroup = component((props: { group: RoleGroup }) =>
+  html`<section class="kit-role-group">
+    <header class="kit-role-group-head">
+      <h3 class="kit-role-group-title">${() => props.group.label}</h3>
+      <p class="kit-role-group-desc">${() => props.group.description}</p>
+    </header>
+    <div class="kit-role-list">
+      ${() => props.group.roles.map(role => roleItem({ role }).key(`${props.group.id}:${role.alias}`))}
+    </div>
+  </section>`
+);
+
+const roleItem = component((props: { role: Role }) => {
+  const isOverridden = () => overrides.map[props.role.alias] !== undefined;
+  return html`<div class="kit-role">
+    <div class="kit-role-head">
+      <div class="kit-role-meta">
+        <div class="kit-role-label">${() => props.role.label}</div>
+        <div class="kit-role-desc">${() => props.role.description}</div>
+      </div>
+      ${() => isOverridden()
+        ? html`<button class="kit-role-reset" @click="${() => resetRole(props.role)}">reset</button>`
+        : null}
+    </div>
+    <div class="kit-role-body">
+      ${() => tokenPicker({ role: props.role })}
+      ${() => valueEditor({ role: props.role })}
+    </div>
+  </div>`;
+});
+
+const tokenPicker = component((props: { role: Role }) => {
+  const isOpen = () => pickerLocal.openAlias === props.role.alias;
+  const currentToken = () => currentTokenFor(props.role);
   return html`<div class="kit-role-token-wrap">
     <button class="kit-role-token-trigger"
       @click="${(e: Event) => {
         e.stopPropagation();
-        pickerLocal.openAlias = isOpen() ? null : role.alias;
+        pickerLocal.openAlias = isOpen() ? null : props.role.alias;
       }}">
       <span class="kit-role-token-name">${currentToken}</span>
       <span class="kit-role-token-chev">▾</span>
     </button>
     ${() => isOpen()
       ? html`<div class="kit-role-token-popover" @click="${(e: Event) => e.stopPropagation()}">
-          ${candidates.map(token => html`<button
+          ${candidatesFor(props.role.kind).map(token => html`<button
             class="kit-role-token-option"
             data-active="${() => currentToken() === token ? 'active' : false}"
-            @click="${() => { setRoleToken(role, token); pickerLocal.openAlias = null; }}">${token}</button>`)}
-          ${role.allowNone ? html`<button
+            @click="${() => { setRoleToken(props.role, token); pickerLocal.openAlias = null; }}">${token}</button>`)}
+          ${() => props.role.allowNone ? html`<button
             class="kit-role-token-option kit-role-token-option-none"
             data-active="${() => currentToken() === 'NONE' ? 'active' : false}"
-            @click="${() => { setRoleToken(role, 'NONE'); pickerLocal.openAlias = null; }}">None</button>` : html``}
+            @click="${() => { setRoleToken(props.role, 'NONE'); pickerLocal.openAlias = null; }}">None</button>` : null}
         </div>`
-      : html``}
+      : null}
   </div>`;
-}
+});
 
-function valueEditor(role: Role, currentToken: () => string) {
-  const token = currentToken();
-  if (token === 'NONE') {
-    return html`<span class="kit-role-none">unset</span>`;
-  }
-  const value = valueForToken(token, role.kind);
+const valueEditor = component((props: { role: Role }) => {
+  // The current token can change when the user picks a different candidate.
+  // Read it lazily; produce the editor body via a closure so the kind-specific
+  // editor swaps when the underlying token changes.
+  return html`<div class="kit-role-value-wrap">${() => {
+    const token = currentTokenFor(props.role);
+    if (token === 'NONE') {
+      return html`<span class="kit-role-none">unset</span>`;
+    }
+    const value = valueForToken(token, props.role.kind);
 
-  if (role.kind === 'color') {
-    const fieldName = token.slice(2).replaceAll('-', '_');
+    if (props.role.kind === 'color') {
+      const fieldName = token.slice(2).replaceAll('-', '_');
+      return html`<div class="kit-role-value">
+        ${() => pickerSwatch({
+          id: `role:${props.role.alias}`,
+          value,
+          onChange: (v: string) => setColor(fieldName, v),
+          className: 'kit-role-swatch',
+        })}
+        <input class="kit-field" value="${value}"
+          @input="${(e: Event) => setValueForToken(token, props.role.kind, (e.target as HTMLInputElement).value)}">
+      </div>`;
+    }
+
+    if (props.role.kind === 'font') {
+      const fieldName = token.slice(2).replaceAll('-', '_');
+      const isMono = token === '--font-mono';
+      return html`<div class="kit-role-value">
+        ${() => fontPicker({
+          id: `role:${props.role.alias}`,
+          value,
+          options: () => isMono ? fonts().mono : fonts().sans,
+          onChange: (v: string) => setTypography(fieldName, v),
+        })}
+      </div>`;
+    }
+
+    // Spacing / radius / text-size — plain text input
     return html`<div class="kit-role-value">
-      ${() => pickerSwatch({
-        id: `role:${role.alias}`,
-        value,
-        onChange: (v: string) => setColor(fieldName, v),
-        className: 'kit-role-swatch',
-      })}
       <input class="kit-field" value="${value}"
-        @input="${(e: Event) => setValueForToken(token, role.kind, (e.target as HTMLInputElement).value)}">
+        @input="${(e: Event) => setValueForToken(token, props.role.kind, (e.target as HTMLInputElement).value)}">
     </div>`;
-  }
-
-  if (role.kind === 'font') {
-    const fieldName = token.slice(2).replaceAll('-', '_');
-    const isMono = token === '--font-mono';
-    return html`<div class="kit-role-value">
-      ${() => fontPicker({
-        id: `role:${role.alias}`,
-        value,
-        options: () => isMono ? fonts().mono : fonts().sans,
-        onChange: (v: string) => setTypography(fieldName, v),
-      })}
-    </div>`;
-  }
-
-  // Spacing / radius / text-size — plain text input
-  return html`<div class="kit-role-value">
-    <input class="kit-field" value="${value}"
-      @input="${(e: Event) => setValueForToken(token, role.kind, (e.target as HTMLInputElement).value)}">
-  </div>`;
-}
+  }}</div>`;
+});

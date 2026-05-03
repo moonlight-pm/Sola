@@ -1,4 +1,4 @@
-import { html, reactive } from '@arrow-js/core';
+import { component, html, reactive } from '@arrow-js/core';
 import { themeState, colorEditor } from '../token-edit.js';
 import type { CatalogEntry } from '../sidebar.js';
 
@@ -20,9 +20,12 @@ const COLOR_FIELDS: Array<{ field: string; var: string }> = [
   { field: 'success',        var: '--success' },
 ];
 
-const local = reactive({ openVar: '--accent' });
+interface ColorsProps {
+  catalog: CatalogEntry[];
+}
 
-export function renderColors(catalog: CatalogEntry[]) {
+export const colorsView = component((props: ColorsProps) => {
+  const local = reactive({ openVar: '--accent' });
   return html`
     <div class="kit-colors">
       <div class="kit-colors-list">
@@ -41,10 +44,10 @@ export function renderColors(catalog: CatalogEntry[]) {
       <div class="kit-colors-detail">
         ${() => {
           const entry = COLOR_FIELDS.find(f => f.var === local.openVar);
-          if (!entry) return html``;
-          const used = catalog.filter(e => e.tokens.includes(entry.var));
+          if (!entry) return null;
+          const used = props.catalog.filter(e => e.tokens.includes(entry.var));
           return html`
-            ${() => colorEditor(entry.field, entry.var, used)}
+            ${() => colorEditor({ field: entry.field, varName: entry.var, used })}
             <div class="kit-affected">
               <div class="kit-section-title-sm">Used in</div>
               ${() => used.length === 0
@@ -56,4 +59,4 @@ export function renderColors(catalog: CatalogEntry[]) {
       </div>
     </div>
   `;
-}
+});

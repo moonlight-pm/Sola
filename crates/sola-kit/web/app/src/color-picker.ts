@@ -3,18 +3,18 @@
 // requires GSettings schemas, looks foreign, dies on missing schemas).
 //
 // Usage:
-//   ${pickerSwatch({
+//   ${() => pickerSwatch({
 //     id: 'editor:accent',                     // unique per swatch
 //     value: () => themeState.current.colors.accent,
 //     onChange: (newValue) => setColor('accent', newValue),
 //     className: 'kit-editor-swatch',          // sizing/look of the trigger
 //   })}
 //
-// The swatch element acts as both the trigger and the popover anchor.
-// At most one popover is open at a time (tracked module-locally). Clicks
-// outside the swatch and outside the popover close it.
+// Module-local `local.openId` enforces single-popover-at-a-time across
+// all swatch instances. Each instance maintains its own editState
+// (reactive HSL+A) inside its component factory.
 
-import { html, reactive } from '@arrow-js/core';
+import { component, html, reactive } from '@arrow-js/core';
 
 interface Rgba { r: number; g: number; b: number; a: number }
 interface Hsl { h: number; s: number; l: number }
@@ -28,8 +28,6 @@ interface PickerSwatchOpts {
 
 const local = reactive<{ openId: string | null }>({ openId: null });
 
-let editState: { h: number; s: number; l: number; a: number } | null = null;
-
 document.addEventListener('click', (e) => {
   if (local.openId === null) return;
   const path = (e.composedPath ? e.composedPath() : []) as EventTarget[];
@@ -40,106 +38,111 @@ document.addEventListener('click', (e) => {
       el.classList.contains('kit-color-popover')
     );
   });
-  if (!insideSwatchOrPopover) {
-    local.openId = null;
-    editState = null;
-  }
+  if (!insideSwatchOrPopover) local.openId = null;
 });
 
-export function pickerSwatch(opts: PickerSwatchOpts) {
-  const isOpen = () => local.openId === opts.id;
+export const pickerSwatch = component((props: PickerSwatchOpts) => {
+  const editState = reactive({ h: 0, s: 0, l: 0, a: 1 });
+  const isOpen = () => local.openId === props.id;
+
   const onTrigger = (e: Event) => {
     e.stopPropagation();
     if (isOpen()) {
       local.openId = null;
-      editState = null;
       return;
     }
-    const parsed = parseColor(opts.value());
-    const hsl = rgbToHsl(parsed.r, parsed.g, parsed.b);
-    editState = reactive({ h: hsl.h, s: hsl.s, l: hsl.l, a: parsed.a });
-    local.openId = opts.id;
+    const parsed = parseColor(props.value());
+    if (parsed) {
+      const hsl = rgbToHsl(parsed.r, parsed.g, parsed.b);
+      editState.h = hsl.h; editState.s = hsl.s; editState.l = hsl.l; editState.a = parsed.a;
+    }
+    local.openId = props.id;
   };
+
   return html`<span
-    class="${`kit-swatch-trigger ${opts.className ?? ''}`}"
-    style="${() => `background: ${opts.value()}`}"
+    class="${() => `kit-swatch-trigger ${props.className ?? ''}`}"
+    style="${() => `background: ${props.value()}`}"
     @click="${onTrigger}"
-  >${() => isOpen() ? renderPopover(opts.value, opts.onChange) : html``}</span>`;
+  >${() => isOpen() ? colorPopover({ value: props.value, onChange: props.onChange, editState }) : null}</span>`;
+});
+
+interface PopoverOpts {
+  value: () => string;
+  onChange: (v: string) => void;
+  editState: { h: number; s: number; l: number; a: number };
 }
 
-function renderPopover(value: () => string, onChange: (v: string) => void) {
-  const s = editState!;
-
+const colorPopover = component((props: PopoverOpts) => {
   const emit = () => {
+    const s = props.editState;
     const rgb = hslToRgb(s.h, s.s, s.l);
     const r = Math.round(rgb.r);
     const g = Math.round(rgb.g);
     const b = Math.round(rgb.b);
-    const a = s.a;
     const hex2 = (n: number) => n.toString(16).padStart(2, '0');
-    const out = a >= 1
+    const out = s.a >= 1
       ? '#' + hex2(r) + hex2(g) + hex2(b)
-      : '#' + hex2(r) + hex2(g) + hex2(b) + hex2(Math.round(a * 255));
-    onChange(out);
+      : '#' + hex2(r) + hex2(g) + hex2(b) + hex2(Math.round(s.a * 255));
+    props.onChange(out);
   };
 
-  const setH = (v: number) => { s.h = v; emit(); };
-  const setS = (v: number) => { s.s = v; emit(); };
-  const setL = (v: number) => { s.l = v; emit(); };
-  const setA = (v: number) => { s.a = v; emit(); };
+  const setH = (v: number) => { props.editState.h = v; emit(); };
+  const setS = (v: number) => { props.editState.s = v; emit(); };
+  const setL = (v: number) => { props.editState.l = v; emit(); };
+  const setA = (v: number) => { props.editState.a = v; emit(); };
 
   const onHexInput = (e: Event) => {
     const v = (e.target as HTMLInputElement).value.trim();
     const parsed = parseColor(v);
     if (parsed === null) return;
     const hsl = rgbToHsl(parsed.r, parsed.g, parsed.b);
-    s.h = hsl.h; s.s = hsl.s; s.l = hsl.l; s.a = parsed.a;
-    onChange(v);
+    props.editState.h = hsl.h; props.editState.s = hsl.s; props.editState.l = hsl.l; props.editState.a = parsed.a;
+    props.onChange(v);
   };
 
   return html`<div class="kit-color-popover" @click="${(e: Event) => e.stopPropagation()}">
-    <div class="kit-color-preview" style="${() => `background: ${value()}`}"></div>
+    <div class="kit-color-preview" style="${() => `background: ${props.value()}`}"></div>
 
     <div class="kit-slider-row">
       <span class="kit-slider-label">H</span>
       <input type="range" class="kit-slider kit-slider-h" min="0" max="360" step="1"
-        value="${() => Math.round(s.h)}"
+        value="${() => Math.round(props.editState.h)}"
         @input="${(e: Event) => setH(+(e.target as HTMLInputElement).value)}">
-      <span class="kit-slider-value">${() => Math.round(s.h)}</span>
+      <span class="kit-slider-value">${() => Math.round(props.editState.h)}</span>
     </div>
 
     <div class="kit-slider-row">
       <span class="kit-slider-label">S</span>
       <input type="range" class="kit-slider" min="0" max="100" step="1"
-        value="${() => Math.round(s.s)}"
-        style="${() => `background: linear-gradient(to right, hsl(${s.h}, 0%, ${s.l}%), hsl(${s.h}, 100%, ${s.l}%))`}"
+        value="${() => Math.round(props.editState.s)}"
+        style="${() => `background: linear-gradient(to right, hsl(${props.editState.h}, 0%, ${props.editState.l}%), hsl(${props.editState.h}, 100%, ${props.editState.l}%))`}"
         @input="${(e: Event) => setS(+(e.target as HTMLInputElement).value)}">
-      <span class="kit-slider-value">${() => Math.round(s.s)}</span>
+      <span class="kit-slider-value">${() => Math.round(props.editState.s)}</span>
     </div>
 
     <div class="kit-slider-row">
       <span class="kit-slider-label">L</span>
       <input type="range" class="kit-slider" min="0" max="100" step="1"
-        value="${() => Math.round(s.l)}"
-        style="${() => `background: linear-gradient(to right, hsl(${s.h}, ${s.s}%, 0%), hsl(${s.h}, ${s.s}%, 50%), hsl(${s.h}, ${s.s}%, 100%))`}"
+        value="${() => Math.round(props.editState.l)}"
+        style="${() => `background: linear-gradient(to right, hsl(${props.editState.h}, ${props.editState.s}%, 0%), hsl(${props.editState.h}, ${props.editState.s}%, 50%), hsl(${props.editState.h}, ${props.editState.s}%, 100%))`}"
         @input="${(e: Event) => setL(+(e.target as HTMLInputElement).value)}">
-      <span class="kit-slider-value">${() => Math.round(s.l)}</span>
+      <span class="kit-slider-value">${() => Math.round(props.editState.l)}</span>
     </div>
 
     <div class="kit-slider-row">
       <span class="kit-slider-label">A</span>
       <input type="range" class="kit-slider kit-slider-alpha" min="0" max="1" step="0.01"
-        value="${() => s.a}"
-        style="${() => `background-image: linear-gradient(to right, hsla(${s.h}, ${s.s}%, ${s.l}%, 0), hsla(${s.h}, ${s.s}%, ${s.l}%, 1)), repeating-conic-gradient(#666 0% 25%, transparent 0% 50%); background-size: auto, 8px 8px`}"
+        value="${() => props.editState.a}"
+        style="${() => `background-image: linear-gradient(to right, hsla(${props.editState.h}, ${props.editState.s}%, ${props.editState.l}%, 0), hsla(${props.editState.h}, ${props.editState.s}%, ${props.editState.l}%, 1)), repeating-conic-gradient(#666 0% 25%, transparent 0% 50%); background-size: auto, 8px 8px`}"
         @input="${(e: Event) => setA(+(e.target as HTMLInputElement).value)}">
-      <span class="kit-slider-value">${() => s.a.toFixed(2)}</span>
+      <span class="kit-slider-value">${() => props.editState.a.toFixed(2)}</span>
     </div>
 
     <input type="text" class="kit-field kit-color-hex"
-      value="${() => value()}"
+      value="${() => props.value()}"
       @input="${onHexInput}">
   </div>`;
-}
+});
 
 // ---------- color math ----------
 

@@ -1,4 +1,4 @@
-import { html } from '@arrow-js/core';
+import { component, html } from '@arrow-js/core';
 import { sidebar, navItem } from '@sola/kit';
 
 export interface CatalogEntry {
@@ -17,27 +17,32 @@ export const TOKEN_ITEMS = [
   { id: 'tokens.spacing',    label: 'Spacing & radius' },
 ];
 
-export function renderSidebar(state: SidebarState, catalog: CatalogEntry[], onSelect: (id: string) => void) {
-  const atoms = catalog.filter(e => e.group === 'atom');
-  const comps = catalog.filter(e => e.group === 'component');
+interface SidebarProps {
+  state: SidebarState;
+  catalog: CatalogEntry[];
+  onSelect: (id: string) => void;
+}
 
+export const appSidebar = component((props: SidebarProps) => {
   const navWith = (id: string, label: string) => navItem({
     label,
-    active: () => state.selected === id,
-    onClick: () => onSelect(id),
+    active: () => props.state.selected === id,
+    onClick: () => props.onSelect(id),
   });
 
-  return sidebar({
+  // Wrap the sidebar Cmp in an html template — the component factory
+  // must return an ArrowTemplate (callable), not a Cmp descriptor.
+  return html`${() => sidebar({
     body: html`
       <div class="kit-sidebar-title">Tokens</div>
-      ${TOKEN_ITEMS.map(t => navWith(t.id, t.label))}
+      ${() => TOKEN_ITEMS.map(t => navWith(t.id, t.label))}
       <div class="kit-sidebar-title">Atoms</div>
-      ${atoms.map(a => navWith(`atoms.${a.name}`, capitalise(a.name)))}
+      ${() => props.catalog.filter(e => e.group === 'atom').map(a => navWith(`atoms.${a.name}`, capitalise(a.name)))}
       <div class="kit-sidebar-title">Components</div>
-      ${comps.map(c => navWith(`components.${c.name}`, capitalise(c.name)))}
+      ${() => props.catalog.filter(e => e.group === 'component').map(c => navWith(`components.${c.name}`, capitalise(c.name)))}
     `,
-  });
-}
+  })}`;
+});
 
 function capitalise(s: string) {
   return s.split('-').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join('');

@@ -1,4 +1,4 @@
-import { html, reactive } from '@arrow-js/core';
+import { component, html, reactive } from '@arrow-js/core';
 import { applyTheme, button } from '@sola/kit';
 import { invoke, on } from '@sola/ipc';
 import { pickerSwatch } from './color-picker.js';
@@ -67,25 +67,31 @@ export function resetTheme() {
   invoke('theme_reset', {});
 }
 
+interface ColorEditorOpts {
+  field: string;
+  varName: string;
+  used: CatalogEntry[];
+}
+
 /** Editor strip for one color token. */
-export function colorEditor(field: string, varName: string, used: CatalogEntry[]) {
-  const current = (): string => themeState.current?.colors?.[field] ?? '';
+export const colorEditor = component((props: ColorEditorOpts) => {
+  const current = (): string => themeState.current?.colors?.[props.field] ?? '';
   return html`
     <div class="kit-editor-strip">
       <div class="kit-editor-head">
-        <div class="kit-editor-name">${varName}</div>
-        <div class="kit-editor-meta">${() => `Used in ${used.length} ${used.length === 1 ? 'component' : 'components'}`}</div>
+        <div class="kit-editor-name">${() => props.varName}</div>
+        <div class="kit-editor-meta">${() => `Used in ${props.used.length} ${props.used.length === 1 ? 'component' : 'components'}`}</div>
       </div>
       <div class="kit-editor-row">
         ${() => pickerSwatch({
-          id: `editor:${field}`,
+          id: `editor:${props.field}`,
           value: current,
-          onChange: (v: string) => setColor(field, v),
+          onChange: (v: string) => setColor(props.field, v),
           className: 'kit-editor-swatch',
         })}
-        <input type="text" class="kit-field" value="${current}" @input="${(e: Event) => setColor(field, (e.target as HTMLInputElement).value)}">
-        <div class="kit-editor-actions">${button({ label: 'Reset', variant: 'ghost', onClick: resetTheme })}</div>
+        <input type="text" class="kit-field" value="${current}" @input="${(e: Event) => setColor(props.field, (e.target as HTMLInputElement).value)}">
+        <div class="kit-editor-actions">${() => button({ label: 'Reset', variant: 'ghost', onClick: resetTheme })}</div>
       </div>
     </div>
   `;
-}
+});

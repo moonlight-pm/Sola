@@ -1,4 +1,4 @@
-import { html } from '@arrow-js/core';
+import { component, html } from '@arrow-js/core';
 
 export type BadgeVariant = 'default' | 'accent' | 'danger' | 'success';
 
@@ -14,9 +14,7 @@ export const badgeTokens = [
   '--radius-sm', '--text-caption', '--space-xs',
 ];
 
-export function badge(opts: BadgeOpts) {
-  const variant = opts.variant ?? 'default';
-  return html`<span class="${`kit-badge kit-badge-${variant}`}">${
-    typeof opts.label === 'function' ? opts.label : () => opts.label
-  }</span>`;
-}
+export const badge = component((props: BadgeOpts) => {
+  const labelFn = () => typeof props.label === 'function' ? (props.label as () => string)() : props.label;
+  return html`<span class="${() => `kit-badge kit-badge-${props.variant ?? 'default'}`}">${labelFn}</span>`;
+});

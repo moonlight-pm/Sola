@@ -1,4 +1,4 @@
-import { html, type TemplatePartial } from '@arrow-js/core';
+import { component, html, type TemplatePartial } from '@arrow-js/core';
 
 export interface ListOpts {
   body: TemplatePartial;
@@ -6,6 +6,6 @@ export interface ListOpts {
 
 export const listTokens = ['--space-xs'];
 
-export function list(opts: ListOpts) {
-  return html`<div class="kit-list">${() => opts.body}</div>`;
-}
+export const list = component((props: ListOpts) =>
+  html`<div class="kit-list">${() => props.body}</div>`
+);

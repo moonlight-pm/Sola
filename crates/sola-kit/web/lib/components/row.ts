@@ -1,4 +1,4 @@
-import { html, type TemplatePartial } from '@arrow-js/core';
+import { component, html, type TemplatePartial } from '@arrow-js/core';
 
 export interface RowOpts {
   label: string | (() => string);
@@ -13,17 +13,15 @@ export const rowTokens = [
   '--space-sm', '--space-md',
 ];
 
-export function row(opts: RowOpts) {
-  const label = typeof opts.label === 'function' ? opts.label : () => opts.label;
-  const detail = opts.detail
-    ? (typeof opts.detail === 'function' ? opts.detail : () => opts.detail as string)
-    : null;
+export const row = component((props: RowOpts) => {
+  const labelFn = () => typeof props.label === 'function' ? (props.label as () => string)() : props.label;
+  const detailFn = () => typeof props.detail === 'function' ? (props.detail as () => string)() : props.detail;
   return html`<div class="kit-row">
-    ${() => opts.leading ? html`<div class="kit-row-leading">${() => opts.leading}</div>` : html``}
+    ${() => props.leading ? html`<div class="kit-row-leading">${() => props.leading}</div>` : null}
     <div class="kit-row-info">
-      <div class="kit-row-label">${label}</div>
-      ${() => detail ? html`<div class="kit-row-detail">${detail}</div>` : html``}
+      <div class="kit-row-label">${labelFn}</div>
+      ${() => props.detail ? html`<div class="kit-row-detail">${detailFn}</div>` : null}
     </div>
-    ${() => opts.actions ? html`<div class="kit-row-actions">${() => opts.actions}</div>` : html``}
+    ${() => props.actions ? html`<div class="kit-row-actions">${() => props.actions}</div>` : null}
   </div>`;
-}
+});

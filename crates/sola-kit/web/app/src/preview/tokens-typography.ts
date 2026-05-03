@@ -1,4 +1,4 @@
-import { html } from '@arrow-js/core';
+import { component, html } from '@arrow-js/core';
 import { themeState, setTypography } from '../token-edit.js';
 import { fontPicker } from '../font-picker.js';
 
@@ -27,38 +27,36 @@ function fonts(): FontList {
   return ((window as unknown as { RESTORED_STATE?: { fonts?: FontList } }).RESTORED_STATE?.fonts) ?? { sans: [], mono: [] };
 }
 
-export function renderTypography() {
-  return html`
-    <div class="kit-typography">
-      ${TYPE_FIELDS.map(f => renderRow(f))}
-    </div>
-  `;
-}
+export const typographyView = component(() =>
+  html`<div class="kit-typography">
+    ${TYPE_FIELDS.map(f => typeRow({ field: f }))}
+  </div>`
+);
 
-function renderRow(f: TypeField) {
-  const value = () => themeState.current?.typography?.[f.field] ?? '';
+const typeRow = component((props: { field: TypeField }) => {
+  const value = () => themeState.current?.typography?.[props.field.field] ?? '';
   const previewStyle = () => {
-    const v = themeState.current?.typography?.[f.field] ?? 'inherit';
-    return f.kind === 'size' ? `font-size: ${v}` : `font-family: ${v}`;
+    const v = themeState.current?.typography?.[props.field.field] ?? 'inherit';
+    return props.field.kind === 'size' ? `font-size: ${v}` : `font-family: ${v}`;
   };
   return html`
     <div class="kit-type-card">
       <div class="kit-type-card-head">
-        <span class="kit-type-card-label">${f.label}</span>
-        <span class="kit-type-card-var">${f.var}</span>
+        <span class="kit-type-card-label">${() => props.field.label}</span>
+        <span class="kit-type-card-var">${() => props.field.var}</span>
       </div>
       <div class="kit-type-card-control">
-        ${() => f.kind === 'size'
+        ${() => props.field.kind === 'size'
           ? html`<input class="kit-field" value="${value}"
-              @input="${(e: Event) => setTypography(f.field, (e.target as HTMLInputElement).value)}">`
+              @input="${(e: Event) => setTypography(props.field.field, (e.target as HTMLInputElement).value)}">`
           : fontPicker({
-              id: `font:${f.field}`,
+              id: `font:${props.field.field}`,
               value,
-              options: () => f.kind === 'mono' ? fonts().mono : fonts().sans,
-              onChange: (v: string) => setTypography(f.field, v),
+              options: () => props.field.kind === 'mono' ? fonts().mono : fonts().sans,
+              onChange: (v: string) => setTypography(props.field.field, v),
             })}
       </div>
       <div class="kit-type-card-preview" style="${previewStyle}">${SPECIMEN}</div>
     </div>
   `;
-}
+});

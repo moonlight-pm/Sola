@@ -1,4 +1,4 @@
-import { html } from '@arrow-js/core';
+import { component, html } from '@arrow-js/core';
 
 export interface FieldOpts {
   value: string | (() => string);
@@ -14,19 +14,18 @@ export const fieldTokens = [
   '--radius-sm', '--text-body', '--font-mono', '--space-xs', '--space-sm',
 ];
 
-export function field(opts: FieldOpts) {
-  const t = opts.type ?? 'text';
-  const valueExpr = typeof opts.value === 'function' ? opts.value : () => opts.value as string;
-  const errorExpr = (): string | false => {
-    const e = typeof opts.error === 'function' ? opts.error() : opts.error;
+export const field = component((props: FieldOpts) => {
+  const valueFn = () => typeof props.value === 'function' ? (props.value as () => string)() : props.value;
+  const errorAttr = (): string | false => {
+    const e = typeof props.error === 'function' ? (props.error as () => string | undefined)() : props.error;
     return e ? 'error' : false;
   };
   return html`<input
-    type="${t}"
+    type="${() => props.type ?? 'text'}"
     class="kit-field"
-    data-error="${errorExpr}"
-    placeholder="${opts.placeholder ?? ''}"
-    value="${valueExpr}"
-    @input="${(e: Event) => opts.onInput && opts.onInput((e.target as HTMLInputElement).value)}"
+    data-error="${errorAttr}"
+    placeholder="${() => props.placeholder ?? ''}"
+    value="${valueFn}"
+    @input="${(e: Event) => props.onInput?.((e.target as HTMLInputElement).value)}"
   >`;
-}
+});

@@ -1,4 +1,4 @@
-import { html, type TemplatePartial } from '@arrow-js/core';
+import { component, html, type TemplatePartial } from '@arrow-js/core';
 
 export interface TabsOpts {
   body: TemplatePartial;       // a list of tab(...) calls
@@ -26,41 +26,46 @@ export const tabsTokens = [
   '--space-xs', '--space-sm',
 ];
 
-export function tabs(opts: TabsOpts) {
-  const o = opts.orientation ?? 'vertical';
-  return html`<div class="${`kit-tabs kit-tabs-${o}`}">${() => opts.body}</div>`;
-}
+export const tabs = component((props: TabsOpts) =>
+  html`<div class="${() => `kit-tabs kit-tabs-${props.orientation ?? 'vertical'}`}">${() => props.body}</div>`
+);
 
-export function tab(opts: TabOpts) {
+export const tab = component((props: TabOpts) => {
+  const titleFn = () => typeof props.title === 'function' ? (props.title as () => string)() : props.title;
   const activeAttr = (): string | false => {
-    const a = typeof opts.active === 'function' ? opts.active() : opts.active;
+    const a = typeof props.active === 'function' ? (props.active as () => boolean)() : props.active;
     return a ? 'active' : false;
   };
 
-  // Variant shortcuts pre-fill leading / trailing.
-  let leading = opts.leading;
-  let trailing = opts.trailing;
-  if (opts.variant === 'numbered' && !leading && opts.index !== undefined) {
-    const idx = typeof opts.index === 'function' ? opts.index : () => opts.index as number;
-    leading = html`<span class="kit-tab-num">${idx}</span>`;
-  }
-  if (opts.variant === 'favicon' && !leading && opts.faviconUrl !== undefined) {
-    const url = typeof opts.faviconUrl === 'function' ? opts.faviconUrl : () => opts.faviconUrl as string;
-    leading = html`<img class="kit-tab-favicon" src="${url}" width="14" height="14">`;
-  }
+  // Variant shortcuts pre-fill leading / trailing. Each is computed lazily so
+  // a parent can switch variant/index/faviconUrl reactively.
+  const leadingFn = (): TemplatePartial | undefined => {
+    if (props.leading) return props.leading;
+    if (props.variant === 'numbered' && props.index !== undefined) {
+      const idxFn = () => typeof props.index === 'function' ? (props.index as () => number)() : props.index as number;
+      return html`<span class="kit-tab-num">${idxFn}</span>`;
+    }
+    if (props.variant === 'favicon' && props.faviconUrl !== undefined) {
+      const urlFn = () => typeof props.faviconUrl === 'function' ? (props.faviconUrl as () => string)() : props.faviconUrl as string;
+      return html`<img class="kit-tab-favicon" src="${urlFn}" width="14" height="14">`;
+    }
+    return undefined;
+  };
 
-  const title = typeof opts.title === 'function' ? opts.title : () => opts.title;
   return html`<div
     class="kit-tab"
     data-active="${activeAttr}"
-    @click="${() => opts.onClick && opts.onClick()}"
+    @click="${() => props.onClick?.()}"
   >
-    ${() => leading ? html`<span class="kit-tab-leading">${() => leading}</span>` : html``}
-    <span class="kit-tab-title">${title}</span>
-    ${() => trailing ? html`<span class="kit-tab-trailing">${() => trailing}</span>` : html``}
-    ${() => opts.onClose ? html`<button
+    ${() => {
+      const l = leadingFn();
+      return l ? html`<span class="kit-tab-leading">${() => l}</span>` : null;
+    }}
+    <span class="kit-tab-title">${titleFn}</span>
+    ${() => props.trailing ? html`<span class="kit-tab-trailing">${() => props.trailing}</span>` : null}
+    ${() => props.onClose ? html`<button
       class="kit-tab-close"
-      @click="${(e: Event) => { e.stopPropagation(); opts.onClose && opts.onClose(); }}"
-    >×</button>` : html``}
+      @click="${(e: Event) => { e.stopPropagation(); props.onClose?.(); }}"
+    >×</button>` : null}
   </div>`;
-}
+});

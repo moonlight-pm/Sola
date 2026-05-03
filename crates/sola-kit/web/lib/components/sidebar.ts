@@ -1,4 +1,4 @@
-import { html, type TemplatePartial } from '@arrow-js/core';
+import { component, html, type TemplatePartial } from '@arrow-js/core';
 
 export interface SidebarOpts {
   title?: string | (() => string);
@@ -11,11 +11,10 @@ export const sidebarTokens = [
   '--text-caption',
 ];
 
-export function sidebar(opts: SidebarOpts) {
+export const sidebar = component((props: SidebarOpts) => {
+  const titleFn = () => typeof props.title === 'function' ? (props.title as () => string)() : props.title;
   return html`<aside class="kit-sidebar">
-    ${() => opts.title ? html`<div class="kit-sidebar-title">${
-      typeof opts.title === 'function' ? opts.title : () => opts.title
-    }</div>` : html``}
-    ${() => opts.body}
+    ${() => props.title ? html`<div class="kit-sidebar-title">${titleFn}</div>` : null}
+    ${() => props.body}
   </aside>`;
-}
+});

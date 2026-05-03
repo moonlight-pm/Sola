@@ -1,4 +1,4 @@
-import { html, type TemplatePartial } from '@arrow-js/core';
+import { component, html, type TemplatePartial } from '@arrow-js/core';
 
 export interface FormOpts {
   body: TemplatePartial;
@@ -17,16 +17,16 @@ export const formTokens = [
   '--space-sm', '--space-md',
 ];
 
-export function form(opts: FormOpts) {
-  return html`<div class="kit-form">
-    <div class="kit-form-body">${() => opts.body}</div>
-    ${() => opts.actions ? html`<div class="kit-form-actions">${() => opts.actions}</div>` : html``}
-  </div>`;
-}
+export const form = component((props: FormOpts) =>
+  html`<div class="kit-form">
+    <div class="kit-form-body">${() => props.body}</div>
+    ${() => props.actions ? html`<div class="kit-form-actions">${() => props.actions}</div>` : null}
+  </div>`
+);
 
-export function fieldRow(opts: FieldRowOpts) {
-  return html`<div class="kit-field-row">
-    <label class="kit-field-label">${opts.label}</label>
-    <div class="${`kit-field-body kit-field-${opts.width ?? 'normal'}`}">${() => opts.body}</div>
-  </div>`;
-}
+export const fieldRow = component((props: FieldRowOpts) =>
+  html`<div class="kit-field-row">
+    <label class="kit-field-label">${() => props.label}</label>
+    <div class="${() => `kit-field-body kit-field-${props.width ?? 'normal'}`}">${() => props.body}</div>
+  </div>`
+);

@@ -1,4 +1,4 @@
-import { html } from '@arrow-js/core';
+import { component, html } from '@arrow-js/core';
 
 export interface NavItemOpts {
   label: string | (() => string);
@@ -12,14 +12,15 @@ export const navItemTokens = [
   '--radius-sm', '--text-body', '--space-xs', '--space-sm',
 ];
 
-export function navItem(opts: NavItemOpts) {
+export const navItem = component((props: NavItemOpts) => {
+  const labelFn = () => typeof props.label === 'function' ? (props.label as () => string)() : props.label;
   const activeAttr = (): string | false => {
-    const a = typeof opts.active === 'function' ? opts.active() : opts.active;
+    const a = typeof props.active === 'function' ? (props.active as () => boolean)() : props.active;
     return a ? 'active' : false;
   };
   return html`<button
     class="kit-nav-item"
     data-active="${activeAttr}"
-    @click="${() => opts.onClick && opts.onClick()}"
-  >${typeof opts.label === 'function' ? opts.label : () => opts.label}</button>`;
-}
+    @click="${() => props.onClick?.()}"
+  >${labelFn}</button>`;
+});

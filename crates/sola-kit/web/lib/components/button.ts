@@ -1,4 +1,4 @@
-import { html } from '@arrow-js/core';
+import { component, html } from '@arrow-js/core';
 
 export type ButtonVariant = 'primary' | 'default' | 'ghost' | 'danger' | 'add';
 
@@ -16,15 +16,15 @@ export const buttonTokens = [
   '--radius-sm', '--text-body', '--space-sm', '--space-md',
 ];
 
-export function button(opts: ButtonOpts) {
-  const variant = opts.variant ?? 'default';
+export const button = component((props: ButtonOpts) => {
+  const labelFn = () => typeof props.label === 'function' ? (props.label as () => string)() : props.label;
   const disabledAttr = (): string | false => {
-    const d = typeof opts.disabled === 'function' ? opts.disabled() : opts.disabled;
+    const d = typeof props.disabled === 'function' ? (props.disabled as () => boolean)() : props.disabled;
     return d ? 'disabled' : false;
   };
   return html`<button
-    class="${`kit-btn kit-btn-${variant}`}"
+    class="${() => `kit-btn kit-btn-${props.variant ?? 'default'}`}"
     disabled="${disabledAttr}"
-    @click="${() => opts.onClick && opts.onClick()}"
-  >${typeof opts.label === 'function' ? opts.label : () => opts.label}</button>`;
-}
+    @click="${() => props.onClick?.()}"
+  >${labelFn}</button>`;
+});

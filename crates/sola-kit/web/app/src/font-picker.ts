@@ -6,14 +6,14 @@
 // Single instance open at a time, anchored to its trigger button.
 // Outside-click closes.
 
-import { html, reactive } from '@arrow-js/core';
+import { component, html, reactive } from '@arrow-js/core';
 
 interface FontPickerOpts {
   id: string;
   value: () => string;
   options: () => string[];
   onChange: (newValue: string) => void;
-  /** Chip-style trigger: borderless, no chevron, sits inline. */
+  /** Chip-style trigger: borderless, no chevron, sits inline. Stable per instance. */
   compact?: boolean;
 }
 
@@ -32,58 +32,18 @@ document.addEventListener('click', (e) => {
   }
 });
 
-export function fontPicker(opts: FontPickerOpts) {
-  return opts.compact ? compactPicker(opts) : fullPicker(opts);
+interface PanelProps {
+  options: () => string[];
+  value: () => string;
+  choose: (name: string) => void;
 }
 
-function makeOnTrigger(opts: FontPickerOpts) {
-  const isOpen = () => local.openId === opts.id;
-  return (e: Event) => {
-    e.stopPropagation();
-    if (isOpen()) {
-      local.openId = null;
-      local.query = '';
-    } else {
-      local.openId = opts.id;
-      local.query = '';
-    }
-  };
-}
-
-function fullPicker(opts: FontPickerOpts) {
-  const isOpen = () => local.openId === opts.id;
-  const onTrigger = makeOnTrigger(opts);
-  return html`<div class="kit-font-trigger-wrap">
-    <button class="kit-font-trigger" @click="${onTrigger}"
-      style="${() => `font-family: ${opts.value()}`}">
-      <span class="kit-font-trigger-name">${() => opts.value() || '— select —'}</span>
-      <span class="kit-font-trigger-chev">▾</span>
-    </button>
-    ${() => isOpen() ? renderPanel(opts) : html``}
-  </div>`;
-}
-
-function compactPicker(opts: FontPickerOpts) {
-  const isOpen = () => local.openId === opts.id;
-  const onTrigger = makeOnTrigger(opts);
-  return html`<span class="kit-font-trigger-wrap kit-font-trigger-wrap-compact">
-    <span class="kit-font-trigger-compact" @click="${onTrigger}"
-      style="${() => `font-family: ${opts.value()}`}">${() => opts.value() || '— select —'}</span>
-    ${() => isOpen() ? renderPanel(opts) : html``}
-  </span>`;
-}
-
-function renderPanel(opts: FontPickerOpts) {
+const fontPanel = component((props: PanelProps) => {
   const matches = () => {
     const q = local.query.toLowerCase().trim();
-    const all = opts.options();
+    const all = props.options();
     if (!q) return all;
     return all.filter(name => name.toLowerCase().includes(q));
-  };
-  const choose = (name: string) => {
-    opts.onChange(name);
-    local.openId = null;
-    local.query = '';
   };
   return html`<div class="kit-font-popover" @click="${(e: Event) => e.stopPropagation()}">
     <input class="kit-field kit-font-search" placeholder="Search…"
@@ -94,10 +54,47 @@ function renderPanel(opts: FontPickerOpts) {
         ? html`<div class="kit-font-empty">No matching fonts</div>`
         : matches().map(name => html`<button
             class="kit-font-option"
-            data-active="${() => opts.value() === name ? 'active' : false}"
+            data-active="${() => props.value() === name ? 'active' : false}"
             style="${() => `font-family: ${name}`}"
-            @click="${() => choose(name)}">${name}</button>`)
+            @click="${() => props.choose(name)}">${name}</button>`)
       }
     </div>
   </div>`;
-}
+});
+
+export const fontPicker = component((props: FontPickerOpts) => {
+  const isOpen = () => local.openId === props.id;
+  const onTrigger = (e: Event) => {
+    e.stopPropagation();
+    if (isOpen()) {
+      local.openId = null;
+      local.query = '';
+    } else {
+      local.openId = props.id;
+      local.query = '';
+    }
+  };
+  const choose = (name: string) => {
+    props.onChange(name);
+    local.openId = null;
+    local.query = '';
+  };
+
+  // `compact` is read once at instance init — the wrapper element type
+  // (span vs div) can't switch without a remount, so we treat it as stable.
+  if (props.compact) {
+    return html`<span class="kit-font-trigger-wrap kit-font-trigger-wrap-compact">
+      <span class="kit-font-trigger-compact" @click="${onTrigger}"
+        style="${() => `font-family: ${props.value()}`}">${() => props.value() || '— select —'}</span>
+      ${() => isOpen() ? fontPanel({ options: props.options, value: props.value, choose }) : null}
+    </span>`;
+  }
+  return html`<div class="kit-font-trigger-wrap">
+    <button class="kit-font-trigger" @click="${onTrigger}"
+      style="${() => `font-family: ${props.value()}`}">
+      <span class="kit-font-trigger-name">${() => props.value() || '— select —'}</span>
+      <span class="kit-font-trigger-chev">▾</span>
+    </button>
+    ${() => isOpen() ? fontPanel({ options: props.options, value: props.value, choose }) : null}
+  </div>`;
+});

@@ -1,4 +1,4 @@
-import { html } from '@arrow-js/core';
+import { component, html } from '@arrow-js/core';
 
 export interface IconOpts {
   name: string | (() => string);
@@ -7,13 +7,12 @@ export interface IconOpts {
 
 export const iconTokens = ['--text-secondary'];
 
-export function icon(opts: IconOpts) {
-  const name = typeof opts.name === 'function' ? opts.name : () => opts.name as string;
-  const size = opts.size ?? 16;
+export const icon = component((props: IconOpts) => {
+  const nameFn = () => typeof props.name === 'function' ? (props.name as () => string)() : props.name;
   return html`<img
     class="kit-icon"
-    src="${() => `sola-assets://icons/${name()}.svg`}"
-    width="${size}"
-    height="${size}"
+    src="${() => `sola-assets://icons/${nameFn()}.svg`}"
+    width="${() => props.size ?? 16}"
+    height="${() => props.size ?? 16}"
   >`;
-}
+});
