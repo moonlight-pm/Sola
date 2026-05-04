@@ -114,6 +114,11 @@ pub fn platform_assets() -> AssetBundle {
     AssetBundle {
         assets: &[
             Asset {
+                path: "/lib/ipc.ts",
+                content: include_str!("../web/lib/ipc.ts"),
+                content_type: ContentType::TypeScript,
+            },
+            Asset {
                 path: "/vendor/preact/preact.module.js",
                 content: include_str!("../web/vendor/preact/preact.module.js"),
                 content_type: ContentType::JavaScript,
