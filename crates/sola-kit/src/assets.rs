@@ -62,6 +62,18 @@ impl AssetBundle {
             let ts_path = format!("{}ts", &path[..path.len() - 2]);
             return self.assets.iter().find(|a| a.path == ts_path);
         }
+        // Extensionless: try .ts, .js, .mjs in order. Matches what tsconfig
+        // "moduleResolution: bundler" lets the editor accept, so `import './foo'`
+        // resolves at runtime the same way it does in the LSP.
+        let last_seg = path.rsplit('/').next().unwrap_or("");
+        if !last_seg.is_empty() && !last_seg.contains('.') {
+            for ext in [".ts", ".js", ".mjs"] {
+                let candidate = format!("{path}{ext}");
+                if let Some(a) = self.assets.iter().find(|a| a.path == candidate) {
+                    return Some(a);
+                }
+            }
+        }
         None
     }
 }

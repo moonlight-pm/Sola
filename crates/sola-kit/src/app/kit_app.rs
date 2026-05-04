@@ -1,6 +1,9 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sola_bus::topics::{Topic, TopicKind};
+use sola_bus::topics::{
+    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
+};
+use sola_core::KeyCode;
 use sola_core::theme::Theme;
 use sola_kit::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 
@@ -35,6 +38,14 @@ impl SolaApp for KitApp {
     const APP_ID: &'static str = "sola-kit";
 
     fn new(ctx: &mut AppCtx) -> Self {
+        // The WebKit Web Inspector follows the GTK theme — there's no
+        // inspector-specific API. Force dark for this process so devtools
+        // come up dark. Sola-kit windows are decorated:false with the
+        // WebView as the sole child, so this has no visible side-effects.
+        if let Some(settings) = gtk4::Settings::default() {
+            settings.set_gtk_application_prefer_dark_theme(true);
+        }
+
         let theme = Theme::default();
         use super::catalog::{CATALOG, Group};
         let catalog_json: Vec<serde_json::Value> = CATALOG
@@ -64,12 +75,15 @@ impl SolaApp for KitApp {
             keyboard_target: true,
         });
 
+        ctx.emit(Topic::SetAppMenu(kit_menu()));
+
         Self { theme, main_window }
     }
 
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
         bus.on(TopicKind::CloseApp, Self::on_close_app);
         bus.on(TopicKind::Theme, Self::on_theme);
+        bus.on(TopicKind::MenuAction, Self::on_menu_action);
     }
 
     fn on_js_command(
@@ -125,5 +139,37 @@ impl KitApp {
         self.theme = Theme::default();
         ctx.emit(Topic::Theme(self.theme.clone()));
         json!({ "ok": true })
+    }
+
+    fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = delivery.topic else {
+            return;
+        };
+        if app_id != Self::APP_ID {
+            return;
+        }
+        if action_id == "open_devtools" {
+            use webkit6::prelude::WebViewExt;
+            let webview = self.main_window.webview();
+            if let Some(inspector) = webview.inspector() {
+                inspector.show();
+            }
+        }
+    }
+}
+
+fn kit_menu() -> AppMenuPayload {
+    AppMenuPayload {
+        app_id: KitApp::APP_ID.into(),
+        menus: vec![MenuDefinition {
+            label: "Sola Kit".into(),
+            items: vec![MenuItem::Action {
+                id: "open_devtools".into(),
+                label: "Developer Tools".into(),
+                shortcut: Some(KeyCode::F12.chord()),
+                disabled: false,
+                checked: false,
+            }],
+        }],
     }
 }

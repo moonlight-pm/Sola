@@ -523,7 +523,8 @@ pub(crate) fn inject_import_map(html: &str) -> String {
     let platform_imports = r#""@arrow-js/core": "/vendor/arrow/index.mjs",
       "@sola/ipc": "/lib/ipc.js",
       "@sola/store": "/lib/store.js",
-      "@sola/kit": "/lib/kit.js""#;
+      "@sola/kit": "/lib/kit.js",
+      "~/": "/lib/""#;
 
     // If there's an existing import map, merge into it
     if let Some(pos) = html.find("\"imports\"") {

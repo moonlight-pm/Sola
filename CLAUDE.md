@@ -163,6 +163,12 @@ Rule of thumb: if a value can change after mount, wrap it in `() => …`. If it'
 
 Sola serves assets directly from Rust-embedded bytes — there's no bundler. **`import './foo.css'` in a `.ts` file will fail** with `'text/css' is not a valid JavaScript MIME type` and kill the frontend. Declare component stylesheets with `<link rel="stylesheet" href="/src/components/foo.css">` in `index.html` (and register each CSS file in the `asset_bundle!` macro in the app's `main.rs`).
 
+### Module imports
+
+Both `import './foo'` and `import './foo.js'` work. The asset server (`AssetBundle::find` in `crates/sola-kit/src/assets.rs`) tries the literal path first, then `.js → .ts`, then — for extensionless paths — `.ts`, `.js`, `.mjs` in that order. The editor side accepts extensionless TypeScript imports because tsconfig sets `"moduleResolution": "bundler"`.
+
+Bare specifiers (`import 'foo'`) still need import-map entries — that's a browser rule, not ours. The current import map lives inline in `crates/sola-kit/src/lib.rs` and maps `@arrow-js/core`, `@sola/ipc`, `@sola/store`, `@sola/kit`.
+
 ### List rendering
 
 ```ts
