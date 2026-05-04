@@ -36,8 +36,6 @@ fn main() {
         TopicKind::Frame,
         TopicKind::Focus,
         TopicKind::RegisteredChords,
-        TopicKind::Copy,
-        TopicKind::Paste,
         TopicKind::CloseApp,
         TopicKind::CaptureScreen,
         TopicKind::SimulatePointer,

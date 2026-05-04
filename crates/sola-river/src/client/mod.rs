@@ -192,12 +192,6 @@ pub fn bus_tick(state: &mut AppData) {
                     .collect();
                 state.pending.set_chords(pairs);
             }
-            sola_bus::topics::Topic::Copy(req) => {
-                dispatch_clipboard_chord(state, req.window_id, ClipboardAction::Copy);
-            }
-            sola_bus::topics::Topic::Paste(req) => {
-                dispatch_clipboard_chord(state, req.window_id, ClipboardAction::Paste);
-            }
             sola_bus::topics::Topic::CaptureScreen(req) => {
                 screenshot::handle(state, req);
             }
@@ -250,48 +244,6 @@ pub fn bus_tick(state: &mut AppData) {
             }
         }
     }
-}
-
-/// Which clipboard chord fired. Determines the evdev keycode synthesized.
-#[derive(Clone, Copy)]
-enum ClipboardAction {
-    Copy,
-    Paste,
-}
-
-impl ClipboardAction {
-    /// Raw Linux evdev keycode from `include/uapi/linux/input-event-codes.h`.
-    fn evdev_keycode(self) -> u32 {
-        match self {
-            ClipboardAction::Copy => 46,  // KEY_C
-            ClipboardAction::Paste => 47, // KEY_V
-        }
-    }
-}
-
-/// Handle `Topic::Copy` / `Topic::Paste` from the shell. The message is
-/// broadcast, not addressed to a specific subscriber — sola-app handles
-/// it for Sola windows; we handle it for foreign (non-sola) windows by
-/// synthesizing Ctrl+C / Ctrl+V at the Wayland seat via the virtual
-/// keyboard. If the window isn't in our registry at all (e.g. the shell
-/// was slightly faster than River's `window` event) we drop silently.
-fn dispatch_clipboard_chord(state: &mut AppData, window_id: u32, action: ClipboardAction) {
-    let Some(app_id) = state.registry.app_id_for(window_id).map(|s| s.to_string()) else {
-        tracing::debug!(window_id, "clipboard chord for unknown window, ignoring");
-        return;
-    };
-    // Sola apps handle Copy/Paste themselves via the sola-app framework.
-    // We only synthesize for foreign clients.
-    if app_id.starts_with("sola-") {
-        return;
-    }
-    tracing::info!(
-        window_id,
-        app_id = %app_id,
-        action = ?(match action { ClipboardAction::Copy => "copy", ClipboardAction::Paste => "paste" }),
-        "synthesizing Ctrl+key for non-sola client"
-    );
-    virtual_keyboard::synthesize_ctrl_plus_evdev_key(state, action.evdev_keycode());
 }
 
 // ---------- Registry dispatch — the only place globals are bound ----------

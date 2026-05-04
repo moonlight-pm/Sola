@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 pub use sola_core::KeyChord;
 use sola_core::Encrypted;
+pub use sola_core::applications::{Application, ApplicationsConfig};
 
 use crate::define_topics;
 
@@ -140,14 +141,6 @@ pub struct ChordEvent {
 /// for `window_interaction` seat events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseClickedPayload {
-    pub window_id: u32,
-}
-
-/// Request that a specific window perform an edit action (copy or paste).
-/// Emitted by the shell when a global clipboard chord fires; consumed by
-/// the sola-app framework in the owning process.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EditRequest {
     pub window_id: u32,
 }
 
@@ -445,6 +438,14 @@ define_topics! {
     #[persistent]
     MailConfig(MailConfig),
 
+    // One launchable application (user-edited; built-ins live in code).
+    // Keyed by `app_id` so each entry has its own `[[Application]]`
+    // record in `state.toml`: settings emits to add/update, retracts
+    // to remove. Renaming `app_id` is a retract+emit pair.
+    // sola-shell consumes for launcher search and switcher icon lookup.
+    #[persistent(keys = [app_id])]
+    Application(Application),
+
     // Terminal UI preferences (sidebar width / collapsed). Persistent
     // so terminal restarts restore the user's layout.
     #[persistent]
@@ -477,12 +478,6 @@ define_topics! {
 
     // Browser
     OpenUrl(OpenUrlRequest),
-
-    // Global clipboard chords. Shell broadcasts when Meta+C/V fires;
-    // sola-app handles for its own windows, sola-river handles for
-    // foreign (non-sola) windows by synthesizing Ctrl+C / Ctrl+V.
-    Copy(EditRequest),
-    Paste(EditRequest),
 
     // Debug introspection (solactl ↔ apps via sola-app framework).
     Evaluate(EvaluatePayload),
@@ -657,6 +652,41 @@ mod tests {
         let empty = toml::Value::Table(toml::map::Map::new());
         assert!(Topic::from_toml_section(TopicKind::Windows, empty.clone()).is_none());
         assert!(Topic::from_toml_section(TopicKind::Shutdown, empty).is_none());
+    }
+
+    #[test]
+    fn application_roundtrips_via_toml() {
+        let app = Application {
+            app_id: "steam".into(),
+            label: "Steam".into(),
+            command: "/run/current-system/sw/bin/steam".into(),
+            icon: "simpleicons/steam".into(),
+        };
+        let topic = Topic::Application(app);
+        let value = topic
+            .to_toml_value()
+            .expect("Application is persistent; must serialize to TOML");
+        let restored = Topic::from_toml_section(TopicKind::Application, value)
+            .expect("section should deserialize");
+        match restored {
+            Topic::Application(back) => {
+                assert_eq!(back.app_id, "steam");
+                assert_eq!(back.command, "/run/current-system/sw/bin/steam");
+            }
+            other => panic!("expected Application, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn application_emits_app_id_as_key() {
+        let app = Application {
+            app_id: "Bitwarden".into(),
+            label: "Bitwarden".into(),
+            command: "/run/current-system/sw/bin/bitwarden".into(),
+            icon: "simpleicons/bitwarden".into(),
+        };
+        let msg = Topic::Application(app).to_message();
+        assert_eq!(msg.keys, vec!["Bitwarden".to_string()]);
     }
 
     #[test]
