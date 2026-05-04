@@ -127,99 +127,200 @@ tail -100 /opt/sola/log/sola.log
 - Logs go to `/opt/sola/log/`
 - User launches sola manually from a physical TTY — no display manager, no auto-login
 
-## Web Frontends: Arrow.js
+## Web Frontends: lit + signals
 
-Sola apps render their UI with `@arrow-js/core` (vendored at `crates/sola-app/web/vendor/arrow/`). Arrow is small and has its own conventions — do NOT assume Lit, Svelte, or React idioms. Before writing or reviewing any `.ts` web file, check these rules.
+Sola apps are built from custom elements. The lit stack (`lit-html` + `lit-element` + `@lit/reactive-element`, vendored under `crates/sola-kit/web/vendor/lit*/`) provides the element base; `@preact/signals-core` (vendored at `crates/sola-kit/web/vendor/signals/`) provides shared reactive state. Together ~15 KB.
 
-### Template basics
+**Component-first**: every reusable view is a custom element, not a function returning a template. Lib components are `<sola-X>`; storybook-internal widgets are `<kit-X>`. The shell is `<kit-app>`. Don't write helper functions that return templates when an element will do — element registration costs nothing and gives you proper composition (slots, events, encapsulation).
+
+### KitElement
+
+`KitElement` (from `@sola/kit`) is the base class:
+- Extends `LitElement` (so you get update batching, lifecycle, render scheduling)
+- Wrapped in `SignalWatcher` mixin (~10 lines inlined from `@lit-labs/preact-signals`) — signal reads inside `render()` auto-schedule re-renders
+- Light DOM via `createRenderRoot() { return this; }` — global CSS variables drive the theme
 
 ```ts
-import { html, reactive, watch } from '@arrow-js/core';
+import { html } from 'lit-html';
+import { signal } from 'signals';
+import { KitElement } from '@sola/kit';
 
-const state = reactive({ count: 0, name: '' });
+const count = signal(0);
 
-html`<div>${() => state.count}</div>`(targetEl);   // mount into targetEl
+class MyCounter extends KitElement {
+  render() {
+    return html`
+      <button @click=${() => count.value++}>Count: ${count.value}</button>
+    `;
+  }
+}
+customElements.define('my-counter', MyCounter);
 ```
 
-`html\`...\`(target)` **appends** to `target`. To swap content, call the mounting function once per target; don't re-invoke `html\`...\`(sameTarget)`. Guard mounts with a boolean flag.
+Drop `<my-counter></my-counter>` in HTML; importing the module registers the tag.
 
-### Reactivity: closures vs. plain values
+### Properties (no decorators)
 
-- **Closure `${() => expr}`** — reactive. Re-runs when any reactive state it reads changes.
-- **Plain `${value}`** — static. Captured once at template creation.
+We use the static-properties API — no decorators (so swc strip-types works without transforms):
 
-Rule of thumb: if a value can change after mount, wrap it in `() => …`. If it's captured inside an outer reactive closure, the outer closure's re-run produces a new template and the "plain" interpolation is fine.
+```ts
+class SolaButton extends KitElement {
+  static properties = {
+    label: { type: String },
+    variant: { type: String },
+    disabled: { type: Boolean, reflect: true },
+  };
+  declare label: string;
+  declare variant?: 'primary' | 'default' | 'ghost' | 'danger';
+  declare disabled?: boolean;
 
-### Attributes
+  render() {
+    return html`<button
+      class=${`kit-btn kit-btn-${this.variant ?? 'default'}`}
+      ?disabled=${this.disabled}
+    >${this.label}</button>`;
+  }
+}
+customElements.define('sola-button', SolaButton);
+```
 
-- **Regular attribute:** `class="${() => state.cls}"` — Arrow replaces the attribute value each time the closure changes.
-- **Boolean attribute:** Arrow does NOT support Lit's `?attr="…"` syntax. Use `attr="${() => cond ? 'attr-name' : false}"`. Returning `false` removes the attribute entirely.
-  - ✅ `disabled="${() => busy ? 'disabled' : false}"`
-  - ❌ `?disabled="${() => busy}"` — throws `InvalidCharacterError: '?disabled'` at runtime and aborts the render.
-- **Event handler:** `@event="${handler}"`, e.g. `@click="${() => onClick()}"`. Handler can be a plain function or an inline arrow.
+Use `declare` (not `let`/`const`/`=`) for property type declarations — avoids `useDefineForClassFields` clobbering Lit's getters/setters. Our `tsconfig.json` sets `useDefineForClassFields: false` defensively.
+
+### Slots, not template props
+
+Pass content via slots, not props that contain templates:
+
+```ts
+// ❌ Old style
+form({ body: html`...`, actions: html`...` })
+
+// ✅ Component style
+html`<sola-form>
+  <sola-field-row label="Email"><sola-field></sola-field></sola-field-row>
+  <sola-button slot="actions" label="Save"></sola-button>
+</sola-form>`
+```
+
+In the element, `<slot></slot>` for default content, `<slot name="actions"></slot>` for named slots.
+
+### Events, not callback props
+
+Components dispatch CustomEvents instead of accepting callback props:
+
+```ts
+// In the element
+this.dispatchEvent(new CustomEvent('sola-input', {
+  detail: { value: newValue },
+  bubbles: true,
+}));
+
+// At the call site
+<sola-field @sola-input=${(e: CustomEvent) => set(e.detail.value)}></sola-field>
+```
+
+For native events (`click`, `submit`, etc.) just let them bubble — `@click=${handler}` on the host catches them.
+
+### Property bindings
+
+Lit-html has four prefixes for interpolations on a custom element:
+
+- `attr=${value}` — attribute (string-only)
+- `?attr=${bool}` — boolean attribute (presence)
+- `.prop=${value}` — DOM property (any type — use this for objects, arrays, numbers passed to a property declared in `static properties`)
+- `@event=${handler}` — event listener
+
+**For object/array props always use `.prop`**: `<sola-tab .index=${1}>` not `<sola-tab index="1">` (the latter would set the attribute as a string, and `type: Number` coercion only kicks in for attributes that exist on the HTML).
+
+### Routing
+
+Inside a `KitElement` `render()`, just dispatch on a signal:
+
+```ts
+class KitApp extends KitElement {
+  render() {
+    const sel = selected.value;
+    return html`<main>${
+      sel === 'home' ? html`<my-home></my-home>` :
+      sel === 'about' ? html`<my-about></my-about>` :
+      html`<div>Not found</div>`
+    }</main>`;
+  }
+}
+```
+
+Lit-html atomically swaps the subtree — no swap-path bugs. Custom-element instances unmount cleanly via their disconnectedCallback.
+
+### Conditionals and lists
+
+Plain JavaScript expressions inside `${}` slots:
+
+```ts
+html`<div>
+  ${state.error ? html`<p class="error">${state.error}</p>` : ''}
+  ${state.items.map(item => html`<li>${item.name}</li>`)}
+</div>`
+```
+
+Use `''` (empty string) rather than `null`/`undefined` for "render nothing" — slightly cleaner DOM.
+
+For keyed lists where items reorder, import `repeat` from `lit-html/directives/repeat.js`. For our usual case (small lists, append/prepend), plain `.map()` is fine — lit-html does positional reuse.
+
+### State
+
+Use `signal()` for any value that changes over time and is read by templates. Mutate via `.value =` (immutable updates for object/array contents):
+
+```ts
+const items = signal<Item[]>([]);
+
+// ✅ replace, signals see the change
+items.value = [...items.value, newItem];
+
+// ❌ mutate in place — signal sees no change, no re-render
+items.value.push(newItem);
+```
+
+For derived state, `computed()` returns a read-only signal that recomputes when its dependencies change:
+
+```ts
+import { computed } from 'signals';
+const count = signal(0);
+const doubled = computed(() => count.value * 2);
+```
+
+### Side effects outside of render
+
+Most reactive work happens automatically through `render()`. For side effects that aren't rendering — DOM listeners, timers, persistence — `effect(fn)` from `signals` returns a dispose function. Call it to stop. The effect's `fn` may also return a cleanup function that runs before the next call (and on dispose):
+
+```ts
+const stop = effect(() => {
+  const id = setInterval(() => count.value++, 1000);
+  return () => clearInterval(id);
+});
+
+// later: stop();
+```
+
+For DOM event listeners that should outlive the effect, attach in module scope; only attach inside an effect if you also clean up.
 
 ### CSS imports
 
-Sola serves assets directly from Rust-embedded bytes — there's no bundler. **`import './foo.css'` in a `.ts` file will fail** with `'text/css' is not a valid JavaScript MIME type` and kill the frontend. Declare component stylesheets with `<link rel="stylesheet" href="/src/components/foo.css">` in `index.html` (and register each CSS file in the `asset_bundle!` macro in the app's `main.rs`).
+Sola serves assets directly from Rust-embedded bytes — there's no bundler. **`import './foo.css'` in a `.ts` file will fail** with `'text/css' is not a valid JavaScript MIME type`. Declare component stylesheets with `<link rel="stylesheet" href="/src/components/foo.css">` in `index.html` (and register each CSS file in the `asset_bundle!` macro in the app's `main.rs`).
 
-### List rendering
+### Module imports
 
-```ts
-html`<ul>
-  ${() => state.items.map(item => html`<li>${() => item.name}</li>`)}
-</ul>`
-```
-
-Re-assign arrays (`state.items = [...state.items, newItem]`) to trigger re-render — mutating in place doesn't always notify.
-
-### Nested templates MUST be in closures
-
-**Critical:** A plain nested template expression — `${childTemplate}` or `${cond ? tplA : tplB}` — is mounted once and **never re-patched** when the parent chunk is reused on a reactive re-render. Only `${() => childTemplate}` (a function expression) installs the update observer that Arrow uses to re-render nested templates.
-
-This is the #1 cause of "the first message shows, but clicking a second message still shows the first" stale-content bugs.
-
-```ts
-// ❌ Stale on parent re-render — no update observer installed
-<div>${msg.cc ? html`<div>${msg.cc}</div>` : html``}</div>
-
-// ✅ Re-patched every time the parent closure re-runs
-<div>${() => msg.cc ? html`<div>${() => msg.cc}</div>` : html``}</div>
-```
-
-The same applies to nested text interpolations that need to follow reactive changes: write `${() => msg.from}`, not `${msg.from}`, when the enclosing template might be reused.
-
-### Keys
-
-Keys aren't needed to force re-patching in reactive single-template contexts — the closure rule above is what you want there. Use `.key(id)` when rendering **lists of templates**: Arrow's list-diffing path consults keys to match items across renders. Single-template reactive expressions go through the `patch` fast-path that reuses the prev chunk by raw-strings signature, so keys are a no-op there.
-
-### watch()
-
-```ts
-watch(() => {
-  // reads any reactive props; re-runs on their changes
-  if (state.composing) mountCompose();
-});
-```
-
-Arrow's reactive setter **emits on every write**, even if the new value equals the old. If a `watch` handler has side-effects (e.g. remounting DOM), guard against no-op transitions:
-
-```ts
-let prev = state.flag;
-watch(() => {
-  if (state.flag === prev) return;
-  prev = state.flag;
-  // …actual work…
-});
-```
+Sola's asset server has a fallback for `.js` → `.ts` lookups. Bare imports like `import { x } from './foo'` (no extension) **will 404**. Always write `import { x } from './foo.js'` — the strip-types layer turns the `.ts` source into JS at request time, and the import path needs to match.
 
 ### Reactive store wrapper
 
-`createStore<T>(initial)` from `@sola/store` is a thin wrapper over `reactive()`. Use it for typed app state. Persistence helpers: `save()` and `persist()` in the same module.
+`@sola/store` re-exports `signal`, `computed`, `effect`, `batch`, `untracked` from `@preact/signals-core`, plus `persistedSignal(initial, key)` for localStorage-backed state.
 
-### Common pitfalls recap
+### Common pitfalls
 
-- ❌ `?bool-attr="${…}"` — use `attr="${() => truthy ? 'attr' : false}"`
-- ❌ `import './x.css'` — use `<link>` in `index.html`
-- ❌ `state.x = x` assuming equality check — Arrow always emits
-- ❌ Mounting `html\`\`(target)` twice — it appends
-- ❌ Nested `${childTemplate}` or `${cond ? tplA : tplB}` — wrap in `${() => ...}` so Arrow re-patches on parent re-render
+- ❌ Writing `function foo(opts) { return html\`...\` }` for a reusable view — make it a custom element.
+- ❌ Initializing properties with `=` instead of `declare` — clobbers Lit's getter/setter setup unless `useDefineForClassFields: false`.
+- ❌ `index="1"` on a custom element prop declared `type: Number` — use `.index=${1}` for non-string props.
+- ❌ `value=${x}` on a controlled input — use `.value=${x}` so the property updates, not just the attribute.
+- ❌ `?disabled="${bool}"` (quoted boolean) — use `?disabled=${bool}`.
+- ❌ Mutating signal contents in place (`items.value.push(x)`) — replace the value (`items.value = [...items.value, x]`).
+- ❌ `import './foo'` (no extension) — use `import './foo.js'`.
+- ❌ `import './x.css'` — use `<link>` in `index.html`.

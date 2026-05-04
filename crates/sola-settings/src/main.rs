@@ -3,15 +3,14 @@ use std::path::Path;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sola_app::config::JsonConfigIn;
 use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 use sola_bus::topics::{
-    AppMenuPayload, MailConfig, MailRule, MailRuleCondition, MenuActionPayload, MenuDefinition,
-    MenuItem, Topic, TopicKind, Window as BusWindow,
+    AppMenuPayload, ApplicationsConfig, MailConfig, MailRule, MailRuleCondition, MenuActionPayload,
+    MenuDefinition, MenuItem, Topic, TopicKind, Window as BusWindow,
 };
 use sola_core::Encrypted;
 use sola_core::KeyCode;
-use sola_core::applications::{Application, ApplicationsConfig, command_exists, is_builtin};
+use sola_core::applications::{Application, command_exists, is_builtin, resolve_in_path};
 
 static APP_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../web/index.html"), Html),
@@ -80,12 +79,10 @@ impl SolaApp for SettingsApp {
     const APP_ID: &'static str = "sola-settings";
 
     fn new(ctx: &mut AppCtx) -> Self {
-        let mut applications = ApplicationsConfig::load();
-        if applications.normalize() {
-            applications.save();
-        }
-        // Mail starts at default; the bus replays the persisted
-        // `Topic::MailConfig` sticky to us once we subscribe.
+        // Both Applications and MailConfig start empty; the bus replays
+        // the persisted stickies for `Topic::Applications` and
+        // `Topic::MailConfig` to us once we subscribe.
+        let applications = ApplicationsConfig::default();
         let mail = MailConfig::default();
         let initial_state =
             serde_json::to_string(&state_payload(&applications, &[], &mail)).unwrap_or_default();
@@ -131,6 +128,7 @@ impl SolaApp for SettingsApp {
         bus.on(TopicKind::Windows, Self::on_windows);
         bus.on(TopicKind::MenuAction, Self::on_menu_action);
         bus.on(TopicKind::MailConfig, Self::on_mail_config);
+        bus.on(TopicKind::Application, Self::on_application);
     }
 
     fn on_js_command(
@@ -142,9 +140,9 @@ impl SolaApp for SettingsApp {
         ctx: &mut AppCtx,
     ) {
         let result = match cmd {
-            "applications_add" => self.handle_add(args),
-            "applications_update" => self.handle_update(args),
-            "applications_remove" => self.handle_remove(args),
+            "applications_add" => self.handle_add(args, ctx),
+            "applications_update" => self.handle_update(args, ctx),
+            "applications_remove" => self.handle_remove(args, ctx),
             "mail_save_account" => self.handle_mail_save_account(args, ctx),
             "mail_add_rule" => self.handle_mail_add_rule(args, ctx),
             "mail_remove_rule" => self.handle_mail_remove_rule(args, ctx),
@@ -161,50 +159,64 @@ impl SolaApp for SettingsApp {
 }
 
 impl SettingsApp {
-    fn handle_add(&mut self, args: &Value) -> Value {
+    fn handle_add(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let args: AddArgs = match serde_json::from_value(args.clone()) {
             Ok(a) => a,
             Err(e) => return json!({ "error": e.to_string() }),
         };
-        if let Err(e) = self.applications.add(Application {
+        let mut new_app = Application {
             app_id: args.app_id,
             label: args.label,
             command: args.command,
             icon: args.icon,
-        }) {
+        };
+        new_app.normalize();
+        if let Err(e) = self.applications.add(new_app.clone()) {
             return json!({ "error": e.to_string() });
         }
-        self.applications.save();
+        ctx.emit(Topic::Application(new_app));
         self.current_state()
     }
 
-    fn handle_update(&mut self, args: &Value) -> Value {
+    fn handle_update(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let args: UpdateArgs = match serde_json::from_value(args.clone()) {
             Ok(a) => a,
             Err(e) => return json!({ "error": e.to_string() }),
         };
-        if let Err(e) = self.applications.update(
-            &args.old_app_id,
-            Application {
-                app_id: args.app_id,
-                label: args.label,
-                command: args.command,
-                icon: args.icon,
-            },
-        ) {
+        let mut new_app = Application {
+            app_id: args.app_id,
+            label: args.label,
+            command: args.command,
+            icon: args.icon,
+        };
+        new_app.normalize();
+        let old_app_id = args.old_app_id;
+        let id_changed = old_app_id != new_app.app_id;
+        let prev = self.applications.get(&old_app_id).cloned();
+        if let Err(e) = self.applications.update(&old_app_id, new_app.clone()) {
             return json!({ "error": e.to_string() });
         }
-        self.applications.save();
+        // Renaming `app_id` changes the keyed slot — retract under the
+        // old key first so `state.toml` doesn't end up with two
+        // `[[Application]]` records for the same logical app.
+        if id_changed {
+            if let Some(old) = prev {
+                ctx.retract(Topic::Application(old));
+            }
+        }
+        ctx.emit(Topic::Application(new_app));
         self.current_state()
     }
 
-    fn handle_remove(&mut self, args: &Value) -> Value {
+    fn handle_remove(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
         let args: RemoveArgs = match serde_json::from_value(args.clone()) {
             Ok(a) => a,
             Err(e) => return json!({ "error": e.to_string() }),
         };
-        self.applications.remove(&args.app_id);
-        self.applications.save();
+        if let Some(removed) = self.applications.get(&args.app_id).cloned() {
+            self.applications.remove(&args.app_id);
+            ctx.retract(Topic::Application(removed));
+        }
         self.current_state()
     }
 
@@ -267,10 +279,22 @@ impl SettingsApp {
             return;
         };
         self.mail = cfg.clone();
-        self.main_window.send_to_js(&json!({
-            "event": "state",
-            "state": state_payload(&self.applications, &self.running, &self.mail),
-        }));
+        self.send_state_event();
+    }
+
+    fn on_application(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        let Topic::Application(app) = delivery.topic else {
+            return;
+        };
+        if delivery.retracted {
+            self.applications.remove(&app.app_id);
+        } else {
+            // Sticky replay or peer update — upsert by app_id. We may be
+            // receiving our own emit back; that's idempotent.
+            self.applications.remove(&app.app_id);
+            self.applications.apps.push(app.clone());
+        }
+        self.send_state_event();
     }
 
     fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
@@ -287,14 +311,23 @@ impl SettingsApp {
             return;
         };
         self.running = windows.clone();
-        self.main_window.send_to_js(&json!({
-            "event": "state",
-            "state": state_payload(&self.applications, &self.running, &self.mail),
-        }));
+        self.send_state_event();
     }
 
     fn current_state(&self) -> Value {
         state_payload(&self.applications, &self.running, &self.mail)
+    }
+
+    /// Push the latest state to the JS frontend as a `state` event.
+    /// Spreads the payload's fields (`applications`, `mail`) at the top
+    /// level alongside `event` — matches the convention used by
+    /// `sola-terminal` and what the JS handler in `web/src/app.ts` reads.
+    fn send_state_event(&self) {
+        let mut payload = self.current_state();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("event".into(), json!("state"));
+        }
+        self.main_window.send_to_js(&payload);
     }
 }
 
@@ -333,7 +366,7 @@ fn state_payload(cfg: &ApplicationsConfig, running: &[BusWindow], mail: &MailCon
         .filter(|a| !is_system_app(&a.app_id))
         .filter(|a| seen.insert(a.app_id.clone()))
         .map(|a| {
-            let suggested = a.pid.and_then(resolve_binary_for_pid);
+            let suggested = suggest_command(&a.app_id, a.pid);
             json!({
                 "app_id": a.app_id,
                 "title": a.title,
@@ -352,57 +385,167 @@ fn state_payload(cfg: &ApplicationsConfig, running: &[BusWindow], mail: &MailCon
     })
 }
 
-/// Best-effort resolution of a PID to the command the user most likely
-/// typed to launch it. Order:
+/// Best-effort suggestion of a launch command for a window we just
+/// noticed. Order:
 ///
-/// 1. `readlink /proc/<pid>/exe` (strip Linux's `" (deleted)"` suffix
-///    that appears when the binary has been replaced since launch)
-/// 2. If the resolved exe is a well-known sandbox/runtime launcher
-///    (`bwrap`, `flatpak-spawn`, AppImage `AppRun`, …), fall back to
-///    `argv[0]` from `/proc/<pid>/cmdline` — that's closer to the user's
-///    intent than the sandbox runner.
-fn resolve_binary_for_pid(pid: u32) -> Option<String> {
-    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
-    let exe_str = exe.to_string_lossy().into_owned();
-    let cleaned = exe_str
-        .strip_suffix(" (deleted)")
-        .unwrap_or(&exe_str)
-        .to_string();
+/// 1. **Search `PATH` using names derived from `app_id`.** This wins
+///    for distro-packaged and NixOS-wrapped apps where the launcher is
+///    a shell wrapper named after the app (e.g. Bitwarden's
+///    `/run/current-system/sw/bin/bitwarden`). The wrapper sets up
+///    library paths and arguments — invoking the raw binary it dispatches
+///    to (`/nix/store/.../electron …`) bypasses that setup and the app
+///    won't start the same way.
+/// 2. **Procfs fallback.** When no `PATH` match exists (AppImage in
+///    `~/Applications`, custom build, etc.), use the running process's
+///    `/proc/<pid>/exe` or `/proc/<pid>/cmdline`. See
+///    [`resolve_binary_for_pid`].
+fn suggest_command(app_id: &str, pid: Option<u32>) -> Option<String> {
+    if let Some(path) = resolve_from_app_id(app_id) {
+        return Some(path);
+    }
+    pid.and_then(resolve_binary_for_pid)
+}
 
-    let file_name = Path::new(&cleaned)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    if is_sandbox_runner(&file_name) {
-        if let Some(argv0) = cmdline_argv0(pid) {
-            return Some(argv0);
+/// Try every plausible `PATH` name derived from `app_id`. Returns the
+/// absolute path of the first match. Tried in order:
+///
+/// 1. `app_id` lowercased verbatim — handles plain names like
+///    `Bitwarden` → `bitwarden`.
+/// 2. The last `.`-segment, lowercased — handles reverse-DNS forms
+///    like `org.mozilla.Firefox` → `firefox`,
+///    `dev.zed.Zed` → `zed`.
+/// 3. The second-to-last `.`-segment — handles the
+///    `com.<brand>.platform` shape (e.g. `com.bitwarden.desktop`)
+///    where the brand sits in the middle.
+fn resolve_from_app_id(app_id: &str) -> Option<String> {
+    let trimmed = app_id.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut tried: Vec<String> = Vec::new();
+    let try_name = |name: &str, tried: &mut Vec<String>| -> Option<String> {
+        if name.is_empty() || tried.iter().any(|t| t == name) {
+            return None;
+        }
+        tried.push(name.to_string());
+        resolve_in_path(name).map(|p| p.to_string_lossy().into_owned())
+    };
+
+    if let Some(hit) = try_name(&trimmed.to_ascii_lowercase(), &mut tried) {
+        return Some(hit);
+    }
+    let segments: Vec<&str> = trimmed.split('.').collect();
+    if segments.len() > 1 {
+        let last = segments[segments.len() - 1].to_ascii_lowercase();
+        if let Some(hit) = try_name(&last, &mut tried) {
+            return Some(hit);
+        }
+        let second = segments[segments.len() - 2].to_ascii_lowercase();
+        if let Some(hit) = try_name(&second, &mut tried) {
+            return Some(hit);
         }
     }
-    Some(cleaned)
+    None
+}
+
+/// `/proc`-based fallback used when the `PATH` lookup in
+/// [`suggest_command`] finds nothing. See that function's docs for the
+/// overall ordering. Within this fallback:
+///
+/// 1. `readlink /proc/<pid>/exe`. The kernel exposes this symlink mode
+///    0700 (root-owned) when the process has `PR_SET_DUMPABLE=0` —
+///    Electron, Chromium, and other sandboxed apps set that even when
+///    the process itself runs as the user. In that case `read_link`
+///    fails and we fall through.
+///    We also strip Linux's `" (deleted)"` suffix that appears when
+///    the binary has been replaced since launch.
+/// 2. If the resolved exe is a wrapper / multi-arg launcher
+///    (`bwrap`, `flatpak-spawn`, AppImage `AppRun`, `electron`, …),
+///    return positional `argv[0..N]` from `/proc/<pid>/cmdline` —
+///    just `argv[0]` would be the wrapper itself, which can't launch
+///    the app on its own.
+/// 3. Otherwise, return positional `argv` from `cmdline`. This handles
+///    sandboxed apps whose `/proc/<pid>/exe` is unreadable.
+fn resolve_binary_for_pid(pid: u32) -> Option<String> {
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+    let cleaned = exe.map(|p| {
+        let s = p.to_string_lossy().into_owned();
+        s.strip_suffix(" (deleted)")
+            .map(str::to_string)
+            .unwrap_or(s)
+    });
+
+    let file_name = cleaned.as_deref().and_then(|c| {
+        Path::new(c)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+    });
+
+    let need_cmdline = file_name
+        .as_deref()
+        .is_none_or(is_multi_arg_launcher);
+    if need_cmdline {
+        return cmdline_positional(pid);
+    }
+    cleaned
 }
 
 /// App IDs that are part of Sola itself and should never appear as
-/// "running, not configured" candidates — adding them to
-/// `applications.json` would let the launcher spawn duplicates. Covers
+/// "running, not configured" candidates — adding them to the
+/// applications list would let the launcher spawn duplicates. Covers
 /// the shell itself plus every built-in (Settings, Monitor, ...).
 fn is_system_app(app_id: &str) -> bool {
     app_id == "sola-shell" || is_builtin(app_id)
 }
 
-fn is_sandbox_runner(name: &str) -> bool {
+/// Binaries whose own path doesn't identify any specific app — the
+/// user-meaningful command is in `argv[1..]` (e.g. `electron app.asar`,
+/// `bwrap … realbin`, `flatpak run com.app.Foo`).
+fn is_multi_arg_launcher(name: &str) -> bool {
     matches!(
         name,
-        "bwrap" | "flatpak-spawn" | "flatpak" | "AppRun" | "snap" | "snap-confine"
+        "bwrap"
+            | "flatpak-spawn"
+            | "flatpak"
+            | "AppRun"
+            | "snap"
+            | "snap-confine"
+            | "electron"
     )
 }
 
-fn cmdline_argv0(pid: u32) -> Option<String> {
+/// Return `/proc/<pid>/cmdline`'s leading positional arguments
+/// (everything up to the first arg that starts with `-`), joined by
+/// spaces. That covers the common shapes:
+/// - `firefox` → `firefox`
+/// - `electron app.asar --flag …` → `electron app.asar`
+/// - `bwrap … --bind … realbin --foo` → just `bwrap` (still better than
+///   nothing; the user can edit the suggestion before saving).
+///
+/// Spaces inside individual args are preserved verbatim — TOML/JSON
+/// quoting is the user's concern when they paste the suggestion into
+/// the command field.
+fn cmdline_positional(pid: u32) -> Option<String> {
     let data = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-    let first: &[u8] = data.split(|&b| b == 0).next()?;
-    if first.is_empty() {
+    let parts: Vec<&[u8]> = data
+        .split(|&b| b == 0)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.is_empty() {
         return None;
     }
-    Some(String::from_utf8_lossy(first).into_owned())
+    let mut take = 1;
+    for arg in &parts[1..] {
+        if arg.first() == Some(&b'-') {
+            break;
+        }
+        take += 1;
+    }
+    let joined: Vec<String> = parts[..take]
+        .iter()
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .collect();
+    Some(joined.join(" "))
 }
 
 fn main() {

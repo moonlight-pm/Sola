@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -192,6 +193,38 @@ fn copy_tree(src: &Path, dest: &Path) -> Result<usize, String> {
     Ok(written)
 }
 
+/// If the install set includes the `sola` process manager and the
+/// freshly built binary differs from the installed one, prompt the user
+/// to confirm. Returns `Ok(true)` if the install should proceed,
+/// `Ok(false)` if the user declined.
+///
+/// Skips the prompt (returns `Ok(true)`) when sola isn't being
+/// installed, when the source binary is missing (the install loop will
+/// warn), or when the bytes already match (the copy would be a no-op).
+fn confirm_sola_replace(binaries: &[String]) -> Result<bool, String> {
+    if !binaries.iter().any(|b| b == "sola") {
+        return Ok(true);
+    }
+    let src = "target/debug/sola";
+    let dest = format!("{BIN_DIR}/sola");
+    if !Path::new(src).exists() {
+        return Ok(true);
+    }
+    if Path::new(&dest).exists() && files_identical(src, &dest)? {
+        return Ok(true);
+    }
+    print!(
+        "About to replace {dest} (the running process manager will restart and tear down every Sola process). Continue? [y/N] "
+    );
+    io::stdout().flush().ok();
+    let mut response = String::new();
+    io::stdin()
+        .read_line(&mut response)
+        .map_err(|e| format!("read stdin: {e}"))?;
+    let answer = response.trim().to_ascii_lowercase();
+    Ok(answer == "y" || answer == "yes")
+}
+
 /// Compare two files byte-for-byte via `cmp -s`. Returns true on match.
 fn files_identical(a: &str, b: &str) -> Result<bool, String> {
     let status = Command::new("cmp")
@@ -232,6 +265,22 @@ pub fn install(app: Option<&str>) {
     } else {
         super::discover_binaries()
     };
+
+    // Replacing `sola` itself restarts the process manager, which tears
+    // down every Sola process. Confirm before doing that — and if the
+    // user declines, abort the whole install so nothing else gets
+    // touched either.
+    match confirm_sola_replace(&binaries) {
+        Ok(true) => {}
+        Ok(false) => {
+            println!("Install cancelled.");
+            return;
+        }
+        Err(e) => {
+            eprintln!("failed to check sola binary: {e}");
+            std::process::exit(1);
+        }
+    }
 
     println!("Installing binaries...");
     for name in &binaries {
