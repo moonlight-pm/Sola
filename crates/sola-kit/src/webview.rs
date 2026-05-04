@@ -1,5 +1,5 @@
-use crate::assets::{AssetBundle, ContentType};
-use crate::strip::strip_ts;
+use crate::assets::AssetBundle;
+use crate::strip::transform;
 
 /// Set up a WebContext with the `app:///` URI scheme.
 /// Serves assets from both the app bundle and platform bundle.
@@ -37,9 +37,14 @@ pub fn create_web_context(
 
         match asset {
             Some(asset) => {
-                let body = match asset.content_type {
-                    ContentType::TypeScript => strip_ts(asset.content),
-                    _ => asset.content.to_string(),
+                let body = if asset.content_type.has_jsx() || asset.content_type.has_types() {
+                    transform(
+                        asset.content,
+                        asset.content_type.has_jsx(),
+                        asset.content_type.has_types(),
+                    )
+                } else {
+                    asset.content.to_string()
                 };
                 serve_string(&request, &body, asset.content_type.mime());
             }

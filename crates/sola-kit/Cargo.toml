@@ -22,8 +22,17 @@ pango = "0.20"
 pangocairo = "0.20"
 webkit6 = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
-swc_ts_fast_strip = "48"
-swc_common = "21"
+swc_core = { version = "65", features = [
+  "common",
+  "ecma_ast",
+  "ecma_parser",
+  "ecma_parser_typescript",
+  "ecma_codegen",
+  "ecma_transforms",
+  "ecma_transforms_react",
+  "ecma_transforms_typescript",
+  "ecma_visit",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"

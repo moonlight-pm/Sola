@@ -520,7 +520,10 @@ mod kit_css_drift {
 
 /// Inject the platform import map into HTML.
 pub(crate) fn inject_import_map(html: &str) -> String {
-    let platform_imports = r#""@arrow-js/core": "/vendor/arrow/index.mjs",
+    let platform_imports = r#""preact": "/vendor/preact/preact.module.js",
+      "preact/hooks": "/vendor/preact/hooks.module.js",
+      "@preact/signals-core": "/vendor/preact/signals-core.module.js",
+      "@preact/signals": "/vendor/preact/signals.module.js",
       "@sola/ipc": "/lib/ipc.js",
       "@sola/store": "/lib/store.js",
       "@sola/kit": "/lib/kit.js",

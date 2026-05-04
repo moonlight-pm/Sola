@@ -9,19 +9,7 @@ use sola_kit::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_b
 
 static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../../web/app/index.html"), Html),
-    "/src/main.ts" => (include_str!("../../web/app/src/main.ts"), TypeScript),
-    "/src/app.ts" => (include_str!("../../web/app/src/app.ts"), TypeScript),
-    "/src/app.css" => (include_str!("../../web/app/src/app.css"), Css),
-    "/src/sidebar.ts" => (include_str!("../../web/app/src/sidebar.ts"), TypeScript),
-    "/src/color-picker.ts" => (include_str!("../../web/app/src/color-picker.ts"), TypeScript),
-    "/src/font-picker.ts" => (include_str!("../../web/app/src/font-picker.ts"), TypeScript),
-    "/src/token-edit.ts" => (include_str!("../../web/app/src/token-edit.ts"), TypeScript),
-    "/src/preview/tokens-colors.ts" => (include_str!("../../web/app/src/preview/tokens-colors.ts"), TypeScript),
-    "/src/preview/tokens-typography.ts" => (include_str!("../../web/app/src/preview/tokens-typography.ts"), TypeScript),
-    "/src/preview/tokens-spacing.ts" => (include_str!("../../web/app/src/preview/tokens-spacing.ts"), TypeScript),
-    "/src/preview/component-view.ts" => (include_str!("../../web/app/src/preview/component-view.ts"), TypeScript),
-    "/src/preview/role-view.ts" => (include_str!("../../web/app/src/preview/role-view.ts"), TypeScript),
-    "/src/preview/role-defs.ts" => (include_str!("../../web/app/src/preview/role-defs.ts"), TypeScript),
+    "/src/main.tsx" => (include_str!("../../web/app/src/main.tsx"), Tsx),
 };
 
 #[derive(Deserialize)]

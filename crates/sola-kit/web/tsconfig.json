@@ -5,13 +5,20 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment",
+    "types": [],
     "paths": {
-      "@arrow-js/core": ["./vendor/arrow/index.d.ts"],
+      "preact": ["./vendor/preact/preact.d.ts"],
+      "preact/hooks": ["./vendor/preact/hooks.d.ts"],
+      "@preact/signals-core": ["./vendor/preact/signals-core.d.ts"],
+      "@preact/signals": ["./vendor/preact/signals.d.ts"],
       "@sola/ipc": ["./lib/ipc.ts"],
       "@sola/store": ["./lib/store.ts"],
       "@sola/kit": ["./lib/kit.ts"],
       "~/*": ["./lib/*"]
     }
   },
-  "include": ["app/src/**/*.ts", "lib/**/*.ts"]
+  "include": ["app/src/**/*.ts", "app/src/**/*.tsx", "lib/**/*.ts", "lib/**/*.tsx"]
 }

@@ -1,10 +1,14 @@
 /// Content type for embedded assets.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContentType {
     Html,
     Css,
     JavaScript,
     TypeScript,
+    /// TypeScript with JSX. Goes through the swc TS+JSX transform.
+    Tsx,
+    /// JavaScript with JSX. Goes through the swc JSX transform (no type strip).
+    Jsx,
     Svg,
 }
 
@@ -18,6 +22,10 @@ impl ContentType {
             Some(Self::Html)
         } else if path.ends_with(".css") {
             Some(Self::Css)
+        } else if path.ends_with(".tsx") {
+            Some(Self::Tsx)
+        } else if path.ends_with(".jsx") {
+            Some(Self::Jsx)
         } else if path.ends_with(".js") || path.ends_with(".mjs") {
             Some(Self::JavaScript)
         } else if path.ends_with(".ts") {
@@ -33,9 +41,21 @@ impl ContentType {
         match self {
             Self::Html => "text/html; charset=utf-8",
             Self::Css => "text/css",
-            Self::JavaScript | Self::TypeScript => "application/javascript",
+            Self::JavaScript | Self::TypeScript | Self::Tsx | Self::Jsx => {
+                "application/javascript"
+            }
             Self::Svg => "image/svg+xml",
         }
+    }
+
+    /// True if this content type needs a JSX→h() transform pass.
+    pub fn has_jsx(&self) -> bool {
+        matches!(self, Self::Tsx | Self::Jsx)
+    }
+
+    /// True if this content type needs TypeScript type stripping.
+    pub fn has_types(&self) -> bool {
+        matches!(self, Self::TypeScript | Self::Tsx)
     }
 }
 
@@ -57,17 +77,24 @@ impl AssetBundle {
         if let Some(asset) = self.assets.iter().find(|a| a.path == path) {
             return Some(asset);
         }
-        // For .js requests, try .ts source (browser requests .js from import extensions)
+        // For .js requests, try .ts/.tsx/.jsx source (browser requests .js
+        // from import extensions; we keep the import-source as the file extension).
         if path.ends_with(".js") {
-            let ts_path = format!("{}ts", &path[..path.len() - 2]);
-            return self.assets.iter().find(|a| a.path == ts_path);
+            let stem = &path[..path.len() - 2];
+            for ext in ["ts", "tsx", "jsx"] {
+                let candidate = format!("{stem}{ext}");
+                if let Some(a) = self.assets.iter().find(|a| a.path == candidate) {
+                    return Some(a);
+                }
+            }
+            return None;
         }
-        // Extensionless: try .ts, .js, .mjs in order. Matches what tsconfig
-        // "moduleResolution: bundler" lets the editor accept, so `import './foo'`
-        // resolves at runtime the same way it does in the LSP.
+        // Extensionless: try .ts, .tsx, .jsx, .js, .mjs in order. Matches what
+        // tsconfig "moduleResolution: bundler" lets the editor accept, so
+        // `import './foo'` resolves at runtime the same way it does in the LSP.
         let last_seg = path.rsplit('/').next().unwrap_or("");
         if !last_seg.is_empty() && !last_seg.contains('.') {
-            for ext in [".ts", ".js", ".mjs"] {
+            for ext in [".ts", ".tsx", ".jsx", ".js", ".mjs"] {
                 let candidate = format!("{path}{ext}");
                 if let Some(a) = self.assets.iter().find(|a| a.path == candidate) {
                     return Some(a);
@@ -79,102 +106,31 @@ impl AssetBundle {
 }
 
 /// Platform assets embedded from sola-kit's own web/ directory.
+///
+/// Currently only the vendored Preact runtime — `lib/` modules will be
+/// re-introduced module-by-module against this slot as we bootstrap the
+/// Preact-based kit.
 pub fn platform_assets() -> AssetBundle {
     AssetBundle {
         assets: &[
             Asset {
-                path: "/lib/ipc.ts",
-                content: include_str!("../web/lib/ipc.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/store.ts",
-                content: include_str!("../web/lib/store.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/kit.ts",
-                content: include_str!("../web/lib/kit.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/kit.css",
-                content: include_str!("../web/lib/kit.css"),
-                content_type: ContentType::Css,
-            },
-            Asset {
-                path: "/lib/components/button.ts",
-                content: include_str!("../web/lib/components/button.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/field.ts",
-                content: include_str!("../web/lib/components/field.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/badge.ts",
-                content: include_str!("../web/lib/components/badge.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/icon.ts",
-                content: include_str!("../web/lib/components/icon.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/sidebar.ts",
-                content: include_str!("../web/lib/components/sidebar.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/nav-item.ts",
-                content: include_str!("../web/lib/components/nav-item.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/section.ts",
-                content: include_str!("../web/lib/components/section.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/row.ts",
-                content: include_str!("../web/lib/components/row.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/list.ts",
-                content: include_str!("../web/lib/components/list.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/form.ts",
-                content: include_str!("../web/lib/components/form.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/tabs.ts",
-                content: include_str!("../web/lib/components/tabs.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/toast.ts",
-                content: include_str!("../web/lib/components/toast.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/lib/components/empty.ts",
-                content: include_str!("../web/lib/components/empty.ts"),
-                content_type: ContentType::TypeScript,
-            },
-            Asset {
-                path: "/vendor/arrow/index.mjs",
-                content: include_str!("../web/vendor/arrow/index.mjs"),
+                path: "/vendor/preact/preact.module.js",
+                content: include_str!("../web/vendor/preact/preact.module.js"),
                 content_type: ContentType::JavaScript,
             },
             Asset {
-                path: "/vendor/arrow/chunks/internal-DchK7S7v.mjs",
-                content: include_str!("../web/vendor/arrow/chunks/internal-DchK7S7v.mjs"),
+                path: "/vendor/preact/hooks.module.js",
+                content: include_str!("../web/vendor/preact/hooks.module.js"),
+                content_type: ContentType::JavaScript,
+            },
+            Asset {
+                path: "/vendor/preact/signals-core.module.js",
+                content: include_str!("../web/vendor/preact/signals-core.module.js"),
+                content_type: ContentType::JavaScript,
+            },
+            Asset {
+                path: "/vendor/preact/signals.module.js",
+                content: include_str!("../web/vendor/preact/signals.module.js"),
                 content_type: ContentType::JavaScript,
             },
         ],
