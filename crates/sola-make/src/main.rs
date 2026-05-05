@@ -50,6 +50,10 @@ enum Commands {
         #[arg(long)]
         watch: bool,
     },
+
+    /// Download CEF binaries to ~/.cache/sola/cef-<version>/.
+    /// Idempotent — skips if already present.
+    InstallCef,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -76,6 +80,17 @@ fn main() {
                 watch::watch_and_install(&app.unwrap());
             } else {
                 install::install(app.as_deref());
+            }
+        }
+        Commands::InstallCef => {
+            match cef::ensure_cef() {
+                Ok(path) => {
+                    println!("CEF ready at {}", path.display());
+                }
+                Err(e) => {
+                    eprintln!("CEF install failed: {e}");
+                    std::process::exit(1);
+                }
             }
         }
     }
