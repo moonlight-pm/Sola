@@ -45,7 +45,11 @@ pub struct WaylandClient {
     /// sctk-managed zwp_linux_dmabuf_v1 state (binds v3..=5).
     pub dmabuf_state: DmabufState,
     /// The event queue. Owned here; pumped via `dispatch_pending()`.
-    pub queue: EventQueue<WaylandClient>,
+    /// Stored in an `Option` so `dispatch_pending(&mut self)` can `take()`
+    /// the queue, hand `&mut self` to `EventQueue::dispatch_pending`, and
+    /// put the queue back — avoiding a "borrow self.queue while &mut self
+    /// is also passed" conflict. The queue is always Some between calls.
+    pub queue: Option<EventQueue<WaylandClient>>,
     pub qh: QueueHandle<WaylandClient>,
 }
 
@@ -84,7 +88,7 @@ impl WaylandClient {
             output_state,
             xdg_shell,
             dmabuf_state,
-            queue: event_queue,
+            queue: Some(event_queue),
             qh,
         }
     }
@@ -92,7 +96,11 @@ impl WaylandClient {
     /// Non-blocking event pump. Call from the CEF main loop on each frame tick
     /// to drain any pending Wayland events (configure, release, etc.).
     pub fn dispatch_pending(&mut self) {
-        let _ = self.queue.dispatch_pending(self);
+        // Take the queue out so we can also pass `&mut self` to dispatch_pending.
+        if let Some(mut queue) = self.queue.take() {
+            let _ = queue.dispatch_pending(self);
+            self.queue = Some(queue);
+        }
     }
 }
 
