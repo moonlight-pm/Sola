@@ -1,18 +1,13 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::time::Duration;
-
-use gtk4::prelude::*;
-
 use sola_bus::BusClient;
 use sola_bus::topics::{EvaluationPayload, Topic, TopicKind};
 
 pub mod assets;
 pub mod async_dispatch;
 pub mod bridge;
+pub mod cef;
 pub mod ctx;
 pub mod strip;
-pub mod webview;
+pub mod wayland;
 pub mod window;
 
 /// Re-export of [`sola_core::watcher`] for backward compatibility.
@@ -99,13 +94,14 @@ pub trait SolaApp: 'static {
         let _ = (cmd, args, id, source, ctx);
     }
 
-    /// Called right before GTK quits on Topic::Shutdown. Default: ignore.
+    /// Called right before the CEF message loop quits on Topic::Shutdown.
+    /// Default: ignore.
     fn on_shutdown(&mut self, ctx: &mut AppCtx) {
         let _ = ctx;
     }
 
     /// Hook for any post-construction setup that needs access to the
-    /// runtime (e.g. attaching GTK event controllers that dispatch into
+    /// runtime (e.g. attaching event controllers that dispatch into
     /// self via the runtime). Default: ignore.
     #[allow(unused_variables)]
     fn after_runtime_ready(
@@ -119,7 +115,7 @@ pub trait SolaApp: 'static {
 }
 
 /// Runtime container — holds the user app and its context together so
-/// GTK / bus callbacks can share `Rc<RefCell<_>>` and destructure into
+/// bus callbacks can share `Rc<RefCell<_>>` and destructure into
 /// disjoint `&mut` borrows.
 pub struct AppRuntime<A: SolaApp> {
     pub app: A,
@@ -127,20 +123,13 @@ pub struct AppRuntime<A: SolaApp> {
 }
 
 /// Entry point for the trait-based API. Bootstraps logging, waits for
-/// the Wayland socket, starts the GTK app, connects the bus, and runs
-/// `A::new` followed by the event loop.
+/// the Wayland socket, initializes CEF, connects the bus, and runs
+/// `A::new` followed by the CEF message loop.
 pub fn run<A: SolaApp>() {
     let app_id: &'static str = A::APP_ID;
 
     // --- Logging ---
     sola_core::log::init(app_id);
-
-    // Suppress WebKit's "Can't connect to a11y bus" warning. The WebKit
-    // WebProcess looks up org.a11y.Bus on the session bus; an empty
-    // WEBKIT_A11Y_BUS_ADDRESS short-circuits that. (NO_AT_BRIDGE is GTK
-    // 2/3 only; GTK_A11Y=none doesn't reach WebKit's own AT-SPI module.)
-    // SAFETY: single-threaded; this runs before GTK/WebKit init.
-    unsafe { std::env::set_var("WEBKIT_A11Y_BUS_ADDRESS", "") };
 
     tracing::info!("{app_id} starting");
 
@@ -156,7 +145,7 @@ pub fn run<A: SolaApp>() {
             if attempt == 1 {
                 tracing::info!("waiting for sola-river to publish wayland socket name");
             }
-            std::thread::sleep(Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
         if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
             if !v.is_empty() {
@@ -172,16 +161,11 @@ pub fn run<A: SolaApp>() {
     watcher::watch_own_binary();
 
     // --- Wayland socket wait ---
-    //
-    // sola-river writes the live socket name (e.g. `wayland-1`) to
-    // `$XDG_RUNTIME_DIR/sola-wayland`. River's libwayland picks the
-    // first free `wayland-N`, which isn't always `wayland-0`, so
-    // hardcoding would race us against a stale-lock scenario.
     let runtime_dir = sola_core::env::runtime_dir();
     let wayland_display = resolve_wayland_display();
+    // SAFETY: single-threaded; this runs before the Wayland connection.
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &wayland_display) };
     let socket_path = runtime_dir.join(&wayland_display);
-    // Verify the socket is actually there — merely setting env isn't enough.
     for attempt in 1..=20 {
         if socket_path.exists() {
             tracing::info!(path = %socket_path.display(), "wayland socket ready");
@@ -191,213 +175,134 @@ pub fn run<A: SolaApp>() {
             tracing::error!(path = %socket_path.display(), "wayland socket not found after 10s");
             std::process::exit(1);
         }
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
-    unsafe { std::env::set_var("GDK_BACKEND", "wayland") };
-    unsafe { std::env::set_var("GTK_A11Y", "none") };
-    // GTK4 defaults to the Vulkan renderer, which drifts into corrupted
-    // swapchain state under rapid invalidation (yellow static, endless
-    // VK_SUBOPTIMAL_KHR warnings) and then stalls the compositor at
-    // shutdown. GL matches WebKit6's compositing path and is stable.
-    unsafe { std::env::set_var("GSK_RENDERER", "gl") };
+    // --- CEF initialize (browser process) ---
+    cef::init::initialize();
 
-    glib::set_prgname(Some(app_id));
+    // --- Wayland connection ---
+    let wayland = std::rc::Rc::new(std::cell::RefCell::new(
+        wayland::WaylandClient::connect_owned(),
+    ));
 
-    let gtk_app = gtk4::Application::new(None::<&str>, Default::default());
-
-    gtk_app.connect_activate(move |gtk_app| {
-        // --- Bus ---
-        let bus = Rc::new(RefCell::new(BusClient::new()));
-        {
-            let mut c = bus.borrow_mut();
-            c.set_app_id(app_id);
-            if let Err(e) = c.connect() {
-                tracing::warn!("bus not available: {e}");
-            }
+    // --- Bus ---
+    let bus = std::rc::Rc::new(std::cell::RefCell::new(BusClient::new()));
+    {
+        let mut c = bus.borrow_mut();
+        c.set_app_id(app_id);
+        if let Err(e) = c.connect() {
+            tracing::warn!("bus not available: {e}");
         }
+    }
 
-        // --- Build AppCtx, run A::new ---
-        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone(), app_id);
-        let mut app = A::new(&mut ctx);
+    // --- Build AppCtx, run A::new ---
+    // NOTE: AppCtx::new takes (bus, wayland, app_id) per B12's rewrite.
+    // The B12 rewrite lands after B11 — so this line won't compile until B12.
+    let mut ctx = AppCtx::new(bus.clone(), wayland.clone(), app_id);
+    let mut app = A::new(&mut ctx);
 
-        // --- Build BusRegistry and subscribe ---
-        let mut registry: BusRegistry<A> = BusRegistry::new();
-        app.register_bus(&mut registry, &mut ctx);
-        // Framework-level topics — the sola-kit event loop below intercepts
-        // these independent of the app's registry. They must be subscribed
-        // so the bus actually delivers them.
-        let mut subscription_kinds = registry.kinds();
-        for kind in [
-            TopicKind::Shutdown,
-            TopicKind::Windows,
-            TopicKind::Copy,
-            TopicKind::Paste,
-            TopicKind::Evaluate,
-            TopicKind::Theme,
-        ] {
-            if !subscription_kinds.contains(&kind) {
-                subscription_kinds.push(kind);
-            }
+    // --- Push the default theme CSS to every window once on init ---
+    {
+        let payload = serde_json::json!({
+            "event": "theme",
+            "css": theme_css(&sola_core::theme::Theme::default()),
+        });
+        for w in &ctx.windows {
+            w.send_to_js(&payload);
         }
-        {
-            let mut c = bus.borrow_mut();
-            if let Err(e) = c.subscribe(&subscription_kinds) {
-                tracing::warn!("failed to subscribe: {e}");
-            }
+    }
+
+    // --- Build BusRegistry and subscribe ---
+    let mut registry: BusRegistry<A> = BusRegistry::new();
+    app.register_bus(&mut registry, &mut ctx);
+    let mut subscription_kinds = registry.kinds();
+    for kind in [
+        TopicKind::Shutdown,
+        TopicKind::Windows,
+        TopicKind::Copy,
+        TopicKind::Paste,
+        TopicKind::Evaluate,
+        TopicKind::Theme,
+    ] {
+        if !subscription_kinds.contains(&kind) {
+            subscription_kinds.push(kind);
         }
+    }
+    {
+        let mut c = bus.borrow_mut();
+        if let Err(e) = c.subscribe(&subscription_kinds) {
+            tracing::warn!("failed to subscribe: {e}");
+        }
+    }
 
-        // --- Wrap runtime ---
-        let runtime = Rc::new(RefCell::new(AppRuntime { app, ctx }));
-        let registry = Rc::new(registry);
+    // --- Wrap runtime ---
+    let runtime = std::rc::Rc::new(std::cell::RefCell::new(AppRuntime { app, ctx }));
+    let registry = std::rc::Rc::new(registry);
 
-        // --- Install per-window JS dispatchers ---
-        let window_handles: Vec<WindowHandle> = runtime.borrow().ctx.windows.clone();
-        for source in window_handles {
-            let runtime_weak = Rc::downgrade(&runtime);
-            let source_for_dispatch = source.clone();
-            let dispatcher: window::JsDispatcher = Box::new(
-                move |cmd: &str, args: &serde_json::Value, id: Option<u64>| {
-                    let Some(runtime) = runtime_weak.upgrade() else {
-                        return;
-                    };
-                    // Framework-internal evaluation result — never reaches the app.
-                    if cmd == EVALUATION_CMD {
-                        let mut rt = runtime.borrow_mut();
-                        emit_evaluation(args, &mut rt.ctx);
-                        return;
-                    }
+    // --- Install per-window JS dispatchers ---
+    let window_handles: Vec<WindowHandle> = runtime.borrow().ctx.windows.clone();
+    for source in window_handles {
+        let runtime_weak = std::rc::Rc::downgrade(&runtime);
+        let source_for_dispatch = source.clone();
+        let dispatcher: window::JsDispatcher = Box::new(
+            move |cmd: &str, args: &serde_json::Value, id: Option<u64>| {
+                let Some(runtime) = runtime_weak.upgrade() else {
+                    return;
+                };
+                if cmd == EVALUATION_CMD {
                     let mut rt = runtime.borrow_mut();
-                    let AppRuntime { app, ctx } = &mut *rt;
-                    app.on_js_command(cmd, args, id, &source_for_dispatch, ctx);
-                },
-            );
-            *source.inner.dispatcher.borrow_mut() = Some(dispatcher);
-        }
-
-        // --- after_runtime_ready hook ---
-        let runtime_weak = Rc::downgrade(&runtime);
-        {
-            let mut rt = runtime.borrow_mut();
-            let AppRuntime { app, ctx } = &mut *rt;
-            app.after_runtime_ready(runtime_weak, ctx);
-        }
-
-        // --- Bus event loop ---
-        let notify_fd = bus.borrow().notify_fd();
-        if let Some(fd) = notify_fd {
-            let runtime = runtime.clone();
-            let registry = registry.clone();
-            let gtk_app = gtk_app.clone();
-            let bus = bus.clone();
-            glib::unix_fd_add_local(fd, glib::IOCondition::IN, move |_fd, _cond| {
-                let client = bus.borrow();
-                client.drain_notify();
-                let mut messages = Vec::new();
-                while let Some(msg) = client.try_recv() {
-                    messages.push(msg);
+                    emit_evaluation(args, &mut rt.ctx);
+                    return;
                 }
-                drop(client);
+                let mut rt = runtime.borrow_mut();
+                let AppRuntime { app, ctx } = &mut *rt;
+                app.on_js_command(cmd, args, id, &source_for_dispatch, ctx);
+            },
+        );
+        *source.inner.dispatcher.borrow_mut() = Some(dispatcher);
+    }
 
-                for msg in messages {
-                    {
-                        let mut rt = runtime.borrow_mut();
-                        let AppRuntime { app, ctx } = &mut *rt;
-                        app.on_raw_bus_message(&msg, ctx);
-                    }
-                    let Some(topic) = Topic::parse(&msg) else {
-                        continue;
-                    };
-                    if matches!(topic, Topic::Shutdown) {
-                        {
-                            let mut rt = runtime.borrow_mut();
-                            let AppRuntime { app, ctx } = &mut *rt;
-                            app.on_shutdown(ctx);
-                        }
-                        gtk_app.quit();
-                        return glib::ControlFlow::Continue;
-                    }
-                    // Framework-level interception. These topics are
-                    // handled by the framework before the app sees them
-                    // (or in addition to — apps still get registry dispatch).
-                    match &topic {
-                        Topic::Windows(apps) => {
-                            let mut rt = runtime.borrow_mut();
-                            rt.ctx.known_windows = apps.clone();
-                        }
-                        Topic::Evaluate(req) if req.target_app == app_id => {
-                            let mut rt = runtime.borrow_mut();
-                            handle_evaluate(app_id, req, &mut rt.ctx);
-                        }
-                        Topic::Copy(req) => {
-                            let rt = runtime.borrow();
-                            if let Some(handle) = rt.ctx.find_window_by_id(req.window_id) {
-                                handle.send_to_js(&serde_json::json!({"event": "copy"}));
-                            }
-                        }
-                        Topic::Paste(req) => {
-                            // WebKit's navigator.clipboard.readText() requires
-                            // a user-activation transient that host-injected
-                            // JS doesn't provide, so fetch the text via
-                            // GdkClipboard on the Rust side and deliver it
-                            // already-resolved as part of the event payload.
-                            let rt = runtime.borrow();
-                            if let Some(handle) = rt.ctx.find_window_by_id(req.window_id) {
-                                let handle = handle.clone();
-                                if let Some(display) = gdk4::Display::default() {
-                                    use gdk4::prelude::DisplayExt;
-                                    let clipboard = display.clipboard();
-                                    clipboard.read_text_async(
-                                        None::<&gio::Cancellable>,
-                                        move |result| {
-                                            let text = result
-                                                .ok()
-                                                .flatten()
-                                                .map(|s| s.to_string())
-                                                .unwrap_or_default();
-                                            handle.send_to_js(&serde_json::json!({
-                                                "event": "paste",
-                                                "text": text,
-                                            }));
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                        Topic::Theme(theme) => {
-                            // Forward to every window's WebView. JS-side
-                            // listener (in @sola/kit) will apply the vars.
-                            let payload = serde_json::json!({
-                                "event": "theme",
-                                "vars": theme.to_css_vars(),
-                            });
-                            let rt = runtime.borrow();
-                            for w in &rt.ctx.windows {
-                                w.send_to_js(&payload);
-                            }
-                        }
-                        _ => {}
-                    }
-                    let mut rt = runtime.borrow_mut();
-                    let AppRuntime { app, ctx } = &mut *rt;
-                    let retracted = topic.kind().behavior().is_sticky() && !msg.sticky;
-                    let delivery = sola_bus::Delivery {
-                        topic: &topic,
-                        retracted,
-                        source: &msg.source,
-                    };
-                    registry.dispatch(&delivery, app, ctx);
-                }
-                glib::ControlFlow::Continue
-            });
-        } else {
-            tracing::warn!("bus notify_fd unavailable; no bus events will be delivered");
-        }
+    // --- after_runtime_ready hook ---
+    {
+        let runtime_weak = std::rc::Rc::downgrade(&runtime);
+        let mut rt = runtime.borrow_mut();
+        let AppRuntime { app, ctx } = &mut *rt;
+        app.after_runtime_ready(runtime_weak, ctx);
+    }
 
-        tracing::info!("{app_id} ready");
-    });
+    // --- Bus → CEF UI thread bridge: deferred to D3/D5 ---
+    spawn_bus_thread::<A>(bus.clone(), runtime.clone(), registry.clone());
 
-    gtk_app.run();
+    // --- Wayland dispatch driver: deferred to a follow-up task ---
+    spawn_wayland_thread(wayland.clone());
+
+    // --- Run CEF's main loop. Blocks until cef::quit_message_loop() is posted. ---
+    tracing::info!("{app_id} entering CEF message loop");
+    cef::init::run_message_loop();
+
+    // --- Cleanup ---
+    cef::init::shutdown();
+    tracing::info!("{app_id} stopped");
+}
+
+// Bus → CEF UI thread bridge. Real implementation in D3/D5 — for B11 this
+// is a no-op that compiles. The current shape borrows everything to keep
+// future call-sites stable.
+fn spawn_bus_thread<A: SolaApp>(
+    bus: std::rc::Rc<std::cell::RefCell<BusClient>>,
+    runtime: std::rc::Rc<std::cell::RefCell<AppRuntime<A>>>,
+    registry: std::rc::Rc<BusRegistry<A>>,
+) {
+    // TODO(D3/D5): real bus polling thread + cef::post_task(UI, …) bridge.
+    let _ = (bus, runtime, registry);
+}
+
+// Wayland event dispatch driver. Real impl posts back into CEF UI thread
+// or polls inline on a frame callback. For B11, no-op.
+fn spawn_wayland_thread(wl: std::rc::Rc<std::cell::RefCell<wayland::WaylandClient>>) {
+    // TODO: wire wl_event_queue → cef::post_task(UI, dispatch_pending) loop.
+    let _ = wl;
 }
 
 /// JS command name reserved for evaluation results. Never reaches the
@@ -407,8 +312,8 @@ pub fn run<A: SolaApp>() {
 /// id, so the CLI filters incoming `Evaluation` events by source.
 const EVALUATION_CMD: &str = "__evaluation__";
 
-/// Handle a `Topic::Evaluate` addressed to this process. Runs in the
-/// bus event loop, on the GTK main thread.
+/// Handle a `Topic::Evaluate` addressed to this process. Runs on the
+/// CEF UI thread.
 fn handle_evaluate(
     app_id: &'static str,
     req: &sola_bus::topics::EvaluatePayload,
@@ -431,15 +336,15 @@ fn handle_evaluate(
     // Inline the expression into a wrapper that:
     //   1. Awaits the value (no-op on non-Promises).
     //   2. Catches runtime errors and JSON serialization errors.
-    //   3. Posts the result back via the WebKit message handler; the
-    //      per-window dispatcher picks it up and forwards via the bus
-    //      as `Topic::Evaluation`.
+    //   3. Posts the result back via cefQuery; the MessageRouter (D1)
+    //      routes the request to the Rust handler which forwards it via
+    //      the bus as `Topic::Evaluation`.
     //
     // Syntax errors in `expr` cause the wrapper to fail to parse and
-    // `evaluate_javascript` silently fails; the CLI hits its timeout.
+    // `eval_js` silently fails; the CLI hits its timeout.
     // Acceptable for a developer tool — the user iterates.
     let wrapped = format!(
-        "(async () => {{\n  let __value, __err;\n  try {{ __value = await (async () => {{ return ({expr}); }})(); }}\n  catch (e) {{ __err = String(e); }}\n  const __payload = (__err === undefined) ? {{ value: __value }} : {{ error: __err }};\n  let __body;\n  try {{ __body = JSON.stringify({{ cmd: '{cmd}', args: __payload }}); }}\n  catch (serErr) {{ __body = JSON.stringify({{ cmd: '{cmd}', args: {{ error: 'serialize: ' + String(serErr) }} }}); }}\n  window.webkit.messageHandlers.sola.postMessage(__body);\n}})()",
+        "(async () => {{\n  let __value, __err;\n  try {{ __value = await (async () => {{ return ({expr}); }})(); }}\n  catch (e) {{ __err = String(e); }}\n  const __payload = (__err === undefined) ? {{ value: __value }} : {{ error: __err }};\n  let __body;\n  try {{ __body = JSON.stringify({{ cmd: '{cmd}', args: __payload }}); }}\n  catch (serErr) {{ __body = JSON.stringify({{ cmd: '{cmd}', args: {{ error: 'serialize: ' + String(serErr) }} }}); }}\n  window.cefQuery({{ request: __body, onSuccess: () => {{}}, onFailure: () => {{}} }});\n}})()",
         expr = req.expr,
         cmd = EVALUATION_CMD,
     );
@@ -496,31 +401,28 @@ pub(crate) fn inject_solarecv_bootstrap(html: &str) -> String {
     html.to_string()
 }
 
-#[cfg(test)]
-mod kit_css_drift {
-    use sola_core::theme::Theme;
-
-    /// kit.css's :root block must declare every var Theme::default() produces,
-    /// with the same value. Catches accidental drift between the Rust source
-    /// of truth and the static CSS apps load before any Topic::Theme arrives.
-    #[test]
-    fn default_to_css_vars_match_kit_css() {
-        let css = include_str!("../web/lib/kit.css");
-        for (var, value) in Theme::default().to_css_vars() {
-            // crude but sufficient: kit.css is hand-maintained, single :root,
-            // each declaration on its own line as `  --name: value;`.
-            let needle = format!("{var}: {value};");
-            assert!(
-                css.contains(&needle),
-                "kit.css missing or wrong value for {var}: expected `{needle}`",
-            );
-        }
+/// Render a Theme as a `:root { ... }` CSS block.
+///
+/// Single source of truth is the Rust `Theme` — there is no static
+/// kit.css to drift. The framework's bus loop renders the current theme
+/// on every `Topic::Theme` delivery and pushes the full CSS to the JS
+/// side, which swaps it into a constructable stylesheet via
+/// `CSSStyleSheet.replaceSync`.
+pub fn theme_css(theme: &sola_core::theme::Theme) -> String {
+    use std::fmt::Write;
+    let mut s = String::from(":root {\n");
+    for (var, value) in theme.to_css_vars() {
+        let _ = writeln!(s, "  {var}: {value};");
     }
+    s.push('}');
+    s.push('\n');
+    s
 }
 
 /// Inject the platform import map into HTML.
 pub(crate) fn inject_import_map(html: &str) -> String {
     let platform_imports = r#""preact": "/vendor/preact/preact.module.js",
+      "preact/jsx-runtime": "/vendor/preact/jsxRuntime.module.js",
       "preact/hooks": "/vendor/preact/hooks.module.js",
       "@preact/signals-core": "/vendor/preact/signals-core.module.js",
       "@preact/signals": "/vendor/preact/signals.module.js",
