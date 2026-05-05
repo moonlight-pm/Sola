@@ -83,11 +83,11 @@ patches.
 ## CEF runtime libraries (sola-kit)
 
 `sola-kit` (and any future CEF-backed Sola app) links against
-`libcef.so` from `~/.cache/sola/cef-<version>/Release/`. CEF's GPU /
-renderer subprocesses pull in ~26 transitive native libraries
+`libcef.so` from `~/.cache/sola/cef-<version>/Release/`. libcef.so
+itself pulls in ~26 transitive native libraries
 (glib/nss/atk/dbus/cups/X11/gbm/…). On NixOS these don't live at
-`/usr/lib`, and we want zero LD\_LIBRARY\_PATH gymnastics or wrapper
-scripts at runtime — so we make the binary itself know where to look.
+`/usr/lib`, and we want zero `LD_LIBRARY_PATH` gymnastics or wrapper
+scripts at runtime — so we make `libcef.so` itself know where to look.
 
 The shape:
 
@@ -97,11 +97,18 @@ The shape:
    stable — `/run/current-system` is repointed by `nixos-rebuild
    switch`, so the indirection always resolves to the active config's
    library set.
-2. **`crates/sola-kit/build.rs`** emits
-   `-Wl,--enable-new-dtags,-rpath,<cef-Release>,-rpath,/run/current-system/sw/share/nix-ld/lib`
-   so the linker bakes both paths into the binary's `DT_RUNPATH`. The
-   dynamic linker walks `RUNPATH` directly — no env vars, no shell
-   wrapper.
+2. **`patchelf` runs once** as part of `sola_make::cef::ensure_cef`
+   immediately after a fresh CEF tarball is extracted. It appends
+   `/run/current-system/sw/share/nix-ld/lib` to `libcef.so`'s
+   `DT_RUNPATH` (which the upstream tarball ships as just `$ORIGIN`).
+   With that, libcef.so's own RUNPATH covers all its transitive deps;
+   the `sola-kit` binary doesn't need any extra rpath plumbing.
+
+Why not just bake the path into the sola-kit executable's RPATH? Per
+`ld.so(8)`, an executable's `DT_RPATH` only covers its *own* direct
+deps. libcef.so's deps are loaded under libcef.so's own
+`DT_RPATH`/`DT_RUNPATH`, not the executable's. So the patch must land
+on libcef.so itself.
 
 ### Required `programs.nix-ld.libraries` entries
 
@@ -119,17 +126,40 @@ programs.nix-ld.libraries = with pkgs; [
   cairo pango                             # libcairo, libpango-1.0
   alsa-lib                                # libasound
   libxkbcommon                            # libxkbcommon
-  libdrm mesa                             # libgbm, libdrm
+  libgbm                                  # libgbm (split from mesa as of nixpkgs 25.x)
+  libdrm mesa                             # libdrm + the rest of mesa
   systemd                                 # libudev
   xorg.libX11 xorg.libXcomposite xorg.libXdamage xorg.libXext
   xorg.libXfixes xorg.libXrandr xorg.libxcb
 ];
 ```
 
-After `nixos-rebuild switch`, verify with `ls
-/run/current-system/sw/share/nix-ld/lib/ | grep -E
-'^(libglib|libnss|libgbm|libcups)' ` — those `.so` files should be
-present.
+`environment.systemPackages` must also include `patchelf` so
+`ensure_cef` can run it.
+
+After `nixos-rebuild switch`, verify with:
+
+```sh
+ls /run/current-system/sw/share/nix-ld/lib/ | grep -E '^(libglib|libnss|libgbm|libcups)'
+```
+
+— those `.so` files should be present.
+
+### Re-patching libcef.so
+
+`ensure_cef` only patchelfs after a fresh download. If you already have
+libcef.so cached (`is_present()` short-circuits), or you change
+`programs.nix-ld.libraries` in a way that requires re-patching, force
+a re-patch by deleting the cache and re-running `cargo run -p
+sola-make -- install-cef`:
+
+```sh
+rm -rf ~/.cache/sola/cef-*
+cargo run -p sola-make -- install-cef
+```
+
+(Or run `patchelf --add-rpath /run/current-system/sw/share/nix-ld/lib
+~/.cache/sola/cef-*/Release/libcef.so` directly.)
 
 ### Verifying a sola-kit build is self-resolving
 
@@ -137,19 +167,18 @@ present.
 ldd /opt/sola/bin/sola-kit | grep "not found"
 ```
 
-Empty output = the binary's `RUNPATH` covers everything. Anything in
-the list points at a missing `programs.nix-ld.libraries` entry; add the
-package, `nixos-rebuild switch`, no rebuild of sola-kit needed
-(`/run/current-system/...` indirection means the binary picks up the
-new contents on next launch).
+Empty output = libcef.so's patched RUNPATH covers everything. Anything
+in the list points at a missing `programs.nix-ld.libraries` entry; add
+the package, `nixos-rebuild switch`, and re-patch libcef.so (see above)
+— no rebuild of sola-kit needed.
 
 ### Why not packaging sola-kit as a Nix derivation?
 
 That would be the most-correct NixOS solution and we'll get there for
 release, but for the develop-and-iterate phase the binary is a
-`cargo build` artefact. The RUNPATH-into-nix-ld approach lets us keep
-`cargo run` ergonomics while still producing a binary that runs cleanly
-without any environmental contortions.
+`cargo build` artefact. The patchelf-libcef + nix-ld path approach
+lets us keep `cargo run` ergonomics while still producing a binary
+that runs cleanly without any environmental contortions.
 
 ## WebKit runtime modules
 

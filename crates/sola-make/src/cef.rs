@@ -61,8 +61,9 @@ fn tarball_url() -> String {
     format!("https://cef-builds.spotifycdn.com/cef_binary_{encoded}_linux64_minimal.tar.bz2")
 }
 
-/// Ensure CEF is present at `cef_path()`. If not, download and extract.
-/// Idempotent — short-circuits when libcef.so exists.
+/// Ensure CEF is present at `cef_path()`. If not, download, extract, and
+/// patch libcef.so for NixOS. Idempotent — short-circuits when libcef.so
+/// already exists (assumes the patchelf step has run if so).
 pub fn ensure_cef() -> io::Result<PathBuf> {
     let dir = cef_path();
     if is_present() {
@@ -76,8 +77,46 @@ pub fn ensure_cef() -> io::Result<PathBuf> {
             format!("CEF download completed but libcef.so missing under {}", dir.display()),
         ));
     }
+    patch_libcef_for_nix_ld(&release_dir().join("libcef.so"))?;
     eprintln!("[cef] installed to {}", dir.display());
     Ok(dir)
+}
+
+/// Stable NixOS path that nix-ld populates from `programs.nix-ld.libraries`.
+/// Adding this to libcef.so's RUNPATH lets the dynamic linker resolve CEF's
+/// transitive system deps (glib, nss, atk, dbus, cups, X11/X*, gbm, expat,
+/// xkbcommon, cairo, pango, udev, alsa, atspi, …) without LD_LIBRARY_PATH
+/// or any wrapper script. See `docs/vault/Distribution.md` →
+/// "CEF runtime libraries (sola-kit)".
+const NIX_LD_LIB_DIR: &str = "/run/current-system/sw/share/nix-ld/lib";
+
+/// Append `NIX_LD_LIB_DIR` to libcef.so's DT_RUNPATH. Without this, libcef's
+/// transitive deps fall back to libcef's own `$ORIGIN` RUNPATH, which only
+/// covers the CEF binaries themselves — and we'd be forced into an
+/// LD_LIBRARY_PATH wrapper at runtime.
+///
+/// No-op on non-NixOS hosts (the path won't exist, but that's harmless —
+/// the dynamic linker silently skips missing RUNPATH entries).
+fn patch_libcef_for_nix_ld(libcef: &Path) -> io::Result<()> {
+    if !libcef.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("libcef.so missing at {}", libcef.display()),
+        ));
+    }
+    let status = std::process::Command::new("patchelf")
+        .args(["--add-rpath", NIX_LD_LIB_DIR])
+        .arg(libcef)
+        .status()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("patchelf not on PATH: {e}")))?;
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("patchelf failed on {}: exit {status}", libcef.display()),
+        ));
+    }
+    eprintln!("[cef] patched libcef.so RUNPATH with {NIX_LD_LIB_DIR}");
+    Ok(())
 }
 
 fn download_and_extract(dir: &Path) -> io::Result<()> {
