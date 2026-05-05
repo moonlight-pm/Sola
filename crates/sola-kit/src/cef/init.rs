@@ -6,7 +6,6 @@
 //!   that worker is done.
 //! - `initialize()` — called once in the browser process to start CEF.
 
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// Subprocess gate — call this at the top of `main()`.
@@ -39,11 +38,32 @@ pub fn short_circuit_if_subprocess() -> Option<ExitCode> {
 /// Initialize CEF in the browser process. Call exactly once, after
 /// `short_circuit_if_subprocess` has returned None.
 pub fn initialize() {
-    // TODO(taskB6): build CefSettings + CefMainArgs, call cef::initialize.
-    let _cef_dir: PathBuf = std::env::var_os("SOLA_KIT_CEF_DIR")
-        .map(PathBuf::from)
-        .expect("SOLA_KIT_CEF_DIR not embedded by build.rs");
-    let _ = _cef_dir;
+    let release   = crate::cef::distribution::release_dir();
+    let resources = crate::cef::distribution::resources_dir();
+    let locales   = crate::cef::distribution::locales_dir();
+    let exe = std::env::current_exe().expect("current_exe");
+
+    let mut settings = cef::Settings::default();
+    settings.framework_dir_path    = cef::CefString::from(&*release.to_string_lossy());
+    settings.resources_dir_path    = cef::CefString::from(&*resources.to_string_lossy());
+    settings.locales_dir_path      = cef::CefString::from(&*locales.to_string_lossy());
+    settings.browser_subprocess_path = cef::CefString::from(&*exe.to_string_lossy());
+    settings.no_sandbox                  = 1; // true — no Windows sandbox on Linux
+    settings.windowless_rendering_enabled = 1; // true — OSR / off-screen rendering
+    settings.external_message_pump       = 0; // false — use cef::run_message_loop
+    settings.multi_threaded_message_loop = 0; // false — single main-thread loop
+    settings.log_severity = cef::LogSeverity::WARNING;
+
+    // `Args::new()` reads `std::env::args()` internally and keeps the
+    // CString/argv storage alive for the duration of the call.
+    let args = cef::args::Args::new();
+    let main_args = args.as_main_args();
+
+    // CEF C-API convention: returns 1 (non-zero positive) on success, 0 on failure.
+    let rc = cef::initialize(Some(main_args), Some(&settings), None, std::ptr::null_mut());
+    if rc <= 0 {
+        panic!("cef::initialize failed (return code {rc})");
+    }
 }
 
 /// Run CEF's message loop on the current (main) thread. Blocks until
