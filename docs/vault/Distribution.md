@@ -206,24 +206,34 @@ by `sola_make::cef::patch_cef_libs_for_nix_ld`. This makes
 `libnvidia-tls.so`, `libgbm.so` (mesa-libgbm), etc. discoverable when
 the EGL ICD dlopens them.
 
-### Known incompatibility — NVIDIA proprietary driver + CEF dma-buf OSR
+### CEF OSR transport: wl_shm (current) vs dma-buf (deferred)
 
-CEF 147's prebuilt `libEGL.so` / `libGLESv2.so` (ANGLE) reference
-several **Mesa-only** EGL extension symbols:
+CEF's offscreen rendering produces frames in two ways: a
+zero-copy **dma-buf** path (`shared_texture_enabled = 1`,
+`OnAcceleratedPaint`) or a CPU readback path (`shared_texture_enabled
+= 0`, `OnPaint`) that delivers a BGRA8888 buffer for us to memcpy
+into a `wl_shm` slot.
+
+**sola-kit currently uses the wl_shm path** (see
+`crates/sola-kit/src/cef/browser.rs::Browser::new` —
+`shared_texture_enabled = 0`). The supporting code is at
+`Surface::present_paint` in `crates/sola-kit/src/wayland/surface.rs`.
+
+The dma-buf path is preferred long-term — zero copies, GPU-direct —
+but on NVIDIA's proprietary driver it fails at link time inside CEF's
+prebuilt ANGLE binaries. Specifically, CEF 147's
+`Release/libEGL.so` / `Release/libGLESv2.so` reference several
+**Mesa-only** EGL extension symbols:
 
 ```
 eglExportDMABUFImageMESA, eglExportDMABUFImageQueryMESA,
 eglImageFlushExternalEXT, eglQueryDevicesEXT
 ```
 
-These don't exist in NVIDIA's proprietary `libEGL_nvidia.so.0`. With
-`shared_texture_enabled=1` (OSR via zwp\_linux\_dmabuf\_v1), CEF's
-GPU process needs those extensions to allocate the dma-bufs that
-`OnAcceleratedPaint` ferries to the host. On NVIDIA proprietary, the
-extensions resolve to nothing and the GPU process gets stuck at
+These don't exist in NVIDIA's `libEGL_nvidia.so.0`. With
+`shared_texture_enabled = 1`, the GPU process gets stuck at
 `shared_image_representation.cc:408 Unable to initialize SkSurface`
-— `OnAcceleratedPaint` never fires and the host surface never
-acquires a buffer.
+— `OnAcceleratedPaint` never fires.
 
 Separately, NVIDIA proprietary 580.x's `libnvidia-glcore.so`
 references `__malloc_hook` / `__realloc_hook` / `__free_hook` /
@@ -231,41 +241,50 @@ references `__malloc_hook` / `__realloc_hook` / `__free_hook` /
 actually load-fatal vs. lazy-failure depends on link options and
 shows up in `LD_DEBUG=libs` output regardless.
 
-**Why does Helium / a Chromium-based AppImage work on the same box?**
+**Why does Helium / Chromium-based AppImages work on the same box?**
 AppImages run inside `appimage-run`, which wraps the binary in a
 `bwrap` FHS sandbox where `/usr/lib/libEGL.so.1` is Mesa's libglvnd
 build. Inside that sandbox, the load-time symbol lookup for
 `eglExportDMABUFImageMESA` resolves against Mesa's dispatch table
 (symbols exist; runtime dispatches to NVIDIA via the same libglvnd
-indirection NixOS uses). The shape of the FHS — specifically having
-`libEGL.so.1` already provide the MESA dispatch surface — is what
-makes ANGLE's libEGL load cleanly. We don't get that benefit from
-`programs.nix-ld.libraries` because libglvnd's libEGL there isn't
-loaded as a hard dependency of CEF's libEGL.so.
+indirection NixOS uses). The shape of the FHS is what makes ANGLE's
+libEGL load cleanly. Outside the FHS, our nix-ld setup doesn't
+provide the equivalent dispatch surface, so the linker fails.
 
-**Workarounds (any one of):**
+#### When to revisit dma-buf
 
-1. **Switch to NVIDIA Open + Mesa NVK** — set
+Switch back to dma-buf when one of:
+
+1. **You change to NVIDIA Open + Mesa NVK.** Set
    `hardware.nvidia.open = true` in `/etc/nixos/configuration.nix`
-   and let Mesa drive the GPU. Mesa's libEGL exposes the missing
-   `*MESA` extensions natively. Requires a compatible GPU (Turing
-   GTX 16xx / RTX 20-series or newer for full NVK support).
-2. **Switch to a Mesa-only setup** (Intel/AMD GPU host) — no
-   special config; Mesa's libEGL has all the extensions ANGLE wants.
-3. **Run sola-kit inside an FHS env** the way `appimage-run` runs
-   AppImages. NixOS's `buildFHSEnv` + a curated lib list would do it.
-   Works without code changes but reintroduces a wrapper around the
-   binary, which we explicitly don't want.
-4. **Force `shared_texture_enabled = 0`** in
-   `crates/sola-kit/src/cef/browser.rs::Browser::new` and switch
-   the OSR transport to `OnPaint` + `wl_shm`. Loses zero-copy
-   dma-buf, but works with any GL stack including SwiftShader. This
-   is a code change in our crate, not a system change, but it does
-   diverge from the design's dma-buf-only stance — see commits on
-   the `sola-kit-preact` branch for the GPU-init investigation
-   trail.
+   and let Mesa drive the GPU. Mesa's libEGL exposes the `*MESA`
+   extensions natively. Requires a compatible GPU (Turing GTX 16xx /
+   RTX 20-series or newer for full NVK support). Note: we previously
+   had Mesa drivers and switched away due to other GPU stability
+   issues; that investigation may need revisiting.
+2. **The host is Intel or AMD** (Mesa-only userspace) — works
+   out of the box; just flip `shared_texture_enabled` back to `1`.
+3. **Performance demands it** — heavy animation or 4K video in
+   `sola-browser` is the regime where the wl_shm CPU readback is
+   measurable. For sola-shell, sola-settings, sola-kit storybook,
+   etc., the difference is in the noise.
+4. **CEF starts shipping libEGL with the dispatch table independent
+   of host vendor** (i.e. ships its own libglvnd-style dispatcher
+   in Release/). Watch upstream for this.
+
+The flip is one line:
+```rust
+// crates/sola-kit/src/cef/browser.rs::Browser::new
+window_info.shared_texture_enabled = 1;  // dma-buf
+```
+The dma-buf code path (`Surface::present_dmabuf`,
+`KitRenderHandler::on_accelerated_paint`) is left in place exactly
+for this — no rewrite needed.
 
 ### Quick diagnosis: what's the GPU stack failing on?
+
+If the wl_shm transport stops working in a future Chromium / NVIDIA
+combination, gather:
 
 ```sh
 WAYLAND_DISPLAY=wayland-1 LD_DEBUG=libs LD_DEBUG_OUTPUT=/tmp/ld /opt/sola/bin/sola-kit
@@ -274,9 +293,11 @@ WAYLAND_DISPLAY=wayland-1 LD_DEBUG=libs LD_DEBUG_OUTPUT=/tmp/ld /opt/sola/bin/so
 # diagnostic.
 ```
 
-Compare against the `sola-river` log at `/opt/sola/log/river.log` —
-if `sola-kit` didn't reach the configure ack, the issue is
-host-side (Wayland), not GPU-side.
+Compare against `tail /opt/sola/log/river.log`. If sola-kit didn't
+reach the configure ack, the issue is host-side (Wayland event pump,
+sctk plumbing). If it did but `on_paint` doesn't fire, the GPU
+process is failing to rasterise — same root-cause class as the
+dma-buf-on-NVIDIA situation above.
 
 ### Why not packaging sola-kit as a Nix derivation?
 

@@ -120,6 +120,32 @@ cef::wrap_render_handler! {
                 &damage,
             );
         }
+
+        // CPU OSR path. Fires when the browser was created with
+        // `shared_texture_enabled = 0` — CEF rasterises to GPU memory,
+        // reads back to a CPU `BGRA8888` buffer, and hands us a pointer
+        // valid only for the duration of this call. Surface::present_paint
+        // memcpys into a wl_shm slot and attaches the resulting wl_buffer.
+        fn on_paint(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _type_: cef::PaintElementType,
+            dirty_rects: Option<&[cef::Rect]>,
+            buffer: *const u8,
+            width: ::std::os::raw::c_int,
+            height: ::std::os::raw::c_int,
+        ) {
+            tracing::info!(
+                width,
+                height,
+                dirty_rects = dirty_rects.map(|r| r.len()).unwrap_or(0),
+                "on_paint fired"
+            );
+            let damage: Vec<(i32, i32, i32, i32)> = dirty_rects
+                .map(|rects| rects.iter().map(|r| (r.x, r.y, r.width, r.height)).collect())
+                .unwrap_or_default();
+            self.surface.present_paint(buffer, width, height, &damage);
+        }
     }
 }
 

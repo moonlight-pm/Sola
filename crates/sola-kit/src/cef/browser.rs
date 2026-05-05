@@ -34,13 +34,21 @@ impl Browser {
     ///     Wayland frame-callback loop is wired (Surface::frame →
     ///     host.SendExternalBeginFrame); for now self-drive gives us the
     ///     initial paint without bespoke pacing infrastructure.
-    ///   - `shared_texture_enabled = 1` — dma-buf transport (Linux GBM).
+    ///   - `shared_texture_enabled = 0` — CPU OSR transport (`OnPaint`
+    ///     → memcpy → wl_shm). Set to `1` to use the dma-buf transport
+    ///     (`OnAcceleratedPaint` → `zwp_linux_dmabuf_v1`); that path is
+    ///     zero-copy but requires a Mesa-style EGL stack with the
+    ///     `*MESA` extensions. NVIDIA proprietary's libEGL doesn't
+    ///     expose those, so the dma-buf path won't work there. See
+    ///     `docs/vault/Distribution.md` → "Known incompatibility —
+    ///     NVIDIA proprietary driver + CEF dma-buf OSR" for details
+    ///     and the path to re-enable.
     pub fn new(surface: Rc<Surface>, initial_url: &str) -> Self {
-        // --- WindowInfo: OSR + self-drive frames + shared-texture ---
+        // --- WindowInfo: OSR + self-drive + CPU paint transport ---
         let mut window_info = cef::WindowInfo::default();
         window_info.windowless_rendering_enabled = 1;
         window_info.external_begin_frame_enabled = 0;
-        window_info.shared_texture_enabled = 1;
+        window_info.shared_texture_enabled = 0;
 
         // --- BrowserSettings: opaque white background ---
         let mut browser_settings = cef::BrowserSettings::default();

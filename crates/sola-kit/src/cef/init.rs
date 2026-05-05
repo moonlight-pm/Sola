@@ -26,21 +26,11 @@ use cef::{rc::*, *};
 ///     Telling Chromium "we're on Wayland" is matching reality, not an
 ///     architectural choice.
 const KIT_CHROMIUM_SWITCHES: &[(&str, Option<&str>)] = &[
+    // sola is a Wayland-only desktop. Without this, Chromium defaults
+    // to its X11 ozone backend, which calls `XOpenDisplay()` and panics
+    // in `aura::Env::Initialize` ("Missing X server or $DISPLAY") on a
+    // TTY launch where no X server is running.
     ("ozone-platform", Some("wayland")),
-    // Chromium 147's GPU service whitelists ANGLE-only backends:
-    //   (gl=egl-angle, angle=opengl|opengles|vulkan).
-    // `angle=gl` (== angle=opengl) routes through the host's libEGL,
-    // which on NixOS is the libglvnd dispatcher that finds NVIDIA's
-    // `libEGL_nvidia.so.0` via the JSON ICD at
-    // `/run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json`.
-    // Vulkan needs `VK_KHR_surface` extensions that headless / TTY
-    // Wayland sessions don't provide; opengles is for embedded only;
-    // opengl is the right choice.
-    ("use-gl", Some("angle")),
-    ("use-angle", Some("gl")),
-    // Diagnostic verbosity around GPU / GL init.
-    ("enable-logging", None),
-    ("v", Some("1")),
 ];
 
 // `KitCefApp` — process-wide CEF app object. Injects Chromium

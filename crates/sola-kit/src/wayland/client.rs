@@ -7,7 +7,7 @@
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_dmabuf, delegate_output, delegate_registry, delegate_seat,
-    delegate_xdg_shell, delegate_xdg_window,
+    delegate_shm, delegate_xdg_shell, delegate_xdg_window,
     dmabuf::{DmabufFeedback, DmabufHandler, DmabufState},
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
@@ -17,6 +17,7 @@ use smithay_client_toolkit::{
         window::{Window, WindowConfigure, WindowHandler},
         XdgShell,
     },
+    shm::{Shm, ShmHandler},
 };
 use wayland_client::{
     globals::registry_queue_init,
@@ -43,7 +44,14 @@ pub struct WaylandClient {
     pub output_state: OutputState,
     pub xdg_shell: XdgShell,
     /// sctk-managed zwp_linux_dmabuf_v1 state (binds v3..=5).
+    /// Used by `Surface::present_dmabuf` for the GPU-accelerated OSR
+    /// transport (`shared_texture_enabled = 1`). Currently unused at
+    /// runtime — see `Browser::new` for the active transport choice.
     pub dmabuf_state: DmabufState,
+    /// sctk-managed wl_shm state. Used by `Surface::present_paint` for
+    /// the CPU OSR transport (`OnPaint` from CEF → BGRA8888 in shared
+    /// memory → wl_buffer).
+    pub shm: Shm,
     /// The event queue. Owned here; pumped via `dispatch_pending()`.
     /// Stored in an `Option` so `dispatch_pending(&mut self)` can `take()`
     /// the queue, hand `&mut self` to `EventQueue::dispatch_pending`, and
@@ -80,6 +88,10 @@ impl WaylandClient {
         // check the version at present_dmabuf time.
         let dmabuf_state = DmabufState::new(&globals, &qh);
 
+        // wl_shm is mandatory in any Wayland compositor (core protocol).
+        // sctk's `Shm::bind` exits with `BindError` if missing.
+        let shm = Shm::bind(&globals, &qh).expect("Wayland: wl_shm missing");
+
         Self {
             conn,
             registry_state,
@@ -88,6 +100,7 @@ impl WaylandClient {
             output_state,
             xdg_shell,
             dmabuf_state,
+            shm,
             queue: Some(event_queue),
             qh,
         }
@@ -130,6 +143,13 @@ delegate_compositor!(WaylandClient);
 delegate_xdg_shell!(WaylandClient);
 delegate_xdg_window!(WaylandClient);
 delegate_dmabuf!(WaylandClient);
+delegate_shm!(WaylandClient);
+
+impl ShmHandler for WaylandClient {
+    fn shm_state(&mut self) -> &mut Shm {
+        &mut self.shm
+    }
+}
 
 // ── ProvidesRegistryState ────────────────────────────────────────────────────
 
