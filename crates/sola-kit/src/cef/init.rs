@@ -15,6 +15,18 @@ use std::process::ExitCode;
 /// `main()` immediately. Returns `None` if this is the main browser
 /// process.
 pub fn short_circuit_if_subprocess() -> Option<ExitCode> {
+    // CEF 133+ requires `cef_api_hash` to be called before ANY other
+    // CEF API function. It pins the API version the application was
+    // compiled against; without this, struct version fields read as -1
+    // and CToCpp wrappers reject them with "called with invalid
+    // version -1" errors. `CEF_API_VERSION` is the experimental
+    // floating tag (999999), which matches the cef-rs binding's own
+    // `init_methods` layout. Subsequent calls are ignored, so it's safe
+    // to invoke this in both the browser-process and subprocess paths.
+    unsafe {
+        cef::sys::cef_api_hash(cef::sys::CEF_API_VERSION, 0);
+    }
+
     // `Args::new()` reads `std::env::args()` internally and holds the
     // CString/argv storage alive for the duration of this call.
     let args = cef::args::Args::new();

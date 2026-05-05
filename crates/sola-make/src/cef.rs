@@ -61,9 +61,10 @@ fn tarball_url() -> String {
     format!("https://cef-builds.spotifycdn.com/cef_binary_{encoded}_linux64_minimal.tar.bz2")
 }
 
-/// Ensure CEF is present at `cef_path()`. If not, download, extract, and
-/// patch libcef.so for NixOS. Idempotent — short-circuits when libcef.so
-/// already exists (assumes the patchelf step has run if so).
+/// Ensure CEF is present at `cef_path()`. If not, download, extract,
+/// patch libcef.so for NixOS, and symlink Resources/* next to
+/// libcef.so. Idempotent — short-circuits when libcef.so already
+/// exists (assumes the patch + symlink steps have run if so).
 pub fn ensure_cef() -> io::Result<PathBuf> {
     let dir = cef_path();
     if is_present() {
@@ -77,7 +78,8 @@ pub fn ensure_cef() -> io::Result<PathBuf> {
             format!("CEF download completed but libcef.so missing under {}", dir.display()),
         ));
     }
-    patch_libcef_for_nix_ld(&release_dir().join("libcef.so"))?;
+    patch_cef_libs_for_nix_ld(&release_dir())?;
+    expose_resources_next_to_libcef(&release_dir(), &resources_dir())?;
     eprintln!("[cef] installed to {}", dir.display());
     Ok(dir)
 }
@@ -90,32 +92,84 @@ pub fn ensure_cef() -> io::Result<PathBuf> {
 /// "CEF runtime libraries (sola-kit)".
 const NIX_LD_LIB_DIR: &str = "/run/current-system/sw/share/nix-ld/lib";
 
-/// Append `NIX_LD_LIB_DIR` to libcef.so's DT_RUNPATH. Without this, libcef's
-/// transitive deps fall back to libcef's own `$ORIGIN` RUNPATH, which only
-/// covers the CEF binaries themselves — and we'd be forced into an
-/// LD_LIBRARY_PATH wrapper at runtime.
+/// Symlink each top-level entry from `Resources/` into `Release/`.
+/// Recent CEF / Chromium versions look up `icudtl.dat`, `*.pak`, and
+/// `locales/` relative to `libcef.so` (DIR_MODULE) rather than honoring
+/// `Settings::resources_dir_path` for every consumer — notably the
+/// subprocess ICU init, which crashes with `Invalid file descriptor to
+/// ICU data received` otherwise. Symlinks keep the original tarball
+/// layout intact while exposing the data next to the engine.
+///
+/// Idempotent: skips entries that already exist (e.g. on a re-extraction
+/// where libcef.so happened to be present).
+fn expose_resources_next_to_libcef(release: &Path, resources: &Path) -> io::Result<()> {
+    if !resources.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Resources dir missing at {}", resources.display()),
+        ));
+    }
+    for entry in fs::read_dir(resources)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let dest = release.join(&name);
+        if dest.exists() || dest.is_symlink() {
+            continue;
+        }
+        // Use a relative target — `../Resources/<name>` — so the link
+        // survives if the cache directory is moved (the relative
+        // structure of Release/ next to Resources/ is invariant).
+        let rel_target = PathBuf::from("..").join("Resources").join(&name);
+        std::os::unix::fs::symlink(&rel_target, &dest)?;
+    }
+    eprintln!("[cef] symlinked Resources/* into {} for DIR_MODULE lookup", release.display());
+    Ok(())
+}
+
+/// Append `NIX_LD_LIB_DIR` to the RUNPATH of every CEF shared library
+/// in `release/`. Just patching `libcef.so` is not enough: ANGLE's
+/// `dlopen("libGL.so.1")` from inside `libEGL.so` consults libEGL.so's
+/// own runpath (not libcef.so's), and libEGL.so / libGLESv2.so /
+/// libvk_swiftshader.so / libvulkan.so.1 all ship with no runpath at
+/// all. We add `$ORIGIN` so they find each other AND `NIX_LD_LIB_DIR`
+/// so dlopened system libs (libGL, libudev, libX*, …) resolve.
 ///
 /// No-op on non-NixOS hosts (the path won't exist, but that's harmless —
 /// the dynamic linker silently skips missing RUNPATH entries).
-fn patch_libcef_for_nix_ld(libcef: &Path) -> io::Result<()> {
-    if !libcef.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("libcef.so missing at {}", libcef.display()),
-        ));
+fn patch_cef_libs_for_nix_ld(release: &Path) -> io::Result<()> {
+    let mut patched = Vec::new();
+    for entry in fs::read_dir(release)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        // Match libcef.so, libEGL.so, libGLESv2.so, libvk_swiftshader.so, libvulkan.so.1.
+        let is_cef_so = name.starts_with("lib") && (name.ends_with(".so") || name.contains(".so."));
+        if !is_cef_so {
+            continue;
+        }
+        // `--add-rpath $ORIGIN:NIX_LD_LIB_DIR` keeps each library's
+        // existing runpath (if any — `$ORIGIN` is already there for
+        // libcef.so) and appends both. Idempotency on second runs is
+        // handled by `is_present()` short-circuiting `ensure_cef`.
+        let new_path = format!("$ORIGIN:{NIX_LD_LIB_DIR}");
+        let status = std::process::Command::new("patchelf")
+            .args(["--add-rpath", &new_path])
+            .arg(&path)
+            .status()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("patchelf not on PATH: {e}")))?;
+        if !status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("patchelf failed on {}: exit {status}", path.display()),
+            ));
+        }
+        patched.push(name.to_string());
     }
-    let status = std::process::Command::new("patchelf")
-        .args(["--add-rpath", NIX_LD_LIB_DIR])
-        .arg(libcef)
-        .status()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("patchelf not on PATH: {e}")))?;
-    if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("patchelf failed on {}: exit {status}", libcef.display()),
-        ));
-    }
-    eprintln!("[cef] patched libcef.so RUNPATH with {NIX_LD_LIB_DIR}");
+    eprintln!("[cef] patched RUNPATH on {} libs in {}: {}",
+        patched.len(), release.display(), patched.join(", "));
     Ok(())
 }
 
