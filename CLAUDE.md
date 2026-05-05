@@ -136,16 +136,15 @@ Sola-kit apps render their UI with **Preact** (`preact`, vendored at `crates/sol
 
 Files end in `.tsx` (JSX) or `.ts` (no JSX). The asset server (`crates/sola-kit/src/strip.rs::transform`) handles the request:
 
-- **`.tsx`** → swc parses TSX → JSX transform (classic runtime, `pragma="h"`, `pragmaFrag="Fragment"`) → TS strip → JS.
-- **`.ts`** → swc parses TS → TS strip → JS. JSX transform is skipped.
-- **`.jsx`** → JSX transform only, no type strip.
+- **`.tsx`** → swc parses TSX → resolver → JSX transform (automatic runtime, `import_source: "preact"`) → TS strip → JS.
+- **`.ts`** → swc parses TS → resolver → TS strip → JS. JSX transform is skipped.
+- **`.jsx`** → resolver → JSX transform only, no type strip.
 
-This means **every `.tsx` file must `import { h, Fragment } from 'preact'`** even if `Fragment` isn't used directly — JSX desugars to `h(...)` calls and `<>...</>` to `h(Fragment, null, ...)`.
+The **automatic runtime** auto-injects `import { jsx, jsxs, Fragment } from "preact/jsx-runtime"` for any file containing JSX, so **app code never imports `h` or `Fragment`**. Just write JSX. This mirrors React 17+'s `jsx: "react-jsx"` mode in tsconfig (which is what we set).
 
 ### A component
 
 ```tsx
-import { h, Fragment } from 'preact';
 import { signal, computed, effect } from '@preact/signals';
 
 // Module-scope signals survive unmount and are shared across components.
@@ -220,15 +219,31 @@ Both `import './foo'` and `import './foo.js'` work. The asset server (`AssetBund
 
 Bare specifiers (`import 'foo'`) still need import-map entries — that's a browser rule, not ours. The current import map lives inline in `crates/sola-kit/src/lib.rs` and publishes:
 
-- `preact`, `preact/hooks`
+- `preact`, `preact/jsx-runtime`, `preact/hooks`
 - `@preact/signals-core`, `@preact/signals`
 - `@sola/ipc`, `@sola/store`, `@sola/kit`
 - `~/` (prefix mapping to `/lib/`, so `import { x } from '~/components/foo'` reaches the public lib surface)
 
 ### Common pitfalls
 
-- ❌ Forgetting `import { h, Fragment } from 'preact'` at the top of a `.tsx` file — JSX desugars to `h(...)` and you'll get a `ReferenceError`.
 - ❌ Mutating `items.value.push(...)` — replace the value (`items.value = [...items.value, x]`).
 - ❌ `import './x.css'` — use `<link>` in `index.html`.
 - ❌ Using `@preact/signals-core` directly in components and expecting auto-tracking — that's what the `@preact/signals` integration package adds. Use `@preact/signals` in components.
 - ❌ Treating Preact like React for non-trivial libraries — preact is API-compatible at the surface but `react`-named packages won't work; use `preact`-named ones (e.g. `@preact/signals`, not `@preact/signals/react`).
+
+## CEF binding choice
+
+**Chosen crate:** `cef` `147.1.0+147.0.10` (tauri-apps/cef-rs, Apache-2.0 OR MIT)
+- crates.io: <https://crates.io/crates/cef>
+- docs.rs: <https://docs.rs/cef/147.1.0+147.0.10/cef/>
+- GitHub: <https://github.com/tauri-apps/cef-rs>
+
+This is the **only** active Rust CEF binding that tracks current CEF releases. `cef-rs` as a separate crate does not exist on crates.io. The crate is maintained by the Tauri team, ships pre-generated bindgen bindings (no headers needed — the tarball is enough), and has a working Linux `osr` example that exercises `on_accelerated_paint` with dma-buf import via Vulkan. Version `147.1.0+147.0.10` exactly matches our pinned CEF `147.0.10`.
+
+Enable the `accelerated_osr` feature to get dma-buf support:
+
+```toml
+cef = { version = "147.1.0+147.0.10", features = ["accelerated_osr"] }
+```
+
+The `accelerated_osr` feature pulls in `ash`, `libc`, `wgpu`, and `tracing` — we will need wgpu anyway for compositing the dma-buf texture into a Wayland buffer.
