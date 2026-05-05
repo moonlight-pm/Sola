@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 /// Pinned CEF release. Update this constant to bump the engine version.
 /// Match the binary tarball naming on https://cef-builds.spotifycdn.com/.
-pub const CEF_VERSION: &str = "132.3.0+gd62b73a+chromium-132.0.6834.83";
+pub const CEF_VERSION: &str = "147.0.10+gd58e84d+chromium-147.0.7727.118";
 
 /// Directory name used inside the cache. Stable across version bumps
 /// only via the version-suffixed subdirectory.
