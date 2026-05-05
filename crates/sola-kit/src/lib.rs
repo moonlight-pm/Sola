@@ -315,7 +315,9 @@ fn spawn_wayland_thread(wl: std::rc::Rc<std::cell::RefCell<wayland::WaylandClien
 const EVALUATION_CMD: &str = "__evaluation__";
 
 /// Handle a `Topic::Evaluate` addressed to this process. Runs on the
-/// CEF UI thread.
+/// CEF UI thread. Called from the bus loop's `Topic::Evaluate` arm —
+/// wired up in D5.
+#[allow(dead_code)]
 fn handle_evaluate(
     app_id: &'static str,
     req: &sola_bus::topics::EvaluatePayload,

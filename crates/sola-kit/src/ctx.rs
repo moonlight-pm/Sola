@@ -14,9 +14,16 @@ pub struct AppCtx {
     pub(crate) bus: Rc<RefCell<BusClient>>,
     pub(crate) wayland: Rc<RefCell<WaylandClient>>,
     pub(crate) windows: Vec<WindowHandle>,
+    /// Read by `find_window_by_id`, which is only invoked from the bus
+    /// loop's Copy/Paste handlers — both wired up in D5. Quiet the
+    /// dead-code lint until then.
+    #[allow(dead_code)]
     pub(crate) app_id: &'static str,
-    /// Latest `Windows` sticky snapshot, used by the framework to correlate
-    /// window_ids in bus topics (e.g. Copy/Paste) back to a `WindowHandle`.
+    /// Latest `Windows` sticky snapshot, used by `find_window_by_id` to
+    /// correlate window_ids in bus topics (e.g. Copy/Paste) back to a
+    /// `WindowHandle`. Populated by the bus loop's `Topic::Windows`
+    /// handler — wired up in D5.
+    #[allow(dead_code)]
     pub(crate) known_windows: Vec<Window>,
 }
 
@@ -113,6 +120,8 @@ impl AppCtx {
 
     /// Resolve a `window_id` (as seen on the bus) to one of *this process's*
     /// owned `WindowHandle`s. Returns `None` if the id doesn't belong to us.
+    /// Used by the bus loop's Copy/Paste handlers — wired up in D5.
+    #[allow(dead_code)]
     pub(crate) fn find_window_by_id(&self, window_id: u32) -> Option<&WindowHandle> {
         let entry = self
             .known_windows

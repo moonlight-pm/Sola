@@ -15,11 +15,15 @@ sola-bus = { path = "../sola-bus" }
 sola-assets = { path = "../sola-assets" }
 sola-core = { path = "../sola-core" }
 
-# CEF binding (version pinned to match CEF_VERSION in sola-make).
+# CEF binding (version pinned to match CEF_VERSION in sola-make). The
+# crate's actual version is 147.1.0+147.0.10 — the `+147.0.10` is build
+# metadata documenting the underlying CEF; Cargo ignores it in version
+# requirements, so dropping it silences the "metadata will be ignored"
+# warning while still resolving to the same crate.
 # Do NOT enable the `accelerated_osr` feature — that pulls in wgpu/ash/metal
 # for a Vulkan-based dma-buf importer we don't need. We import dma-bufs via
 # zwp_linux_dmabuf_v1 directly through smithay-client-toolkit.
-cef = "147.1.0+147.0.10"
+cef = "147.1.0"
 
 # Wayland client side
 smithay-client-toolkit = "0.19"

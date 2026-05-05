@@ -28,11 +28,18 @@ pub fn release_dir() -> PathBuf {
 }
 
 /// Path to the `Resources/` subdirectory containing icudtl.dat + .pak files.
+/// Currently unused inside this build crate — `crates/sola-kit/src/cef/distribution.rs`
+/// reads the same path from the `SOLA_KIT_CEF_DIR` env var at runtime — but it
+/// rounds out the cache-path API alongside `release_dir` and is cheap to keep.
+#[allow(dead_code)]
 pub fn resources_dir() -> PathBuf {
     cef_path().join("Resources")
 }
 
 /// Path to the `Resources/locales/` subdirectory.
+/// Same status as `resources_dir`: round-out of the path API; the runtime
+/// resolves locales from the env var.
+#[allow(dead_code)]
 pub fn locales_dir() -> PathBuf {
     resources_dir().join("locales")
 }

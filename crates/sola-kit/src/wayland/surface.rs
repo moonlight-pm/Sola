@@ -42,7 +42,7 @@ impl Surface {
     /// Create a new xdg_toplevel surface from `cfg` and commit the initial
     /// empty frame. Returns `Rc<Self>` so it can be shared with closures.
     pub fn new(client: Rc<RefCell<WaylandClient>>, cfg: &WindowConfig) -> Rc<Self> {
-        let (xdg_window) = {
+        let xdg_window = {
             let c = client.borrow();
 
             let wl_surface = c.compositor_state.create_surface(&c.qh);
