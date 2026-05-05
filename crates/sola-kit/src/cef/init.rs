@@ -16,8 +16,24 @@ use std::process::ExitCode;
 /// `main()` immediately. Returns `None` if this is the main browser
 /// process.
 pub fn short_circuit_if_subprocess() -> Option<ExitCode> {
-    // TODO(taskB5): call cef::execute_process and translate result.
-    None
+    // `Args::new()` reads `std::env::args()` internally and holds the
+    // CString/argv storage alive for the duration of this call.
+    let args = cef::args::Args::new();
+    let main_args = args.as_main_args();
+
+    // Linux: no Windows sandbox — pass null.
+    // Returns >= 0 if this process is a CEF worker (renderer/GPU/utility/zygote);
+    // returns -1 if this is the main browser process.
+    let result = cef::execute_process(Some(main_args), None, std::ptr::null_mut());
+
+    if result >= 0 {
+        // CEF docs: the return value is the worker's exit code.
+        // Clamp to u8 range — process exit codes are 0–255 on POSIX.
+        Some(ExitCode::from(result.clamp(0, 255) as u8))
+    } else {
+        // result == -1: we are the main browser process, continue normally.
+        None
+    }
 }
 
 /// Initialize CEF in the browser process. Call exactly once, after
