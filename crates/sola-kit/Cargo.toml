@@ -14,14 +14,19 @@ path = "src/app/main.rs"
 sola-bus = { path = "../sola-bus" }
 sola-assets = { path = "../sola-assets" }
 sola-core = { path = "../sola-core" }
-gtk4 = "0.9"
-gdk4 = "0.9"
-glib = "0.20"
-gio = "0.20"
-pango = "0.20"
-pangocairo = "0.20"
-webkit6 = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+
+# CEF binding (version pinned to match CEF_VERSION in sola-make).
+# Do NOT enable the `accelerated_osr` feature — that pulls in wgpu/ash/metal
+# for a Vulkan-based dma-buf importer we don't need. We import dma-bufs via
+# zwp_linux_dmabuf_v1 directly through smithay-client-toolkit.
+cef = "147.1.0+147.0.10"
+
+# Wayland client side
+smithay-client-toolkit = "0.19"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
+
+# Existing kit code (unchanged)
 swc_core = { version = "65", features = [
   "common",
   "ecma_ast",
@@ -37,3 +42,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+
+[build-dependencies]
+sola-make = { path = "../sola-make" }
