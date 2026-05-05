@@ -6,6 +6,7 @@
 ///
 /// See: https://github.com/matklad/cargo-xtask
 mod assets;
+mod cef;
 mod install;
 mod watch;
 
