@@ -67,12 +67,12 @@ pub fn initialize() {
 }
 
 /// Run CEF's message loop on the current (main) thread. Blocks until
-/// `cef::quit_message_loop` is posted.
+/// `cef::quit_message_loop()` is posted from any CEF thread.
 pub fn run_message_loop() {
-    // TODO(taskB7): call cef::run_message_loop.
+    cef::run_message_loop();
 }
 
-/// Tear down CEF cleanly. Called once after `run_message_loop` returns.
+/// Tear down CEF cleanly. Call once after `run_message_loop` returns.
 pub fn shutdown() {
-    // TODO(taskB7): call cef::shutdown.
+    cef::shutdown();
 }
