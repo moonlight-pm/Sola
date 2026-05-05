@@ -36,13 +36,39 @@ impl AppCtx {
     }
 
     /// Create a new window: pair a Wayland surface with a CEF browser.
-    /// The browser navigates to `app:///index.html`; the cef::scheme
-    /// handler (registered separately, see C1) serves the HTML and
-    /// embedded assets via the AssetBundle in `cfg.assets`.
+    ///
+    /// Builds the final HTML for this window — index.html lookup,
+    /// `__RESTORED_STATE__` substitution, bootstrap script injection,
+    /// and import map injection — then registers it with the `app://`
+    /// scheme handler before creating the browser. The browser navigates
+    /// to `app:///index.html`, where the scheme handler serves the
+    /// pre-built HTML and all assets from `cfg.assets` (with TS/JSX
+    /// transform applied on-demand).
     pub fn add_window(&mut self, cfg: WindowConfig) -> WindowHandle {
         let dispatcher_slot: Rc<RefCell<Option<JsDispatcher>>> = Rc::new(RefCell::new(None));
         let loaded: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
         let pending: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+
+        // Build the HTML that the scheme handler will serve for /index.html.
+        let html_raw = cfg
+            .assets
+            .find("/index.html")
+            .map(|a| a.content.to_string())
+            .unwrap_or_else(|| "<html><body>No index.html in bundle</body></html>".to_string());
+
+        // Substitute __RESTORED_STATE__ with the window's initial state JSON
+        // (if any), then inject the queueing bootstrap stub and import map.
+        let html = if let Some(state_json) = cfg.initial_state.as_ref() {
+            html_raw.replace("__RESTORED_STATE__", state_json)
+        } else {
+            html_raw
+        };
+        let html = crate::inject_solarecv_bootstrap(&html);
+        let html = crate::inject_import_map(&html);
+
+        // Register the bundle + HTML with the static scheme handler before
+        // the browser is created so the first navigation is served correctly.
+        crate::cef::scheme::register_window(cfg.assets, html);
 
         let surface = Surface::new(self.wayland.clone(), &cfg);
         let browser = Browser::new(surface.clone(), "app:///index.html");

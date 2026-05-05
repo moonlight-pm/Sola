@@ -178,6 +178,11 @@ pub fn run<A: SolaApp>() {
     // --- CEF initialize (browser process) ---
     cef::init::initialize();
 
+    // --- Register app:// scheme factory ---
+    // Must be called after cef::initialize and before any Browser navigates
+    // to an app:// URL.
+    cef::init::register_app_scheme();
+
     // --- Wayland connection ---
     let wayland = std::rc::Rc::new(std::cell::RefCell::new(
         wayland::WaylandClient::connect_owned(),
