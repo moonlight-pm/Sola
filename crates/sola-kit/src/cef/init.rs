@@ -43,9 +43,7 @@ use cef::{rc::*, *};
 ///     it for now. The Media Controls feature pulls in more of the
 ///     desktop integration we don't need.
 const KIT_CHROMIUM_SWITCHES: &[(&str, Option<&str>)] = &[
-    ("ozone-platform", Some("headless")),
-    ("use-gl", Some("angle")),
-    ("use-angle", Some("swiftshader")),
+    ("ozone-platform", Some("wayland")),
     ("disable-features", Some("BatteryStatus,GlobalMediaControlsModernUI")),
 ];
 
