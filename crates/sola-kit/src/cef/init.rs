@@ -8,6 +8,76 @@
 
 use std::process::ExitCode;
 
+// `wrap_app!` and `wrap_task!` expand to code referencing bare names from
+// the cef crate (App, Task, ImplApp, ImplTask, WrapApp, WrapTask, RcImpl, …).
+#[allow(unused_imports)]
+use cef::{rc::*, *};
+
+// ── Custom CEF App: command-line tweaks ──────────────────────────────────────
+
+/// Switches we add to Chromium's command line on every process. Each is
+/// `(name, optional value)` — value is `None` for boolean switches.
+///
+///   - `ozone-platform=headless` — sola-kit owns the Wayland surface; we
+///     don't want Chromium to create one of its own. The default ozone
+///     backend tries to connect to X11 and fails on a TTY-launched app
+///     ("Missing X server or $DISPLAY"). Headless avoids the handshake;
+///     OSR paints land via `OnAcceleratedPaint` regardless.
+///   - `use-gl=angle`, `use-angle=swiftshader` — even with headless
+///     ozone, ANGLE's default GPU backends try to bind to a windowing
+///     system: the X11 backend calls XOpenDisplay() and fails on a
+///     TTY ("Could not open the default X display"), and the Vulkan
+///     backend wants `VK_KHR_surface`/`VK_KHR_xcb_surface` which
+///     headless doesn't provide. SwiftShader (the CPU rasteriser CEF
+///     ships in `libvk_swiftshader.so`) is the only ANGLE backend
+///     that's fully display-agnostic. Suitable for the storybook /
+///     `cargo run` smoke; production OSR with hardware-accelerated
+///     dma-bufs (via a real EGL/Vulkan stack) is a follow-up.
+///   - `disable-features=BatteryStatus,GlobalMediaControlsModernUI` —
+///     best-effort. `BatteryStatus` is intended to kill the W3C
+///     Battery Status API + its `BatteryStatusManager` upstream, which
+///     otherwise probes `org.freedesktop.UPower` over DBus and logs
+///     an ERROR-level line when UPower isn't running. In practice the
+///     probe still fires on Chromium 147 (it's not fully feature-gated
+///     in the device service) — the warning is benign and we accept
+///     it for now. The Media Controls feature pulls in more of the
+///     desktop integration we don't need.
+const KIT_CHROMIUM_SWITCHES: &[(&str, Option<&str>)] = &[
+    ("ozone-platform", Some("headless")),
+    ("use-gl", Some("angle")),
+    ("use-angle", Some("swiftshader")),
+    ("disable-features", Some("BatteryStatus,GlobalMediaControlsModernUI")),
+];
+
+// `KitCefApp` — process-wide CEF app object. Injects Chromium
+// command-line flags before browser/renderer subprocesses spin up.
+cef::wrap_app! {
+    pub struct KitCefApp {}
+
+    impl App {
+        fn on_before_command_line_processing(
+            &self,
+            _process_type: Option<&CefString>,
+            command_line: Option<&mut CommandLine>,
+        ) {
+            if let Some(cmd) = command_line {
+                for (name, value) in KIT_CHROMIUM_SWITCHES {
+                    let k = CefString::from(*name);
+                    match value {
+                        Some(v) => {
+                            let v = CefString::from(*v);
+                            cmd.append_switch_with_value(Some(&k), Some(&v));
+                        }
+                        None => {
+                            cmd.append_switch(Some(&k));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Subprocess gate — call this at the top of `main()`.
 ///
 /// Returns `Some(ExitCode)` if the current process is a CEF worker
@@ -34,8 +104,11 @@ pub fn short_circuit_if_subprocess() -> Option<ExitCode> {
 
     // Linux: no Windows sandbox — pass null.
     // Returns >= 0 if this process is a CEF worker (renderer/GPU/utility/zygote);
-    // returns -1 if this is the main browser process.
-    let result = cef::execute_process(Some(main_args), None, std::ptr::null_mut());
+    // returns -1 if this is the main browser process. The `KitCefApp` is
+    // passed in both paths so subprocess command-line processing also sees
+    // our `--disable-features=...` injection.
+    let mut app = KitCefApp::new();
+    let result = cef::execute_process(Some(main_args), Some(&mut app), std::ptr::null_mut());
 
     if result >= 0 {
         // CEF docs: the return value is the worker's exit code.
@@ -55,11 +128,22 @@ pub fn initialize() {
     let locales   = crate::cef::distribution::locales_dir();
     let exe = std::env::current_exe().expect("current_exe");
 
+    // Application-specific cache root. Without this, CEF defaults to
+    // `~/.config/cef_user_data/` and warns about "unintended process
+    // singleton behavior" — and any leftover orphaned subprocess tree
+    // from a previous run holds the singleton lock and refuses to let a
+    // new instance start ("Opening in existing browser session"). Owning
+    // a known sola-specific path makes recovery (kill + clear lock)
+    // straightforward and silences the warning.
+    let cache_root = crate::cef::distribution::cef_dir().join("runtime");
+    let _ = std::fs::create_dir_all(&cache_root);
+
     let mut settings = cef::Settings::default();
     settings.framework_dir_path    = cef::CefString::from(&*release.to_string_lossy());
     settings.resources_dir_path    = cef::CefString::from(&*resources.to_string_lossy());
     settings.locales_dir_path      = cef::CefString::from(&*locales.to_string_lossy());
     settings.browser_subprocess_path = cef::CefString::from(&*exe.to_string_lossy());
+    settings.root_cache_path       = cef::CefString::from(&*cache_root.to_string_lossy());
     settings.no_sandbox                  = 1; // true — no Windows sandbox on Linux
     settings.windowless_rendering_enabled = 1; // true — OSR / off-screen rendering
     settings.external_message_pump       = 0; // false — use cef::run_message_loop
@@ -71,11 +155,52 @@ pub fn initialize() {
     let args = cef::args::Args::new();
     let main_args = args.as_main_args();
 
+    // Same App as in `short_circuit_if_subprocess`, so the browser process
+    // sees the same command-line flag injection as the workers.
+    let mut app = KitCefApp::new();
+
     // CEF C-API convention: returns 1 (non-zero positive) on success, 0 on failure.
-    let rc = cef::initialize(Some(main_args), Some(&settings), None, std::ptr::null_mut());
+    let rc = cef::initialize(Some(main_args), Some(&settings), Some(&mut app), std::ptr::null_mut());
     if rc <= 0 {
         panic!("cef::initialize failed (return code {rc})");
     }
+}
+
+// ── Wayland event-pump task ──────────────────────────────────────────────────
+
+// `PumpWaylandTask` — periodic CEF UI-thread task that drains the
+// Wayland event queue. CEF owns the main thread via `run_message_loop`,
+// so we can't have our own blocking `event_queue.dispatch_blocking(…)`
+// loop. Instead we re-post ourselves every ~16 ms (matches the 60 Hz
+// default frame cadence) so configure events, frame callbacks, and
+// buffer-release events reach our handlers without contention with
+// CEF. `Rc<RefCell<…>>` is `!Send`/`!Sync`, but the Task only ever
+// runs on TID_UI which IS our main thread; the macro doesn't add
+// Send/Sync bounds, so the type-checker is happy.
+cef::wrap_task! {
+    pub struct PumpWaylandTask {
+        wayland: std::rc::Rc<std::cell::RefCell<crate::wayland::WaylandClient>>,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            self.wayland.borrow_mut().dispatch_pending();
+
+            // Re-post ourselves for the next tick. The Task we were
+            // posted as is about to be released; we hand CEF a fresh
+            // one so the loop continues. 16 ms ≈ 60 Hz.
+            let mut next = PumpWaylandTask::new(self.wayland.clone());
+            cef::post_delayed_task(cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI), Some(&mut next), 16);
+        }
+    }
+}
+
+/// Kick off the Wayland-event-pump loop on the CEF UI thread. Call once,
+/// after `cef::initialize()` returns success and before
+/// `cef::run_message_loop()`.
+pub fn start_wayland_pump(wayland: std::rc::Rc<std::cell::RefCell<crate::wayland::WaylandClient>>) {
+    let mut task = PumpWaylandTask::new(wayland);
+    cef::post_task(cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI), Some(&mut task));
 }
 
 /// Register the `app://` custom scheme factory. Call once, immediately

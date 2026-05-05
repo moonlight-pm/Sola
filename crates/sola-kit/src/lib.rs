@@ -276,8 +276,10 @@ pub fn run<A: SolaApp>() {
     // --- Bus → CEF UI thread bridge: deferred to D3/D5 ---
     spawn_bus_thread::<A>(bus.clone(), runtime.clone(), registry.clone());
 
-    // --- Wayland dispatch driver: deferred to a follow-up task ---
-    spawn_wayland_thread(wayland.clone());
+    // --- Wayland event-pump: recurring CEF UI-thread task drains
+    //     the queue every ~16 ms so configures, frame callbacks, and
+    //     buffer-release events reach our handlers. ---
+    cef::init::start_wayland_pump(wayland.clone());
 
     // --- Run CEF's main loop. Blocks until cef::quit_message_loop() is posted. ---
     tracing::info!("{app_id} entering CEF message loop");
@@ -300,12 +302,6 @@ fn spawn_bus_thread<A: SolaApp>(
     let _ = (bus, runtime, registry);
 }
 
-// Wayland event dispatch driver. Real impl posts back into CEF UI thread
-// or polls inline on a frame callback. For B11, no-op.
-fn spawn_wayland_thread(wl: std::rc::Rc<std::cell::RefCell<wayland::WaylandClient>>) {
-    // TODO: wire wl_event_queue → cef::post_task(UI, dispatch_pending) loop.
-    let _ = wl;
-}
 
 /// JS command name reserved for evaluation results. Never reaches the
 /// app's `on_js_command`; the framework intercepts and emits a

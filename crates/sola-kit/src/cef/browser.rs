@@ -29,14 +29,17 @@ impl Browser {
     ///
     /// Flags set on `WindowInfo`:
     ///   - `windowless_rendering_enabled = 1` — OSR mode (no native window).
-    ///   - `external_begin_frame_enabled = 1` — caller drives vsync via
-    ///     Wayland frame callbacks; CEF will not self-tick.
+    ///   - `external_begin_frame_enabled = 0` — CEF self-drives at its
+    ///     internal default rate. We'll flip this back to 1 once the
+    ///     Wayland frame-callback loop is wired (Surface::frame →
+    ///     host.SendExternalBeginFrame); for now self-drive gives us the
+    ///     initial paint without bespoke pacing infrastructure.
     ///   - `shared_texture_enabled = 1` — dma-buf transport (Linux GBM).
     pub fn new(surface: Rc<Surface>, initial_url: &str) -> Self {
-        // --- WindowInfo: OSR + external-begin-frame + shared-texture ---
+        // --- WindowInfo: OSR + self-drive frames + shared-texture ---
         let mut window_info = cef::WindowInfo::default();
         window_info.windowless_rendering_enabled = 1;
-        window_info.external_begin_frame_enabled = 1;
+        window_info.external_begin_frame_enabled = 0;
         window_info.shared_texture_enabled = 1;
 
         // --- BrowserSettings: opaque white background ---
