@@ -93,11 +93,28 @@ impl WaylandClient {
         }
     }
 
-    /// Non-blocking event pump. Call from the CEF main loop on each frame tick
-    /// to drain any pending Wayland events (configure, release, etc.).
+    /// Non-blocking event pump. Call from the CEF main loop on each frame tick.
+    ///
+    /// `dispatch_pending` alone only drains the in-memory event queue — it
+    /// does NOT read from the Wayland socket. So we follow the standard
+    /// integrated-event-loop pattern:
+    ///   1. `flush()` — send our pending requests to the compositor.
+    ///   2. `prepare_read()` + `read()` — if the socket has bytes ready,
+    ///      drain them into the in-memory queue. Returns `WouldBlock` when
+    ///      the socket is empty, which is fine — we just have nothing new.
+    ///   3. `dispatch_pending()` — process whatever's in the queue (newly
+    ///      read or otherwise).
     pub fn dispatch_pending(&mut self) {
-        // Take the queue out so we can also pass `&mut self` to dispatch_pending.
         if let Some(mut queue) = self.queue.take() {
+            let _ = queue.flush();
+            if let Some(guard) = queue.prepare_read() {
+                match guard.read() {
+                    Ok(_) => {}
+                    Err(wayland_client::backend::WaylandError::Io(e))
+                        if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(e) => tracing::warn!(?e, "wayland read failed"),
+                }
+            }
             let _ = queue.dispatch_pending(self);
             self.queue = Some(queue);
         }
@@ -236,10 +253,14 @@ impl WindowHandler for WaylandClient {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _window: &Window,
-        _configure: WindowConfigure,
-        _serial: u32,
+        configure: WindowConfigure,
+        serial: u32,
     ) {
-        // TODO(B12): mark the matching Surface configured + dispatch resize to CEF browser.
+        tracing::info!(new_size = ?configure.new_size, serial, "WindowHandler::configure fired");
+        // sctk's xdg_surface dispatcher already called ack_configure(serial)
+        // before invoking us. Marking the Surface configured + dispatching
+        // host.was_resized to CEF lands when we have the surface↔window map
+        // (planned with surface_to_browser in D4).
     }
 }
 

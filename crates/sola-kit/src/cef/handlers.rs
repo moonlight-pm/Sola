@@ -78,10 +78,22 @@ cef::wrap_render_handler! {
             dirty_rects: Option<&[cef::Rect]>,
             info: Option<&cef::AcceleratedPaintInfo>,
         ) {
+            tracing::info!(
+                has_info = info.is_some(),
+                dirty_rects = dirty_rects.map(|r| r.len()).unwrap_or(0),
+                "on_accelerated_paint fired"
+            );
             let info = match info {
                 Some(i) => i,
                 None => return,
             };
+            tracing::info!(
+                plane_count = info.plane_count,
+                modifier = info.modifier,
+                fd = info.planes[0].fd,
+                stride = info.planes[0].stride,
+                "on_accelerated_paint: dma-buf info"
+            );
             // Chromium OSR always produces a single-plane ARGB/ABGR dma-buf.
             if info.plane_count < 1 {
                 return;

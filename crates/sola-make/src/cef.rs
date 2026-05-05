@@ -92,6 +92,14 @@ pub fn ensure_cef() -> io::Result<PathBuf> {
 /// "CEF runtime libraries (sola-kit)".
 const NIX_LD_LIB_DIR: &str = "/run/current-system/sw/share/nix-ld/lib";
 
+/// NixOS GPU-driver indirection. `hardware.graphics.enable = true`
+/// populates this with the active vendor's libGL/libEGL/libVulkan plus
+/// their internal helpers (libnvidia-glcore.so, libGLX_nvidia.so.0, …).
+/// libEGL_nvidia.so.0 dlopens those at runtime; without this in
+/// libcef.so's RUNPATH the EGL ICD load succeeds but Skia GPU
+/// initialization fails with "Unable to initialize SkSurface".
+const OPENGL_DRIVER_DIR: &str = "/run/opengl-driver/lib";
+
 /// Symlink each top-level entry from `Resources/` into `Release/`.
 /// Recent CEF / Chromium versions look up `icudtl.dat`, `*.pak`, and
 /// `locales/` relative to `libcef.so` (DIR_MODULE) rather than honoring
@@ -150,11 +158,12 @@ fn patch_cef_libs_for_nix_ld(release: &Path) -> io::Result<()> {
         if !is_cef_so {
             continue;
         }
-        // `--add-rpath $ORIGIN:NIX_LD_LIB_DIR` keeps each library's
-        // existing runpath (if any — `$ORIGIN` is already there for
-        // libcef.so) and appends both. Idempotency on second runs is
-        // handled by `is_present()` short-circuiting `ensure_cef`.
-        let new_path = format!("$ORIGIN:{NIX_LD_LIB_DIR}");
+        // `--add-rpath $ORIGIN:NIX_LD_LIB_DIR:OPENGL_DRIVER_DIR` keeps
+        // each library's existing runpath (if any — `$ORIGIN` is already
+        // there for libcef.so) and appends all three. Idempotency on
+        // second runs is handled by `is_present()` short-circuiting
+        // `ensure_cef`.
+        let new_path = format!("$ORIGIN:{NIX_LD_LIB_DIR}:{OPENGL_DRIVER_DIR}");
         let status = std::process::Command::new("patchelf")
             .args(["--add-rpath", &new_path])
             .arg(&path)

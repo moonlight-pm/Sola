@@ -154,6 +154,42 @@ pub fn run<A: SolaApp>() {
         "wayland-0".to_string()
     }
 
+    // --- GPU driver environment ---
+    // NixOS keeps GPU drivers under `/run/opengl-driver/`, but only sets
+    // the relevant env vars in interactive desktop sessions. sola-kit
+    // launched from a TTY inherits a shell env without them, so:
+    //
+    //   - `__EGL_VENDOR_LIBRARY_DIRS` points libglvnd at NixOS's
+    //     `/run/opengl-driver/share/glvnd/egl_vendor.d/{10_nvidia,50_mesa}.json`
+    //     so it can find vendor ICDs. Without this, libEGL.so loads but
+    //     dispatches to nothing → the GPU process can't initialize Skia
+    //     ("Unable to initialize SkSurface") and OnAcceleratedPaint
+    //     never fires.
+    //   - `LIBVA_DRIVERS_PATH` and `VK_ICD_FILENAMES` cover the analogous
+    //     dispatch for VA-API and Vulkan drivers respectively.
+    //
+    // Setting these here (before cef::init::initialize forks subprocesses)
+    // ensures every CEF worker inherits them.
+    //
+    // SAFETY: single-threaded at this point.
+    unsafe {
+        if std::env::var_os("__EGL_VENDOR_LIBRARY_DIRS").is_none() {
+            std::env::set_var(
+                "__EGL_VENDOR_LIBRARY_DIRS",
+                "/run/opengl-driver/share/glvnd/egl_vendor.d",
+            );
+        }
+        if std::env::var_os("LIBVA_DRIVERS_PATH").is_none() {
+            std::env::set_var("LIBVA_DRIVERS_PATH", "/run/opengl-driver/lib/dri");
+        }
+        if std::env::var_os("VK_ICD_FILENAMES").is_none() {
+            std::env::set_var(
+                "VK_ICD_FILENAMES",
+                "/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.x86_64.json",
+            );
+        }
+    }
+
     // --- Binary self-watch ---
     watcher::watch_own_binary();
 

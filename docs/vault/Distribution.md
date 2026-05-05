@@ -172,6 +172,112 @@ in the list points at a missing `programs.nix-ld.libraries` entry; add
 the package, `nixos-rebuild switch`, and re-patch libcef.so (see above)
 — no rebuild of sola-kit needed.
 
+## CEF GPU runtime (sola-kit, NixOS)
+
+Beyond the dynamic-linker plumbing above, the GPU subprocess CEF spawns
+needs three system-level inputs to initialize a GL/Vulkan context.
+These are all set automatically when sola-kit starts up — but the
+*system* has to provide them:
+
+### 1. EGL vendor dispatch
+
+`__EGL_VENDOR_LIBRARY_DIRS` must point at NixOS's libglvnd ICD JSON
+directory so libEGL can find the active vendor driver. sola-kit's
+`run<A>()` sets it to `/run/opengl-driver/share/glvnd/egl_vendor.d`
+(populated by `hardware.graphics.enable = true` plus
+`hardware.nvidia` / Mesa). Without this, libEGL loads but dispatches
+to nothing → the GPU process can't initialise Skia (`Unable to
+initialize SkSurface`) and `OnAcceleratedPaint` never fires.
+
+### 2. Vulkan ICD discovery
+
+`VK_ICD_FILENAMES` must point at the active vendor's Vulkan ICD JSON.
+sola-kit defaults it to
+`/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.x86_64.json`. The
+ANGLE/Vulkan backend (`--use-angle=vulkan`) needs this; the GL
+backend uses it to query device capabilities.
+
+### 3. NVIDIA / Mesa userspace libraries on the RUNPATH
+
+`/run/opengl-driver/lib` is appended to libcef.so's `DT_RUNPATH` (and
+to libEGL.so / libGLESv2.so / libvk_swiftshader.so / libvulkan.so.1)
+by `sola_make::cef::patch_cef_libs_for_nix_ld`. This makes
+`libnvidia-glcore.so`, `libnvidia-glsi.so`, `libGLX_nvidia.so.0`,
+`libnvidia-tls.so`, `libgbm.so` (mesa-libgbm), etc. discoverable when
+the EGL ICD dlopens them.
+
+### Known incompatibility — NVIDIA proprietary driver + CEF dma-buf OSR
+
+CEF 147's prebuilt `libEGL.so` / `libGLESv2.so` (ANGLE) reference
+several **Mesa-only** EGL extension symbols:
+
+```
+eglExportDMABUFImageMESA, eglExportDMABUFImageQueryMESA,
+eglImageFlushExternalEXT, eglQueryDevicesEXT
+```
+
+These don't exist in NVIDIA's proprietary `libEGL_nvidia.so.0`. With
+`shared_texture_enabled=1` (OSR via zwp\_linux\_dmabuf\_v1), CEF's
+GPU process needs those extensions to allocate the dma-bufs that
+`OnAcceleratedPaint` ferries to the host. On NVIDIA proprietary, the
+extensions resolve to nothing and the GPU process gets stuck at
+`shared_image_representation.cc:408 Unable to initialize SkSurface`
+— `OnAcceleratedPaint` never fires and the host surface never
+acquires a buffer.
+
+Separately, NVIDIA proprietary 580.x's `libnvidia-glcore.so`
+references `__malloc_hook` / `__realloc_hook` / `__free_hook` /
+`__memalign_hook`, all removed in glibc 2.34+. Whether this is
+actually load-fatal vs. lazy-failure depends on link options and
+shows up in `LD_DEBUG=libs` output regardless.
+
+**Why does Helium / a Chromium-based AppImage work on the same box?**
+AppImages run inside `appimage-run`, which wraps the binary in a
+`bwrap` FHS sandbox where `/usr/lib/libEGL.so.1` is Mesa's libglvnd
+build. Inside that sandbox, the load-time symbol lookup for
+`eglExportDMABUFImageMESA` resolves against Mesa's dispatch table
+(symbols exist; runtime dispatches to NVIDIA via the same libglvnd
+indirection NixOS uses). The shape of the FHS — specifically having
+`libEGL.so.1` already provide the MESA dispatch surface — is what
+makes ANGLE's libEGL load cleanly. We don't get that benefit from
+`programs.nix-ld.libraries` because libglvnd's libEGL there isn't
+loaded as a hard dependency of CEF's libEGL.so.
+
+**Workarounds (any one of):**
+
+1. **Switch to NVIDIA Open + Mesa NVK** — set
+   `hardware.nvidia.open = true` in `/etc/nixos/configuration.nix`
+   and let Mesa drive the GPU. Mesa's libEGL exposes the missing
+   `*MESA` extensions natively. Requires a compatible GPU (Turing
+   GTX 16xx / RTX 20-series or newer for full NVK support).
+2. **Switch to a Mesa-only setup** (Intel/AMD GPU host) — no
+   special config; Mesa's libEGL has all the extensions ANGLE wants.
+3. **Run sola-kit inside an FHS env** the way `appimage-run` runs
+   AppImages. NixOS's `buildFHSEnv` + a curated lib list would do it.
+   Works without code changes but reintroduces a wrapper around the
+   binary, which we explicitly don't want.
+4. **Force `shared_texture_enabled = 0`** in
+   `crates/sola-kit/src/cef/browser.rs::Browser::new` and switch
+   the OSR transport to `OnPaint` + `wl_shm`. Loses zero-copy
+   dma-buf, but works with any GL stack including SwiftShader. This
+   is a code change in our crate, not a system change, but it does
+   diverge from the design's dma-buf-only stance — see commits on
+   the `sola-kit-preact` branch for the GPU-init investigation
+   trail.
+
+### Quick diagnosis: what's the GPU stack failing on?
+
+```sh
+WAYLAND_DISPLAY=wayland-1 LD_DEBUG=libs LD_DEBUG_OUTPUT=/tmp/ld /opt/sola/bin/sola-kit
+# inspect /tmp/ld.<pid> for "undefined symbol" lines around libEGL,
+# libGLESv2, and libnvidia-*. The first fatal-tagged miss is usually
+# diagnostic.
+```
+
+Compare against the `sola-river` log at `/opt/sola/log/river.log` —
+if `sola-kit` didn't reach the configure ack, the issue is
+host-side (Wayland), not GPU-side.
+
 ### Why not packaging sola-kit as a Nix derivation?
 
 That would be the most-correct NixOS solution and we'll get there for

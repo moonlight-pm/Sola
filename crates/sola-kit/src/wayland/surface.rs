@@ -42,6 +42,7 @@ impl Surface {
     /// Create a new xdg_toplevel surface from `cfg` and commit the initial
     /// empty frame. Returns `Rc<Self>` so it can be shared with closures.
     pub fn new(client: Rc<RefCell<WaylandClient>>, cfg: &WindowConfig) -> Rc<Self> {
+        tracing::info!(title = %cfg.title, size = ?cfg.size, "Surface::new entered");
         let xdg_window = {
             let c = client.borrow();
 
@@ -59,6 +60,7 @@ impl Surface {
             // Initial empty commit: tells the compositor we exist so it sends
             // the first configure event (which gives us actual dimensions).
             xdg_window.commit();
+            tracing::info!("Surface::new initial commit sent (no buffer)");
 
             xdg_window
         };
@@ -102,6 +104,7 @@ impl Surface {
         height: i32,
         damage_rects: &[(i32, i32, i32, i32)],
     ) {
+        tracing::info!(fd, format, modifier, stride, offset, width, height, "Surface::present_dmabuf entered");
         let c = self.client.borrow();
 
         let params = match c.dmabuf_state.create_params(&c.qh) {

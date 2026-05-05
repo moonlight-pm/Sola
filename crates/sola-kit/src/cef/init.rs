@@ -18,33 +18,29 @@ use cef::{rc::*, *};
 /// Switches we add to Chromium's command line on every process. Each is
 /// `(name, optional value)` — value is `None` for boolean switches.
 ///
-///   - `ozone-platform=headless` — sola-kit owns the Wayland surface; we
-///     don't want Chromium to create one of its own. The default ozone
-///     backend tries to connect to X11 and fails on a TTY-launched app
-///     ("Missing X server or $DISPLAY"). Headless avoids the handshake;
-///     OSR paints land via `OnAcceleratedPaint` regardless.
-///   - `use-gl=angle`, `use-angle=swiftshader` — even with headless
-///     ozone, ANGLE's default GPU backends try to bind to a windowing
-///     system: the X11 backend calls XOpenDisplay() and fails on a
-///     TTY ("Could not open the default X display"), and the Vulkan
-///     backend wants `VK_KHR_surface`/`VK_KHR_xcb_surface` which
-///     headless doesn't provide. SwiftShader (the CPU rasteriser CEF
-///     ships in `libvk_swiftshader.so`) is the only ANGLE backend
-///     that's fully display-agnostic. Suitable for the storybook /
-///     `cargo run` smoke; production OSR with hardware-accelerated
-///     dma-bufs (via a real EGL/Vulkan stack) is a follow-up.
-///   - `disable-features=BatteryStatus,GlobalMediaControlsModernUI` —
-///     best-effort. `BatteryStatus` is intended to kill the W3C
-///     Battery Status API + its `BatteryStatusManager` upstream, which
-///     otherwise probes `org.freedesktop.UPower` over DBus and logs
-///     an ERROR-level line when UPower isn't running. In practice the
-///     probe still fires on Chromium 147 (it's not fully feature-gated
-///     in the device service) — the warning is benign and we accept
-///     it for now. The Media Controls feature pulls in more of the
-///     desktop integration we don't need.
+///   - `ozone-platform=wayland` — sola is a Wayland-only desktop
+///     (sola-river is the compositor). Without this, Chromium defaults
+///     to its X11 ozone backend, which calls `XOpenDisplay()` and
+///     panics in `aura::Env::Initialize` ("Missing X server or
+///     $DISPLAY") on a TTY launch where no X server is running.
+///     Telling Chromium "we're on Wayland" is matching reality, not an
+///     architectural choice.
 const KIT_CHROMIUM_SWITCHES: &[(&str, Option<&str>)] = &[
     ("ozone-platform", Some("wayland")),
-    ("disable-features", Some("BatteryStatus,GlobalMediaControlsModernUI")),
+    // Chromium 147's GPU service whitelists ANGLE-only backends:
+    //   (gl=egl-angle, angle=opengl|opengles|vulkan).
+    // `angle=gl` (== angle=opengl) routes through the host's libEGL,
+    // which on NixOS is the libglvnd dispatcher that finds NVIDIA's
+    // `libEGL_nvidia.so.0` via the JSON ICD at
+    // `/run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json`.
+    // Vulkan needs `VK_KHR_surface` extensions that headless / TTY
+    // Wayland sessions don't provide; opengles is for embedded only;
+    // opengl is the right choice.
+    ("use-gl", Some("angle")),
+    ("use-angle", Some("gl")),
+    // Diagnostic verbosity around GPU / GL init.
+    ("enable-logging", None),
+    ("v", Some("1")),
 ];
 
 // `KitCefApp` — process-wide CEF app object. Injects Chromium
