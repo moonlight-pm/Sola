@@ -4,6 +4,8 @@ use std::rc::Rc;
 use serde_json::Value;
 
 use crate::assets::AssetBundle;
+use crate::cef::Browser;
+use crate::wayland::Surface;
 
 /// Declarative window configuration passed to `AppCtx::add_window`.
 pub struct WindowConfig {
@@ -21,27 +23,27 @@ pub struct WindowConfig {
 }
 
 /// JS dispatcher installed per window by the runtime after `A::new`.
-/// Converts a UCM script message into `SolaApp::on_js_command`.
 /// The `Option<u64>` is the request id used to correlate replies.
 pub type JsDispatcher = Box<dyn FnMut(&str, &Value, Option<u64>)>;
 
 /// Internal per-window state owned by sola-kit.
 pub(crate) struct WindowInner {
     pub(crate) title: String,
-    pub(crate) webview: webkit6::WebView,
-    pub(crate) gtk_window: gtk4::ApplicationWindow,
-    /// Shared with the UCM handler: the UCM reads from this slot, the
-    /// runtime writes into it after `A::new` returns.
+    pub(crate) surface: Rc<Surface>,
+    pub(crate) browser: Browser,
+    /// Shared with the JS bridge: the cef::ipc handler reads, the
+    /// runtime writes after `A::new` returns.
     pub(crate) dispatcher: Rc<RefCell<Option<JsDispatcher>>>,
-    /// Set to `true` after WebKit fires `LoadEvent::Finished`. Until
-    /// then, `eval_js` queues into `pending` so messages emitted in
-    /// response to replayed sticky topics aren't lost on a `window`
-    /// that hasn't even parsed our HTML yet.
+    /// Set to `true` after the browser fires LoadHandler::OnLoadEnd.
+    /// Until then, `eval_js` queues into `pending` so messages emitted
+    /// in response to replayed sticky topics aren't lost on a window
+    /// that hasn't even loaded our HTML yet. (LoadHandler wiring lands
+    /// in a follow-up; for now `loaded` stays false and queued messages
+    /// accumulate.)
     pub(crate) loaded: Rc<RefCell<bool>>,
     pub(crate) pending: Rc<RefCell<Vec<String>>>,
 }
 
-/// Cheap-clone handle to a window created via `AppCtx::add_window`.
 #[derive(Clone)]
 pub struct WindowHandle {
     pub(crate) inner: Rc<WindowInner>,
@@ -54,14 +56,11 @@ impl WindowHandle {
 
     pub fn eval_js(&self, script: &str) {
         if !*self.inner.loaded.borrow() {
-            // WebKit hasn't finished loading index.html yet — running
-            // evaluate_javascript now would target the initial blank
-            // window, where neither our DOM nor the JS bootstrap exist.
-            // Queue and let `connect_load_changed` drain on Finished.
+            // Browser hasn't fired OnLoadEnd yet — queue, drain on Finished.
             self.inner.pending.borrow_mut().push(script.to_string());
             return;
         }
-        eval_js_now(&self.inner.webview, script);
+        self.inner.browser.execute_js(script);
     }
 
     /// Send a JSON value to the frontend's `window.__solaRecv`. The frontend
@@ -73,33 +72,20 @@ impl WindowHandle {
         self.send_raw_json_to_js(&json_str);
     }
 
-    /// Variant of `send_to_js` for callers that already have a JSON-encoded
-    /// string to forward (e.g. messages coming off an mpsc channel).
     pub fn send_raw_json_to_js(&self, json: &str) {
         let js_literal = serde_json::to_string(json).unwrap_or_default();
         self.eval_js(&format!("window.__solaRecv({js_literal})"));
     }
 
-    /// Access the underlying GTK window for event controllers etc.
-    pub fn gtk_window(&self) -> &gtk4::ApplicationWindow {
-        &self.inner.gtk_window
+    /// Access the underlying Surface (Wayland surface + xdg_toplevel).
+    pub fn surface(&self) -> &Rc<Surface> {
+        &self.inner.surface
     }
 
-    /// Access the underlying WebKit WebView. Apps that need to restructure
-    /// the window's widget tree (e.g. reparent the WebView into a container
-    /// to add sibling WebViews) use this. The JS dispatcher / UCM stays
-    /// attached to the WebView across reparenting.
-    pub fn webview(&self) -> &webkit6::WebView {
-        &self.inner.webview
+    /// Access the underlying Browser (CEF wrapper).
+    pub fn browser(&self) -> &Browser {
+        &self.inner.browser
     }
-}
-
-/// Run a script against the WebView immediately. Called from
-/// `WindowHandle::eval_js` once the page has loaded, and from the
-/// `load-changed` handler in `ctx.rs` to drain queued scripts.
-pub(crate) fn eval_js_now(webview: &webkit6::WebView, script: &str) {
-    use webkit6::prelude::WebViewExt;
-    webview.evaluate_javascript(script, None, None, None::<&gio::Cancellable>, |_| {});
 }
 
 impl PartialEq for WindowHandle {

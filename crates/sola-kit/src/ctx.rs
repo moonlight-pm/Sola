@@ -1,22 +1,18 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gtk4::glib::Propagation;
-use gtk4::prelude::*;
-use webkit6::prelude::*;
-
 use sola_bus::BusClient;
 use sola_bus::topics::{Topic, Window};
 
-use crate::assets;
-use crate::webview;
+use crate::cef::Browser;
+use crate::wayland::{Surface, WaylandClient};
 use crate::window::{JsDispatcher, WindowConfig, WindowHandle, WindowInner};
 
 /// Effect handle passed to every `SolaApp` trait method.
-/// Holds the bus, the GTK application, and the list of live windows.
+/// Holds the bus, the Wayland client, and the list of live windows.
 pub struct AppCtx {
     pub(crate) bus: Rc<RefCell<BusClient>>,
-    pub(crate) gtk_app: gtk4::Application,
+    pub(crate) wayland: Rc<RefCell<WaylandClient>>,
     pub(crate) windows: Vec<WindowHandle>,
     pub(crate) app_id: &'static str,
     /// Latest `Windows` sticky snapshot, used by the framework to correlate
@@ -27,147 +23,47 @@ pub struct AppCtx {
 impl AppCtx {
     pub(crate) fn new(
         bus: Rc<RefCell<BusClient>>,
-        gtk_app: gtk4::Application,
+        wayland: Rc<RefCell<WaylandClient>>,
         app_id: &'static str,
     ) -> Self {
         Self {
             bus,
-            gtk_app,
+            wayland,
             windows: Vec::new(),
             app_id,
             known_windows: Vec::new(),
         }
     }
 
-    /// Create a new window. The returned handle can be stored as a field
-    /// and used later to `eval_js`, `send_to_js`, etc.
+    /// Create a new window: pair a Wayland surface with a CEF browser.
+    /// The browser navigates to `app:///index.html`; the cef::scheme
+    /// handler (registered separately, see C1) serves the HTML and
+    /// embedded assets via the AssetBundle in `cfg.assets`.
     pub fn add_window(&mut self, cfg: WindowConfig) -> WindowHandle {
-        let platform = Box::leak(Box::new(assets::platform_assets()));
-        let html_raw = cfg
-            .assets
-            .find("/index.html")
-            .map(|a| a.content.to_string())
-            .unwrap_or_else(|| "<html><body>No index.html</body></html>".to_string());
-
-        let html = if let Some(state_json) = cfg.initial_state.as_ref() {
-            html_raw.replace("__RESTORED_STATE__", state_json)
-        } else {
-            html_raw
-        };
-        let html = crate::inject_solarecv_bootstrap(&html);
-        let html = crate::inject_import_map(&html);
-
-        let web_context = webview::create_web_context(cfg.assets, platform, html);
-
         let dispatcher_slot: Rc<RefCell<Option<JsDispatcher>>> = Rc::new(RefCell::new(None));
-        let ucm = webview::create_ucm_for_window(dispatcher_slot.clone());
-
-        if cfg.transparent {
-            let css = gtk4::CssProvider::new();
-            css.load_from_data("window, window.background { background: transparent; }");
-            gtk4::style_context_add_provider_for_display(
-                &gdk4::Display::default().unwrap(),
-                &css,
-                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
-        }
-
-        let gtk_window = gtk4::ApplicationWindow::new(&self.gtk_app);
-        gtk_window.set_decorated(cfg.decorated);
-        gtk_window.set_default_size(cfg.size.0, cfg.size.1);
-        gtk_window.set_title(Some(&cfg.title));
-        // Sola apps exit only via bus CloseApp → on_close_app → ctx.shutdown.
-        // Swallowing xdg_toplevel.close here prevents the compositor's graceful-
-        // close flow for external apps from also taking down sola apps.
-        gtk_window.connect_close_request(|_win| Propagation::Stop);
-
-        let webview = webkit6::WebView::builder()
-            .web_context(&web_context)
-            .user_content_manager(&ucm)
-            .build();
-        if let Some(settings) = webkit6::prelude::WebViewExt::settings(&webview) {
-            settings.set_enable_developer_extras(true);
-            settings.set_enable_write_console_messages_to_stdout(true);
-        }
-        // Suppress WebKit's default right-click menu.
-        webview.connect_context_menu(|_, _, _| true);
-        if cfg.transparent {
-            webview.set_background_color(&gdk4::RGBA::new(0.0, 0.0, 0.0, 0.0));
-        }
-        gtk_window.set_child(Some(&webview));
-
         let loaded: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
         let pending: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-        {
-            let loaded = loaded.clone();
-            let pending = pending.clone();
-            let webview_for_drain = webview.clone();
-            webview.connect_load_changed(move |webview, event| {
-                if event != webkit6::LoadEvent::Finished {
-                    return;
-                }
-                *loaded.borrow_mut() = true;
 
-                // Compensate for compositor-assigned surface scales that
-                // make some WebView surfaces have devicePixelRatio != 1.
-                // dpr is linear in zoom_level for a fixed surface scale,
-                // so `current_zoom / dpr` is the zoom that makes css-px
-                // == device-px. (The earlier `1.0 / dpr` formula
-                // feedback-looped on reload — zoom 0.5 ⇒ dpr 1.0 ⇒ "fix"
-                // sets zoom 1.0 ⇒ next reload reads dpr 2.0 ⇒ flip.)
-                let webview_for_zoom = webview.clone();
-                webview.evaluate_javascript(
-                    "window.devicePixelRatio",
-                    None,
-                    None,
-                    None::<&gio::Cancellable>,
-                    move |result| {
-                        let Ok(jsv) = result else {
-                            return;
-                        };
-                        let dpr = jsv.to_double();
-                        if dpr <= 0.001 {
-                            return;
-                        }
-                        let current = webview_for_zoom.zoom_level();
-                        let target_zoom = current / dpr;
-                        if (current - target_zoom).abs() < 0.005 {
-                            return;
-                        }
-                        webview_for_zoom.set_zoom_level(target_zoom);
-                    },
-                );
-
-                let queued: Vec<String> = std::mem::take(&mut *pending.borrow_mut());
-                for script in queued {
-                    crate::window::eval_js_now(&webview_for_drain, &script);
-                }
-            });
-        }
-
-        webview.load_uri("app:///index.html");
+        let surface = Surface::new(self.wayland.clone(), &cfg);
+        let browser = Browser::new(surface.clone(), "app:///index.html");
 
         let inner = WindowInner {
             title: cfg.title,
-            webview,
-            gtk_window: gtk_window.clone(),
+            surface,
+            browser,
             dispatcher: dispatcher_slot,
             loaded,
             pending,
         };
 
-        gtk_window.present();
-
-        let handle = WindowHandle {
-            inner: Rc::new(inner),
-        };
+        let handle = WindowHandle { inner: Rc::new(inner) };
         self.windows.push(handle.clone());
         handle
     }
 
-    /// Close and remove a window.
+    /// Close and remove a window. (Surface drop → wl_surface destroy;
+    /// Browser drop → cef close; sctk + cef handle teardown internally.)
     pub fn remove_window(&mut self, handle: &WindowHandle) {
-        handle.inner.gtk_window.close();
         self.windows.retain(|w| w != handle);
     }
 
@@ -177,28 +73,20 @@ impl AppCtx {
         let _ = self.bus.borrow_mut().emit(topic);
     }
 
-    /// Retract a sticky bus event. Symmetric to [`emit`](Self::emit):
-    /// the bus removes the entry under `(topic, keys)` from its sticky
-    /// map and broadcasts the retraction. No-op for ephemeral topic
-    /// kinds (logged by `BusClient::retract`).
+    /// Retract a sticky bus event. Symmetric to [`emit`](Self::emit).
     pub fn retract(&self, topic: Topic) {
         let _ = self.bus.borrow_mut().retract(topic);
     }
 
-    /// Trigger a clean shutdown: calls `gtk::Application::quit` so the GTK
-    /// main loop exits. The `on_shutdown` hook is called by the framework
-    /// before this path is reached when coming from `Topic::Shutdown`; for
-    /// `on_close_app`-initiated exits the hook is also invoked before quit.
+    /// Trigger a clean shutdown: posts `cef::quit_message_loop()` so
+    /// `cef::run_message_loop` returns and `lib.rs::run<A>` proceeds to
+    /// `cef::shutdown()`.
     pub fn shutdown(&self) {
-        self.gtk_app.quit();
+        cef::quit_message_loop();
     }
 
     /// Resolve a `window_id` (as seen on the bus) to one of *this process's*
     /// owned `WindowHandle`s. Returns `None` if the id doesn't belong to us.
-    ///
-    /// Matching is by `(app_id, title)` pulled from the latest `Apps` sticky
-    /// snapshot. `app_id` guards against a coincidental title collision with
-    /// another Sola app.
     pub(crate) fn find_window_by_id(&self, window_id: u32) -> Option<&WindowHandle> {
         let entry = self
             .known_windows
@@ -211,18 +99,15 @@ impl AppCtx {
     }
 
     /// Return a Clone-able handle to the bus client. Use this when you need
-    /// to emit topics from a GTK timeout/idle closure that outlives the
-    /// `&mut AppCtx` borrow. The handle is not Send — it must run on the
-    /// GTK main thread.
+    /// to emit topics from a CEF-thread closure that outlives the `&mut
+    /// AppCtx` borrow. Not Send — must run on the CEF UI thread.
     pub fn bus_proxy(&self) -> BusProxy {
-        BusProxy {
-            bus: self.bus.clone(),
-        }
+        BusProxy { bus: self.bus.clone() }
     }
 }
 
-/// Cheap clone of the bus client, usable from any GTK-thread closure
-/// (not Send — runs on the GTK main loop).
+/// Cheap clone of the bus client, usable from any CEF UI-thread closure
+/// (not Send — runs on the CEF UI thread).
 #[derive(Clone)]
 pub struct BusProxy {
     bus: Rc<RefCell<BusClient>>,
