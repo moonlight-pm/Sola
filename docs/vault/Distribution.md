@@ -80,6 +80,77 @@ side, GTK4 + WebKitGTK 6.0 are runtime requirements for every
 [[sola-app|WebView app]]. These are normal nixpkgs packages with no
 patches.
 
+## CEF runtime libraries (sola-kit)
+
+`sola-kit` (and any future CEF-backed Sola app) links against
+`libcef.so` from `~/.cache/sola/cef-<version>/Release/`. CEF's GPU /
+renderer subprocesses pull in ~26 transitive native libraries
+(glib/nss/atk/dbus/cups/X11/gbm/…). On NixOS these don't live at
+`/usr/lib`, and we want zero LD\_LIBRARY\_PATH gymnastics or wrapper
+scripts at runtime — so we make the binary itself know where to look.
+
+The shape:
+
+1. **`programs.nix-ld.libraries`** in `/etc/nixos/configuration.nix`
+   collates the required packages' `.so` files into a single flat
+   directory at `/run/current-system/sw/share/nix-ld/lib`. The path is
+   stable — `/run/current-system` is repointed by `nixos-rebuild
+   switch`, so the indirection always resolves to the active config's
+   library set.
+2. **`crates/sola-kit/build.rs`** emits
+   `-Wl,--enable-new-dtags,-rpath,<cef-Release>,-rpath,/run/current-system/sw/share/nix-ld/lib`
+   so the linker bakes both paths into the binary's `DT_RUNPATH`. The
+   dynamic linker walks `RUNPATH` directly — no env vars, no shell
+   wrapper.
+
+### Required `programs.nix-ld.libraries` entries
+
+```nix
+programs.nix-ld.enable = true;
+programs.nix-ld.libraries = with pkgs; [
+  glib                                    # libglib-2.0, libgobject-2.0, libgio-2.0
+  nss nspr                                # libnss3, libnssutil3, libsmime3, libnspr4
+  atk                                     # libatk-1.0
+  at-spi2-atk                             # libatk-bridge-2.0
+  at-spi2-core                            # libatspi
+  dbus                                    # libdbus-1
+  cups                                    # libcups
+  expat                                   # libexpat
+  cairo pango                             # libcairo, libpango-1.0
+  alsa-lib                                # libasound
+  libxkbcommon                            # libxkbcommon
+  libdrm mesa                             # libgbm, libdrm
+  systemd                                 # libudev
+  xorg.libX11 xorg.libXcomposite xorg.libXdamage xorg.libXext
+  xorg.libXfixes xorg.libXrandr xorg.libxcb
+];
+```
+
+After `nixos-rebuild switch`, verify with `ls
+/run/current-system/sw/share/nix-ld/lib/ | grep -E
+'^(libglib|libnss|libgbm|libcups)' ` — those `.so` files should be
+present.
+
+### Verifying a sola-kit build is self-resolving
+
+```sh
+ldd /opt/sola/bin/sola-kit | grep "not found"
+```
+
+Empty output = the binary's `RUNPATH` covers everything. Anything in
+the list points at a missing `programs.nix-ld.libraries` entry; add the
+package, `nixos-rebuild switch`, no rebuild of sola-kit needed
+(`/run/current-system/...` indirection means the binary picks up the
+new contents on next launch).
+
+### Why not packaging sola-kit as a Nix derivation?
+
+That would be the most-correct NixOS solution and we'll get there for
+release, but for the develop-and-iterate phase the binary is a
+`cargo build` artefact. The RUNPATH-into-nix-ld approach lets us keep
+`cargo run` ergonomics while still producing a binary that runs cleanly
+without any environmental contortions.
+
 ## WebKit runtime modules
 
 WebKitGTK is modular: it dynamically loads pieces of the system at
