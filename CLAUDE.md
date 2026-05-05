@@ -240,10 +240,33 @@ Bare specifiers (`import 'foo'`) still need import-map entries — that's a brow
 
 This is the **only** active Rust CEF binding that tracks current CEF releases. `cef-rs` as a separate crate does not exist on crates.io. The crate is maintained by the Tauri team, ships pre-generated bindgen bindings (no headers needed — the tarball is enough), and has a working Linux `osr` example that exercises `on_accelerated_paint` with dma-buf import via Vulkan. Version `147.1.0+147.0.10` exactly matches our pinned CEF `147.0.10`.
 
-Enable the `accelerated_osr` feature to get dma-buf support:
+**Do NOT enable the `accelerated_osr` feature.** That feature only gates the crate's wgpu/Vulkan-based dma-buf importer helper module — it pulls in `ash`, `wgpu`, `metal`, `objc`, etc. We don't need any of that. We import dma-bufs through `zwp_linux_dmabuf_v1::create_params` (sctk-managed `wl_buffer`) and let sola-river composite. The `AcceleratedPaintInfo` and `AcceleratedPaintNativePixmapPlaneInfo` structs live in the base bindgen output (`cef::sys::*`) and are available without features.
 
 ```toml
-cef = { version = "147.1.0+147.0.10", features = ["accelerated_osr"] }
+cef = "147.1.0+147.0.10"
 ```
 
-The `accelerated_osr` feature pulls in `ash`, `libc`, `wgpu`, and `tracing` — we will need wgpu anyway for compositing the dma-buf texture into a Wayland buffer.
+### Binding name deltas vs. the design spec
+
+The design spec uses generic CEF C-API names. The actual `cef` crate names differ:
+
+| Spec / pseudocode | Actual `cef` crate |
+|---|---|
+| `CefSettings` | `Settings` |
+| `CefMainArgs` | `MainArgs` (built via `cef::args::Args::new()`) |
+| `CefBrowserSettings` | `BrowserSettings` |
+| `CefWindowInfo` | `WindowInfo` |
+| `CefBrowserHost::create_browser_sync(...)` | free fn `cef::browser_host_create_browser_sync(window_info, client, url, settings, extra_info, request_context)` |
+| `frame.execute_javascript(...)` | `frame.execute_java_script(...)` (yes, with underscore) |
+| `RenderHandler::get_view_rect(...) -> Rect` | `ImplRenderHandler::view_rect(&self, browser, rect: Option<&mut Rect>)` (out-param, no return) |
+| `ResourceHandler::get_response_headers(...)` | `response_headers(...)` (no `get_` prefix) |
+| `cef::post_task(ThreadId::UI, closure)` | `cef::post_task(thread_id, task: Option<&mut Task>)` — boxed `Task`, not closure (helper macro: `wrap_task!`) |
+| `cef::CefClientBuilder::new().with_*()` | no builder — use `wrap_client!` macro with handler fields |
+| `EventFlags::EVENTFLAG_*` | constants on `cef::sys::cef_event_flags_t` |
+| `KeyEventType::{KeyDown, KeyUp, Char}` | `KeyEventType::{KEYDOWN, KEYUP, CHAR, RAWKEYDOWN}` (uppercase) |
+| `MouseButtonType::{Left, Right, Middle}` | `MouseButtonType::{LEFT, RIGHT, MIDDLE}` |
+| C `int` booleans on event structs | `c_int` in Rust — cast `true as _` or `1 / 0` |
+| `CefString` is `Option<String>` in pseudocode | actual is `cef::CefString` — built from `&str` via its `From` impl |
+| `execute_process` returning `< 0` for main | actually returns `-1` for main, `>= 0` for subprocess (matches plan's branching) |
+
+`on_accelerated_paint` confirmed present in `ImplRenderHandler` with full dma-buf info (per-plane fd, stride, offset, size; struct-level DRM modifier; `cef::sys::cef_color_type_t` format = RGBA_8888 or BGRA_8888). No bindgen build step — the crate ships pre-generated bindings per target under `src/bindings/`.
