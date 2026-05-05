@@ -2,12 +2,13 @@
 //!
 //! Pipeline:
 //!   .ts  → strip types
-//!   .tsx → JSX→h() then strip types
-//!   .jsx → JSX→h()
+//!   .tsx → JSX→jsx()/jsxs() (auto-imported) then strip types
+//!   .jsx → JSX→jsx()/jsxs() (auto-imported)
 //!
-//! JSX transform is configured for Preact (classic runtime, pragma "h",
-//! fragment "Fragment"). Apps just need `import { h, Fragment } from 'preact'`
-//! at the top of any .tsx file.
+//! JSX transform is configured for Preact's automatic runtime
+//! (`import_source: "preact"`), so swc auto-injects
+//! `import { jsx, jsxs, Fragment } from "preact/jsx-runtime"` for any
+//! file containing JSX. App code never needs to import `h` or `Fragment`.
 
 use swc_core::common::comments::SingleThreadedComments;
 use swc_core::common::sync::Lrc;
@@ -17,6 +18,7 @@ use swc_core::ecma::codegen::Emitter;
 use swc_core::ecma::codegen::text_writer::JsWriter;
 use swc_core::ecma::parser::lexer::Lexer;
 use swc_core::ecma::parser::{Parser, StringInput, Syntax, TsSyntax};
+use swc_core::ecma::transforms::base::resolver;
 use swc_core::ecma::transforms::react::{Options as JsxOptions, Runtime, jsx};
 use swc_core::ecma::transforms::typescript::strip;
 
@@ -57,14 +59,19 @@ pub fn transform(source: &str, has_jsx: bool, has_types: bool) -> String {
 
         let mut program = Program::Module(module);
 
+        // Resolver assigns scope marks to every identifier. Without it,
+        // identifiers JSX inserts (e.g. `h` from `<Foo />` → `h(Foo, ...)`)
+        // are unmarked, and the TS strip pass's import-elision sees no
+        // "value use" of `h` and removes the import → ReferenceError at runtime.
+        program = program.apply(resolver(unresolved_mark, top_level_mark, true));
+
         if has_jsx {
             program = program.apply(jsx(
                 cm.clone(),
                 Some(&comments),
                 JsxOptions {
-                    runtime: Some(Runtime::Classic),
-                    pragma: Some("h".into()),
-                    pragma_frag: Some("Fragment".into()),
+                    runtime: Some(Runtime::Automatic),
+                    import_source: Some("preact".into()),
                     ..Default::default()
                 },
                 top_level_mark,
@@ -100,4 +107,36 @@ pub fn transform(source: &str, has_jsx: bool, has_types: bool) -> String {
 /// Back-compat entry point: TS-only, no JSX.
 pub fn strip_ts(source: &str) -> String {
     transform(source, false, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jsx_auto_imports_jsx_runtime() {
+        // App code does NOT import h. Automatic runtime should add
+        // `import { jsx } from "preact/jsx-runtime"` (or jsxs) for us.
+        let src = r#"import { render } from "preact";
+import { Main } from "./components/Main";
+
+render(<Main />, document.body);
+"#;
+        let out = transform(src, true, true);
+        eprintln!("=== TRANSFORM OUTPUT ===\n{}\n=== END ===", out);
+        assert!(
+            out.contains("preact/jsx-runtime"),
+            "expected automatic-runtime import from preact/jsx-runtime; got:\n{out}"
+        );
+        // JSX must lower to a jsx*() call from the runtime.
+        assert!(
+            out.contains("jsx(") || out.contains("jsxs("),
+            "expected jsx()/jsxs() call from automatic runtime; got:\n{out}"
+        );
+        // The user's existing `render` import must survive resolver+strip.
+        assert!(
+            out.contains("import { render }") || out.contains("render,") || out.contains(", render"),
+            "expected user's `render` import to survive; got:\n{out}"
+        );
+    }
 }

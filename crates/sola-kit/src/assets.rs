@@ -10,6 +10,8 @@ pub enum ContentType {
     /// JavaScript with JSX. Goes through the swc JSX transform (no type strip).
     Jsx,
     Svg,
+    /// JSON (incl. source maps).
+    Json,
 }
 
 impl ContentType {
@@ -32,6 +34,8 @@ impl ContentType {
             Some(Self::TypeScript)
         } else if path.ends_with(".svg") {
             Some(Self::Svg)
+        } else if path.ends_with(".map") || path.ends_with(".json") {
+            Some(Self::Json)
         } else {
             None
         }
@@ -45,6 +49,7 @@ impl ContentType {
                 "application/javascript"
             }
             Self::Svg => "image/svg+xml",
+            Self::Json => "application/json",
         }
     }
 
@@ -124,9 +129,33 @@ pub fn platform_assets() -> AssetBundle {
                 content_type: ContentType::JavaScript,
             },
             Asset {
+                path: "/vendor/preact/preact.module.js.map",
+                content: include_str!("../web/vendor/preact/preact.module.js.map"),
+                content_type: ContentType::Json,
+            },
+            // Filename kept as `jsxRuntime.module.js` (camelCase) to match the
+            // sourceMappingURL trailer baked into the file by upstream — the
+            // package path is still `preact/jsx-runtime` (kebab) via the
+            // import map.
+            Asset {
+                path: "/vendor/preact/jsxRuntime.module.js",
+                content: include_str!("../web/vendor/preact/jsxRuntime.module.js"),
+                content_type: ContentType::JavaScript,
+            },
+            Asset {
+                path: "/vendor/preact/jsxRuntime.module.js.map",
+                content: include_str!("../web/vendor/preact/jsxRuntime.module.js.map"),
+                content_type: ContentType::Json,
+            },
+            Asset {
                 path: "/vendor/preact/hooks.module.js",
                 content: include_str!("../web/vendor/preact/hooks.module.js"),
                 content_type: ContentType::JavaScript,
+            },
+            Asset {
+                path: "/vendor/preact/hooks.module.js.map",
+                content: include_str!("../web/vendor/preact/hooks.module.js.map"),
+                content_type: ContentType::Json,
             },
             Asset {
                 path: "/vendor/preact/signals-core.module.js",
@@ -134,9 +163,19 @@ pub fn platform_assets() -> AssetBundle {
                 content_type: ContentType::JavaScript,
             },
             Asset {
+                path: "/vendor/preact/signals-core.module.js.map",
+                content: include_str!("../web/vendor/preact/signals-core.module.js.map"),
+                content_type: ContentType::Json,
+            },
+            Asset {
                 path: "/vendor/preact/signals.module.js",
                 content: include_str!("../web/vendor/preact/signals.module.js"),
                 content_type: ContentType::JavaScript,
+            },
+            Asset {
+                path: "/vendor/preact/signals.module.js.map",
+                content: include_str!("../web/vendor/preact/signals.module.js.map"),
+                content_type: ContentType::Json,
             },
         ],
     }
