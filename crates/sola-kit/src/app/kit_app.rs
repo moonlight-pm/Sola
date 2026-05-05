@@ -8,8 +8,9 @@ use sola_core::theme::Theme;
 use sola_kit::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 
 static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
-    "/index.html" => (include_str!("../../web/app/index.html"), Html),
-    "/src/main.tsx" => (include_str!("../../web/app/src/main.tsx"), Tsx),
+    "/index.html" => (include_str!("../../web/index.html"), Html),
+    "/index.tsx" => (include_str!("../../web/index.tsx"), Tsx),
+    "/components/Main.tsx" => (include_str!("../../web/components/Main.tsx"), Tsx),
 };
 
 #[derive(Deserialize)]
@@ -26,13 +27,9 @@ impl SolaApp for KitApp {
     const APP_ID: &'static str = "sola-kit";
 
     fn new(ctx: &mut AppCtx) -> Self {
-        // The WebKit Web Inspector follows the GTK theme — there's no
-        // inspector-specific API. Force dark for this process so devtools
-        // come up dark. Sola-kit windows are decorated:false with the
-        // WebView as the sole child, so this has no visible side-effects.
-        if let Some(settings) = gtk4::Settings::default() {
-            settings.set_gtk_application_prefer_dark_theme(true);
-        }
+        // (Was: force GTK dark theme so the WebKit inspector inherited it.
+        // Removed during the CEF port — Chromium DevTools has its own theme
+        // selector and doesn't follow a host toolkit setting.)
 
         let theme = Theme::default();
         use super::catalog::{CATALOG, Group};
@@ -96,21 +93,10 @@ impl SolaApp for KitApp {
 impl KitApp {
     fn on_theme(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
         let Topic::Theme(theme) = delivery.topic else { return };
-        // Persisted replay or peer update: refresh in-memory copy.
+        // Persisted replay or peer update: refresh in-memory copy. The
+        // framework's bus loop is responsible for pushing the rendered
+        // CSS to the JS side; we don't duplicate that here.
         self.theme = theme.clone();
-        // Push to the JS frontend so its mirror updates too.
-        self.main_window.send_to_js(&json!({
-            "event": "theme",
-            "vars": self.theme.to_css_vars(),
-        }));
-        // Editor needs the full struct (mirrored in JS as themeState.current)
-        // because the 'theme' event above only carries the flat var map. Without
-        // this, color inputs / swatches in the editor stay stale after reset
-        // or peer updates.
-        self.main_window.send_to_js(&json!({
-            "event": "theme_state",
-            "theme": &self.theme,
-        }));
     }
 
     fn handle_theme_set(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
@@ -137,11 +123,9 @@ impl KitApp {
             return;
         }
         if action_id == "open_devtools" {
-            use webkit6::prelude::WebViewExt;
-            let webview = self.main_window.webview();
-            if let Some(inspector) = webview.inspector() {
-                inspector.show();
-            }
+            // E1 will wire this through self.main_window.browser().open_devtools(),
+            // which spawns a second OSR Surface for Chromium DevTools.
+            self.main_window.browser().open_devtools();
         }
     }
 }
