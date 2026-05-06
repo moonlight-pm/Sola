@@ -18,12 +18,12 @@ struct ThemeSetArgs {
     theme: Theme,
 }
 
-pub struct KitApp {
+pub struct KitApplication {
     theme: Theme,
     main_window: WindowHandle,
 }
 
-impl SolaApp for KitApp {
+impl SolaApp for KitApplication {
     const APP_ID: &'static str = "sola-kit";
 
     fn new(ctx: &mut AppCtx) -> Self {
@@ -46,7 +46,8 @@ impl SolaApp for KitApp {
             "theme": &theme,
             "catalog": catalog_json,
             "fonts": fonts,
-        })).ok();
+        }))
+        .ok();
 
         let main_window = ctx.add_window(WindowConfig {
             title: "Theme".into(),
@@ -90,9 +91,11 @@ impl SolaApp for KitApp {
     }
 }
 
-impl KitApp {
+impl KitApplication {
     fn on_theme(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
-        let Topic::Theme(theme) = delivery.topic else { return };
+        let Topic::Theme(theme) = delivery.topic else {
+            return;
+        };
         // Persisted replay or peer update: refresh in-memory copy. The
         // framework's bus loop is responsible for pushing the rendered
         // CSS to the JS side; we don't duplicate that here.
@@ -132,7 +135,7 @@ impl KitApp {
 
 fn kit_menu() -> AppMenuPayload {
     AppMenuPayload {
-        app_id: KitApp::APP_ID.into(),
+        app_id: KitApplication::APP_ID.into(),
         menus: vec![MenuDefinition {
             label: "Sola Kit".into(),
             items: vec![MenuItem::Action {

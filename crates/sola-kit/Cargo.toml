@@ -2,13 +2,19 @@
 name = "sola-kit"
 version.workspace = true
 edition.workspace = true
+# Cargo auto-discovers every `.rs` directly in `src/bin/` as its own
+# binary target. The bin tree here is `main.rs` + sibling submodules
+# (`application.rs`, `catalog.rs`, `fonts.rs`) — they're not standalone
+# bins, just modules of `main`. Disable auto-discovery and list the
+# real bin explicitly below.
+autobins = false
 
 [lib]
 # default — uses src/lib.rs
 
 [[bin]]
 name = "sola-kit"
-path = "src/app/main.rs"
+path = "src/bin/main.rs"
 
 [dependencies]
 sola-bus = { path = "../sola-bus" }

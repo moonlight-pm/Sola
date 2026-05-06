@@ -1,6 +1,6 @@
+mod application;
 mod catalog;
 mod fonts;
-mod kit_app;
 
 use std::process::ExitCode;
 
@@ -13,6 +13,6 @@ fn main() -> ExitCode {
         return code;
     }
 
-    sola_kit::run::<kit_app::KitApp>();
+    sola_kit::run::<application::KitApplication>();
     ExitCode::SUCCESS
 }
