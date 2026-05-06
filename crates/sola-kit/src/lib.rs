@@ -1,6 +1,12 @@
 use sola_bus::BusClient;
 use sola_bus::topics::{Topic, TopicKind};
 
+// `wrap_task!` (used below) expands to code referencing CEF traits + RcImpl
+// types by bare name. We can't `use cef::*` here because the local `pub mod
+// cef` shadows the external crate; reach the macro and types via `::cef::`.
+#[allow(unused_imports)]
+use ::cef::{rc::*, *};
+
 pub mod assets;
 pub mod cef;
 pub mod ctx;
@@ -244,10 +250,11 @@ pub fn run<A: SolaApp>() {
         *source.inner.dispatcher.borrow_mut() = Some(dispatcher);
     }
 
-    // TODO(D3/D5): bus → CEF UI thread bridge. The registry is built and
-    // subscriptions are placed; what's missing is a thread that drains the
-    // bus client and posts dispatches onto the CEF UI thread.
-    let _ = registry;
+    // --- Bus → CEF UI thread bridge ---
+    // Recurring CEF UI-thread task that drains the BusClient and dispatches
+    // to per-topic handlers via the registry. 16 ms tick mirrors the Wayland
+    // event-pump cadence.
+    start_bus_pump::<A>(bus.clone(), runtime.clone(), std::rc::Rc::new(registry));
 
     // --- Wayland event-pump: recurring CEF UI-thread task drains
     //     the queue every ~16 ms so configures, frame callbacks, and
@@ -261,6 +268,85 @@ pub fn run<A: SolaApp>() {
     // --- Cleanup ---
     cef::init::shutdown();
     tracing::info!("{app_id} stopped");
+}
+
+// ── Bus pump ────────────────────────────────────────────────────────────────
+
+::cef::wrap_task! {
+    pub struct BusPumpTask<A: SolaApp,> {
+        bus: std::rc::Rc<std::cell::RefCell<BusClient>>,
+        runtime: std::rc::Rc<std::cell::RefCell<AppRuntime<A>>>,
+        registry: std::rc::Rc<BusRegistry<A>>,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            // Drain everything pending in one pass so we don't accumulate
+            // backpressure across ticks.
+            let messages: Vec<sola_bus::Message> = {
+                let bus = self.bus.borrow();
+                bus.drain_notify();
+                let mut msgs = Vec::new();
+                while let Some(msg) = bus.try_recv() {
+                    msgs.push(msg);
+                }
+                msgs
+            };
+
+            for msg in messages {
+                {
+                    let mut rt = self.runtime.borrow_mut();
+                    let AppRuntime { app, ctx } = &mut *rt;
+                    app.on_raw_bus_message(&msg, ctx);
+                }
+
+                let Some(topic) = Topic::parse(&msg) else {
+                    continue;
+                };
+
+                if matches!(topic, Topic::Shutdown) {
+                    {
+                        let mut rt = self.runtime.borrow_mut();
+                        let AppRuntime { app, ctx } = &mut *rt;
+                        app.on_shutdown(ctx);
+                    }
+                    ::cef::quit_message_loop();
+                    return;
+                }
+
+                let mut rt = self.runtime.borrow_mut();
+                let AppRuntime { app, ctx } = &mut *rt;
+                let retracted = topic.kind().behavior().is_sticky() && !msg.sticky;
+                let delivery = sola_bus::Delivery {
+                    topic: &topic,
+                    retracted,
+                    source: &msg.source,
+                };
+                self.registry.dispatch(&delivery, app, ctx);
+            }
+
+            // Re-post for next tick. 16 ms ≈ 60 Hz, matches the Wayland pump.
+            let mut next = BusPumpTask::<A>::new(
+                self.bus.clone(),
+                self.runtime.clone(),
+                self.registry.clone(),
+            );
+            ::cef::post_delayed_task(
+                ::cef::ThreadId::from(::cef::sys::cef_thread_id_t::TID_UI),
+                Some(&mut next),
+                16,
+            );
+        }
+    }
+}
+
+fn start_bus_pump<A: SolaApp>(
+    bus: std::rc::Rc<std::cell::RefCell<BusClient>>,
+    runtime: std::rc::Rc<std::cell::RefCell<AppRuntime<A>>>,
+    registry: std::rc::Rc<BusRegistry<A>>,
+) {
+    let mut task = BusPumpTask::<A>::new(bus, runtime, registry);
+    ::cef::post_task(::cef::ThreadId::from(::cef::sys::cef_thread_id_t::TID_UI), Some(&mut task));
 }
 
 /// Inject a synchronous bootstrap that installs a queueing
