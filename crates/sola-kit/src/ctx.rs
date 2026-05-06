@@ -14,17 +14,24 @@ pub struct AppCtx {
     pub(crate) bus: Rc<RefCell<BusClient>>,
     pub(crate) wayland: Rc<RefCell<WaylandClient>>,
     pub(crate) windows: Vec<WindowHandle>,
+    /// `SolaApp::APP_ID` for this process. Reported to the compositor as
+    /// `xdg_toplevel.app_id` (so window-manager rules + sola-river's
+    /// per-app focus/zoning logic see the right id) and used by future
+    /// bus-loop intercepts that need to filter messages addressed to us.
+    pub(crate) app_id: &'static str,
 }
 
 impl AppCtx {
     pub(crate) fn new(
         bus: Rc<RefCell<BusClient>>,
         wayland: Rc<RefCell<WaylandClient>>,
+        app_id: &'static str,
     ) -> Self {
         Self {
             bus,
             wayland,
             windows: Vec::new(),
+            app_id,
         }
     }
 
@@ -60,7 +67,7 @@ impl AppCtx {
         // the browser is created so the first navigation is served correctly.
         crate::cef::scheme::register_window(cfg.assets, html);
 
-        let surface = Surface::new(self.wayland.clone(), &cfg);
+        let surface = Surface::new(self.wayland.clone(), &cfg, self.app_id);
         let browser = Browser::new(surface.clone(), "app:///index.html");
 
         // Wire this browser's identifier to its dispatcher slot so the

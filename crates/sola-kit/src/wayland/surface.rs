@@ -35,10 +35,6 @@ use crate::window::WindowConfig;
 #[allow(unused_imports)]
 use ::cef::{rc::*, *};
 
-/// App-id reported to the compositor for all sola-kit windows.
-/// TODO(later): plumb the actual APP_ID through from `SolaApp::APP_ID`.
-const APP_ID: &str = "sola.kit";
-
 /// Per-window Wayland state: a `wl_surface` mapped as an `xdg_toplevel`,
 /// plus enough context to present CEF-produced frames via either dma-buf
 /// (zero-copy GPU) or wl_shm (CPU readback via OnPaint).
@@ -67,8 +63,16 @@ pub struct Surface {
 impl Surface {
     /// Create a new xdg_toplevel surface from `cfg` and commit the initial
     /// empty frame. Returns `Rc<Self>` so it can be shared with closures.
-    pub fn new(client: Rc<RefCell<WaylandClient>>, cfg: &WindowConfig) -> Rc<Self> {
-        tracing::debug!(title = %cfg.title, size = ?cfg.size, "Surface::new");
+    ///
+    /// `app_id` becomes the `xdg_toplevel.app_id` reported to the compositor
+    /// (sola-river uses it for per-app focus/zoning rules); the kit's
+    /// `lib.rs::run<A>` threads `SolaApp::APP_ID` through here.
+    pub fn new(
+        client: Rc<RefCell<WaylandClient>>,
+        cfg: &WindowConfig,
+        app_id: &str,
+    ) -> Rc<Self> {
+        tracing::debug!(title = %cfg.title, size = ?cfg.size, app_id, "Surface::new");
         let xdg_window = {
             let c = client.borrow();
 
@@ -80,7 +84,7 @@ impl Surface {
             );
 
             xdg_window.set_title(cfg.title.clone());
-            xdg_window.set_app_id(APP_ID.to_string());
+            xdg_window.set_app_id(app_id.to_string());
             xdg_window.set_min_size(Some((400, 300)));
 
             // Initial empty commit: tells the compositor we exist so it sends

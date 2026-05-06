@@ -216,7 +216,7 @@ pub fn run<A: SolaApp>() {
     }
 
     // --- Build AppCtx, run A::new ---
-    let mut ctx = AppCtx::new(bus.clone(), wayland.clone());
+    let mut ctx = AppCtx::new(bus.clone(), wayland.clone(), app_id);
     let mut app = A::new(&mut ctx);
 
     // --- Build BusRegistry and subscribe to the topics the app declared ---
