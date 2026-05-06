@@ -132,7 +132,13 @@ pub fn initialize() {
     settings.windowless_rendering_enabled = 1; // true — OSR / off-screen rendering
     settings.external_message_pump       = 0; // false — use cef::run_message_loop
     settings.multi_threaded_message_loop = 0; // false — single main-thread loop
-    settings.log_severity = cef::LogSeverity::WARNING;
+    // DISABLE silences Chromium's WARNING + ERROR output to stderr (FATAL
+    // still surfaces, which is what we want for genuine crashes). Without
+    // this, every startup spams a `dbus/object_proxy.cc` error from the
+    // UPower DisplayDevice probe (NixOS doesn't run upowerd) plus assorted
+    // first-run noise that drowns out our own tracing logs. Bump back to
+    // WARNING (or INFO) when actively debugging Chromium internals.
+    settings.log_severity = cef::LogSeverity::DISABLE;
 
     // `Args::new()` reads `std::env::args()` internally and keeps the
     // CString/argv storage alive for the duration of the call.
