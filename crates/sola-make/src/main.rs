@@ -10,6 +10,7 @@ mod cef;
 mod install;
 mod watch;
 
+use std::os::unix::process::CommandExt;
 use std::process::{Command, exit};
 
 use clap::Parser;
@@ -67,7 +68,7 @@ enum AssetsAction {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Build { target, release } => build(target, release),
+        Commands::Build { target, release } => build_exec(target, release),
         Commands::Assets { action } => match action {
             AssetsAction::Pull => assets::pull(),
         },
@@ -112,6 +113,10 @@ fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
 }
 
 /// Run `cargo build` with optional crate targeting and release mode.
+///
+/// Spawns cargo as a child process. Use this when the caller needs to
+/// do further work after the build (e.g. `install`'s post-build copy
+/// steps).
 fn build(target: Option<String>, release: bool) {
     let resolved = target.as_deref().map(resolve_crate_name);
     let args = build_args(resolved.as_deref(), release);
@@ -122,6 +127,21 @@ fn build(target: Option<String>, release: bool) {
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
+}
+
+/// `exec`-based variant for the top-level `cargo make build` command.
+///
+/// Replaces the current process image with cargo so the outer
+/// `cargo run -q -p sola-make` becomes the inner `cargo build` —
+/// one cargo process, no nested-cargo overhead, and no risk of
+/// env-var divergence between the parent and child invocation.
+fn build_exec(target: Option<String>, release: bool) -> ! {
+    let resolved = target.as_deref().map(resolve_crate_name);
+    let args = build_args(resolved.as_deref(), release);
+    // `exec` only returns on failure (e.g. cargo not on PATH).
+    let err = Command::new("cargo").args(&args).exec();
+    eprintln!("failed to exec cargo: {err}");
+    exit(1);
 }
 
 /// Resolve a short crate name (e.g. "shell") to its package name

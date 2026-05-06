@@ -1,42 +1,74 @@
 //! sola-kit build script.
 //!
-//! 1. Ensures the pinned CEF binary distribution is present at
-//!    ~/.cache/sola/cef-<version>/ (downloads if missing — first build
-//!    on a fresh machine takes ~1-2 minutes). `ensure_cef` also
-//!    patchelfs libcef.so on a fresh download so its DT_RUNPATH covers
-//!    `/run/current-system/sw/share/nix-ld/lib` — see
-//!    `crates/sola-make/src/cef.rs::patch_libcef_for_nix_ld` and
-//!    `docs/vault/Distribution.md` → "CEF runtime libraries
-//!    (sola-kit)".
-//! 2. Emits link directives so cargo links against libcef.so from that
+//! 1. Reads the pinned CEF version from the workspace-root `cef-version`
+//!    file. The file is the single source of truth — `sola-make`'s
+//!    `cef::CEF_VERSION` reads the same path. Bump = one-line edit.
+//! 2. Computes the cache path: `~/.cache/sola/cef-<version>/`.
+//! 3. Verifies `Release/libcef.so` exists. If not, errors out with a
+//!    clear "run `cargo make install-cef` first" message — the download
+//!    + extract + patchelf + Resources-symlink work lives in
+//!    `sola-make::cef::ensure_cef` and is invoked explicitly by the
+//!    `install-cef` subcommand, never implicitly during `cargo build`.
+//!    This keeps `sola-kit`'s build graph free of `ureq`/`ring`/
+//!    `rustls`/`bzip2`/`tar` (the download crates) so alternation
+//!    between `cargo build -p sola-kit` and `cargo make build sola-kit`
+//!    doesn't cascade rebuilds across the workspace.
+//! 4. Emits link directives so cargo links against libcef.so from the
 //!    cache directory.
 //!
-//! With (1) in place, the dynamic linker resolves libcef.so's
-//! transitive deps (glib, nss, atk, X11, gbm, …) directly through
-//! libcef's own RUNPATH — sola-kit's binary doesn't need any
-//! additional rpath beyond what `cef-dll-sys` already emits.
+//! Setup on a fresh machine:
+//!
+//! ```sh
+//! cargo make install-cef    # one-time: downloads ~150 MB, patchelfs, symlinks
+//! cargo build -p sola-kit   # works from here on out
+//! ```
+//!
+//! After a CEF version bump (edit `cef-version` at workspace root):
+//! re-run `cargo make install-cef`. The cache directory is
+//! version-suffixed so multiple versions can coexist on disk.
+
+use std::path::PathBuf;
+
+/// Single source of truth for the pinned CEF release. `sola-make`
+/// reads the same file via the same `include_str!` mechanism.
+const CEF_VERSION: &str = include_str!("../../cef-version").trim_ascii_end();
+
+fn cef_dir() -> PathBuf {
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = std::env::var_os("HOME")
+                .expect("HOME not set; cannot resolve CEF cache path");
+            PathBuf::from(home).join(".cache")
+        });
+    cache.join("sola").join(format!("cef-{CEF_VERSION}"))
+}
 
 fn main() {
-    let cef_dir = sola_make::cef::ensure_cef()
-        .expect("CEF binary distribution required (failed to download)");
+    let cef_dir = cef_dir();
+    let release_dir = cef_dir.join("Release");
+    let libcef = release_dir.join("libcef.so");
 
-    let release_dir = sola_make::cef::release_dir();
-    let release_dir_str = release_dir.display().to_string();
-    println!("cargo:rustc-link-search=native={release_dir_str}");
+    if !libcef.exists() {
+        // Hard fail with a clear, actionable message. Don't try to
+        // download — that would re-introduce the heavy build-deps.
+        eprintln!();
+        eprintln!("error: CEF binary distribution not found");
+        eprintln!("       expected: {}", libcef.display());
+        eprintln!();
+        eprintln!("       run this once to download + extract + patchelf:");
+        eprintln!("           cargo make install-cef");
+        eprintln!();
+        std::process::exit(1);
+    }
+
+    println!("cargo:rustc-link-search=native={}", release_dir.display());
     println!("cargo:rustc-link-lib=dylib=cef");
 
     // Embed the cache path as a compile-time string for runtime CefSettings.
     println!("cargo:rustc-env=SOLA_KIT_CEF_DIR={}", cef_dir.display());
 
-    // Make the cache copy of libcef.so come FIRST in the binary's
-    // RUNPATH. The `cef-dll-sys` build script also copies libcef.so to
-    // its own per-build OUT_DIR and emits an `-rpath` for it; without
-    // this directive we'd resolve libcef via that copy at runtime, and
-    // its (un-patched) `$ORIGIN` RUNPATH wouldn't find CEF's transitive
-    // system deps. The cache copy is the one `ensure_cef` patchelf'd
-    // with `/run/current-system/sw/share/nix-ld/lib`, so we want it to
-    // win the lookup.
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{release_dir_str}");
-
+    // Re-run only when the build script itself or the pinned version changes.
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../../cef-version");
 }

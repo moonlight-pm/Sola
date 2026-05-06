@@ -54,5 +54,9 @@ tracing = "0.1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 
-[build-dependencies]
-sola-make = { path = "../sola-make" }
+# No `[build-dependencies]`: `build.rs` is dependency-free (just std)
+# and reads the pinned CEF version from the workspace-root `cef-version`
+# file via `include_str!`. Keeping `sola-make` out of sola-kit's build
+# graph stops `ureq`/`ring`/`rustls`/`bzip2`/`tar` from being pulled in
+# (they live only in `sola-make` for the `install-cef` subcommand) so
+# alternation with `cargo make build` doesn't trigger spurious rebuilds.

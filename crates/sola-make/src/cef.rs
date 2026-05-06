@@ -6,9 +6,18 @@
 
 use std::path::PathBuf;
 
-/// Pinned CEF release. Update this constant to bump the engine version.
-/// Match the binary tarball naming on https://cef-builds.spotifycdn.com/.
-pub const CEF_VERSION: &str = "147.0.10+gd58e84d+chromium-147.0.7727.118";
+/// Pinned CEF release. Read from the workspace-root `cef-version` file
+/// so `crates/sola-kit/build.rs` can read the same version without
+/// taking a `[build-dependencies]` on `sola-make` (which would pull
+/// in the whole `ureq`/`bzip2`/`tar` tree into sola-kit's build graph
+/// and trigger spurious rebuild cascades when alternating between
+/// `cargo build -p sola-kit` and `cargo make build sola-kit`).
+///
+/// `trim_ascii_end()` is `const fn` since Rust 1.80, so this stays a
+/// compile-time constant — bumping the version is a one-line file
+/// edit and a rebuild.
+pub const CEF_VERSION: &str =
+    include_str!("../../../cef-version").trim_ascii_end();
 
 /// Directory name used inside the cache. Stable across version bumps
 /// only via the version-suffixed subdirectory.
@@ -182,33 +191,66 @@ fn patch_cef_libs_for_nix_ld(release: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Download the CEF tarball and extract its contents into `dir`.
+///
+/// Shells out to `curl | tar -xj` instead of doing the HTTP + bzip2 +
+/// tar work in Rust. Reason: the Rust path required `ureq` + `ring` +
+/// `rustls` + `bzip2` + `tar` as deps. Those crates were also pulled
+/// in (at different feature unifications) by `cef-dll-sys`'s
+/// `download-cef` build-dependency, causing cargo to rebuild them on
+/// every alternation between `cargo build -p sola-kit` and
+/// `cargo make build sola-kit`. Shelling out drops the deps entirely.
+///
+/// Both `curl` and `tar` are universally available on Linux hosts;
+/// we already require `patchelf` and other tools, so this isn't a new
+/// kind of dependency.
 fn download_and_extract(dir: &Path) -> io::Result<()> {
-    let parent = dir.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "cef_path has no parent"))?;
+    let parent = dir
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "cef_path has no parent"))?;
     fs::create_dir_all(parent)?;
 
     let url = tarball_url();
     eprintln!("[cef] GET {url}");
-    let response = ureq::get(&url)
-        .call()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("download failed: {e}")))?;
-    let reader = response.into_reader();
-    let bz2 = bzip2::read::BzDecoder::new(reader);
-    let mut archive = tar::Archive::new(bz2);
 
-    // The tarball contains a top-level dir like `cef_binary_<ver>_linux64_minimal/`.
-    // We want its contents, not the dir itself, placed at `dir/`. Easiest:
-    // extract to a tmp staging directory, then rename the inner directory.
+    // The tarball contains a top-level dir like
+    // `cef_binary_<ver>_linux64_minimal/`. We want its contents — not
+    // the dir itself — placed at `dir/`. Extract into a tmp staging
+    // dir, then rename the inner directory into place.
     let staging = parent.join(format!(".cef-staging-{}", std::process::id()));
-    if staging.exists() { fs::remove_dir_all(&staging)?; }
+    if staging.exists() {
+        fs::remove_dir_all(&staging)?;
+    }
     fs::create_dir_all(&staging)?;
 
-    archive.unpack(&staging)?;
+    // `set -o pipefail` so a failed `curl` propagates through the pipe
+    // (otherwise `tar` succeeds on empty input and we silently get an
+    // empty staging dir). `curl -fsSL`: -f fail on HTTP error, -s
+    // silent progress, -L follow redirects.
+    let pipeline = format!(
+        "set -e && set -o pipefail && curl -fsSL '{url}' | tar -xjf - -C '{}'",
+        staging.display()
+    );
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&pipeline)
+        .status()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("failed to spawn sh: {e}")))?;
+    if !status.success() {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("CEF download/extract failed (exit {status}); pipeline: {pipeline}"),
+        ));
+    }
 
     // Find the single top-level directory inside staging.
     let inner = fs::read_dir(&staging)?
         .filter_map(|e| e.ok())
         .find(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no top-level dir in CEF tarball"))?;
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "no top-level dir in CEF tarball")
+        })?;
 
     fs::rename(inner.path(), dir)?;
     fs::remove_dir_all(&staging)?;
