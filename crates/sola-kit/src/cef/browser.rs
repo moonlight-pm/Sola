@@ -15,7 +15,7 @@ use cef::{rc::*, *};
 
 use std::rc::Rc;
 
-use crate::cef::handlers::{KitClient, KitRenderHandler};
+use crate::cef::handlers::{KitClient, KitLifeSpanHandler, KitRenderHandler, KitRequestHandler};
 use crate::wayland::Surface;
 
 /// A CEF browser bound to a Wayland surface via OSR + dma-buf.
@@ -55,10 +55,12 @@ impl Browser {
         // Background colour is ARGB packed into u32: 0xFFFFFFFF = opaque white.
         browser_settings.background_color = 0xFFFF_FFFFu32;
 
-        // --- Build the client with just a RenderHandler at this checkpoint ---
-        // LoadHandler and IpcHandler land in D1/D5.
+        // --- Build the client with the OSR RenderHandler + the MessageRouter
+        // hookups (LifeSpan + Request handlers + on_process_message_received). ---
         let render_handler = KitRenderHandler::new(surface);
-        let mut client = KitClient::new(render_handler);
+        let life_span_handler = KitLifeSpanHandler::new();
+        let request_handler = KitRequestHandler::new();
+        let mut client = KitClient::new(render_handler, life_span_handler, request_handler);
 
         // --- URL ---
         let url = cef::CefString::from(initial_url);
@@ -84,5 +86,12 @@ impl Browser {
             let url = cef::CefString::from("app:///inline.js");
             frame.execute_java_script(Some(&code), Some(&url), 0);
         }
+    }
+
+    /// CEF's stable per-browser id. Used as the key into the
+    /// MessageRouter's per-window dispatcher registry
+    /// (`crate::cef::router::register_window`).
+    pub fn identifier(&self) -> i32 {
+        self.inner.identifier()
     }
 }

@@ -28,10 +28,11 @@ const defaults = new Map<string, EventCallback>([
   }],
 ]);
 
-// Called from Rust via evaluate_javascript to deliver responses and events.
-// A synchronous bootstrap script in <head> (injected by sola-app) installs
-// a queueing stub so messages that arrive before this module loads aren't
-// dropped. We install the real handler here and drain anything queued.
+// Called from Rust via CefFrame::execute_java_script to deliver responses
+// and events. A synchronous bootstrap script in <head> (injected by
+// `inject_solarecv_bootstrap` in the kit) installs a queueing stub so
+// messages that arrive before this module loads aren't dropped. We install
+// the real handler here and drain anything queued.
 const recv = (json: string) => {
   const msg = JSON.parse(json);
   if (msg.id !== undefined) {
@@ -69,13 +70,44 @@ const earlyQueue: string[] = (window as any).__solaRecvQueue ?? [];
 delete (window as any).__solaRecvQueue;
 for (const json of earlyQueue) recv(json);
 
+// CEF MessageRouter installs `window.cefQuery` on every V8 context. The
+// returned Promise here resolves through the `__solaRecv` reply channel
+// (correlated by `id` via the `pending` map above), not via cefQuery's
+// own onSuccess — the Rust handler in `crates/sola-kit/src/cef/router.rs`
+// always acks success_str("") immediately, then the app sends the real
+// result back via `WindowHandle::send_to_js`. cefQuery's onFailure is the
+// only signal we care about (e.g. the renderer crashed mid-query).
+declare global {
+  interface Window {
+    cefQuery?: (args: {
+      request: string;
+      persistent?: boolean;
+      onSuccess: (response: string) => void;
+      onFailure: (errorCode: number, errorMessage: string) => void;
+    }) => number;
+  }
+}
+
 export function invoke(cmd: string, args: Record<string, any> = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     const id = nextId++;
     pending.set(id, { resolve, reject });
-    (window as any).webkit.messageHandlers.sola.postMessage(
-      JSON.stringify({ id, cmd, args })
-    );
+    if (!window.cefQuery) {
+      pending.delete(id);
+      reject(new Error("cefQuery not installed (renderer not initialized?)"));
+      return;
+    }
+    window.cefQuery({
+      request: JSON.stringify({ id, cmd, args }),
+      onSuccess: () => {},
+      onFailure: (code, msg) => {
+        const p = pending.get(id);
+        if (p) {
+          pending.delete(id);
+          p.reject(new Error(`cefQuery failed (${code}): ${msg}`));
+        }
+      },
+    });
   });
 }
 

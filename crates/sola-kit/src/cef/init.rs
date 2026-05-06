@@ -34,7 +34,11 @@ const KIT_CHROMIUM_SWITCHES: &[(&str, Option<&str>)] = &[
 ];
 
 // `KitCefApp` — process-wide CEF app object. Injects Chromium
-// command-line flags before browser/renderer subprocesses spin up.
+// command-line flags before browser/renderer subprocesses spin up, and
+// supplies the renderer-side MessageRouter via `render_process_handler`.
+// (The browser process never actually invokes `render_process_handler`,
+// but returning a handler unconditionally is harmless and cheaper than
+// branching on process type.)
 cef::wrap_app! {
     pub struct KitCefApp {}
 
@@ -58,6 +62,10 @@ cef::wrap_app! {
                     }
                 }
             }
+        }
+
+        fn render_process_handler(&self) -> Option<RenderProcessHandler> {
+            Some(crate::cef::router::KitRenderProcessHandler::new())
         }
     }
 }

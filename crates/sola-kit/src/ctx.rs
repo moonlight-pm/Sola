@@ -63,6 +63,11 @@ impl AppCtx {
         let surface = Surface::new(self.wayland.clone(), &cfg);
         let browser = Browser::new(surface.clone(), "app:///index.html");
 
+        // Wire this browser's identifier to its dispatcher slot so the
+        // MessageRouter's `KitBrowserHandler::on_query_str` can route
+        // cefQuery requests back to the right window.
+        crate::cef::router::register_window(browser.identifier(), dispatcher_slot.clone());
+
         let inner = WindowInner {
             title: cfg.title,
             surface,
