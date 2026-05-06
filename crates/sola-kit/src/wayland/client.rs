@@ -14,7 +14,7 @@ use smithay_client_toolkit::{
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
-    seat::{Capability, SeatHandler, SeatState},
+    seat::{Capability, SeatHandler, SeatState, keyboard::Modifiers},
     shell::{
         WaylandSurface,
         xdg::{
@@ -29,6 +29,7 @@ use wayland_client::{
     globals::registry_queue_init,
     protocol::{
         wl_buffer::WlBuffer,
+        wl_keyboard::WlKeyboard,
         wl_output::{Transform, WlOutput},
         wl_seat::WlSeat,
         wl_surface::WlSurface,
@@ -71,6 +72,21 @@ pub struct WaylandClient {
     /// authoritative owners are on `WindowInner`. Linear-scanned on
     /// configure since storybook + apps in scope have ≤ a few windows.
     pub surfaces: Vec<Weak<Surface>>,
+    /// Live wl_pointer (one per seat we've seen with the Pointer
+    /// capability). Sctk's PointerHandler is what translates events;
+    /// this field exists purely to keep the proxy alive — dropping it
+    /// would tear down the wl_pointer.
+    pub pointer: Option<wayland_client::protocol::wl_pointer::WlPointer>,
+    /// Surface the pointer is currently inside (latest Enter event).
+    /// Used to track focus across Motion-without-prior-Enter cases.
+    pub entered_pointer_surface: Option<Rc<Surface>>,
+    /// Live wl_keyboard. Same role as `pointer`: holding the proxy alive.
+    pub keyboard: Option<WlKeyboard>,
+    /// Surface that currently holds keyboard focus.
+    pub entered_keyboard_surface: Option<Rc<Surface>>,
+    /// Latest modifier state from `wl_keyboard.modifiers`. Forwarded as
+    /// `cef_event_flags_t` on every CEF KeyEvent.
+    pub current_modifiers: Modifiers,
 }
 
 impl WaylandClient {
@@ -116,6 +132,11 @@ impl WaylandClient {
             queue: Some(event_queue),
             qh,
             surfaces: Vec::new(),
+            pointer: None,
+            entered_pointer_surface: None,
+            keyboard: None,
+            entered_keyboard_surface: None,
+            current_modifiers: Modifiers::default(),
         }
     }
 
@@ -209,12 +230,33 @@ impl SeatHandler for WaylandClient {
     fn new_capability(
         &mut self,
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
-        _seat: WlSeat,
-        _capability: Capability,
+        qh: &QueueHandle<Self>,
+        seat: WlSeat,
+        capability: Capability,
     ) {
-        // TODO(B9 follow-up / D4): on Capability::Keyboard, get_keyboard and store.
-        // TODO(D6): on Capability::Pointer, get_pointer and store.
+        if capability == Capability::Pointer && self.pointer.is_none() {
+            match self.seat_state.get_pointer(qh, &seat) {
+                Ok(p) => {
+                    self.pointer = Some(p);
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "wl_seat: get_pointer failed");
+                }
+            }
+        }
+        if capability == Capability::Keyboard && self.keyboard.is_none() {
+            // sctk pulls the keymap from the compositor and tracks xkb state
+            // internally; our KeyboardHandler receives `KeyEvent { keysym,
+            // raw_code, utf8 }` already-resolved.
+            match self.seat_state.get_keyboard(qh, &seat, None) {
+                Ok(kb) => {
+                    self.keyboard = Some(kb);
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "wl_seat: get_keyboard failed");
+                }
+            }
+        }
     }
 
     fn remove_capability(
