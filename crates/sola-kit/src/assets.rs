@@ -41,9 +41,14 @@ impl ContentType {
         }
     }
 
+    /// Bare MIME (no charset). CEF's `Response::set_mime_type` wants the
+    /// type only — charset is set separately via `set_charset`, and the
+    /// composite `Content-Type` header is built by Chromium downstream.
+    /// Smuggling a charset in here causes Chromium to mis-detect the type
+    /// and fall back to plaintext rendering.
     pub fn mime(&self) -> &'static str {
         match self {
-            Self::Html => "text/html; charset=utf-8",
+            Self::Html => "text/html",
             Self::Css => "text/css",
             Self::JavaScript | Self::TypeScript | Self::Tsx | Self::Jsx => {
                 "application/javascript"

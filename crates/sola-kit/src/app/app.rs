@@ -70,6 +70,7 @@ impl SolaApp for KitApp {
         ctx: &mut AppCtx,
     ) {
         let result = match cmd {
+            "ping" => json!({ "pong": true, "echo": args }),
             "theme_set" => self.handle_theme_set(args, ctx),
             "theme_reset" => self.handle_theme_reset(ctx),
             _ => json!({ "error": format!("unknown command: {cmd}") }),

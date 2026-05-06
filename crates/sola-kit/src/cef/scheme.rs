@@ -100,13 +100,12 @@ cef::wrap_scheme_handler_factory! {
                 }
             };
 
+            tracing::debug!(url = %url_str, path, "cef::scheme: incoming request");
+
             // index.html — return the pre-built HTML (bootstrap + import map
             // + initial state already injected by ctx::add_window).
             if path == "/" || path == "/index.html" {
-                return Some(make_string_resource(
-                    reg.html.clone(),
-                    "text/html; charset=utf-8",
-                ));
+                return Some(make_string_resource(reg.html.clone(), "text/html"));
             }
 
             // Asset lookup: app bundle first, platform assets as fallback.
@@ -176,17 +175,32 @@ cef::wrap_resource_handler! {
             1 // true: handled synchronously, no async callback needed
         }
 
-        // response_headers() fills in the HTTP status and MIME type.
+        // response_headers() fills in the HTTP status, MIME type, charset,
+        // and an explicit Content-Type header. Setting all three is
+        // belt-and-braces — different CEF call paths (CEF's own
+        // resource-pipeline checks vs Chromium's downstream sniffing) read
+        // different fields, and a missing one can result in plaintext
+        // fallback rendering of HTML.
         fn response_headers(
             &self,
             response: Option<&mut cef::Response>,
             response_length: Option<&mut i64>,
             _redirect_url: Option<&mut CefString>,
         ) {
+            tracing::debug!(mime = %self.mime, len = self.body.len(), "cef::scheme: response_headers");
             if let Some(r) = response {
                 r.set_status(200);
+                let status_text = CefString::from("OK");
+                r.set_status_text(Some(&status_text));
                 let mime_cef = CefString::from(self.mime.as_str());
                 r.set_mime_type(Some(&mime_cef));
+                let utf8 = CefString::from("utf-8");
+                r.set_charset(Some(&utf8));
+                let ct_name = CefString::from("Content-Type");
+                let ct_value = CefString::from(
+                    format!("{}; charset=utf-8", self.mime).as_str(),
+                );
+                r.set_header_by_name(Some(&ct_name), Some(&ct_value), 1);
             }
             if let Some(len) = response_length {
                 *len = self.body.len() as i64;

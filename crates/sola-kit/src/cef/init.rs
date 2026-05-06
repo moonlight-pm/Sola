@@ -25,16 +25,49 @@ const KIT_CHROMIUM_SWITCHES: &[(&str, Option<&str>)] = &[
     ("ozone-platform", Some("wayland")),
 ];
 
-// `KitCefApp` — process-wide CEF app object. Injects Chromium
-// command-line flags before browser/renderer subprocesses spin up, and
-// supplies the renderer-side MessageRouter via `render_process_handler`.
-// (The browser process never actually invokes `render_process_handler`,
-// but returning a handler unconditionally is harmless and cheaper than
-// branching on process type.)
+// `KitCefApp` — process-wide CEF app object. Three jobs:
+//
+//   1. `on_register_custom_schemes` — declare `app://` as a STANDARD +
+//      SECURE + CORS + FETCH scheme. CEF requires this in *every* process
+//      (browser, renderer, GPU, …) before `cef::initialize` /
+//      `cef::execute_process` runs, which is why `KitCefApp::new()` is
+//      passed to both. Without it Chromium treats `app://` as opaque and
+//      module loading + HTML rendering misbehave — pages display as
+//      text instead of rendering.
+//   2. `on_before_command_line_processing` — inject Chromium flags
+//      (currently `--ozone-platform=wayland`) into every subprocess.
+//   3. `render_process_handler` — supply the renderer-side MessageRouter
+//      so `window.cefQuery` is installed in V8 contexts. The browser
+//      process never invokes this, but returning a handler
+//      unconditionally is harmless and cheaper than branching on type.
+//
+// `app://` scheme option flags (cef_scheme_options_t):
+//   STANDARD (1)  — URL has authority + path; required for module URL
+//                   resolution and `<script type="module">`.
+//   SECURE (8)    — treated like https for mixed-content rules; lets
+//                   secure pages load app:// resources without warnings.
+//   CORS_ENABLED (16) — allows CORS requests; CEF docs say this should
+//                       be set in most cases where STANDARD is set.
+//   FETCH_ENABLED (64) — lets fetch() target app:// URLs.
+const APP_SCHEME_OPTIONS: i32 = 1 | 8 | 16 | 64; // = 89
+
 cef::wrap_app! {
     pub struct KitCefApp {}
 
     impl App {
+        fn on_register_custom_schemes(
+            &self,
+            registrar: Option<&mut SchemeRegistrar>,
+        ) {
+            if let Some(reg) = registrar {
+                let scheme = CefString::from("app");
+                let rc = reg.add_custom_scheme(Some(&scheme), APP_SCHEME_OPTIONS);
+                tracing::info!(rc, opts = APP_SCHEME_OPTIONS, "cef::on_register_custom_schemes(\"app\")");
+            } else {
+                tracing::warn!("cef::on_register_custom_schemes called with NULL registrar");
+            }
+        }
+
         fn on_before_command_line_processing(
             &self,
             _process_type: Option<&CefString>,
@@ -196,13 +229,10 @@ pub fn start_wayland_pump(wayland: std::rc::Rc<std::cell::RefCell<crate::wayland
 /// Register the `app://` custom scheme factory. Call once, immediately
 /// after `initialize()` succeeds.
 ///
-/// CEF's URL parser must know about `app://` as a standard-format scheme
-/// (i.e. one with a host component) for host-stripping to work. For now
-/// we rely on CEF treating unregistered schemes as opaque — the scheme
-/// factory still fires, and our factory ignores the authority component.
-/// If `app://` needs proper origin-isolation treatment in a future task,
-/// add an `App` impl with `on_register_custom_schemes` (called before
-/// `cef::initialize`) to declare it as a standard scheme.
+/// The scheme itself is declared as STANDARD + SECURE + CORS + FETCH in
+/// `KitCefApp::on_register_custom_schemes` (which CEF invokes earlier,
+/// before `cef::initialize`). This call only attaches the per-request
+/// factory that turns `app://...` requests into `AssetBundle` lookups.
 pub fn register_app_scheme() {
     let scheme = cef::CefString::from("app");
     // Empty domain = match all authorities under app://.
