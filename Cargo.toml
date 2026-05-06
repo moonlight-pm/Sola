@@ -15,3 +15,16 @@ rustls = { version = "0.23", features = ["aws_lc_rs"] }
 rustls-connector = { version = "0.21", features = ["native-certs"] }
 toml = "0.8"
 ureq = "3"
+
+# Substitute a zero-dep stub for tauri-apps/download-cef. The upstream
+# crate is a build-dependency of cef-dll-sys (transitive via `cef`)
+# and unconditionally pulls ureq + rustls + ring + rustls-webpki +
+# bzip2 + tar into the build graph. Those crates rebuilt every time
+# we alternated between subset cargo invocations because the resolver
+# computes a different feature unification per invocation. The stub
+# lives at `crates/download-cef-stub/` and re-implements only the API
+# surface cef-dll-sys/build.rs touches; see its src/lib.rs for the
+# rationale and the OUT_DIR-symlink trick that makes -lcef resolve
+# against the pre-installed `cargo make install-cef` cache.
+[patch.crates-io]
+download-cef = { path = "crates/download-cef-stub" }

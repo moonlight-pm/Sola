@@ -1,0 +1,19 @@
+[package]
+# Package name must remain `download-cef` so [patch.crates-io] in the
+# workspace Cargo.toml can substitute this crate for the upstream
+# tauri-apps `download-cef`. The directory is `-stub`-suffixed for
+# clarity, but the crate name on the wire is what cef-dll-sys's
+# build-dependency resolves.
+name = "download-cef"
+version = "2.3.1"
+edition = "2021"
+description = "Stub for tauri-apps/download-cef. Replaces the upstream crate via [patch.crates-io] to drop ureq/ring/rustls/bzip2/tar from the build graph (they were transitively pulled in via cef-dll-sys's build-dependency on the real download-cef)."
+
+[lib]
+path = "src/lib.rs"
+
+# No [dependencies]. The whole point of this crate is to short-circuit
+# the network/extract path with a zero-dep stub. cef-dll-sys's build.rs
+# is the only consumer; the small surface it touches is reimplemented
+# in src/lib.rs against std + a hardcoded symlink to our pre-installed
+# CEF cache (see `cargo make install-cef`).

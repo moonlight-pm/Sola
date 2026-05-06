@@ -135,7 +135,18 @@ programs.nix-ld.libraries = with pkgs; [
 ```
 
 `environment.systemPackages` must also include `patchelf` so
-`ensure_cef` can run it.
+`ensure_cef` can run it, **and** `libxkbcommon` so its `.pc` file
+is in the system `PKG_CONFIG_PATH` for `smithay-client-toolkit`'s
+build script (the previous WebKit/GTK build path got xkbcommon
+pkg-config transitively through `gtk4`'s dev output; the sctk path
+needs it explicitly).
+
+```nix
+environment.systemPackages = with pkgs; [
+  patchelf
+  libxkbcommon
+];
+```
 
 After `nixos-rebuild switch`, verify with:
 
