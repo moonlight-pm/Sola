@@ -47,9 +47,13 @@ impl WindowHandle {
     }
 
     pub fn eval_js(&self, script: &str) {
-        // TODO: drop messages emitted before LoadHandler::OnLoadEnd by
-        // queueing here and draining on load. For now CEF's frame queues
-        // pre-load execute_java_script calls internally; relying on that.
+        // Pre-load risk: `CefFrame::execute_java_script` calls issued before
+        // the main frame commits a document may be dropped by Chromium. The
+        // WebKit-era sola-app worked around this with a `pending: Vec<String>`
+        // queue drained on LoadHandler::OnLoadEnd (see git history). We're
+        // not wiring LoadHandler yet and no Rust→JS message is emitted before
+        // user input, so the race is dormant — re-add the queue when bus
+        // dispatch (D3/D5) starts replaying sticky topics at startup.
         self.inner.browser.execute_js(script);
     }
 
