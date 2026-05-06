@@ -8,22 +8,6 @@ static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../../web/index.html"), Html),
     "/index.tsx" => (include_str!("../../web/index.tsx"), Tsx),
     "/components/Main.tsx" => (include_str!("../../web/components/Main.tsx"), Tsx),
-
-    // Vendored Preact runtime — the storybook chooses Preact for itself;
-    // the kit lib doesn't ship any framework. Filename `jsxRuntime.module.js`
-    // is camelCase to match the sourceMappingURL trailer baked in by upstream;
-    // the package path stays kebab (`preact/jsx-runtime`) via the import map
-    // declared in index.html.
-    "/vendor/preact/preact.module.js" => (include_str!("../../web/vendor/preact/preact.module.js"), JavaScript),
-    "/vendor/preact/preact.module.js.map" => (include_str!("../../web/vendor/preact/preact.module.js.map"), Json),
-    "/vendor/preact/jsxRuntime.module.js" => (include_str!("../../web/vendor/preact/jsxRuntime.module.js"), JavaScript),
-    "/vendor/preact/jsxRuntime.module.js.map" => (include_str!("../../web/vendor/preact/jsxRuntime.module.js.map"), Json),
-    "/vendor/preact/hooks.module.js" => (include_str!("../../web/vendor/preact/hooks.module.js"), JavaScript),
-    "/vendor/preact/hooks.module.js.map" => (include_str!("../../web/vendor/preact/hooks.module.js.map"), Json),
-    "/vendor/preact/signals-core.module.js" => (include_str!("../../web/vendor/preact/signals-core.module.js"), JavaScript),
-    "/vendor/preact/signals-core.module.js.map" => (include_str!("../../web/vendor/preact/signals-core.module.js.map"), Json),
-    "/vendor/preact/signals.module.js" => (include_str!("../../web/vendor/preact/signals.module.js"), JavaScript),
-    "/vendor/preact/signals.module.js.map" => (include_str!("../../web/vendor/preact/signals.module.js.map"), Json),
 };
 
 #[derive(Deserialize)]

@@ -1,6 +1,4 @@
-import { render } from "preact";
 import { on } from "@sola/ipc";
-import { Main } from "./components/Main";
 
 // The Rust side renders the merged theme as a `:root { ... }` CSS block
 // and pushes it whenever Topic::Theme changes (incl. the sticky replay
@@ -11,5 +9,3 @@ document.adoptedStyleSheets = [...document.adoptedStyleSheets, themeSheet];
 on("theme", (msg: { css?: string }) => {
   if (msg.css) themeSheet.replaceSync(msg.css);
 });
-
-render(<Main />, document.body);
