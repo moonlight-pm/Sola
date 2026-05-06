@@ -17,14 +17,6 @@ use cef::{rc::*, *};
 
 /// Switches we add to Chromium's command line on every process. Each is
 /// `(name, optional value)` — value is `None` for boolean switches.
-///
-///   - `ozone-platform=wayland` — sola is a Wayland-only desktop
-///     (sola-river is the compositor). Without this, Chromium defaults
-///     to its X11 ozone backend, which calls `XOpenDisplay()` and
-///     panics in `aura::Env::Initialize` ("Missing X server or
-///     $DISPLAY") on a TTY launch where no X server is running.
-///     Telling Chromium "we're on Wayland" is matching reality, not an
-///     architectural choice.
 const KIT_CHROMIUM_SWITCHES: &[(&str, Option<&str>)] = &[
     // sola is a Wayland-only desktop. Without this, Chromium defaults
     // to its X11 ozone backend, which calls `XOpenDisplay()` and panics

@@ -195,6 +195,13 @@ impl CefVersion {
 /// step (libcef_dll_wrapper is only built on Windows/macOS), so we
 /// don't need to expose CMakeLists.txt, cmake/, include/, libcef_dll/
 /// inside the cef_dir.
+///
+/// Beyond linking, Chromium itself loads `icudtl.dat`, `v8_context_snapshot.bin`,
+/// and the `*.pak` files from the directory containing libcef.so at runtime —
+/// not from `settings.resources_dir_path`, which is only consulted later via
+/// the path service. So we mirror the *whole* Release directory into cef_dir
+/// (every file becomes a symlink), which is also what the upstream
+/// `download-cef` would do via tarball extraction.
 pub fn extract_target_archive<P: AsRef<Path>, Q: AsRef<Path>>(
     target: &str,
     _archive: P,
@@ -206,7 +213,8 @@ pub fn extract_target_archive<P: AsRef<Path>, Q: AsRef<Path>>(
     let cef_dir = location.join(os_arch.to_string());
 
     let real = sola_cef_dir();
-    let real_libcef = real.join("Release/libcef.so");
+    let real_release = real.join("Release");
+    let real_libcef = real_release.join("libcef.so");
     if !real_libcef.exists() {
         return Err(Error::new(format!(
             "CEF binary distribution missing.\n  expected: {}\n  run: cargo make install-cef",
@@ -215,11 +223,16 @@ pub fn extract_target_archive<P: AsRef<Path>, Q: AsRef<Path>>(
     }
 
     std::fs::create_dir_all(&cef_dir)?;
-    let lib_link = cef_dir.join("libcef.so");
-    if lib_link.is_symlink() || lib_link.exists() {
-        std::fs::remove_file(&lib_link)?;
+    for entry in std::fs::read_dir(&real_release)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let dest = cef_dir.join(&name);
+        if dest.is_symlink() || dest.exists() {
+            // Already linked from a prior build; leave it.
+            continue;
+        }
+        std::os::unix::fs::symlink(entry.path(), &dest)?;
     }
-    std::os::unix::fs::symlink(&real_libcef, &lib_link)?;
 
     Ok(cef_dir)
 }
