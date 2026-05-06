@@ -433,12 +433,10 @@ The pragmatic answer is **don't use stock GTK chooser widgets from a
 Sola WebView**. The `<input type="color">` element, for example,
 spawns the GTK color chooser dialog, which is both visually foreign
 (no token/theme integration) and a crash hazard on a Sola system.
-[[sola-kit]]'s storybook ships a custom HTML/CSS/JS color picker
-(`web/app/src/color-picker.ts`) that stays in-window and uses kit
-tokens; new Sola UIs should follow the same pattern (build the picker
-in the WebView, not invoke a system dialog). Same logic applies to
-font choosers, print dialogs, and file pickers as they come up — host
-the UI inside the app rather than calling out.
+The general guidance: build the picker in the WebView (HTML/CSS/JS,
+themed via [[sola-kit]] tokens), don't invoke a system dialog. Same
+logic applies to font choosers, print dialogs, and file pickers as
+they come up — host the UI inside the app rather than calling out.
 
 If a stock GTK widget genuinely is the right answer for some future
 case, the fix is to either wire `XDG_DATA_DIRS` to point at the
