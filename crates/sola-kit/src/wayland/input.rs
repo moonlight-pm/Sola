@@ -47,10 +47,7 @@ impl PointerHandler for WaylandClient {
             let mouse_event = ::cef::MouseEvent {
                 x: x.round() as i32,
                 y: y.round() as i32,
-                // TODO(D4c): pull current modifier state from wl_keyboard
-                // once keyboard input is wired. CEF treats this as a bitfield
-                // of `cef_event_flags_t` values.
-                modifiers: 0,
+                modifiers: modifiers_to_cef(&self.current_modifiers),
             };
 
             let Some(browser) = surface.browser.borrow().as_ref().cloned() else {
