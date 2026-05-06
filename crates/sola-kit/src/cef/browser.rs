@@ -85,9 +85,4 @@ impl Browser {
             frame.execute_java_script(Some(&code), Some(&url), 0);
         }
     }
-
-    /// Open DevTools for this browser.
-    pub fn open_devtools(&self) {
-        // TODO(taskE1)
-    }
 }

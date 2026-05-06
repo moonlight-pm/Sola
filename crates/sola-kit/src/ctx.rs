@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use sola_bus::BusClient;
-use sola_bus::topics::{Topic, Window};
+use sola_bus::topics::Topic;
 
 use crate::cef::Browser;
 use crate::wayland::{Surface, WaylandClient};
@@ -14,47 +14,33 @@ pub struct AppCtx {
     pub(crate) bus: Rc<RefCell<BusClient>>,
     pub(crate) wayland: Rc<RefCell<WaylandClient>>,
     pub(crate) windows: Vec<WindowHandle>,
-    /// Read by `find_window_by_id`, which is only invoked from the bus
-    /// loop's Copy/Paste handlers — both wired up in D5. Quiet the
-    /// dead-code lint until then.
-    #[allow(dead_code)]
-    pub(crate) app_id: &'static str,
-    /// Latest `Windows` sticky snapshot, used by `find_window_by_id` to
-    /// correlate window_ids in bus topics (e.g. Copy/Paste) back to a
-    /// `WindowHandle`. Populated by the bus loop's `Topic::Windows`
-    /// handler — wired up in D5.
-    #[allow(dead_code)]
-    pub(crate) known_windows: Vec<Window>,
 }
 
 impl AppCtx {
     pub(crate) fn new(
         bus: Rc<RefCell<BusClient>>,
         wayland: Rc<RefCell<WaylandClient>>,
-        app_id: &'static str,
     ) -> Self {
         Self {
             bus,
             wayland,
             windows: Vec::new(),
-            app_id,
-            known_windows: Vec::new(),
         }
     }
 
     /// Create a new window: pair a Wayland surface with a CEF browser.
     ///
     /// Builds the final HTML for this window — index.html lookup,
-    /// `__RESTORED_STATE__` substitution, bootstrap script injection,
-    /// and import map injection — then registers it with the `app://`
-    /// scheme handler before creating the browser. The browser navigates
-    /// to `app:///index.html`, where the scheme handler serves the
+    /// `__RESTORED_STATE__` substitution, and the queueing bootstrap
+    /// script injection — then registers it with the `app://` scheme
+    /// handler before creating the browser. The browser navigates to
+    /// `app:///index.html`, where the scheme handler serves the
     /// pre-built HTML and all assets from `cfg.assets` (with TS/JSX
-    /// transform applied on-demand).
+    /// transform applied on-demand). The app's `index.html` is responsible
+    /// for declaring its own `<script type="importmap">` — the kit makes
+    /// no assumption about the JS framework.
     pub fn add_window(&mut self, cfg: WindowConfig) -> WindowHandle {
         let dispatcher_slot: Rc<RefCell<Option<JsDispatcher>>> = Rc::new(RefCell::new(None));
-        let loaded: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
-        let pending: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
         // Build the HTML that the scheme handler will serve for /index.html.
         let html_raw = cfg
@@ -63,15 +49,12 @@ impl AppCtx {
             .map(|a| a.content.to_string())
             .unwrap_or_else(|| "<html><body>No index.html in bundle</body></html>".to_string());
 
-        // Substitute __RESTORED_STATE__ with the window's initial state JSON
-        // (if any), then inject the queueing bootstrap stub and import map.
         let html = if let Some(state_json) = cfg.initial_state.as_ref() {
             html_raw.replace("__RESTORED_STATE__", state_json)
         } else {
             html_raw
         };
         let html = crate::inject_solarecv_bootstrap(&html);
-        let html = crate::inject_import_map(&html);
 
         // Register the bundle + HTML with the static scheme handler before
         // the browser is created so the first navigation is served correctly.
@@ -85,8 +68,6 @@ impl AppCtx {
             surface,
             browser,
             dispatcher: dispatcher_slot,
-            loaded,
-            pending,
         };
 
         let handle = WindowHandle { inner: Rc::new(inner) };
@@ -116,21 +97,6 @@ impl AppCtx {
     /// `cef::shutdown()`.
     pub fn shutdown(&self) {
         cef::quit_message_loop();
-    }
-
-    /// Resolve a `window_id` (as seen on the bus) to one of *this process's*
-    /// owned `WindowHandle`s. Returns `None` if the id doesn't belong to us.
-    /// Used by the bus loop's Copy/Paste handlers — wired up in D5.
-    #[allow(dead_code)]
-    pub(crate) fn find_window_by_id(&self, window_id: u32) -> Option<&WindowHandle> {
-        let entry = self
-            .known_windows
-            .iter()
-            .find(|a| a.window_id == window_id)?;
-        if entry.app_id != self.app_id {
-            return None;
-        }
-        self.windows.iter().find(|w| w.title() == entry.title)
     }
 
     /// Return a Clone-able handle to the bus client. Use this when you need

@@ -110,11 +110,13 @@ impl AssetBundle {
     }
 }
 
-/// Platform assets embedded from sola-kit's own web/ directory.
+/// Platform assets the kit serves on every app:// scheme request, regardless
+/// of which JS framework the app uses.
 ///
-/// Currently only the vendored Preact runtime — `lib/` modules will be
-/// re-introduced module-by-module against this slot as we bootstrap the
-/// Preact-based kit.
+/// The kit's only non-negotiable asset is the IPC bridge (`/lib/ipc.ts`),
+/// paired with the `__solaRecv` bootstrap stub that `ctx::add_window` injects
+/// into every `index.html`. Frameworks (Preact, Lit, Svelte, …) are an
+/// app-level choice and live in the app's own `asset_bundle!`.
 pub fn platform_assets() -> AssetBundle {
     AssetBundle {
         assets: &[
@@ -123,80 +125,8 @@ pub fn platform_assets() -> AssetBundle {
                 content: include_str!("../web/lib/ipc.ts"),
                 content_type: ContentType::TypeScript,
             },
-            Asset {
-                path: "/vendor/preact/preact.module.js",
-                content: include_str!("../web/vendor/preact/preact.module.js"),
-                content_type: ContentType::JavaScript,
-            },
-            Asset {
-                path: "/vendor/preact/preact.module.js.map",
-                content: include_str!("../web/vendor/preact/preact.module.js.map"),
-                content_type: ContentType::Json,
-            },
-            // Filename kept as `jsxRuntime.module.js` (camelCase) to match the
-            // sourceMappingURL trailer baked into the file by upstream — the
-            // package path is still `preact/jsx-runtime` (kebab) via the
-            // import map.
-            Asset {
-                path: "/vendor/preact/jsxRuntime.module.js",
-                content: include_str!("../web/vendor/preact/jsxRuntime.module.js"),
-                content_type: ContentType::JavaScript,
-            },
-            Asset {
-                path: "/vendor/preact/jsxRuntime.module.js.map",
-                content: include_str!("../web/vendor/preact/jsxRuntime.module.js.map"),
-                content_type: ContentType::Json,
-            },
-            Asset {
-                path: "/vendor/preact/hooks.module.js",
-                content: include_str!("../web/vendor/preact/hooks.module.js"),
-                content_type: ContentType::JavaScript,
-            },
-            Asset {
-                path: "/vendor/preact/hooks.module.js.map",
-                content: include_str!("../web/vendor/preact/hooks.module.js.map"),
-                content_type: ContentType::Json,
-            },
-            Asset {
-                path: "/vendor/preact/signals-core.module.js",
-                content: include_str!("../web/vendor/preact/signals-core.module.js"),
-                content_type: ContentType::JavaScript,
-            },
-            Asset {
-                path: "/vendor/preact/signals-core.module.js.map",
-                content: include_str!("../web/vendor/preact/signals-core.module.js.map"),
-                content_type: ContentType::Json,
-            },
-            Asset {
-                path: "/vendor/preact/signals.module.js",
-                content: include_str!("../web/vendor/preact/signals.module.js"),
-                content_type: ContentType::JavaScript,
-            },
-            Asset {
-                path: "/vendor/preact/signals.module.js.map",
-                content: include_str!("../web/vendor/preact/signals.module.js.map"),
-                content_type: ContentType::Json,
-            },
         ],
     }
-}
-
-/// Macro to embed all servable files from a web directory at compile time.
-///
-/// Usage: `embed_web!("web/")`
-///
-/// Generates a static `AssetBundle` containing all .html, .css, .js, .mjs, .ts
-/// files found in the directory (excluding .d.ts files).
-#[macro_export]
-macro_rules! embed_web {
-    ($dir:literal) => {{
-        // NOTE: This macro requires manual listing of files since proc macros
-        // that walk the filesystem at compile time need a separate proc-macro crate.
-        // Apps list their assets explicitly using the embed_assets! helper.
-        compile_error!(
-            "embed_web! requires explicit file listing. Use sola_kit::asset_bundle! instead."
-        )
-    }};
 }
 
 /// Build an AssetBundle from explicit file entries.

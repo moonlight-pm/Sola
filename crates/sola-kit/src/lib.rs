@@ -1,5 +1,5 @@
 use sola_bus::BusClient;
-use sola_bus::topics::{EvaluationPayload, Topic, TopicKind};
+use sola_bus::topics::{Topic, TopicKind};
 
 pub mod assets;
 pub mod cef;
@@ -7,18 +7,6 @@ pub mod ctx;
 pub mod strip;
 pub mod wayland;
 pub mod window;
-
-/// Re-export of [`sola_core::watcher`] for backward compatibility.
-pub use sola_core::watcher;
-
-/// Re-export of [`sola_core::config`] for backward compatibility: the
-/// traits used to live here, and downstream apps still write
-/// `sola_kit::config::JsonConfig`.
-pub use sola_core::config;
-
-/// Re-export of [`sola_core::theme`] so apps that depend on sola-kit
-/// can reach `Theme` without an additional direct dependency on sola-core.
-pub use sola_core::theme;
 
 // Re-export for macro use and common consumer paths.
 pub use assets::{Asset, AssetBundle, ContentType};
@@ -96,27 +84,14 @@ pub trait SolaApp: 'static {
     fn on_shutdown(&mut self, ctx: &mut AppCtx) {
         let _ = ctx;
     }
-
-    /// Hook for any post-construction setup that needs access to the
-    /// runtime (e.g. attaching event controllers that dispatch into
-    /// self via the runtime). Default: ignore.
-    #[allow(unused_variables)]
-    fn after_runtime_ready(
-        &mut self,
-        runtime: std::rc::Weak<std::cell::RefCell<AppRuntime<Self>>>,
-        ctx: &mut AppCtx,
-    ) where
-        Self: Sized,
-    {
-    }
 }
 
 /// Runtime container — holds the user app and its context together so
 /// bus callbacks can share `Rc<RefCell<_>>` and destructure into
 /// disjoint `&mut` borrows.
-pub struct AppRuntime<A: SolaApp> {
-    pub app: A,
-    pub ctx: AppCtx,
+pub(crate) struct AppRuntime<A: SolaApp> {
+    pub(crate) app: A,
+    pub(crate) ctx: AppCtx,
 }
 
 /// Entry point for the trait-based API. Bootstraps logging, waits for
@@ -191,7 +166,7 @@ pub fn run<A: SolaApp>() {
     }
 
     // --- Binary self-watch ---
-    watcher::watch_own_binary();
+    sola_core::watcher::watch_own_binary();
 
     // --- Wayland socket wait ---
     let runtime_dir = sola_core::env::runtime_dir();
@@ -235,48 +210,21 @@ pub fn run<A: SolaApp>() {
     }
 
     // --- Build AppCtx, run A::new ---
-    // NOTE: AppCtx::new takes (bus, wayland, app_id) per B12's rewrite.
-    // The B12 rewrite lands after B11 — so this line won't compile until B12.
-    let mut ctx = AppCtx::new(bus.clone(), wayland.clone(), app_id);
+    let mut ctx = AppCtx::new(bus.clone(), wayland.clone());
     let mut app = A::new(&mut ctx);
 
-    // --- Push the default theme CSS to every window once on init ---
-    {
-        let payload = serde_json::json!({
-            "event": "theme",
-            "css": theme_css(&sola_core::theme::Theme::default()),
-        });
-        for w in &ctx.windows {
-            w.send_to_js(&payload);
-        }
-    }
-
-    // --- Build BusRegistry and subscribe ---
+    // --- Build BusRegistry and subscribe to the topics the app declared ---
     let mut registry: BusRegistry<A> = BusRegistry::new();
     app.register_bus(&mut registry, &mut ctx);
-    let mut subscription_kinds = registry.kinds();
-    for kind in [
-        TopicKind::Shutdown,
-        TopicKind::Windows,
-        TopicKind::Copy,
-        TopicKind::Paste,
-        TopicKind::Evaluate,
-        TopicKind::Theme,
-    ] {
-        if !subscription_kinds.contains(&kind) {
-            subscription_kinds.push(kind);
-        }
-    }
     {
         let mut c = bus.borrow_mut();
-        if let Err(e) = c.subscribe(&subscription_kinds) {
+        if let Err(e) = c.subscribe(&registry.kinds()) {
             tracing::warn!("failed to subscribe: {e}");
         }
     }
 
     // --- Wrap runtime ---
     let runtime = std::rc::Rc::new(std::cell::RefCell::new(AppRuntime { app, ctx }));
-    let registry = std::rc::Rc::new(registry);
 
     // --- Install per-window JS dispatchers ---
     let window_handles: Vec<WindowHandle> = runtime.borrow().ctx.windows.clone();
@@ -288,11 +236,6 @@ pub fn run<A: SolaApp>() {
                 let Some(runtime) = runtime_weak.upgrade() else {
                     return;
                 };
-                if cmd == EVALUATION_CMD {
-                    let mut rt = runtime.borrow_mut();
-                    emit_evaluation(args, &mut rt.ctx);
-                    return;
-                }
                 let mut rt = runtime.borrow_mut();
                 let AppRuntime { app, ctx } = &mut *rt;
                 app.on_js_command(cmd, args, id, &source_for_dispatch, ctx);
@@ -301,16 +244,10 @@ pub fn run<A: SolaApp>() {
         *source.inner.dispatcher.borrow_mut() = Some(dispatcher);
     }
 
-    // --- after_runtime_ready hook ---
-    {
-        let runtime_weak = std::rc::Rc::downgrade(&runtime);
-        let mut rt = runtime.borrow_mut();
-        let AppRuntime { app, ctx } = &mut *rt;
-        app.after_runtime_ready(runtime_weak, ctx);
-    }
-
-    // --- Bus → CEF UI thread bridge: deferred to D3/D5 ---
-    spawn_bus_thread::<A>(bus.clone(), runtime.clone(), registry.clone());
+    // TODO(D3/D5): bus → CEF UI thread bridge. The registry is built and
+    // subscriptions are placed; what's missing is a thread that drains the
+    // bus client and posts dispatches onto the CEF UI thread.
+    let _ = registry;
 
     // --- Wayland event-pump: recurring CEF UI-thread task drains
     //     the queue every ~16 ms so configures, frame callbacks, and
@@ -324,82 +261,6 @@ pub fn run<A: SolaApp>() {
     // --- Cleanup ---
     cef::init::shutdown();
     tracing::info!("{app_id} stopped");
-}
-
-// Bus → CEF UI thread bridge. Real implementation in D3/D5 — for B11 this
-// is a no-op that compiles. The current shape borrows everything to keep
-// future call-sites stable.
-fn spawn_bus_thread<A: SolaApp>(
-    bus: std::rc::Rc<std::cell::RefCell<BusClient>>,
-    runtime: std::rc::Rc<std::cell::RefCell<AppRuntime<A>>>,
-    registry: std::rc::Rc<BusRegistry<A>>,
-) {
-    // TODO(D3/D5): real bus polling thread + cef::post_task(UI, …) bridge.
-    let _ = (bus, runtime, registry);
-}
-
-
-/// JS command name reserved for evaluation results. Never reaches the
-/// app's `on_js_command`; the framework intercepts and emits a
-/// `Topic::Evaluation`. Routing to the originating CLI is by
-/// `Message::source` — the bus tags every emit with the emitting app's
-/// id, so the CLI filters incoming `Evaluation` events by source.
-const EVALUATION_CMD: &str = "__evaluation__";
-
-/// Handle a `Topic::Evaluate` addressed to this process. Runs on the
-/// CEF UI thread. Called from the bus loop's `Topic::Evaluate` arm —
-/// wired up in D5.
-#[allow(dead_code)]
-fn handle_evaluate(
-    app_id: &'static str,
-    req: &sola_bus::topics::EvaluatePayload,
-    ctx: &mut AppCtx,
-) {
-    let target = match &req.window {
-        Some(title) => ctx.windows.iter().find(|w| w.title() == title).cloned(),
-        None => ctx.windows.first().cloned(),
-    };
-    let Some(target) = target else {
-        ctx.emit(Topic::Evaluation(EvaluationPayload {
-            result: Err(format!(
-                "no window matching {:?} in {app_id}",
-                req.window
-            )),
-        }));
-        return;
-    };
-
-    // Inline the expression into a wrapper that:
-    //   1. Awaits the value (no-op on non-Promises).
-    //   2. Catches runtime errors and JSON serialization errors.
-    //   3. Posts the result back via cefQuery; the MessageRouter (D1)
-    //      routes the request to the Rust handler which forwards it via
-    //      the bus as `Topic::Evaluation`.
-    //
-    // Syntax errors in `expr` cause the wrapper to fail to parse and
-    // `eval_js` silently fails; the CLI hits its timeout.
-    // Acceptable for a developer tool — the user iterates.
-    let wrapped = format!(
-        "(async () => {{\n  let __value, __err;\n  try {{ __value = await (async () => {{ return ({expr}); }})(); }}\n  catch (e) {{ __err = String(e); }}\n  const __payload = (__err === undefined) ? {{ value: __value }} : {{ error: __err }};\n  let __body;\n  try {{ __body = JSON.stringify({{ cmd: '{cmd}', args: __payload }}); }}\n  catch (serErr) {{ __body = JSON.stringify({{ cmd: '{cmd}', args: {{ error: 'serialize: ' + String(serErr) }} }}); }}\n  window.cefQuery({{ request: __body, onSuccess: () => {{}}, onFailure: () => {{}} }});\n}})()",
-        expr = req.expr,
-        cmd = EVALUATION_CMD,
-    );
-    target.eval_js(&wrapped);
-}
-
-/// Convert an `__evaluation__` JS message into a `Topic::Evaluation`.
-fn emit_evaluation(args: &serde_json::Value, ctx: &mut AppCtx) {
-    let result = if let Some(err) = args.get("error").and_then(|v| v.as_str()) {
-        Err(err.to_string())
-    } else {
-        let value = args
-            .get("value")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
-        Ok(json)
-    };
-    ctx.emit(Topic::Evaluation(EvaluationPayload { result }));
 }
 
 /// Inject a synchronous bootstrap that installs a queueing
@@ -437,70 +298,3 @@ pub(crate) fn inject_solarecv_bootstrap(html: &str) -> String {
     html.to_string()
 }
 
-/// Render a Theme as a `:root { ... }` CSS block.
-///
-/// Single source of truth is the Rust `Theme` — there is no static
-/// kit.css to drift. The framework's bus loop renders the current theme
-/// on every `Topic::Theme` delivery and pushes the full CSS to the JS
-/// side, which swaps it into a constructable stylesheet via
-/// `CSSStyleSheet.replaceSync`.
-pub fn theme_css(theme: &sola_core::theme::Theme) -> String {
-    use std::fmt::Write;
-    let mut s = String::from(":root {\n");
-    for (var, value) in theme.to_css_vars() {
-        let _ = writeln!(s, "  {var}: {value};");
-    }
-    s.push('}');
-    s.push('\n');
-    s
-}
-
-/// Inject the platform import map into HTML.
-pub(crate) fn inject_import_map(html: &str) -> String {
-    let platform_imports = r#""preact": "/vendor/preact/preact.module.js",
-      "preact/jsx-runtime": "/vendor/preact/jsxRuntime.module.js",
-      "preact/hooks": "/vendor/preact/hooks.module.js",
-      "@preact/signals-core": "/vendor/preact/signals-core.module.js",
-      "@preact/signals": "/vendor/preact/signals.module.js",
-      "@sola/ipc": "/lib/ipc.js",
-      "@sola/store": "/lib/store.js",
-      "@sola/kit": "/lib/kit.js",
-      "~/": "/lib/""#;
-
-    // If there's an existing import map, merge into it
-    if let Some(pos) = html.find("\"imports\"") {
-        if let Some(brace) = html[pos..].find('{') {
-            let insert_pos = pos + brace + 1;
-            let mut result = String::with_capacity(html.len() + 100);
-            result.push_str(&html[..insert_pos]);
-            result.push('\n');
-            result.push_str("      ");
-            result.push_str(platform_imports);
-            result.push(',');
-            result.push_str(&html[insert_pos..]);
-            return result;
-        }
-    }
-
-    // No import map found — inject one before first <script>
-    let import_map = format!(
-        r#"  <script type="importmap">
-  {{
-    "imports": {{
-      {platform_imports}
-    }}
-  }}
-  </script>
-"#
-    );
-
-    if let Some(pos) = html.find("<script") {
-        let mut result = String::with_capacity(html.len() + import_map.len());
-        result.push_str(&html[..pos]);
-        result.push_str(&import_map);
-        result.push_str(&html[pos..]);
-        result
-    } else {
-        html.to_string()
-    }
-}

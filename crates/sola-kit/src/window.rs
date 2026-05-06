@@ -34,14 +34,6 @@ pub(crate) struct WindowInner {
     /// Shared with the JS bridge: the cef::ipc handler reads, the
     /// runtime writes after `A::new` returns.
     pub(crate) dispatcher: Rc<RefCell<Option<JsDispatcher>>>,
-    /// Set to `true` after the browser fires LoadHandler::OnLoadEnd.
-    /// Until then, `eval_js` queues into `pending` so messages emitted
-    /// in response to replayed sticky topics aren't lost on a window
-    /// that hasn't even loaded our HTML yet. (LoadHandler wiring lands
-    /// in a follow-up; for now `loaded` stays false and queued messages
-    /// accumulate.)
-    pub(crate) loaded: Rc<RefCell<bool>>,
-    pub(crate) pending: Rc<RefCell<Vec<String>>>,
 }
 
 #[derive(Clone)]
@@ -55,11 +47,9 @@ impl WindowHandle {
     }
 
     pub fn eval_js(&self, script: &str) {
-        if !*self.inner.loaded.borrow() {
-            // Browser hasn't fired OnLoadEnd yet — queue, drain on Finished.
-            self.inner.pending.borrow_mut().push(script.to_string());
-            return;
-        }
+        // TODO: drop messages emitted before LoadHandler::OnLoadEnd by
+        // queueing here and draining on load. For now CEF's frame queues
+        // pre-load execute_java_script calls internally; relying on that.
         self.inner.browser.execute_js(script);
     }
 

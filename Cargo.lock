@@ -2947,7 +2947,6 @@ dependencies = [
 name = "sola-kit"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "cef",
  "serde",
  "serde_json",
@@ -2956,7 +2955,6 @@ dependencies = [
  "sola-bus",
  "sola-core",
  "swc_core",
- "tokio",
  "tracing",
  "wayland-client",
  "wayland-protocols",

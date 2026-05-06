@@ -15,8 +15,6 @@
       "@preact/signals-core": ["./vendor/preact/signals-core.d.ts"],
       "@preact/signals": ["./vendor/preact/signals.d.ts"],
       "@sola/ipc": ["./lib/ipc.ts"],
-      "@sola/store": ["./lib/store.ts"],
-      "@sola/kit": ["./lib/kit.ts"],
       "~/*": ["./lib/*"],
     },
   },

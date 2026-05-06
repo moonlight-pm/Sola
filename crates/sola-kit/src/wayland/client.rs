@@ -274,9 +274,9 @@ impl WindowHandler for WaylandClient {
         _qh: &QueueHandle<Self>,
         _window: &Window,
         configure: WindowConfigure,
-        serial: u32,
+        _serial: u32,
     ) {
-        tracing::info!(new_size = ?configure.new_size, serial, "WindowHandler::configure fired");
+        tracing::debug!(new_size = ?configure.new_size, "WindowHandler::configure");
         // sctk's xdg_surface dispatcher already called ack_configure(serial)
         // before invoking us. Marking the Surface configured + dispatching
         // host.was_resized to CEF lands when we have the surface↔window map
