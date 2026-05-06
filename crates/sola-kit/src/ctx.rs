@@ -68,6 +68,10 @@ impl AppCtx {
         // cefQuery requests back to the right window.
         crate::cef::router::register_window(browser.identifier(), dispatcher_slot.clone());
 
+        // Bind the browser to the surface so xdg configures can drive
+        // `BrowserHost::was_resized`.
+        surface.bind_browser(browser.inner.clone());
+
         let inner = WindowInner {
             title: cfg.title,
             surface,

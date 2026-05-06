@@ -32,6 +32,9 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_buffer_params_v1
 use crate::wayland::WaylandClient;
 use crate::window::WindowConfig;
 
+#[allow(unused_imports)]
+use ::cef::{rc::*, *};
+
 /// App-id reported to the compositor for all sola-kit windows.
 /// TODO(later): plumb the actual APP_ID through from `SolaApp::APP_ID`.
 const APP_ID: &str = "sola.kit";
@@ -54,6 +57,11 @@ pub struct Surface {
     /// call sized to fit the current surface; grows automatically inside
     /// sctk if a later frame is bigger.
     paint_pool: RefCell<Option<SlotPool>>,
+    /// The CEF browser bound to this surface. Set by `Surface::bind_browser`
+    /// after `browser_host_create_browser_sync` returns; consumed by
+    /// `Surface::on_configure` to drive `BrowserHost::was_resized` when the
+    /// compositor changes our size.
+    pub browser: RefCell<Option<::cef::Browser>>,
 }
 
 impl Surface {
@@ -82,18 +90,47 @@ impl Surface {
             xdg_window
         };
 
-        Rc::new(Self {
+        let surface = Rc::new(Self {
             xdg_window,
             size: RefCell::new(cfg.size),
             configured: RefCell::new(false),
-            client,
+            client: client.clone(),
             paint_pool: RefCell::new(None),
-        })
+            browser: RefCell::new(None),
+        });
+        client.borrow_mut().register_surface(&surface);
+        surface
     }
 
     /// Current logical size in pixels.
     pub fn size(&self) -> (i32, i32) {
         *self.size.borrow()
+    }
+
+    /// Bind the CEF browser created against this surface. Called from
+    /// `ctx::add_window` immediately after `Browser::new`. The configure
+    /// handler uses this to invoke `BrowserHost::was_resized` so CEF
+    /// re-queries `RenderHandler::view_rect` and rasterises at the new size.
+    pub fn bind_browser(&self, browser: ::cef::Browser) {
+        *self.browser.borrow_mut() = Some(browser);
+    }
+
+    /// Apply a compositor configure: update our cached size and notify CEF.
+    /// Compositors send 0/0 for "you choose"; ignore that and keep our last
+    /// known size.
+    pub fn on_configure(&self, new_size: Option<(u32, u32)>) {
+        if let Some((w, h)) = new_size {
+            if w > 0 && h > 0 {
+                *self.size.borrow_mut() = (w as i32, h as i32);
+            }
+        }
+        *self.configured.borrow_mut() = true;
+
+        if let Some(browser) = self.browser.borrow().as_ref() {
+            if let Some(host) = browser.host() {
+                host.was_resized();
+            }
+        }
     }
 
     /// Import a CEF-produced dma-buf as the next frame via

@@ -4,6 +4,8 @@
 //! required globals. Callers wrap the returned value in `Rc<RefCell<>>` to
 //! share it across surfaces.
 
+use std::rc::{Rc, Weak};
+
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_compositor, delegate_dmabuf, delegate_output, delegate_registry, delegate_seat,
@@ -13,13 +15,17 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{Capability, SeatHandler, SeatState},
-    shell::xdg::{
-        window::{Window, WindowConfigure, WindowHandler},
-        XdgShell,
+    shell::{
+        WaylandSurface,
+        xdg::{
+            XdgShell,
+            window::{Window, WindowConfigure, WindowHandler},
+        },
     },
     shm::{Shm, ShmHandler},
 };
 use wayland_client::{
+    Connection, EventQueue, Proxy, QueueHandle,
     globals::registry_queue_init,
     protocol::{
         wl_buffer::WlBuffer,
@@ -27,12 +33,13 @@ use wayland_client::{
         wl_seat::WlSeat,
         wl_surface::WlSurface,
     },
-    Connection, EventQueue, QueueHandle,
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
     zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
     zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
 };
+
+use crate::wayland::Surface;
 
 /// Per-process Wayland connection and bound globals. Single-threaded; callers
 /// wrap in `Rc<RefCell<WaylandClient>>` to share across surfaces.
@@ -59,6 +66,11 @@ pub struct WaylandClient {
     /// is also passed" conflict. The queue is always Some between calls.
     pub queue: Option<EventQueue<WaylandClient>>,
     pub qh: QueueHandle<WaylandClient>,
+    /// Surfaces created against this client, used to dispatch xdg
+    /// configures back to the right `Surface`. Weak refs because the
+    /// authoritative owners are on `WindowInner`. Linear-scanned on
+    /// configure since storybook + apps in scope have ≤ a few windows.
+    pub surfaces: Vec<Weak<Surface>>,
 }
 
 impl WaylandClient {
@@ -103,7 +115,14 @@ impl WaylandClient {
             shm,
             queue: Some(event_queue),
             qh,
+            surfaces: Vec::new(),
         }
+    }
+
+    /// Hold a weak ref to a freshly-created Surface so the configure
+    /// handler can find it later by `wl_surface.id()`.
+    pub fn register_surface(&mut self, surface: &Rc<Surface>) {
+        self.surfaces.push(Rc::downgrade(surface));
     }
 
     /// Non-blocking event pump. Call from the CEF main loop on each frame tick.
@@ -272,15 +291,37 @@ impl WindowHandler for WaylandClient {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _window: &Window,
+        window: &Window,
         configure: WindowConfigure,
         _serial: u32,
     ) {
         tracing::debug!(new_size = ?configure.new_size, "WindowHandler::configure");
+
+        let target_id = window.wl_surface().id();
+
+        // GC dropped surfaces on every configure. Cheap (Vec::retain) and
+        // amortizes; this is the only iteration path.
+        self.surfaces.retain(|w| w.strong_count() > 0);
+
+        let matching = self
+            .surfaces
+            .iter()
+            .find_map(|w| w.upgrade())
+            .filter(|s| s.xdg_window.wl_surface().id() == target_id);
+
+        if let Some(surface) = matching {
+            // sctk packs each axis as Option<NonZeroU32> ("compositor said
+            // pick your own"); collapse both-Some to Some((w, h)) and
+            // anything else (zero or unspecified) to None so the surface
+            // keeps its last known size.
+            let new_size = match configure.new_size {
+                (Some(w), Some(h)) => Some((w.get(), h.get())),
+                _ => None,
+            };
+            surface.on_configure(new_size);
+        }
         // sctk's xdg_surface dispatcher already called ack_configure(serial)
-        // before invoking us. Marking the Surface configured + dispatching
-        // host.was_resized to CEF lands when we have the surface↔window map
-        // (planned with surface_to_browser in D4).
+        // before invoking us; nothing more to do here.
     }
 }
 
