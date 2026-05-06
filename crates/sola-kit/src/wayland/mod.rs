@@ -2,7 +2,6 @@
 //! wl_seat input events into CEF input events.
 
 pub mod client;
-pub mod input;
 pub mod surface;
 
 pub use client::WaylandClient;

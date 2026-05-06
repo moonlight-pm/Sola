@@ -6,7 +6,6 @@ pub mod browser;
 pub mod distribution;
 pub mod handlers;
 pub mod init;
-pub mod ipc;
 pub mod scheme;
 
 pub use browser::Browser;

@@ -1,4 +1,4 @@
-mod application;
+mod app;
 mod catalog;
 mod fonts;
 
@@ -13,6 +13,6 @@ fn main() -> ExitCode {
         return code;
     }
 
-    sola_kit::run::<application::KitApplication>();
+    sola_kit::run::<app::KitApp>();
     ExitCode::SUCCESS
 }

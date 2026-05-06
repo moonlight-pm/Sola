@@ -1,9 +1,6 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sola_bus::topics::{
-    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
-};
-use sola_core::KeyCode;
+use sola_bus::topics::{Topic, TopicKind};
 use sola_core::theme::Theme;
 use sola_kit::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 
@@ -11,6 +8,22 @@ static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
     "/index.html" => (include_str!("../../web/index.html"), Html),
     "/index.tsx" => (include_str!("../../web/index.tsx"), Tsx),
     "/components/Main.tsx" => (include_str!("../../web/components/Main.tsx"), Tsx),
+
+    // Vendored Preact runtime — the storybook chooses Preact for itself;
+    // the kit lib doesn't ship any framework. Filename `jsxRuntime.module.js`
+    // is camelCase to match the sourceMappingURL trailer baked in by upstream;
+    // the package path stays kebab (`preact/jsx-runtime`) via the import map
+    // declared in index.html.
+    "/vendor/preact/preact.module.js" => (include_str!("../../web/vendor/preact/preact.module.js"), JavaScript),
+    "/vendor/preact/preact.module.js.map" => (include_str!("../../web/vendor/preact/preact.module.js.map"), Json),
+    "/vendor/preact/jsxRuntime.module.js" => (include_str!("../../web/vendor/preact/jsxRuntime.module.js"), JavaScript),
+    "/vendor/preact/jsxRuntime.module.js.map" => (include_str!("../../web/vendor/preact/jsxRuntime.module.js.map"), Json),
+    "/vendor/preact/hooks.module.js" => (include_str!("../../web/vendor/preact/hooks.module.js"), JavaScript),
+    "/vendor/preact/hooks.module.js.map" => (include_str!("../../web/vendor/preact/hooks.module.js.map"), Json),
+    "/vendor/preact/signals-core.module.js" => (include_str!("../../web/vendor/preact/signals-core.module.js"), JavaScript),
+    "/vendor/preact/signals-core.module.js.map" => (include_str!("../../web/vendor/preact/signals-core.module.js.map"), Json),
+    "/vendor/preact/signals.module.js" => (include_str!("../../web/vendor/preact/signals.module.js"), JavaScript),
+    "/vendor/preact/signals.module.js.map" => (include_str!("../../web/vendor/preact/signals.module.js.map"), Json),
 };
 
 #[derive(Deserialize)]
@@ -18,19 +31,14 @@ struct ThemeSetArgs {
     theme: Theme,
 }
 
-pub struct KitApplication {
+pub struct KitApp {
     theme: Theme,
-    main_window: WindowHandle,
 }
 
-impl SolaApp for KitApplication {
+impl SolaApp for KitApp {
     const APP_ID: &'static str = "sola-kit";
 
     fn new(ctx: &mut AppCtx) -> Self {
-        // (Was: force GTK dark theme so the WebKit inspector inherited it.
-        // Removed during the CEF port — Chromium DevTools has its own theme
-        // selector and doesn't follow a host toolkit setting.)
-
         let theme = Theme::default();
         use super::catalog::{CATALOG, Group};
         let catalog_json: Vec<serde_json::Value> = CATALOG
@@ -49,7 +57,7 @@ impl SolaApp for KitApplication {
         }))
         .ok();
 
-        let main_window = ctx.add_window(WindowConfig {
+        ctx.add_window(WindowConfig {
             title: "Theme".into(),
             size: (1100, 720),
             position: None,
@@ -61,15 +69,12 @@ impl SolaApp for KitApplication {
             keyboard_target: true,
         });
 
-        ctx.emit(Topic::SetAppMenu(kit_menu()));
-
-        Self { theme, main_window }
+        Self { theme }
     }
 
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
         bus.on(TopicKind::CloseApp, Self::on_close_app);
         bus.on(TopicKind::Theme, Self::on_theme);
-        bus.on(TopicKind::MenuAction, Self::on_menu_action);
     }
 
     fn on_js_command(
@@ -91,7 +96,7 @@ impl SolaApp for KitApplication {
     }
 }
 
-impl KitApplication {
+impl KitApp {
     fn on_theme(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
         let Topic::Theme(theme) = delivery.topic else {
             return;
@@ -116,35 +121,5 @@ impl KitApplication {
         self.theme = Theme::default();
         ctx.emit(Topic::Theme(self.theme.clone()));
         json!({ "ok": true })
-    }
-
-    fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
-        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = delivery.topic else {
-            return;
-        };
-        if app_id != Self::APP_ID {
-            return;
-        }
-        if action_id == "open_devtools" {
-            // E1 will wire this through self.main_window.browser().open_devtools(),
-            // which spawns a second OSR Surface for Chromium DevTools.
-            self.main_window.browser().open_devtools();
-        }
-    }
-}
-
-fn kit_menu() -> AppMenuPayload {
-    AppMenuPayload {
-        app_id: KitApplication::APP_ID.into(),
-        menus: vec![MenuDefinition {
-            label: "Sola Kit".into(),
-            items: vec![MenuItem::Action {
-                id: "open_devtools".into(),
-                label: "Developer Tools".into(),
-                shortcut: Some(KeyCode::F12.chord()),
-                disabled: false,
-                checked: false,
-            }],
-        }],
     }
 }
