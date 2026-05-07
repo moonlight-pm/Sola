@@ -8,6 +8,9 @@
     "types": [],
     "paths": {
       "@sola/ipc": ["./lib/ipc.ts"],
+      "@remix-run/ui": ["./vendor/remix-ui/index.ts"],
+      "@remix-run/ui/jsx-runtime": ["./vendor/remix-ui/jsx-runtime.ts"],
+      "@remix-run/ui/*": ["./vendor/remix-ui/*"],
       "~/*": ["./lib/*"],
     },
   },

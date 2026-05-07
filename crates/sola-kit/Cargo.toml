@@ -46,6 +46,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 
+# Compile-time directory embedding for vendored web assets
+# (web/vendor/remix-ui/, etc). The macro bakes file contents into a
+# `Dir<'static>` tree of `&'static [u8]` slices, so `AssetBundle`
+# fallback lookup is a constant-time map without per-file
+# `include_bytes!` boilerplate. No runtime dependencies; build-only
+# proc-macro pulls.
+include_dir = "0.7"
+
 # No `[build-dependencies]`: `build.rs` is dependency-free (just std)
 # and reads the pinned CEF version from the workspace-root `cef-version`
 # file via `include_str!`. Keeping `sola-make` out of sola-kit's build

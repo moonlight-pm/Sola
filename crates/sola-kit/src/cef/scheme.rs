@@ -93,8 +93,8 @@ cef::wrap_scheme_handler_factory! {
                         path,
                         "cef::scheme: request arrived before any window was registered"
                     );
-                    return Some(make_string_resource(
-                        "No window registered".to_string(),
+                    return Some(make_resource(
+                        b"No window registered".to_vec(),
                         "text/plain",
                     ));
                 }
@@ -105,7 +105,7 @@ cef::wrap_scheme_handler_factory! {
             // index.html — return the pre-built HTML (bootstrap + import map
             // + initial state already injected by ctx::add_window).
             if path == "/" || path == "/index.html" {
-                return Some(make_string_resource(reg.html.clone(), "text/html"));
+                return Some(make_resource(reg.html.clone().into_bytes(), "text/html"));
             }
 
             // Asset lookup: app bundle first, platform assets as fallback.
@@ -114,39 +114,46 @@ cef::wrap_scheme_handler_factory! {
 
             match asset {
                 Some(asset) => {
-                    let body = if asset.content_type.has_jsx()
+                    let body: Vec<u8> = if asset.content_type.has_jsx()
                         || asset.content_type.has_types()
                     {
+                        // swc operates on UTF-8 source; our embedded TS/JSX
+                        // is UTF-8 by construction (we control the inputs).
+                        // A non-UTF-8 byte here would mean a corrupted asset
+                        // bundle, which is a bug — panic loudly.
+                        let src = std::str::from_utf8(asset.content)
+                            .expect("non-UTF-8 source in TS/JSX asset");
                         transform(
-                            asset.content,
+                            src,
                             asset.content_type.has_jsx(),
                             asset.content_type.has_types(),
                         )
+                        .into_bytes()
                     } else {
-                        asset.content.to_string()
+                        asset.content.to_vec()
                     };
                     let mime = asset.content_type.mime().to_string();
-                    Some(make_string_resource(body, mime))
+                    Some(make_resource(body, mime))
                 }
                 None => {
                     tracing::warn!(path, "cef::scheme: 404");
-                    Some(make_string_resource("Not Found".to_string(), "text/plain"))
+                    Some(make_resource(b"Not Found".to_vec(), "text/plain"))
                 }
             }
         }
     }
 }
 
-// ── ResourceHandler — string-backed ──────────────────────────────────────────
+// ── ResourceHandler — bytes-backed ───────────────────────────────────────────
 
 /// Construct a `ResourceHandler` that serves `body` as `mime`.
 ///
 /// The `wrap_resource_handler!` macro's generated `StringResource::new()`
 /// takes all three fields including `pos`. This helper hides the
 /// `Arc<Mutex<usize>>` boilerplate from the factory.
-fn make_string_resource(body: String, mime: impl Into<String>) -> ResourceHandler {
+fn make_resource(body: Vec<u8>, mime: impl Into<String>) -> ResourceHandler {
     StringResource::new(
-        body.into_bytes(),
+        body,
         mime.into(),
         std::sync::Arc::new(Mutex::new(0usize)),
     )

@@ -15,7 +15,7 @@ pub mod wayland;
 pub mod window;
 
 // Re-export for macro use and common consumer paths.
-pub use assets::{Asset, AssetBundle, ContentType};
+pub use assets::{Asset, AssetBundle, ContentType, DirMount};
 pub use ctx::{AppCtx, BusProxy};
 pub use window::{WindowConfig, WindowHandle};
 

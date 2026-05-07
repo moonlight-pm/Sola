@@ -50,10 +50,17 @@ impl AppCtx {
         let dispatcher_slot: Rc<RefCell<Option<JsDispatcher>>> = Rc::new(RefCell::new(None));
 
         // Build the HTML that the scheme handler will serve for /index.html.
+        // index.html is text by definition, but Asset.content is bytes —
+        // validate UTF-8 at the boundary. A non-UTF-8 index.html is a
+        // bug in the asset bundle; panic loudly rather than serving it.
         let html_raw = cfg
             .assets
             .find("/index.html")
-            .map(|a| a.content.to_string())
+            .map(|a| {
+                std::str::from_utf8(a.content)
+                    .expect("non-UTF-8 index.html in asset bundle")
+                    .to_string()
+            })
             .unwrap_or_else(|| "<html><body>No index.html in bundle</body></html>".to_string());
 
         let html = if let Some(state_json) = cfg.initial_state.as_ref() {

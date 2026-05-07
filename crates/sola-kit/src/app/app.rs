@@ -4,10 +4,27 @@ use sola_bus::topics::{Topic, TopicKind};
 use sola_core::theme::Theme;
 use sola_kit::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 
+// Storybook UI components, mounted at /components/* so adding a new file
+// to web/components/ doesn't require an asset_bundle edit.
+static COMPONENTS_DIR: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/components");
+
+// Vendored @remix-run/ui (see web/vendor/remix-ui/VENDOR.md). Mounted at
+// /vendor/remix-ui/* — the include_dir! macro bakes the whole tree as
+// `&'static [u8]` slices at compile time, and AssetBundle's dir-mount
+// fallback derives ContentType per request from the file extension.
+// Storybook-only registration; if/when remix-ui is promoted to the kit's
+// framework layer, this moves into platform_assets() and apps stop
+// re-registering it.
+static REMIX_UI_DIR: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/vendor/remix-ui");
+
 static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
-    "/index.html" => (include_str!("../../web/index.html"), Html),
-    "/index.tsx" => (include_str!("../../web/index.tsx"), Tsx),
-    "/components/Main.tsx" => (include_str!("../../web/components/Main.tsx"), Tsx),
+    "/index.html" => (include_bytes!("../../web/index.html"), Html),
+    "/index.tsx" => (include_bytes!("../../web/index.tsx"), Tsx),
+
+    @dir "/components/" => &COMPONENTS_DIR,
+    @dir "/vendor/remix-ui/" => &REMIX_UI_DIR,
 };
 
 #[derive(Deserialize)]
