@@ -269,6 +269,14 @@ pub fn run<A: SolaApp>() {
         if !kinds.contains(&TopicKind::Theme) {
             kinds.push(TopicKind::Theme);
         }
+        // Force-subscribe to `Evaluate` so `solactl eval <app> <expr>`
+        // reaches us even when the app didn't register a handler. The
+        // bus pump intercepts `Topic::Evaluate(payload)`, runs
+        // `payload.expr` in the targeted window via CEF, and emits
+        // `Topic::Evaluation` with the JSON-encoded result.
+        if !kinds.contains(&TopicKind::Evaluate) {
+            kinds.push(TopicKind::Evaluate);
+        }
         if let Err(e) = c.subscribe(&kinds) {
             tracing::warn!("failed to subscribe: {e}");
         }
@@ -287,6 +295,27 @@ pub fn run<A: SolaApp>() {
                 let Some(runtime) = runtime_weak.upgrade() else {
                     return;
                 };
+
+                // Kit-internal commands — handled before delegating to
+                // the user's `on_js_command`. Reserved namespace
+                // `__sola/*`; nothing else should use it.
+                if cmd == "__sola/eval-result" {
+                    let result: Result<String, String> = if let Some(ok) =
+                        args.get("ok").and_then(|v| v.as_str())
+                    {
+                        Ok(ok.to_string())
+                    } else if let Some(err) = args.get("error").and_then(|v| v.as_str()) {
+                        Err(err.to_string())
+                    } else {
+                        Err("eval-result missing ok/error".to_string())
+                    };
+                    let rt = runtime.borrow();
+                    rt.ctx.emit(Topic::Evaluation(
+                        sola_bus::topics::EvaluationPayload { result },
+                    ));
+                    return;
+                }
+
                 let mut rt = runtime.borrow_mut();
                 let AppRuntime { app, ctx } = &mut *rt;
                 app.on_js_command(cmd, args, id, &source_for_dispatch, ctx);
@@ -375,6 +404,49 @@ pub fn run<A: SolaApp>() {
                     let rt = self.runtime.borrow();
                     for window in &rt.ctx.windows {
                         window.send_to_js(&payload);
+                    }
+                }
+
+                // Framework default for `Topic::Evaluate`: if it's
+                // addressed at this app, wrap `payload.expr` in a
+                // self-invoking async IIFE that runs it, JSON-encodes
+                // the result, and calls back through `cefQuery` with
+                // `cmd: "__sola/eval-result"`. The dispatcher closure
+                // installed up in `run<A>` intercepts that command and
+                // emits `Topic::Evaluation`. solactl picks it up via
+                // its bus subscription. No request-id correlation —
+                // matches the existing solactl one-at-a-time contract.
+                if let Topic::Evaluate(payload) = &topic {
+                    let rt = self.runtime.borrow();
+                    if payload.target_app == rt.ctx.app_id {
+                        let target = match &payload.window {
+                            Some(title) => rt
+                                .ctx
+                                .windows
+                                .iter()
+                                .find(|w| w.title() == title)
+                                .cloned(),
+                            None => rt.ctx.windows.first().cloned(),
+                        };
+                        if let Some(window) = target {
+                            let wrapped = build_eval_wrapper(&payload.expr);
+                            window.eval_js(&wrapped);
+                        } else {
+                            tracing::warn!(
+                                target_app = %payload.target_app,
+                                window = ?payload.window,
+                                "Topic::Evaluate: no matching window"
+                            );
+                            // Send a synthetic error reply so solactl
+                            // doesn't time out.
+                            rt.ctx.emit(Topic::Evaluation(
+                                sola_bus::topics::EvaluationPayload {
+                                    result: Err(
+                                        "no matching window".to_string()
+                                    ),
+                                },
+                            ));
+                        }
                     }
                 }
 
@@ -491,6 +563,39 @@ fn kit_css_links() -> String {
         }
     }
     out
+}
+
+/// Wrap a user-supplied JS expression in an async IIFE that runs it,
+/// JSON-encodes the result, and calls back via `cefQuery` with
+/// `cmd: "__sola/eval-result"`. The dispatcher closure in `run<A>`
+/// intercepts that command and emits `Topic::Evaluation`.
+///
+/// `expr` should be a single JavaScript expression (not a statement
+/// list). Object literals need their own parens — `{a: 1}` parses as a
+/// block; pass `({a: 1})` instead. Promises are awaited.
+fn build_eval_wrapper(expr: &str) -> String {
+    format!(
+        r#"
+(async () => {{
+  function send(payload) {{
+    if (!window.cefQuery) {{ return; }}
+    window.cefQuery({{
+      request: JSON.stringify({{ cmd: '__sola/eval-result', args: payload }}),
+      onSuccess: function () {{}},
+      onFailure: function () {{}},
+    }});
+  }}
+  try {{
+    const r = await (async () => ({expr}))();
+    const json = JSON.stringify(r === undefined ? null : r);
+    send({{ ok: json }});
+  }} catch (e) {{
+    send({{ error: String(e && e.message ? e.message : e) }});
+  }}
+}})();
+"#,
+        expr = expr,
+    )
 }
 
 /// Inject the kit's importmap, auto-discovered component stylesheets,
