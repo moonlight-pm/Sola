@@ -169,6 +169,23 @@ pub fn run<A: SolaApp>() {
                 "/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.x86_64.json",
             );
         }
+        // Chromium probes GSettings (proxy config, GTK theme, locale) on
+        // startup. On a minimal NixOS with no desktop session in scope,
+        // GLib finds no schema files anywhere on `XDG_DATA_DIRS` and
+        // logs:
+        //
+        //   GLib-GIO-CRITICAL: g_settings_schema_source_lookup:
+        //                      assertion 'source != NULL' failed
+        //   Invalid UTF-16 string
+        //
+        // (the UTF-16 line is GLib trying to decode a string out of the
+        // NULL schema lookup result.) Forcing the in-memory backend
+        // skips schema discovery entirely; Chromium's queries return
+        // empty values, which is what missing schemas would have given
+        // it anyway, with no behavioural change.
+        if std::env::var_os("GSETTINGS_BACKEND").is_none() {
+            std::env::set_var("GSETTINGS_BACKEND", "memory");
+        }
     }
 
     // --- Binary self-watch ---
