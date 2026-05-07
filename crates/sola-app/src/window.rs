@@ -85,6 +85,40 @@ impl WindowHandle {
         &self.inner.gtk_window
     }
 
+    /// Tell this window's JS that the user invoked a copy chord. Apps
+    /// that want non-default copy behavior listen via `on('copy', ...)`;
+    /// `lib/ipc.ts` ships a default that copies the current selection.
+    /// Typically called from a Meta+C menu-action handler.
+    pub fn dispatch_copy(&self) {
+        self.send_to_js(&serde_json::json!({"event": "copy"}));
+    }
+
+    /// Tell this window's JS that the user invoked a paste chord.
+    /// Reads the system clipboard text on the Rust side and delivers it
+    /// in `msg.text` — host-injected JS can't call
+    /// `navigator.clipboard.readText()` (no user-activation transient).
+    /// Apps that want non-default behavior listen via `on('paste', ...)`;
+    /// the framework default inserts the text via `execCommand`.
+    pub fn dispatch_paste(&self) {
+        let Some(display) = gdk4::Display::default() else {
+            return;
+        };
+        use gdk4::prelude::DisplayExt;
+        let clipboard = display.clipboard();
+        let handle = self.clone();
+        clipboard.read_text_async(None::<&gio::Cancellable>, move |result| {
+            let text = result
+                .ok()
+                .flatten()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            handle.send_to_js(&serde_json::json!({
+                "event": "paste",
+                "text": text,
+            }));
+        });
+    }
+
     /// Access the underlying WebKit WebView. Apps that need to restructure
     /// the window's widget tree (e.g. reparent the WebView into a container
     /// to add sibling WebViews) use this. The JS dispatcher / UCM stays

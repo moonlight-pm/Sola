@@ -1,19 +1,15 @@
 //! Driver for `zwp_virtual_keyboard_unstable_v1`.
 //!
 //! Owns the manager proxy and a single virtual keyboard attached to the
-//! seat. Provides `synthesize_ctrl_plus_evdev_key` which emits a real
-//! Ctrl+<key> keystroke as if it came from a physical keyboard — used to
-//! implement copy/paste inside non-Sola clients when the shell's Meta+C
-//! and Meta+V chords fire.
+//! seat. Provides `synthesize_chord` for `Topic::SimulateKey` (used by
+//! `solactl input` for testing/automation).
 //!
-//! Uses explicit `modifiers()` requests rather than synthesizing a
-//! LeftCtrl keycode press/release pair, so:
-//!   - Ctrl state is always bracketed by a final clear, avoiding a
+//! Uses explicit `modifiers()` requests rather than synthesizing
+//! modifier keycode press/release pairs:
+//!   - Modifier state is always bracketed by a final clear, avoiding a
 //!     "stuck modifier" failure mode.
 //!   - The virtual keyboard's modifier state is isolated from the user's
-//!     physical state in wlroots-family compositors, so clients see a
-//!     clean Ctrl+<key> even if the user is still holding Meta from the
-//!     chord press.
+//!     physical state in wlroots-family compositors.
 
 use std::io::Write;
 use std::os::fd::{AsFd, OwnedFd};
@@ -91,39 +87,6 @@ pub fn init_if_ready(state: &mut AppData, qh: &QueueHandle<AppData>) {
     }
 
     state.virtual_keyboard.keyboard = Some(kb);
-}
-
-/// Synthesize a Ctrl+<evdev_keycode> keystroke on the virtual keyboard.
-/// No-op (with a warning) if the keyboard isn't ready.
-///
-/// `evdev_keycode` is the raw Linux input-event-code (e.g. `KEY_C = 46`).
-/// The compositor adds the +8 offset internally when resolving against
-/// the keymap.
-pub fn synthesize_ctrl_plus_evdev_key(state: &AppData, evdev_keycode: u32) {
-    let Some(kb) = state.virtual_keyboard.keyboard.as_ref() else {
-        warn!(
-            "clipboard chord fired but virtual keyboard not ready; did wl_seat / \
-             zwp_virtual_keyboard_manager_v1 bind?"
-        );
-        return;
-    };
-    if !state.virtual_keyboard.keymap_set {
-        warn!("virtual keyboard keymap not set; refusing to synthesize");
-        return;
-    }
-
-    let t1 = now_ms();
-    // Assert Ctrl as our depressed modifier state. No latched/locked, group 0.
-    kb.modifiers(CTRL_MASK, 0, 0, 0);
-    kb.key(t1, evdev_keycode, KEY_PRESSED);
-    kb.key(t1 + 1, evdev_keycode, KEY_RELEASED);
-    kb.modifiers(0, 0, 0, 0);
-
-    if let Some(conn) = state.conn.as_ref() {
-        if let Err(e) = conn.flush() {
-            warn!(%e, "failed to flush wayland after synthesizing keystroke");
-        }
-    }
 }
 
 /// Synthesize a keystroke for an arbitrary KeyChord. Used by the

@@ -2,6 +2,8 @@
 // Rust calls renderSwitcher / setSelection / clear via evaluate_javascript,
 // which resolves against window globals — we expose them at the bottom.
 
+import { invoke } from '@sola/ipc';
+
 var switcherEl = document.getElementById('switcher')!;
 var dropdownEl = document.getElementById('dropdown')!;
 var apps: any[] = [];
@@ -40,6 +42,7 @@ function renderSwitcher(appList, selected) {
 
         el.addEventListener('mouseenter', function() {
             setSelection(i);
+            invoke('select', { index: i });
         });
 
         switcherEl.appendChild(el);
@@ -49,7 +52,6 @@ function renderSwitcher(appList, selected) {
 function setSelection(index) {
     if (index < 0 || index >= apps.length) return;
     selectedIndex = index;
-    document.title = String(index);
     var children = switcherEl.children;
     for (var i = 0; i < children.length; i++) {
         children[i].classList.toggle('selected', i === selectedIndex);

@@ -50,6 +50,25 @@ pub fn terminal_menu(tab_count: usize) -> AppMenuPayload {
                 ],
             },
             MenuDefinition {
+                label: "Edit".into(),
+                items: vec![
+                    MenuItem::Action {
+                        id: "copy".into(),
+                        label: "Copy".into(),
+                        shortcut: Some(KeyCode::C.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Action {
+                        id: "paste".into(),
+                        label: "Paste".into(),
+                        shortcut: Some(KeyCode::V.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                ],
+            },
+            MenuDefinition {
                 label: "Tabs".into(),
                 items: (0..tab_count).map(tab_item).collect(),
             },

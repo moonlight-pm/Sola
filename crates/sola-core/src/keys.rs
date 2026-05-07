@@ -68,6 +68,7 @@ impl KeyCode {
     pub const LEFT: Self = Self(113);
     pub const RIGHT: Self = Self(114);
     pub const SPACE: Self = Self(65);
+    pub const GRAVE: Self = Self(49);
 
     // --- Function keys (X11 keycodes; evdev + 8) ---
     pub const F12: Self = Self(96);
@@ -138,6 +139,7 @@ impl KeyCode {
             36 => "\u{21A9}",  // ↩
             113 => "\u{2190}", // ←
             114 => "\u{2192}", // →
+            49 => "`",
             // Numbers
             10 => "1",
             11 => "2",

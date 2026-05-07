@@ -1,18 +1,15 @@
 //! Applications known to the shell.
 //!
-//! `ApplicationsConfig` is the in-memory form of `~/.config/sola/shell/applications.json`.
-//! It is consumed by the shell (for launcher search, switcher icon lookup, session
-//! reconciliation) and written by the settings app. Types live in `sola-core` so
-//! neither side owns the schema.
-//!
-//! Persists via the [`crate::config::JsonConfigIn`] impl at the bottom of
-//! this file — `ApplicationsConfig::load()` / `.save()` work directly.
+//! `ApplicationsConfig` is the in-memory shape of the user-edited
+//! launcher list. It is consumed by `sola-shell` (launcher search,
+//! switcher icon lookup, session reconciliation) and produced by
+//! `sola-settings`. Types live in `sola-core` so neither side owns
+//! the schema. Persistence is via the bus: `Topic::Applications` is a
+//! `#[persistent]` topic that the bus host stores in `state.toml`.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-
-use crate::config::JsonConfigIn;
 
 /// A launchable application known to the shell.
 ///
@@ -83,12 +80,26 @@ impl ApplicationsConfig {
     pub fn normalize(&mut self) -> bool {
         let mut changed = false;
         for app in &mut self.apps {
-            if let Some(new_cmd) = normalize_command(&app.command) {
-                app.command = new_cmd;
+            if app.normalize() {
                 changed = true;
             }
         }
         changed
+    }
+}
+
+impl Application {
+    /// Per-entry counterpart to [`ApplicationsConfig::normalize`]. If
+    /// `command`'s first word is a relative name that resolves on
+    /// `PATH`, rewrite it to the absolute path. Returns `true` if the
+    /// command changed.
+    pub fn normalize(&mut self) -> bool {
+        if let Some(new_cmd) = normalize_command(&self.command) {
+            self.command = new_cmd;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -174,11 +185,6 @@ impl std::fmt::Display for UpdateError {
 }
 
 impl std::error::Error for UpdateError {}
-
-impl JsonConfigIn for ApplicationsConfig {
-    const APP_DIR: &'static str = "shell";
-    const FILE_NAME: &'static str = "applications.json";
-}
 
 /// Apps that ship with Sola. The shell merges these into the launcher
 /// list at startup, ahead of any user-configured entries with the same

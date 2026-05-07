@@ -18,23 +18,17 @@ pub struct AppCtx {
     pub(crate) bus: Rc<RefCell<BusClient>>,
     pub(crate) gtk_app: gtk4::Application,
     pub(crate) windows: Vec<WindowHandle>,
-    pub(crate) app_id: &'static str,
-    /// Latest `Windows` sticky snapshot, used by the framework to correlate
-    /// window_ids in bus topics (e.g. Copy/Paste) back to a `WindowHandle`.
+    /// Latest `Windows` sticky snapshot. Reserved for framework-level
+    /// window_id ↔ WindowHandle correlation; currently no consumer.
     pub(crate) known_windows: Vec<Window>,
 }
 
 impl AppCtx {
-    pub(crate) fn new(
-        bus: Rc<RefCell<BusClient>>,
-        gtk_app: gtk4::Application,
-        app_id: &'static str,
-    ) -> Self {
+    pub(crate) fn new(bus: Rc<RefCell<BusClient>>, gtk_app: gtk4::Application) -> Self {
         Self {
             bus,
             gtk_app,
             windows: Vec::new(),
-            app_id,
             known_windows: Vec::new(),
         }
     }
@@ -191,23 +185,6 @@ impl AppCtx {
     /// `on_close_app`-initiated exits the hook is also invoked before quit.
     pub fn shutdown(&self) {
         self.gtk_app.quit();
-    }
-
-    /// Resolve a `window_id` (as seen on the bus) to one of *this process's*
-    /// owned `WindowHandle`s. Returns `None` if the id doesn't belong to us.
-    ///
-    /// Matching is by `(app_id, title)` pulled from the latest `Apps` sticky
-    /// snapshot. `app_id` guards against a coincidental title collision with
-    /// another Sola app.
-    pub(crate) fn find_window_by_id(&self, window_id: u32) -> Option<&WindowHandle> {
-        let entry = self
-            .known_windows
-            .iter()
-            .find(|a| a.window_id == window_id)?;
-        if entry.app_id != self.app_id {
-            return None;
-        }
-        self.windows.iter().find(|w| w.title() == entry.title)
     }
 
     /// Return a Clone-able handle to the bus client. Use this when you need

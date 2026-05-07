@@ -12,7 +12,7 @@
 //!   - Preserves Meta-release closes switcher by registering Meta+Tab and
 //!     acting on its `ChordReleased` event.
 use sola_app::SolaApp;
-use sola_bus::topics::{ChordEvent, EditRequest, FocusTarget, FrameUpdate, RegisteredChord, Topic};
+use sola_bus::topics::{ChordEvent, FocusTarget, FrameUpdate, RegisteredChord, Topic};
 use sola_core::{KeyChord, KeyCode};
 
 use crate::app::ShellApp;
@@ -89,6 +89,7 @@ fn keycode_to_keysym(k: KeyCode) -> u32 {
     match k {
         KeyCode::TAB => 0xFF09,
         KeyCode::SPACE => 0x20,
+        KeyCode::GRAVE => 0x60,
         KeyCode::BACKSPACE => 0xFF08,
         KeyCode::LEFT => 0xFF51,
         KeyCode::RIGHT => 0xFF53,
@@ -183,6 +184,7 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
     match sym {
         0xFF09 => Some(KeyCode::TAB),
         0x20 => Some(KeyCode::SPACE),
+        0x60 => Some(KeyCode::GRAVE),
         0xFF08 => Some(KeyCode::BACKSPACE),
         0xFF51 => Some(KeyCode::LEFT),
         0xFF53 => Some(KeyCode::RIGHT),
@@ -298,44 +300,20 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEv
         }
     }
 
-    // Meta+C / Meta+V: global clipboard chords. Dispatched to the
-    // focused window's owning process via the bus; non-Sola clients
-    // aren't subscribers, so Meta+C/V with a foreign focus is a silent
-    // no-op (and in practice doesn't fire at all, because the xkb
-    // profile rebinds Meta→Ctrl when a non-Sola app is focused).
-    //
-    // Apps that explicitly bind Meta+C / Meta+V in their own menu opt
-    // out of this global path: the menu shortcut wins so they handle
-    // copy/paste like any other action (e.g. sola-browser's Edit menu
-    // routes to WebKit's editing commands). Otherwise we'd intercept
-    // here and the menu binding would never fire.
+    // Meta+`: cycle through the focused app's own windows. macOS-style
+    // alt-tab-within-an-app — no overlay, just advance focus to the next
+    // window of the current app on each press.
     if chord.meta
         && !chord.ctrl
         && !chord.alt
         && !chord.shift
-        && matches!(chord.keycode, KeyCode::C | KeyCode::V)
+        && chord.keycode == KeyCode::GRAVE
     {
         if app.switcher.active {
             return;
         }
-        let app_owns_chord = app
-            .focused_app_id
-            .as_deref()
-            .is_some_and(|focused| app.menus.lookup_shortcut(&chord, focused).is_some());
-        if !app_owns_chord {
-            if let Some(window_id) = app.focused_window_id {
-                let topic = if chord.keycode == KeyCode::C {
-                    Topic::Copy(EditRequest { window_id })
-                } else {
-                    Topic::Paste(EditRequest { window_id })
-                };
-                ctx.emit(topic);
-            } else {
-                tracing::debug!("clipboard chord with no focused window");
-            }
-            return;
-        }
-        // Fall through to the standard menu-shortcut dispatch below.
+        app.cycle_focused_app_windows(ctx);
+        return;
     }
 
     // Shell system shortcuts (e.g. Exit Sola).
@@ -444,7 +422,7 @@ fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
     app.emit_registered_chords(ctx);
     app.windows.switcher.eval_js("clear()");
     if let Some(ref app_id) = app_id {
-        app.set_focus(app_id);
+        app.set_focus(app_id, ctx);
         let wid = app
             .mru_window_by_app
             .get(app_id)

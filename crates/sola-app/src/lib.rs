@@ -214,7 +214,7 @@ pub fn run<A: SolaApp>() {
         }
 
         // --- Build AppCtx, run A::new ---
-        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone(), app_id);
+        let mut ctx = AppCtx::new(bus.clone(), gtk_app.clone());
         let mut app = A::new(&mut ctx);
 
         // --- Build BusRegistry and subscribe ---
@@ -227,8 +227,6 @@ pub fn run<A: SolaApp>() {
         for kind in [
             TopicKind::Shutdown,
             TopicKind::Windows,
-            TopicKind::Copy,
-            TopicKind::Paste,
             TopicKind::Evaluate,
         ] {
             if !subscription_kinds.contains(&kind) {
@@ -323,41 +321,6 @@ pub fn run<A: SolaApp>() {
                         Topic::Evaluate(req) if req.target_app == app_id => {
                             let mut rt = runtime.borrow_mut();
                             handle_evaluate(app_id, req, &mut rt.ctx);
-                        }
-                        Topic::Copy(req) => {
-                            let rt = runtime.borrow();
-                            if let Some(handle) = rt.ctx.find_window_by_id(req.window_id) {
-                                handle.send_to_js(&serde_json::json!({"event": "copy"}));
-                            }
-                        }
-                        Topic::Paste(req) => {
-                            // WebKit's navigator.clipboard.readText() requires
-                            // a user-activation transient that host-injected
-                            // JS doesn't provide, so fetch the text via
-                            // GdkClipboard on the Rust side and deliver it
-                            // already-resolved as part of the event payload.
-                            let rt = runtime.borrow();
-                            if let Some(handle) = rt.ctx.find_window_by_id(req.window_id) {
-                                let handle = handle.clone();
-                                if let Some(display) = gdk4::Display::default() {
-                                    use gdk4::prelude::DisplayExt;
-                                    let clipboard = display.clipboard();
-                                    clipboard.read_text_async(
-                                        None::<&gio::Cancellable>,
-                                        move |result| {
-                                            let text = result
-                                                .ok()
-                                                .flatten()
-                                                .map(|s| s.to_string())
-                                                .unwrap_or_default();
-                                            handle.send_to_js(&serde_json::json!({
-                                                "event": "paste",
-                                                "text": text,
-                                            }));
-                                        },
-                                    );
-                                }
-                            }
                         }
                         _ => {}
                     }

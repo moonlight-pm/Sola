@@ -1,37 +1,30 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Weak;
+use std::time::Duration;
 
 use serde_json::Value;
-use sola_app::config::JsonConfigIn;
-use sola_app::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle};
+use sola_app::{AppCtx, AppRuntime, BusRegistry, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
-    AppMenuPayload, CompositionEntry, FocusTarget, FrameUpdate, KeyChord, LaunchResultPayload,
-    MenuDefinition, MenuItem, MouseClickedPayload, MouseEnteredPayload, RegisteredChord, Topic,
-    TopicKind, UserAppExitedPayload, Window,
+    AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
+    LaunchResultPayload, MenuDefinition, MenuItem, MouseClickedPayload, MouseEnteredPayload,
+    RegisteredChord, Topic, TopicKind, UserAppExitedPayload, Window,
 };
 use sola_core::KeyCode;
-use sola_core::applications::{Application, ApplicationsConfig, builtin_apps};
+use sola_core::applications::{Application, builtin_apps, is_builtin};
 
-/// Load the apps list, normalize relative commands to absolute paths,
-/// and merge in the built-in apps (Settings, Monitor) ahead of any
-/// user-configured entry that happens to share an app_id. The merged
-/// list is what feeds the launcher; user-only entries are persisted
-/// back to disk if normalization rewrote any commands.
-fn load_applications() -> ApplicationsConfig {
-    let mut cfg = ApplicationsConfig::load();
-    if cfg.normalize() {
-        cfg.save();
-    }
-    let mut merged = ApplicationsConfig {
+/// Initial `applications` list — just the built-ins. User entries
+/// arrive later as `Topic::Application` sticky replays from the bus
+/// and get appended in `on_application`.
+fn initial_applications() -> ApplicationsConfig {
+    ApplicationsConfig {
         apps: builtin_apps(),
-    };
-    for a in cfg.apps {
-        if merged.get(&a.app_id).is_some() {
-            continue;
-        }
-        merged.apps.push(a);
     }
-    merged
 }
+
+/// Hover dwell before focus-follows-mouse switches focus. Below this,
+/// sweeping the cursor across windows leaves focus where it was.
+const FOCUS_HOVER_DELAY: Duration = Duration::from_millis(500);
 
 use crate::launcher::{self, LAUNCHER_ASSETS, LauncherState};
 use crate::menu::{MENU_ASSETS, MenuCache, SYNTHESIZED_CLOSE_ACTION, synthesized_menu};
@@ -69,6 +62,13 @@ pub struct ShellApp {
     pub launcher: LauncherState,
     pub menu_open: bool,
     pub windows: ShellWindows,
+    /// Pending focus-follows-mouse timer. Set when the cursor enters a
+    /// non-focused app window; cleared when it fires, when the cursor
+    /// moves elsewhere, or when a click forces an immediate focus.
+    pub pending_focus_source: Option<glib::SourceId>,
+    /// Captured in `after_runtime_ready`. Used by hover timers to call
+    /// back into the shell off the GTK main loop.
+    pub runtime_weak: Option<Weak<RefCell<AppRuntime<Self>>>>,
 }
 
 impl SolaApp for ShellApp {
@@ -136,7 +136,7 @@ impl SolaApp for ShellApp {
             mru_window_by_app: HashMap::new(),
             known_windows: Vec::new(),
             window_id_by_key: HashMap::new(),
-            applications: load_applications(),
+            applications: initial_applications(),
             menus,
             zoning: ZoningState::new(),
             switcher: SwitcherState::default(),
@@ -148,11 +148,21 @@ impl SolaApp for ShellApp {
                 switcher,
                 launcher,
             },
+            pending_focus_source: None,
+            runtime_weak: None,
         };
 
         app.emit_registered_chords(ctx);
 
         app
+    }
+
+    fn after_runtime_ready(
+        &mut self,
+        runtime: Weak<RefCell<AppRuntime<Self>>>,
+        _ctx: &mut AppCtx,
+    ) {
+        self.runtime_weak = Some(runtime);
     }
 
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
@@ -168,6 +178,7 @@ impl SolaApp for ShellApp {
         bus.on(TopicKind::ChordReleased, Self::on_chord_released);
         bus.on(TopicKind::LaunchResult, Self::on_launch_result);
         bus.on(TopicKind::UserAppExited, Self::on_user_app_exited);
+        bus.on(TopicKind::Application, Self::on_application);
     }
 
     fn on_js_command(
@@ -202,6 +213,12 @@ impl SolaApp for ShellApp {
                     }));
                 }
                 self.close_menu(ctx);
+            }
+            ("switcher", "select") => {
+                let index = args.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                if self.switcher.active && index < self.switcher.apps.len() {
+                    self.switcher.selected = index;
+                }
             }
             ("launcher", "query") => {
                 let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
@@ -322,17 +339,20 @@ impl ShellApp {
         self.emit_composition(ctx);
     }
 
-    fn on_mouse_entered(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
+    fn on_mouse_entered(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
         let Topic::MouseEntered(MouseEnteredPayload { window_id }) = delivery.topic else {
             return;
         };
-        self.focus_window_from_pointer(*window_id, ctx);
+        self.schedule_focus_from_pointer(*window_id);
     }
 
     fn on_mouse_clicked(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
         let Topic::MouseClicked(MouseClickedPayload { window_id }) = delivery.topic else {
             return;
         };
+        // A click is an explicit signal — bypass the hover dwell and
+        // focus immediately, dropping any pending hover timer.
+        self.cancel_pending_focus();
         // While a menubar menu is open we run in macOS-style menu mode:
         // a click on any non-shell window (i.e. outside the menubar and
         // dropdown surfaces) dismisses the menu. Clicks landing on the
@@ -352,7 +372,11 @@ impl ShellApp {
         self.focus_window_from_pointer(*window_id, ctx);
     }
 
-    fn on_mouse_left(&mut self, _delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {}
+    fn on_mouse_left(&mut self, _delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        // Cursor left all known windows — drop any pending hover focus
+        // so we don't switch into an app the user has moved away from.
+        self.cancel_pending_focus();
+    }
 
     fn on_chord(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
         let Topic::Chord(evt) = delivery.topic else { return };
@@ -413,6 +437,28 @@ impl ShellApp {
         self.push_toast(&format!("{command} — {detail}"));
     }
 
+    fn on_application(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        let Topic::Application(app) = delivery.topic else {
+            return;
+        };
+        // Built-ins live in code; the bus must not be able to shadow
+        // them or remove them with a stray emit/retract.
+        if is_builtin(&app.app_id) {
+            return;
+        }
+        self.applications.remove(&app.app_id);
+        if !delivery.retracted {
+            self.applications.apps.push(app.clone());
+        }
+        // Re-render the launcher if it's currently open so a newly
+        // added app shows up without the user having to retype.
+        if self.launcher.active {
+            let query = self.launcher.query.clone();
+            self.launcher.apply_query(&self.applications, &query);
+            self.render_launcher();
+        }
+    }
+
     /// Look up a configured application by its `app_id`.
     pub fn application(&self, app_id: &str) -> Option<&Application> {
         self.applications.get(app_id)
@@ -443,7 +489,7 @@ impl ShellApp {
                     .count() as u32;
                 serde_json::json!({
                     "app_id": app.app_id,
-                    "name": app.app_id,
+                    "name": self.display_label(&app.app_id),
                     "icon": icon,
                     "window_count": window_count,
                 })
@@ -486,23 +532,36 @@ impl ShellApp {
     }
 
     fn shell_key_chords(&self) -> Vec<KeyChord> {
+        // Always include the shell's own meta-bound shortcuts (e.g. Exit
+        // Sola). Then add the focused Sola app's meta shortcuts — and ONLY
+        // that app's. Registering every cached app's chords globally
+        // means River grabs them no matter who has focus, swallowing
+        // chords like Cmd+W when a non-Sola client (e.g. Zed) is focused.
         let mut bindings: Vec<KeyChord> = self
             .menus
-            .key_bindings()
+            .key_bindings_for(Self::APP_ID)
             .into_iter()
             .filter(|b| b.meta)
             .collect();
+        if let Some(focused) = self.focused_app_id.as_deref() {
+            if focused != Self::APP_ID {
+                bindings.extend(
+                    self.menus
+                        .key_bindings_for(focused)
+                        .into_iter()
+                        .filter(|b| b.meta),
+                );
+            }
+        }
 
         // Meta+Tab activates switcher.
         bindings.push(KeyCode::TAB.meta());
 
+        // Meta+` cycles through the focused app's own windows.
+        bindings.push(KeyCode::GRAVE.meta());
+
         // Meta+Space toggles launcher.
         bindings.push(KeyCode::SPACE.meta());
-
-        // Meta+C / Meta+V: global copy/paste. Routed to the focused
-        // window's owning Sola app via Topic::Copy / Topic::Paste.
-        bindings.push(KeyCode::C.meta());
-        bindings.push(KeyCode::V.meta());
 
         // Meta+Q: close focused app.
         bindings.push(KeyCode::Q.meta());
@@ -521,6 +580,52 @@ impl ShellApp {
         bindings
     }
 
+    /// Drop any pending hover-focus timer.
+    fn cancel_pending_focus(&mut self) {
+        if let Some(src) = self.pending_focus_source.take() {
+            src.remove();
+        }
+    }
+
+    /// Schedule focus-follows-mouse for `window_id` after `FOCUS_HOVER_DELAY`.
+    /// Re-entries cancel the previous timer; the cursor must dwell on a
+    /// single window for the full delay before focus actually moves.
+    fn schedule_focus_from_pointer(&mut self, window_id: u32) {
+        self.cancel_pending_focus();
+
+        // Skip surfaces that wouldn't focus anyway: shell chrome, our own
+        // overlays' active state, or the already-focused window.
+        let Some(info) = self.known_windows.iter().find(|w| w.window_id == window_id) else {
+            return;
+        };
+        if info.app_id == Self::APP_ID {
+            return;
+        }
+        if self.menu_open || self.switcher.active || self.launcher.active {
+            return;
+        }
+        if self.focused_window_id == Some(window_id) {
+            return;
+        }
+
+        let Some(runtime_weak) = self.runtime_weak.clone() else {
+            return;
+        };
+
+        let src = glib::timeout_add_local_once(FOCUS_HOVER_DELAY, move || {
+            let Some(runtime) = runtime_weak.upgrade() else {
+                return;
+            };
+            let mut rt = runtime.borrow_mut();
+            let AppRuntime { app, ctx } = &mut *rt;
+            // Source auto-removes after firing — clear our handle so a
+            // later cancel doesn't try to remove an already-dead source.
+            app.pending_focus_source = None;
+            app.focus_window_from_pointer(window_id, ctx);
+        });
+        self.pending_focus_source = Some(src);
+    }
+
     fn focus_window_from_pointer(&mut self, window_id: u32, ctx: &mut AppCtx) {
         let Some(info) = self.known_windows.iter().find(|w| w.window_id == window_id) else {
             return;
@@ -532,14 +637,44 @@ impl ShellApp {
             return;
         }
         let app_id = info.app_id.clone();
-        self.set_focus(&app_id);
+        self.set_focus(&app_id, ctx);
         self.focused_window_id = Some(window_id);
         self.mru_window_by_app.insert(app_id, window_id);
         ctx.emit(Topic::Focus(FocusTarget { window_id }));
         self.emit_composition(ctx);
     }
 
-    pub fn set_focus(&mut self, app_id: &str) {
+    /// Advance keyboard focus to the next window of the currently
+    /// focused app. No-op if there are fewer than two such windows.
+    /// Wraps around in `known_windows` order.
+    pub fn cycle_focused_app_windows(&mut self, ctx: &mut AppCtx) {
+        let Some(app_id) = self.focused_app_id.clone() else {
+            return;
+        };
+        let windows: Vec<u32> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id == app_id)
+            .map(|w| w.window_id)
+            .collect();
+        if windows.len() < 2 {
+            return;
+        }
+        let cur_idx = self
+            .focused_window_id
+            .and_then(|cur| windows.iter().position(|w| *w == cur))
+            .unwrap_or(0);
+        let next_wid = windows[(cur_idx + 1) % windows.len()];
+        self.focused_window_id = Some(next_wid);
+        self.mru_window_by_app.insert(app_id, next_wid);
+        ctx.emit(Topic::Focus(FocusTarget {
+            window_id: next_wid,
+        }));
+        self.emit_composition(ctx);
+    }
+
+    pub fn set_focus(&mut self, app_id: &str, ctx: &mut AppCtx) {
+        let app_changed = self.focused_app_id.as_deref() != Some(app_id);
         self.focused_app_id = Some(app_id.to_string());
         self.zoning.set_focused(app_id.to_string());
         self.mru_apps.retain(|m| m != app_id);
@@ -549,6 +684,13 @@ impl ShellApp {
         if self.menu_open {
             self.menu_open = false;
             self.windows.menu.eval_js("clearMenu()");
+        }
+
+        // Per-app menu chords are only registered with River while their
+        // app is focused — otherwise (e.g.) sola-browser's Meta+W would
+        // be intercepted while a non-Sola client like Zed is focused.
+        if app_changed {
+            self.emit_registered_chords(ctx);
         }
 
         let synthesized;
@@ -637,18 +779,30 @@ impl ShellApp {
         }
 
         // 2. App windows ordered by MRU (least recent first = bottom of stack).
+        // Within each app, the per-app MRU window stacks last so it sits on
+        // top of its siblings — important for Meta+` cycling and any time
+        // the same app has multiple overlapping windows.
         let mut seen_app_ids = HashSet::new();
         for app_id in self.mru_apps.iter().rev() {
             if app_id == Self::APP_ID {
                 continue;
             }
             seen_app_ids.insert(app_id.clone());
-            // Include all windows for this app.
+            let top_wid = self.mru_window_by_app.get(app_id).copied();
             for w in &self.known_windows {
-                if w.app_id == *app_id {
+                if w.app_id == *app_id && Some(w.window_id) != top_wid {
                     entries.push(CompositionEntry {
                         window_id: w.window_id,
                     });
+                }
+            }
+            if let Some(wid) = top_wid {
+                if self
+                    .known_windows
+                    .iter()
+                    .any(|w| w.window_id == wid && w.app_id == *app_id)
+                {
+                    entries.push(CompositionEntry { window_id: wid });
                 }
             }
         }
@@ -798,7 +952,7 @@ impl ShellApp {
         // back to the next MRU app — or clear the menubar entirely if there
         // are no apps left.
         if let Some(id) = added.first() {
-            self.set_focus(id);
+            self.set_focus(id, ctx);
             if let Some(wid) = self.lookup_any_window_id(id) {
                 self.focused_window_id = Some(wid);
                 self.mru_window_by_app.insert(id.clone(), wid);
@@ -807,7 +961,7 @@ impl ShellApp {
             self.emit_composition(ctx);
         } else if focused_app_was_removed {
             if let Some(next) = self.mru_apps.first().cloned() {
-                self.set_focus(&next);
+                self.set_focus(&next, ctx);
                 let wid = self
                     .mru_window_by_app
                     .get(&next)
@@ -821,6 +975,9 @@ impl ShellApp {
                 self.emit_composition(ctx);
             } else {
                 self.clear_menubar_focus();
+                // No focused app left — drop any per-app chords that were
+                // still registered with River.
+                self.emit_registered_chords(ctx);
             }
         }
     }
@@ -923,9 +1080,6 @@ impl ShellApp {
         if self.launcher.active {
             return;
         }
-
-        // Reload apps from disk so edits take effect without restarting.
-        self.applications = load_applications();
 
         // Snapshot the focus target we'll restore on close.
         self.launcher.prior_focus = self.focused_window_id;

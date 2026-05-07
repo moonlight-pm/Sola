@@ -90,12 +90,18 @@ impl MenuCache {
         }
     }
 
-    /// Return a de-duplicated list of key bindings handled by this cache.
-    pub fn key_bindings(&self) -> Vec<KeyChord> {
+    /// Return a de-duplicated list of key bindings owned by `app_id`.
+    /// The shell uses this to register only the focused app's chords with
+    /// River — registering globally causes a Sola app's shortcut (e.g.
+    /// sola-browser's Meta+W) to be grabbed even when a non-Sola client
+    /// like Zed is focused, swallowing the chord.
+    pub fn key_bindings_for(&self, app_id: &str) -> Vec<KeyChord> {
         let mut set: HashSet<KeyChord> = HashSet::new();
 
-        for chord in self.shortcuts.keys() {
-            set.insert(chord.clone());
+        for (chord, entries) in &self.shortcuts {
+            if entries.iter().any(|(id, _)| id == app_id) {
+                set.insert(chord.clone());
+            }
         }
 
         let mut out: Vec<KeyChord> = set.into_iter().collect();

@@ -127,13 +127,25 @@ document.addEventListener('click', () => {
     dismissMenu();
 });
 
+const WEEKDAYS = [
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+];
+
 function updateClock(): void {
     const now = new Date();
-    const h = now.getHours();
-    const m = String(now.getMinutes()).padStart(2, '0');
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const h12 = h % 12 || 12;
-    clockEl.textContent = `${h12}:${m} ${ampm}`;
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const weekday = WEEKDAYS[now.getDay()];
+    const y = now.getFullYear();
+    const mo = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    clockEl.textContent = `${hh}:${mm} ${weekday} ${y}-${mo}-${d}`;
 }
 
 updateClock();

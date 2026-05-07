@@ -222,6 +222,8 @@ impl TerminalApp {
                         .send_to_js(&json!({"event": "select_tab", "index": index}));
                 }
             }
+            "copy" => self.main_window.dispatch_copy(),
+            "paste" => self.main_window.dispatch_paste(),
             "quit" => std::process::exit(0),
             _ => {
                 tracing::debug!(action_id, "unknown menu action");
