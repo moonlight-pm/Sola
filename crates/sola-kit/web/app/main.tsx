@@ -1,47 +1,36 @@
+// Storybook entry. Layout: <Root> at top, then a flex row of the
+// kit-shipped <Sidebar> on the left and the selected showcase on
+// the right. Selection is parent-controlled via a closure-captured
+// local; nav and content are both derived from the registry in
+// `./showcases/index.ts` so adding a new showcase never touches
+// this file.
+
 import { type Handle } from "@remix-run/ui";
-import { Button } from "@sola/button";
 import { Root } from "@sola/root";
 import { Sidebar, SidebarSection, SidebarItem } from "@sola/sidebar";
 
-// Storybook layout: <Root> at the top of the tree (provides the
-// page-level theme styling), then a flex row of kit-shipped <Sidebar>
-// on the left and a content pane on the right. Selection is
-// parent-controlled — we track the current id in a closure-captured
-// local and call `handle.update()` when it changes, then pass
-// `active={...}` and `onSelect={...}` per item.
-//
-// Items are label-only here (the storybook's preference); other apps
-// can use the `leading`/`trailing` named slots for icons or counters.
-
-interface NavEntry {
-  id: string;
-  label: string;
-}
+import { findShowcase, showcases } from "./showcases/index.ts";
 
 interface NavSection {
   label: string;
-  items: NavEntry[];
+  items: { id: string; label: string }[];
 }
 
-const sections: NavSection[] = [
-  {
-    label: "Components",
-    items: [
-      { id: "button", label: "Button" },
-      { id: "sidebar", label: "Sidebar" },
-    ],
-  },
-  {
-    label: "Theme",
-    items: [
-      { id: "palette", label: "Palette" },
-      { id: "bindings", label: "Bindings" },
-    ],
-  },
-];
+/** Group the registry's showcases by `section`, preserving first-
+    appearance order for both sections and items. */
+function buildNavSections(): NavSection[] {
+  const map = new Map<string, { id: string; label: string }[]>();
+  for (const s of showcases) {
+    if (!map.has(s.section)) map.set(s.section, []);
+    map.get(s.section)!.push({ id: s.id, label: s.label });
+  }
+  return Array.from(map.entries()).map(([label, items]) => ({ label, items }));
+}
+
+const navSections = buildNavSections();
 
 export function Main(handle: Handle) {
-  let selectedId = "button";
+  let selectedId = showcases[0]?.id ?? "";
 
   const select = (id: string) => {
     if (id === selectedId) return;
@@ -56,97 +45,40 @@ export function Main(handle: Handle) {
   const contentStyle =
     "flex: 1 1 auto; padding: 24px 32px; overflow: auto;";
 
-  return () => (
-    <Root>
-      <div style={layoutStyle}>
-        <Sidebar>
-          {sections.map((section) => (
-            <SidebarSection label={section.label}>
-              {section.items.map((item) => (
-                <SidebarItem
-                  active={item.id === selectedId}
-                  onSelect={() => select(item.id)}
-                >
-                  {item.label}
-                </SidebarItem>
-              ))}
-            </SidebarSection>
-          ))}
-        </Sidebar>
-        <section style={contentStyle}>
-          <h1 style="margin-top: 0;">{labelFor(selectedId)}</h1>
-          {selectedId === "button"
-            ? <ButtonShowcase />
-            : (
-              <p style="opacity: 0.75;">
-                Storybook content for "{selectedId}" goes here.
-              </p>
-            )}
-        </section>
-      </div>
-    </Root>
-  );
-}
+  return () => {
+    const entry = findShowcase(selectedId);
+    const Showcase = entry?.component;
+    const heading = entry?.label ?? selectedId;
 
-// ── Button storybook page ───────────────────────────────────────────
-//
-// Renders one row per variant with idle and disabled instances. The
-// `pressedFlash` lets clicks visibly do something — a tiny "pressed
-// N times" line below each row, demonstrating onPress wiring.
-
-function ButtonShowcase(handle: Handle) {
-  let count = 0;
-  const onPress = () => {
-    count++;
-    handle.update();
+    return (
+      <Root>
+        <div style={layoutStyle}>
+          <Sidebar>
+            {navSections.map((section) => (
+              <SidebarSection label={section.label}>
+                {section.items.map((item) => (
+                  <SidebarItem
+                    active={item.id === selectedId}
+                    onSelect={() => select(item.id)}
+                  >
+                    {item.label}
+                  </SidebarItem>
+                ))}
+              </SidebarSection>
+            ))}
+          </Sidebar>
+          <section style={contentStyle}>
+            <h1 style="margin-top: 0;">{heading}</h1>
+            {Showcase
+              ? <Showcase />
+              : (
+                <p style="opacity: 0.75;">
+                  No showcase registered for "{selectedId}".
+                </p>
+              )}
+          </section>
+        </div>
+      </Root>
+    );
   };
-
-  const rowStyle = "display: flex; gap: 12px; align-items: center;";
-  const groupStyle = "display: flex; flex-direction: column; gap: 8px;";
-  const labelStyle = "font-size: 11px; opacity: 0.6; text-transform: uppercase;";
-
-  return () => (
-    <div style="display: flex; flex-direction: column; gap: 24px; max-width: 640px;">
-      <p style="opacity: 0.75; margin: 0;">
-        Pressed {count} time{count === 1 ? "" : "s"}.
-      </p>
-      <div style={groupStyle}>
-        <span style={labelStyle}>default</span>
-        <div style={rowStyle}>
-          <Button onPress={onPress}>Default</Button>
-          <Button onPress={onPress} disabled>Disabled</Button>
-        </div>
-      </div>
-      <div style={groupStyle}>
-        <span style={labelStyle}>primary</span>
-        <div style={rowStyle}>
-          <Button variant="primary" onPress={onPress}>Primary</Button>
-          <Button variant="primary" onPress={onPress} disabled>Disabled</Button>
-        </div>
-      </div>
-      <div style={groupStyle}>
-        <span style={labelStyle}>ghost</span>
-        <div style={rowStyle}>
-          <Button variant="ghost" onPress={onPress}>Ghost</Button>
-          <Button variant="ghost" onPress={onPress} disabled>Disabled</Button>
-        </div>
-      </div>
-      <div style={groupStyle}>
-        <span style={labelStyle}>danger</span>
-        <div style={rowStyle}>
-          <Button variant="danger" onPress={onPress}>Danger</Button>
-          <Button variant="danger" onPress={onPress} disabled>Disabled</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function labelFor(id: string): string {
-  for (const s of sections) {
-    for (const i of s.items) {
-      if (i.id === id) return i.label;
-    }
-  }
-  return id;
 }

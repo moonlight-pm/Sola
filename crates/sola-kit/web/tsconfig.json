@@ -30,6 +30,7 @@
       "@sola/button": ["./lib/components/button.tsx"],
       "@sola/root": ["./lib/components/root.tsx"],
       "@sola/sidebar": ["./lib/components/sidebar.tsx"],
+      "@sola/stack": ["./lib/components/stack.tsx"],
       // Per-app root component. The kit's built-in `index.tsx`
       // imports `Main` via this specifier; the runtime importmap
       // injection (in `crates/sola-kit/src/lib.rs::build_importmap`)

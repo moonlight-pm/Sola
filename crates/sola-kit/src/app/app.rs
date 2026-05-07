@@ -9,16 +9,23 @@ use sola_kit::{
     AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle, kit_default_theme,
 };
 
-// Storybook's only app-specific asset is the root component file.
-// `index.html` and `index.tsx` come from `platform_assets()`; the
-// vendored Remix v3 source and every kit-shipped component (sidebar,
-// future ones) come from there too.
+// Storybook's app-specific assets — everything under `web/app/`
+// served at the root of the app:// scheme. `index.html` and
+// `index.tsx` come from `platform_assets()`; the vendored Remix v3
+// source and every kit-shipped component (sidebar, button, root,
+// stack, …) come from there too.
 //
-// The kit's built-in `index.tsx` imports `Main` via the bare specifier
-// `@sola/app-root`, which the importmap injection wires to the URL
-// declared on `KitApp::ROOT_COMPONENT` — `/main.tsx` by default.
+// The whole `web/app/` subtree is mounted at `/` so dropping a new
+// file (e.g. another showcase) is a zero-touch addition — no entry
+// in this asset bundle to maintain. The kit's built-in `index.tsx`
+// imports `Main` via the bare specifier `@sola/app-root`, which the
+// importmap injection wires to the URL declared on
+// `KitApp::ROOT_COMPONENT` — `/main.tsx` by default.
+static APP_DIR: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/app");
+
 static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
-    "/main.tsx" => (include_bytes!("../../web/app/main.tsx"), Tsx),
+    @dir "/" => &APP_DIR,
 };
 
 #[derive(Deserialize)]

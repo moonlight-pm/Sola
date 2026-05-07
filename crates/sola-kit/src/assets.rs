@@ -292,6 +292,11 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content: include_bytes!("../web/lib/components/sidebar.css"),
                 content_type: ContentType::Css,
             },
+            Asset {
+                path: "/lib/components/stack.tsx",
+                content: include_bytes!("../web/lib/components/stack.tsx"),
+                content_type: ContentType::Tsx,
+            },
         ],
         dirs: &[DirMount {
             url_prefix: "/vendor/remix-ui/",
