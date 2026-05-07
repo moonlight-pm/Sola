@@ -15,7 +15,9 @@ use cef::{rc::*, *};
 
 use std::rc::Rc;
 
-use crate::cef::handlers::{KitClient, KitLifeSpanHandler, KitRenderHandler, KitRequestHandler};
+use crate::cef::handlers::{
+    KitClient, KitDisplayHandler, KitLifeSpanHandler, KitRenderHandler, KitRequestHandler,
+};
 use crate::wayland::Surface;
 
 /// A CEF browser bound to a Wayland surface via OSR + dma-buf.
@@ -56,11 +58,19 @@ impl Browser {
         browser_settings.background_color = 0xFFFF_FFFFu32;
 
         // --- Build the client with the OSR RenderHandler + the MessageRouter
-        // hookups (LifeSpan + Request handlers + on_process_message_received). ---
+        // hookups (LifeSpan + Request handlers + on_process_message_received).
+        // The DisplayHandler routes JS console.* output into our tracing log
+        // (see KitDisplayHandler::on_console_message). ---
         let render_handler = KitRenderHandler::new(surface);
         let life_span_handler = KitLifeSpanHandler::new();
         let request_handler = KitRequestHandler::new();
-        let mut client = KitClient::new(render_handler, life_span_handler, request_handler);
+        let display_handler = KitDisplayHandler::new();
+        let mut client = KitClient::new(
+            render_handler,
+            life_span_handler,
+            request_handler,
+            display_handler,
+        );
 
         // --- URL ---
         let url = cef::CefString::from(initial_url);

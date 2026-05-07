@@ -209,6 +209,7 @@ cef::wrap_client! {
         pub render_handler: cef::RenderHandler,
         pub life_span_handler: cef::LifeSpanHandler,
         pub request_handler: cef::RequestHandler,
+        pub display_handler: cef::DisplayHandler,
     }
 
     impl Client {
@@ -222,6 +223,10 @@ cef::wrap_client! {
 
         fn request_handler(&self) -> Option<cef::RequestHandler> {
             Some(self.request_handler.clone())
+        }
+
+        fn display_handler(&self) -> Option<cef::DisplayHandler> {
+            Some(self.display_handler.clone())
         }
 
         fn on_process_message_received(
@@ -239,6 +244,60 @@ cef::wrap_client! {
                     message.cloned(),
                 );
             if handled { 1 } else { 0 }
+        }
+    }
+}
+
+// DisplayHandler — primarily here so we can route the renderer's
+// `console.log` / `console.warn` / `console.error` output into our
+// own tracing pipeline. With Chromium's own log severity set to
+// DISABLE (init.rs), JS console messages would otherwise be dropped
+// on the floor; routing them through `tracing` lands them in the
+// shared `/opt/sola/log/sola.log` next to native logs from the same
+// process.
+cef::wrap_display_handler! {
+    pub struct KitDisplayHandler {}
+
+    impl DisplayHandler {
+        fn on_console_message(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            level: cef::LogSeverity,
+            message: Option<&cef::CefString>,
+            source: Option<&cef::CefString>,
+            line: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            // CefString implements Display via its UTF-16 → UTF-8
+            // conversion; format!() pulls a clean Rust String out.
+            let msg = message.map(|s| s.to_string()).unwrap_or_default();
+            // Strip a single trailing newline if Chromium added one — keeps
+            // the log file's one-line-per-event invariant.
+            let msg = msg.strip_suffix('\n').unwrap_or(&msg);
+            let src = source.map(|s| s.to_string()).unwrap_or_default();
+
+            // LogSeverity → tracing level. DEFAULT and INFO both map to
+            // info; VERBOSE is debug (we don't surface trace by default
+            // because console.debug is common enough that trace would be
+            // too quiet); WARNING/ERROR/FATAL escalate as expected.
+            match level {
+                cef::LogSeverity::VERBOSE => {
+                    tracing::debug!(target: "sola_kit::console", source = %src, line, "{msg}");
+                }
+                cef::LogSeverity::WARNING => {
+                    tracing::warn!(target: "sola_kit::console", source = %src, line, "{msg}");
+                }
+                cef::LogSeverity::ERROR | cef::LogSeverity::FATAL => {
+                    tracing::error!(target: "sola_kit::console", source = %src, line, "{msg}");
+                }
+                _ => {
+                    // DEFAULT / INFO / anything Chromium adds later.
+                    tracing::info!(target: "sola_kit::console", source = %src, line, "{msg}");
+                }
+            }
+
+            // Return 1 ("handled") so CEF's internal logger doesn't also
+            // emit the message — we've already routed it.
+            1
         }
     }
 }
