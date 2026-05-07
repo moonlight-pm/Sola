@@ -7,27 +7,16 @@ use sola_core::KeyCode;
 use sola_core::theme::Theme;
 use sola_kit::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 
-// Storybook UI components, mounted at /components/* so adding a new file
-// to web/components/ doesn't require an asset_bundle edit.
-static COMPONENTS_DIR: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/components");
-
-// Vendored @remix-run/ui (see web/vendor/remix-ui/VENDOR.md). Mounted at
-// /vendor/remix-ui/* — the include_dir! macro bakes the whole tree as
-// `&'static [u8]` slices at compile time, and AssetBundle's dir-mount
-// fallback derives ContentType per request from the file extension.
-// Storybook-only registration; if/when remix-ui is promoted to the kit's
-// framework layer, this moves into platform_assets() and apps stop
-// re-registering it.
-static REMIX_UI_DIR: include_dir::Dir<'_> =
-    include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/vendor/remix-ui");
-
+// Storybook's only app-specific asset is the root component file.
+// `index.html` and `index.tsx` come from `platform_assets()`; the
+// vendored Remix v3 source and every kit-shipped component (sidebar,
+// future ones) come from there too.
+//
+// The kit's built-in `index.tsx` imports `Main` via the bare specifier
+// `@sola/app-root`, which the importmap injection wires to the URL
+// declared on `KitApp::ROOT_COMPONENT` — `/main.tsx` by default.
 static APP_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
-    "/index.html" => (include_bytes!("../../web/index.html"), Html),
-    "/index.tsx" => (include_bytes!("../../web/index.tsx"), Tsx),
-
-    @dir "/components/" => &COMPONENTS_DIR,
-    @dir "/vendor/remix-ui/" => &REMIX_UI_DIR,
+    "/main.tsx" => (include_bytes!("../../web/app/main.tsx"), Tsx),
 };
 
 #[derive(Deserialize)]
@@ -47,22 +36,6 @@ impl SolaApp for KitApp {
 
     fn new(ctx: &mut AppCtx) -> Self {
         let theme = Theme::default();
-        use super::catalog::{CATALOG, Group};
-        let catalog_json: Vec<serde_json::Value> = CATALOG
-            .iter()
-            .map(|e| serde_json::json!({
-                "name": e.name,
-                "group": match e.group { Group::Atom => "atom", Group::Component => "component" },
-                "tokens": e.tokens,
-            }))
-            .collect();
-        let fonts = super::fonts::discover();
-        let initial_state = serde_json::to_string(&serde_json::json!({
-            "theme": &theme,
-            "catalog": catalog_json,
-            "fonts": fonts,
-        }))
-        .ok();
 
         let main_window = ctx.add_window(WindowConfig {
             title: "Theme".into(),
@@ -71,7 +44,6 @@ impl SolaApp for KitApp {
             decorated: false,
             transparent: false,
             assets: APP_ASSETS,
-            initial_state,
             zoned: true,
             keyboard_target: true,
         });
@@ -80,6 +52,18 @@ impl SolaApp for KitApp {
         // can show "Sola Kit → Developer Tools" and register the F12
         // chord for the action.
         ctx.emit(Topic::SetAppMenu(kit_menu()));
+
+        // Seed the bus with the default theme so the kit's bus-pump
+        // has something to lower into CSS on (re)connect.
+        //
+        // TODO: move this emission out of the storybook. Other apps
+        // need a theme even when sola-kit isn't running, so the
+        // owner should be either sola-shell (already responsible for
+        // persistent shell state) or sola-bus itself (a generic
+        // "default value for a persistent topic" mechanism would let
+        // any sticky topic seed itself from a Default impl). The
+        // storybook is bootstrapping today because nothing else is.
+        ctx.emit(Topic::Theme(theme.clone()));
 
         Self { theme, main_window }
     }
@@ -116,8 +100,10 @@ impl KitApp {
             return;
         };
         // Persisted replay or peer update: refresh in-memory copy. The
-        // framework's bus loop is responsible for pushing the rendered
-        // CSS to the JS side; we don't duplicate that here.
+        // kit's bus pump (BusPumpTask::execute in lib.rs) pushes the
+        // rendered CSS to every window before this handler runs — we
+        // only mirror so future commands like `theme_reset` start from
+        // the right baseline.
         self.theme = theme.clone();
     }
 

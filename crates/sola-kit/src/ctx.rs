@@ -19,6 +19,11 @@ pub struct AppCtx {
     /// per-app focus/zoning logic see the right id) and used by future
     /// bus-loop intercepts that need to filter messages addressed to us.
     pub(crate) app_id: &'static str,
+    /// `SolaApp::ROOT_COMPONENT` for this process. The kit's
+    /// `inject_kit_head` injects this path into the importmap as
+    /// `"@sola/app-root": "<path>"` so the built-in `index.tsx` can
+    /// `import { Main } from "@sola/app-root"`.
+    pub(crate) root_component: &'static str,
 }
 
 impl AppCtx {
@@ -26,26 +31,33 @@ impl AppCtx {
         bus: Rc<RefCell<BusClient>>,
         wayland: Rc<RefCell<WaylandClient>>,
         app_id: &'static str,
+        root_component: &'static str,
     ) -> Self {
         Self {
             bus,
             wayland,
             windows: Vec::new(),
             app_id,
+            root_component,
         }
     }
 
     /// Create a new window: pair a Wayland surface with a CEF browser.
     ///
-    /// Builds the final HTML for this window — index.html lookup,
-    /// `__RESTORED_STATE__` substitution, and the queueing bootstrap
-    /// script injection — then registers it with the `app://` scheme
-    /// handler before creating the browser. The browser navigates to
-    /// `app:///index.html`, where the scheme handler serves the
-    /// pre-built HTML and all assets from `cfg.assets` (with TS/JSX
-    /// transform applied on-demand). The app's `index.html` is responsible
-    /// for declaring its own `<script type="importmap">` — the kit makes
-    /// no assumption about the JS framework.
+    /// Builds the final HTML for this window — index.html lookup plus
+    /// the kit's auto-injected `<head>` additions (importmap +
+    /// `__solaRecv` queueing bootstrap) — then registers it with the
+    /// `app://` scheme handler before creating the browser. The browser
+    /// navigates to `app:///index.html`, where the scheme handler
+    /// serves the pre-built HTML and all assets from `cfg.assets` (with
+    /// TS/JSX transform applied on-demand).
+    ///
+    /// Apps' `index.html` files do NOT declare an importmap — the kit
+    /// owns that to keep `@sola/ipc` / `@sola/sidebar` /
+    /// `@remix-run/ui` mappings consistent across every kit-based app.
+    /// If an app needs initial state, it registers an `on_js_command`
+    /// handler and the renderer fetches it via `invoke("…")` at
+    /// startup; there's no inline state injection.
     pub fn add_window(&mut self, cfg: WindowConfig) -> WindowHandle {
         let dispatcher_slot: Rc<RefCell<Option<JsDispatcher>>> = Rc::new(RefCell::new(None));
 
@@ -53,9 +65,14 @@ impl AppCtx {
         // index.html is text by definition, but Asset.content is bytes —
         // validate UTF-8 at the boundary. A non-UTF-8 index.html is a
         // bug in the asset bundle; panic loudly rather than serving it.
+        // App bundle first, then platform_assets — apps don't have to
+        // ship an index.html unless they need to customise. The kit's
+        // built-in lives in `web/lib/index.html` and is registered
+        // under `platform_assets()` at `/index.html`.
         let html_raw = cfg
             .assets
             .find("/index.html")
+            .or_else(|| crate::assets::platform_assets().find("/index.html"))
             .map(|a| {
                 std::str::from_utf8(a.content)
                     .expect("non-UTF-8 index.html in asset bundle")
@@ -63,12 +80,7 @@ impl AppCtx {
             })
             .unwrap_or_else(|| "<html><body>No index.html in bundle</body></html>".to_string());
 
-        let html = if let Some(state_json) = cfg.initial_state.as_ref() {
-            html_raw.replace("__RESTORED_STATE__", state_json)
-        } else {
-            html_raw
-        };
-        let html = crate::inject_solarecv_bootstrap(&html);
+        let html = crate::inject_kit_head(&html_raw, self.root_component);
 
         // Register the bundle + HTML with the static scheme handler before
         // the browser is created so the first navigation is served correctly.

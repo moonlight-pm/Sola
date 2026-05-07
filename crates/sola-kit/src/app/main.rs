@@ -1,6 +1,4 @@
 mod app;
-mod catalog;
-mod fonts;
 
 use std::process::ExitCode;
 

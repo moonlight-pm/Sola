@@ -5,9 +5,36 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
+
+    // The vendored @remix-run/ui source under web/vendor/remix-ui/
+    // imports its own modules with explicit `.ts` / `.tsx` extensions
+    // (`import { … } from './foo.ts'`). Without this flag, every TS
+    // resolution into the vendored tree fails with TS5097.
+    "allowImportingTsExtensions": true,
+
     "types": [],
+
+    // JSX runtime config. `react-jsx` selects the automatic runtime
+    // (TS auto-imports `jsx`/`jsxs`/`Fragment` from
+    // `<jsxImportSource>/jsx-runtime`), and `jsxImportSource` points
+    // it at our vendored Remix v3. This must mirror what swc does at
+    // request time in `crates/sola-kit/src/strip.rs` (`runtime:
+    // Automatic`, `import_source: "@remix-run/ui"`) so the editor
+    // and runtime agree on the same factory.
+    "jsx": "react-jsx",
+    "jsxImportSource": "@remix-run/ui",
+
     "paths": {
       "@sola/ipc": ["./lib/ipc.ts"],
+      "@sola/kit": ["./lib/kit.ts"],
+      "@sola/sidebar": ["./lib/components/sidebar.tsx"],
+      // Per-app root component. The kit's built-in `index.tsx`
+      // imports `Main` via this specifier; the runtime importmap
+      // injection (in `crates/sola-kit/src/lib.rs::build_importmap`)
+      // wires it to the URL declared on `SolaApp::ROOT_COMPONENT`.
+      // For LSP resolution we point at the storybook's main file —
+      // other kit-using apps will declare their own override here.
+      "@sola/app-root": ["./app/main.tsx"],
       "@remix-run/ui": ["./vendor/remix-ui/index.ts"],
       "@remix-run/ui/jsx-runtime": ["./vendor/remix-ui/jsx-runtime.ts"],
       "@remix-run/ui/*": ["./vendor/remix-ui/*"],

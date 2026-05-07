@@ -215,21 +215,63 @@ fn lookup_dir_exact(mount: &DirMount, rel: &str) -> Option<Asset> {
     })
 }
 
+/// Vendored `@remix-run/ui` source tree — kit infrastructure shared by
+/// every app. Mounted under `/vendor/remix-ui/*` and resolved via the
+/// kit-injected importmap (`@remix-run/ui` → `/vendor/remix-ui/index.ts`).
+static REMIX_UI_DIR: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/vendor/remix-ui");
+
 /// Platform assets the kit serves on every app:// scheme request, regardless
-/// of which JS framework the app uses.
+/// of which app it's hosting.
 ///
-/// The kit's only non-negotiable asset is the IPC bridge (`/lib/ipc.ts`),
-/// paired with the `__solaRecv` bootstrap stub that `ctx::add_window` injects
-/// into every `index.html`. Frameworks (Preact, Lit, Svelte, …) are an
-/// app-level choice and live in the app's own `asset_bundle!`.
+/// Includes:
+/// - The default `/index.html` and `/index.tsx` — apps don't ship
+///   their own unless they need to customise; `ctx::add_window` falls
+///   back here when an app bundle has no `/index.html`.
+/// - The IPC bridge (`/lib/ipc.ts`) and kit helpers (`/lib/kit.ts`).
+/// - Every kit-shipped component (TS source + CSS). The kit's
+///   `inject_kit_head` walks this bundle for `Css` assets and emits a
+///   `<link rel="stylesheet">` for each — apps don't enumerate
+///   component stylesheets in their own `index.html`.
+/// - The vendored Remix v3 source tree under `/vendor/remix-ui/`.
 pub fn platform_assets() -> &'static AssetBundle {
     static PLATFORM: AssetBundle = AssetBundle {
-        assets: &[Asset {
-            path: "/lib/ipc.ts",
-            content: include_bytes!("../web/lib/ipc.ts"),
-            content_type: ContentType::TypeScript,
+        assets: &[
+            Asset {
+                path: "/index.html",
+                content: include_bytes!("../web/lib/index.html"),
+                content_type: ContentType::Html,
+            },
+            Asset {
+                path: "/index.tsx",
+                content: include_bytes!("../web/lib/index.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/ipc.ts",
+                content: include_bytes!("../web/lib/ipc.ts"),
+                content_type: ContentType::TypeScript,
+            },
+            Asset {
+                path: "/lib/kit.ts",
+                content: include_bytes!("../web/lib/kit.ts"),
+                content_type: ContentType::TypeScript,
+            },
+            Asset {
+                path: "/lib/components/sidebar.tsx",
+                content: include_bytes!("../web/lib/components/sidebar.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/sidebar.css",
+                content: include_bytes!("../web/lib/components/sidebar.css"),
+                content_type: ContentType::Css,
+            },
+        ],
+        dirs: &[DirMount {
+            url_prefix: "/vendor/remix-ui/",
+            dir: &REMIX_UI_DIR,
         }],
-        dirs: &[],
     };
     &PLATFORM
 }

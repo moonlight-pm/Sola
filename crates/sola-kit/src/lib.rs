@@ -33,6 +33,17 @@ pub type BusHandler<A> = sola_bus::BusHandler<A, AppCtx>;
 pub trait SolaApp: 'static {
     const APP_ID: &'static str;
 
+    /// URL path of the app's root component file under `app://`. The
+    /// file must export a Remix v3 component factory named `Main`
+    /// (`(handle: Handle) => RenderFn`). The kit's built-in
+    /// `index.tsx` imports it via the bare specifier
+    /// `@sola/app-root`, which is mapped to this path through the
+    /// kit-injected importmap.
+    ///
+    /// Default `/main.tsx`; apps override only when their root lives
+    /// elsewhere in their asset bundle.
+    const ROOT_COMPONENT: &'static str = "/main.tsx";
+
     /// Construct the app. This is where windows are created via
     /// `ctx.add_window`. sola-river does not receive any policy
     /// declarations from apps — the shell drives all window geometry,
@@ -242,7 +253,7 @@ pub fn run<A: SolaApp>() {
     }
 
     // --- Build AppCtx, run A::new ---
-    let mut ctx = AppCtx::new(bus.clone(), wayland.clone(), app_id);
+    let mut ctx = AppCtx::new(bus.clone(), wayland.clone(), app_id, A::ROOT_COMPONENT);
     let mut app = A::new(&mut ctx);
 
     // --- Build BusRegistry and subscribe to the topics the app declared ---
@@ -250,7 +261,15 @@ pub fn run<A: SolaApp>() {
     app.register_bus(&mut registry, &mut ctx);
     {
         let mut c = bus.borrow_mut();
-        if let Err(e) = c.subscribe(&registry.kinds()) {
+        // Always include `Theme` in the kit's subscription set: the bus
+        // pump turns every `Topic::Theme` delivery into a `__solaRecv`
+        // CSS push to all kit-managed windows, regardless of whether
+        // the app registered a handler. See `BusPumpTask::execute`.
+        let mut kinds = registry.kinds();
+        if !kinds.contains(&TopicKind::Theme) {
+            kinds.push(TopicKind::Theme);
+        }
+        if let Err(e) = c.subscribe(&kinds) {
             tracing::warn!("failed to subscribe: {e}");
         }
     }
@@ -340,6 +359,25 @@ pub fn run<A: SolaApp>() {
                     return;
                 }
 
+                // Framework default for `Topic::Theme`: lower the new
+                // theme to CSS once and push to every kit-managed
+                // window via `__solaRecv`. This runs before the user's
+                // `on_theme` handler (if any) so app-level mirroring is
+                // strictly an in-memory concern. The renderer-side
+                // `on("theme", ...)` listener in `index.tsx` does
+                // `themeSheet.replaceSync(msg.css)` on receipt.
+                if let Topic::Theme(theme) = &topic {
+                    let css = theme.to_css();
+                    let payload = serde_json::json!({
+                        "event": "theme",
+                        "css": css,
+                    });
+                    let rt = self.runtime.borrow();
+                    for window in &rt.ctx.windows {
+                        window.send_to_js(&payload);
+                    }
+                }
+
                 let mut rt = self.runtime.borrow_mut();
                 let AppRuntime { app, ctx } = &mut *rt;
                 let retracted = topic.kind().behavior().is_sticky() && !msg.sticky;
@@ -375,16 +413,15 @@ fn start_bus_pump<A: SolaApp>(
     ::cef::post_task(::cef::ThreadId::from(::cef::sys::cef_thread_id_t::TID_UI), Some(&mut task));
 }
 
-/// Inject a synchronous bootstrap that installs a queueing
+/// Synchronous bootstrap stub that installs a queueing
 /// `window.__solaRecv` before any module import has had a chance to
-/// load. Without this, Rust calls into JS that race against the
+/// load. Without this, Rust calls into JS race against the
 /// async-loaded `ipc.ts` (which installs the real handler) — typically
 /// when a sticky topic is replayed at subscribe-time and the app's
 /// handler immediately calls `send_to_js`. The real handler in
 /// `ipc.ts` replaces this stub on load and drains
 /// `window.__solaRecvQueue`.
-pub(crate) fn inject_solarecv_bootstrap(html: &str) -> String {
-    const BOOTSTRAP: &str = r#"  <script>
+const BOOTSTRAP_SCRIPT: &str = r#"  <script>
   (function () {
     var q = [];
     window.__solaRecvQueue = q;
@@ -392,21 +429,85 @@ pub(crate) fn inject_solarecv_bootstrap(html: &str) -> String {
   })();
   </script>
 "#;
+
+/// Build the kit's importmap with the app's root-component path
+/// substituted into `@sola/app-root`. Keeps app authors out of the
+/// business of mirroring kit-internal paths in their own HTML (and
+/// out of sync with the kit). HTML allows only one
+/// `<script type="importmap">` per document, so the kit's must be the
+/// only one — apps that need additional entries should add a kit-side
+/// extension hook (not yet built; pull when the second consumer
+/// appears).
+fn build_importmap(root_component: &str) -> String {
+    format!(
+        r#"  <script type="importmap">
+  {{
+    "imports": {{
+      "@sola/ipc":                 "/lib/ipc.ts",
+      "@sola/kit":                 "/lib/kit.ts",
+      "@sola/sidebar":             "/lib/components/sidebar.tsx",
+      "@sola/app-root":            "{root_component}",
+      "@remix-run/ui":             "/vendor/remix-ui/index.ts",
+      "@remix-run/ui/jsx-runtime": "/vendor/remix-ui/jsx-runtime.ts"
+    }}
+  }}
+  </script>
+"#
+    )
+}
+
+/// Insert `injection` into `html` before `</head>`, falling back to
+/// before the first `<script>` if the head closer is missing.
+fn inject_before_head_close(html: &str, injection: &str) -> String {
     if let Some(pos) = html.find("</head>") {
-        let mut result = String::with_capacity(html.len() + BOOTSTRAP.len());
+        let mut result = String::with_capacity(html.len() + injection.len());
         result.push_str(&html[..pos]);
-        result.push_str(BOOTSTRAP);
+        result.push_str(injection);
         result.push_str(&html[pos..]);
         return result;
     }
-    // No </head> — fall back to before the first <script>.
     if let Some(pos) = html.find("<script") {
-        let mut result = String::with_capacity(html.len() + BOOTSTRAP.len());
+        let mut result = String::with_capacity(html.len() + injection.len());
         result.push_str(&html[..pos]);
-        result.push_str(BOOTSTRAP);
+        result.push_str(injection);
         result.push_str(&html[pos..]);
         return result;
     }
     html.to_string()
+}
+
+/// Build the `<link rel="stylesheet">` block for every `Css` asset
+/// the kit ships in `platform_assets()`. Apps no longer enumerate
+/// component stylesheets in their own `index.html` — adding a new
+/// kit component with a sibling `.css` file makes it appear in every
+/// kit app automatically.
+fn kit_css_links() -> String {
+    let mut out = String::from("");
+    for asset in assets::platform_assets().assets {
+        if asset.content_type == assets::ContentType::Css {
+            out.push_str("  <link rel=\"stylesheet\" href=\"");
+            out.push_str(asset.path);
+            out.push_str("\" />\n");
+        }
+    }
+    out
+}
+
+/// Inject the kit's importmap, auto-discovered component stylesheets,
+/// and the `__solaRecv` bootstrap into the app's index.html.
+///
+/// Order is intentional:
+///   1. Importmap — installed before any module loads so bare
+///      specifiers resolve.
+///   2. Stylesheet `<link>`s — let the browser begin fetching CSS
+///      while the JS bootstrap runs.
+///   3. `__solaRecv` queueing stub — installed before any
+///      `<script type="module">` runs so Rust→JS pushes that race
+///      module loading don't drop on the floor.
+pub(crate) fn inject_kit_head(html: &str, root_component: &str) -> String {
+    let importmap = build_importmap(root_component);
+    let with_map = inject_before_head_close(html, &importmap);
+    let with_css = inject_before_head_close(&with_map, &kit_css_links());
+    inject_before_head_close(&with_css, BOOTSTRAP_SCRIPT)
 }
 

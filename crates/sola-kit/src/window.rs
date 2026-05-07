@@ -15,7 +15,6 @@ pub struct WindowConfig {
     pub decorated: bool,
     pub transparent: bool,
     pub assets: &'static AssetBundle,
-    pub initial_state: Option<String>,
     /// WindowPolicy: whether the compositor's zoning system manages this window.
     pub zoned: bool,
     /// WindowPolicy: whether this window can receive keyboard input.
