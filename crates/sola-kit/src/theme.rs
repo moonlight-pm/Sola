@@ -92,6 +92,10 @@ mod tests {
   --sola-button-radius: var(--radius-md);
   --sola-button-text-size: var(--text-body);
 
+  /* color-input */
+  --sola-color-input-gap: var(--space-xs);
+  --sola-color-input-swatch-size: var(--space-xxl);
+
   /* field */
   --sola-field-error-color: var(--danger);
   --sola-field-gap: var(--space-xs);

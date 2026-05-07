@@ -273,6 +273,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Css,
             },
             Asset {
+                path: "/lib/components/color-input.tsx",
+                content: include_bytes!("../web/lib/components/color-input.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/color-input.css",
+                content: include_bytes!("../web/lib/components/color-input.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
                 path: "/lib/components/field.tsx",
                 content: include_bytes!("../web/lib/components/field.tsx"),
                 content_type: ContentType::Tsx,
