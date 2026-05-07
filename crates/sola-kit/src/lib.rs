@@ -193,7 +193,7 @@ pub fn run<A: SolaApp>() {
     }
 
     // --- CEF initialize (browser process) ---
-    cef::init::initialize();
+    cef::init::initialize(app_id);
 
     // --- Register app:// scheme factory ---
     // Must be called after cef::initialize and before any Browser navigates

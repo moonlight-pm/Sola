@@ -52,7 +52,17 @@ const KIT_CHROMIUM_SWITCHES: &[(&str, Option<&str>)] = &[
 const APP_SCHEME_OPTIONS: i32 = 1 | 8 | 16 | 64; // = 89
 
 cef::wrap_app! {
-    pub struct KitCefApp {}
+    pub struct KitCefApp {
+        // Carried through every CEF process so we can inject `--class`
+        // (and matching `--name`) into Chromium's command line — that's
+        // how Ozone-Wayland derives the `xdg_toplevel.app_id` for
+        // *Chromium*-created windows like the DevTools popup. Without
+        // it, devtools shows up to sola-shell as a separate app
+        // (Chromium's default class) instead of part of `<app_id>`.
+        // The kit's *primary* surface sets app_id directly on its own
+        // `xdg_toplevel`, so this flag only changes secondary windows.
+        app_id: &'static str,
+    }
 
     impl App {
         fn on_register_custom_schemes(
@@ -86,6 +96,19 @@ cef::wrap_app! {
                         }
                     }
                 }
+
+                // Group secondary CEF windows (DevTools etc.) under the
+                // app's xdg_toplevel.app_id so sola-shell groups them
+                // with the primary surface in the switcher / menubar.
+                // `--class` is the resource class half of X11 WM_CLASS
+                // and is also what Ozone-Wayland uses for the
+                // xdg_toplevel.app_id, so it covers both backends.
+                // We deliberately do *not* set `--name` (the X11 instance
+                // half) — Chromium sometimes treats it as a separate
+                // semantic flag and it's not needed for app grouping.
+                let class_key = CefString::from("class");
+                let id_value = CefString::from(self.app_id);
+                cmd.append_switch_with_value(Some(&class_key), Some(&id_value));
             }
         }
 
@@ -97,11 +120,16 @@ cef::wrap_app! {
 
 /// Subprocess gate — call this at the top of `main()`.
 ///
+/// `app_id` is threaded into `KitCefApp` so subprocesses inject the
+/// same `--class=<app_id>` into their command line as the browser
+/// process. CEF re-execs this binary for each worker, so they all
+/// hit this same gate and need the same class.
+///
 /// Returns `Some(ExitCode)` if the current process is a CEF worker
 /// (renderer/GPU/utility/zygote); the caller should `return code` from
 /// `main()` immediately. Returns `None` if this is the main browser
 /// process.
-pub fn short_circuit_if_subprocess() -> Option<ExitCode> {
+pub fn short_circuit_if_subprocess(app_id: &'static str) -> Option<ExitCode> {
     // CEF 133+ requires `cef_api_hash` to be called before ANY other
     // CEF API function. It pins the API version the application was
     // compiled against; without this, struct version fields read as -1
@@ -124,7 +152,7 @@ pub fn short_circuit_if_subprocess() -> Option<ExitCode> {
     // returns -1 if this is the main browser process. The `KitCefApp` is
     // passed in both paths so subprocess command-line processing also sees
     // our `--disable-features=...` injection.
-    let mut app = KitCefApp::new();
+    let mut app = KitCefApp::new(app_id);
     let result = cef::execute_process(Some(main_args), Some(&mut app), std::ptr::null_mut());
 
     if result >= 0 {
@@ -139,7 +167,11 @@ pub fn short_circuit_if_subprocess() -> Option<ExitCode> {
 
 /// Initialize CEF in the browser process. Call exactly once, after
 /// `short_circuit_if_subprocess` has returned None.
-pub fn initialize() {
+///
+/// `app_id` is threaded into `KitCefApp` so the browser process injects
+/// `--class=<app_id>` (and matching `--name`) into Chromium's command
+/// line. See `KitCefApp::on_before_command_line_processing`.
+pub fn initialize(app_id: &'static str) {
     let release   = crate::cef::distribution::release_dir();
     let resources = crate::cef::distribution::resources_dir();
     let locales   = crate::cef::distribution::locales_dir();
@@ -180,7 +212,7 @@ pub fn initialize() {
 
     // Same App as in `short_circuit_if_subprocess`, so the browser process
     // sees the same command-line flag injection as the workers.
-    let mut app = KitCefApp::new();
+    let mut app = KitCefApp::new(app_id);
 
     // CEF C-API convention: returns 1 (non-zero positive) on success, 0 on failure.
     let rc = cef::initialize(Some(main_args), Some(&settings), Some(&mut app), std::ptr::null_mut());
