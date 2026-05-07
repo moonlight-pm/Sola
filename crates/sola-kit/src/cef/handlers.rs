@@ -75,6 +75,61 @@ cef::wrap_render_handler! {
             }
         }
 
+        // Returning the view-shaped rect here (and from `screen_info`) and
+        // a passthrough `screen_point` keeps CEF from auto-querying the
+        // Wayland output for screen geometry. Without these, Chromium
+        // sometimes picks up the compositor's preferred fractional scale
+        // and applies it to OSR rasterisation — leading to "everything
+        // gets smaller" drift after a resize or focus change. Pinning
+        // these to scale = 1 with a (0,0,w,h) rect gives the renderer a
+        // stable, deterministic answer and matches what `view_rect`
+        // already reports.
+        fn root_screen_rect(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            rect: Option<&mut cef::Rect>,
+        ) -> ::std::os::raw::c_int {
+            let (w, h) = self.surface.size();
+            if let Some(r) = rect {
+                r.x = 0;
+                r.y = 0;
+                r.width = w;
+                r.height = h;
+            }
+            1
+        }
+
+        fn screen_point(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            view_x: ::std::os::raw::c_int,
+            view_y: ::std::os::raw::c_int,
+            screen_x: Option<&mut ::std::os::raw::c_int>,
+            screen_y: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            // We don't do multi-monitor here; the surface is the screen.
+            if let Some(sx) = screen_x { *sx = view_x; }
+            if let Some(sy) = screen_y { *sy = view_y; }
+            1
+        }
+
+        fn screen_info(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            screen_info: Option<&mut cef::ScreenInfo>,
+        ) -> ::std::os::raw::c_int {
+            let (w, h) = self.surface.size();
+            if let Some(si) = screen_info {
+                si.device_scale_factor = 1.0;
+                si.depth = 24;
+                si.depth_per_component = 8;
+                si.is_monochrome = 0;
+                si.rect = cef::Rect { x: 0, y: 0, width: w, height: h };
+                si.available_rect = cef::Rect { x: 0, y: 0, width: w, height: h };
+            }
+            1
+        }
+
         fn on_accelerated_paint(
             &self,
             _browser: Option<&mut cef::Browser>,
@@ -96,7 +151,17 @@ cef::wrap_render_handler! {
                 .map(|rects| rects.iter().map(|r| (r.x, r.y, r.width, r.height)).collect())
                 .unwrap_or_default();
 
-            let (w, h) = self.surface.size();
+            // Use the dma-buf's *actual* rasterised dimensions, not the
+            // surface's logical size. During a resize the surface state
+            // updates immediately on `configure`, but CEF's GPU process
+            // may still be emitting frames sized to the previous
+            // `view_rect`. Telling the compositor `wl_buffer.width =
+            // surface.size()` while the buffer was actually rasterised
+            // at the previous size produces stride mismatches and
+            // sticky/stale frames. `extra.coded_size` is the buffer's
+            // own dimensions as the GPU produced it.
+            let coded = &info.extra.coded_size;
+            let (w, h) = (coded.width, coded.height);
 
             // SAFETY: `plane.fd` is a valid open dma-buf file descriptor for
             // the duration of this callback. CEF retains ownership; the

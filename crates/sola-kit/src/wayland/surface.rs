@@ -133,6 +133,14 @@ impl Surface {
         if let Some(browser) = self.browser.borrow().as_ref() {
             if let Some(host) = browser.host() {
                 host.was_resized();
+                // Our `RenderHandler::screen_info` reports a rect that
+                // tracks `surface.size()`, so a resize implies the
+                // screen info also changed. Notifying here keeps
+                // Chromium's cached scale + screen rect in lockstep
+                // with the new surface size, otherwise the renderer
+                // can keep using the previous `screen_info` and produce
+                // frames at a scale that no longer matches the buffer.
+                host.notify_screen_info_changed();
             }
         }
     }
