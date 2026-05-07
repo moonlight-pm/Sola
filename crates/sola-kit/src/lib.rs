@@ -493,9 +493,14 @@ fn start_bus_pump<A: SolaApp>(
 /// handler immediately calls `send_to_js`. The real handler in
 /// `ipc.ts` replaces this stub on load and drains
 /// `window.__solaRecvQueue`.
+///
+/// **Reuses any pre-existing queue** so a Rust→JS push that landed
+/// before the parser reached this `<script>` (see
+/// `WindowHandle::send_raw_json_to_js`'s self-defending wrapper) is
+/// preserved into the queue this stub installs.
 const BOOTSTRAP_SCRIPT: &str = r#"  <script>
   (function () {
-    var q = [];
+    var q = window.__solaRecvQueue || [];
     window.__solaRecvQueue = q;
     window.__solaRecv = function (json) { q.push(json); };
   })();

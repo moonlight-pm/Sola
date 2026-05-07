@@ -67,7 +67,18 @@ impl WindowHandle {
 
     pub fn send_raw_json_to_js(&self, json: &str) {
         let js_literal = serde_json::to_string(json).unwrap_or_default();
-        self.eval_js(&format!("window.__solaRecv({js_literal})"));
+        // Self-defending: if a Rust→JS push lands before the
+        // bootstrap inline `<script>` has parsed (e.g. sticky theme
+        // replay at startup, racing the document load), `__solaRecv`
+        // is undefined and `window.__solaRecv(json)` would throw.
+        // Fall back to pushing into `__solaRecvQueue` directly,
+        // creating it if needed; the bootstrap reuses any
+        // pre-existing queue so the message is preserved.
+        self.eval_js(&format!(
+            "(window.__solaRecv || function(j){{ \
+              (window.__solaRecvQueue = window.__solaRecvQueue || []).push(j); \
+            }})({js_literal});"
+        ));
     }
 
     /// Access the underlying Surface (Wayland surface + xdg_toplevel).
