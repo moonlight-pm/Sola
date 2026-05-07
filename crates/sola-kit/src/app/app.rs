@@ -5,7 +5,9 @@ use sola_bus::topics::{
 };
 use sola_core::KeyCode;
 use sola_core::theme::Theme;
-use sola_kit::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
+use sola_kit::{
+    AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle, kit_default_theme,
+};
 
 // Storybook's only app-specific asset is the root component file.
 // `index.html` and `index.tsx` come from `platform_assets()`; the
@@ -35,7 +37,7 @@ impl SolaApp for KitApp {
     const APP_ID: &'static str = "sola-kit";
 
     fn new(ctx: &mut AppCtx) -> Self {
-        let theme = Theme::default();
+        let theme = kit_default_theme();
 
         let main_window = ctx.add_window(WindowConfig {
             title: "Theme".into(),
@@ -118,7 +120,7 @@ impl KitApp {
     }
 
     fn handle_theme_reset(&mut self, ctx: &mut AppCtx) -> Value {
-        self.theme = Theme::default();
+        self.theme = kit_default_theme();
         ctx.emit(Topic::Theme(self.theme.clone()));
         json!({ "ok": true })
     }

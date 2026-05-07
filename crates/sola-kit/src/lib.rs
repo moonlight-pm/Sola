@@ -9,15 +9,18 @@ use ::cef::{rc::*, *};
 
 pub mod assets;
 pub mod cef;
+pub mod components;
 pub mod ctx;
 pub mod stderr_filter;
 pub mod strip;
+pub mod theme;
 pub mod wayland;
 pub mod window;
 
 // Re-export for macro use and common consumer paths.
 pub use assets::{Asset, AssetBundle, ContentType, DirMount};
 pub use ctx::{AppCtx, BusProxy};
+pub use theme::kit_default_theme;
 pub use window::{WindowConfig, WindowHandle};
 
 /// Per-topic handler registry used by `SolaApp::register_bus`. Aliases
