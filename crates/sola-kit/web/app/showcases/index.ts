@@ -14,8 +14,10 @@
 import { type Handle, type RemixNode } from "@remix-run/ui";
 
 import { ButtonShowcase } from "./button.tsx";
+import { FieldShowcase } from "./field.tsx";
 import { SidebarShowcase } from "./sidebar.tsx";
 import { StackShowcase } from "./stack.tsx";
+import { TextInputShowcase } from "./text-input.tsx";
 
 export interface ShowcaseEntry {
   /** Stable id; used as the selectedId in the storybook's nav. */
@@ -30,7 +32,9 @@ export interface ShowcaseEntry {
 
 export const showcases: ShowcaseEntry[] = [
   { id: "button", label: "Button", section: "Components", component: ButtonShowcase },
+  { id: "field", label: "Field", section: "Components", component: FieldShowcase },
   { id: "sidebar", label: "Sidebar", section: "Components", component: SidebarShowcase },
+  { id: "text-input", label: "TextInput", section: "Components", component: TextInputShowcase },
   { id: "stack", label: "Stack", section: "Layout", component: StackShowcase },
 ];
 

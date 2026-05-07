@@ -92,6 +92,13 @@ mod tests {
   --sola-button-radius: var(--radius-md);
   --sola-button-text-size: var(--text-body);
 
+  /* field */
+  --sola-field-error-color: var(--danger);
+  --sola-field-gap: var(--space-xs);
+  --sola-field-help-color: var(--text-tertiary);
+  --sola-field-label-color: var(--text-secondary);
+  --sola-field-label-size: var(--text-caption);
+
   /* root */
   --sola-root-bg: var(--bg-primary);
   --sola-root-font: var(--font-sans);
@@ -116,6 +123,18 @@ mod tests {
   --sola-sidebar-padding-inline: var(--space-sm);
   --sola-sidebar-section-label-color: var(--text-secondary);
   --sola-sidebar-section-label-size: var(--text-caption);
+
+  /* text-input */
+  --sola-text-input-bg: var(--bg-tertiary);
+  --sola-text-input-border: var(--border);
+  --sola-text-input-border-focus: var(--accent);
+  --sola-text-input-border-invalid: var(--danger);
+  --sola-text-input-padding-block: var(--space-xs);
+  --sola-text-input-padding-inline: var(--space-sm);
+  --sola-text-input-placeholder-color: var(--text-muted);
+  --sola-text-input-radius: var(--radius-md);
+  --sola-text-input-text: var(--text-primary);
+  --sola-text-input-text-size: var(--text-body);
 }
 ";
         assert_eq!(css, expected);

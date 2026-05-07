@@ -17,16 +17,23 @@ use std::collections::BTreeMap;
 use sola_core::theme::ComponentBindings;
 
 pub mod button;
+pub mod field;
 pub mod root;
 pub mod sidebar;
+pub mod text_input;
 
 /// Compose every kit-shipped component's seed bindings into the
 /// `Theme.components` map shape. Keys are the component names used as
 /// `--sola-<component>-<slot>` prefixes in the rendered CSS.
+///
+/// Note: keys may use kebab-case (e.g. `"text-input"`) even when the
+/// Rust module name is snake_case — the key is what appears in CSS.
 pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     let mut map = BTreeMap::new();
     map.insert("button".into(), button::bindings());
+    map.insert("field".into(), field::bindings());
     map.insert("root".into(), root::bindings());
     map.insert("sidebar".into(), sidebar::bindings());
+    map.insert("text-input".into(), text_input::bindings());
     map
 }

@@ -1,0 +1,52 @@
+/* TextInput styles — references only `--sola-text-input-*` scoped
+   theme vars. The `:focus` rule (not `:focus-visible`) is correct
+   here: text inputs always show a focus ring when focused, since
+   "where am I typing" is the relevant signal — unlike buttons,
+   where a click-then-focus ring is noisy. */
+
+.sola-text-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+
+  padding: var(--sola-text-input-padding-block)
+           var(--sola-text-input-padding-inline);
+  background: var(--sola-text-input-bg);
+  color: var(--sola-text-input-text);
+  border: 1px solid var(--sola-text-input-border);
+  border-radius: var(--sola-text-input-radius);
+
+  font: inherit;
+  font-size: var(--sola-text-input-text-size);
+  line-height: 1.4;
+
+  outline: none;
+  appearance: none;
+
+  transition:
+    border-color 80ms linear,
+    box-shadow 80ms linear;
+}
+
+.sola-text-input::placeholder {
+  color: var(--sola-text-input-placeholder-color);
+}
+
+.sola-text-input:focus {
+  border-color: var(--sola-text-input-border-focus);
+  box-shadow: 0 0 0 1px var(--sola-text-input-border-focus);
+}
+
+.sola-text-input.is-invalid {
+  border-color: var(--sola-text-input-border-invalid);
+}
+
+.sola-text-input.is-invalid:focus {
+  border-color: var(--sola-text-input-border-invalid);
+  box-shadow: 0 0 0 1px var(--sola-text-input-border-invalid);
+}
+
+.sola-text-input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

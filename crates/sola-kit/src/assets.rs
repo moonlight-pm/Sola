@@ -273,6 +273,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Css,
             },
             Asset {
+                path: "/lib/components/field.tsx",
+                content: include_bytes!("../web/lib/components/field.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/field.css",
+                content: include_bytes!("../web/lib/components/field.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
                 path: "/lib/components/root.tsx",
                 content: include_bytes!("../web/lib/components/root.tsx"),
                 content_type: ContentType::Tsx,
@@ -296,6 +306,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 path: "/lib/components/stack.tsx",
                 content: include_bytes!("../web/lib/components/stack.tsx"),
                 content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/text-input.tsx",
+                content: include_bytes!("../web/lib/components/text-input.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/text-input.css",
+                content: include_bytes!("../web/lib/components/text-input.css"),
+                content_type: ContentType::Css,
             },
         ],
         dirs: &[DirMount {
