@@ -20,6 +20,7 @@ pub mod button;
 pub mod field;
 pub mod root;
 pub mod sidebar;
+pub mod swatch;
 pub mod text_input;
 
 /// Compose every kit-shipped component's seed bindings into the
@@ -34,6 +35,7 @@ pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     map.insert("field".into(), field::bindings());
     map.insert("root".into(), root::bindings());
     map.insert("sidebar".into(), sidebar::bindings());
+    map.insert("swatch".into(), swatch::bindings());
     map.insert("text-input".into(), text_input::bindings());
     map
 }

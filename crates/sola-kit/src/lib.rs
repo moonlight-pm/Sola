@@ -530,6 +530,7 @@ fn build_importmap(root_component: &str) -> String {
       "@sola/root":                "/lib/components/root.tsx",
       "@sola/sidebar":             "/lib/components/sidebar.tsx",
       "@sola/stack":               "/lib/components/stack.tsx",
+      "@sola/swatch":              "/lib/components/swatch.tsx",
       "@sola/text-input":          "/lib/components/text-input.tsx",
       "@sola/app-root":            "{root_component}",
       "@remix-run/ui":             "/vendor/remix-ui/index.ts",

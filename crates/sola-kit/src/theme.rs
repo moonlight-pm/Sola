@@ -124,6 +124,10 @@ mod tests {
   --sola-sidebar-section-label-color: var(--text-secondary);
   --sola-sidebar-section-label-size: var(--text-caption);
 
+  /* swatch */
+  --sola-swatch-border: var(--border-subtle);
+  --sola-swatch-radius: var(--radius-sm);
+
   /* text-input */
   --sola-text-input-bg: var(--bg-tertiary);
   --sola-text-input-border: var(--border);

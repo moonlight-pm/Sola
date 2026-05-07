@@ -308,6 +308,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Tsx,
             },
             Asset {
+                path: "/lib/components/swatch.tsx",
+                content: include_bytes!("../web/lib/components/swatch.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/swatch.css",
+                content: include_bytes!("../web/lib/components/swatch.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
                 path: "/lib/components/text-input.tsx",
                 content: include_bytes!("../web/lib/components/text-input.tsx"),
                 content_type: ContentType::Tsx,

@@ -32,6 +32,7 @@
       "@sola/root": ["./lib/components/root.tsx"],
       "@sola/sidebar": ["./lib/components/sidebar.tsx"],
       "@sola/stack": ["./lib/components/stack.tsx"],
+      "@sola/swatch": ["./lib/components/swatch.tsx"],
       "@sola/text-input": ["./lib/components/text-input.tsx"],
       // Per-app root component. The kit's built-in `index.tsx`
       // imports `Main` via this specifier; the runtime importmap
