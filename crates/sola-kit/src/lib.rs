@@ -10,6 +10,7 @@ use ::cef::{rc::*, *};
 pub mod assets;
 pub mod cef;
 pub mod ctx;
+pub mod stderr_filter;
 pub mod strip;
 pub mod wayland;
 pub mod window;
@@ -105,6 +106,14 @@ pub(crate) struct AppRuntime<A: SolaApp> {
 /// `A::new` followed by the CEF message loop.
 pub fn run<A: SolaApp>() {
     let app_id: &'static str = A::APP_ID;
+
+    // --- stderr filter ---
+    // Install before tracing init (so the tracing stderr layer's writes
+    // also flow through the saved fd) and well before `cef::initialize`
+    // forks worker subprocesses (so they inherit the redirected fd 2).
+    // Suppresses a stray `eprintln!` in cef-rs that fires on every
+    // renderer-side MessageRouter dispatch with an empty STRING payload.
+    stderr_filter::install();
 
     // --- Logging ---
     sola_core::log::init(app_id);
