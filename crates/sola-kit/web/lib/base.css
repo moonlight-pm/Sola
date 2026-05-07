@@ -1,0 +1,30 @@
+/* Kit-shipped base reset. Auto-injected into every kit app via
+   `inject_kit_head` (any `Css` asset in `platform_assets()` becomes
+   a `<link rel="stylesheet">`).
+
+   Goals:
+   - No default browser margin around the document body.
+   - The viewport is the window — no document-level scrollbars; if
+     a region needs to scroll, it opts in (`overflow: auto` on its
+     own container).
+   - Page-level theme vars apply at body so children inherit
+     `color`, `font-family`, and `font-size` without each page
+     re-asserting them. */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--sola-page-bg);
+  color: var(--sola-page-text);
+  font-family: var(--sola-page-font);
+  font-size: var(--sola-page-text-size);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

@@ -258,6 +258,11 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::TypeScript,
             },
             Asset {
+                path: "/lib/base.css",
+                content: include_bytes!("../web/lib/base.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
                 path: "/lib/components/sidebar.tsx",
                 content: include_bytes!("../web/lib/components/sidebar.tsx"),
                 content_type: ContentType::Tsx,
