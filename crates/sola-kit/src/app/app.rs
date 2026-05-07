@@ -1,6 +1,9 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sola_bus::topics::{Topic, TopicKind};
+use sola_bus::topics::{
+    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
+};
+use sola_core::KeyCode;
 use sola_core::theme::Theme;
 use sola_kit::{AppCtx, BusRegistry, SolaApp, WindowConfig, WindowHandle, asset_bundle};
 
@@ -34,6 +37,9 @@ struct ThemeSetArgs {
 
 pub struct KitApp {
     theme: Theme,
+    /// Main storybook window — used to target devtools toggling from
+    /// the shell's MenuAction dispatch.
+    main_window: WindowHandle,
 }
 
 impl SolaApp for KitApp {
@@ -58,7 +64,7 @@ impl SolaApp for KitApp {
         }))
         .ok();
 
-        ctx.add_window(WindowConfig {
+        let main_window = ctx.add_window(WindowConfig {
             title: "Theme".into(),
             size: (1100, 720),
             position: None,
@@ -70,12 +76,18 @@ impl SolaApp for KitApp {
             keyboard_target: true,
         });
 
-        Self { theme }
+        // Publish the storybook's app menu to the shell so the menubar
+        // can show "Sola Kit → Developer Tools" and register the F12
+        // chord for the action.
+        ctx.emit(Topic::SetAppMenu(kit_menu()));
+
+        Self { theme, main_window }
     }
 
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
         bus.on(TopicKind::CloseApp, Self::on_close_app);
         bus.on(TopicKind::Theme, Self::on_theme);
+        bus.on(TopicKind::MenuAction, Self::on_menu_action);
     }
 
     fn on_js_command(
@@ -123,5 +135,33 @@ impl KitApp {
         self.theme = Theme::default();
         ctx.emit(Topic::Theme(self.theme.clone()));
         json!({ "ok": true })
+    }
+
+    fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
+        let Topic::MenuAction(MenuActionPayload { app_id, action_id }) = delivery.topic else {
+            return;
+        };
+        if app_id != Self::APP_ID {
+            return;
+        }
+        if action_id == "open_devtools" {
+            self.main_window.toggle_dev_tools();
+        }
+    }
+}
+
+fn kit_menu() -> AppMenuPayload {
+    AppMenuPayload {
+        app_id: KitApp::APP_ID.into(),
+        menus: vec![MenuDefinition {
+            label: "Sola Kit".into(),
+            items: vec![MenuItem::Action {
+                id: "open_devtools".into(),
+                label: "Developer Tools".into(),
+                shortcut: Some(KeyCode::F12.chord()),
+                disabled: false,
+                checked: false,
+            }],
+        }],
     }
 }

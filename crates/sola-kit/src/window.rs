@@ -80,6 +80,13 @@ impl WindowHandle {
     pub fn browser(&self) -> &Browser {
         &self.inner.browser
     }
+
+    /// Toggle the Chromium DevTools panel for this window's browser.
+    /// See `Browser::toggle_dev_tools` for the behaviour and the note
+    /// about bottom-half integration as future work.
+    pub fn toggle_dev_tools(&self) {
+        self.inner.browser.toggle_dev_tools();
+    }
 }
 
 impl PartialEq for WindowHandle {

@@ -94,4 +94,48 @@ impl Browser {
     pub fn identifier(&self) -> i32 {
         self.inner.identifier()
     }
+
+    /// Open the Chromium DevTools panel for this browser.
+    ///
+    /// Passing `None` for `window_info` lets CEF open devtools as a
+    /// separate top-level windowed browser (via GTK/X11 — under
+    /// sola-river that surfaces through XWayland). That gets us a
+    /// working inspector with no further plumbing.
+    ///
+    /// **Future work:** to host devtools as the bottom half of the
+    /// owning Wayland surface we'd need a second OSR browser with its
+    /// own `RenderHandler` rendering into a sub-region (subsurface or
+    /// composited dma-buf overlay). That's a meaningful chunk of code
+    /// — out of scope for the initial wiring.
+    pub fn show_dev_tools(&self) {
+        let Some(host) = self.inner.host() else {
+            tracing::warn!("show_dev_tools: browser has no host");
+            return;
+        };
+        host.show_dev_tools(None, None, None, None);
+    }
+
+    /// Close the DevTools window for this browser, if any.
+    pub fn close_dev_tools(&self) {
+        if let Some(host) = self.inner.host() {
+            host.close_dev_tools();
+        }
+    }
+
+    /// Whether DevTools is currently open for this browser.
+    pub fn has_dev_tools(&self) -> bool {
+        self.inner
+            .host()
+            .map(|h| h.has_dev_tools() != 0)
+            .unwrap_or(false)
+    }
+
+    /// Toggle DevTools for this browser — open if closed, close if open.
+    pub fn toggle_dev_tools(&self) {
+        if self.has_dev_tools() {
+            self.close_dev_tools();
+        } else {
+            self.show_dev_tools();
+        }
+    }
 }
