@@ -13,8 +13,9 @@
 //
 // Styles live in `sidebar.css`, registered via a `<link>` in the host
 // `index.html`. The CSS references only `--sola-sidebar-*` (scoped vars
-// emitted by the new theme protocol) and inherits `--sola-page-*` from
-// the page; no atom is referenced directly.
+// emitted by the new theme protocol); typography (color, font-family,
+// font-size) cascades from the surrounding `<Root>` via natural CSS
+// inheritance. No atom is referenced directly.
 
 import { type Handle, type RemixNode } from "@remix-run/ui";
 import { on } from "@sola/kit";

@@ -1,11 +1,14 @@
 import { type Handle } from "@remix-run/ui";
 import { Button } from "@sola/button";
+import { Root } from "@sola/root";
 import { Sidebar, SidebarSection, SidebarItem } from "@sola/sidebar";
 
-// Storybook layout: kit-shipped <Sidebar> on the left, content pane on
-// the right. Selection is parent-controlled — we track the current id
-// in a closure-captured local and call `handle.update()` when it
-// changes, then pass `active={...}` and `onSelect={...}` per item.
+// Storybook layout: <Root> at the top of the tree (provides the
+// page-level theme styling), then a flex row of kit-shipped <Sidebar>
+// on the left and a content pane on the right. Selection is
+// parent-controlled — we track the current id in a closure-captured
+// local and call `handle.update()` when it changes, then pass
+// `active={...}` and `onSelect={...}` per item.
 //
 // Items are label-only here (the storybook's preference); other apps
 // can use the `leading`/`trailing` named slots for icons or counters.
@@ -46,40 +49,42 @@ export function Main(handle: Handle) {
     handle.update();
   };
 
+  // <Root> handles bg/text/font; the inner div is just the
+  // app-specific layout (sidebar row + content column).
   const layoutStyle =
-    "display: flex; height: 100vh; width: 100vw; min-height: 0; " +
-    "background: var(--sola-page-bg); color: var(--sola-page-text); " +
-    "font-family: var(--sola-page-font); font-size: var(--sola-page-text-size);";
+    "display: flex; height: 100%; width: 100%; min-height: 0;";
   const contentStyle =
     "flex: 1 1 auto; padding: 24px 32px; overflow: auto;";
 
   return () => (
-    <main style={layoutStyle}>
-      <Sidebar>
-        {sections.map((section) => (
-          <SidebarSection label={section.label}>
-            {section.items.map((item) => (
-              <SidebarItem
-                active={item.id === selectedId}
-                onSelect={() => select(item.id)}
-              >
-                {item.label}
-              </SidebarItem>
-            ))}
-          </SidebarSection>
-        ))}
-      </Sidebar>
-      <section style={contentStyle}>
-        <h1 style="margin-top: 0;">{labelFor(selectedId)}</h1>
-        {selectedId === "button"
-          ? <ButtonShowcase />
-          : (
-            <p style="opacity: 0.75;">
-              Storybook content for "{selectedId}" goes here.
-            </p>
-          )}
-      </section>
-    </main>
+    <Root>
+      <div style={layoutStyle}>
+        <Sidebar>
+          {sections.map((section) => (
+            <SidebarSection label={section.label}>
+              {section.items.map((item) => (
+                <SidebarItem
+                  active={item.id === selectedId}
+                  onSelect={() => select(item.id)}
+                >
+                  {item.label}
+                </SidebarItem>
+              ))}
+            </SidebarSection>
+          ))}
+        </Sidebar>
+        <section style={contentStyle}>
+          <h1 style="margin-top: 0;">{labelFor(selectedId)}</h1>
+          {selectedId === "button"
+            ? <ButtonShowcase />
+            : (
+              <p style="opacity: 0.75;">
+                Storybook content for "{selectedId}" goes here.
+              </p>
+            )}
+        </section>
+      </div>
+    </Root>
   );
 }
 

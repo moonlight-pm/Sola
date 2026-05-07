@@ -2,14 +2,13 @@
    `inject_kit_head` (any `Css` asset in `platform_assets()` becomes
    a `<link rel="stylesheet">`).
 
-   Goals:
-   - No default browser margin around the document body.
-   - The viewport is the window — no document-level scrollbars; if
-     a region needs to scroll, it opts in (`overflow: auto` on its
-     own container).
-   - Page-level theme vars apply at body so children inherit
-     `color`, `font-family`, and `font-size` without each page
-     re-asserting them. */
+   Strictly a reset — no theming. The page's look (background,
+   foreground, font) lives on the `<Root>` component, which every
+   kit app must include at the top of its `Main` tree. base.css
+   only ensures the document has zero default margin and that
+   neither html nor body produces document-level scrollbars; if a
+   region needs to scroll, it opts in (`overflow: auto` on its own
+   container). */
 
 html,
 body {
@@ -18,13 +17,4 @@ body {
   height: 100%;
   width: 100%;
   overflow: hidden;
-}
-
-body {
-  background: var(--sola-page-bg);
-  color: var(--sola-page-text);
-  font-family: var(--sola-page-font);
-  font-size: var(--sola-page-text-size);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }

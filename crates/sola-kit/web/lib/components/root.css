@@ -1,0 +1,18 @@
+/* Root styles — references only `--sola-root-*` scoped theme vars.
+   Fills its parent (the document body, sized to the viewport via
+   base.css). Apps put `<Root>` at the top of their `Main` tree; this
+   stylesheet is auto-injected into every kit app via `inject_kit_head`. */
+
+.sola-root {
+  height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+
+  background: var(--sola-root-bg);
+  color: var(--sola-root-text);
+  font-family: var(--sola-root-font);
+  font-size: var(--sola-root-text-size);
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

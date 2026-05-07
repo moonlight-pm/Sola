@@ -1,7 +1,9 @@
 /* Sidebar styles — references only the scoped theme vars
-   (`var(--sola-sidebar-*)` for sidebar slots, inherited
-   `var(--sola-page-*)` for global font/text). Atoms are never
-   referenced directly.
+   (`var(--sola-sidebar-*)` for sidebar slots; the rest is
+   inherited from the surrounding `<Root>` via natural CSS
+   inheritance — `font-family`, `color`, and `font-size` cascade
+   from the Root wrapper to descendants without re-asserting any
+   var here). Atoms are never referenced directly.
 
    Class-based selectors target the DOM the Remix v3 component
    factories produce:
@@ -30,7 +32,8 @@
   background: var(--sola-sidebar-bg);
   border-right: 1px solid var(--sola-sidebar-border);
 
-  font-family: var(--sola-page-font);
+  /* font-family inherits from <Root>; sidebar overrides only its
+     own text size and idle color. */
   font-size: var(--sola-sidebar-item-text-size);
   color: var(--sola-sidebar-item-text-idle);
 

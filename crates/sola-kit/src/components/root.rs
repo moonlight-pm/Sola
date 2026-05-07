@@ -1,6 +1,8 @@
-//! `page` component bindings — globals applied at `body { … }` so
-//! children inherit `--sola-page-bg/text/font/text-size`. The DOM
-//! sibling lives in `web/lib/base.css`.
+//! `root` component bindings. The Tsx and CSS siblings live at
+//! `web/lib/components/root.{tsx,css}` and reference only
+//! `--sola-root-*` scoped vars. Root is the top-of-tree wrapper
+//! every kit app's `Main` should return; its slots set the page
+//! background, text color, font family, and base text size.
 
 use sola_core::theme::{Binding, ComponentBindings};
 

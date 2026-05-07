@@ -223,7 +223,7 @@ Spec: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`.
 
 ### CSS authoring
 
-Kit components ship a `web/lib/components/<name>.css` next to their `.tsx`. Class-based selectors (not tag-based — Remix components render plain DOM). Reference only `var(--sola-<component>-<slot>)` and inherited globals (`var(--sola-page-*)`); never atoms directly.
+Kit components ship a `web/lib/components/<name>.css` next to their `.tsx`. Class-based selectors (not tag-based — Remix components render plain DOM). Reference only `var(--sola-<component>-<slot>)` slots; inherited typography (color, font-family, font-size) cascades from the surrounding `<Root>` via normal CSS inheritance — don't re-reference `--sola-root-*` from inside other components.
 
 `import './foo.css'` in a `.ts(x)` file fails (`'text/css' is not a valid JavaScript MIME type`). The kit's auto-injection handles it — just add the CSS file to `platform_assets()` and a `<link>` appears in every app's `<head>`.
 

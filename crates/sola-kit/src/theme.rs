@@ -8,7 +8,7 @@ use sola_core::theme::{Palette, Theme};
 use crate::components;
 
 /// The kit's default theme — palette atoms from sola-core plus
-/// bindings for every kit-shipped component (button, sidebar, page).
+/// bindings for every kit-shipped component (button, root, sidebar).
 ///
 /// Apps should treat this as a "factory reset" baseline; the canonical
 /// owner of the live theme is sola-shell (or sola-bus, whoever owns
@@ -92,11 +92,11 @@ mod tests {
   --sola-button-radius: var(--radius-md);
   --sola-button-text-size: var(--text-body);
 
-  /* page */
-  --sola-page-bg: var(--bg-primary);
-  --sola-page-font: var(--font-sans);
-  --sola-page-text: var(--text-primary);
-  --sola-page-text-size: var(--text-body);
+  /* root */
+  --sola-root-bg: var(--bg-primary);
+  --sola-root-font: var(--font-sans);
+  --sola-root-text: var(--text-primary);
+  --sola-root-text-size: var(--text-body);
 
   /* sidebar */
   --sola-sidebar-bg: var(--bg-secondary);
