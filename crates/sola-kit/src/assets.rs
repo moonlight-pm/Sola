@@ -176,7 +176,7 @@ fn find_in_dir(mount: &DirMount, rel: &str) -> Option<Asset> {
     }
     if let Some(stem) = rel.strip_suffix(".js") {
         for ext in ["ts", "tsx", "jsx"] {
-            let candidate = format!("{stem}{ext}");
+            let candidate = format!("{stem}.{ext}");
             if let Some(a) = lookup_dir_exact(mount, &candidate) {
                 return Some(a);
             }
