@@ -1,4 +1,5 @@
 import { type Handle } from "@remix-run/ui";
+import { Button } from "@sola/button";
 import { Sidebar, SidebarSection, SidebarItem } from "@sola/sidebar";
 
 // Storybook layout: kit-shipped <Sidebar> on the left, content pane on
@@ -23,6 +24,7 @@ const sections: NavSection[] = [
   {
     label: "Components",
     items: [
+      { id: "button", label: "Button" },
       { id: "sidebar", label: "Sidebar" },
     ],
   },
@@ -36,7 +38,7 @@ const sections: NavSection[] = [
 ];
 
 export function Main(handle: Handle) {
-  let selectedId = "sidebar";
+  let selectedId = "button";
 
   const select = (id: string) => {
     if (id === selectedId) return;
@@ -69,11 +71,69 @@ export function Main(handle: Handle) {
       </Sidebar>
       <section style={contentStyle}>
         <h1 style="margin-top: 0;">{labelFor(selectedId)}</h1>
-        <p style="opacity: 0.75;">
-          Storybook content for "{selectedId}" goes here.
-        </p>
+        {selectedId === "button"
+          ? <ButtonShowcase />
+          : (
+            <p style="opacity: 0.75;">
+              Storybook content for "{selectedId}" goes here.
+            </p>
+          )}
       </section>
     </main>
+  );
+}
+
+// ── Button storybook page ───────────────────────────────────────────
+//
+// Renders one row per variant with idle and disabled instances. The
+// `pressedFlash` lets clicks visibly do something — a tiny "pressed
+// N times" line below each row, demonstrating onPress wiring.
+
+function ButtonShowcase(handle: Handle) {
+  let count = 0;
+  const onPress = () => {
+    count++;
+    handle.update();
+  };
+
+  const rowStyle = "display: flex; gap: 12px; align-items: center;";
+  const groupStyle = "display: flex; flex-direction: column; gap: 8px;";
+  const labelStyle = "font-size: 11px; opacity: 0.6; text-transform: uppercase;";
+
+  return () => (
+    <div style="display: flex; flex-direction: column; gap: 24px; max-width: 640px;">
+      <p style="opacity: 0.75; margin: 0;">
+        Pressed {count} time{count === 1 ? "" : "s"}.
+      </p>
+      <div style={groupStyle}>
+        <span style={labelStyle}>default</span>
+        <div style={rowStyle}>
+          <Button onPress={onPress}>Default</Button>
+          <Button onPress={onPress} disabled>Disabled</Button>
+        </div>
+      </div>
+      <div style={groupStyle}>
+        <span style={labelStyle}>primary</span>
+        <div style={rowStyle}>
+          <Button variant="primary" onPress={onPress}>Primary</Button>
+          <Button variant="primary" onPress={onPress} disabled>Disabled</Button>
+        </div>
+      </div>
+      <div style={groupStyle}>
+        <span style={labelStyle}>ghost</span>
+        <div style={rowStyle}>
+          <Button variant="ghost" onPress={onPress}>Ghost</Button>
+          <Button variant="ghost" onPress={onPress} disabled>Disabled</Button>
+        </div>
+      </div>
+      <div style={groupStyle}>
+        <span style={labelStyle}>danger</span>
+        <div style={rowStyle}>
+          <Button variant="danger" onPress={onPress}>Danger</Button>
+          <Button variant="danger" onPress={onPress} disabled>Disabled</Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

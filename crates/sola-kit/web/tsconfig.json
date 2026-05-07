@@ -27,6 +27,7 @@
     "paths": {
       "@sola/ipc": ["./lib/ipc.ts"],
       "@sola/kit": ["./lib/kit.ts"],
+      "@sola/button": ["./lib/components/button.tsx"],
       "@sola/sidebar": ["./lib/components/sidebar.tsx"],
       // Per-app root component. The kit's built-in `index.tsx`
       // imports `Main` via this specifier; the runtime importmap

@@ -403,6 +403,63 @@ impl Theme {
             tok(TokenKind::Radius, "6px", &["radius"]),
         );
 
+        // Components — button. Variants (`default`, `primary`, `ghost`,
+        // `danger`) get their own per-state slots; shape slots (radius,
+        // padding, gap, text-size, focus-ring) are variant-agnostic.
+        // CSS handles hover/active on saturated variants via filter()
+        // rather than minting more atoms — keep the binding surface
+        // small at first; extend slots when a real consumer needs
+        // finer control.
+        let mut button = ComponentBindings::default();
+        button.slots.insert("radius".into(), bind("radius", "radius-md"));
+        button
+            .slots
+            .insert("padding-block".into(), bind("space", "space-sm"));
+        button
+            .slots
+            .insert("padding-inline".into(), bind("space", "space-md"));
+        button.slots.insert("gap".into(), bind("space", "space-xs"));
+        button
+            .slots
+            .insert("text-size".into(), bind("text-size", "text-body"));
+        button
+            .slots
+            .insert("focus-ring".into(), bind("accent", "accent"));
+        // default variant
+        button
+            .slots
+            .insert("default-bg".into(), bind("surface", "bg-tertiary"));
+        button
+            .slots
+            .insert("default-bg-hover".into(), bind("surface", "bg-hover"));
+        button
+            .slots
+            .insert("default-text".into(), bind("text", "text-primary"));
+        button
+            .slots
+            .insert("default-border".into(), bind("border", "border"));
+        // primary variant — saturated accent fill
+        button
+            .slots
+            .insert("primary-bg".into(), bind("accent", "accent"));
+        button
+            .slots
+            .insert("primary-text".into(), bind("text", "text-primary"));
+        // ghost variant — transparent at rest, surface tint on hover
+        button
+            .slots
+            .insert("ghost-bg-hover".into(), bind("surface", "bg-hover"));
+        button
+            .slots
+            .insert("ghost-text".into(), bind("text", "text-secondary"));
+        // danger variant — saturated status fill
+        button
+            .slots
+            .insert("danger-bg".into(), bind("status", "danger"));
+        button
+            .slots
+            .insert("danger-text".into(), bind("text", "text-primary"));
+
         // Components — page (globals applied at body { … })
         let mut page = ComponentBindings::default();
         page.slots.insert("bg".into(), bind("surface", "bg-primary"));
@@ -466,6 +523,7 @@ impl Theme {
         sidebar.slots.insert("gap".into(), bind("space", "space-xs"));
 
         let mut components = BTreeMap::new();
+        components.insert("button".into(), button);
         components.insert("page".into(), page);
         components.insert("sidebar".into(), sidebar);
 
@@ -527,6 +585,24 @@ mod tests {
   --text-primary: #e6edf3;
   --text-secondary: #8b949e;
   --text-tertiary: #6e7681;
+
+  /* button */
+  --sola-button-danger-bg: var(--danger);
+  --sola-button-danger-text: var(--text-primary);
+  --sola-button-default-bg: var(--bg-tertiary);
+  --sola-button-default-bg-hover: var(--bg-hover);
+  --sola-button-default-border: var(--border);
+  --sola-button-default-text: var(--text-primary);
+  --sola-button-focus-ring: var(--accent);
+  --sola-button-gap: var(--space-xs);
+  --sola-button-ghost-bg-hover: var(--bg-hover);
+  --sola-button-ghost-text: var(--text-secondary);
+  --sola-button-padding-block: var(--space-sm);
+  --sola-button-padding-inline: var(--space-md);
+  --sola-button-primary-bg: var(--accent);
+  --sola-button-primary-text: var(--text-primary);
+  --sola-button-radius: var(--radius-md);
+  --sola-button-text-size: var(--text-body);
 
   /* page */
   --sola-page-bg: var(--bg-primary);
