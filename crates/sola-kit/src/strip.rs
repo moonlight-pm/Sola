@@ -5,10 +5,17 @@
 //!   .tsx → JSX→jsx()/jsxs() (auto-imported) then strip types
 //!   .jsx → JSX→jsx()/jsxs() (auto-imported)
 //!
-//! JSX transform is configured for Preact's automatic runtime
-//! (`import_source: "preact"`), so swc auto-injects
-//! `import { jsx, jsxs, Fragment } from "preact/jsx-runtime"` for any
-//! file containing JSX. App code never needs to import `h` or `Fragment`.
+//! JSX transform is configured for the automatic runtime with
+//! `import_source: "@remix-run/ui"`, so swc auto-injects
+//! `import { jsx, jsxs, Fragment } from "@remix-run/ui/jsx-runtime"`
+//! for any file containing JSX. App code never needs to import the
+//! factory or Fragment by hand. The vendored `@remix-run/ui` tree is
+//! mounted under `/vendor/remix-ui/` and the import map in each app's
+//! index.html resolves the bare specifier to that mount. Components
+//! that want the *classic* runtime can opt out per-file via the
+//! `// @jsxRuntime classic` / `// @jsx createElement` pragmas (which
+//! is what remix-ui's own first-party components do, to avoid a
+//! self-import).
 
 use swc_core::common::comments::SingleThreadedComments;
 use swc_core::common::sync::Lrc;
@@ -71,7 +78,7 @@ pub fn transform(source: &str, has_jsx: bool, has_types: bool) -> String {
                 Some(&comments),
                 JsxOptions {
                     runtime: Some(Runtime::Automatic),
-                    import_source: Some("preact".into()),
+                    import_source: Some("@remix-run/ui".into()),
                     ..Default::default()
                 },
                 top_level_mark,
@@ -115,9 +122,10 @@ mod tests {
 
     #[test]
     fn jsx_auto_imports_jsx_runtime() {
-        // App code does NOT import h. Automatic runtime should add
-        // `import { jsx } from "preact/jsx-runtime"` (or jsxs) for us.
-        let src = r#"import { render } from "preact";
+        // App code does NOT import the JSX factory by hand. The automatic
+        // runtime should add `import { jsx } from "@remix-run/ui/jsx-runtime"`
+        // (or jsxs) for us.
+        let src = r#"import { render } from "@remix-run/ui";
 import { Main } from "./components/Main";
 
 render(<Main />, document.body);
@@ -125,8 +133,8 @@ render(<Main />, document.body);
         let out = transform(src, true, true);
         eprintln!("=== TRANSFORM OUTPUT ===\n{}\n=== END ===", out);
         assert!(
-            out.contains("preact/jsx-runtime"),
-            "expected automatic-runtime import from preact/jsx-runtime; got:\n{out}"
+            out.contains("@remix-run/ui/jsx-runtime"),
+            "expected automatic-runtime import from @remix-run/ui/jsx-runtime; got:\n{out}"
         );
         // JSX must lower to a jsx*() call from the runtime.
         assert!(
