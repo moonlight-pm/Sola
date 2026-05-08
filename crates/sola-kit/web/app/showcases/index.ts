@@ -20,6 +20,7 @@ import { SidebarShowcase } from "./sidebar.tsx";
 import { StackShowcase } from "./stack.tsx";
 import { SwatchShowcase } from "./swatch.tsx";
 import { TextInputShowcase } from "./text-input.tsx";
+import { TokensShowcase } from "./tokens.tsx";
 
 export interface ShowcaseEntry {
   /** Stable id; used as the selectedId in the storybook's nav. */
@@ -40,6 +41,7 @@ export const showcases: ShowcaseEntry[] = [
   { id: "swatch", label: "Swatch", section: "Components", component: SwatchShowcase },
   { id: "text-input", label: "TextInput", section: "Components", component: TextInputShowcase },
   { id: "stack", label: "Stack", section: "Layout", component: StackShowcase },
+  { id: "tokens", label: "Tokens", section: "Theme", component: TokensShowcase },
 ];
 
 /** Lookup by id; returns `undefined` if no such showcase exists. */
