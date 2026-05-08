@@ -392,17 +392,26 @@ pub fn run<A: SolaApp>() {
                 }
 
                 // Framework default for `Topic::Theme`: lower the new
-                // theme to CSS once and push to every kit-managed
-                // window via `__solaRecv`. This runs before the user's
-                // `on_theme` handler (if any) so app-level mirroring is
-                // strictly an in-memory concern. The renderer-side
-                // `on("theme", ...)` listener in `index.tsx` does
-                // `themeSheet.replaceSync(msg.css)` on receipt.
+                // theme to CSS *and* serialize the structured Theme,
+                // pushing both to every kit-managed window via
+                // `__solaRecv` in a single message. `css` is what
+                // `setupKit()` adopts onto the stylesheet for live
+                // theming; `definition` is the structured input
+                // (palette + bindings) that theme editors read so
+                // they can render one row per token with the right
+                // input type.
+                //
+                // This runs before the user's `on_theme` handler (if
+                // any) so app-level mirroring is strictly an
+                // in-memory concern.
                 if let Topic::Theme(theme) = &topic {
                     let css = theme.to_css();
+                    let definition =
+                        serde_json::to_value(theme).unwrap_or(serde_json::Value::Null);
                     let payload = serde_json::json!({
                         "event": "theme",
                         "css": css,
+                        "definition": definition,
                     });
                     let rt = self.runtime.borrow();
                     for window in &rt.ctx.windows {
