@@ -1,7 +1,8 @@
 /* Root styles — references only `--sola-root-*` scoped theme vars.
    Fills its parent (the document body, sized to the viewport via
-   base.css). Apps put `<Root>` at the top of their `Main` tree; this
-   stylesheet is auto-injected into every kit app via `inject_kit_head`. */
+   base.css). Apps put `<Root>` at the top of their `Main` tree;
+   this stylesheet is auto-injected into every kit app via
+   `inject_kit_head`. */
 
 .sola-root {
   height: 100%;
@@ -15,4 +16,42 @@
 
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar theme. CEF is Chromium so the WebKit pseudo-elements
+   take effect; the firefox-style `scrollbar-color`/`scrollbar-width`
+   declarations on .sola-root itself are a future-portability hedge
+   in case a Sola app ever runs in a non-Chromium WebView.
+
+   Selector targets `.sola-root *` (descendants, not Root itself) so
+   every scrollable region in the app inherits the same look without
+   apps having to re-style their own panes. */
+
+.sola-root {
+  scrollbar-color:
+    var(--sola-root-scrollbar-thumb)
+    var(--sola-root-scrollbar-track);
+  scrollbar-width: thin;
+}
+
+.sola-root *::-webkit-scrollbar {
+  width: var(--sola-root-scrollbar-size);
+  height: var(--sola-root-scrollbar-size);
+}
+
+.sola-root *::-webkit-scrollbar-track {
+  background: var(--sola-root-scrollbar-track);
+}
+
+.sola-root *::-webkit-scrollbar-thumb {
+  background: var(--sola-root-scrollbar-thumb);
+  border-radius: 4px;
+}
+
+.sola-root *::-webkit-scrollbar-thumb:hover {
+  background: var(--sola-root-scrollbar-thumb-hover);
+}
+
+.sola-root *::-webkit-scrollbar-corner {
+  background: var(--sola-root-scrollbar-track);
 }

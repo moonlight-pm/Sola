@@ -42,9 +42,15 @@ impl Palette {
         palette
             .tokens
             .insert("text-tertiary".into(), Token::new(TokenKind::Color, "#6e7681", &["text"]));
+        // text-muted is the brightest of the gray atoms; doubles as a
+        // strong border (e.g. scrollbar thumb on hover) which is why
+        // it's eligible for both `text` and `border` groups.
         palette
             .tokens
-            .insert("text-muted".into(), Token::new(TokenKind::Color, "#484f58", &["text"]));
+            .insert(
+                "text-muted".into(),
+                Token::new(TokenKind::Color, "#484f58", &["text", "border"]),
+            );
         palette.tokens.insert(
             "text-accent".into(),
             Token::new(TokenKind::Color, "#58a6ff", &["text", "accent"]),

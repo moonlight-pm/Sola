@@ -106,6 +106,10 @@ mod tests {
   /* root */
   --sola-root-bg: var(--bg-primary);
   --sola-root-font: var(--font-sans);
+  --sola-root-scrollbar-size: var(--space-sm);
+  --sola-root-scrollbar-thumb: var(--border);
+  --sola-root-scrollbar-thumb-hover: var(--text-muted);
+  --sola-root-scrollbar-track: var(--bg-primary);
   --sola-root-text: var(--text-primary);
   --sola-root-text-size: var(--text-body);
 
