@@ -1,11 +1,12 @@
-// Storybook entry. Layout: <Root> at top, then a flex row of the
-// kit-shipped <Sidebar> on the left and the selected showcase on
-// the right. Selection is parent-controlled via a closure-captured
-// local; nav and content are both derived from the registry in
-// `./showcases/index.ts` so adding a new showcase never touches
-// this file.
+// Storybook entry. Layout: <Root> as the viewport-filling flex
+// column, then a <Stack fill> row pairing the kit-shipped <Sidebar>
+// on the left with a <Pane> on the right. Selection is parent-
+// controlled via a closure-captured local; nav and content are both
+// derived from the registry in `./showcases/index.ts` so adding a
+// new showcase never touches this file.
 
 import { type Handle } from "@remix-run/ui";
+import { Pane } from "@sola/pane";
 import { Root } from "@sola/root";
 import { Sidebar, SidebarSection, SidebarItem } from "@sola/sidebar";
 import { Stack } from "@sola/stack";
@@ -40,13 +41,6 @@ export function Main(handle: Handle) {
     handle.update();
   };
 
-  // <Root> handles bg/text/font; the inner div is just the
-  // app-specific layout (sidebar row + content column).
-  const layoutStyle =
-    "display: flex; height: 100%; width: 100%; min-height: 0;";
-  const contentStyle =
-    "flex: 1 1 auto; padding: 24px 32px; overflow: auto;";
-
   return () => {
     const entry = findShowcase(selectedId);
     const Showcase = entry?.component;
@@ -54,7 +48,7 @@ export function Main(handle: Handle) {
 
     return (
       <Root>
-        <div style={layoutStyle}>
+        <Stack direction="row" fill>
           <Sidebar>
             {navSections.map((section) => (
               <SidebarSection label={section.label}>
@@ -69,7 +63,7 @@ export function Main(handle: Handle) {
               </SidebarSection>
             ))}
           </Sidebar>
-          <section style={contentStyle}>
+          <Pane>
             <Stack gap="var(--space-xl)">
               <Text kind="display">{heading}</Text>
               {Showcase
@@ -80,8 +74,8 @@ export function Main(handle: Handle) {
                   </Text>
                 )}
             </Stack>
-          </section>
-        </div>
+          </Pane>
+        </Stack>
       </Root>
     );
   };

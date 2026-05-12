@@ -9,6 +9,13 @@
   width: 100%;
   box-sizing: border-box;
 
+  /* Flex column so a single `<Stack fill>` child can absorb the
+     full viewport height. Multi-child Roots stack vertically by
+     default; the contract is "wrap one Main", so this is a strictly
+     additive change for existing consumers. */
+  display: flex;
+  flex-direction: column;
+
   background: var(--sola-root-bg);
   color: var(--sola-root-text);
   font-family: var(--sola-root-font);

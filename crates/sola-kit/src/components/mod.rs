@@ -19,6 +19,7 @@ use sola_core::theme::ComponentBindings;
 pub mod button;
 pub mod color_input;
 pub mod field;
+pub mod pane;
 pub mod root;
 pub mod sidebar;
 pub mod swatch;
@@ -36,6 +37,7 @@ pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     map.insert("button".into(), button::bindings());
     map.insert("color-input".into(), color_input::bindings());
     map.insert("field".into(), field::bindings());
+    map.insert("pane".into(), pane::bindings());
     map.insert("root".into(), root::bindings());
     map.insert("sidebar".into(), sidebar::bindings());
     map.insert("swatch".into(), swatch::bindings());

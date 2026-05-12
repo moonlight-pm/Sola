@@ -293,6 +293,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Css,
             },
             Asset {
+                path: "/lib/components/pane.tsx",
+                content: include_bytes!("../web/lib/components/pane.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/pane.css",
+                content: include_bytes!("../web/lib/components/pane.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
                 path: "/lib/components/root.tsx",
                 content: include_bytes!("../web/lib/components/root.tsx"),
                 content_type: ContentType::Tsx,

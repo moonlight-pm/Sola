@@ -537,6 +537,7 @@ fn build_importmap(root_component: &str) -> String {
       "@sola/button":              "/lib/components/button.tsx",
       "@sola/color-input":         "/lib/components/color-input.tsx",
       "@sola/field":               "/lib/components/field.tsx",
+      "@sola/pane":                "/lib/components/pane.tsx",
       "@sola/root":                "/lib/components/root.tsx",
       "@sola/sidebar":             "/lib/components/sidebar.tsx",
       "@sola/stack":               "/lib/components/stack.tsx",

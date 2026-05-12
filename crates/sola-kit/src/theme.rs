@@ -103,6 +103,10 @@ mod tests {
   --sola-field-label-color: var(--text-secondary);
   --sola-field-label-size: var(--text-caption);
 
+  /* pane */
+  --sola-pane-padding-block: var(--space-xl);
+  --sola-pane-padding-inline: var(--space-xxl);
+
   /* root */
   --sola-root-bg: var(--bg-primary);
   --sola-root-font: var(--font-sans);
