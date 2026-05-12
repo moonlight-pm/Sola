@@ -5,18 +5,19 @@
 
 import { type Handle } from "@remix-run/ui";
 import { Stack } from "@sola/stack";
+import { Text } from "@sola/text";
 
 export function SidebarShowcase(_handle: Handle) {
   return () => (
     <Stack gap="var(--space-md)">
-      <p style="opacity: 0.85; margin: 0;">
+      <Text>
         The kit-shipped Sidebar is rendered on the left of this page —
         the storybook navigation itself uses it.
-      </p>
-      <p style="opacity: 0.6; margin: 0;">
+      </Text>
+      <Text tone="subtle">
         Variant stories (icons, trailing counts, disabled items,
         custom widths) will go here.
-      </p>
+      </Text>
     </Stack>
   );
 }

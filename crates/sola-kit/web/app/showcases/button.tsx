@@ -4,6 +4,7 @@
 import { type Handle } from "@remix-run/ui";
 import { Button } from "@sola/button";
 import { Stack } from "@sola/stack";
+import { Text } from "@sola/text";
 
 export function ButtonShowcase(handle: Handle) {
   let count = 0;
@@ -12,17 +13,14 @@ export function ButtonShowcase(handle: Handle) {
     handle.update();
   };
 
-  const labelStyle =
-    "font-size: 11px; opacity: 0.6; text-transform: uppercase;";
-
   return () => (
     <Stack gap="var(--space-xxl)">
-      <p style="opacity: 0.75; margin: 0;">
+      <Text tone="muted">
         Pressed {count} time{count === 1 ? "" : "s"}.
-      </p>
+      </Text>
 
       <Stack gap="var(--space-sm)">
-        <span style={labelStyle}>default</span>
+        <Text kind="label">default</Text>
         <Stack direction="row" gap="var(--space-md)" align="center">
           <Button onPress={onPress}>Default</Button>
           <Button onPress={onPress} disabled>Disabled</Button>
@@ -30,7 +28,7 @@ export function ButtonShowcase(handle: Handle) {
       </Stack>
 
       <Stack gap="var(--space-sm)">
-        <span style={labelStyle}>primary</span>
+        <Text kind="label">primary</Text>
         <Stack direction="row" gap="var(--space-md)" align="center">
           <Button variant="primary" onPress={onPress}>Primary</Button>
           <Button variant="primary" onPress={onPress} disabled>Disabled</Button>
@@ -38,7 +36,7 @@ export function ButtonShowcase(handle: Handle) {
       </Stack>
 
       <Stack gap="var(--space-sm)">
-        <span style={labelStyle}>ghost</span>
+        <Text kind="label">ghost</Text>
         <Stack direction="row" gap="var(--space-md)" align="center">
           <Button variant="ghost" onPress={onPress}>Ghost</Button>
           <Button variant="ghost" onPress={onPress} disabled>Disabled</Button>
@@ -46,7 +44,7 @@ export function ButtonShowcase(handle: Handle) {
       </Stack>
 
       <Stack gap="var(--space-sm)">
-        <span style={labelStyle}>danger</span>
+        <Text kind="label">danger</Text>
         <Stack direction="row" gap="var(--space-md)" align="center">
           <Button variant="danger" onPress={onPress}>Danger</Button>
           <Button variant="danger" onPress={onPress} disabled>Disabled</Button>

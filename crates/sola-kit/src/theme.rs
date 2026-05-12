@@ -136,6 +136,17 @@ mod tests {
   --sola-swatch-border: var(--border-subtle);
   --sola-swatch-radius: var(--radius-sm);
 
+  /* text */
+  --sola-text-body-lg-size: var(--text-body-lg);
+  --sola-text-body-size: var(--text-body);
+  --sola-text-caption-size: var(--text-caption);
+  --sola-text-display-size: var(--text-display);
+  --sola-text-heading-size: var(--text-heading);
+  --sola-text-label-color: var(--text-secondary);
+  --sola-text-label-size: var(--text-caption);
+  --sola-text-muted-color: var(--text-secondary);
+  --sola-text-subtle-color: var(--text-tertiary);
+
   /* text-input */
   --sola-text-input-bg: var(--bg-tertiary);
   --sola-text-input-border: var(--border);

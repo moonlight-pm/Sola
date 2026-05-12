@@ -36,6 +36,7 @@ import {
 } from "@sola/kit";
 import { invoke } from "@sola/ipc";
 import { Stack } from "@sola/stack";
+import { Text } from "@sola/text";
 import { TextInput } from "@sola/text-input";
 
 // Display order for the kind groups. The serialized payload uses
@@ -57,9 +58,6 @@ const KIND_LABELS: Record<TokenKind, string> = {
   Space: "Spacing",
   Radius: "Radii",
 };
-
-const sectionLabelStyle =
-  "font-size: 11px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.04em;";
 
 export function TokensShowcase(handle: Handle) {
   // Local mutable copy of the theme. Initialised from getTheme()
@@ -124,9 +122,9 @@ export function TokensShowcase(handle: Handle) {
     if (!theme) {
       return (
         <Stack gap="var(--space-md)">
-          <p style="opacity: 0.6;">
+          <Text tone="subtle">
             Waiting for the first theme delivery from the bus…
-          </p>
+          </Text>
         </Stack>
       );
     }
@@ -153,10 +151,10 @@ export function TokensShowcase(handle: Handle) {
           align="center"
           gap="var(--space-md)"
         >
-          <p style="opacity: 0.75; margin: 0;">
+          <Text tone="muted">
             Edit palette atoms — every component slot bound to a
             token follows the change automatically.
-          </p>
+          </Text>
           <Button variant="ghost" onPress={reset}>Reset</Button>
         </Stack>
 
@@ -165,7 +163,7 @@ export function TokensShowcase(handle: Handle) {
           if (entries.length === 0) return "";
           return (
             <Stack gap="var(--space-md)">
-              <span style={sectionLabelStyle}>{KIND_LABELS[kind]}</span>
+              <Text kind="label">{KIND_LABELS[kind]}</Text>
               <Stack gap="var(--space-md)">
                 {entries.map(([name, token]) => {
                   const helpText = token.groups.length

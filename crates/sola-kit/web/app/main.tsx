@@ -8,6 +8,8 @@
 import { type Handle } from "@remix-run/ui";
 import { Root } from "@sola/root";
 import { Sidebar, SidebarSection, SidebarItem } from "@sola/sidebar";
+import { Stack } from "@sola/stack";
+import { Text } from "@sola/text";
 
 import { findShowcase, showcases } from "./showcases/index.ts";
 
@@ -68,14 +70,16 @@ export function Main(handle: Handle) {
             ))}
           </Sidebar>
           <section style={contentStyle}>
-            <h1 style="margin-top: 0;">{heading}</h1>
-            {Showcase
-              ? <Showcase />
-              : (
-                <p style="opacity: 0.75;">
-                  No showcase registered for "{selectedId}".
-                </p>
-              )}
+            <Stack gap="var(--space-xl)">
+              <Text kind="display">{heading}</Text>
+              {Showcase
+                ? <Showcase />
+                : (
+                  <Text tone="muted">
+                    No showcase registered for "{selectedId}".
+                  </Text>
+                )}
+            </Stack>
           </section>
         </div>
       </Root>

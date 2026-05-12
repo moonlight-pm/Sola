@@ -6,9 +6,7 @@
 import { type Handle } from "@remix-run/ui";
 import { Stack } from "@sola/stack";
 import { Swatch } from "@sola/swatch";
-
-const labelStyle =
-  "font-size: 11px; opacity: 0.6; text-transform: uppercase;";
+import { Text } from "@sola/text";
 
 const PALETTE_COLORS: { name: string; value: string }[] = [
   { name: "bg-primary", value: "var(--bg-primary)" },
@@ -40,36 +38,36 @@ export function SwatchShowcase(_handle: Handle) {
   return () => (
     <Stack gap="var(--space-xxl)">
       <Stack gap="var(--space-sm)">
-        <span style={labelStyle}>palette atoms</span>
+        <Text kind="label">palette atoms</Text>
         <Stack direction="row" gap="var(--space-md)" align="center" wrap>
           {PALETTE_COLORS.map((c) => (
             <Stack gap="var(--space-xs)" align="center">
               <Swatch color={c.value} />
-              <span style="font-size: 11px; opacity: 0.7;">{c.name}</span>
+              <Text kind="caption" tone="muted">{c.name}</Text>
             </Stack>
           ))}
         </Stack>
       </Stack>
 
       <Stack gap="var(--space-sm)">
-        <span style={labelStyle}>sizes</span>
+        <Text kind="label">sizes</Text>
         <Stack direction="row" gap="var(--space-md)" align="end">
           {SIZES.map((s) => (
             <Stack gap="var(--space-xs)" align="center">
               <Swatch color="var(--accent)" size={s} />
-              <span style="font-size: 11px; opacity: 0.7;">{s}</span>
+              <Text kind="caption" tone="muted">{s}</Text>
             </Stack>
           ))}
         </Stack>
       </Stack>
 
       <Stack gap="var(--space-sm)">
-        <span style={labelStyle}>transparency (accent at varying alpha)</span>
+        <Text kind="label">transparency (accent at varying alpha)</Text>
         <Stack direction="row" gap="var(--space-md)" align="center">
           {ALPHA_STEPS.map((a) => (
             <Stack gap="var(--space-xs)" align="center">
               <Swatch color={a.value} size="32px" />
-              <span style="font-size: 11px; opacity: 0.7;">α {a.label}</span>
+              <Text kind="caption" tone="muted">α {a.label}</Text>
             </Stack>
           ))}
         </Stack>

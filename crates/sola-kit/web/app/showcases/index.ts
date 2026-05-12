@@ -19,6 +19,7 @@ import { FieldShowcase } from "./field.tsx";
 import { SidebarShowcase } from "./sidebar.tsx";
 import { StackShowcase } from "./stack.tsx";
 import { SwatchShowcase } from "./swatch.tsx";
+import { TextShowcase } from "./text.tsx";
 import { TextInputShowcase } from "./text-input.tsx";
 import { TokensShowcase } from "./tokens.tsx";
 
@@ -39,6 +40,7 @@ export const showcases: ShowcaseEntry[] = [
   { id: "field", label: "Field", section: "Components", component: FieldShowcase },
   { id: "sidebar", label: "Sidebar", section: "Components", component: SidebarShowcase },
   { id: "swatch", label: "Swatch", section: "Components", component: SwatchShowcase },
+  { id: "text", label: "Text", section: "Components", component: TextShowcase },
   { id: "text-input", label: "TextInput", section: "Components", component: TextInputShowcase },
   { id: "stack", label: "Stack", section: "Layout", component: StackShowcase },
   { id: "tokens", label: "Tokens", section: "Theme", component: TokensShowcase },
