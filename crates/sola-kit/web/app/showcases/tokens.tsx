@@ -70,11 +70,24 @@ export function TokensShowcase(handle: Handle) {
   // showcase lives effectively forever in the storybook context.
   // If a real leak shows up, mark the showcase with an
   // `unmounted` flag and short-circuit the listener body.
+  //
+  // `onThemeChange` fires the listener synchronously if a theme is
+  // already in memory at subscribe time. Calling `handle.update()`
+  // during that sync fire throws — we're still inside the
+  // component setup function and the reconciler hasn't wired up
+  // `scheduleUpdate` yet (component.ts: setScheduleUpdate is
+  // called *after* render returns). The initial value is already
+  // captured via `getTheme()` above, so the `setupComplete` gate
+  // skips the redundant update during the sync replay and only
+  // forwards real subsequent theme events.
+  let setupComplete = false;
   // deno-lint-ignore no-unused-vars
   const _dispose = onThemeChange((t) => {
     theme = t;
+    if (!setupComplete) return;
     handle.update();
   });
+  setupComplete = true;
 
   /**
    * Build a fresh Theme with the given palette token's value
