@@ -51,8 +51,8 @@ mod tests {
   --border: #2d333b;
   --border-subtle: #21262d;
   --danger: #f85149;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Source Code Pro', monospace;
-  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: Iosevka Term Slab;
+  --font-sans: DejaVu Sans;
   --radius-lg: 6px;
   --radius-md: 4px;
   --radius-sm: 3px;
@@ -114,6 +114,18 @@ mod tests {
   --sola-field-help-color: var(--text-tertiary);
   --sola-field-label-color: var(--text-secondary);
   --sola-field-label-size: var(--text-caption);
+
+  /* font-input */
+  --sola-font-input-muted-text: var(--text-secondary);
+  --sola-font-input-option-bg-hover: var(--bg-hover);
+  --sola-font-input-option-bg-selected: var(--bg-tertiary);
+  --sola-font-input-option-text: var(--text-primary);
+  --sola-font-input-trigger-bg: var(--bg-tertiary);
+  --sola-font-input-trigger-border: var(--border-subtle);
+  --sola-font-input-trigger-padding-block: var(--space-xs);
+  --sola-font-input-trigger-padding-inline: var(--space-sm);
+  --sola-font-input-trigger-radius: var(--radius-md);
+  --sola-font-input-trigger-text: var(--text-primary);
 
   /* pane */
   --sola-pane-padding-block: var(--space-xl);

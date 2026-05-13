@@ -69,18 +69,22 @@ impl Palette {
         palette
             .tokens
             .insert("success".into(), Token::new(TokenKind::Color, "#3fb950", &["status"]));
-        // Fonts
+        // Fonts — picked to match what's actually installed on the
+        // target system so a freshly-flashed kit renders in its
+        // intended typeface without the user needing to install
+        // anything. DejaVu Sans is the default proportional face
+        // shipped with most Linux distros; Iosevka Term Slab is the
+        // monospace pick (the "Slab" cut has serif terminals on
+        // descenders/ascenders, which reads as deliberate-looking
+        // code without going as far as a full slab serif). Picker
+        // selections overwrite these at runtime.
         palette.tokens.insert(
             "font-sans".into(),
-            Token::new(TokenKind::FontFamily, "'DM Sans', system-ui, sans-serif", &["font-family"]),
+            Token::new(TokenKind::FontFamily, "DejaVu Sans", &["font-family"]),
         );
         palette.tokens.insert(
             "font-mono".into(),
-            Token::new(
-                TokenKind::FontFamily,
-                "'JetBrains Mono', 'Fira Code', 'Source Code Pro', monospace",
-                &["font-family"],
-            ),
+            Token::new(TokenKind::FontFamily, "Iosevka Term Slab", &["font-family"]),
         );
         // Text sizes
         palette
