@@ -172,10 +172,6 @@ export function TokensShowcase(handle: Handle) {
     ].join("; ");
 
     const cardHeaderStyle = [
-      "display: flex",
-      "align-items: baseline",
-      "justify-content: space-between",
-      "gap: var(--space-md)",
       "padding-bottom: var(--space-md)",
       "border-bottom: 1px solid var(--border-subtle)",
       "margin-bottom: var(--space-md)",
@@ -216,7 +212,6 @@ export function TokensShowcase(handle: Handle) {
               <section style={cardStyle}>
                 <div style={cardHeaderStyle}>
                   <Text kind="label">{KIND_LABELS[kind]}</Text>
-                  <Text tone="subtle">{String(entries.length)}</Text>
                 </div>
                 <div style={gridStyle(kind)}>
                   {entries.map(([name, token]) => {
