@@ -4,8 +4,14 @@
 // controlled via a closure-captured local; nav and content are both
 // derived from the registry in `./showcases/index.ts` so adding a
 // new showcase never touches this file.
+//
+// The Pane has a persistent header bar at the top: section heading
+// on the left, global theme actions (Reset for now; Save / Load
+// once theme files land) on the right.
 
 import { type Handle } from "@remix-run/ui";
+import { Button } from "@sola/button";
+import { invoke } from "@sola/ipc";
 import { Pane } from "@sola/pane";
 import { Root } from "@sola/root";
 import { Sidebar, SidebarSection, SidebarItem } from "@sola/sidebar";
@@ -31,6 +37,12 @@ function buildNavSections(): NavSection[] {
 }
 
 const navSections = buildNavSections();
+
+function resetTheme() {
+  invoke("theme_reset").catch((err) => {
+    console.error("theme_reset failed", err);
+  });
+}
 
 export function Main(handle: Handle) {
   let selectedId = showcases[0]?.id ?? "";
@@ -64,8 +76,23 @@ export function Main(handle: Handle) {
             ))}
           </Sidebar>
           <Pane>
-            <Stack gap="var(--space-xl)">
-              <Text kind="display">{heading}</Text>
+            <Stack gap="var(--space-xl)" fill>
+              {/* Persistent content header. Section heading on the
+                  left, global theme actions on the right. Future
+                  additions: theme name + save/load buttons. */}
+              <Stack
+                direction="row"
+                align="center"
+                justify="between"
+                gap="var(--space-md)"
+              >
+                <Text kind="display">{heading}</Text>
+                <Stack direction="row" gap="var(--space-sm)" align="center">
+                  <Button variant="ghost" onPress={resetTheme}>
+                    Reset theme
+                  </Button>
+                </Stack>
+              </Stack>
               {Showcase
                 ? <Showcase />
                 : (

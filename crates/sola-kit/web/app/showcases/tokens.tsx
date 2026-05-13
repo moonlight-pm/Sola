@@ -24,7 +24,6 @@
 // then refreshes the visible token rows.
 
 import { type Handle } from "@remix-run/ui";
-import { Button } from "@sola/button";
 import { ColorInput } from "@sola/color-input";
 import { Field } from "@sola/field";
 import { FontInput } from "@sola/font-input";
@@ -127,12 +126,6 @@ export function TokensShowcase(handle: Handle) {
     });
   }
 
-  function reset() {
-    invoke("theme_reset").catch((err) => {
-      console.error("theme_reset failed", err);
-    });
-  }
-
   return () => {
     if (!theme) {
       return (
@@ -194,18 +187,10 @@ export function TokensShowcase(handle: Handle) {
     return (
       <div style={containerStyle}>
         <Stack gap="var(--space-xxl)">
-          <Stack
-            direction="row"
-            justify="between"
-            align="center"
-            gap="var(--space-md)"
-          >
-            <Text tone="muted">
-              Edit palette atoms — every component slot bound to a
-              token follows the change automatically.
-            </Text>
-            <Button variant="ghost" onPress={reset}>Reset</Button>
-          </Stack>
+          <Text tone="muted">
+            Edit palette atoms — every component slot bound to a
+            token follows the change automatically.
+          </Text>
 
           {KIND_ORDER.map((kind) => {
             const entries = byKind[kind];

@@ -4,13 +4,20 @@
    buttons sit flush against the input on the right. */
 
 .sola-number-input {
-  /* `inline-flex` keeps the input + unit + step buttons on one
-     row; `min-width: 0` lets the input shrink inside a flex grid
-     cell without overflowing. */
+  /* Content-sized by default — a value like `12px` doesn't need
+     to fill a 400px row. `inline-flex` keeps the input + unit +
+     step buttons on one row; `min-width: 0` lets the inner input
+     shrink inside any constrained ancestor without overflowing.
+     The internal `width: 60px` on the input field below sets the
+     practical minimum so the digit cell has breathing room.
+
+     Consumers wanting fill behaviour can wrap in a width-set
+     container; the dense form layouts here all read better with
+     a content-sized control left-aligned in its slot. */
   display: inline-flex;
   align-items: stretch;
   min-width: 0;
-  width: 100%;
+  width: max-content;
 
   background: var(--sola-number-input-bg);
   border: 1px solid var(--sola-number-input-border);
@@ -24,12 +31,14 @@
 }
 
 .sola-number-input-field {
-  /* Numeric input grows to fill available width and right-aligns
-     so the digits land next to the unit hint, matching how
-     designers usually read measurements. */
-  flex: 1 1 auto;
+  /* Right-aligned so the digits land next to the unit hint. The
+     fixed `width: 56px` sets the practical minimum cell — two to
+     three digits + a decimal point fit comfortably, and the
+     outer container's natural width grows with the unit/step
+     widths beside it (no need for the field itself to flex). */
+  flex: 0 0 auto;
   min-width: 0;
-  width: 100%;
+  width: 56px;
 
   background: transparent;
   border: none;

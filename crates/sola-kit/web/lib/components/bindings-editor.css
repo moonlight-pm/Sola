@@ -6,14 +6,25 @@
    that sola-river would treat as a separate surface. */
 
 .sola-bindings-editor-grid {
+  /* Three deliberately-sized columns so every row reads as the
+     same grid:
+       1. Label: shrinks to widest label (max-content) — labels
+          aren't truncated and the column doesn't reserve dead
+          space.
+       2. Token picker: fixed 180px so all pickers line up
+          vertically regardless of which token is bound.
+       3. Value editor: max-content so it sizes to the widest
+          editor across all rows — NumberInputs, ColorInputs and
+          FontInputs each render at their natural width, left-
+          aligned within the column.
+     A small column gap keeps the columns visually distinct
+     without horizontal rules. */
   display: grid;
-  grid-template-columns:
-    minmax(140px, max-content)
-    minmax(140px, 1fr)
-    minmax(160px, 1.5fr);
+  grid-template-columns: max-content 180px max-content;
   column-gap: var(--space-md);
   row-gap: var(--space-xs);
   align-items: center;
+  justify-content: start;
 }
 
 .sola-bindings-editor-row {
@@ -31,9 +42,20 @@
   text-overflow: ellipsis;
 }
 
+/* The Popover root that wraps our trigger normally has
+   `width: max-content` (so the popover doesn't expand into a flex
+   parent's free space). Inside the editor grid we *want* it
+   stretching to the fixed picker column, so override here — this
+   selector is more specific than `.sola-popover-root` alone, so
+   the override wins without a wrapper element. */
+.sola-bindings-editor-grid .sola-popover-root {
+  width: 100%;
+}
+
 .sola-bindings-editor-picker {
-  /* Trigger reads as a slim button — same visual density as
-     TextInput / NumberInput rows so the editor grid lines up. */
+  /* Trigger fills the popover-root which now fills the 180px
+     grid column. Reads as a slim button with the bound token name
+     left-aligned and a chevron on the right. */
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
@@ -46,16 +68,8 @@
   font-family: var(--font-mono);
   cursor: pointer;
   min-width: 0;
-  /* Trigger sits inside a Popover root whose `max-content` width
-     would otherwise size to the *trigger button*'s natural width.
-     We want the trigger to fill its grid cell, so we override the
-     popover-root's width-bound from the cell side: parent grid
-     gives us a width, this `width: 100%` consumes it.
-
-     The popover-root itself (which wraps this trigger) keeps its
-     `width: max-content` — that's fine because the wrap happens
-     here, inside a fixed-size cell. */
   width: 100%;
+  box-sizing: border-box;
 }
 
 .sola-bindings-editor-picker:hover {
