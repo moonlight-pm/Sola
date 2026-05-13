@@ -87,6 +87,13 @@ pub struct WaylandClient {
     /// Latest modifier state from `wl_keyboard.modifiers`. Forwarded as
     /// `cef_event_flags_t` on every CEF KeyEvent.
     pub current_modifiers: Modifiers,
+    /// Bitfield of `cef_event_flags_t` for the mouse buttons currently
+    /// held down (`EVENTFLAG_{LEFT,MIDDLE,RIGHT}_MOUSE_BUTTON`).
+    /// OR'd into `MouseEvent::modifiers` on every pointer event so the
+    /// DOM `buttons` property reflects held buttons during drags —
+    /// without this, `<input type="range">` (and any other native
+    /// drag) sees `buttons: 0` on mousemove and stops responding.
+    pub current_buttons: u32,
 }
 
 impl WaylandClient {
@@ -137,6 +144,7 @@ impl WaylandClient {
             keyboard: None,
             entered_keyboard_surface: None,
             current_modifiers: Modifiers::default(),
+            current_buttons: 0,
         }
     }
 

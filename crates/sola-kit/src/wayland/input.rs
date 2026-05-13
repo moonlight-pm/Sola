@@ -44,16 +44,39 @@ impl PointerHandler for WaylandClient {
             let Some(surface) = surface else { continue };
 
             let (x, y) = event.position;
-            let mouse_event = ::cef::MouseEvent {
-                x: x.round() as i32,
-                y: y.round() as i32,
-                modifiers: modifiers_to_cef(&self.current_modifiers),
-            };
 
             let Some(browser) = surface.browser.borrow().as_ref().cloned() else {
                 continue;
             };
             let Some(host) = browser.host() else { continue };
+
+            // For Press/Release we update `current_buttons` BEFORE building
+            // the MouseEvent so the down/up event itself reports the
+            // button as held — Chromium synthesizes the DOM event's
+            // `buttons` field from these modifier flags, so an inconsistent
+            // snapshot leaves the renderer thinking the drag never started.
+            match event.kind {
+                PointerEventKind::Press { button, .. } => {
+                    if let Some(flag) = linux_button_to_cef_flag(button) {
+                        self.current_buttons |= flag;
+                    }
+                }
+                PointerEventKind::Release { button, .. } => {
+                    // Keep the flag set for the release event itself (the
+                    // event represents the moment the held button is
+                    // letting go), then clear after dispatching below.
+                    if let Some(flag) = linux_button_to_cef_flag(button) {
+                        self.current_buttons |= flag;
+                    }
+                }
+                _ => {}
+            }
+
+            let mouse_event = ::cef::MouseEvent {
+                x: x.round() as i32,
+                y: y.round() as i32,
+                modifiers: modifiers_to_cef(&self.current_modifiers) | self.current_buttons,
+            };
 
             match event.kind {
                 PointerEventKind::Enter { .. } => {
@@ -74,6 +97,9 @@ impl PointerHandler for WaylandClient {
                 PointerEventKind::Release { button, .. } => {
                     if let Some(btn) = linux_button_to_cef(button) {
                         host.send_mouse_click_event(Some(&mouse_event), btn, 1, 1);
+                    }
+                    if let Some(flag) = linux_button_to_cef_flag(button) {
+                        self.current_buttons &= !flag;
                     }
                 }
                 PointerEventKind::Axis { horizontal, vertical, .. } => {
@@ -113,6 +139,23 @@ fn linux_button_to_cef(button: u32) -> Option<::cef::MouseButtonType> {
         BTN_LEFT => Some(::cef::MouseButtonType::LEFT),
         BTN_RIGHT => Some(::cef::MouseButtonType::RIGHT),
         BTN_MIDDLE => Some(::cef::MouseButtonType::MIDDLE),
+        _ => None,
+    }
+}
+
+/// `cef_event_flags_t` mask for the held-button bit corresponding to a
+/// Linux input event code. Tracked across pointer events in
+/// `WaylandClient::current_buttons` so DOM `MouseEvent.buttons` stays
+/// truthful during drags.
+fn linux_button_to_cef_flag(button: u32) -> Option<u32> {
+    use ::cef::sys::cef_event_flags_t as F;
+    const BTN_LEFT: u32 = 0x110;
+    const BTN_RIGHT: u32 = 0x111;
+    const BTN_MIDDLE: u32 = 0x112;
+    match button {
+        BTN_LEFT => Some(F::EVENTFLAG_LEFT_MOUSE_BUTTON.0),
+        BTN_RIGHT => Some(F::EVENTFLAG_RIGHT_MOUSE_BUTTON.0),
+        BTN_MIDDLE => Some(F::EVENTFLAG_MIDDLE_MOUSE_BUTTON.0),
         _ => None,
     }
 }
