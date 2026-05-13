@@ -219,7 +219,7 @@ pub fn builtin_apps() -> Vec<Application> {
         },
         Application {
             app_id: "sola-kit".into(),
-            label: "Theme".into(),
+            label: "Kit".into(),
             command: "/opt/sola/bin/sola-kit".into(),
             icon: "lucide/palette".into(),
         },
