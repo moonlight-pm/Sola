@@ -156,46 +156,92 @@ export function TokensShowcase(handle: Handle) {
       byKind[token.kind].push([name, token]);
     }
 
-    return (
-      <Stack gap="var(--space-xxl)">
-        <Stack
-          direction="row"
-          justify="between"
-          align="center"
-          gap="var(--space-md)"
-        >
-          <Text tone="muted">
-            Edit palette atoms — every component slot bound to a
-            token follows the change automatically.
-          </Text>
-          <Button variant="ghost" onPress={reset}>Reset</Button>
-        </Stack>
+    // Container max-width is deliberate — at the storybook's full
+    // 1150 px width the tokens read as a sparse list of micro-controls.
+    // 880 px keeps two columns of inline-label rows comfortably wide
+    // (label band + control + breathing room) without going past where
+    // a reader naturally tracks.
+    const containerStyle =
+      "max-width: 880px; margin: 0 auto; width: 100%;";
 
-        {KIND_ORDER.map((kind) => {
-          const entries = byKind[kind];
-          if (entries.length === 0) return "";
-          return (
-            <Stack gap="var(--space-md)">
-              <Text kind="label">{KIND_LABELS[kind]}</Text>
-              <Stack gap="var(--space-md)">
-                {entries.map(([name, token]) => {
-                  const helpText = token.groups.length
-                    ? `groups: ${token.groups.join(", ")}`
-                    : "";
-                  const onChange = (v: string) => commitToken(name, v);
-                  return (
-                    <Field label={name} help={helpText}>
-                      {kind === "Color"
-                        ? <ColorInput value={token.value} onChange={onChange} />
-                        : <TextInput value={token.value} onChange={onChange} />}
-                    </Field>
-                  );
-                })}
-              </Stack>
-            </Stack>
-          );
-        })}
-      </Stack>
+    const cardStyle = [
+      "background: var(--bg-secondary)",
+      "border: 1px solid var(--border-subtle)",
+      "border-radius: var(--radius-lg)",
+      "padding: var(--space-lg) var(--space-xl)",
+    ].join("; ");
+
+    const cardHeaderStyle = [
+      "display: flex",
+      "align-items: baseline",
+      "justify-content: space-between",
+      "gap: var(--space-md)",
+      "padding-bottom: var(--space-md)",
+      "border-bottom: 1px solid var(--border-subtle)",
+      "margin-bottom: var(--space-md)",
+    ].join("; ");
+
+    // 2-column grid by default; the FontFamily group has long
+    // freetext values so it gets a single column for readability.
+    const gridStyle = (kind: TokenKind) => {
+      const cols = kind === "FontFamily" ? 1 : 2;
+      return [
+        "display: grid",
+        `grid-template-columns: repeat(${cols}, minmax(0, 1fr))`,
+        "column-gap: var(--space-xl)",
+        "row-gap: var(--space-sm)",
+      ].join("; ");
+    };
+
+    return (
+      <div style={containerStyle}>
+        <Stack gap="var(--space-xxl)">
+          <Stack
+            direction="row"
+            justify="between"
+            align="center"
+            gap="var(--space-md)"
+          >
+            <Text tone="muted">
+              Edit palette atoms — every component slot bound to a
+              token follows the change automatically.
+            </Text>
+            <Button variant="ghost" onPress={reset}>Reset</Button>
+          </Stack>
+
+          {KIND_ORDER.map((kind) => {
+            const entries = byKind[kind];
+            if (entries.length === 0) return "";
+            return (
+              <section style={cardStyle}>
+                <div style={cardHeaderStyle}>
+                  <Text kind="label">{KIND_LABELS[kind]}</Text>
+                  <Text tone="subtle">{String(entries.length)}</Text>
+                </div>
+                <div style={gridStyle(kind)}>
+                  {entries.map(([name, token]) => {
+                    const helpText = token.groups.length
+                      ? `groups: ${token.groups.join(", ")}`
+                      : "";
+                    const onChange = (v: string) => commitToken(name, v);
+                    return (
+                      <Field
+                        direction="row"
+                        label={name}
+                        title={helpText}
+                      >
+                        {kind === "Color"
+                          ? <ColorInput value={token.value} onChange={onChange} />
+                          : <TextInput value={token.value} onChange={onChange} />}
+                      </Field>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </Stack>
+      </div>
     );
   };
 }

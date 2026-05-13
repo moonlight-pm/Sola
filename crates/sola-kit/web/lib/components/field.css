@@ -31,3 +31,39 @@
   font-size: var(--sola-field-label-size);
   color: var(--sola-field-error-color);
 }
+
+/* Row variant — label sits to the left of the control inside the
+   row band; help/error stays as a single line below. The row band
+   is a flex row aligned to the baseline so labels of slightly
+   different x-heights still read as one line. */
+.sola-field-row .sola-field-row-band {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+/* Fixed label width keeps a grid of rows visually aligned even
+   when label lengths vary; ellipsis on overflow prevents long
+   token names from blowing out the row. Labels lose their default
+   uppercase + heavy-weight treatment in row mode — they're
+   identifiers, not section headings, so a tighter mixed-case
+   monospace reads more like data and less like chrome. */
+.sola-field-row .sola-field-label {
+  flex: 0 0 var(--sola-field-row-label-width, 110px);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  font-family: var(--font-mono);
+  color: var(--sola-field-label-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sola-field-row .sola-field-row-control {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
