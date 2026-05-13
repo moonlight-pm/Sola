@@ -44,7 +44,12 @@
 
 .sola-color-picker-slider {
   flex: 1;
-  height: 12px;
+  /* Slider height tracks the thumb diameter so the thumb sits
+     fully inside the input's hit area — at 12px previously the
+     thumb extended 1px above and below the input, which made it
+     awkward to grab and easy to mousedown on the row (parent)
+     instead of the input. 18px matches the thumb. */
+  height: 18px;
   -webkit-appearance: none;
   appearance: none;
   background: var(--sola-color-picker-slider-track-bg);
@@ -57,8 +62,11 @@
 .sola-color-picker-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  /* Larger thumb (was 14px) — easier to grab for dragging, and
+     now matches the slider's full height so a vertical mousedown
+     anywhere on the row band lands on the input element. */
+  width: 18px;
+  height: 18px;
   background: var(--sola-color-picker-slider-thumb-bg);
   border: 2px solid var(--sola-color-picker-slider-thumb-border);
   border-radius: 50%;

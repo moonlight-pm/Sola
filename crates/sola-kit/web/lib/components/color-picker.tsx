@@ -13,8 +13,7 @@
 // spawns the GTK color chooser dialog, which looks foreign and
 // needs GSettings schemas. This is a fully in-window picker.
 
-import { type Handle } from "@remix-run/ui";
-import { on } from "@sola/kit";
+import { type Handle, ref } from "@remix-run/ui";
 import { TextInput } from "@sola/text-input";
 
 interface Rgba { r: number; g: number; b: number; a: number }
@@ -41,6 +40,25 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
   let hexDraft = "";
   let lastEmitted: string | null = null;
   let lastSeenValue: string | undefined = undefined;
+  // Slider DOM refs, captured by the `ref` mixin. The sliders are
+  // intentionally uncontrolled: passing `value` would trip Remix's
+  // controlled-input reflection, which schedules a microtask that
+  // reverts the DOM value to the previous render's number — racing
+  // the browser's native drag handling and snapping the thumb back
+  // by one tick per move. We set initial values from the ref
+  // callback and push externally-driven changes (hex edits, theme
+  // refreshes) via `pushDomValues`; drags are read-only from JS
+  // and the DOM stays authoritative.
+  const sliderEls: Partial<Record<keyof Hsla, HTMLInputElement>> = {};
+
+  function pushDomValues(): void {
+    for (const k of ["h", "s", "l", "a"] as const) {
+      const el = sliderEls[k];
+      if (!el) continue;
+      const v = String(edit[k]);
+      if (el.value !== v) el.value = v;
+    }
+  }
 
   function syncFromExternal(value: string | undefined): void {
     if (value === lastSeenValue) return;
@@ -54,6 +72,7 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
     if (parsed === null) return;
     const hsl = rgbToHsl(parsed.r, parsed.g, parsed.b);
     edit = { h: hsl.h, s: hsl.s, l: hsl.l, a: parsed.a };
+    pushDomValues();
   }
 
   function emit(): void {
@@ -85,6 +104,8 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
       edit = { h: hsl.h, s: hsl.s, l: hsl.l, a: parsed.a };
       lastEmitted = v;
       handle.props.onChange?.(v);
+      // Hex was the source of truth here; reflect to sliders.
+      pushDomValues();
     }
     handle.update();
   };
@@ -108,6 +129,7 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
 
     const sliderRow = (
       label: string,
+      channel: keyof Hsla,
       min: number,
       max: number,
       step: number,
@@ -125,12 +147,29 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
           min={String(min)}
           max={String(max)}
           step={String(step)}
-          value={String(value)}
           style={sliderStyle}
-          mix={[on("input", (e: Event) => {
-            const t = e.target as HTMLInputElement;
-            onInput(Number(t.value));
-          })]}
+          mix={[
+            // One ref does both jobs: captures the slider node,
+            // seeds its initial value, and attaches the `input`
+            // listener directly via addEventListener with the
+            // ref's AbortSignal handling cleanup. Avoiding the
+            // separate `on` mixin keeps things obvious — there's
+            // exactly one place per slider where the listener is
+            // wired up, and the listener captures the same
+            // closure (`onInput`) that the render passed in.
+            ref<HTMLInputElement>((el, signal) => {
+              sliderEls[channel] = el;
+              el.value = String(value);
+              el.addEventListener(
+                "input",
+                (e) => {
+                  const t = e.target as HTMLInputElement;
+                  onInput(Number(t.value));
+                },
+                { signal },
+              );
+            }),
+          ]}
         />
         <span class="sola-color-picker-value">{display}</span>
       </div>
@@ -141,6 +180,7 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
         <div class="sola-color-picker-preview" style={previewStyle} />
         {sliderRow(
           "H",
+          "h",
           0,
           360,
           1,
@@ -152,6 +192,7 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
         )}
         {sliderRow(
           "S",
+          "s",
           0,
           100,
           1,
@@ -163,6 +204,7 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
         )}
         {sliderRow(
           "L",
+          "l",
           0,
           100,
           1,
@@ -174,6 +216,7 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
         )}
         {sliderRow(
           "A",
+          "a",
           0,
           1,
           0.01,
