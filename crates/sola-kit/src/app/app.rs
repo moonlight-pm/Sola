@@ -95,6 +95,7 @@ impl SolaApp for KitApp {
             "ping" => json!({ "pong": true, "echo": args }),
             "theme_set" => self.handle_theme_set(args, ctx),
             "theme_reset" => self.handle_theme_reset(ctx),
+            "list_fonts" => self.handle_list_fonts(),
             _ => json!({ "error": format!("unknown command: {cmd}") }),
         };
         if let Some(id) = id {
@@ -130,6 +131,21 @@ impl KitApp {
         self.theme = kit_default_theme();
         ctx.emit(Topic::Theme(self.theme.clone()));
         json!({ "ok": true })
+    }
+
+    /// Enumerate font families installed on the host via `fc-list`.
+    /// Re-runs on every call (no Rust-side cache) — the operation
+    /// itself is fast (~10ms on a typical system) and the JS
+    /// FontInput caches the result in component state, so a manual
+    /// refresh button is the only reason we'd want to re-enumerate.
+    fn handle_list_fonts(&self) -> Value {
+        match enumerate_fonts() {
+            Ok(families) => json!({ "families": families }),
+            Err(e) => {
+                tracing::warn!(error = %e, "list_fonts: enumeration failed");
+                json!({ "error": e })
+            }
+        }
     }
 
     fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
@@ -200,4 +216,63 @@ fn kit_menu() -> AppMenuPayload {
             },
         ],
     }
+}
+
+/// CSS generic family names that fontconfig surfaces as if they were
+/// real installed families. We hide them — the kit's typography
+/// editor wants the user to pick a concrete face, not an alias.
+const GENERIC_FAMILIES: &[&str] = &[
+    "serif",
+    "sans-serif",
+    "monospace",
+    "cursive",
+    "fantasy",
+    "system-ui",
+    "ui-serif",
+    "ui-sans-serif",
+    "ui-monospace",
+    "ui-rounded",
+    "math",
+    "emoji",
+    "fangsong",
+    "sans",
+    "mono",
+    "symbol",
+    "tofu",
+];
+
+/// Run `fc-list : family` and return the unique, sorted list of
+/// canonical family names. Comma-separated alias rows (e.g.
+/// `Iosevka Term Slab,Iosevka Term Slab Heavy`) collapse to the
+/// first segment, which is the family proper; the trailing
+/// segments are weight/style aliases that fontconfig generates per
+/// style and we don't want them cluttering the picker.
+fn enumerate_fonts() -> Result<Vec<String>, String> {
+    use std::process::Command;
+    let output = Command::new("fc-list")
+        .arg(":")
+        .arg("family")
+        .output()
+        .map_err(|e| format!("failed to run fc-list: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "fc-list exited with {} ({})",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    for line in stdout.lines() {
+        let first = line.split(',').next().unwrap_or("").trim();
+        if first.is_empty() {
+            continue;
+        }
+        let lower = first.to_ascii_lowercase();
+        if GENERIC_FAMILIES.iter().any(|g| *g == lower) {
+            continue;
+        }
+        seen.insert(first.to_string());
+    }
+    Ok(seen.into_iter().collect())
 }

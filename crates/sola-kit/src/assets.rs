@@ -303,6 +303,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Css,
             },
             Asset {
+                path: "/lib/components/font-input.tsx",
+                content: include_bytes!("../web/lib/components/font-input.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/font-input.css",
+                content: include_bytes!("../web/lib/components/font-input.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
                 path: "/lib/components/pane.tsx",
                 content: include_bytes!("../web/lib/components/pane.tsx"),
                 content_type: ContentType::Tsx,

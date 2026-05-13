@@ -27,6 +27,7 @@ import { type Handle } from "@remix-run/ui";
 import { Button } from "@sola/button";
 import { ColorInput } from "@sola/color-input";
 import { Field } from "@sola/field";
+import { FontInput } from "@sola/font-input";
 import {
   type Theme,
   type Token,
@@ -227,6 +228,8 @@ export function TokensShowcase(handle: Handle) {
                       >
                         {kind === "Color"
                           ? <ColorInput value={token.value} onChange={onChange} />
+                          : kind === "FontFamily"
+                          ? <FontInput value={token.value} onChange={onChange} />
                           : <TextInput value={token.value} onChange={onChange} />}
                       </Field>
                     );
