@@ -1,21 +1,9 @@
-/* ColorInput styles — references only `--sola-color-input-*` scoped
-   theme vars. Layout is a single flex row: leading swatch (fixed
-   square) + text input (fills remaining width). */
+/* ColorInput styles — the swatch trigger ships its own cursor and
+   subtle box-shadow so it reads as "clickable" without an extra
+   wrapping affordance. The Popover handles the floating panel
+   chrome; ColorInput only owns the trigger appearance. */
 
-.sola-color-input {
-  display: flex;
-  align-items: center;
-  gap: var(--sola-color-input-gap);
-  width: 100%;
-}
-
-/* The text input absorbs all remaining horizontal space; the swatch
-   keeps its natural square size (set via inline style on the
-   <Swatch> from the size prop). */
-.sola-color-input > .sola-text-input {
-  flex: 1 1 auto;
-}
-
-.sola-color-input > .sola-swatch {
-  flex: 0 0 auto;
+.sola-color-input-trigger {
+  display: inline-block;
+  cursor: pointer;
 }

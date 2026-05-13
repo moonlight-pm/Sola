@@ -1,16 +1,16 @@
-// ColorInput showcase — live editing where the swatch follows the
-// typed value via onInput → handle.update(). Demonstrates a few
-// CSS color forms (hex, rgba, var, color-mix) and the
-// disabled/invalid states.
+// ColorInput showcase — the swatch trigger opens the picker
+// popover; sliders + hex input edit the value. The "Live" row
+// shows the picker round-trip wired up through onChange.
 
 import { type Handle } from "@remix-run/ui";
 import { ColorInput } from "@sola/color-input";
 import { Field } from "@sola/field";
 import { Stack } from "@sola/stack";
+import { Text } from "@sola/text";
 
 export function ColorInputShowcase(handle: Handle) {
-  let live = "var(--accent)";
-  const onLiveInput = (v: string) => {
+  let live = "#00d4ff";
+  const onLiveChange = (v: string) => {
     live = v;
     handle.update();
   };
@@ -21,9 +21,9 @@ export function ColorInputShowcase(handle: Handle) {
         <Stack gap="var(--space-lg)">
           <Field
             label="Live"
-            help={`Swatch reflects: ${live || "(empty → transparent)"}`}
+            help={`Current value: ${live || "(empty)"}`}
           >
-            <ColorInput value={live} onInput={onLiveInput} />
+            <ColorInput value={live} onChange={onLiveChange} />
           </Field>
 
           <Field label="Hex">
@@ -34,27 +34,27 @@ export function ColorInputShowcase(handle: Handle) {
             <ColorInput value="rgba(0, 212, 255, 0.5)" />
           </Field>
 
-          <Field label="var() reference">
-            <ColorInput value="var(--accent)" />
+          <Field label="Hex + alpha">
+            <ColorInput value="#3fb95080" />
           </Field>
 
-          <Field label="color-mix()">
-            <ColorInput value="color-mix(in srgb, var(--accent), transparent 60%)" />
+          <Field
+            label="var() reference"
+            help="Picker opens at its last HSLA state; the swatch still renders the var."
+          >
+            <ColorInput value="var(--accent)" />
           </Field>
 
           <Field label="Empty (swatch shows checker)">
             <ColorInput value="" />
           </Field>
-
-          <Field label="Disabled">
-            <ColorInput value="#3fb950" disabled />
-          </Field>
-
-          <Field label="Invalid" error="Not a recognised CSS color.">
-            <ColorInput value="not-a-color" invalid />
-          </Field>
         </Stack>
       </div>
+
+      <Text tone="muted">
+        Click any swatch to open the HSL + alpha picker. Outside click
+        closes; opening a second picker closes the first.
+      </Text>
     </Stack>
   );
 }

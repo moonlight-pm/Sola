@@ -283,6 +283,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Css,
             },
             Asset {
+                path: "/lib/components/color-picker.tsx",
+                content: include_bytes!("../web/lib/components/color-picker.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/color-picker.css",
+                content: include_bytes!("../web/lib/components/color-picker.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
                 path: "/lib/components/field.tsx",
                 content: include_bytes!("../web/lib/components/field.tsx"),
                 content_type: ContentType::Tsx,
@@ -300,6 +310,16 @@ pub fn platform_assets() -> &'static AssetBundle {
             Asset {
                 path: "/lib/components/pane.css",
                 content: include_bytes!("../web/lib/components/pane.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
+                path: "/lib/components/popover.tsx",
+                content: include_bytes!("../web/lib/components/popover.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/popover.css",
+                content: include_bytes!("../web/lib/components/popover.css"),
                 content_type: ContentType::Css,
             },
             Asset {

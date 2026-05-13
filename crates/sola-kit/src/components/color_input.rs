@@ -3,18 +3,16 @@
 //! `--sola-color-input-*` scoped vars. Component key is hyphenated;
 //! the Rust module name uses underscores per Rust conventions.
 //!
-//! ColorInput is a thin composition (Swatch + TextInput) — its own
-//! theme footprint is just spacing.
+//! ColorInput is a Swatch trigger that opens a ColorPicker popover.
+//! Its only theme footprint is the swatch edge length.
 
 use sola_core::theme::{Binding, ComponentBindings};
 
 pub fn bindings() -> ComponentBindings {
     let mut comp = ComponentBindings::default();
-    comp.slots.insert("gap".into(), Binding::new("space", "space-xs"));
-    // Leading swatch edge length. space-xxl (24px) sits well next
-    // to the default-themed TextInput (~28px tall) without towering
-    // over it. Exposed as a slot so theme tweaks (larger text-size,
-    // denser padding) can rebalance the visual.
+    // Swatch edge length when used as the picker trigger. space-xxl
+    // (24px) reads as "clickable affordance" without dominating the
+    // surrounding form row.
     comp.slots.insert("swatch-size".into(), Binding::new("space", "space-xxl"));
     comp
 }

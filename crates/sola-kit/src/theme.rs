@@ -93,8 +93,20 @@ mod tests {
   --sola-button-text-size: var(--text-body);
 
   /* color-input */
-  --sola-color-input-gap: var(--space-xs);
   --sola-color-input-swatch-size: var(--space-xxl);
+
+  /* color-picker */
+  --sola-color-picker-gap: var(--space-sm);
+  --sola-color-picker-label-color: var(--text-secondary);
+  --sola-color-picker-label-size: var(--text-caption);
+  --sola-color-picker-preview-border: var(--border-subtle);
+  --sola-color-picker-preview-height: var(--space-xxl);
+  --sola-color-picker-preview-radius: var(--radius-sm);
+  --sola-color-picker-slider-thumb-bg: var(--text-primary);
+  --sola-color-picker-slider-thumb-border: var(--bg-primary);
+  --sola-color-picker-slider-thumb-shadow: var(--border);
+  --sola-color-picker-slider-track-bg: var(--bg-primary);
+  --sola-color-picker-value-color: var(--text-tertiary);
 
   /* field */
   --sola-field-error-color: var(--danger);
@@ -106,6 +118,13 @@ mod tests {
   /* pane */
   --sola-pane-padding-block: var(--space-xl);
   --sola-pane-padding-inline: var(--space-xxl);
+
+  /* popover */
+  --sola-popover-bg: var(--bg-secondary);
+  --sola-popover-border: var(--border-subtle);
+  --sola-popover-offset: var(--space-xs);
+  --sola-popover-padding: var(--space-md);
+  --sola-popover-radius: var(--radius-md);
 
   /* root */
   --sola-root-bg: var(--bg-primary);

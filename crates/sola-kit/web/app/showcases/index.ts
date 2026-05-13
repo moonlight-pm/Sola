@@ -17,6 +17,7 @@ import { ButtonShowcase } from "./button.tsx";
 import { ColorInputShowcase } from "./color-input.tsx";
 import { FieldShowcase } from "./field.tsx";
 import { PaneShowcase } from "./pane.tsx";
+import { PopoverShowcase } from "./popover.tsx";
 import { SidebarShowcase } from "./sidebar.tsx";
 import { StackShowcase } from "./stack.tsx";
 import { SwatchShowcase } from "./swatch.tsx";
@@ -40,6 +41,7 @@ export const showcases: ShowcaseEntry[] = [
   { id: "color-input", label: "ColorInput", section: "Components", component: ColorInputShowcase },
   { id: "field", label: "Field", section: "Components", component: FieldShowcase },
   { id: "pane", label: "Pane", section: "Components", component: PaneShowcase },
+  { id: "popover", label: "Popover", section: "Components", component: PopoverShowcase },
   { id: "sidebar", label: "Sidebar", section: "Components", component: SidebarShowcase },
   { id: "swatch", label: "Swatch", section: "Components", component: SwatchShowcase },
   { id: "text", label: "Text", section: "Components", component: TextShowcase },

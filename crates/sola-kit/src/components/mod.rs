@@ -18,8 +18,10 @@ use sola_core::theme::ComponentBindings;
 
 pub mod button;
 pub mod color_input;
+pub mod color_picker;
 pub mod field;
 pub mod pane;
+pub mod popover;
 pub mod root;
 pub mod sidebar;
 pub mod swatch;
@@ -36,8 +38,10 @@ pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     let mut map = BTreeMap::new();
     map.insert("button".into(), button::bindings());
     map.insert("color-input".into(), color_input::bindings());
+    map.insert("color-picker".into(), color_picker::bindings());
     map.insert("field".into(), field::bindings());
     map.insert("pane".into(), pane::bindings());
+    map.insert("popover".into(), popover::bindings());
     map.insert("root".into(), root::bindings());
     map.insert("sidebar".into(), sidebar::bindings());
     map.insert("swatch".into(), swatch::bindings());
