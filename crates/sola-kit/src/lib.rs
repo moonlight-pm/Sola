@@ -8,6 +8,7 @@ use sola_bus::topics::{Topic, TopicKind};
 use ::cef::{rc::*, *};
 
 pub mod assets;
+pub mod categories;
 pub mod cef;
 pub mod components;
 pub mod ctx;
@@ -534,6 +535,7 @@ fn build_importmap(root_component: &str) -> String {
     "imports": {{
       "@sola/ipc":                 "/lib/ipc.ts",
       "@sola/kit":                 "/lib/kit.ts",
+      "@sola/bindings-editor":     "/lib/components/bindings-editor.tsx",
       "@sola/button":              "/lib/components/button.tsx",
       "@sola/color-input":         "/lib/components/color-input.tsx",
       "@sola/color-picker":        "/lib/components/color-picker.tsx",
@@ -548,6 +550,7 @@ fn build_importmap(root_component: &str) -> String {
       "@sola/swatch":              "/lib/components/swatch.tsx",
       "@sola/text":                "/lib/components/text.tsx",
       "@sola/text-input":          "/lib/components/text-input.tsx",
+      "@sola/token-value-editor":  "/lib/components/token-value-editor.tsx",
       "@sola/app-root":            "{root_component}",
       "@remix-run/ui":             "/vendor/remix-ui/index.ts",
       "@remix-run/ui/jsx-runtime": "/vendor/remix-ui/jsx-runtime.ts"

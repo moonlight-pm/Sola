@@ -263,6 +263,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Css,
             },
             Asset {
+                path: "/lib/components/bindings-editor.tsx",
+                content: include_bytes!("../web/lib/components/bindings-editor.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/bindings-editor.css",
+                content: include_bytes!("../web/lib/components/bindings-editor.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
                 path: "/lib/components/button.tsx",
                 content: include_bytes!("../web/lib/components/button.tsx"),
                 content_type: ContentType::Tsx,
@@ -396,6 +406,11 @@ pub fn platform_assets() -> &'static AssetBundle {
                 path: "/lib/components/text-input.css",
                 content: include_bytes!("../web/lib/components/text-input.css"),
                 content_type: ContentType::Css,
+            },
+            Asset {
+                path: "/lib/components/token-value-editor.tsx",
+                content: include_bytes!("../web/lib/components/token-value-editor.tsx"),
+                content_type: ContentType::Tsx,
             },
         ],
         dirs: &[DirMount {

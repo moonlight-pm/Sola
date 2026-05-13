@@ -27,6 +27,7 @@
     "paths": {
       "@sola/ipc": ["./lib/ipc.ts"],
       "@sola/kit": ["./lib/kit.ts"],
+      "@sola/bindings-editor": ["./lib/components/bindings-editor.tsx"],
       "@sola/button": ["./lib/components/button.tsx"],
       "@sola/color-input": ["./lib/components/color-input.tsx"],
       "@sola/color-picker": ["./lib/components/color-picker.tsx"],
@@ -41,6 +42,7 @@
       "@sola/swatch": ["./lib/components/swatch.tsx"],
       "@sola/text": ["./lib/components/text.tsx"],
       "@sola/text-input": ["./lib/components/text-input.tsx"],
+      "@sola/token-value-editor": ["./lib/components/token-value-editor.tsx"],
       // Per-app root component. The kit's built-in `index.tsx`
       // imports `Main` via this specifier; the runtime importmap
       // injection (in `crates/sola-kit/src/lib.rs::build_importmap`)

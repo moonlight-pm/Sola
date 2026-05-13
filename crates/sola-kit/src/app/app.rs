@@ -94,8 +94,10 @@ impl SolaApp for KitApp {
         let result = match cmd {
             "ping" => json!({ "pong": true, "echo": args }),
             "theme_set" => self.handle_theme_set(args, ctx),
+            "theme_set_binding" => self.handle_theme_set_binding(args, ctx),
             "theme_reset" => self.handle_theme_reset(ctx),
             "list_fonts" => self.handle_list_fonts(),
+            "list_categories" => self.handle_list_categories(args),
             _ => json!({ "error": format!("unknown command: {cmd}") }),
         };
         if let Some(id) = id {
@@ -146,6 +148,66 @@ impl KitApp {
                 json!({ "error": e })
             }
         }
+    }
+
+    /// Look up editor categories for a component. Used by the
+    /// bindings editor on each showcase page.
+    fn handle_list_categories(&self, args: &Value) -> Value {
+        let component = args
+            .get("component")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let categories = sola_kit::categories::for_component(component);
+        json!({ "categories": categories })
+    }
+
+    /// Re-bind a single slot of a single component to a different
+    /// token. The token's *selection group* (the `group` field on
+    /// `Binding`) is preserved — only the token name changes.
+    /// Validates the new token belongs to the same group; on
+    /// success emits `Topic::Theme` so every kit window picks up
+    /// the new rendered CSS.
+    fn handle_theme_set_binding(&mut self, args: &Value, ctx: &mut AppCtx) -> Value {
+        let component = match args.get("component").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return json!({ "error": "missing component" }),
+        };
+        let slot = match args.get("slot").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return json!({ "error": "missing slot" }),
+        };
+        let token = match args.get("token").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return json!({ "error": "missing token" }),
+        };
+
+        let comp = match self.theme.components.get_mut(&component) {
+            Some(c) => c,
+            None => return json!({ "error": format!("unknown component: {component}") }),
+        };
+        let binding = match comp.slots.get_mut(&slot) {
+            Some(b) => b,
+            None => {
+                return json!({ "error": format!("unknown slot: {component}.{slot}") });
+            }
+        };
+        // Verify the candidate token exists and is eligible for
+        // this slot's selection group. Mismatch would produce
+        // invalid CSS, so we refuse rather than emitting a broken
+        // theme.
+        let group = binding.group.clone();
+        let token_def = match self.theme.palette.tokens.get(&token) {
+            Some(t) => t,
+            None => return json!({ "error": format!("unknown token: {token}") }),
+        };
+        if !token_def.groups.iter().any(|g| g == &group) {
+            return json!({
+                "error": format!("token {token} not in group {group}")
+            });
+        }
+        binding.token = token;
+        ctx.emit(Topic::Theme(self.theme.clone()));
+        json!({ "ok": true })
     }
 
     fn on_menu_action(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {

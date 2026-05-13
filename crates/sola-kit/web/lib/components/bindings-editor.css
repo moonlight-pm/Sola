@@ -1,0 +1,128 @@
+/* BindingsEditor styles — references only `--sola-bindings-editor-*`
+   scoped vars. Layout-only chrome: a 3-column grid for the per-slot
+   rows with a sticky width on the label column so labels read as
+   one stack. The token-picker uses a kit Popover (not a native
+   <select>) so we don't spawn a real OS-level dropdown window
+   that sola-river would treat as a separate surface. */
+
+.sola-bindings-editor-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(140px, max-content)
+    minmax(140px, 1fr)
+    minmax(160px, 1.5fr);
+  column-gap: var(--space-md);
+  row-gap: var(--space-xs);
+  align-items: center;
+}
+
+.sola-bindings-editor-row {
+  /* Each row is its own `display: contents` wrapper so the grid
+     columns line up across rows without a per-row container. */
+  display: contents;
+}
+
+.sola-bindings-editor-label {
+  font-size: var(--text-body);
+  color: var(--sola-bindings-editor-label-color);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sola-bindings-editor-picker {
+  /* Trigger reads as a slim button — same visual density as
+     TextInput / NumberInput rows so the editor grid lines up. */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: var(--sola-bindings-editor-picker-bg);
+  color: var(--sola-bindings-editor-picker-text);
+  border: 1px solid var(--sola-bindings-editor-picker-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--text-body);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  min-width: 0;
+  /* Trigger sits inside a Popover root whose `max-content` width
+     would otherwise size to the *trigger button*'s natural width.
+     We want the trigger to fill its grid cell, so we override the
+     popover-root's width-bound from the cell side: parent grid
+     gives us a width, this `width: 100%` consumes it.
+
+     The popover-root itself (which wraps this trigger) keeps its
+     `width: max-content` — that's fine because the wrap happens
+     here, inside a fixed-size cell. */
+  width: 100%;
+}
+
+.sola-bindings-editor-picker:hover {
+  border-color: var(--sola-bindings-editor-picker-border-focus);
+}
+
+.sola-bindings-editor-picker-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sola-bindings-editor-picker-chevron {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--sola-bindings-editor-label-color);
+}
+
+/* Popover-content list — one option per token. Keyed off the same
+   tokens the slot's selection group allows, sorted alphabetically
+   by the editor. */
+.sola-bindings-editor-picker-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0 calc(-1 * var(--sola-popover-padding));
+  padding: 0 var(--sola-popover-padding);
+}
+
+.sola-bindings-editor-picker-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding:
+    calc(var(--space-xs) * 1.25)
+    var(--space-sm);
+  color: var(--sola-bindings-editor-picker-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-body);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  appearance: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sola-bindings-editor-picker-option:hover {
+  background: var(--sola-bindings-editor-picker-option-bg-hover);
+}
+
+.sola-bindings-editor-picker-option.is-selected {
+  background: var(--sola-bindings-editor-picker-option-bg-selected);
+}
+
+.sola-bindings-editor-value {
+  /* Slot for the inline value editor (ColorInput / FontInput /
+     NumberInput). Keep it as a flex row so contained controls fit
+     naturally regardless of which input is rendered. */
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}

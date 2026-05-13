@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 use sola_core::theme::ComponentBindings;
 
+pub mod bindings_editor;
 pub mod button;
 pub mod color_input;
 pub mod color_picker;
@@ -38,6 +39,7 @@ pub mod text_input;
 /// Rust module name is snake_case — the key is what appears in CSS.
 pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     let mut map = BTreeMap::new();
+    map.insert("bindings-editor".into(), bindings_editor::bindings());
     map.insert("button".into(), button::bindings());
     map.insert("color-input".into(), color_input::bindings());
     map.insert("color-picker".into(), color_picker::bindings());
@@ -51,5 +53,8 @@ pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     map.insert("swatch".into(), swatch::bindings());
     map.insert("text".into(), text::bindings());
     map.insert("text-input".into(), text_input::bindings());
+    // token-value-editor is a pure dispatcher with no own slots, so
+    // it's intentionally not registered — empty entries would just
+    // produce dead section headers in the rendered CSS.
     map
 }

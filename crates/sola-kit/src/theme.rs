@@ -74,6 +74,15 @@ mod tests {
   --text-secondary: #8b949e;
   --text-tertiary: #6e7681;
 
+  /* bindings-editor */
+  --sola-bindings-editor-label-color: var(--text-secondary);
+  --sola-bindings-editor-picker-bg: var(--bg-tertiary);
+  --sola-bindings-editor-picker-border: var(--border);
+  --sola-bindings-editor-picker-border-focus: var(--accent);
+  --sola-bindings-editor-picker-option-bg-hover: var(--bg-hover);
+  --sola-bindings-editor-picker-option-bg-selected: var(--bg-tertiary);
+  --sola-bindings-editor-picker-text: var(--text-primary);
+
   /* button */
   --sola-button-danger-bg: var(--danger);
   --sola-button-danger-text: var(--text-primary);
