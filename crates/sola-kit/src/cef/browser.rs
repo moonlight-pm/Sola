@@ -148,4 +148,37 @@ impl Browser {
             self.show_dev_tools();
         }
     }
+
+    /// Clipboard cut on the currently-focused frame. CEF's `Frame::cut`
+    /// targets the active editing context — a text input, contenteditable
+    /// element, or anywhere the renderer's selection layer is willing to
+    /// hand off bytes. No-op when there's no focused frame.
+    pub fn cut(&self) {
+        if let Some(frame) = self.inner.focused_frame() {
+            frame.cut();
+        }
+    }
+
+    /// Clipboard copy on the currently-focused frame. See `cut` for the
+    /// focus / no-op semantics.
+    pub fn copy(&self) {
+        if let Some(frame) = self.inner.focused_frame() {
+            frame.copy();
+        }
+    }
+
+    /// Clipboard paste on the currently-focused frame. See `cut` for the
+    /// focus / no-op semantics.
+    pub fn paste(&self) {
+        if let Some(frame) = self.inner.focused_frame() {
+            frame.paste();
+        }
+    }
+
+    /// Select-all on the currently-focused frame. See `cut`.
+    pub fn select_all(&self) {
+        if let Some(frame) = self.inner.focused_frame() {
+            frame.select_all();
+        }
+    }
 }

@@ -139,8 +139,13 @@ impl KitApp {
         if app_id != Self::APP_ID {
             return;
         }
-        if action_id == "open_devtools" {
-            self.main_window.toggle_dev_tools();
+        match action_id.as_str() {
+            "open_devtools" => self.main_window.toggle_dev_tools(),
+            "cut" => self.main_window.cut(),
+            "copy" => self.main_window.copy(),
+            "paste" => self.main_window.paste(),
+            "select_all" => self.main_window.select_all(),
+            _ => {}
         }
     }
 }
@@ -148,15 +153,51 @@ impl KitApp {
 fn kit_menu() -> AppMenuPayload {
     AppMenuPayload {
         app_id: KitApp::APP_ID.into(),
-        menus: vec![MenuDefinition {
-            label: "Sola Kit".into(),
-            items: vec![MenuItem::Action {
-                id: "open_devtools".into(),
-                label: "Developer Tools".into(),
-                shortcut: Some(KeyCode::F12.chord()),
-                disabled: false,
-                checked: false,
-            }],
-        }],
+        menus: vec![
+            MenuDefinition {
+                label: "Kit".into(),
+                items: vec![MenuItem::Action {
+                    id: "open_devtools".into(),
+                    label: "Developer Tools".into(),
+                    shortcut: Some(KeyCode::F12.chord()),
+                    disabled: false,
+                    checked: false,
+                }],
+            },
+            MenuDefinition {
+                label: "Edit".into(),
+                items: vec![
+                    MenuItem::Action {
+                        id: "cut".into(),
+                        label: "Cut".into(),
+                        shortcut: Some(KeyCode::X.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Action {
+                        id: "copy".into(),
+                        label: "Copy".into(),
+                        shortcut: Some(KeyCode::C.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Action {
+                        id: "paste".into(),
+                        label: "Paste".into(),
+                        shortcut: Some(KeyCode::V.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Divider,
+                    MenuItem::Action {
+                        id: "select_all".into(),
+                        label: "Select All".into(),
+                        shortcut: Some(KeyCode::A.meta()),
+                        disabled: false,
+                        checked: false,
+                    },
+                ],
+            },
+        ],
     }
 }

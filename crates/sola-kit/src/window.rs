@@ -97,6 +97,24 @@ impl WindowHandle {
     pub fn toggle_dev_tools(&self) {
         self.inner.browser.toggle_dev_tools();
     }
+
+    /// Forward an Edit-menu clipboard action to the focused frame.
+    /// Used by the kit's menu-action handler so Cmd+C / Cmd+V (and
+    /// their menu items) cut/copy/paste through CEF's normal editing
+    /// pipeline — i.e. into whatever text input or contenteditable
+    /// element holds focus.
+    pub fn cut(&self) {
+        self.inner.browser.cut();
+    }
+    pub fn copy(&self) {
+        self.inner.browser.copy();
+    }
+    pub fn paste(&self) {
+        self.inner.browser.paste();
+    }
+    pub fn select_all(&self) {
+        self.inner.browser.select_all();
+    }
 }
 
 impl PartialEq for WindowHandle {
