@@ -127,6 +127,19 @@ mod tests {
   --sola-font-input-trigger-radius: var(--radius-md);
   --sola-font-input-trigger-text: var(--text-primary);
 
+  /* number-input */
+  --sola-number-input-bg: var(--bg-tertiary);
+  --sola-number-input-border: var(--border);
+  --sola-number-input-border-focus: var(--accent);
+  --sola-number-input-padding-block: var(--space-xs);
+  --sola-number-input-padding-inline: var(--space-sm);
+  --sola-number-input-radius: var(--radius-md);
+  --sola-number-input-step-bg-active: var(--bg-secondary);
+  --sola-number-input-step-bg-hover: var(--bg-hover);
+  --sola-number-input-step-color: var(--text-secondary);
+  --sola-number-input-text: var(--text-primary);
+  --sola-number-input-unit-color: var(--text-secondary);
+
   /* pane */
   --sola-pane-padding-block: var(--space-xl);
   --sola-pane-padding-inline: var(--space-xxl);

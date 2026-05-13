@@ -32,6 +32,7 @@
       "@sola/color-picker": ["./lib/components/color-picker.tsx"],
       "@sola/field": ["./lib/components/field.tsx"],
       "@sola/font-input": ["./lib/components/font-input.tsx"],
+      "@sola/number-input": ["./lib/components/number-input.tsx"],
       "@sola/pane": ["./lib/components/pane.tsx"],
       "@sola/popover": ["./lib/components/popover.tsx"],
       "@sola/root": ["./lib/components/root.tsx"],

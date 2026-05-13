@@ -21,6 +21,7 @@ pub mod color_input;
 pub mod color_picker;
 pub mod field;
 pub mod font_input;
+pub mod number_input;
 pub mod pane;
 pub mod popover;
 pub mod root;
@@ -42,6 +43,7 @@ pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     map.insert("color-picker".into(), color_picker::bindings());
     map.insert("field".into(), field::bindings());
     map.insert("font-input".into(), font_input::bindings());
+    map.insert("number-input".into(), number_input::bindings());
     map.insert("pane".into(), pane::bindings());
     map.insert("popover".into(), popover::bindings());
     map.insert("root".into(), root::bindings());

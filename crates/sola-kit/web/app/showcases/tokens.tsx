@@ -36,6 +36,7 @@ import {
   onThemeChange,
 } from "@sola/kit";
 import { invoke } from "@sola/ipc";
+import { NumberInput } from "@sola/number-input";
 import { Stack } from "@sola/stack";
 import { Text } from "@sola/text";
 import { TextInput } from "@sola/text-input";
@@ -230,6 +231,17 @@ export function TokensShowcase(handle: Handle) {
                           ? <ColorInput value={token.value} onChange={onChange} />
                           : kind === "FontFamily"
                           ? <FontInput value={token.value} onChange={onChange} />
+                          : kind === "TextSize" ||
+                              kind === "Space" ||
+                              kind === "Radius"
+                          ? (
+                            <NumberInput
+                              value={token.value}
+                              unit="px"
+                              min={0}
+                              onChange={onChange}
+                            />
+                          )
                           : <TextInput value={token.value} onChange={onChange} />}
                       </Field>
                     );
