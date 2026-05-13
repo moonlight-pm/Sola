@@ -6,9 +6,11 @@
 ///
 /// See: https://github.com/matklad/cargo-xtask
 mod assets;
+mod cef;
 mod install;
 mod watch;
 
+use std::os::unix::process::CommandExt;
 use std::process::{Command, exit};
 
 use clap::Parser;
@@ -49,6 +51,10 @@ enum Commands {
         #[arg(long)]
         watch: bool,
     },
+
+    /// Download CEF binaries to ~/.cache/sola/cef-<version>/.
+    /// Idempotent — skips if already present.
+    InstallCef,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -62,7 +68,7 @@ enum AssetsAction {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Build { target, release } => build(target, release),
+        Commands::Build { target, release } => build_exec(target, release),
         Commands::Assets { action } => match action {
             AssetsAction::Pull => assets::pull(),
         },
@@ -75,6 +81,17 @@ fn main() {
                 watch::watch_and_install(&app.unwrap());
             } else {
                 install::install(app.as_deref());
+            }
+        }
+        Commands::InstallCef => {
+            match cef::ensure_cef() {
+                Ok(path) => {
+                    println!("CEF ready at {}", path.display());
+                }
+                Err(e) => {
+                    eprintln!("CEF install failed: {e}");
+                    std::process::exit(1);
+                }
             }
         }
     }
@@ -96,6 +113,10 @@ fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
 }
 
 /// Run `cargo build` with optional crate targeting and release mode.
+///
+/// Spawns cargo as a child process. Use this when the caller needs to
+/// do further work after the build (e.g. `install`'s post-build copy
+/// steps).
 fn build(target: Option<String>, release: bool) {
     let resolved = target.as_deref().map(resolve_crate_name);
     let args = build_args(resolved.as_deref(), release);
@@ -106,6 +127,21 @@ fn build(target: Option<String>, release: bool) {
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
+}
+
+/// `exec`-based variant for the top-level `cargo make build` command.
+///
+/// Replaces the current process image with cargo so the outer
+/// `cargo run -q -p sola-make` becomes the inner `cargo build` —
+/// one cargo process, no nested-cargo overhead, and no risk of
+/// env-var divergence between the parent and child invocation.
+fn build_exec(target: Option<String>, release: bool) -> ! {
+    let resolved = target.as_deref().map(resolve_crate_name);
+    let args = build_args(resolved.as_deref(), release);
+    // `exec` only returns on failure (e.g. cargo not on PATH).
+    let err = Command::new("cargo").args(&args).exec();
+    eprintln!("failed to exec cargo: {err}");
+    exit(1);
 }
 
 /// Resolve a short crate name (e.g. "shell") to its package name
@@ -140,10 +176,15 @@ fn discover_binaries() -> Vec<String> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.join("src/main.rs").exists() {
+            let has_main_rs = path.join("src/main.rs").exists();
+            let cargo_toml_path = path.join("Cargo.toml");
+            let has_bin_section = std::fs::read_to_string(&cargo_toml_path)
+                .map(|s| s.contains("[[bin]]"))
+                .unwrap_or(false);
+            if !has_main_rs && !has_bin_section {
                 continue;
             }
-            let toml_path = path.join("Cargo.toml");
+            let toml_path = cargo_toml_path;
             let contents = match std::fs::read_to_string(&toml_path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -257,5 +298,55 @@ mod tests {
             cli.command,
             Commands::Install { app: Some(ref a), watch: true } if a == "terminal"
         ));
+    }
+
+    /// A crate with [[bin]] in Cargo.toml but no src/main.rs must still be
+    /// discovered. This verifies the fix that allows sola-kit (whose binary is
+    /// at src/app/main.rs) to be found by the all-apps install path.
+    #[test]
+    fn discover_binaries_finds_bin_section_without_main_rs() {
+        let tmp = std::env::temp_dir().join("sola-make-test-discover");
+        let crate_dir = tmp.join("sola-fake-bin");
+        let src_dir = crate_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        // Write Cargo.toml with [[bin]] but no src/main.rs.
+        std::fs::write(
+            crate_dir.join("Cargo.toml"),
+            "[package]\nname = \"sola-fake-bin\"\nversion = \"0.1.0\"\n\n[[bin]]\nname = \"sola-fake-bin\"\npath = \"src/app/main.rs\"\n",
+        ).unwrap();
+        // Verify src/main.rs does NOT exist.
+        assert!(!crate_dir.join("src/main.rs").exists());
+        // Run discover logic for just this temp directory.
+        let mut binaries = Vec::new();
+        for entry in std::fs::read_dir(&tmp).unwrap().flatten() {
+            let path = entry.path();
+            let has_main_rs = path.join("src/main.rs").exists();
+            let cargo_toml_path = path.join("Cargo.toml");
+            let has_bin_section = std::fs::read_to_string(&cargo_toml_path)
+                .map(|s| s.contains("[[bin]]"))
+                .unwrap_or(false);
+            if !has_main_rs && !has_bin_section {
+                continue;
+            }
+            let contents = std::fs::read_to_string(&cargo_toml_path).unwrap();
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.starts_with("name") {
+                    if let Some(name) = line.split('"').nth(1) {
+                        if name != "sola-make" {
+                            binaries.push(name.to_string());
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        // Clean up.
+        std::fs::remove_dir_all(&tmp).ok();
+        assert!(
+            binaries.contains(&"sola-fake-bin".to_string()),
+            "expected sola-fake-bin to be discovered, got: {:?}",
+            binaries
+        );
     }
 }

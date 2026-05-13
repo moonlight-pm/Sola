@@ -39,7 +39,8 @@ bus and compositor restarts.
 | sola-river      | River ↔ bus bridge (window manager, xkb bindings)       | Separate  |
 | sola-shell      | Desktop shell — launcher, switcher, menubar, zoning     | Separate  |
 | sola-session    | User app session manager (spawn, close, reap)           | Separate  |
-| [[sola-app]]    | WebView app framework (GTK4 + WebKit6)                  | Library   |
+| [[sola-app]]    | WebView app framework (GTK4 + WebKit6) — being replaced | Library   |
+| [[sola-kit]]    | WebView app framework (CEF + sctk) + theme-editor bin   | Lib + bin |
 | sola-core       | Shared primitives — log, env, process, keys, encrypted  | Library   |
 | sola-assets     | Vendored icon/asset bundles                             | Library   |
 | [[sola-make]]   | Build/install orchestration (xtask)                     | Dev tool  |
@@ -97,7 +98,8 @@ crates/
   sola/                # Process manager
   sola-bus/            # Bus host + client library + protocol
   sola-core/           # Shared primitives (env, process, log, keys, encrypted, watcher)
-  sola-app/            # WebView app framework (GTK4 + WebKit6)
+  sola-app/            # WebView app framework (GTK4 + WebKit6) — being replaced
+  sola-kit/            # WebView app framework (CEF + sctk) + theme-editor binary
   sola-assets/         # Vendored icon/asset bundles
   sola-make/           # Build/install orchestration (xtask)
   sola-monitor/        # System monitor / bus audit

@@ -70,6 +70,9 @@ impl KeyCode {
     pub const SPACE: Self = Self(65);
     pub const GRAVE: Self = Self(49);
 
+    // --- Function keys (X11 keycodes; evdev + 8) ---
+    pub const F12: Self = Self(96);
+
     // --- Alphanumeric ---
     pub const KEY_0: Self = Self(19);
     pub const KEY_1: Self = Self(10);
@@ -175,6 +178,8 @@ impl KeyCode {
             53 => "X",
             29 => "Y",
             52 => "Z",
+            // Function keys
+            96 => "F12",
             // Numpad
             90 => "KP0",
             88 => "KP2",

@@ -1,0 +1,9 @@
+/* ColorInput styles — the swatch trigger ships its own cursor and
+   subtle box-shadow so it reads as "clickable" without an extra
+   wrapping affordance. The Popover handles the floating panel
+   chrome; ColorInput only owns the trigger appearance. */
+
+.sola-color-input-trigger {
+  display: inline-block;
+  cursor: pointer;
+}

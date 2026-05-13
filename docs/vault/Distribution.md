@@ -80,6 +80,244 @@ side, GTK4 + WebKitGTK 6.0 are runtime requirements for every
 [[sola-app|WebView app]]. These are normal nixpkgs packages with no
 patches.
 
+## CEF runtime libraries (sola-kit)
+
+`sola-kit` (and any future CEF-backed Sola app) links against
+`libcef.so` from `~/.cache/sola/cef-<version>/Release/`. libcef.so
+itself pulls in ~26 transitive native libraries
+(glib/nss/atk/dbus/cups/X11/gbm/…). On NixOS these don't live at
+`/usr/lib`, and we want zero `LD_LIBRARY_PATH` gymnastics or wrapper
+scripts at runtime — so we make `libcef.so` itself know where to look.
+
+The shape:
+
+1. **`programs.nix-ld.libraries`** in `/etc/nixos/configuration.nix`
+   collates the required packages' `.so` files into a single flat
+   directory at `/run/current-system/sw/share/nix-ld/lib`. The path is
+   stable — `/run/current-system` is repointed by `nixos-rebuild
+   switch`, so the indirection always resolves to the active config's
+   library set.
+2. **`patchelf` runs once** as part of `sola_make::cef::ensure_cef`
+   immediately after a fresh CEF tarball is extracted. It appends
+   `/run/current-system/sw/share/nix-ld/lib` to `libcef.so`'s
+   `DT_RUNPATH` (which the upstream tarball ships as just `$ORIGIN`).
+   With that, libcef.so's own RUNPATH covers all its transitive deps;
+   the `sola-kit` binary doesn't need any extra rpath plumbing.
+
+Why not just bake the path into the sola-kit executable's RPATH? Per
+`ld.so(8)`, an executable's `DT_RPATH` only covers its *own* direct
+deps. libcef.so's deps are loaded under libcef.so's own
+`DT_RPATH`/`DT_RUNPATH`, not the executable's. So the patch must land
+on libcef.so itself.
+
+### Required `programs.nix-ld.libraries` entries
+
+```nix
+programs.nix-ld.enable = true;
+programs.nix-ld.libraries = with pkgs; [
+  glib                                    # libglib-2.0, libgobject-2.0, libgio-2.0
+  nss nspr                                # libnss3, libnssutil3, libsmime3, libnspr4
+  atk                                     # libatk-1.0
+  at-spi2-atk                             # libatk-bridge-2.0
+  at-spi2-core                            # libatspi
+  dbus                                    # libdbus-1
+  cups                                    # libcups
+  expat                                   # libexpat
+  cairo pango                             # libcairo, libpango-1.0
+  alsa-lib                                # libasound
+  libxkbcommon                            # libxkbcommon
+  libgbm                                  # libgbm (split from mesa as of nixpkgs 25.x)
+  libdrm mesa                             # libdrm + the rest of mesa
+  systemd                                 # libudev
+  xorg.libX11 xorg.libXcomposite xorg.libXdamage xorg.libXext
+  xorg.libXfixes xorg.libXrandr xorg.libxcb
+];
+```
+
+`environment.systemPackages` must also include `patchelf` so
+`ensure_cef` can run it, **and** `libxkbcommon` so its `.pc` file
+is in the system `PKG_CONFIG_PATH` for `smithay-client-toolkit`'s
+build script (the previous WebKit/GTK build path got xkbcommon
+pkg-config transitively through `gtk4`'s dev output; the sctk path
+needs it explicitly).
+
+```nix
+environment.systemPackages = with pkgs; [
+  patchelf
+  libxkbcommon
+];
+```
+
+After `nixos-rebuild switch`, verify with:
+
+```sh
+ls /run/current-system/sw/share/nix-ld/lib/ | grep -E '^(libglib|libnss|libgbm|libcups)'
+```
+
+— those `.so` files should be present.
+
+### Re-patching libcef.so
+
+`ensure_cef` only patchelfs after a fresh download. If you already have
+libcef.so cached (`is_present()` short-circuits), or you change
+`programs.nix-ld.libraries` in a way that requires re-patching, force
+a re-patch by deleting the cache and re-running `cargo run -p
+sola-make -- install-cef`:
+
+```sh
+rm -rf ~/.cache/sola/cef-*
+cargo run -p sola-make -- install-cef
+```
+
+(Or run `patchelf --add-rpath /run/current-system/sw/share/nix-ld/lib
+~/.cache/sola/cef-*/Release/libcef.so` directly.)
+
+### Verifying a sola-kit build is self-resolving
+
+```sh
+ldd /opt/sola/bin/sola-kit | grep "not found"
+```
+
+Empty output = libcef.so's patched RUNPATH covers everything. Anything
+in the list points at a missing `programs.nix-ld.libraries` entry; add
+the package, `nixos-rebuild switch`, and re-patch libcef.so (see above)
+— no rebuild of sola-kit needed.
+
+## CEF GPU runtime (sola-kit, NixOS)
+
+Beyond the dynamic-linker plumbing above, the GPU subprocess CEF spawns
+needs three system-level inputs to initialize a GL/Vulkan context.
+These are all set automatically when sola-kit starts up — but the
+*system* has to provide them:
+
+### 1. EGL vendor dispatch
+
+`__EGL_VENDOR_LIBRARY_DIRS` must point at NixOS's libglvnd ICD JSON
+directory so libEGL can find the active vendor driver. sola-kit's
+`run<A>()` sets it to `/run/opengl-driver/share/glvnd/egl_vendor.d`
+(populated by `hardware.graphics.enable = true` plus
+`hardware.nvidia` / Mesa). Without this, libEGL loads but dispatches
+to nothing → the GPU process can't initialise Skia (`Unable to
+initialize SkSurface`) and `OnAcceleratedPaint` never fires.
+
+### 2. Vulkan ICD discovery
+
+`VK_ICD_FILENAMES` must point at the active vendor's Vulkan ICD JSON.
+sola-kit defaults it to
+`/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.x86_64.json`. The
+ANGLE/Vulkan backend (`--use-angle=vulkan`) needs this; the GL
+backend uses it to query device capabilities.
+
+### 3. NVIDIA / Mesa userspace libraries on the RUNPATH
+
+`/run/opengl-driver/lib` is appended to libcef.so's `DT_RUNPATH` (and
+to libEGL.so / libGLESv2.so / libvk_swiftshader.so / libvulkan.so.1)
+by `sola_make::cef::patch_cef_libs_for_nix_ld`. This makes
+`libnvidia-glcore.so`, `libnvidia-glsi.so`, `libGLX_nvidia.so.0`,
+`libnvidia-tls.so`, `libgbm.so` (mesa-libgbm), etc. discoverable when
+the EGL ICD dlopens them.
+
+### CEF OSR transport: wl_shm (current) vs dma-buf (deferred)
+
+CEF's offscreen rendering produces frames in two ways: a
+zero-copy **dma-buf** path (`shared_texture_enabled = 1`,
+`OnAcceleratedPaint`) or a CPU readback path (`shared_texture_enabled
+= 0`, `OnPaint`) that delivers a BGRA8888 buffer for us to memcpy
+into a `wl_shm` slot.
+
+**sola-kit currently uses the wl_shm path** (see
+`crates/sola-kit/src/cef/browser.rs::Browser::new` —
+`shared_texture_enabled = 0`). The supporting code is at
+`Surface::present_paint` in `crates/sola-kit/src/wayland/surface.rs`.
+
+The dma-buf path is preferred long-term — zero copies, GPU-direct —
+but on NVIDIA's proprietary driver it fails at link time inside CEF's
+prebuilt ANGLE binaries. Specifically, CEF 147's
+`Release/libEGL.so` / `Release/libGLESv2.so` reference several
+**Mesa-only** EGL extension symbols:
+
+```
+eglExportDMABUFImageMESA, eglExportDMABUFImageQueryMESA,
+eglImageFlushExternalEXT, eglQueryDevicesEXT
+```
+
+These don't exist in NVIDIA's `libEGL_nvidia.so.0`. With
+`shared_texture_enabled = 1`, the GPU process gets stuck at
+`shared_image_representation.cc:408 Unable to initialize SkSurface`
+— `OnAcceleratedPaint` never fires.
+
+Separately, NVIDIA proprietary 580.x's `libnvidia-glcore.so`
+references `__malloc_hook` / `__realloc_hook` / `__free_hook` /
+`__memalign_hook`, all removed in glibc 2.34+. Whether this is
+actually load-fatal vs. lazy-failure depends on link options and
+shows up in `LD_DEBUG=libs` output regardless.
+
+**Why does Helium / Chromium-based AppImages work on the same box?**
+AppImages run inside `appimage-run`, which wraps the binary in a
+`bwrap` FHS sandbox where `/usr/lib/libEGL.so.1` is Mesa's libglvnd
+build. Inside that sandbox, the load-time symbol lookup for
+`eglExportDMABUFImageMESA` resolves against Mesa's dispatch table
+(symbols exist; runtime dispatches to NVIDIA via the same libglvnd
+indirection NixOS uses). The shape of the FHS is what makes ANGLE's
+libEGL load cleanly. Outside the FHS, our nix-ld setup doesn't
+provide the equivalent dispatch surface, so the linker fails.
+
+#### When to revisit dma-buf
+
+Switch back to dma-buf when one of:
+
+1. **You change to NVIDIA Open + Mesa NVK.** Set
+   `hardware.nvidia.open = true` in `/etc/nixos/configuration.nix`
+   and let Mesa drive the GPU. Mesa's libEGL exposes the `*MESA`
+   extensions natively. Requires a compatible GPU (Turing GTX 16xx /
+   RTX 20-series or newer for full NVK support). Note: we previously
+   had Mesa drivers and switched away due to other GPU stability
+   issues; that investigation may need revisiting.
+2. **The host is Intel or AMD** (Mesa-only userspace) — works
+   out of the box; just flip `shared_texture_enabled` back to `1`.
+3. **Performance demands it** — heavy animation or 4K video in
+   `sola-browser` is the regime where the wl_shm CPU readback is
+   measurable. For sola-shell, sola-settings, sola-kit storybook,
+   etc., the difference is in the noise.
+4. **CEF starts shipping libEGL with the dispatch table independent
+   of host vendor** (i.e. ships its own libglvnd-style dispatcher
+   in Release/). Watch upstream for this.
+
+The flip is one line:
+```rust
+// crates/sola-kit/src/cef/browser.rs::Browser::new
+window_info.shared_texture_enabled = 1;  // dma-buf
+```
+The dma-buf code path (`Surface::present_dmabuf`,
+`KitRenderHandler::on_accelerated_paint`) is left in place exactly
+for this — no rewrite needed.
+
+### Quick diagnosis: what's the GPU stack failing on?
+
+If the wl_shm transport stops working in a future Chromium / NVIDIA
+combination, gather:
+
+```sh
+WAYLAND_DISPLAY=wayland-1 LD_DEBUG=libs LD_DEBUG_OUTPUT=/tmp/ld /opt/sola/bin/sola-kit
+# inspect /tmp/ld.<pid> for "undefined symbol" lines around libEGL,
+# libGLESv2, and libnvidia-*. The first fatal-tagged miss is usually
+# diagnostic.
+```
+
+Compare against `tail /opt/sola/log/river.log`. If sola-kit didn't
+reach the configure ack, the issue is host-side (Wayland event pump,
+sctk plumbing). If it did but `on_paint` doesn't fire, the GPU
+process is failing to rasterise — same root-cause class as the
+dma-buf-on-NVIDIA situation above.
+
+### Why not packaging sola-kit as a Nix derivation?
+
+That would be the most-correct NixOS solution and we'll get there for
+release, but for the develop-and-iterate phase the binary is a
+`cargo build` artefact. The patchelf-libcef + nix-ld path approach
+lets us keep `cargo run` ergonomics while still producing a binary
+that runs cleanly without any environmental contortions.
+
 ## WebKit runtime modules
 
 WebKitGTK is modular: it dynamically loads pieces of the system at
@@ -181,6 +419,31 @@ Recipe to identify the next missing piece:
 After updating session vars, the running sola won't see the change
 (it inherited the old environment). Either log out of the TTY and
 back in, or `source /etc/set-environment && pkill sola` and relaunch.
+
+## A note on GTK native widgets and GSettings
+
+Anything that opens a stock GTK widget — `GtkColorChooser`,
+`GtkFontChooser`, `GtkPrintDialog`, the file picker, etc. — will lazily
+call `g_settings_new()` and abort the host process if the matching
+schema isn't reachable. Cargo-built binaries (every Sola app today)
+skip nixpkgs' `wrapGAppsHook`, which is what normally aggregates
+package-provided schemas into a per-binary `XDG_DATA_DIRS`.
+
+The pragmatic answer is **don't use stock GTK chooser widgets from a
+Sola WebView**. The `<input type="color">` element, for example,
+spawns the GTK color chooser dialog, which is both visually foreign
+(no token/theme integration) and a crash hazard on a Sola system.
+The general guidance: build the picker in the WebView (HTML/CSS/JS,
+themed via [[sola-kit]] tokens), don't invoke a system dialog. Same
+logic applies to font choosers, print dialogs, and file pickers as
+they come up — host the UI inside the app rather than calling out.
+
+If a stock GTK widget genuinely is the right answer for some future
+case, the fix is to either wire `XDG_DATA_DIRS` to point at the
+per-package `share/gsettings-schemas/<pkg-version>/` dirs in
+`environment.sessionVariables`, or wrap the binary the
+nixpkgs-idiomatic way. We'll cross that bridge if the use case
+appears.
 
 ## Default browser / URL handler
 

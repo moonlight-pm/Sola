@@ -1,0 +1,129 @@
+/* Button styles — references only `--sola-button-*` scoped theme
+   vars. Variant-specific state changes (hover, active) on saturated
+   variants use `filter()` rather than minting more atoms; mint a slot
+   when a real consumer needs to override the modulation amount.
+
+   DOM produced by the Remix v3 factory:
+
+     <button class="sola-button sola-button-{variant} [is-disabled]"
+             type="button" disabled?>
+       <span class="sola-button-leading">…</span>?
+       <span class="sola-button-label">…</span>
+       <span class="sola-button-trailing">…</span>?
+     </button>
+*/
+
+.sola-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sola-button-gap);
+
+  padding: var(--sola-button-padding-block) var(--sola-button-padding-inline);
+  border-radius: var(--sola-button-radius);
+  border: 1px solid transparent;
+
+  font-family: inherit;
+  font-size: var(--sola-button-text-size);
+  line-height: 1;
+  white-space: nowrap;
+
+  cursor: pointer;
+  user-select: none;
+  appearance: none;
+  outline: none;
+
+  transition:
+    background 80ms linear,
+    filter 80ms linear,
+    box-shadow 80ms linear;
+}
+
+.sola-button:focus-visible {
+  box-shadow: 0 0 0 2px var(--sola-button-focus-ring);
+}
+
+.sola-button.is-disabled,
+.sola-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* default — neutral filled */
+
+.sola-button-default {
+  background: var(--sola-button-default-bg);
+  color: var(--sola-button-default-text);
+  border-color: var(--sola-button-default-border);
+}
+
+.sola-button-default:hover {
+  background: var(--sola-button-default-bg-hover);
+}
+
+.sola-button-default:active {
+  filter: brightness(0.92);
+}
+
+/* primary — saturated accent fill */
+
+.sola-button-primary {
+  background: var(--sola-button-primary-bg);
+  color: var(--sola-button-primary-text);
+  border-color: transparent;
+}
+
+.sola-button-primary:hover {
+  filter: brightness(1.08);
+}
+
+.sola-button-primary:active {
+  filter: brightness(0.92);
+}
+
+/* ghost — transparent at rest, surface tint on hover */
+
+.sola-button-ghost {
+  background: transparent;
+  color: var(--sola-button-ghost-text);
+  border-color: transparent;
+}
+
+.sola-button-ghost:hover {
+  background: var(--sola-button-ghost-bg-hover);
+}
+
+.sola-button-ghost:active {
+  filter: brightness(0.92);
+}
+
+/* danger — saturated status fill */
+
+.sola-button-danger {
+  background: var(--sola-button-danger-bg);
+  color: var(--sola-button-danger-text);
+  border-color: transparent;
+}
+
+.sola-button-danger:hover {
+  filter: brightness(1.08);
+}
+
+.sola-button-danger:active {
+  filter: brightness(0.92);
+}
+
+/* slots */
+
+.sola-button-leading,
+.sola-button-trailing {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.sola-button-label {
+  flex: 0 1 auto;
+  min-width: 0;
+}

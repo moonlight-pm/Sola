@@ -3,6 +3,12 @@
 Shared crate providing the WebView application framework for every
 Sola shell app.
 
+> **Status:** being replaced by [[sola-kit]] (CEF + smithay-client-toolkit
+> instead of WebKitGTK + GTK4). The two crates carry the same `SolaApp`
+> trait surface so apps migrate by changing one `use` line and one
+> `Cargo.toml` dep. sola-app stays in tree until the last consumer ports
+> over.
+
 ## What it provides
 
 **Rust side:**

@@ -1,0 +1,41 @@
+/* Swatch styles — references only `--sola-swatch-*` scoped theme
+   vars (border, radius). The transparency-checker pattern is
+   hardcoded in CSS rather than themed: it's a structural visual
+   artifact (the standard "alpha grid" convention), not a brand
+   element. A future light theme can override the checker color via
+   a new slot if needed.
+
+   The element layers two surfaces:
+     1. Base background — a 4-step gradient producing the 8x8
+        checker pattern. Always visible.
+     2. ::after overlay — solid `var(--swatch-color)` at full
+        coverage; semi-transparent values reveal the checker beneath. */
+
+.sola-swatch {
+  display: inline-block;
+  flex: 0 0 auto;
+  position: relative;
+  box-sizing: border-box;
+  border: 1px solid var(--sola-swatch-border);
+  border-radius: var(--sola-swatch-radius);
+  overflow: hidden;
+
+  /* 8x8 checkerboard. Two diagonal gradients (45° and -45°) render
+     two of the four cells each; positioning offsets line up the
+     pattern. */
+  background-color: transparent;
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.18) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.18) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.18) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.18) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+
+.sola-swatch::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--swatch-color, transparent);
+}

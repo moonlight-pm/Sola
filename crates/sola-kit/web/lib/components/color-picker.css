@@ -1,0 +1,81 @@
+/* ColorPicker styles — references only `--sola-color-picker-*`
+   scoped theme vars. Layout is a single column of slider rows + a
+   trailing hex input. Sliders are native `<input type="range">`
+   restyled with WebKit pseudo-elements (CEF is Chromium so they
+   apply); the hue track is the only one with a hardcoded rainbow
+   gradient (every theme has the same hue circle). */
+
+.sola-color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sola-color-picker-gap);
+  width: 240px;
+}
+
+.sola-color-picker-preview {
+  height: var(--sola-color-picker-preview-height);
+  border-radius: var(--sola-color-picker-preview-radius);
+  box-shadow: inset 0 0 0 1px var(--sola-color-picker-preview-border);
+}
+
+.sola-color-picker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.sola-color-picker-label {
+  font-family: var(--font-mono);
+  font-size: var(--sola-color-picker-label-size);
+  color: var(--sola-color-picker-label-color);
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.sola-color-picker-value {
+  font-family: var(--font-mono);
+  font-size: var(--sola-color-picker-label-size);
+  color: var(--sola-color-picker-value-color);
+  width: 36px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.sola-color-picker-slider {
+  flex: 1;
+  height: 12px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--sola-color-picker-slider-track-bg);
+  border-radius: var(--radius-sm);
+  outline: none;
+  margin: 0;
+  cursor: pointer;
+}
+
+.sola-color-picker-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--sola-color-picker-slider-thumb-bg);
+  border: 2px solid var(--sola-color-picker-slider-thumb-border);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--sola-color-picker-slider-thumb-shadow);
+}
+
+/* Hue rainbow — independent of theme. */
+.sola-color-picker-slider-h {
+  background: linear-gradient(
+    to right,
+    #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00
+  );
+}
+
+/* Alpha slider track is layered (gradient + checker) via inline
+   `background-image`; this rule just constrains the checker size. */
+.sola-color-picker-slider-alpha {
+  background-size: auto, 8px 8px;
+}

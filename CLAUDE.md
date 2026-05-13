@@ -23,6 +23,7 @@ crates/
   sola-bus/            # IPC bus host + client library
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
   sola-app/            # WebView app framework (GTK4 + WebKit6)
+  sola-kit/            # WebView app framework + design-token kit + storybook (parallel to sola-app)
   sola-assets/         # Vendored icon/asset bundles
   sola-browser/        # WebKit browser
   sola-make/           # Build/install orchestration (xtask)
@@ -127,200 +128,167 @@ tail -100 /opt/sola/log/sola.log
 - Logs go to `/opt/sola/log/`
 - User launches sola manually from a physical TTY — no display manager, no auto-login
 
-## Web Frontends: lit + signals
+## Web Frontends — Two Stacks Coexisting
 
-Sola apps are built from custom elements. The lit stack (`lit-html` + `lit-element` + `@lit/reactive-element`, vendored under `crates/sola-kit/web/vendor/lit*/`) provides the element base; `@preact/signals-core` (vendored at `crates/sola-kit/web/vendor/signals/`) provides shared reactive state. Together ~15 KB.
+Two app frameworks live side-by-side in the workspace:
 
-**Component-first**: every reusable view is a custom element, not a function returning a template. Lib components are `<sola-X>`; storybook-internal widgets are `<kit-X>`. The shell is `<kit-app>`. Don't write helper functions that return templates when an element will do — element registration costs nothing and gives you proper composition (slots, events, encapsulation).
+- **`sola-kit` (the future).** GTK-free CEF stack with off-screen rendering composited as Wayland surfaces via dma-buf. Apps use Remix v3 (`@remix-run/ui`) for component composition. This is where new app work happens. Documented below.
+- **`sola-app` (legacy).** GTK4 + WebKit6 stack still hosting `sola-shell`, `sola-settings`, `sola-terminal`, and `sola-browser`. Retained until each is ported to the kit; do not write new apps against it.
 
-### KitElement
+The rest of this section is the kit; the legacy stack is self-contained and follows its own crate-local conventions.
 
-`KitElement` (from `@sola/kit`) is the base class:
-- Extends `LitElement` (so you get update batching, lifecycle, render scheduling)
-- Wrapped in `SignalWatcher` mixin (~10 lines inlined from `@lit-labs/preact-signals`) — signal reads inside `render()` auto-schedule re-renders
-- Light DOM via `createRenderRoot() { return this; }` — global CSS variables drive the theme
+## Web Frontends: Remix v3 (sola-kit)
 
-```ts
-import { html } from 'lit-html';
-import { signal } from 'signals';
-import { KitElement } from '@sola/kit';
+Sola-kit apps render their UI with **Remix v3** (`@remix-run/ui`, vendored at `crates/sola-kit/web/vendor/remix-ui/`). JSX is **transformed server-side** by swc — there is no bundler, no Node, and no `tsc` in the loop at runtime.
 
-const count = signal(0);
+### Build pipeline
 
-class MyCounter extends KitElement {
-  render() {
-    return html`
-      <button @click=${() => count.value++}>Count: ${count.value}</button>
-    `;
-  }
+Files end in `.tsx` (JSX) or `.ts` (no JSX). The asset server (`crates/sola-kit/src/strip.rs::transform`) handles the request:
+
+- **`.tsx`** → swc parses TSX → resolver → JSX transform (automatic runtime, `import_source: "@remix-run/ui"`) → TS strip → JS.
+- **`.ts`** → swc parses TS → resolver → TS strip → JS. JSX transform is skipped.
+- **`.jsx`** → resolver → JSX transform only, no type strip.
+
+The **automatic runtime** auto-injects `import { jsx, jsxs, Fragment } from "@remix-run/ui/jsx-runtime"` for any file containing JSX, so app code never imports a JSX factory by hand. The editor mirror is `tsconfig.json` with `"jsx": "react-jsx"` and `"jsxImportSource": "@remix-run/ui"` — both must agree.
+
+### What the kit provides for free
+
+Apps don't ship `index.html`, an importmap, theme bootstrap, or component CSS `<link>`s. The kit auto-injects all of that:
+
+- **`index.html` + `index.tsx`** live in `crates/sola-kit/web/lib/` and are served via `platform_assets()`. `ctx::add_window` falls back to platform assets when an app has no own `index.html`.
+- **Importmap** built per-app by `lib.rs::build_importmap` and injected into `<head>` before any module script. Publishes `@sola/ipc`, `@sola/kit`, `@sola/sidebar`, `@sola/app-root`, `@remix-run/ui`, `@remix-run/ui/jsx-runtime`. `@sola/app-root` is mapped per-app from `SolaApp::ROOT_COMPONENT` (default `/main.tsx`).
+- **Component stylesheets** auto-discovered: `inject_kit_head` walks `platform_assets()` for every `Css` asset and emits a `<link rel="stylesheet">` for each. Adding a new kit component with a sibling `.css` file makes it appear in every kit app automatically.
+- **`__solaRecv` queueing bootstrap** installed before any module script runs so Rust→JS pushes during early init don't drop on the floor.
+
+The minimum an app needs is a `Cargo.toml`, a `SolaApp` impl, and a `web/main.tsx` that exports a Remix v3 component named `Main`. Override `ROOT_COMPONENT` only if the root file lives elsewhere.
+
+### Component model (Remix v3)
+
+Components are functions that take a `Handle<Props>` and return a `RenderFn`:
+
+```tsx
+import { type Handle, type RemixNode } from "@remix-run/ui";
+import { on } from "@sola/kit";
+
+interface CounterProps {
+  label: string;
+  children?: RemixNode;
 }
-customElements.define('my-counter', MyCounter);
-```
 
-Drop `<my-counter></my-counter>` in HTML; importing the module registers the tag.
+export function Counter(handle: Handle<CounterProps>) {
+  let count = 0;
 
-### Properties (no decorators)
-
-We use the static-properties API — no decorators (so swc strip-types works without transforms):
-
-```ts
-class SolaButton extends KitElement {
-  static properties = {
-    label: { type: String },
-    variant: { type: String },
-    disabled: { type: Boolean, reflect: true },
+  const onClick = () => {
+    count++;
+    handle.update();
   };
-  declare label: string;
-  declare variant?: 'primary' | 'default' | 'ghost' | 'danger';
-  declare disabled?: boolean;
 
-  render() {
-    return html`<button
-      class=${`kit-btn kit-btn-${this.variant ?? 'default'}`}
-      ?disabled=${this.disabled}
-    >${this.label}</button>`;
-  }
-}
-customElements.define('sola-button', SolaButton);
-```
-
-Use `declare` (not `let`/`const`/`=`) for property type declarations — avoids `useDefineForClassFields` clobbering Lit's getters/setters. Our `tsconfig.json` sets `useDefineForClassFields: false` defensively.
-
-### Slots, not template props
-
-Pass content via slots, not props that contain templates:
-
-```ts
-// ❌ Old style
-form({ body: html`...`, actions: html`...` })
-
-// ✅ Component style
-html`<sola-form>
-  <sola-field-row label="Email"><sola-field></sola-field></sola-field-row>
-  <sola-button slot="actions" label="Save"></sola-button>
-</sola-form>`
-```
-
-In the element, `<slot></slot>` for default content, `<slot name="actions"></slot>` for named slots.
-
-### Events, not callback props
-
-Components dispatch CustomEvents instead of accepting callback props:
-
-```ts
-// In the element
-this.dispatchEvent(new CustomEvent('sola-input', {
-  detail: { value: newValue },
-  bubbles: true,
-}));
-
-// At the call site
-<sola-field @sola-input=${(e: CustomEvent) => set(e.detail.value)}></sola-field>
-```
-
-For native events (`click`, `submit`, etc.) just let them bubble — `@click=${handler}` on the host catches them.
-
-### Property bindings
-
-Lit-html has four prefixes for interpolations on a custom element:
-
-- `attr=${value}` — attribute (string-only)
-- `?attr=${bool}` — boolean attribute (presence)
-- `.prop=${value}` — DOM property (any type — use this for objects, arrays, numbers passed to a property declared in `static properties`)
-- `@event=${handler}` — event listener
-
-**For object/array props always use `.prop`**: `<sola-tab .index=${1}>` not `<sola-tab index="1">` (the latter would set the attribute as a string, and `type: Number` coercion only kicks in for attributes that exist on the HTML).
-
-### Routing
-
-Inside a `KitElement` `render()`, just dispatch on a signal:
-
-```ts
-class KitApp extends KitElement {
-  render() {
-    const sel = selected.value;
-    return html`<main>${
-      sel === 'home' ? html`<my-home></my-home>` :
-      sel === 'about' ? html`<my-about></my-about>` :
-      html`<div>Not found</div>`
-    }</main>`;
-  }
+  return () => (
+    <button class="kit-btn" mix={[on("click", onClick)]}>
+      {handle.props.label}: {count} {handle.props.children}
+    </button>
+  );
 }
 ```
 
-Lit-html atomically swaps the subtree — no swap-path bugs. Custom-element instances unmount cleanly via their disconnectedCallback.
+Key points:
 
-### Conditionals and lists
+- **State is closure-captured.** Mutate locals; call `handle.update()` to schedule a re-render. The function body runs once per mount; the returned `RenderFn` runs every render.
+- **`handle.props` is stable identity, fresh values.** Object reference doesn't change; field values are updated in place before each render.
+- **Events attach via `mix={[on("click", handler)]}`.** Lowercase JSX attrs like `onclick=` are *not* typed on Remix v3's host elements — see "Pitfalls" below.
+- **Children compose naturally** — `props.children` is `RemixNode` (renderable + arrays of renderable). Named slots use named props (`leading`, `trailing`, etc.), not HTML `<slot>`.
+- **Conditionals and lists are plain JS** — `cond ? html`...` : null` and `items.map(item => <Item key={item.id} ... />)`.
 
-Plain JavaScript expressions inside `${}` slots:
+### `@sola/kit` umbrella
 
-```ts
-html`<div>
-  ${state.error ? html`<p class="error">${state.error}</p>` : ''}
-  ${state.items.map(item => html`<li>${item.name}</li>`)}
-</div>`
-```
+`web/lib/kit.ts`, served at `/lib/kit.ts`, importmap entry `@sola/kit`. Two exports:
 
-Use `''` (empty string) rather than `null`/`undefined` for "render nothing" — slightly cleaner DOM.
+- **`setupKit()`** — call once from the kit's built-in `index.tsx` (apps almost never need to call it). Installs the constructable themeSheet that the bus-pump pushes CSS into.
+- **`on()`** — typed wrapper around Remix v3's `on()` that pre-fixes `target = HTMLElement` and gives full event-type inference for handler params (`on("keydown", e => e.key)` infers `e: KeyboardEvent`). Always import from `@sola/kit`, not `@remix-run/ui`. The raw Remix `on` defaults its target to `Element`, whose `ElementEventMap` is missing keyboard events; inside Remix's own components that's not a problem because they're inside `createMixin<HTMLElement>` wrappers, but our direct-JSX `mix={[…]}` usage doesn't get that context.
 
-For keyed lists where items reorder, import `repeat` from `lit-html/directives/repeat.js`. For our usual case (small lists, append/prepend), plain `.map()` is fine — lit-html does positional reuse.
+### Theme protocol
 
-### State
+Two layers, both in `sola-core::theme::Theme`, both broadcast as the persistent `Topic::Theme`:
 
-Use `signal()` for any value that changes over time and is read by templates. Mutate via `.value =` (immutable updates for object/array contents):
+1. **Palette** — flat `BTreeMap<TokenName, Token>`. Each token has a `kind` (Color / FontFamily / TextSize / Space / Radius), a value, and the *selection groups* it's eligible for (e.g. `["surface"]`, `["accent", "border"]`).
+2. **Component bindings** — `BTreeMap<String, ComponentBindings>` keyed by component name. Each component declares slots; each slot points at a token and constrains itself to a selection group.
 
-```ts
-const items = signal<Item[]>([]);
+`Theme::to_css(&self)` lowers to a single `:root { … }` block in two sections — every palette token first (`--bg-secondary: #161b22;`), then every binding as a scoped var pointing at an atom (`--sola-sidebar-bg: var(--bg-secondary);`). **Component CSS only ever references the scoped vars** (`var(--sola-<component>-<slot>)`), never atoms directly. A binding swap is a one-line `:root` edit with no component-CSS change.
 
-// ✅ replace, signals see the change
-items.value = [...items.value, newItem];
+`Theme::validate()` enforces the four invariants (binding's token exists, token's groups contain binding's group, group→kind consistent, all referenced components present in bindings).
 
-// ❌ mutate in place — signal sees no change, no re-render
-items.value.push(newItem);
-```
+The kit's `BusPumpTask::execute` intercepts `Topic::Theme` deliveries: lowers via `to_css()` once, pushes to every kit-managed window via `__solaRecv` `{ event: "theme", css: … }`. The renderer-side `setupKit()` listener does `themeSheet.replaceSync(msg.css)` — single allocation, hot-reloadable on every theme update including the sticky replay at first connect.
 
-For derived state, `computed()` returns a read-only signal that recomputes when its dependencies change:
+Spec: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`.
 
-```ts
-import { computed } from 'signals';
-const count = signal(0);
-const doubled = computed(() => count.value * 2);
-```
+### CSS authoring
 
-### Side effects outside of render
+Kit components ship a `web/lib/components/<name>.css` next to their `.tsx`. Class-based selectors (not tag-based — Remix components render plain DOM). Reference only `var(--sola-<component>-<slot>)` slots; inherited typography (color, font-family, font-size) cascades from the surrounding `<Root>` via normal CSS inheritance — don't re-reference `--sola-root-*` from inside other components.
 
-Most reactive work happens automatically through `render()`. For side effects that aren't rendering — DOM listeners, timers, persistence — `effect(fn)` from `signals` returns a dispose function. Call it to stop. The effect's `fn` may also return a cleanup function that runs before the next call (and on dispose):
-
-```ts
-const stop = effect(() => {
-  const id = setInterval(() => count.value++, 1000);
-  return () => clearInterval(id);
-});
-
-// later: stop();
-```
-
-For DOM event listeners that should outlive the effect, attach in module scope; only attach inside an effect if you also clean up.
-
-### CSS imports
-
-Sola serves assets directly from Rust-embedded bytes — there's no bundler. **`import './foo.css'` in a `.ts` file will fail** with `'text/css' is not a valid JavaScript MIME type`. Declare component stylesheets with `<link rel="stylesheet" href="/src/components/foo.css">` in `index.html` (and register each CSS file in the `asset_bundle!` macro in the app's `main.rs`).
+`import './foo.css'` in a `.ts(x)` file fails (`'text/css' is not a valid JavaScript MIME type`). The kit's auto-injection handles it — just add the CSS file to `platform_assets()` and a `<link>` appears in every app's `<head>`.
 
 ### Module imports
 
-Sola's asset server has a fallback for `.js` → `.ts` lookups. Bare imports like `import { x } from './foo'` (no extension) **will 404**. Always write `import { x } from './foo.js'` — the strip-types layer turns the `.ts` source into JS at request time, and the import path needs to match.
+Both `import './foo'` and `import './foo.js'` work. The asset server (`AssetBundle::find` in `crates/sola-kit/src/assets.rs`) tries the literal path first, then `.js → .ts/.tsx/.jsx`, then — for extensionless paths — `.ts/.tsx/.jsx/.js/.mjs` in that order.
 
-### Reactive store wrapper
+Bare specifiers (`import x from 'foo'`) need importmap entries. The kit's importmap (auto-injected) covers `@sola/*` and `@remix-run/ui*`. Apps with their own bare specifiers need their own kit-side extension (not yet built; pull when a real consumer needs it).
 
-`@sola/store` re-exports `signal`, `computed`, `effect`, `batch`, `untracked` from `@preact/signals-core`, plus `persistedSignal(initial, key)` for localStorage-backed state.
+`tsconfig.json` carries:
+- `"jsx": "react-jsx"` and `"jsxImportSource": "@remix-run/ui"` — must mirror swc's runtime config.
+- `"allowImportingTsExtensions": true` — required because the vendored `@remix-run/ui` source uses explicit `.ts`/`.tsx` extensions in its own imports.
+- `"paths"` mirroring the runtime importmap so the LSP resolves the same specifiers.
+
+### Sidebar (the first kit component)
+
+`web/lib/components/sidebar.tsx` exports three component factories — `Sidebar`, `SidebarSection`, `SidebarItem`. Slot-based composition, parent-controlled active state, `onSelect` callback prop, `leading` / `trailing` named-prop slots. CSS lives in the sibling `sidebar.css` and references only `--sola-sidebar-*` scoped vars. See the spec for the slot inventory and selection groups.
 
 ### Common pitfalls
 
-- ❌ Writing `function foo(opts) { return html\`...\` }` for a reusable view — make it a custom element.
-- ❌ Initializing properties with `=` instead of `declare` — clobbers Lit's getter/setter setup unless `useDefineForClassFields: false`.
-- ❌ `index="1"` on a custom element prop declared `type: Number` — use `.index=${1}` for non-string props.
-- ❌ `value=${x}` on a controlled input — use `.value=${x}` so the property updates, not just the attribute.
-- ❌ `?disabled="${bool}"` (quoted boolean) — use `?disabled=${bool}`.
-- ❌ Mutating signal contents in place (`items.value.push(x)`) — replace the value (`items.value = [...items.value, x]`).
-- ❌ `import './foo'` (no extension) — use `import './foo.js'`.
-- ❌ `import './x.css'` — use `<link>` in `index.html`.
+- ❌ `import { on } from "@remix-run/ui"` — use `import { on } from "@sola/kit"` so HTMLElement event-map inference works without explicit type parameters.
+- ❌ `<div onclick={fn}>` or `<div onClick={fn}>` — host elements have no event attribute typings in Remix v3. Use `mix={[on("click", fn)]}`.
+- ❌ Mounting your own importmap or `<link>` for kit components in a kit app's `index.html` — the kit auto-injects both. Only one importmap is allowed per page.
+- ❌ Re-importing or shipping `@remix-run/ui` in a kit app — the kit serves the vendored source via `platform_assets()`.
+- ❌ Returning JSX directly from the component function (`function C() { return <div/> }`) — Remix factories return a `RenderFn` (`function C(handle) { return () => <div/> }`).
+- ❌ Mutating closure state without `handle.update()` — the renderer doesn't auto-track. Call `handle.update()` to schedule the next render.
+- ❌ Object literals at expression position (`async () => {a: 1}`) — they parse as block statements. Use `async () => ({a: 1})`. Only relevant inside `solactl eval` and similar wrappers.
+- ❌ `import './foo.css'` — use a `<link>` (or, for kit-shipped CSS, just register in `platform_assets()` and the kit auto-injects).
+
+## CEF binding choice
+
+**Chosen crate:** `cef` `147.1.0+147.0.10` (tauri-apps/cef-rs, Apache-2.0 OR MIT)
+- crates.io: <https://crates.io/crates/cef>
+- docs.rs: <https://docs.rs/cef/147.1.0+147.0.10/cef/>
+- GitHub: <https://github.com/tauri-apps/cef-rs>
+
+This is the **only** active Rust CEF binding that tracks current CEF releases. `cef-rs` as a separate crate does not exist on crates.io. The crate is maintained by the Tauri team, ships pre-generated bindgen bindings (no headers needed — the tarball is enough), and has a working Linux `osr` example that exercises `on_accelerated_paint` with dma-buf import via Vulkan. Version `147.1.0+147.0.10` exactly matches our pinned CEF `147.0.10`.
+
+**Do NOT enable the `accelerated_osr` feature.** That feature only gates the crate's wgpu/Vulkan-based dma-buf importer helper module — it pulls in `ash`, `wgpu`, `metal`, `objc`, etc. We don't need any of that. We import dma-bufs through `zwp_linux_dmabuf_v1::create_params` (sctk-managed `wl_buffer`) and let sola-river composite. The `AcceleratedPaintInfo` and `AcceleratedPaintNativePixmapPlaneInfo` structs live in the base bindgen output (`cef::sys::*`) and are available without features.
+
+```toml
+cef = "147.1.0+147.0.10"
+```
+
+### Binding name deltas vs. the design spec
+
+The design spec uses generic CEF C-API names. The actual `cef` crate names differ:
+
+| Spec / pseudocode | Actual `cef` crate |
+|---|---|
+| `CefSettings` | `Settings` |
+| `CefMainArgs` | `MainArgs` (built via `cef::args::Args::new()`) |
+| `CefBrowserSettings` | `BrowserSettings` |
+| `CefWindowInfo` | `WindowInfo` |
+| `CefBrowserHost::create_browser_sync(...)` | free fn `cef::browser_host_create_browser_sync(window_info, client, url, settings, extra_info, request_context)` |
+| `frame.execute_javascript(...)` | `frame.execute_java_script(...)` (yes, with underscore) |
+| `RenderHandler::get_view_rect(...) -> Rect` | `ImplRenderHandler::view_rect(&self, browser, rect: Option<&mut Rect>)` (out-param, no return) |
+| `ResourceHandler::get_response_headers(...)` | `response_headers(...)` (no `get_` prefix) |
+| `cef::post_task(ThreadId::UI, closure)` | `cef::post_task(thread_id, task: Option<&mut Task>)` — boxed `Task`, not closure (helper macro: `wrap_task!`) |
+| `cef::CefClientBuilder::new().with_*()` | no builder — use `wrap_client!` macro with handler fields |
+| `EventFlags::EVENTFLAG_*` | constants on `cef::sys::cef_event_flags_t` |
+| `KeyEventType::{KeyDown, KeyUp, Char}` | `KeyEventType::{KEYDOWN, KEYUP, CHAR, RAWKEYDOWN}` (uppercase) |
+| `MouseButtonType::{Left, Right, Middle}` | `MouseButtonType::{LEFT, RIGHT, MIDDLE}` |
+| C `int` booleans on event structs | `c_int` in Rust — cast `true as _` or `1 / 0` |
+| `CefString` is `Option<String>` in pseudocode | actual is `cef::CefString` — built from `&str` via its `From` impl |
+| `execute_process` returning `< 0` for main | actually returns `-1` for main, `>= 0` for subprocess (matches plan's branching) |
+
+`on_accelerated_paint` confirmed present in `ImplRenderHandler` with full dma-buf info (per-plane fd, stride, offset, size; struct-level DRM modifier; `cef::sys::cef_color_type_t` format = RGBA_8888 or BGRA_8888). No bindgen build step — the crate ships pre-generated bindings per target under `src/bindings/`.

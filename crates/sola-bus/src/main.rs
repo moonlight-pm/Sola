@@ -240,8 +240,18 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
             return;
         }
     };
+    // Sticky/persistent topics carry *shared state*: the sender is writing a
+    // canonical value that every subscriber — themselves included — should
+    // observe through the same delivery path. Skipping self for sticky topics
+    // means framework-level subscribers in the sender's own process (e.g. the
+    // kit's bus pump that lowers Topic::Theme to CSS) miss the update, and the
+    // sender's UI silently diverges from its own write.
+    //
+    // Ephemeral topics still skip self — input events, deliveries, and other
+    // "fire and forget" messages don't want echoes.
+    let echo_to_sender = kind.behavior().is_sticky();
     for (&id, tx) in bus.clients.iter() {
-        if id == sender {
+        if id == sender && !echo_to_sender {
             continue;
         }
         let wants = bus

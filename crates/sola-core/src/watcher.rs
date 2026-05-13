@@ -200,10 +200,10 @@ fn event_kind_matches(event: &notify::Event) -> bool {
 /// that basename. Used by [`watch_binaries`].
 fn extract_watched_name(event: &notify::Event, watched: &HashSet<String>) -> Option<String> {
     for path in &event.paths {
-        if let Some(name) = path.file_name().and_then(OsStr::to_str) {
-            if watched.contains(name) {
-                return Some(name.to_string());
-            }
+        if let Some(name) = path.file_name().and_then(OsStr::to_str)
+            && watched.contains(name)
+        {
+            return Some(name.to_string());
         }
     }
     None

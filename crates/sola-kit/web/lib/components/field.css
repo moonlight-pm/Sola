@@ -1,0 +1,33 @@
+/* Field styles — references only `--sola-field-*` scoped theme
+   vars. The label and help/error texts use the same `label-size`
+   slot so all secondary text in a field is one consistent size; the
+   color slots distinguish their roles. */
+
+.sola-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sola-field-gap);
+  /* Cancel any cursor: pointer the browser default would put on a
+     <label> — Field is the structural container, not the click
+     target. The contained control owns its own cursor. */
+  cursor: default;
+}
+
+.sola-field-label {
+  font-size: var(--sola-field-label-size);
+  color: var(--sola-field-label-color);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  user-select: none;
+}
+
+.sola-field-help {
+  font-size: var(--sola-field-label-size);
+  color: var(--sola-field-help-color);
+}
+
+.sola-field-error {
+  font-size: var(--sola-field-label-size);
+  color: var(--sola-field-error-color);
+}

@@ -115,6 +115,7 @@ fn keycode_to_keysym(k: KeyCode) -> u32 {
         KeyCode::KP_8 => KEYSYM_KP_0 + 8,
         KeyCode::KP_EQUAL => 0xFFBD,   // XK_KP_Equal
         KeyCode::KP_DECIMAL => 0xFFAE, // XK_KP_Decimal
+        KeyCode::F12 => 0xFFC9,        // XK_F12
         _ => {
             if let Some(sym) = letter_keysym(k) {
                 sym
@@ -208,6 +209,7 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
         0xFFB8 => Some(KeyCode::KP_8),
         0xFFBD => Some(KeyCode::KP_EQUAL),
         0xFFAE => Some(KeyCode::KP_DECIMAL),
+        0xFFC9 => Some(KeyCode::F12),
         // NumLock-off variants of the zoning numpad keys.
         KEYSYM_KP_UP => Some(KeyCode::KP_8),
         KEYSYM_KP_LEFT => Some(KeyCode::KP_4),
