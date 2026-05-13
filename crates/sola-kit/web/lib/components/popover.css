@@ -11,6 +11,13 @@
 .sola-popover-root {
   display: inline-block;
   position: relative;
+  /* Pin the root to its trigger's intrinsic width even when it's
+     a flex item — flex containers "blockify" inline-block children
+     and stretch them via align-items: stretch, which would make the
+     entire row (not just the trigger) a clickable popover toggle.
+     `width: max-content` keeps the trigger area scoped to its
+     content regardless of layout context. */
+  width: max-content;
 }
 
 .sola-popover-content {
