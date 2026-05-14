@@ -14,32 +14,32 @@ export function StackShowcase(_handle: Handle) {
   );
 
   return () => (
-    <Stack gap="var(--space-xxl)">
-      <Stack gap="var(--space-sm)">
+    <Stack gap="xxl">
+      <Stack gap="sm">
         <Text kind="label">direction="column" (default), gap=md</Text>
-        <Stack gap="var(--space-md)">
+        <Stack gap="md">
           {cell(1)}
           {cell(2)}
           {cell(3)}
         </Stack>
       </Stack>
 
-      <Stack gap="var(--space-sm)">
+      <Stack gap="sm">
         <Text kind="label">direction="row", gap=md, align="center"</Text>
-        <Stack direction="row" gap="var(--space-md)" align="center">
+        <Stack direction="row" gap="md" align="center">
           {cell(1)}
           {cell(2)}
           {cell(3)}
         </Stack>
       </Stack>
 
-      <Stack gap="var(--space-sm)">
+      <Stack gap="sm">
         <Text kind="label">direction="row", justify="between"</Text>
         <Stack
           direction="row"
           justify="between"
           align="center"
-          gap="var(--space-md)"
+          gap="md"
         >
           {cell(1)}
           {cell(2)}
@@ -47,9 +47,9 @@ export function StackShowcase(_handle: Handle) {
         </Stack>
       </Stack>
 
-      <Stack gap="var(--space-sm)">
+      <Stack gap="sm">
         <Text kind="label">direction="row", wrap=true</Text>
-        <Stack direction="row" gap="var(--space-sm)" wrap>
+        <Stack direction="row" gap="sm" wrap>
           {Array.from({ length: 12 }, (_, i) => cell(i + 1))}
         </Stack>
       </Stack>

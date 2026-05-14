@@ -26,8 +26,12 @@
 import { type Handle } from "@remix-run/ui";
 import { ColorPicker } from "@sola/color-picker";
 import { Popover } from "@sola/popover";
+import { type SpaceTag } from "@sola/kit";
 
-export type SwatchSize = "xs" | "sm" | "md" | "lg" | "xl" | "xxl";
+/** Alias of the kit-wide space scale; Swatch deliberately rejects
+    raw CSS lengths so every swatch in a Sola app picks from the
+    shared scale. */
+export type SwatchSize = SpaceTag;
 
 export interface SwatchProps {
   /** CSS color expression to display. Required. Any value the

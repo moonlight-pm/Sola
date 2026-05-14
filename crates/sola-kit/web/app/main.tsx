@@ -92,10 +92,10 @@ export function Main(handle: Handle) {
                 direction="row"
                 align="center"
                 justify="between"
-                gap="var(--space-md)"
+                gap="md"
               >
                 <Text kind="display">{heading}</Text>
-                <Stack direction="row" gap="var(--space-sm)" align="center">
+                <Stack direction="row" gap="sm" align="center">
                   <Button variant="ghost" onPress={resetTheme}>
                     Reset theme
                   </Button>

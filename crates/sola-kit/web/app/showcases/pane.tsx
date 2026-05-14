@@ -22,16 +22,16 @@ const demoContainerStyle =
 
 export function PaneShowcase(_handle: Handle) {
   return () => (
-    <Stack gap="var(--space-xxl)">
+    <Stack gap="xxl">
       <Card
         label="Live preview"
         description="The page you are reading is a Pane — the content area between the sidebar and the right edge of the window."
       >
-        <Stack gap="var(--space-sm)">
+        <Stack gap="sm">
           <Text kind="label">Scrolling demo (240px tall)</Text>
           <div style={demoContainerStyle}>
             <Pane as="div">
-              <Stack gap="var(--space-md)">
+              <Stack gap="md">
                 {PARAGRAPHS.map((p) => <Text>{p}</Text>)}
               </Stack>
             </Pane>

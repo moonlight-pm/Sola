@@ -17,17 +17,17 @@ const SAMPLE = "The quick brown fox jumps over the lazy dog";
 
 export function TextShowcase(_handle: Handle) {
   return () => (
-    <Stack gap="var(--space-xxl)">
+    <Stack gap="xxl">
       <Card
         label="Live preview"
         description="One row per kind, then a column of tone overlays applied to body kind."
       >
-        <Stack gap="var(--space-xl)">
-          <Stack gap="var(--space-md)">
+        <Stack gap="xl">
+          <Stack gap="md">
             <Text kind="label" tone="muted">Kinds</Text>
-            <Stack gap="var(--space-md)">
+            <Stack gap="md">
               {KINDS.map((k) => (
-                <Stack gap="var(--space-xs)">
+                <Stack gap="xs">
                   <Text kind="label" tone="subtle">{k}</Text>
                   <Text kind={k}>{SAMPLE}</Text>
                 </Stack>
@@ -35,11 +35,11 @@ export function TextShowcase(_handle: Handle) {
             </Stack>
           </Stack>
 
-          <Stack gap="var(--space-md)">
+          <Stack gap="md">
             <Text kind="label" tone="muted">Tones (body kind)</Text>
-            <Stack gap="var(--space-md)">
+            <Stack gap="md">
               {TONES.map((t) => (
-                <Stack gap="var(--space-xs)">
+                <Stack gap="xs">
                   <Text kind="label" tone="subtle">{t}</Text>
                   <Text tone={t}>{SAMPLE}</Text>
                 </Stack>

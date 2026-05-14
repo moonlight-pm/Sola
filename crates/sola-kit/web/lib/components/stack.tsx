@@ -3,9 +3,9 @@
 // gap and alignment).
 //
 // Stack is layout-only: no theme bindings, no colors, no typography.
-// Apps pass `gap` as a raw CSS length so a kit-themed gap is just
-// `gap="var(--space-md)"`; an apps that wants a literal pixel can
-// pass `"12px"`.
+// `gap` accepts a semantic SpaceTag (`"md"`) which expands to
+// `var(--space-md)`, or any raw CSS length (`"12px"`, `"0.5rem"`)
+// which passes through. See `resolveSpace` in `@sola/kit`.
 //
 // Renders `<div class="sola-stack" style="…">{children}</div>` with
 // every flex property derived from props serialized into the inline
@@ -24,6 +24,7 @@
 //                         unless asked to
 
 import { type Handle, type RemixNode } from "@remix-run/ui";
+import { resolveSpace, type SpaceValue } from "@sola/kit";
 
 export type StackDirection = "column" | "row";
 export type StackAlign = "start" | "center" | "end" | "stretch";
@@ -38,11 +39,11 @@ export interface StackProps {
   /** Main-axis direction. Defaults to "column" (vertical stack). */
   direction?: StackDirection;
   /**
-   * Gap between children, as a raw CSS length. Defaults to "0".
-   * Pass `var(--space-…)` for theme-driven spacing, or any CSS unit
-   * (px, rem, em, %) for one-off values.
+   * Gap between children. Pass a SpaceTag (`"md"`) for theme-driven
+   * spacing, or any raw CSS length (`"12px"`, `"0.5rem"`) for
+   * one-offs. Defaults to `"0"`.
    */
-  gap?: string;
+  gap?: SpaceValue;
   /** Cross-axis alignment. Defaults to "stretch" (matches flex). */
   align?: StackAlign;
   /** Main-axis distribution. Defaults to "start". */
@@ -97,7 +98,7 @@ export function Stack(handle: Handle<StackProps>) {
     const style = [
       `display: ${inline ? "inline-flex" : "flex"}`,
       `flex-direction: ${direction}`,
-      `gap: ${gap}`,
+      `gap: ${resolveSpace(gap)}`,
       `align-items: ${ALIGN[align]}`,
       `justify-content: ${JUSTIFY[justify]}`,
       `flex-wrap: ${wrap ? "wrap" : "nowrap"}`,

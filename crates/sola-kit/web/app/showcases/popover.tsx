@@ -19,7 +19,7 @@ const PLACEMENTS: PopoverPlacement[] = [
 
 function panelFor(placement: PopoverPlacement) {
   return (
-    <Stack gap="var(--space-xs)">
+    <Stack gap="xs">
       <Text kind="label">{placement}</Text>
       <Text>
         Popover content. Click outside, or the trigger again, to close.
@@ -30,14 +30,14 @@ function panelFor(placement: PopoverPlacement) {
 
 export function PopoverShowcase(_handle: Handle) {
   return () => (
-    <Stack gap="var(--space-xxl)">
+    <Stack gap="xxl">
       <Card
         label="Live preview"
         description="Single popover open globally — click a second trigger and the first closes automatically."
       >
-        <Stack gap="var(--space-sm)">
+        <Stack gap="sm">
           <Text kind="label">Placements</Text>
-          <Stack direction="row" gap="var(--space-lg)" wrap>
+          <Stack direction="row" gap="lg" wrap>
             {PLACEMENTS.map((p) => (
               <Popover placement={p} content={panelFor(p)}>
                 <Button variant="ghost">{p}</Button>

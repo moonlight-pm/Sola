@@ -49,17 +49,17 @@ export function SwatchShowcase(handle: Handle) {
   };
 
   return () => (
-    <Stack gap="var(--space-xxl)">
+    <Stack gap="xxl">
       <Card
         label="Live preview"
         description="Palette atoms, the space-scale sizes, an alpha ramp using color-mix, and the editable mode that opens a ColorPicker on click."
       >
-        <Stack gap="var(--space-xl)">
-          <Stack gap="var(--space-sm)">
+        <Stack gap="xl">
+          <Stack gap="sm">
             <Text kind="label">Palette atoms</Text>
-            <Stack direction="row" gap="var(--space-md)" align="center" wrap>
+            <Stack direction="row" gap="md" align="center" wrap>
               {PALETTE_COLORS.map((c) => (
-                <Stack gap="var(--space-xs)" align="center">
+                <Stack gap="xs" align="center">
                   <Swatch color={c.value} />
                   <Text kind="caption" tone="muted">{c.name}</Text>
                 </Stack>
@@ -67,11 +67,11 @@ export function SwatchShowcase(handle: Handle) {
             </Stack>
           </Stack>
 
-          <Stack gap="var(--space-sm)">
+          <Stack gap="sm">
             <Text kind="label">Sizes (space scale)</Text>
-            <Stack direction="row" gap="var(--space-md)" align="end">
+            <Stack direction="row" gap="md" align="end">
               {SIZES.map((s) => (
-                <Stack gap="var(--space-xs)" align="center">
+                <Stack gap="xs" align="center">
                   <Swatch color="var(--accent)" size={s} />
                   <Text kind="caption" tone="muted">{s}</Text>
                 </Stack>
@@ -79,11 +79,11 @@ export function SwatchShowcase(handle: Handle) {
             </Stack>
           </Stack>
 
-          <Stack gap="var(--space-sm)">
+          <Stack gap="sm">
             <Text kind="label">Transparency (accent at varying alpha)</Text>
-            <Stack direction="row" gap="var(--space-md)" align="center">
+            <Stack direction="row" gap="md" align="center">
               {ALPHA_STEPS.map((a) => (
-                <Stack gap="var(--space-xs)" align="center">
+                <Stack gap="xs" align="center">
                   <Swatch color={a.value} size="xl" />
                   <Text kind="caption" tone="muted">α {a.label}</Text>
                 </Stack>
@@ -91,10 +91,10 @@ export function SwatchShowcase(handle: Handle) {
             </Stack>
           </Stack>
 
-          <Stack gap="var(--space-sm)">
+          <Stack gap="sm">
             <Text kind="label">Editable (onChange opens the picker)</Text>
             <div style="max-width: 360px;">
-              <Stack gap="var(--space-lg)">
+              <Stack gap="lg">
                 <Field
                   label="Live"
                   help={`Current value: ${live || "(empty)"}`}

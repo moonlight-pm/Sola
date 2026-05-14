@@ -14,7 +14,7 @@ import { Text } from "@sola/text";
 
 export function SidebarShowcase(_handle: Handle) {
   return () => (
-    <Stack gap="var(--space-xl)">
+    <Stack gap="xl">
       <Text tone="muted">
         Every page in this storybook is framed by the kit-shipped
         Sidebar on the left — that's your live example. The editor

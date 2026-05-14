@@ -12,13 +12,13 @@ import { TextInput } from "@sola/text-input";
 
 export function FieldShowcase(_handle: Handle) {
   return () => (
-    <Stack gap="var(--space-xxl)">
+    <Stack gap="xxl">
       <Card
         label="Live preview"
         description="Four common row shapes: label only, label + help, label + error, and labelless help-only."
       >
         <div style="max-width: 360px;">
-          <Stack gap="var(--space-lg)">
+          <Stack gap="lg">
             <Field label="Name">
               <TextInput placeholder="Joshua" />
             </Field>

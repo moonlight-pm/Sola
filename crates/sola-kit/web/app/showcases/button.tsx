@@ -18,27 +18,27 @@ export function ButtonShowcase(handle: Handle) {
   };
 
   return () => (
-    <Stack gap="var(--space-xxl)">
+    <Stack gap="xxl">
       <Card
         label="Live preview"
         description="Each row is one variant in idle and disabled states. The press counter at the top reflects onPress wiring."
       >
-        <Stack gap="var(--space-lg)">
+        <Stack gap="lg">
           <Text tone="muted">
             Pressed {count} time{count === 1 ? "" : "s"}.
           </Text>
 
-          <Stack gap="var(--space-xs)">
+          <Stack gap="xs">
             <Text kind="label">default</Text>
-            <Stack direction="row" gap="var(--space-md)" align="center">
+            <Stack direction="row" gap="md" align="center">
               <Button onPress={onPress}>Default</Button>
               <Button onPress={onPress} disabled>Disabled</Button>
             </Stack>
           </Stack>
 
-          <Stack gap="var(--space-xs)">
+          <Stack gap="xs">
             <Text kind="label">primary</Text>
-            <Stack direction="row" gap="var(--space-md)" align="center">
+            <Stack direction="row" gap="md" align="center">
               <Button variant="primary" onPress={onPress}>Primary</Button>
               <Button variant="primary" onPress={onPress} disabled>
                 Disabled
@@ -46,9 +46,9 @@ export function ButtonShowcase(handle: Handle) {
             </Stack>
           </Stack>
 
-          <Stack gap="var(--space-xs)">
+          <Stack gap="xs">
             <Text kind="label">ghost</Text>
-            <Stack direction="row" gap="var(--space-md)" align="center">
+            <Stack direction="row" gap="md" align="center">
               <Button variant="ghost" onPress={onPress}>Ghost</Button>
               <Button variant="ghost" onPress={onPress} disabled>
                 Disabled
@@ -56,9 +56,9 @@ export function ButtonShowcase(handle: Handle) {
             </Stack>
           </Stack>
 
-          <Stack gap="var(--space-xs)">
+          <Stack gap="xs">
             <Text kind="label">danger</Text>
-            <Stack direction="row" gap="var(--space-md)" align="center">
+            <Stack direction="row" gap="md" align="center">
               <Button variant="danger" onPress={onPress}>Danger</Button>
               <Button variant="danger" onPress={onPress} disabled>
                 Disabled

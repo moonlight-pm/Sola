@@ -18,13 +18,13 @@ export function TextInputShowcase(handle: Handle) {
   };
 
   return () => (
-    <Stack gap="var(--space-xxl)">
+    <Stack gap="xxl">
       <Card
         label="Live preview"
         description="Each row demonstrates a different state — controlled input, type variants, disabled, and invalid border swap."
       >
         <div style="max-width: 360px;">
-          <Stack gap="var(--space-lg)">
+          <Stack gap="lg">
             <Field
               label="Live"
               help={`onInput → "${live || "(empty)"}"`}

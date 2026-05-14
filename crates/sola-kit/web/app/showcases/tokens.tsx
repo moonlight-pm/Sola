@@ -130,7 +130,7 @@ export function TokensShowcase(handle: Handle) {
   return () => {
     if (!theme) {
       return (
-        <Stack gap="var(--space-md)">
+        <Stack gap="md">
           <Text tone="subtle">
             Waiting for the first theme delivery from the bus…
           </Text>
@@ -174,7 +174,7 @@ export function TokensShowcase(handle: Handle) {
     };
 
     return (
-      <Stack gap="var(--space-xxl)">
+      <Stack gap="xxl">
         <Text tone="muted">
           Edit palette atoms — every component slot bound to a
           token follows the change automatically.

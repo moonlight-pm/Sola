@@ -29,6 +29,33 @@ export type TokenKind =
   | "Space"
   | "Radius";
 
+// ── Token resolution ───────────────────────────────────────────────
+//
+// Components that accept a "design-system or raw CSS" value (Stack
+// gap, Swatch size, future padding/radius props) take a SpaceValue:
+// either a semantic tag like "md" — which expands to
+// `var(--space-md)` — or any raw CSS length like "12px" / "0.5rem"
+// which passes through verbatim. The `(string & {})` intersection
+// keeps TS literal-union autocomplete for the tags without
+// collapsing the type back to plain `string`.
+
+export type SpaceTag = "xs" | "sm" | "md" | "lg" | "xl" | "xxl";
+export type SpaceValue = SpaceTag | (string & {});
+
+const SPACE_TAGS: ReadonlySet<string> = new Set([
+  "xs",
+  "sm",
+  "md",
+  "lg",
+  "xl",
+  "xxl",
+]);
+
+/** Tag → `var(--space-${tag})`; raw CSS lengths pass through. */
+export function resolveSpace(value: SpaceValue): string {
+  return SPACE_TAGS.has(value) ? `var(--space-${value})` : value;
+}
+
 export interface Token {
   kind: TokenKind;
   value: string;
