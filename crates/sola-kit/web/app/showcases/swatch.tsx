@@ -4,6 +4,8 @@
 // progressively visible.
 
 import { type Handle } from "@remix-run/ui";
+import { BindingsEditor } from "@sola/bindings-editor";
+import { Card } from "@sola/card";
 import { Stack } from "@sola/stack";
 import { Swatch } from "@sola/swatch";
 import { Text } from "@sola/text";
@@ -37,41 +39,50 @@ const ALPHA_STEPS = [
 export function SwatchShowcase(_handle: Handle) {
   return () => (
     <Stack gap="var(--space-xxl)">
-      <Stack gap="var(--space-sm)">
-        <Text kind="label">palette atoms</Text>
-        <Stack direction="row" gap="var(--space-md)" align="center" wrap>
-          {PALETTE_COLORS.map((c) => (
-            <Stack gap="var(--space-xs)" align="center">
-              <Swatch color={c.value} />
-              <Text kind="caption" tone="muted">{c.name}</Text>
+      <Card
+        label="Live preview"
+        description="Palette atoms, size scale, and an alpha ramp using color-mix so the row follows whatever color is bound to --accent."
+      >
+        <Stack gap="var(--space-xl)">
+          <Stack gap="var(--space-sm)">
+            <Text kind="label">Palette atoms</Text>
+            <Stack direction="row" gap="var(--space-md)" align="center" wrap>
+              {PALETTE_COLORS.map((c) => (
+                <Stack gap="var(--space-xs)" align="center">
+                  <Swatch color={c.value} />
+                  <Text kind="caption" tone="muted">{c.name}</Text>
+                </Stack>
+              ))}
             </Stack>
-          ))}
-        </Stack>
-      </Stack>
+          </Stack>
 
-      <Stack gap="var(--space-sm)">
-        <Text kind="label">sizes</Text>
-        <Stack direction="row" gap="var(--space-md)" align="end">
-          {SIZES.map((s) => (
-            <Stack gap="var(--space-xs)" align="center">
-              <Swatch color="var(--accent)" size={s} />
-              <Text kind="caption" tone="muted">{s}</Text>
+          <Stack gap="var(--space-sm)">
+            <Text kind="label">Sizes</Text>
+            <Stack direction="row" gap="var(--space-md)" align="end">
+              {SIZES.map((s) => (
+                <Stack gap="var(--space-xs)" align="center">
+                  <Swatch color="var(--accent)" size={s} />
+                  <Text kind="caption" tone="muted">{s}</Text>
+                </Stack>
+              ))}
             </Stack>
-          ))}
-        </Stack>
-      </Stack>
+          </Stack>
 
-      <Stack gap="var(--space-sm)">
-        <Text kind="label">transparency (accent at varying alpha)</Text>
-        <Stack direction="row" gap="var(--space-md)" align="center">
-          {ALPHA_STEPS.map((a) => (
-            <Stack gap="var(--space-xs)" align="center">
-              <Swatch color={a.value} size="32px" />
-              <Text kind="caption" tone="muted">α {a.label}</Text>
+          <Stack gap="var(--space-sm)">
+            <Text kind="label">Transparency (accent at varying alpha)</Text>
+            <Stack direction="row" gap="var(--space-md)" align="center">
+              {ALPHA_STEPS.map((a) => (
+                <Stack gap="var(--space-xs)" align="center">
+                  <Swatch color={a.value} size="32px" />
+                  <Text kind="caption" tone="muted">α {a.label}</Text>
+                </Stack>
+              ))}
             </Stack>
-          ))}
+          </Stack>
         </Stack>
-      </Stack>
+      </Card>
+
+      <BindingsEditor componentName="swatch" />
     </Stack>
   );
 }

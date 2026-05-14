@@ -1,11 +1,14 @@
-//! `text` component bindings. The Tsx and CSS siblings live at
-//! `web/lib/components/text.{tsx,css}` and reference only
-//! `--sola-text-*` scoped vars. Text is the typography primitive:
-//! one slot per `kind` (display / heading / body-lg / body / caption
-//! / label) drives the font-size, and two tone slots provide muted
-//! and subtle color treatments layered on top.
+//! `text` component bindings + editor categories. The Tsx and CSS
+//! siblings live at `web/lib/components/text.{tsx,css}` and
+//! reference only `--sola-text-*` scoped vars. Text is the
+//! typography primitive: one slot per `kind` (display / heading /
+//! body-lg / body / caption / label) drives the font-size, and two
+//! tone slots provide muted and subtle color treatments layered on
+//! top.
 
 use sola_core::theme::{Binding, ComponentBindings};
+
+use crate::categories::{Category, SlotEntry};
 
 pub fn bindings() -> ComponentBindings {
     let mut comp = ComponentBindings::default();
@@ -25,4 +28,35 @@ pub fn bindings() -> ComponentBindings {
     comp.slots.insert("muted-color".into(), Binding::new("text", "text-secondary"));
     comp.slots.insert("subtle-color".into(), Binding::new("text", "text-tertiary"));
     comp
+}
+
+pub fn categories() -> Vec<Category> {
+    vec![
+        Category::new(
+            "sizes",
+            "Sizes",
+            vec![
+                SlotEntry::new("display-size", "Display"),
+                SlotEntry::new("heading-size", "Heading"),
+                SlotEntry::new("body-lg-size", "Body (large)"),
+                SlotEntry::new("body-size", "Body"),
+                SlotEntry::new("caption-size", "Caption"),
+                SlotEntry::new("label-size", "Label"),
+            ],
+        )
+        .with_description("One slot per `kind` — picks the font-size token used by that variant."),
+        Category::new(
+            "tone",
+            "Tone & label",
+            vec![
+                SlotEntry::new("label-color", "Label color"),
+                SlotEntry::new("muted-color", "Muted tone"),
+                SlotEntry::new("subtle-color", "Subtle tone"),
+            ],
+        )
+        .with_description(
+            "Label color is dedicated to `kind=\"label\"`; muted and\
+             subtle tones overlay any kind via the `tone` prop.",
+        ),
+    ]
 }

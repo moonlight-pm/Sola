@@ -65,7 +65,15 @@ impl Category {
 /// dump.
 pub fn for_component(name: &str) -> Vec<Category> {
     match name {
+        "button" => crate::components::button::categories(),
+        "color-input" => crate::components::color_input::categories(),
+        "field" => crate::components::field::categories(),
+        "pane" => crate::components::pane::categories(),
+        "popover" => crate::components::popover::categories(),
         "sidebar" => crate::components::sidebar::categories(),
+        "swatch" => crate::components::swatch::categories(),
+        "text" => crate::components::text::categories(),
+        "text-input" => crate::components::text_input::categories(),
         _ => Vec::new(),
     }
 }

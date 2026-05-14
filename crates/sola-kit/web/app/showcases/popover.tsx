@@ -3,7 +3,9 @@
 // outside to close; opening one closes any other.
 
 import { type Handle } from "@remix-run/ui";
+import { BindingsEditor } from "@sola/bindings-editor";
 import { Button } from "@sola/button";
+import { Card } from "@sola/card";
 import { Popover, type PopoverPlacement } from "@sola/popover";
 import { Stack } from "@sola/stack";
 import { Text } from "@sola/text";
@@ -29,21 +31,23 @@ function panelFor(placement: PopoverPlacement) {
 export function PopoverShowcase(_handle: Handle) {
   return () => (
     <Stack gap="var(--space-xxl)">
-      <Text tone="muted">
-        Single popover open globally — click a second trigger and
-        the first closes automatically.
-      </Text>
-
-      <Stack gap="var(--space-md)">
-        <Text kind="label">placements</Text>
-        <Stack direction="row" gap="var(--space-lg)" wrap>
-          {PLACEMENTS.map((p) => (
-            <Popover placement={p} content={panelFor(p)}>
-              <Button variant="ghost">{p}</Button>
-            </Popover>
-          ))}
+      <Card
+        label="Live preview"
+        description="Single popover open globally — click a second trigger and the first closes automatically."
+      >
+        <Stack gap="var(--space-sm)">
+          <Text kind="label">Placements</Text>
+          <Stack direction="row" gap="var(--space-lg)" wrap>
+            {PLACEMENTS.map((p) => (
+              <Popover placement={p} content={panelFor(p)}>
+                <Button variant="ghost">{p}</Button>
+              </Popover>
+            ))}
+          </Stack>
         </Stack>
-      </Stack>
+      </Card>
+
+      <BindingsEditor componentName="popover" />
     </Stack>
   );
 }
