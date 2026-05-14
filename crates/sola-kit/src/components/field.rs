@@ -1,8 +1,8 @@
 //! `field` component bindings + editor categories. The Tsx and
 //! CSS siblings live at `web/lib/components/field.{tsx,css}` and
 //! reference only `--sola-field-*` scoped vars. Field is the
-//! labeled wrapper used around form controls (TextInput,
-//! ColorInput, …).
+//! labeled wrapper used around form controls (TextInput, Swatch,
+//! FontInput, NumberInput, …).
 
 use sola_core::theme::{Binding, ComponentBindings};
 

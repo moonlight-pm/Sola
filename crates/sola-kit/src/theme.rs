@@ -102,9 +102,6 @@ mod tests {
   --sola-card-padding-inline: var(--space-xl);
   --sola-card-radius: var(--radius-lg);
 
-  /* color-input */
-  --sola-color-input-swatch-size: var(--space-xxl);
-
   /* color-picker */
   --sola-color-picker-gap: var(--space-sm);
   --sola-color-picker-label-color: var(--text-secondary);

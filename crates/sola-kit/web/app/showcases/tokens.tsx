@@ -1,8 +1,8 @@
 // Tokens editor — the first functional storybook page. Reads the
 // current theme via `getTheme()` / `onThemeChange()` (populated by
 // the bus pump's structured `definition` push), groups palette
-// atoms by kind, and renders one Field per token: ColorInput for
-// `Color`, TextInput for everything else.
+// atoms by kind, and renders one Field per token: an editable
+// Swatch for `Color`, TextInput for everything else.
 //
 // Edits commit on blur/Enter via `onChange` (not `onInput` — token
 // editing isn't a hot loop, and committing per-keystroke would
@@ -25,7 +25,6 @@
 
 import { type Handle } from "@remix-run/ui";
 import { Card } from "@sola/card";
-import { ColorInput } from "@sola/color-input";
 import { Field } from "@sola/field";
 import { FontInput } from "@sola/font-input";
 import {
@@ -38,6 +37,7 @@ import {
 import { invoke } from "@sola/ipc";
 import { NumberInput } from "@sola/number-input";
 import { Stack } from "@sola/stack";
+import { Swatch } from "@sola/swatch";
 import { Text } from "@sola/text";
 import { TextInput } from "@sola/text-input";
 
@@ -198,7 +198,13 @@ export function TokensShowcase(handle: Handle) {
                         title={helpText}
                       >
                         {kind === "Color"
-                          ? <ColorInput value={token.value} onChange={onChange} />
+                          ? (
+                            <Swatch
+                              color={token.value}
+                              size="xxl"
+                              onChange={onChange}
+                            />
+                          )
                           : kind === "FontFamily"
                           ? <FontInput value={token.value} onChange={onChange} />
                           : kind === "TextSize" ||

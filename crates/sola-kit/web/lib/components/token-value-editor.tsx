@@ -1,7 +1,7 @@
 // TokenValueEditor — picks the right input primitive for a Token
 // based on its `kind` and forwards value / onChange:
 //
-//   Color       → <ColorInput>
+//   Color       → <Swatch onChange=...>
 //   FontFamily  → <FontInput>
 //   TextSize    → <NumberInput unit="px" min={0}>
 //   Space       → <NumberInput unit="px" min={0}>
@@ -14,10 +14,10 @@
 // only requires touching this file.
 
 import { type Handle } from "@remix-run/ui";
-import { ColorInput } from "@sola/color-input";
 import { FontInput } from "@sola/font-input";
 import { type Token } from "@sola/kit";
 import { NumberInput } from "@sola/number-input";
+import { Swatch } from "@sola/swatch";
 import { TextInput } from "@sola/text-input";
 
 export interface TokenValueEditorProps {
@@ -30,7 +30,17 @@ export function TokenValueEditor(handle: Handle<TokenValueEditorProps>) {
     const { token, onChange } = handle.props;
     switch (token.kind) {
       case "Color":
-        return <ColorInput value={token.value} onChange={onChange} />;
+        // `xxl` is the kit's largest space-scale step (24px) — the
+        // size we used for the previous ColorInput trigger. Reads
+        // as a clickable affordance in a Field row without
+        // dominating the surrounding layout.
+        return (
+          <Swatch
+            color={token.value}
+            size="xxl"
+            onChange={onChange}
+          />
+        );
       case "FontFamily":
         return <FontInput value={token.value} onChange={onChange} />;
       case "TextSize":

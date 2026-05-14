@@ -87,3 +87,40 @@
 .sola-color-picker-slider-alpha {
   background-size: auto, 8px 8px;
 }
+
+/* Copy-to-clipboard button living in the hex TextInput's trailing
+   slot. Always visible inside the picker (no hover-reveal) — the
+   user is already in a dedicated workspace, so the affordance
+   should be present, not hidden. */
+.sola-color-picker-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--sola-color-picker-label-color);
+
+  cursor: pointer;
+  appearance: none;
+  transition: background 80ms ease, color 80ms ease;
+}
+
+.sola-color-picker-copy:hover {
+  background: var(--sola-color-picker-slider-track-bg);
+  color: var(--sola-color-picker-slider-thumb-bg);
+}
+
+.sola-color-picker-copy:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.sola-color-picker-copy-icon {
+  width: 14px;
+  height: 14px;
+}

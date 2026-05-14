@@ -14,7 +14,6 @@
 import { type Handle, type RemixNode } from "@remix-run/ui";
 
 import { ButtonShowcase } from "./button.tsx";
-import { ColorInputShowcase } from "./color-input.tsx";
 import { FieldShowcase } from "./field.tsx";
 import { PaneShowcase } from "./pane.tsx";
 import { PopoverShowcase } from "./popover.tsx";
@@ -44,7 +43,6 @@ export const showcases: ShowcaseEntry[] = [
   { id: "tokens", label: "Tokens", section: "Theme", component: TokensShowcase },
   { id: "stack", label: "Stack", section: "Layout", component: StackShowcase },
   { id: "button", label: "Button", section: "Components", component: ButtonShowcase },
-  { id: "color-input", label: "ColorInput", section: "Components", component: ColorInputShowcase },
   { id: "field", label: "Field", section: "Components", component: FieldShowcase },
   { id: "pane", label: "Pane", section: "Components", component: PaneShowcase },
   { id: "popover", label: "Popover", section: "Components", component: PopoverShowcase },

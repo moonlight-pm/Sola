@@ -10,9 +10,13 @@
 //
 // Used inside `<Field>` for labeled forms; `<Field>`'s `<label>`
 // wrapping makes clicking the label text focus this input via
-// native HTML semantics.
+// native HTML semantics. When a `trailing` slot is set the input
+// is rendered inside a `.sola-text-input-wrapper` span, with the
+// trailing content absolutely positioned at the input's right
+// edge and the input's right padding extended so typed text
+// doesn't collide with it.
 
-import { type Handle } from "@remix-run/ui";
+import { type Handle, type RemixNode } from "@remix-run/ui";
 import { on } from "@sola/kit";
 
 export type TextInputType = "text" | "search" | "email" | "url" | "password";
@@ -37,6 +41,14 @@ export interface TextInputProps {
   /** Visual error state. Swaps the border to the error color; pair
       with a Field-level `error` prop for the message. */
   invalid?: boolean;
+
+  /**
+   * Optional content rendered inside the input box at the right
+   * edge — copy buttons, clear icons, password reveal toggles. The
+   * input's right padding is extended so typed text doesn't sit
+   * underneath whatever you pass here.
+   */
+  trailing?: RemixNode;
 
   /**
    * Fires on every keystroke / IME composition event. The string
@@ -65,15 +77,17 @@ export function TextInput(handle: Handle<TextInputProps>) {
   };
 
   return () => {
-    const { value, placeholder, type, disabled, invalid } = handle.props;
+    const { value, placeholder, type, disabled, invalid, trailing } =
+      handle.props;
     const classes = [
       "sola-text-input",
       invalid ? "is-invalid" : "",
+      trailing ? "has-trailing" : "",
     ]
       .filter(Boolean)
       .join(" ");
 
-    return (
+    const input = (
       <input
         type={type ?? "text"}
         class={classes}
@@ -82,6 +96,15 @@ export function TextInput(handle: Handle<TextInputProps>) {
         disabled={disabled ? true : false}
         mix={[on("input", handleInput), on("change", handleChange)]}
       />
+    );
+
+    if (!trailing) return input;
+
+    return (
+      <span class="sola-text-input-wrapper">
+        {input}
+        <span class="sola-text-input-trailing">{trailing}</span>
+      </span>
     );
   };
 }

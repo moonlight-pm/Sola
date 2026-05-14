@@ -1,8 +1,8 @@
 //! `color-picker` component bindings. The Tsx and CSS siblings
 //! live at `web/lib/components/color-picker.{tsx,css}` and
 //! reference only `--sola-color-picker-*` scoped vars. ColorPicker
-//! is the HSL+alpha panel that ColorInput shows inside its
-//! Popover when the swatch trigger is clicked.
+//! is the HSL+alpha panel an editable Swatch shows inside its
+//! Popover when the swatch is clicked.
 
 use sola_core::theme::{Binding, ComponentBindings};
 

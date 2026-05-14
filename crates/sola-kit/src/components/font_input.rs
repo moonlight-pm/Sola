@@ -5,8 +5,8 @@
 //!
 //! FontInput is a trigger that opens a popover with a searchable
 //! list of installed font families (each rendered in its own font
-//! for instant recognition). Mirrors the ColorInput → ColorPicker
-//! pattern but for typography.
+//! for instant recognition). Mirrors the editable Swatch →
+//! ColorPicker pattern but for typography.
 
 use sola_core::theme::{Binding, ComponentBindings};
 

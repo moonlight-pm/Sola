@@ -19,7 +19,6 @@ use sola_core::theme::ComponentBindings;
 pub mod bindings_editor;
 pub mod button;
 pub mod card;
-pub mod color_input;
 pub mod color_picker;
 pub mod field;
 pub mod font_input;
@@ -44,7 +43,6 @@ pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     map.insert("bindings-editor".into(), bindings_editor::bindings());
     map.insert("button".into(), button::bindings());
     map.insert("card".into(), card::bindings());
-    map.insert("color-input".into(), color_input::bindings());
     map.insert("color-picker".into(), color_picker::bindings());
     map.insert("field".into(), field::bindings());
     map.insert("font-input".into(), font_input::bindings());

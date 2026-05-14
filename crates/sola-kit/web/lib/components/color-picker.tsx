@@ -1,7 +1,7 @@
-// ColorPicker — the HSL + alpha editor panel ColorInput shows
-// inside its Popover. Adapted from the lit-based picker in the
-// legacy sola-kit worktree (web/app/src/color-picker.ts), ported to
-// Remix v3 with closure-captured state.
+// ColorPicker — the HSL + alpha editor panel an editable Swatch
+// shows inside its Popover. Adapted from the lit-based picker in
+// the legacy sola-kit worktree (web/app/src/color-picker.ts),
+// ported to Remix v3 with closure-captured state.
 //
 // Pure presentation + math: receives `value` (any CSS color
 // expression we can parse — hex / hex+alpha / rgb / rgba), fires
@@ -9,11 +9,20 @@
 // edit state so slider drags don't have to round-trip through the
 // consumer per pixel.
 //
+// The hex field carries a copy-to-clipboard button in its trailing
+// slot. Clicking copies the current draft value verbatim; the icon
+// swaps to a checkmark for ~900ms as non-blocking confirmation.
+// Living here (rather than next to the swatch trigger) keeps the
+// copy affordance discoverable when the user is actually inspecting
+// a value, and stops the swatch — which now carries the editable
+// semantics directly — from also juggling clipboard chrome.
+//
 // We don't reach for `<input type="color">` — WebKit on Linux
 // spawns the GTK color chooser dialog, which looks foreign and
 // needs GSettings schemas. This is a fully in-window picker.
 
 import { type Handle, ref } from "@remix-run/ui";
+import { on } from "@sola/kit";
 import { TextInput } from "@sola/text-input";
 
 interface Rgba { r: number; g: number; b: number; a: number }
@@ -40,6 +49,32 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
   let hexDraft = "";
   let lastEmitted: string | null = null;
   let lastSeenValue: string | undefined = undefined;
+  // `copied` flips true for ~900ms after a successful copy so the
+  // trailing icon swaps to a check mark. Non-blocking confirmation
+  // without a separate toast/snackbar component.
+  let copied = false;
+  let copiedTimer: number | null = null;
+
+  const onCopy = async (e: Event) => {
+    // Stop the event reaching the popover-root listener — clicking
+    // the trailing button is a separate action, not a trigger
+    // toggle.
+    e.stopPropagation();
+    if (!hexDraft) return;
+    try {
+      await navigator.clipboard.writeText(hexDraft);
+      copied = true;
+      handle.update();
+      if (copiedTimer !== null) clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => {
+        copied = false;
+        copiedTimer = null;
+        handle.update();
+      }, 900) as unknown as number;
+    } catch (err) {
+      console.error("ColorPicker copy failed", err);
+    }
+  };
   // Slider DOM refs, captured by the `ref` mixin. The sliders are
   // intentionally uncontrolled: passing `value` would trip Remix's
   // controlled-input reflection, which schedules a microtask that
@@ -226,10 +261,63 @@ export function ColorPicker(handle: Handle<ColorPickerProps>) {
           "sola-color-picker-slider-alpha",
           alphaStyle,
         )}
-        <TextInput value={hexDraft} onInput={onHexInput} />
+        <TextInput
+          value={hexDraft}
+          onInput={onHexInput}
+          trailing={
+            <button
+              type="button"
+              class="sola-color-picker-copy"
+              aria-label={copied ? "Copied" : "Copy color value"}
+              title={copied ? "Copied" : "Copy color value"}
+              disabled={hexDraft ? false : true}
+              mix={[on("click", onCopy)]}
+            >
+              {copied ? checkIcon() : copyIcon()}
+            </button>
+          }
+        />
       </div>
     );
   };
+}
+
+// Inline lucide icons (24×24 viewBox, strokes use currentColor).
+// Inlined rather than fetched from /opt/sola/share/icons because the
+// kit doesn't yet mount the icon directory under its app:// scheme.
+function copyIcon() {
+  return (
+    <svg
+      class="sola-color-picker-copy-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </svg>
+  );
+}
+
+function checkIcon() {
+  return (
+    <svg
+      class="sola-color-picker-copy-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
 }
 
 // ---------- color math (ported from the legacy picker) ----------

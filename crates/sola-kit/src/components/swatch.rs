@@ -28,7 +28,8 @@ pub fn categories() -> Vec<Category> {
         )
         .with_description(
             "Outline + rounding wrapped around the color fill. Affects\
-             every consumer (ColorInput trigger, palette displays, etc).",
+             every Swatch — palette displays, transparency demos, and\
+             editable triggers alike.",
         ),
     ]
 }

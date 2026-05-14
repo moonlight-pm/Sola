@@ -9,7 +9,12 @@
      1. Base background — a 4-step gradient producing the 8x8
         checker pattern. Always visible.
      2. ::after overlay — solid `var(--swatch-color)` at full
-        coverage; semi-transparent values reveal the checker beneath. */
+        coverage; semi-transparent values reveal the checker beneath.
+
+   Size is selected via one of the `.sola-swatch-${tag}` modifier
+   classes (xs / sm / md / lg / xl / xxl). The Tsx side enforces the
+   tagged-enum API; the CSS just sets width = height = the matching
+   space-scale token for each modifier. */
 
 .sola-swatch {
   display: inline-block;
@@ -38,4 +43,22 @@
   position: absolute;
   inset: 0;
   background: var(--swatch-color, transparent);
+}
+
+/* Size modifiers — each maps to the matching space-scale token.
+   The order is the size order, smallest first, to keep this file
+   readable. */
+.sola-swatch-xs  { width: var(--space-xs);  height: var(--space-xs);  }
+.sola-swatch-sm  { width: var(--space-sm);  height: var(--space-sm);  }
+.sola-swatch-md  { width: var(--space-md);  height: var(--space-md);  }
+.sola-swatch-lg  { width: var(--space-lg);  height: var(--space-lg);  }
+.sola-swatch-xl  { width: var(--space-xl);  height: var(--space-xl);  }
+.sola-swatch-xxl { width: var(--space-xxl); height: var(--space-xxl); }
+
+/* Editable swatches read as clickable. The Popover anchors itself
+   to this element via its own root span; nothing else changes
+   visually — the affordance is the pointer + the swatch's role as
+   a button by virtue of opening the picker. */
+.sola-swatch.is-editable {
+  cursor: pointer;
 }

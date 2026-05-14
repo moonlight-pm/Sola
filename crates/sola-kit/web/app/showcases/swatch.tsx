@@ -1,13 +1,16 @@
-// Swatch showcase — palette atoms, transparency demo, and size
-// variants. The transparency row uses the kit's palette tokens at
-// successively-lower alpha so the checker pattern beneath becomes
-// progressively visible.
+// Swatch showcase — palette atoms, semantic-token sizes,
+// transparency demo, and the editable mode that absorbed the old
+// ColorInput. Every size in this page is from the kit's space
+// scale (xs / sm / md / lg / xl / xxl) — pixel values are not
+// expressible at the type level, which is the design-system
+// guarantee for color affordances.
 
 import { type Handle } from "@remix-run/ui";
 import { BindingsEditor } from "@sola/bindings-editor";
 import { Card } from "@sola/card";
+import { Field } from "@sola/field";
 import { Stack } from "@sola/stack";
-import { Swatch } from "@sola/swatch";
+import { type SwatchSize, Swatch } from "@sola/swatch";
 import { Text } from "@sola/text";
 
 const PALETTE_COLORS: { name: string; value: string }[] = [
@@ -21,7 +24,7 @@ const PALETTE_COLORS: { name: string; value: string }[] = [
   { name: "success", value: "var(--success)" },
 ];
 
-const SIZES = ["12px", "20px", "32px", "48px"];
+const SIZES: SwatchSize[] = ["xs", "sm", "md", "lg", "xl", "xxl"];
 
 // Alpha steps reference the accent atom via color-mix so the demo
 // follows whatever color the theme has bound `--accent` to —
@@ -36,12 +39,20 @@ const ALPHA_STEPS = [
   { label: "0.0", value: "transparent" },
 ];
 
-export function SwatchShowcase(_handle: Handle) {
+export function SwatchShowcase(handle: Handle) {
+  // Editable demo — round-trips a value through the picker so the
+  // page can show "you picked X" with a live update.
+  let live = "#00d4ff";
+  const onLiveChange = (v: string) => {
+    live = v;
+    handle.update();
+  };
+
   return () => (
     <Stack gap="var(--space-xxl)">
       <Card
         label="Live preview"
-        description="Palette atoms, size scale, and an alpha ramp using color-mix so the row follows whatever color is bound to --accent."
+        description="Palette atoms, the space-scale sizes, an alpha ramp using color-mix, and the editable mode that opens a ColorPicker on click."
       >
         <Stack gap="var(--space-xl)">
           <Stack gap="var(--space-sm)">
@@ -57,7 +68,7 @@ export function SwatchShowcase(_handle: Handle) {
           </Stack>
 
           <Stack gap="var(--space-sm)">
-            <Text kind="label">Sizes</Text>
+            <Text kind="label">Sizes (space scale)</Text>
             <Stack direction="row" gap="var(--space-md)" align="end">
               {SIZES.map((s) => (
                 <Stack gap="var(--space-xs)" align="center">
@@ -73,11 +84,48 @@ export function SwatchShowcase(_handle: Handle) {
             <Stack direction="row" gap="var(--space-md)" align="center">
               {ALPHA_STEPS.map((a) => (
                 <Stack gap="var(--space-xs)" align="center">
-                  <Swatch color={a.value} size="32px" />
+                  <Swatch color={a.value} size="xl" />
                   <Text kind="caption" tone="muted">α {a.label}</Text>
                 </Stack>
               ))}
             </Stack>
+          </Stack>
+
+          <Stack gap="var(--space-sm)">
+            <Text kind="label">Editable (onChange opens the picker)</Text>
+            <div style="max-width: 360px;">
+              <Stack gap="var(--space-lg)">
+                <Field
+                  label="Live"
+                  help={`Current value: ${live || "(empty)"}`}
+                >
+                  <Swatch
+                    color={live}
+                    size="xxl"
+                    onChange={onLiveChange}
+                  />
+                </Field>
+
+                <Field label="Hex">
+                  <Swatch color="#161b22" size="xxl" onChange={() => {}} />
+                </Field>
+
+                <Field label="Hex + alpha">
+                  <Swatch color="#3fb95080" size="xxl" onChange={() => {}} />
+                </Field>
+
+                <Field
+                  label="var() reference"
+                  help="Picker opens at its last HSLA state; the swatch still renders the var."
+                >
+                  <Swatch
+                    color="var(--accent)"
+                    size="xxl"
+                    onChange={() => {}}
+                  />
+                </Field>
+              </Stack>
+            </div>
           </Stack>
         </Stack>
       </Card>

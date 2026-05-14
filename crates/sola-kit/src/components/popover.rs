@@ -1,8 +1,9 @@
 //! `popover` component bindings + editor categories. The Tsx and
 //! CSS siblings live at `web/lib/components/popover.{tsx,css}` and
 //! reference only `--sola-popover-*` scoped vars. Popover is a
-//! floating panel anchored to a trigger; ColorInput's picker and
-//! every PopoverSelect dropdown inherit its surface chrome.
+//! floating panel anchored to a trigger; editable Swatch's
+//! ColorPicker and every PopoverSelect dropdown inherit its
+//! surface chrome.
 
 use sola_core::theme::{Binding, ComponentBindings};
 

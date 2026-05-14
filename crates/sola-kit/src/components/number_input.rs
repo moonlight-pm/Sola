@@ -13,7 +13,7 @@ use sola_core::theme::{Binding, ComponentBindings};
 pub fn bindings() -> ComponentBindings {
     let mut comp = ComponentBindings::default();
     // Body chrome mirrors the TextInput slot scheme so a row mixing
-    // TextInput, ColorInput, and NumberInput reads as one density.
+    // TextInput, Swatch, and NumberInput reads as one density.
     comp.slots.insert("bg".into(), Binding::new("surface", "bg-tertiary"));
     comp.slots.insert("text".into(), Binding::new("text", "text-primary"));
     comp.slots.insert("border".into(), Binding::new("border", "border"));
