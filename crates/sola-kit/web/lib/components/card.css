@@ -1,0 +1,26 @@
+/* Card styles — references only `--sola-card-*` scoped vars.
+   Layout default is `display: block`; consumers can opt-in to
+   grid / subgrid behaviour via page-level rules without Card
+   needing to know about its placement context. */
+
+.sola-card {
+  background: var(--sola-card-bg);
+  border: 1px solid var(--sola-card-border);
+  border-radius: var(--sola-card-radius);
+  padding:
+    var(--sola-card-padding-block)
+    var(--sola-card-padding-inline);
+}
+
+.sola-card-header {
+  /* Header sits above the body with a thin rule separating them.
+     The label / description stack uses a 2px gap so they read as
+     one block — bigger spacing would imply they're independent
+     items. */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--sola-card-border);
+  margin-bottom: var(--space-md);
+}

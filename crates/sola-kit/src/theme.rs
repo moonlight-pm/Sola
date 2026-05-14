@@ -101,6 +101,13 @@ mod tests {
   --sola-button-radius: var(--radius-md);
   --sola-button-text-size: var(--text-body);
 
+  /* card */
+  --sola-card-bg: var(--bg-secondary);
+  --sola-card-border: var(--border-subtle);
+  --sola-card-padding-block: var(--space-lg);
+  --sola-card-padding-inline: var(--space-xl);
+  --sola-card-radius: var(--radius-lg);
+
   /* color-input */
   --sola-color-input-swatch-size: var(--space-xxl);
 
