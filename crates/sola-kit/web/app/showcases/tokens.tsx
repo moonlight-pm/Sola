@@ -139,8 +139,11 @@ export function TokensShowcase(handle: Handle) {
     }
 
     // Bucket tokens by kind. Object.entries returns the BTreeMap-
-    // serialized order (alphabetical), which gives stable output
-    // within each bucket.
+    // serialized order (alphabetical); we leave that as the
+    // default for Color and FontFamily where there's no semantic
+    // ordering, and re-sort numeric kinds (TextSize / Space /
+    // Radius) by their actual value so the row reads smallest →
+    // largest instead of "lg, md, sm, xl, xs, xxl".
     const byKind: Record<TokenKind, [string, Token][]> = {
       Color: [],
       FontFamily: [],
@@ -150,6 +153,10 @@ export function TokensShowcase(handle: Handle) {
     };
     for (const [name, token] of Object.entries(theme.palette.tokens)) {
       byKind[token.kind].push([name, token]);
+    }
+    const NUMERIC_KINDS: TokenKind[] = ["TextSize", "Space", "Radius"];
+    for (const kind of NUMERIC_KINDS) {
+      byKind[kind].sort(([, a], [, b]) => parseFloat(a.value) - parseFloat(b.value));
     }
 
     // 2-column grid by default; the FontFamily group has long

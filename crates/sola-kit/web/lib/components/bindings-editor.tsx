@@ -323,10 +323,33 @@ export function BindingsEditor(handle: Handle<BindingsEditorProps>) {
 }
 
 function candidatesForGroup(theme: Theme, group: string): string[] {
-  const out: string[] = [];
+  // Each candidate is (name, value, numeric-or-null). When every
+  // value parses cleanly as a number (sizes, radii, text-sizes —
+  // everything stored as "<n>px"), we sort smallest → largest so
+  // the dropdown reads in size order instead of alphabetical
+  // "lg, md, sm, xl, xs, xxl" nonsense. Otherwise (colors, font
+  // families, anything else stringly-typed) we fall back to
+  // alphabetical, which is the right default for non-ordered
+  // values.
+  const candidates: { name: string; numeric: number | null }[] = [];
   for (const [name, token] of Object.entries(theme.palette.tokens)) {
-    if (token.groups.includes(group)) out.push(name);
+    if (!token.groups.includes(group)) continue;
+    const trimmed = token.value.trim();
+    const num = parseFloat(trimmed);
+    // parseFloat("12px") === 12; parseFloat("rgba(...)") === NaN;
+    // parseFloat("0.12") === 0.12. We additionally require the
+    // value to *start* with a digit to keep "0.5em" numeric but
+    // reject things like "color-mix(...)" that happen to embed
+    // numbers later in the string.
+    const numeric = !Number.isNaN(num) && /^[+-]?\d/.test(trimmed) ? num : null;
+    candidates.push({ name, numeric });
   }
-  out.sort();
-  return out;
+  const allNumeric = candidates.length > 0 &&
+    candidates.every((c) => c.numeric !== null);
+  candidates.sort((a, b) =>
+    allNumeric
+      ? (a.numeric as number) - (b.numeric as number)
+      : a.name.localeCompare(b.name)
+  );
+  return candidates.map((c) => c.name);
 }
