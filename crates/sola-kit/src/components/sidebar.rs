@@ -10,7 +10,7 @@ pub fn bindings() -> ComponentBindings {
     let mut comp = ComponentBindings::default();
     comp.slots.insert("bg".into(), Binding::new("surface", "bg-secondary"));
     comp.slots.insert("border".into(), Binding::new("border", "border-subtle"));
-    comp.slots.insert("section-label-color".into(), Binding::new("text", "text-secondary"));
+    comp.slots.insert("section-label-color".into(), Binding::new("text", "text-tertiary"));
     comp.slots.insert("section-label-size".into(), Binding::new("text-size", "text-caption"));
     comp.slots.insert("item-text-idle".into(), Binding::new("text", "text-secondary"));
     comp.slots.insert("item-text-active".into(), Binding::new("text", "text-primary"));

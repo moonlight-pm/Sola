@@ -46,6 +46,14 @@
   gap: 2px;
 }
 
+/* Second-and-later sections get extra breathing room above so each
+   title visually clusters with the items below it rather than
+   blending into the items above. First section sits flush with the
+   sidebar's top padding. */
+.sola-sidebar-section + .sola-sidebar-section {
+  margin-top: var(--space-md);
+}
+
 .sola-sidebar-section-label {
   display: block;
   margin: 0;
@@ -53,7 +61,7 @@
   font-size: var(--sola-sidebar-section-label-size);
   color: var(--sola-sidebar-section-label-color);
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   user-select: none;
 }

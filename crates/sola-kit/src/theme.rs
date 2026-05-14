@@ -197,7 +197,7 @@ mod tests {
   --sola-sidebar-item-text-size: var(--text-body);
   --sola-sidebar-padding-block: var(--space-md);
   --sola-sidebar-padding-inline: var(--space-sm);
-  --sola-sidebar-section-label-color: var(--text-secondary);
+  --sola-sidebar-section-label-color: var(--text-tertiary);
   --sola-sidebar-section-label-size: var(--text-caption);
 
   /* swatch */
