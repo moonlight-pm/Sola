@@ -24,6 +24,7 @@
 // then refreshes the visible token rows.
 
 import { type Handle } from "@remix-run/ui";
+import { Card } from "@sola/card";
 import { ColorInput } from "@sola/color-input";
 import { Field } from "@sola/field";
 import { FontInput } from "@sola/font-input";
@@ -151,29 +152,10 @@ export function TokensShowcase(handle: Handle) {
       byKind[token.kind].push([name, token]);
     }
 
-    // Container max-width is deliberate — at the storybook's full
-    // 1150 px width the tokens read as a sparse list of micro-controls.
-    // 880 px keeps two columns of inline-label rows comfortably wide
-    // (label band + control + breathing room) without going past where
-    // a reader naturally tracks.
-    const containerStyle =
-      "max-width: 880px; margin: 0 auto; width: 100%;";
-
-    const cardStyle = [
-      "background: var(--bg-secondary)",
-      "border: 1px solid var(--border-subtle)",
-      "border-radius: var(--radius-lg)",
-      "padding: var(--space-lg) var(--space-xl)",
-    ].join("; ");
-
-    const cardHeaderStyle = [
-      "padding-bottom: var(--space-md)",
-      "border-bottom: 1px solid var(--border-subtle)",
-      "margin-bottom: var(--space-md)",
-    ].join("; ");
-
     // 2-column grid by default; the FontFamily group has long
     // freetext values so it gets a single column for readability.
+    // (Page-level centering / max-width comes from main.tsx — the
+    // showcase only owns its own per-section layout.)
     const gridStyle = (kind: TokenKind) => {
       const cols = kind === "FontFamily" ? 1 : 2;
       return [
@@ -185,23 +167,19 @@ export function TokensShowcase(handle: Handle) {
     };
 
     return (
-      <div style={containerStyle}>
-        <Stack gap="var(--space-xxl)">
-          <Text tone="muted">
-            Edit palette atoms — every component slot bound to a
-            token follows the change automatically.
-          </Text>
+      <Stack gap="var(--space-xxl)">
+        <Text tone="muted">
+          Edit palette atoms — every component slot bound to a
+          token follows the change automatically.
+        </Text>
 
-          {KIND_ORDER.map((kind) => {
-            const entries = byKind[kind];
-            if (entries.length === 0) return "";
-            return (
-              <section style={cardStyle}>
-                <div style={cardHeaderStyle}>
-                  <Text kind="label">{KIND_LABELS[kind]}</Text>
-                </div>
-                <div style={gridStyle(kind)}>
-                  {entries.map(([name, token]) => {
+        {KIND_ORDER.map((kind) => {
+          const entries = byKind[kind];
+          if (entries.length === 0) return "";
+          return (
+            <Card label={KIND_LABELS[kind]}>
+              <div style={gridStyle(kind)}>
+                {entries.map(([name, token]) => {
                     const helpText = token.groups.length
                       ? `groups: ${token.groups.join(", ")}`
                       : "";
@@ -232,11 +210,10 @@ export function TokensShowcase(handle: Handle) {
                     );
                   })}
                 </div>
-              </section>
-            );
-          })}
-        </Stack>
-      </div>
+            </Card>
+          );
+        })}
+      </Stack>
     );
   };
 }

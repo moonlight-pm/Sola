@@ -76,7 +76,15 @@ export function Main(handle: Handle) {
             ))}
           </Sidebar>
           <Pane>
-            <Stack gap="var(--space-xl)" fill>
+            {/* Centered max-width column shared by every showcase
+                (and the page header above it). 880 px is the same
+                breakpoint Tokens has been using — wide enough for
+                two columns of inline-label rows without going past
+                where a reader naturally tracks. Sit inside the
+                Pane's padding rather than fighting it. */}
+            <div
+              style="max-width: 880px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: var(--space-xl);"
+            >
               {/* Persistent content header. Section heading on the
                   left, global theme actions on the right. Future
                   additions: theme name + save/load buttons. */}
@@ -100,7 +108,7 @@ export function Main(handle: Handle) {
                     No showcase registered for "{selectedId}".
                   </Text>
                 )}
-            </Stack>
+            </div>
           </Pane>
         </Stack>
       </Root>

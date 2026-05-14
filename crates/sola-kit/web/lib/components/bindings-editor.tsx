@@ -23,6 +23,7 @@
 // rendered output.
 
 import { type Handle } from "@remix-run/ui";
+import { Card } from "@sola/card";
 import { on } from "@sola/kit";
 import { invoke } from "@sola/ipc";
 import {
@@ -32,7 +33,6 @@ import {
   onThemeChange,
 } from "@sola/kit";
 import { Popover } from "@sola/popover";
-import { Stack } from "@sola/stack";
 import { Text } from "@sola/text";
 import { TokenValueEditor } from "@sola/token-value-editor";
 
@@ -162,101 +162,95 @@ export function BindingsEditor(handle: Handle<BindingsEditorProps>) {
       );
     }
 
+    // The editor is one outer grid; each category is a Card that
+    // spans all columns and uses `grid-template-columns: subgrid`
+    // to inherit the outer grid's column tracks. That gets us
+    // both the visual grouping (cards with header + chrome) and
+    // perfect column alignment top-to-bottom across cards — the
+    // Label / Picker / Value triplets in card N line up with the
+    // ones in card N+1 because they all consume the same outer
+    // grid columns. The subgrid override lives in this component's
+    // CSS, scoped under `.sola-bindings-editor` so Card stays
+    // display-block when used elsewhere.
     return (
-      <Stack gap="var(--space-xxl)">
+      <div class="sola-bindings-editor">
         {categories.map((cat) => (
-          <Stack gap="var(--space-sm)">
-            <Stack gap="var(--space-xxs, 2px)">
-              <Text kind="label">{cat.label}</Text>
-              {cat.description
-                ? (
-                  <Text tone="muted" kind="caption">
-                    {cat.description}
-                  </Text>
-                )
-                : ""}
-            </Stack>
-            <div class="sola-bindings-editor-grid">
-              {cat.slots.map((slot) => {
-                const binding = comp.slots[slot.key];
-                if (!binding) {
-                  return (
-                    <div class="sola-bindings-editor-row" key={slot.key}>
-                      <Text>{slot.label}</Text>
-                      <Text tone="muted">slot not in theme</Text>
-                      <span />
-                    </div>
-                  );
-                }
-                const tokenName = binding.token;
-                const token: Token | undefined =
-                  themeRef.palette.tokens[tokenName];
-                const candidates = candidatesForGroup(
-                  themeRef,
-                  binding.group,
-                );
-                const onValueChange = (v: string) => {
-                  rewriteToken(tokenName, v);
-                };
-                // Token picker — Popover-based so we never spawn a
-                // native OS popup window (CEF's <select> would,
-                // which sola-river sees as a real top-level surface
-                // and the shell rezones around).
-                const renderPickerContent = (
-                  { close }: { close: () => void },
-                ) => (
-                  <div class="sola-bindings-editor-picker-list">
-                    {candidates.map((cand) => {
-                      const selected = cand === tokenName;
-                      const cls = "sola-bindings-editor-picker-option" +
-                        (selected ? " is-selected" : "");
-                      return (
-                        <button
-                          type="button"
-                          class={cls}
-                          mix={[
-                            on("click", () => {
-                              rebindSlot(slot.key, cand);
-                              close();
-                            }),
-                          ]}
-                        >
-                          {cand}
-                        </button>
-                      );
-                    })}
-                  </div>
-                );
-                return (
-                  <div class="sola-bindings-editor-row" key={slot.key}>
-                    <span class="sola-bindings-editor-label">
-                      {slot.label}
+          <Card label={cat.label} description={cat.description}>
+            {cat.slots.flatMap((slot) => {
+              const binding = comp.slots[slot.key];
+              const slotKey = `${cat.id}/${slot.key}`;
+              if (!binding) {
+                return [
+                  <span class="sola-bindings-editor-label" key={`${slotKey}:lbl`}>
+                    {slot.label}
+                  </span>,
+                  <Text tone="muted" key={`${slotKey}:pick`}>—</Text>,
+                  <Text tone="muted" key={`${slotKey}:val`}>
+                    slot not in theme
+                  </Text>,
+                ];
+              }
+              const tokenName = binding.token;
+              const token: Token | undefined =
+                themeRef.palette.tokens[tokenName];
+              const candidates = candidatesForGroup(themeRef, binding.group);
+              const onValueChange = (v: string) => rewriteToken(tokenName, v);
+              // Token picker — Popover-based so we never spawn a
+              // native OS popup window (CEF's <select> would,
+              // which sola-river sees as a real top-level surface
+              // and the shell rezones around).
+              const renderPickerContent = (
+                { close }: { close: () => void },
+              ) => (
+                <div class="sola-bindings-editor-picker-list">
+                  {candidates.map((cand) => {
+                    const selected = cand === tokenName;
+                    const cls = "sola-bindings-editor-picker-option" +
+                      (selected ? " is-selected" : "");
+                    return (
+                      <button
+                        type="button"
+                        class={cls}
+                        mix={[
+                          on("click", () => {
+                            rebindSlot(slot.key, cand);
+                            close();
+                          }),
+                        ]}
+                      >
+                        {cand}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+              return [
+                <span class="sola-bindings-editor-label" key={`${slotKey}:lbl`}>
+                  {slot.label}
+                </span>,
+                <Popover content={renderPickerContent} key={`${slotKey}:pick`}>
+                  <span class="sola-bindings-editor-picker">
+                    <span class="sola-bindings-editor-picker-label">
+                      {tokenName}
                     </span>
-                    <Popover content={renderPickerContent}>
-                      <span class="sola-bindings-editor-picker">
-                        <span class="sola-bindings-editor-picker-label">
-                          {tokenName}
-                        </span>
-                        {chevronIcon()}
-                      </span>
-                    </Popover>
-                    <span class="sola-bindings-editor-value">
-                      {token
-                        ? (
-                          <TokenValueEditor
-                            token={token}
-                            onChange={onValueChange}
-                          />
-                        )
-                        : <Text tone="muted">missing token</Text>}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </Stack>
+                    {chevronIcon()}
+                  </span>
+                </Popover>,
+                <span class="sola-bindings-editor-value" key={`${slotKey}:val`}>
+                  {token
+                    ? (
+                      <TokenValueEditor
+                        token={token}
+                        onChange={onValueChange}
+                      />
+                    )
+                    : <Text tone="muted">missing token</Text>}
+                </span>,
+              ];
+            })}
+          </Card>
         ))}
-      </Stack>
+      </div>
     );
   };
 }

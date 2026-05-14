@@ -5,32 +5,44 @@
    <select>) so we don't spawn a real OS-level dropdown window
    that sola-river would treat as a separate surface. */
 
-.sola-bindings-editor-grid {
-  /* Three deliberately-sized columns so every row reads as the
-     same grid:
-       1. Label: shrinks to widest label (max-content) — labels
-          aren't truncated and the column doesn't reserve dead
-          space.
-       2. Token picker: fixed 180px so all pickers line up
-          vertically regardless of which token is bound.
-       3. Value editor: max-content so it sizes to the widest
-          editor across all rows — NumberInputs, ColorInputs and
-          FontInputs each render at their natural width, left-
-          aligned within the column.
-     A small column gap keeps the columns visually distinct
-     without horizontal rules. */
+/* Outer container: defines the three column tracks used by every
+   slot row across every category card. Each `.sola-card` child
+   spans all three columns and uses `grid-template-columns:
+   subgrid` to inherit those tracks — so the Label / Picker /
+   Value triplets line up vertically across cards even though
+   each card has its own visual chrome.
+     1. Label: shrinks to widest label (max-content).
+     2. Token picker: fixed 180px so all pickers align.
+     3. Value editor: `1fr` so the grid (and therefore each
+        card, which spans all 3 columns) stretches to fill the
+        page-level 880 px column from main.tsx — same width as
+        the Tokens cards. Value editors stay content-sized and
+        sit left-aligned inside their cell.
+   Cards stack vertically via the `row-gap` between grid rows. */
+.sola-bindings-editor {
   display: grid;
-  grid-template-columns: max-content 180px max-content;
+  grid-template-columns: max-content 180px 1fr;
   column-gap: var(--space-md);
-  row-gap: var(--space-xs);
-  align-items: center;
-  justify-content: start;
+  row-gap: var(--space-lg);
 }
 
-.sola-bindings-editor-row {
-  /* Each row is its own `display: contents` wrapper so the grid
-     columns line up across rows without a per-row container. */
-  display: contents;
+/* Each Card child overrides its default block layout to be a
+   subgrid that inherits the outer grid's column tracks. Card's
+   own padding / background / border / radius come through
+   unchanged from `.sola-card`. */
+.sola-bindings-editor > .sola-card {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  row-gap: var(--space-xs);
+  align-items: center;
+}
+
+/* Card's header is the first child of the section element; force
+   it to span all subgrid columns so the heading + description
+   read as a full-width band above the slot rows. */
+.sola-bindings-editor > .sola-card > .sola-card-header {
+  grid-column: 1 / -1;
 }
 
 .sola-bindings-editor-label {

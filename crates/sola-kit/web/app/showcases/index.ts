@@ -37,6 +37,12 @@ export interface ShowcaseEntry {
 }
 
 export const showcases: ShowcaseEntry[] = [
+  // Section ordering is governed by first-appearance below.
+  // Order chosen: Theme → Layout → Components — theme work is
+  // the top-of-mind activity right now, layout primitives next,
+  // and individual component stories rounding it out.
+  { id: "tokens", label: "Tokens", section: "Theme", component: TokensShowcase },
+  { id: "stack", label: "Stack", section: "Layout", component: StackShowcase },
   { id: "button", label: "Button", section: "Components", component: ButtonShowcase },
   { id: "color-input", label: "ColorInput", section: "Components", component: ColorInputShowcase },
   { id: "field", label: "Field", section: "Components", component: FieldShowcase },
@@ -46,8 +52,6 @@ export const showcases: ShowcaseEntry[] = [
   { id: "swatch", label: "Swatch", section: "Components", component: SwatchShowcase },
   { id: "text", label: "Text", section: "Components", component: TextShowcase },
   { id: "text-input", label: "TextInput", section: "Components", component: TextInputShowcase },
-  { id: "stack", label: "Stack", section: "Layout", component: StackShowcase },
-  { id: "tokens", label: "Tokens", section: "Theme", component: TokensShowcase },
 ];
 
 /** Lookup by id; returns `undefined` if no such showcase exists. */
