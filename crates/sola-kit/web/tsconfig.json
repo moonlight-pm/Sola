@@ -37,6 +37,7 @@
       "@sola/number-input": ["./lib/components/number-input.tsx"],
       "@sola/pane": ["./lib/components/pane.tsx"],
       "@sola/popover": ["./lib/components/popover.tsx"],
+      "@sola/popover-select": ["./lib/components/popover-select.tsx"],
       "@sola/root": ["./lib/components/root.tsx"],
       "@sola/sidebar": ["./lib/components/sidebar.tsx"],
       "@sola/stack": ["./lib/components/stack.tsx"],
@@ -51,6 +52,7 @@
       // For LSP resolution we point at the storybook's main file —
       // other kit-using apps will declare their own override here.
       "@sola/app-root": ["./app/main.tsx"],
+      "@chenglou/pretext": ["./vendor/pretext/dist/layout.d.ts"],
       "@remix-run/ui": ["./vendor/remix-ui/index.ts"],
       "@remix-run/ui/jsx-runtime": ["./vendor/remix-ui/jsx-runtime.ts"],
       "@remix-run/ui/*": ["./vendor/remix-ui/*"],

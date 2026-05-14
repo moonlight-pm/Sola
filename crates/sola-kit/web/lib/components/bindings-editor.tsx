@@ -7,9 +7,9 @@
 // sees:
 //
 //   • A label.
-//   • A *token picker* — a dropdown of palette atoms eligible for
-//     this slot's selection group. Changing the picker re-points
-//     the slot at the new token via `theme_set_binding`.
+//   • A *token picker* — a PopoverSelect of palette atoms eligible
+//     for this slot's selection group. Changing the picker re-
+//     points the slot at the new token via `theme_set_binding`.
 //   • An inline value editor for the *currently-bound* token's
 //     global value (ColorInput / FontInput / NumberInput depending
 //     on token kind). Edits here flow through `theme_set`, the
@@ -21,10 +21,19 @@
 // without leaving the page. The two operations are deliberately
 // separate so the picker reflects intent and the value reflects
 // rendered output.
+//
+// Editor-wide picker width — every slot's PopoverSelect gets the
+// same width, computed from the widest candidate token label
+// across *all* slots in the editor (via @chenglou/pretext). One
+// computed value flows down to every picker, so the column reads
+// as uniform even though each slot has its own candidate set.
 
-import { type Handle } from "@remix-run/ui";
+import { type Handle, ref } from "@remix-run/ui";
+import {
+  measureNaturalWidth,
+  prepareWithSegments,
+} from "@chenglou/pretext";
 import { Card } from "@sola/card";
-import { on } from "@sola/kit";
 import { invoke } from "@sola/ipc";
 import {
   type Theme,
@@ -32,7 +41,7 @@ import {
   getTheme,
   onThemeChange,
 } from "@sola/kit";
-import { Popover } from "@sola/popover";
+import { PopoverSelect } from "@sola/popover-select";
 import { Text } from "@sola/text";
 import { TokenValueEditor } from "@sola/token-value-editor";
 
@@ -59,14 +68,98 @@ export function BindingsEditor(handle: Handle<BindingsEditorProps>) {
   let categories: Category[] | null = null;
   let loadError: string | null = null;
 
+  // Captured by the `ref` mixin on the editor root; cleared on
+  // remove. Used as the host node for pretext-driven width
+  // measurement so we read the right CSS custom properties from
+  // the live theme.
+  let editorEl: HTMLElement | null = null;
+
+  // Computed editor-wide picker width in px, or null until the
+  // first measurement lands. Every PopoverSelect renders with
+  // this width when set, falling back to "auto" while unset.
+  let pickerWidth: number | null = null;
+
+  // Cache key for the last measurement (sorted union of all
+  // candidate labels + font). recomputePickerWidth short-
+  // circuits when the hash hasn't changed.
+  let pickerWidthHash = "";
+
+  function recomputePickerWidth() {
+    if (!editorEl || !theme || categories === null || categories.length === 0) {
+      return;
+    }
+    const comp = theme.components[handle.props.componentName];
+    if (!comp) return;
+
+    const cs = getComputedStyle(editorEl);
+    // The trigger CSS reads `--font-mono` and `--text-body` from
+    // theme custom properties; pull them through here so the
+    // measurement matches what the user actually sees.
+    const family = cs.getPropertyValue("--font-mono").trim();
+    const size = cs.getPropertyValue("--text-body").trim();
+    if (!family || !size) return; // theme hasn't applied yet
+    const font = `normal 400 ${size} ${family}`;
+
+    // Collect every candidate token name across every slot's
+    // selection group. A Set dedupes; sort makes the hash stable.
+    const labels = new Set<string>();
+    for (const cat of categories) {
+      for (const slot of cat.slots) {
+        const binding = comp.slots[slot.key];
+        if (!binding) continue;
+        for (const cand of candidatesForGroup(theme, binding.group)) {
+          labels.add(cand);
+        }
+      }
+    }
+    const sorted = [...labels].sort();
+    const hash = sorted.join("\x01") + "\x02" + font;
+    if (hash === pickerWidthHash) return;
+    pickerWidthHash = hash;
+
+    if (sorted.length === 0) {
+      pickerWidth = null;
+      handle.update();
+      return;
+    }
+
+    let widest = 0;
+    for (const label of sorted) {
+      const prepared = prepareWithSegments(label, font);
+      const w = measureNaturalWidth(prepared);
+      if (w > widest) widest = w;
+    }
+
+    // PopoverSelect trigger chrome — match the rule in
+    // popover-select.css: padding-inline space-sm × 2, gap
+    // space-xs, chevron 12px. We could getComputedStyle on an
+    // actual trigger but that requires a mounted node we don't
+    // have here; pull the token values directly off the editor
+    // root (which inherits the same custom properties).
+    const padInline = parseFloat(cs.getPropertyValue("--space-sm")) || 8;
+    const gap = parseFloat(cs.getPropertyValue("--space-xs")) || 4;
+    const chevron = 12;
+    pickerWidth = Math.ceil(widest + padInline * 2 + gap + chevron + 2);
+    handle.update();
+  }
+
   let setupComplete = false;
   // deno-lint-ignore no-unused-vars
   const _dispose = onThemeChange((t) => {
     theme = t;
     if (!setupComplete) return;
+    // Invalidate the hash so a same-set remeasure runs against
+    // the new font.
+    pickerWidthHash = "";
+    recomputePickerWidth();
     handle.update();
   });
   setupComplete = true;
+
+  const onEditorRef = (node: Element) => {
+    editorEl = node as HTMLElement;
+    queueMicrotask(recomputePickerWidth);
+  };
 
   async function loadCategories(name: string): Promise<void> {
     try {
@@ -82,13 +175,12 @@ export function BindingsEditor(handle: Handle<BindingsEditorProps>) {
       loadError = String(e);
       categories = [];
     }
+    // New categories → new candidate set → invalidate cache.
+    pickerWidthHash = "";
+    recomputePickerWidth();
     handle.update();
   }
 
-  // Component name only changes if a parent re-renders us with a
-  // different one — kick off (or re-kick) the fetch when that
-  // happens. Lazy on first render avoids fetching for components
-  // the user never opens.
   let lastFetchedFor: string | null = null;
 
   function rebindSlot(slot: string, token: string): void {
@@ -101,10 +193,6 @@ export function BindingsEditor(handle: Handle<BindingsEditorProps>) {
 
   function rewriteToken(name: string, value: string): void {
     if (!theme) return;
-    // Same shape `commitToken` in tokens.tsx uses: clone the theme
-    // with the named atom's value replaced, then push via
-    // theme_set. The bus loopback updates this component along
-    // with every other consumer.
     const oldToken = theme.palette.tokens[name];
     if (!oldToken) return;
     const next: Theme = {
@@ -128,6 +216,8 @@ export function BindingsEditor(handle: Handle<BindingsEditorProps>) {
     const name = handle.props.componentName;
     if (lastFetchedFor !== name) {
       lastFetchedFor = name;
+      // Component changed — re-fetch and re-measure.
+      pickerWidthHash = "";
       void loadCategories(name);
     }
 
@@ -162,18 +252,24 @@ export function BindingsEditor(handle: Handle<BindingsEditorProps>) {
       );
     }
 
+    // Cheap to call every render — recomputePickerWidth hashes
+    // labels+font and short-circuits when nothing changed.
+    queueMicrotask(recomputePickerWidth);
+
+    // Width passed to every PopoverSelect. Falls back to "auto"
+    // (each picker self-measures) until the editor-wide measure
+    // lands; after that, every picker pins to the same width.
+    const pickerWidthValue: "auto" | string = pickerWidth != null
+      ? `${pickerWidth}px`
+      : "auto";
+
     // The editor is one outer grid; each category is a Card that
     // spans all columns and uses `grid-template-columns: subgrid`
     // to inherit the outer grid's column tracks. That gets us
     // both the visual grouping (cards with header + chrome) and
-    // perfect column alignment top-to-bottom across cards — the
-    // Label / Picker / Value triplets in card N line up with the
-    // ones in card N+1 because they all consume the same outer
-    // grid columns. The subgrid override lives in this component's
-    // CSS, scoped under `.sola-bindings-editor` so Card stays
-    // display-block when used elsewhere.
+    // perfect column alignment top-to-bottom across cards.
     return (
-      <div class="sola-bindings-editor">
+      <div class="sola-bindings-editor" mix={[ref(onEditorRef)]}>
         {categories.map((cat) => (
           <Card label={cat.label} description={cat.description}>
             {cat.slots.flatMap((slot) => {
@@ -194,48 +290,19 @@ export function BindingsEditor(handle: Handle<BindingsEditorProps>) {
               const token: Token | undefined =
                 themeRef.palette.tokens[tokenName];
               const candidates = candidatesForGroup(themeRef, binding.group);
+              const options = candidates.map((c) => ({ value: c }));
               const onValueChange = (v: string) => rewriteToken(tokenName, v);
-              // Token picker — Popover-based so we never spawn a
-              // native OS popup window (CEF's <select> would,
-              // which sola-river sees as a real top-level surface
-              // and the shell rezones around).
-              const renderPickerContent = (
-                { close }: { close: () => void },
-              ) => (
-                <div class="sola-bindings-editor-picker-list">
-                  {candidates.map((cand) => {
-                    const selected = cand === tokenName;
-                    const cls = "sola-bindings-editor-picker-option" +
-                      (selected ? " is-selected" : "");
-                    return (
-                      <button
-                        type="button"
-                        class={cls}
-                        mix={[
-                          on("click", () => {
-                            rebindSlot(slot.key, cand);
-                            close();
-                          }),
-                        ]}
-                      >
-                        {cand}
-                      </button>
-                    );
-                  })}
-                </div>
-              );
               return [
                 <span class="sola-bindings-editor-label" key={`${slotKey}:lbl`}>
                   {slot.label}
                 </span>,
-                <Popover content={renderPickerContent} key={`${slotKey}:pick`}>
-                  <span class="sola-bindings-editor-picker">
-                    <span class="sola-bindings-editor-picker-label">
-                      {tokenName}
-                    </span>
-                    {chevronIcon()}
-                  </span>
-                </Popover>,
+                <PopoverSelect
+                  key={`${slotKey}:pick`}
+                  options={options}
+                  value={tokenName}
+                  onChange={(next) => rebindSlot(slot.key, next)}
+                  width={pickerWidthValue}
+                />,
                 <span class="sola-bindings-editor-value" key={`${slotKey}:val`}>
                   {token
                     ? (
@@ -262,21 +329,4 @@ function candidatesForGroup(theme: Theme, group: string): string[] {
   }
   out.sort();
   return out;
-}
-
-function chevronIcon() {
-  return (
-    <svg
-      class="sola-bindings-editor-picker-chevron"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
 }

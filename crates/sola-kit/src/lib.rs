@@ -545,6 +545,7 @@ fn build_importmap(root_component: &str) -> String {
       "@sola/number-input":        "/lib/components/number-input.tsx",
       "@sola/pane":                "/lib/components/pane.tsx",
       "@sola/popover":             "/lib/components/popover.tsx",
+      "@sola/popover-select":      "/lib/components/popover-select.tsx",
       "@sola/root":                "/lib/components/root.tsx",
       "@sola/sidebar":             "/lib/components/sidebar.tsx",
       "@sola/stack":               "/lib/components/stack.tsx",
@@ -553,6 +554,7 @@ fn build_importmap(root_component: &str) -> String {
       "@sola/text-input":          "/lib/components/text-input.tsx",
       "@sola/token-value-editor":  "/lib/components/token-value-editor.tsx",
       "@sola/app-root":            "{root_component}",
+      "@chenglou/pretext":         "/vendor/pretext/dist/layout.js",
       "@remix-run/ui":             "/vendor/remix-ui/index.ts",
       "@remix-run/ui/jsx-runtime": "/vendor/remix-ui/jsx-runtime.ts"
     }}

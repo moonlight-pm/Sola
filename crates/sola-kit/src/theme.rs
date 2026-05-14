@@ -76,12 +76,6 @@ mod tests {
 
   /* bindings-editor */
   --sola-bindings-editor-label-color: var(--text-secondary);
-  --sola-bindings-editor-picker-bg: var(--bg-tertiary);
-  --sola-bindings-editor-picker-border: var(--border);
-  --sola-bindings-editor-picker-border-focus: var(--accent);
-  --sola-bindings-editor-picker-option-bg-hover: var(--bg-hover);
-  --sola-bindings-editor-picker-option-bg-selected: var(--bg-tertiary);
-  --sola-bindings-editor-picker-text: var(--text-primary);
 
   /* button */
   --sola-button-danger-bg: var(--danger);
@@ -166,6 +160,16 @@ mod tests {
   --sola-popover-offset: var(--space-xs);
   --sola-popover-padding: var(--space-md);
   --sola-popover-radius: var(--radius-md);
+
+  /* popover-select */
+  --sola-popover-select-bg: var(--bg-tertiary);
+  --sola-popover-select-border: var(--border);
+  --sola-popover-select-border-focus: var(--accent);
+  --sola-popover-select-chevron-color: var(--text-secondary);
+  --sola-popover-select-option-bg-hover: var(--bg-hover);
+  --sola-popover-select-option-bg-selected: var(--bg-tertiary);
+  --sola-popover-select-option-text: var(--text-primary);
+  --sola-popover-select-text: var(--text-primary);
 
   /* root */
   --sola-root-bg: var(--bg-primary);

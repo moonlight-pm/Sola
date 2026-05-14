@@ -221,6 +221,14 @@ fn lookup_dir_exact(mount: &DirMount, rel: &str) -> Option<Asset> {
 static REMIX_UI_DIR: include_dir::Dir<'_> =
     include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/vendor/remix-ui");
 
+/// Vendored `@chenglou/pretext` — pre-built dist from the npm tarball.
+/// Used by PopoverSelect (and any other consumer) for synchronous,
+/// DOM-free text-width measurement via canvas `measureText`. Mounted
+/// under `/vendor/pretext/*`; the `@chenglou/pretext` importmap entry
+/// points at `dist/layout.js`.
+static PRETEXT_DIR: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/vendor/pretext");
+
 /// Platform assets the kit serves on every app:// scheme request, regardless
 /// of which app it's hosting.
 ///
@@ -363,6 +371,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Css,
             },
             Asset {
+                path: "/lib/components/popover-select.tsx",
+                content: include_bytes!("../web/lib/components/popover-select.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/popover-select.css",
+                content: include_bytes!("../web/lib/components/popover-select.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
                 path: "/lib/components/root.tsx",
                 content: include_bytes!("../web/lib/components/root.tsx"),
                 content_type: ContentType::Tsx,
@@ -423,10 +441,16 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Tsx,
             },
         ],
-        dirs: &[DirMount {
-            url_prefix: "/vendor/remix-ui/",
-            dir: &REMIX_UI_DIR,
-        }],
+        dirs: &[
+            DirMount {
+                url_prefix: "/vendor/remix-ui/",
+                dir: &REMIX_UI_DIR,
+            },
+            DirMount {
+                url_prefix: "/vendor/pretext/",
+                dir: &PRETEXT_DIR,
+            },
+        ],
     };
     &PLATFORM
 }
