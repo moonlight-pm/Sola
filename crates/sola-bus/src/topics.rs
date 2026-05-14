@@ -154,7 +154,12 @@ pub enum Zone {
     TopMiddle,
     BottomMiddle,
     FullMiddle,
+    /// Fullscreen *under* the menubar — the standard "max window".
     Fullscreen,
+    /// True fullscreen including the menubar — the cinema / no-chrome
+    /// view. The shell skips its menubar offset for this zone so the
+    /// window covers the whole output.
+    Cinema,
 }
 
 impl Zone {
@@ -169,6 +174,7 @@ impl Zone {
             Zone::BottomMiddle => (0.28, 0.7, 0.44, 0.3),
             Zone::FullMiddle => (0.28, 0.0, 0.44, 1.0),
             Zone::Fullscreen => (0.0, 0.0, 1.0, 1.0),
+            Zone::Cinema => (0.0, 0.0, 1.0, 1.0),
         }
     }
 }

@@ -181,6 +181,7 @@ pub const ZONING_KEYCODES: &[u32] = &[
     KeyCode::KP_0.raw(),
     KeyCode::KP_EQUAL.raw(),
     KeyCode::KP_DECIMAL.raw(),
+    KeyCode::KP_ENTER.raw(),
 ];
 
 fn zone_for_keycode(code: u32) -> Option<Zone> {
@@ -193,16 +194,25 @@ fn zone_for_keycode(code: u32) -> Option<Zone> {
         c if c == KeyCode::KP_0.raw() => Some(Zone::Fullscreen),
         c if c == KeyCode::KP_EQUAL.raw() => Some(Zone::Top),
         c if c == KeyCode::KP_DECIMAL.raw() => Some(Zone::Bottom),
+        c if c == KeyCode::KP_ENTER.raw() => Some(Zone::Cinema),
         _ => None,
     }
 }
 
 fn compute_frame(zone: Zone, window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
     let (xp, yp, wp, hp) = zone.rect();
-    let usable_h = output_h - MENUBAR_HEIGHT;
+    // Cinema is the special zone that covers the whole output —
+    // including the menubar — so its rect (0, 0, 1, 1) maps to the
+    // raw output bounds with no chrome offset. Every other zone
+    // sits under the menubar and is sized against the usable area.
+    let (offset_y, usable_h) = if matches!(zone, Zone::Cinema) {
+        (0, output_h)
+    } else {
+        (MENUBAR_HEIGHT, output_h - MENUBAR_HEIGHT)
+    };
 
     let x = (xp * output_w as f64).round() as i32;
-    let y = MENUBAR_HEIGHT + (yp * usable_h as f64).round() as i32;
+    let y = offset_y + (yp * usable_h as f64).round() as i32;
     let w = (wp * output_w as f64).round() as i32;
     let h = (hp * usable_h as f64).round() as i32;
 

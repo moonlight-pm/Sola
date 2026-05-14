@@ -121,6 +121,9 @@ impl KeyCode {
     pub const KP_6: Self = Self(85);
     pub const KP_8: Self = Self(80);
     pub const KP_DECIMAL: Self = Self(91);
+    /// Numpad Enter — used by zoning for the Cinema zone (true
+    /// fullscreen including the menubar).
+    pub const KP_ENTER: Self = Self(104);
 
     /// Returns true if this key code is either left or right Meta.
     #[inline]
