@@ -1,20 +1,21 @@
 // Storybook entry. Layout: <Root> as the viewport-filling flex
-// column, then a <Stack fill> row pairing the kit-shipped <Sidebar>
-// on the left with a <Pane> on the right. Selection is parent-
-// controlled via a closure-captured local; nav and content are both
-// derived from the registry in `./showcases/index.ts` so adding a
-// new showcase never touches this file.
+// column, then a <Split> pairing the kit-shipped <Sidebar> on the
+// left with a <Container>-wrapped page on the right. Selection is
+// parent-controlled via a closure-captured local; nav and content
+// are both derived from the registry in `./showcases/index.ts` so
+// adding a new showcase never touches this file.
 //
-// The Pane has a persistent header bar at the top: section heading
+// The page has a persistent header bar at the top: section heading
 // on the left, global theme actions (Reset for now; Save / Load
 // once theme files land) on the right.
 
 import { type Handle } from "@remix-run/ui";
 import { Button } from "@sola/button";
+import { Container } from "@sola/container";
 import { invoke } from "@sola/ipc";
-import { Pane } from "@sola/pane";
 import { Root } from "@sola/root";
 import { Sidebar, SidebarSection, SidebarItem } from "@sola/sidebar";
+import { Split } from "@sola/split";
 import { Stack } from "@sola/stack";
 import { Text } from "@sola/text";
 
@@ -60,7 +61,7 @@ export function Main(handle: Handle) {
 
     return (
       <Root>
-        <Stack direction="row" fill>
+        <Split direction="row" position="240px">
           <Sidebar>
             {navSections.map((section) => (
               <SidebarSection label={section.label}>
@@ -75,16 +76,12 @@ export function Main(handle: Handle) {
               </SidebarSection>
             ))}
           </Sidebar>
-          <Pane>
-            {/* Centered max-width column shared by every showcase
-                (and the page header above it). 880 px is the same
-                breakpoint Tokens has been using — wide enough for
-                two columns of inline-label rows without going past
-                where a reader naturally tracks. Sit inside the
-                Pane's padding rather than fighting it. */}
-            <div
-              style="max-width: 880px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: var(--space-xl);"
-            >
+          {/* 880px is the storybook's content-column width — wider
+              than `reading` (720) but narrower than `wide` (1100), so
+              we use Container's escape-hatch CSS-length for now.
+              Tokens-page two-column layouts fit within this. */}
+          <Container maxWidth="880px">
+            <Stack gap="xl">
               {/* Persistent content header. Section heading on the
                   left, global theme actions on the right. Future
                   additions: theme name + save/load buttons. */}
@@ -108,9 +105,9 @@ export function Main(handle: Handle) {
                     No showcase registered for "{selectedId}".
                   </Text>
                 )}
-            </div>
-          </Pane>
-        </Stack>
+            </Stack>
+          </Container>
+        </Split>
       </Root>
     );
   };

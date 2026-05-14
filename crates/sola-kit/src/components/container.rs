@@ -1,8 +1,8 @@
-//! `pane` component bindings + editor categories. The Tsx and CSS
-//! siblings live at `web/lib/components/pane.{tsx,css}` and
-//! reference only `--sola-pane-*` scoped vars. Pane is the
-//! scrollable padded content area used inside every kit app page —
-//! the storybook's content column is the canonical example.
+//! `container` component bindings + editor categories. The Tsx and
+//! CSS siblings live at `web/lib/components/container.{tsx,css}` and
+//! reference only `--sola-container-*` scoped vars. Container is the
+//! centered max-width readable column used inside every kit app's
+//! content area — the storybook's page body is the canonical example.
 
 use sola_core::theme::{Binding, ComponentBindings};
 
@@ -26,8 +26,9 @@ pub fn categories() -> Vec<Category> {
             ],
         )
         .with_description(
-            "Inner spacing around the scrollable content. Affects every\
-             kit app page since Pane is the standard content surface.",
+            "Inner spacing around the readable column. Affects every\
+             kit app page since Container is the standard content\
+             wrapper.",
         ),
     ]
 }

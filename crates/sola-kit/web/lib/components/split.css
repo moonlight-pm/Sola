@@ -1,0 +1,71 @@
+/* Split styles — references only `--sola-split-*` scoped theme
+   vars. Layout primitive: no background, no padding. The themed
+   surface comes from whatever the panes contain. */
+
+.sola-split {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sola-split-row    { flex-direction: row; }
+.sola-split-column { flex-direction: column; }
+
+.sola-split-pane {
+  /* Each pane scrolls independently — universal split-pane
+     convention (VSCode editor splits, Finder columns, etc.). */
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+  /* Inner flex column so child Stacks/Containers fill the pane. */
+  display: flex;
+  flex-direction: column;
+}
+
+.sola-split-pane-first  { flex: 0 0 auto; }
+.sola-split-pane-second { flex: 1 1 auto; }
+
+.sola-split-divider {
+  position: relative;
+  flex: 0 0 auto;
+  user-select: none;
+  /* The divider element itself is the pointer hit area. The visible
+     1px line is drawn via ::before so the hit area can be wider than
+     the line for grab affordance. */
+}
+
+.sola-split-row > .sola-split-divider {
+  width: 6px;
+  cursor: col-resize;
+}
+
+.sola-split-column > .sola-split-divider {
+  height: 6px;
+  cursor: row-resize;
+}
+
+.sola-split-divider::before {
+  content: "";
+  position: absolute;
+  background: var(--sola-split-divider);
+  pointer-events: none;
+  transition: background-color 120ms;
+}
+
+.sola-split-row > .sola-split-divider::before {
+  inset-block: 0;
+  inset-inline: calc(50% - 0.5px);
+  width: 1px;
+}
+
+.sola-split-column > .sola-split-divider::before {
+  inset-inline: 0;
+  inset-block: calc(50% - 0.5px);
+  height: 1px;
+}
+
+.sola-split-divider:hover::before,
+.sola-split-divider.is-dragging::before {
+  background: var(--sola-split-divider-hover);
+}

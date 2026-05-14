@@ -14,10 +14,11 @@
 import { type Handle, type RemixNode } from "@remix-run/ui";
 
 import { ButtonShowcase } from "./button.tsx";
+import { ContainerShowcase } from "./container.tsx";
 import { FieldShowcase } from "./field.tsx";
-import { PaneShowcase } from "./pane.tsx";
 import { PopoverShowcase } from "./popover.tsx";
 import { SidebarShowcase } from "./sidebar.tsx";
+import { SplitShowcase } from "./split.tsx";
 import { StackShowcase } from "./stack.tsx";
 import { SwatchShowcase } from "./swatch.tsx";
 import { TextShowcase } from "./text.tsx";
@@ -41,10 +42,11 @@ export const showcases: ShowcaseEntry[] = [
   // the top-of-mind activity right now, layout primitives next,
   // and individual component stories rounding it out.
   { id: "tokens", label: "Tokens", section: "Theme", component: TokensShowcase },
+  { id: "container", label: "Container", section: "Layout", component: ContainerShowcase },
+  { id: "split", label: "Split", section: "Layout", component: SplitShowcase },
   { id: "stack", label: "Stack", section: "Layout", component: StackShowcase },
   { id: "button", label: "Button", section: "Components", component: ButtonShowcase },
   { id: "field", label: "Field", section: "Components", component: FieldShowcase },
-  { id: "pane", label: "Pane", section: "Components", component: PaneShowcase },
   { id: "popover", label: "Popover", section: "Components", component: PopoverShowcase },
   { id: "sidebar", label: "Sidebar", section: "Components", component: SidebarShowcase },
   { id: "swatch", label: "Swatch", section: "Components", component: SwatchShowcase },

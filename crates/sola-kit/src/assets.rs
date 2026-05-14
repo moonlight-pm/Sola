@@ -341,13 +341,23 @@ pub fn platform_assets() -> &'static AssetBundle {
                 content_type: ContentType::Css,
             },
             Asset {
-                path: "/lib/components/pane.tsx",
-                content: include_bytes!("../web/lib/components/pane.tsx"),
+                path: "/lib/components/container.tsx",
+                content: include_bytes!("../web/lib/components/container.tsx"),
                 content_type: ContentType::Tsx,
             },
             Asset {
-                path: "/lib/components/pane.css",
-                content: include_bytes!("../web/lib/components/pane.css"),
+                path: "/lib/components/container.css",
+                content: include_bytes!("../web/lib/components/container.css"),
+                content_type: ContentType::Css,
+            },
+            Asset {
+                path: "/lib/components/split.tsx",
+                content: include_bytes!("../web/lib/components/split.tsx"),
+                content_type: ContentType::Tsx,
+            },
+            Asset {
+                path: "/lib/components/split.css",
+                content: include_bytes!("../web/lib/components/split.css"),
                 content_type: ContentType::Css,
             },
             Asset {

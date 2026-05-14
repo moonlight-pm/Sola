@@ -59,17 +59,14 @@ impl Category {
     }
 }
 
-/// Look up the editor categories for a component by name. Returns
-/// an empty vector if the component has no editor metadata yet — the
-/// JS side renders nothing in that case rather than a flat slot
-/// dump.
 pub fn for_component(name: &str) -> Vec<Category> {
     match name {
         "button" => crate::components::button::categories(),
+        "container" => crate::components::container::categories(),
         "field" => crate::components::field::categories(),
-        "pane" => crate::components::pane::categories(),
         "popover" => crate::components::popover::categories(),
         "sidebar" => crate::components::sidebar::categories(),
+        "split" => crate::components::split::categories(),
         "swatch" => crate::components::swatch::categories(),
         "text" => crate::components::text::categories(),
         "text-input" => crate::components::text_input::categories(),

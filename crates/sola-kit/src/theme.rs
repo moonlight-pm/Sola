@@ -115,6 +115,10 @@ mod tests {
   --sola-color-picker-slider-track-bg: var(--bg-primary);
   --sola-color-picker-value-color: var(--text-tertiary);
 
+  /* container */
+  --sola-container-padding-block: var(--space-xl);
+  --sola-container-padding-inline: var(--space-xxl);
+
   /* field */
   --sola-field-error-color: var(--danger);
   --sola-field-gap: var(--space-xs);
@@ -146,10 +150,6 @@ mod tests {
   --sola-number-input-step-color: var(--text-secondary);
   --sola-number-input-text: var(--text-primary);
   --sola-number-input-unit-color: var(--text-secondary);
-
-  /* pane */
-  --sola-pane-padding-block: var(--space-xl);
-  --sola-pane-padding-inline: var(--space-xxl);
 
   /* popover */
   --sola-popover-bg: var(--bg-secondary);
@@ -196,6 +196,10 @@ mod tests {
   --sola-sidebar-padding-inline: var(--space-sm);
   --sola-sidebar-section-label-color: var(--text-tertiary);
   --sola-sidebar-section-label-size: var(--text-caption);
+
+  /* split */
+  --sola-split-divider: var(--border-subtle);
+  --sola-split-divider-hover: var(--border);
 
   /* swatch */
   --sola-swatch-border: var(--border-subtle);

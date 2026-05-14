@@ -23,35 +23,31 @@ pub mod color_picker;
 pub mod field;
 pub mod font_input;
 pub mod number_input;
-pub mod pane;
+pub mod container;
 pub mod popover;
 pub mod popover_select;
 pub mod root;
 pub mod sidebar;
+pub mod split;
 pub mod swatch;
 pub mod text;
 pub mod text_input;
 
-/// Compose every kit-shipped component's seed bindings into the
-/// `Theme.components` map shape. Keys are the component names used as
-/// `--sola-<component>-<slot>` prefixes in the rendered CSS.
-///
-/// Note: keys may use kebab-case (e.g. `"text-input"`) even when the
-/// Rust module name is snake_case — the key is what appears in CSS.
 pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     let mut map = BTreeMap::new();
     map.insert("bindings-editor".into(), bindings_editor::bindings());
     map.insert("button".into(), button::bindings());
     map.insert("card".into(), card::bindings());
     map.insert("color-picker".into(), color_picker::bindings());
+    map.insert("container".into(), container::bindings());
     map.insert("field".into(), field::bindings());
     map.insert("font-input".into(), font_input::bindings());
     map.insert("number-input".into(), number_input::bindings());
-    map.insert("pane".into(), pane::bindings());
     map.insert("popover".into(), popover::bindings());
     map.insert("popover-select".into(), popover_select::bindings());
     map.insert("root".into(), root::bindings());
     map.insert("sidebar".into(), sidebar::bindings());
+    map.insert("split".into(), split::bindings());
     map.insert("swatch".into(), swatch::bindings());
     map.insert("text".into(), text::bindings());
     map.insert("text-input".into(), text_input::bindings());
