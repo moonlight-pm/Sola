@@ -229,14 +229,22 @@ impl WaylandClient {
     /// will re-emit.
     fn apply_pending_cursor(&self) {
         let Some(shape) = cursor::take_pending() else { return };
-        let Some(device) = self.cursor_shape_device.as_ref() else { return };
-        let Some(pointer) = self.pointer.as_ref() else { return };
+        let Some(device) = self.cursor_shape_device.as_ref() else {
+            tracing::debug!(?shape, "cursor: drop (no device — manager not advertised?)");
+            return;
+        };
+        let Some(pointer) = self.pointer.as_ref() else {
+            tracing::debug!(?shape, "cursor: drop (no pointer)");
+            return;
+        };
         let Some(serial) = pointer
             .data::<PointerData>()
             .and_then(|d| d.latest_enter_serial())
         else {
+            tracing::debug!(?shape, "cursor: drop (no enter serial yet)");
             return;
         };
+        tracing::debug!(?shape, serial, "cursor: set_shape");
         device.set_shape(serial, shape);
     }
 }

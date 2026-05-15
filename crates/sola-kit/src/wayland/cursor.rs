@@ -4,6 +4,11 @@
 //! `Shape` and the next Wayland dispatch tick applies it to the
 //! active pointer via `wp_cursor_shape_device_v1.set_shape`.
 //!
+//! Known limitation: river+bundled-Adwaita currently renders only
+//! `text` and `pointer` shapes; others silently fall back to default.
+//! The pipeline here is verified correct — see
+//! `docs/manual/cursor-theme-loading.md` before touching this file.
+//!
 //! The CEF UI thread and the Wayland event loop are the same thread
 //! in our setup (see `cef/handlers.rs`), so a thread-local `Cell`
 //! is the cheapest possible producer→consumer channel — no locks,
@@ -36,6 +41,7 @@ thread_local! {
 
 /// Producer side — called from the CEF DisplayHandler callback.
 pub fn set_pending(shape: Shape) {
+    tracing::debug!(?shape, "cursor: pending");
     PENDING.with(|p| p.set(Some(shape)));
 }
 
