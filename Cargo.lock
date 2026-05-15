@@ -3037,12 +3037,12 @@ dependencies = [
 name = "sola-settings"
 version = "0.1.0"
 dependencies = [
- "gtk4",
+ "include_dir",
  "serde",
  "serde_json",
- "sola-app",
  "sola-bus",
  "sola-core",
+ "sola-kit",
  "tracing",
 ]
 
