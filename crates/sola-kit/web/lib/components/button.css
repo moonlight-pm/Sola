@@ -127,3 +127,11 @@
   flex: 0 1 auto;
   min-width: 0;
 }
+
+/* armed (confirm mode) — subtle outline so the danger fill alone
+   isn't the only signal that the button has changed state. */
+
+.sola-button.is-armed {
+  outline: 1px solid var(--sola-button-danger-bg);
+  outline-offset: 2px;
+}

@@ -65,6 +65,23 @@ export function ButtonShowcase(handle: Handle) {
               </Button>
             </Stack>
           </Stack>
+
+          <Stack gap="xs">
+            <Text kind="label">confirm</Text>
+            <Stack direction="row" gap="md" align="center">
+              <Button variant="danger" confirm onPress={onPress}>
+                Delete
+              </Button>
+              <Button
+                variant="ghost"
+                confirm
+                confirmLabel="Tap again to discard"
+                onPress={onPress}
+              >
+                Discard changes
+              </Button>
+            </Stack>
+          </Stack>
         </Stack>
       </Card>
 

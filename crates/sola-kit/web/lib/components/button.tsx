@@ -11,6 +11,12 @@
 // Slots are named props (Remix v3 idiom): `leading` / `trailing` for
 // adornments around the label; the label itself is default-slot
 // `children`.
+//
+// `confirm` mode — two-stage destructive action. First click swaps
+// the visible variant to `danger` and the label to `confirmLabel`;
+// a second click within 2 s commits and fires `onPress`. 2 s of
+// inactivity rolls back to idle silently. The disarm timer is
+// component-owned (`setTimeout`) and cleared on every interaction.
 
 import { type Handle, type RemixNode } from "@remix-run/ui";
 import { on } from "@sola/kit";
@@ -18,75 +24,87 @@ import { on } from "@sola/kit";
 export type ButtonVariant = "default" | "primary" | "ghost" | "danger";
 
 export interface ButtonProps {
-  /**
-   * Visual variant. Defaults to `"default"`. Each variant has its own
-   * theme slot block (`--sola-button-<variant>-*`).
-   */
   variant?: ButtonVariant;
-
-  /**
-   * Disabled buttons render at reduced opacity, stop firing `onPress`,
-   * and are removed from the tab order via the native `disabled`
-   * attribute.
-   */
   disabled?: boolean;
-
-  /**
-   * Native button `type` — defaults to `"button"` so the button
-   * doesn't accidentally submit a wrapping `<form>`. Override to
-   * `"submit"` or `"reset"` for form integration.
-   */
   type?: "button" | "submit" | "reset";
-
-  /**
-   * Fired on click (and, via native `<button>` semantics, on Enter or
-   * Space when focused). No arguments — the consumer's closure has
-   * everything it needs.
-   */
   onPress?: () => void;
-
-  /**
-   * Optional leading slot — an icon or status dot rendered before the
-   * label. Hidden if not provided.
-   */
   leading?: RemixNode;
-
-  /**
-   * Optional trailing slot — chevron, kbd hint, or count rendered
-   * after the label. Hidden if not provided.
-   */
   trailing?: RemixNode;
-
-  /**
-   * The button label. Default-slot content; usually a string but any
-   * RemixNode is accepted.
-   */
   children?: RemixNode;
+  /**
+   * Two-stage confirmation pattern. When `true`, the first click
+   * arms the button (variant flips to danger, label swaps to
+   * `confirmLabel`); the next click within 2 s fires `onPress`.
+   * 2 s of inactivity disarms silently.
+   */
+  confirm?: boolean;
+  /** Label shown while armed. Defaults to "Click again to confirm". */
+  confirmLabel?: string;
 }
 
+const CONFIRM_TIMEOUT_MS = 2000;
+
 export function Button(handle: Handle<ButtonProps>) {
-  // Event listeners attach via `mix={[on(...)]}` — Remix v3 doesn't
-  // type lowercase event attrs on host elements, and the native
-  // `disabled` attribute already short-circuits click before this
-  // handler runs, so the disabled guard here is a belt-and-braces
-  // check rather than a load-bearing one.
+  let armed = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const disarm = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (armed) {
+      armed = false;
+      handle.update();
+    }
+  };
+
   const handleClick = () => {
     if (handle.props.disabled) return;
+    if (handle.props.confirm) {
+      if (!armed) {
+        armed = true;
+        timer = setTimeout(() => {
+          armed = false;
+          timer = null;
+          handle.update();
+        }, CONFIRM_TIMEOUT_MS);
+        handle.update();
+        return;
+      }
+      // armed → commit
+      disarm();
+      handle.props.onPress?.();
+      return;
+    }
     handle.props.onPress?.();
   };
 
   return () => {
-    const { variant, disabled, type, leading, trailing, children } =
-      handle.props;
-    const v: ButtonVariant = variant ?? "default";
+    const {
+      variant,
+      disabled,
+      type,
+      leading,
+      trailing,
+      children,
+      confirm,
+      confirmLabel,
+    } = handle.props;
+    const v: ButtonVariant = armed && confirm ? "danger" : variant ?? "default";
 
     const classes = [
       "sola-button",
       `sola-button-${v}`,
       disabled ? "is-disabled" : "",
+      armed && confirm ? "is-armed" : "",
     ]
       .filter(Boolean)
       .join(" ");
+
+    const labelContent = armed && confirm
+      ? (confirmLabel ?? "Click again to confirm")
+      : children;
 
     return (
       <button
@@ -98,7 +116,7 @@ export function Button(handle: Handle<ButtonProps>) {
         {leading
           ? <span class="sola-button-leading">{leading}</span>
           : null}
-        <span class="sola-button-label">{children}</span>
+        <span class="sola-button-label">{labelContent}</span>
         {trailing
           ? <span class="sola-button-trailing">{trailing}</span>
           : null}
