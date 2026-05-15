@@ -188,51 +188,49 @@ export function ApplicationsPanel(handle: Handle<ApplicationsProps>) {
     };
 
     return (
-      <Stack gap="xs">
-        <Stack direction="row" gap="md" align="center">
-          <Text>{app.label || app.app_id}</Text>
-          {handle.props.state.missing.includes(app.app_id)
-            ? <Badge kind="warning">not found</Badge>
-            : null}
-          <Button
-            variant="danger"
-            confirm
-            confirmLabel="Click again to remove"
-            onPress={() => removeApp(app.app_id)}
-          >
-            Remove
-          </Button>
-        </Stack>
-        <Stack direction="row" gap="sm">
-          <Field label="app_id">
-            <TextInput
-              value={app.app_id}
-              onChange={onField("app_id")}
-            />
-          </Field>
-          <Field label="label">
-            <TextInput
-              value={app.label}
-              onChange={onField("label")}
-            />
-          </Field>
+      <Card>
+        <Stack gap="md">
+          <Stack direction="row" justify="between" align="center" gap="md">
+            <Stack direction="row" gap="md" align="center">
+              <Text kind="heading">{app.label || app.app_id}</Text>
+              {handle.props.state.missing.includes(app.app_id)
+                ? <Badge kind="warning">not found</Badge>
+                : null}
+            </Stack>
+            <Button
+              variant="ghost"
+              confirm
+              confirmLabel="Click again to remove"
+              onPress={() => removeApp(app.app_id)}
+            >
+              Remove
+            </Button>
+          </Stack>
+          <Stack direction="row" gap="md">
+            <div style="flex: 1 1 0; min-width: 0">
+              <Field label="app_id">
+                <TextInput value={app.app_id} onChange={onField("app_id")} />
+              </Field>
+            </div>
+            <div style="flex: 1 1 0; min-width: 0">
+              <Field label="label">
+                <TextInput value={app.label} onChange={onField("label")} />
+              </Field>
+            </div>
+            <div style="flex: 1 1 0; min-width: 0">
+              <Field label="icon">
+                <TextInput value={app.icon} onChange={onField("icon")} />
+              </Field>
+            </div>
+          </Stack>
           <Field label="command">
-            <TextInput
-              value={app.command}
-              onChange={onField("command")}
-            />
+            <TextInput value={app.command} onChange={onField("command")} />
           </Field>
-          <Field label="icon">
-            <TextInput
-              value={app.icon}
-              onChange={onField("icon")}
-            />
-          </Field>
+          {rowErrors.get(app.app_id)
+            ? <Text tone="muted">{rowErrors.get(app.app_id)}</Text>
+            : null}
         </Stack>
-        {rowErrors.get(app.app_id)
-          ? <Text tone="muted">{rowErrors.get(app.app_id)}</Text>
-          : null}
-      </Stack>
+      </Card>
     );
   };
 
@@ -243,37 +241,48 @@ export function ApplicationsPanel(handle: Handle<ApplicationsProps>) {
     };
 
     return (
-      <Stack gap="xs">
-        <Stack direction="row" gap="md" align="center">
-          <Text tone="muted">New application</Text>
-          <Button
-            variant="primary"
-            onPress={() => commitDraft(draft)}
-          >
-            Add
-          </Button>
-          <Button
-            variant="ghost"
-            onPress={() => discardDraft(draft.draftKey!)}
-          >
-            Discard
-          </Button>
-        </Stack>
-        <Stack direction="row" gap="sm">
-          <Field label="app_id">
-            <TextInput
-              value={draft.app_id}
-              onInput={onField("app_id")}
-              placeholder="firefox"
-            />
-          </Field>
-          <Field label="label">
-            <TextInput
-              value={draft.label}
-              onInput={onField("label")}
-              placeholder="Firefox"
-            />
-          </Field>
+      <Card>
+        <Stack gap="md">
+          <Stack direction="row" justify="between" align="center" gap="md">
+            <Text kind="heading" tone="muted">New application</Text>
+            <Stack direction="row" gap="sm" align="center">
+              <Button variant="ghost" onPress={() => discardDraft(draft.draftKey!)}>
+                Discard
+              </Button>
+              <Button variant="primary" onPress={() => commitDraft(draft)}>
+                Add
+              </Button>
+            </Stack>
+          </Stack>
+          <Stack direction="row" gap="md">
+            <div style="flex: 1 1 0; min-width: 0">
+              <Field label="app_id">
+                <TextInput
+                  value={draft.app_id}
+                  onInput={onField("app_id")}
+                  placeholder="firefox"
+                />
+              </Field>
+            </div>
+            <div style="flex: 1 1 0; min-width: 0">
+              <Field label="label">
+                <TextInput
+                  value={draft.label}
+                  onInput={onField("label")}
+                  placeholder="Firefox"
+                />
+              </Field>
+            </div>
+            <div style="flex: 1 1 0; min-width: 0">
+              <Field label="icon">
+                <TextInput
+                  value={draft.icon}
+                  onInput={onField("icon")}
+                  placeholder="simpleicons/firefox"
+                />
+              </Field>
+            </div>
+          </Stack>
           <Field label="command">
             <TextInput
               value={draft.command}
@@ -281,18 +290,11 @@ export function ApplicationsPanel(handle: Handle<ApplicationsProps>) {
               placeholder="firefox"
             />
           </Field>
-          <Field label="icon">
-            <TextInput
-              value={draft.icon}
-              onInput={onField("icon")}
-              placeholder="simpleicons/firefox"
-            />
-          </Field>
+          {rowErrors.get(draft.draftKey ?? "")
+            ? <Text tone="muted">{rowErrors.get(draft.draftKey ?? "")}</Text>
+            : null}
         </Stack>
-        {rowErrors.get(draft.draftKey ?? "")
-          ? <Text tone="muted">{rowErrors.get(draft.draftKey ?? "")}</Text>
-          : null}
-      </Stack>
+      </Card>
     );
   };
 
@@ -316,27 +318,22 @@ export function ApplicationsPanel(handle: Handle<ApplicationsProps>) {
   return () => {
     const { apps, candidates } = handle.props.state;
     return (
-      <Stack gap="xl">
-        <Card
-          label="Configured"
-          description="Edits commit half a second after the last keystroke."
-        >
-          <Stack gap="lg">
-            {apps.length === 0 && drafts.length === 0
-              ? <Text tone="muted">No applications configured.</Text>
-              : null}
-            {drafts.map(renderDraftRow)}
-            {apps.map(renderConfiguredRow)}
-            <Button variant="ghost" onPress={startAddBlank}>
-              + Add application
-            </Button>
-          </Stack>
-        </Card>
+      <Stack gap="lg">
+        {apps.length === 0 && drafts.length === 0
+          ? <Text tone="muted">No applications configured. Edits commit half a second after the last keystroke.</Text>
+          : null}
+        {drafts.map(renderDraftRow)}
+        {apps.map(renderConfiguredRow)}
+        <Stack direction="row" justify="start">
+          <Button variant="ghost" onPress={startAddBlank}>
+            + Add application
+          </Button>
+        </Stack>
         {candidates.length > 0
           ? (
             <Card
               label="Running, not configured"
-              description="Pre-filled by what's currently running. One click drops a draft into Configured."
+              description="Pre-filled by what's currently running. One click drops a draft above."
             >
               <Stack gap="md">
                 {candidates.map(renderCandidate)}
