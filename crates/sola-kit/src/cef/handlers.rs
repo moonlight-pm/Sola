@@ -248,17 +248,41 @@ cef::wrap_client! {
     }
 }
 
-// DisplayHandler — primarily here so we can route the renderer's
-// `console.log` / `console.warn` / `console.error` output into our
-// own tracing pipeline. With Chromium's own log severity set to
-// DISABLE (init.rs), JS console messages would otherwise be dropped
-// on the floor; routing them through `tracing` lands them in the
-// shared `/opt/sola/log/sola.log` next to native logs from the same
-// process.
+// DisplayHandler — routes the renderer's `console.log/warn/error`
+// output into our tracing pipeline (with Chromium's own log severity
+// set to DISABLE in init.rs, JS console messages would otherwise be
+// dropped) and translates CSS cursor changes into Wayland cursor-
+// shape requests via the channel in `wayland::cursor`.
 cef::wrap_display_handler! {
     pub struct KitDisplayHandler {}
 
     impl DisplayHandler {
+        // CSS `cursor:` changes inside the webview surface as
+        // on_cursor_change. CEF runs this on the UI thread = our main
+        // thread, so writing to the thread-local pending slot in
+        // `wayland::cursor` is lock-free; the next Wayland dispatch
+        // tick drains it and issues the wp_cursor_shape_v1 set_shape.
+        // Custom cursors and "no cursor" (CT_NONE) are intentionally
+        // unsupported — see wayland::cursor::cef_to_shape.
+        fn on_cursor_change(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _cursor: ::std::os::raw::c_ulong,
+            type_: cef::CursorType,
+            _custom_cursor_info: Option<&cef::CursorInfo>,
+        ) -> ::std::os::raw::c_int {
+            if let Some(shape) = crate::wayland::cursor::cef_to_shape(type_) {
+                crate::wayland::cursor::set_pending(shape);
+                1
+            } else {
+                // Unmapped type (CT_NONE, CT_CUSTOM, CT_DND_*, …).
+                // Returning 0 signals "not handled"; CEF has no
+                // default behavior for OSR cursors so the cursor
+                // simply stays on whatever shape it last had.
+                0
+            }
+        }
+
         fn on_console_message(
             &self,
             _browser: Option<&mut cef::Browser>,

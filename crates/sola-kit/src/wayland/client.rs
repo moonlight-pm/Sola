@@ -14,7 +14,9 @@ use smithay_client_toolkit::{
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
-    seat::{Capability, SeatHandler, SeatState, keyboard::Modifiers},
+    seat::{
+        Capability, SeatHandler, SeatState, keyboard::Modifiers, pointer::PointerData,
+    },
     shell::{
         WaylandSurface,
         xdg::{
@@ -35,12 +37,18 @@ use wayland_client::{
         wl_surface::WlSurface,
     },
 };
-use wayland_protocols::wp::linux_dmabuf::zv1::client::{
-    zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
-    zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
+use wayland_protocols::wp::{
+    cursor_shape::v1::client::{
+        wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+        wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+    },
+    linux_dmabuf::zv1::client::{
+        zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1,
+        zwp_linux_dmabuf_feedback_v1::ZwpLinuxDmabufFeedbackV1,
+    },
 };
 
-use crate::wayland::Surface;
+use crate::wayland::{Surface, cursor};
 
 /// Per-process Wayland connection and bound globals. Single-threaded; callers
 /// wrap in `Rc<RefCell<WaylandClient>>` to share across surfaces.
@@ -94,6 +102,16 @@ pub struct WaylandClient {
     /// without this, `<input type="range">` (and any other native
     /// drag) sees `buttons: 0` on mousemove and stops responding.
     pub current_buttons: u32,
+    /// `wp_cursor_shape_manager_v1`, if the compositor advertised it.
+    /// `None` means cursor-shape changes from CEF are silently dropped
+    /// (warning logged once at init). River, sway, mutter, hyprland
+    /// all support it; older or minimal compositors may not.
+    pub cursor_shape_manager: Option<WpCursorShapeManagerV1>,
+    /// Device wrapping the live `wl_pointer`, used for `set_shape`.
+    /// Created from `cursor_shape_manager.get_pointer(...)` when the
+    /// pointer capability arrives. `None` if either the manager is
+    /// missing or no pointer is yet bound.
+    pub cursor_shape_device: Option<WpCursorShapeDeviceV1>,
 }
 
 impl WaylandClient {
@@ -127,6 +145,25 @@ impl WaylandClient {
         // sctk's `Shm::bind` exits with `BindError` if missing.
         let shm = Shm::bind(&globals, &qh).expect("Wayland: wl_shm missing");
 
+        // wp_cursor_shape_manager_v1 is optional — the compositor may
+        // not advertise it. We bind it lazily here and warn once; if
+        // absent, every cursor-change request from CEF is dropped on
+        // the floor (matches today's behavior). No XCursor fallback.
+        let cursor_shape_manager = match globals.bind::<WpCursorShapeManagerV1, _, _>(
+            &qh,
+            1..=1,
+            (),
+        ) {
+            Ok(mgr) => Some(mgr),
+            Err(e) => {
+                tracing::warn!(
+                    ?e,
+                    "wp_cursor_shape_manager_v1 not advertised — cursor changes will be no-ops"
+                );
+                None
+            }
+        };
+
         Self {
             conn,
             registry_state,
@@ -145,6 +182,8 @@ impl WaylandClient {
             entered_keyboard_surface: None,
             current_modifiers: Modifiers::default(),
             current_buttons: 0,
+            cursor_shape_manager,
+            cursor_shape_device: None,
         }
     }
 
@@ -179,6 +218,26 @@ impl WaylandClient {
             let _ = queue.dispatch_pending(self);
             self.queue = Some(queue);
         }
+        self.apply_pending_cursor();
+    }
+
+    /// Drain any cursor shape that CEF requested since the last tick
+    /// and apply it to the active pointer. Cursor-shape-v1 needs the
+    /// serial of the latest pointer-enter event; we read it from
+    /// sctk's PointerData. If the device, pointer, or serial is
+    /// missing the shape is silently dropped — the next CSS change
+    /// will re-emit.
+    fn apply_pending_cursor(&self) {
+        let Some(shape) = cursor::take_pending() else { return };
+        let Some(device) = self.cursor_shape_device.as_ref() else { return };
+        let Some(pointer) = self.pointer.as_ref() else { return };
+        let Some(serial) = pointer
+            .data::<PointerData>()
+            .and_then(|d| d.latest_enter_serial())
+        else {
+            return;
+        };
+        device.set_shape(serial, shape);
     }
 }
 
@@ -245,6 +304,15 @@ impl SeatHandler for WaylandClient {
         if capability == Capability::Pointer && self.pointer.is_none() {
             match self.seat_state.get_pointer(qh, &seat) {
                 Ok(p) => {
+                    // Bind the cursor-shape device against this pointer
+                    // before storing the proxy. The device is what
+                    // `set_shape` is called on; if the manager wasn't
+                    // advertised this stays None and cursor changes
+                    // from CEF are dropped at drain time.
+                    self.cursor_shape_device = self
+                        .cursor_shape_manager
+                        .as_ref()
+                        .map(|mgr| mgr.get_pointer(&p, qh, ()));
                     self.pointer = Some(p);
                 }
                 Err(e) => {
