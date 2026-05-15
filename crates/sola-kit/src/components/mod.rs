@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 use sola_core::theme::ComponentBindings;
 
+pub mod badge;
 pub mod bindings_editor;
 pub mod button;
 pub mod card;
@@ -35,6 +36,7 @@ pub mod text_input;
 
 pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
     let mut map = BTreeMap::new();
+    map.insert("badge".into(), badge::bindings());
     map.insert("bindings-editor".into(), bindings_editor::bindings());
     map.insert("button".into(), button::bindings());
     map.insert("card".into(), card::bindings());

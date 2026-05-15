@@ -1,0 +1,39 @@
+/* Badge — small pill with kind-driven color. Shape slots are
+   shared across kinds; only bg/text vary. */
+
+.sola-badge {
+  display: inline-flex;
+  align-items: center;
+  padding-block: var(--sola-badge-padding-block);
+  padding-inline: var(--sola-badge-padding-inline);
+  border-radius: var(--sola-badge-radius);
+  font-size: var(--sola-badge-text-size);
+  line-height: 1;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.sola-badge-neutral {
+  background: var(--sola-badge-neutral-bg);
+  color: var(--sola-badge-neutral-text);
+}
+
+.sola-badge-info {
+  background: var(--sola-badge-info-bg);
+  color: var(--sola-badge-info-text);
+}
+
+.sola-badge-success {
+  background: var(--sola-badge-success-bg);
+  color: var(--sola-badge-success-text);
+}
+
+.sola-badge-warning {
+  background: var(--sola-badge-warning-bg);
+  color: var(--sola-badge-warning-text);
+}
+
+.sola-badge-danger {
+  background: var(--sola-badge-danger-bg);
+  color: var(--sola-badge-danger-text);
+}

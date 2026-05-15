@@ -61,6 +61,7 @@ impl Category {
 
 pub fn for_component(name: &str) -> Vec<Category> {
     match name {
+        "badge" => crate::components::badge::categories(),
         "button" => crate::components::button::categories(),
         "container" => crate::components::container::categories(),
         "field" => crate::components::field::categories(),

@@ -74,6 +74,22 @@ mod tests {
   --text-secondary: #8b949e;
   --text-tertiary: #6e7681;
 
+  /* badge */
+  --sola-badge-danger-bg: var(--danger);
+  --sola-badge-danger-text: var(--text-primary);
+  --sola-badge-info-bg: var(--bg-tertiary);
+  --sola-badge-info-text: var(--text-accent);
+  --sola-badge-neutral-bg: var(--bg-tertiary);
+  --sola-badge-neutral-text: var(--text-secondary);
+  --sola-badge-padding-block: var(--space-xs);
+  --sola-badge-padding-inline: var(--space-sm);
+  --sola-badge-radius: var(--radius-sm);
+  --sola-badge-success-bg: var(--success);
+  --sola-badge-success-text: var(--text-primary);
+  --sola-badge-text-size: var(--text-caption);
+  --sola-badge-warning-bg: var(--danger);
+  --sola-badge-warning-text: var(--text-primary);
+
   /* bindings-editor */
   --sola-bindings-editor-label-color: var(--text-secondary);
 

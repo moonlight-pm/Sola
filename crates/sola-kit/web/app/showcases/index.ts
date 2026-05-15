@@ -13,6 +13,7 @@
 
 import { type Handle, type RemixNode } from "@remix-run/ui";
 
+import { BadgeShowcase } from "./badge.tsx";
 import { ButtonShowcase } from "./button.tsx";
 import { ContainerShowcase } from "./container.tsx";
 import { FieldShowcase } from "./field.tsx";
@@ -45,6 +46,7 @@ export const showcases: ShowcaseEntry[] = [
   { id: "container", label: "Container", section: "Layout", component: ContainerShowcase },
   { id: "split", label: "Split", section: "Layout", component: SplitShowcase },
   { id: "stack", label: "Stack", section: "Layout", component: StackShowcase },
+  { id: "badge", label: "Badge", section: "Components", component: BadgeShowcase },
   { id: "button", label: "Button", section: "Components", component: ButtonShowcase },
   { id: "field", label: "Field", section: "Components", component: FieldShowcase },
   { id: "popover", label: "Popover", section: "Components", component: PopoverShowcase },

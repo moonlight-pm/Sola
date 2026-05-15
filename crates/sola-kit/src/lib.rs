@@ -535,6 +535,7 @@ fn build_importmap(root_component: &str) -> String {
     "imports": {{
       "@sola/ipc":                 "/lib/ipc.ts",
       "@sola/kit":                 "/lib/kit.ts",
+      "@sola/badge":               "/lib/components/badge.tsx",
       "@sola/bindings-editor":     "/lib/components/bindings-editor.tsx",
       "@sola/button":              "/lib/components/button.tsx",
       "@sola/card":                "/lib/components/card.tsx",
