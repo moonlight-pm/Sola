@@ -8,7 +8,7 @@ import { Container, type MaxWidthTag } from "@sola/container";
 import { Stack } from "@sola/stack";
 import { Text } from "@sola/text";
 
-const TAGS: MaxWidthTag[] = ["narrow", "reading", "wide", "full"];
+const TAGS: MaxWidthTag[] = ["narrow", "reading", "article", "wide", "full"];
 
 const FRAME =
   "background: var(--bg-secondary); border: 1px dashed var(--border-subtle); border-radius: var(--radius-md);";

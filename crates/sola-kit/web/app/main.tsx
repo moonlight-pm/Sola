@@ -76,11 +76,7 @@ export function Main(handle: Handle) {
               </SidebarSection>
             ))}
           </Sidebar>
-          {/* 880px is the storybook's content-column width — wider
-              than `reading` (720) but narrower than `wide` (1100), so
-              we use Container's escape-hatch CSS-length for now.
-              Tokens-page two-column layouts fit within this. */}
-          <Container maxWidth="880px">
+          <Container maxWidth="article">
             <Stack gap="xl">
               {/* Persistent content header. Section heading on the
                   left, global theme actions on the right. Future

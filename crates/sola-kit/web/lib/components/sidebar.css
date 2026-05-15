@@ -23,21 +23,21 @@
 .sola-sidebar {
   display: flex;
   flex-direction: column;
-  flex: 0 0 auto;
-  width: var(--_sola-sidebar-width, 220px);
+  /* Fill the layout slot so the bg covers the entire column even
+     when items don't reach the bottom. The Split's pane wrapper
+     handles width, scroll, and the divider line — Sidebar only
+     contributes its own surface and item rhythm. */
+  flex: 1 1 auto;
   box-sizing: border-box;
   padding: var(--sola-sidebar-padding-block) var(--sola-sidebar-padding-inline);
   gap: var(--sola-sidebar-gap);
 
   background: var(--sola-sidebar-bg);
-  border-right: 1px solid var(--sola-sidebar-border);
 
   /* font-family inherits from <Root>; sidebar overrides only its
      own text size and idle color. */
   font-size: var(--sola-sidebar-item-text-size);
   color: var(--sola-sidebar-item-text-idle);
-
-  overflow-y: auto;
 }
 
 .sola-sidebar-section {

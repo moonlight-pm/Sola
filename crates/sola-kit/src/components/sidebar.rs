@@ -9,7 +9,6 @@ use crate::categories::{Category, SlotEntry};
 pub fn bindings() -> ComponentBindings {
     let mut comp = ComponentBindings::default();
     comp.slots.insert("bg".into(), Binding::new("surface", "bg-secondary"));
-    comp.slots.insert("border".into(), Binding::new("border", "border-subtle"));
     comp.slots.insert("section-label-color".into(), Binding::new("text", "text-tertiary"));
     comp.slots.insert("section-label-size".into(), Binding::new("text-size", "text-caption"));
     comp.slots.insert("item-text-idle".into(), Binding::new("text", "text-secondary"));
@@ -39,10 +38,13 @@ pub fn categories() -> Vec<Category> {
             "Surface",
             vec![
                 SlotEntry::new("bg", "Background"),
-                SlotEntry::new("border", "Right border"),
             ],
         )
-        .with_description("Fill and the vertical separator anchoring the sidebar to the work area."),
+        .with_description(
+            "Background fill of the sidebar column. The vertical line\
+             between the sidebar and the next pane is owned by Split,\
+             not Sidebar — see the Split component's `divider` slot.",
+        ),
         Category::new(
             "layout",
             "Layout",

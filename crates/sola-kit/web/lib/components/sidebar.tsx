@@ -23,28 +23,20 @@ import { on } from "@sola/kit";
 // ── Sidebar ─────────────────────────────────────────────────────────
 
 export interface SidebarProps {
-  /**
-   * Sidebar width as a CSS length. Defaults to "220px". Per-instance
-   * choice — not a theme slot.
-   */
-  width?: string;
   children?: RemixNode;
 }
 
 export function Sidebar(handle: Handle<SidebarProps>) {
-  return () => {
-    const width = handle.props.width ?? "220px";
-    // The width is set as a custom property on the host so the
-    // class-based stylesheet can read it without inline `width:`,
-    // which would lose to a `width:` set elsewhere on a styled
-    // descendant.
-    const style = `--_sola-sidebar-width: ${width};`;
-    return (
-      <nav class="sola-sidebar" role="navigation" style={style}>
-        {handle.props.children}
-      </nav>
-    );
-  };
+  // Sidebar fills its layout slot — width comes from the parent
+  // (typically a Split's first pane), scroll comes from the parent's
+  // overflow:auto wrapper, and the visual separator from Sidebar to
+  // the next pane comes from Split's themed divider. Sidebar owns
+  // only its own background, padding, gap, and typography.
+  return () => (
+    <nav class="sola-sidebar" role="navigation">
+      {handle.props.children}
+    </nav>
+  );
 }
 
 // ── SidebarSection ──────────────────────────────────────────────────

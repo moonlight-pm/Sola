@@ -180,7 +180,6 @@ mod tests {
 
   /* sidebar */
   --sola-sidebar-bg: var(--bg-secondary);
-  --sola-sidebar-border: var(--border-subtle);
   --sola-sidebar-gap: var(--space-xs);
   --sola-sidebar-item-bg-active: var(--accent-dim);
   --sola-sidebar-item-bg-hover: var(--bg-hover);
