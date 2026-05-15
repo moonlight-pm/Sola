@@ -177,14 +177,20 @@ pub fn initialize(app_id: &'static str) {
     let locales   = crate::cef::distribution::locales_dir();
     let exe = std::env::current_exe().expect("current_exe");
 
-    // Application-specific cache root. Without this, CEF defaults to
-    // `~/.config/cef_user_data/` and warns about "unintended process
-    // singleton behavior" — and any leftover orphaned subprocess tree
-    // from a previous run holds the singleton lock and refuses to let a
-    // new instance start ("Opening in existing browser session"). Owning
-    // a known sola-specific path makes recovery (kill + clear lock)
-    // straightforward and silences the warning.
-    let cache_root = crate::cef::distribution::cef_dir().join("runtime");
+    // Per-app cache root. CEF's process-singleton lock lives in this
+    // directory; if two kit apps share it, launching the second app
+    // while the first is running causes CEF to forward the launch to
+    // the first process ("Opening in existing browser session") and the
+    // user sees a stray Chrome-style window instead of the new app.
+    // Scoping by `app_id` gives each kit app its own singleton domain.
+    //
+    // Without any explicit `root_cache_path`, CEF would default to
+    // `~/.config/cef_user_data/` and warn about "unintended process
+    // singleton behavior". Owning a known sola-specific path also makes
+    // recovery (kill + clear lock) straightforward.
+    let cache_root = crate::cef::distribution::cef_dir()
+        .join("runtime")
+        .join(app_id);
     let _ = std::fs::create_dir_all(&cache_root);
 
     let mut settings = cef::Settings::default();
