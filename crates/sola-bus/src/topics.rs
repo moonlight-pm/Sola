@@ -282,6 +282,20 @@ pub struct BrowserConfig {
     pub active_tab_id: Option<String>,
 }
 
+/// Monitor UI preferences. Persistent so the sticky-panel width
+/// survives across monitor restarts and bus restarts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MonitorConfig {
+    pub sidebar_width: u32,
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self { sidebar_width: 240 }
+    }
+}
+
 /// One visited URL. Cap and MRU policy are enforced by the browser
 /// before emitting `BrowserHistory` (the singleton aggregate).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -463,6 +477,11 @@ define_topics! {
     // so terminal restarts restore the user's layout.
     #[persistent]
     TerminalConfig(TerminalConfig),
+
+    // Monitor UI preferences (sticky-panel width). Persistent
+    // so the user's chosen width survives across restarts.
+    #[persistent]
+    MonitorConfig(MonitorConfig),
 
     // One terminal tab as persisted on the bus. Keyed by `id` so each
     // tab has its own `(TerminalSession, [id])` slot — add a tab by
@@ -749,6 +768,37 @@ mod tests {
                 assert!(!back.sidebar_collapsed);
             }
             other => panic!("expected TerminalConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn monitor_config_roundtrips_via_postcard() {
+        let cfg = MonitorConfig { sidebar_width: 312 };
+        let topic = Topic::MonitorConfig(cfg.clone());
+        let msg = topic.to_message();
+        let parsed = Topic::parse(&msg).unwrap();
+        match parsed {
+            Topic::MonitorConfig(back) => {
+                assert_eq!(back.sidebar_width, 312);
+            }
+            other => panic!("expected MonitorConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn monitor_config_roundtrips_via_toml() {
+        let cfg = MonitorConfig { sidebar_width: 240 };
+        let topic = Topic::MonitorConfig(cfg);
+        let value = topic
+            .to_toml_value()
+            .expect("persistent payload should serialize to TOML");
+        let restored = Topic::from_toml_section(TopicKind::MonitorConfig, value)
+            .expect("section should deserialize");
+        match restored {
+            Topic::MonitorConfig(back) => {
+                assert_eq!(back.sidebar_width, 240);
+            }
+            other => panic!("expected MonitorConfig, got {other:?}"),
         }
     }
 
