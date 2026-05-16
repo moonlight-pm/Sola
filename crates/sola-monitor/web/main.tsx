@@ -15,6 +15,9 @@ import {
 } from "./panels/messages";
 import { StickyDivider, StickyPanel, type StickyState } from "./panels/sticky";
 
+// TODO(perf): Remix v3 re-renders the whole list on every message.
+// 5000 is the safety cap; if Frame-heavy sessions stutter, reduce to
+// 500 visible rows with pagination.
 const MAX_MESSAGES = 5000;
 
 type MonitorState = MessagesState & StickyState;

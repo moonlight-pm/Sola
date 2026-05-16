@@ -81,15 +81,28 @@ impl SolaApp for MonitorApp {
         &mut self,
         cmd: &str,
         args: &Value,
-        _id: Option<u64>,
-        _source: &WindowHandle,
+        id: Option<u64>,
+        source: &WindowHandle,
         ctx: &mut AppCtx,
     ) {
-        if cmd == "monitor_set_sidebar_width" {
-            if let Some(w) = args.get("width").and_then(|v| v.as_u64()) {
-                self.config.sidebar_width = w as u32;
-                ctx.emit(Topic::MonitorConfig(self.config.clone()));
+        let result = match cmd {
+            "monitor_set_sidebar_width" => {
+                if let Some(w) = args.get("width").and_then(|v| v.as_u64()) {
+                    self.config.sidebar_width = w as u32;
+                    ctx.emit(Topic::MonitorConfig(self.config.clone()));
+                    json!(null)
+                } else {
+                    json!({ "error": "missing or invalid width" })
+                }
             }
+            _ => {
+                tracing::warn!(cmd, "unknown command");
+                json!({ "error": format!("unknown command: {cmd}") })
+            }
+        };
+
+        if let Some(id) = id {
+            source.send_to_js(&json!({ "id": id, "result": result }));
         }
     }
 }
