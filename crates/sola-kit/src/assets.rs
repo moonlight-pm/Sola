@@ -238,9 +238,11 @@ static PRETEXT_DIR: include_dir::Dir<'_> =
 ///   back here when an app bundle has no `/index.html`.
 /// - The IPC bridge (`/lib/ipc.ts`) and kit helpers (`/lib/kit.ts`).
 /// - Every kit-shipped component (TS source + CSS). The kit's
-///   `inject_kit_head` walks this bundle for `Css` assets and emits a
-///   `<link rel="stylesheet">` for each — apps don't enumerate
-///   component stylesheets in their own `index.html`.
+///   `inject_kit_head` walks this bundle (and the per-window app
+///   bundle) for `Css` assets and emits a `<link rel="stylesheet">`
+///   for each — neither the kit nor apps enumerate stylesheets in
+///   their own `index.html`. App CSS is appended after kit CSS so app
+///   rules cascade over kit defaults.
 /// - The vendored Remix v3 source tree under `/vendor/remix-ui/`.
 pub fn platform_assets() -> &'static AssetBundle {
     static PLATFORM: AssetBundle = AssetBundle {

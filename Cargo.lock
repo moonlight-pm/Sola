@@ -2996,12 +2996,12 @@ dependencies = [
 name = "sola-monitor"
 version = "0.1.0"
 dependencies = [
- "gtk4",
  "hex",
+ "include_dir",
  "serde_json",
- "sola-app",
  "sola-bus",
  "sola-core",
+ "sola-kit",
  "tracing",
 ]
 

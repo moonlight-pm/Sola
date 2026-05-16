@@ -585,18 +585,24 @@ fn inject_before_head_close(html: &str, injection: &str) -> String {
     html.to_string()
 }
 
-/// Build the `<link rel="stylesheet">` block for every `Css` asset
-/// the kit ships in `platform_assets()`. Apps no longer enumerate
-/// component stylesheets in their own `index.html` — adding a new
-/// kit component with a sibling `.css` file makes it appear in every
-/// kit app automatically.
-fn kit_css_links() -> String {
-    let mut out = String::from("");
-    for asset in assets::platform_assets().assets {
-        if asset.content_type == assets::ContentType::Css {
-            out.push_str("  <link rel=\"stylesheet\" href=\"");
-            out.push_str(asset.path);
-            out.push_str("\" />\n");
+/// Build the `<link rel="stylesheet">` block for every `Css` asset in the
+/// given bundles, in order. Apps no longer enumerate component
+/// stylesheets in their own `index.html` — adding a new kit component
+/// (or app-side stylesheet) with a `.css` extension to the relevant
+/// bundle makes it appear in every kit app automatically.
+///
+/// Bundles are walked in the order supplied; with `platform_assets()`
+/// first and the app's bundle second, app CSS naturally cascades over
+/// kit defaults.
+fn kit_css_links(bundles: &[&assets::AssetBundle]) -> String {
+    let mut out = String::new();
+    for bundle in bundles {
+        for asset in bundle.assets {
+            if asset.content_type == assets::ContentType::Css {
+                out.push_str("  <link rel=\"stylesheet\" href=\"");
+                out.push_str(asset.path);
+                out.push_str("\" />\n");
+            }
         }
     }
     out
@@ -641,15 +647,21 @@ fn build_eval_wrapper(expr: &str) -> String {
 /// Order is intentional:
 ///   1. Importmap — installed before any module loads so bare
 ///      specifiers resolve.
-///   2. Stylesheet `<link>`s — let the browser begin fetching CSS
-///      while the JS bootstrap runs.
+///   2. Stylesheet `<link>`s — kit CSS first, app CSS second so app
+///      rules cascade over kit defaults. The browser begins fetching
+///      both while the JS bootstrap runs.
 ///   3. `__solaRecv` queueing stub — installed before any
 ///      `<script type="module">` runs so Rust→JS pushes that race
 ///      module loading don't drop on the floor.
-pub(crate) fn inject_kit_head(html: &str, root_component: &str) -> String {
+pub(crate) fn inject_kit_head(
+    html: &str,
+    root_component: &str,
+    app_assets: &assets::AssetBundle,
+) -> String {
     let importmap = build_importmap(root_component);
     let with_map = inject_before_head_close(html, &importmap);
-    let with_css = inject_before_head_close(&with_map, &kit_css_links());
+    let links = kit_css_links(&[assets::platform_assets(), app_assets]);
+    let with_css = inject_before_head_close(&with_map, &links);
     inject_before_head_close(&with_css, BOOTSTRAP_SCRIPT)
 }
 

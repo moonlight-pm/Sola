@@ -80,7 +80,7 @@ impl AppCtx {
             })
             .unwrap_or_else(|| "<html><body>No index.html in bundle</body></html>".to_string());
 
-        let html = crate::inject_kit_head(&html_raw, self.root_component);
+        let html = crate::inject_kit_head(&html_raw, self.root_component, cfg.assets);
 
         // Register the bundle + HTML with the static scheme handler before
         // the browser is created so the first navigation is served correctly.
