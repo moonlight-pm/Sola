@@ -26,10 +26,7 @@ If your system uses a flake (`/etc/nixos/flake.nix`):
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    sola = {
-      url = "git+ssh://git@github.com/moonlight-pm/Sola";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    sola.url = "git+ssh://git@github.com/moonlight-pm/Sola";
   };
 
   outputs = { self, nixpkgs, sola, ... }: {
@@ -44,6 +41,14 @@ If your system uses a flake (`/etc/nixos/flake.nix`):
   };
 }
 ```
+
+> **Do not add `inputs.sola.inputs.nixpkgs.follows = "nixpkgs";`.**
+> Sola pins its own nixpkgs (via `flake.lock`) to a revision where
+> the patched `pkgs.river` (0.4.5, the zig rewrite) builds cleanly.
+> Overriding it with your nixpkgs can land you on a revision where
+> `pkgs.river` has been renamed or doesn't have the right version, and
+> the build will fail with a `'river' has been renamed to/replaced by`
+> throw. The closure-size cost of two nixpkgs revisions is small.
 
 If your system uses the classic `/etc/nixos/configuration.nix` (no
 flake), the simplest path is to add a flake — even a one-file
