@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const RELEASE_REPO: &str = "moonlight-pm/Sola";
-const REMOTE: &str = "github";
+const REMOTE: &str = "origin";
 const BRANCH: &str = "master";
 
 /// Binaries that dynamically link `libcef.so` — their RUNPATH needs
