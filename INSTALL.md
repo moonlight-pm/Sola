@@ -166,9 +166,6 @@ above.
 - **A `sola-kit` app shows a blank window** — GPU initialization
   failed. See "GPU notes" above and check
   `/opt/sola/log/sola-kit.log`.
-- **Steam games don't work / crash River** — only run Steam via
-  `gamescope -- steam`. Direct `steam` hits River bugs the patch
-  doesn't cover.
 - **`error: 'river' has been renamed to/replaced by 'river-classic'`**
   during `nixos-rebuild` — your flake has
   `inputs.sola.inputs.nixpkgs.follows = "nixpkgs"`. Remove that line
