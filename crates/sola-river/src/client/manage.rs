@@ -22,6 +22,8 @@ pub fn handle_manage_start(state: &mut AppData) {
     let pending_count = state.pending.manage.len();
     for (&window_id, &(w, h)) in &state.pending.manage {
         if let Some(proxy) = state.windows_by_id.get(&window_id) {
+            let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
+            tracing::info!(window_id, app_id, w, h, "propose_dimensions");
             proxy.propose_dimensions(w, h);
         }
     }
@@ -95,6 +97,7 @@ fn apply_fullscreen_requests(state: &mut AppData) {
             if let Some(proxy) = state.windows_by_id.get(&window_id) {
                 proxy.fullscreen(&output);
                 proxy.inform_fullscreen();
+                state.currently_fullscreen.insert(window_id);
                 tracing::info!(window_id, "granted fullscreen");
             }
         }
@@ -104,6 +107,7 @@ fn apply_fullscreen_requests(state: &mut AppData) {
         if let Some(proxy) = state.windows_by_id.get(&window_id) {
             proxy.exit_fullscreen();
             proxy.inform_not_fullscreen();
+            state.currently_fullscreen.remove(&window_id);
             tracing::info!(window_id, "exited fullscreen");
         }
     }

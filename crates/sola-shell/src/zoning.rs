@@ -122,8 +122,17 @@ impl ZoningState {
             }
         };
 
-        info!(app_id = %app_id, window_id, ?zone, "snapping to zone");
         let frame = compute_frame(zone, window_id, w, h);
+        info!(
+            app_id = %app_id,
+            window_id,
+            ?zone,
+            x = frame.x,
+            y = frame.y,
+            width = frame.width,
+            height = frame.height,
+            "snapping to zone"
+        );
 
         self.window_zones.insert(window_id, zone);
 
@@ -148,6 +157,7 @@ impl ZoningState {
             y: 0,
             width: w,
             height: MENUBAR_HEIGHT,
+            fullscreen: false,
         })
     }
 
@@ -160,6 +170,7 @@ impl ZoningState {
             y: MENUBAR_HEIGHT,
             width: w,
             height: h - MENUBAR_HEIGHT,
+            fullscreen: false,
         })
     }
 
@@ -201,10 +212,8 @@ fn zone_for_keycode(code: u32) -> Option<Zone> {
 
 fn compute_frame(zone: Zone, window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
     let (xp, yp, wp, hp) = zone.rect();
-    // Cinema is the special zone that covers the whole output —
-    // including the menubar — so its rect (0, 0, 1, 1) maps to the
-    // raw output bounds with no chrome offset. Every other zone
-    // sits under the menubar and is sized against the usable area.
+    // Cinema covers the whole output including the menubar; every other
+    // zone sits under the menubar and is sized against the usable area.
     let (offset_y, usable_h) = if matches!(zone, Zone::Cinema) {
         (0, output_h)
     } else {
@@ -222,5 +231,10 @@ fn compute_frame(zone: Zone, window_id: u32, output_w: i32, output_h: i32) -> Fr
         y,
         width: w,
         height: h,
+        // Cinema = "true fullscreen treatment": the compositor sends
+        // xdg-shell fullscreen state, which forces clients past their
+        // own max_size / work-area assumptions. Every other zone is a
+        // normal toplevel.
+        fullscreen: matches!(zone, Zone::Cinema),
     }
 }

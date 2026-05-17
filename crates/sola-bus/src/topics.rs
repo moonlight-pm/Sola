@@ -68,6 +68,14 @@ pub struct FrameUpdate {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+    /// When true, the compositor should enter true fullscreen state for
+    /// this window (call `proxy.fullscreen(&output)`), not just resize
+    /// it. Set by the shell for the Cinema zone so games receive a
+    /// configure with the fullscreen bit, which per xdg-shell overrides
+    /// their own internal max_size/work-area constraints. Exit is
+    /// driven by either the client itself (`unset_fullscreen`) or by
+    /// river auto-exiting on focus change.
+    pub fullscreen: bool,
 }
 
 /// Which surface receives keyboard focus.

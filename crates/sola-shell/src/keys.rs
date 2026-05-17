@@ -374,6 +374,7 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEv
                 y: (oh - 400) / 2,
                 width: 800,
                 height: 400,
+                fullscreen: false,
             }));
         }
         app.emit_composition(ctx);

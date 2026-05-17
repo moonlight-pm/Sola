@@ -65,6 +65,13 @@ pub struct AppData {
     /// explicit shell Frame or our own centered default. Prevents the
     /// default from re-firing across subsequent render passes.
     pub placed: std::collections::HashSet<u32>,
+    /// Windows currently in compositor-fullscreen state because we
+    /// called `proxy.fullscreen`. Used by the focus-change handler to
+    /// auto-exit fullscreen when the user Alt-Tabs away — many games
+    /// (Enshrouded) toggle to "Windowed" mode internally without ever
+    /// sending `xdg_toplevel.unset_fullscreen`, so the surface stays
+    /// z-stacked above everything and Alt-Tab gives no visual feedback.
+    pub currently_fullscreen: std::collections::HashSet<u32>,
     /// Mode selection state for `zwlr_output_manager_v1` — we use this
     /// protocol to pick the highest resolution ≥60Hz on startup.
     pub output_config: output_config::OutputConfigState,
@@ -107,6 +114,7 @@ impl AppData {
             outputs: Vec::new(),
             output_size: None,
             placed: std::collections::HashSet::new(),
+            currently_fullscreen: std::collections::HashSet::new(),
             output_config: output_config::OutputConfigState::default(),
             virtual_keyboard: virtual_keyboard::VirtualKeyboardState::default(),
             libinput_config: None,
@@ -167,20 +175,50 @@ pub fn bus_tick(state: &mut AppData) {
                 state.pending.set_composition(ids);
             }
             sola_bus::topics::Topic::Frame(f) => {
-                tracing::debug!(
+                let app_id = state.registry.app_id_for(f.window_id).unwrap_or("?");
+                tracing::info!(
                     window_id = f.window_id,
+                    app_id,
+                    x = f.x,
+                    y = f.y,
                     w = f.width,
                     h = f.height,
+                    fullscreen = f.fullscreen,
                     "got Frame"
                 );
                 state
                     .pending
                     .frame(f.window_id, f.x, f.y, f.width, f.height);
+                if f.fullscreen {
+                    // Shell-initiated fullscreen (Cinema zone). Same
+                    // path as a client-initiated request — manage_finish
+                    // enters the surface into true xdg-shell fullscreen.
+                    state.pending.queue_fullscreen(f.window_id);
+                }
                 state
                     .registry
                     .set_frame(f.window_id, f.x, f.y, f.width, f.height);
             }
             sola_bus::topics::Topic::Focus(t) => {
+                // If focus is moving AWAY from a window we put in
+                // compositor-fullscreen state, exit fullscreen for the
+                // previously focused window first. Otherwise the
+                // surface keeps its "above everything" z-stack and
+                // Alt-Tab gives no visual feedback, even though focus
+                // technically changed (music drops, but the game is
+                // still painted on top of the new focus target).
+                if let Some(prev) = state.focused_window {
+                    if prev != t.window_id
+                        && state.currently_fullscreen.contains(&prev)
+                    {
+                        tracing::info!(
+                            prev_window_id = prev,
+                            new_window_id = t.window_id,
+                            "focus moved away from fullscreen window — auto-exit"
+                        );
+                        state.pending.queue_exit_fullscreen(prev);
+                    }
+                }
                 state
                     .pending
                     .set_focus(crate::pending::FocusAction::Window(t.window_id));

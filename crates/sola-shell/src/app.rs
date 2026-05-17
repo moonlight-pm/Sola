@@ -1050,6 +1050,7 @@ impl ShellApp {
                 y: zoning::MENUBAR_HEIGHT,
                 width: ow,
                 height: oh - zoning::MENUBAR_HEIGHT,
+                fullscreen: false,
             }));
         }
 
@@ -1102,6 +1103,7 @@ impl ShellApp {
                 y: zoning::MENUBAR_HEIGHT,
                 width: ow,
                 height: oh - zoning::MENUBAR_HEIGHT,
+                fullscreen: false,
             }));
         }
 

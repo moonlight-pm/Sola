@@ -93,9 +93,9 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
         let mut apps_dirty = false;
         match event {
             Event::AppId { app_id } => {
-                state
-                    .registry
-                    .set_app_id(window_id, app_id.unwrap_or_default());
+                let value = app_id.unwrap_or_default();
+                info!(window_id, app_id = %value, "app_id set");
+                state.registry.set_app_id(window_id, value);
                 apps_dirty = true;
             }
             Event::Title { title } => {
@@ -119,6 +119,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 state.windows_by_id.remove(&window_id);
                 state.nodes_by_window.remove(&window_id);
                 state.placed.remove(&window_id);
+                state.currently_fullscreen.remove(&window_id);
                 window.destroy();
                 apps_dirty = true;
             }
@@ -127,6 +128,14 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 max_height,
                 ..
             } => {
+                let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
+                info!(
+                    window_id,
+                    app_id,
+                    max_width,
+                    max_height,
+                    "dimensions hint"
+                );
                 state
                     .registry
                     .set_max_size(window_id, max_width, max_height);
@@ -138,11 +147,13 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 }
             }
             Event::FullscreenRequested { output: _ } => {
-                info!(window_id, "fullscreen requested");
+                let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
+                info!(window_id, app_id, "fullscreen requested (client-initiated)");
                 state.pending.queue_fullscreen(window_id);
             }
             Event::ExitFullscreenRequested => {
-                info!(window_id, "exit fullscreen requested");
+                let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
+                info!(window_id, app_id, "exit fullscreen requested (client-initiated)");
                 state.pending.queue_exit_fullscreen(window_id);
             }
             _ => {}
