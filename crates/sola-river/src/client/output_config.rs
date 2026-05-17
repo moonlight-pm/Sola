@@ -1,4 +1,4 @@
-//! Pick the highest-resolution mode ≥60Hz on each head.
+//! Pick the highest-resolution mode at "60Hz-ish" (≥59Hz) on each head.
 //!
 //! On startup we bind `zwlr_output_manager_v1`, collect modes per head,
 //! and on the first `done` serial where any head isn't already running
@@ -20,7 +20,7 @@ use crate::protocol::wlr_output_management_unstable_v1::{
 };
 
 /// Hz * 1000 — wlr-output-management's refresh rate unit.
-const MIN_REFRESH_MHZ: i32 = 60_000;
+const MIN_REFRESH_MHZ: i32 = 59_000;
 
 #[derive(Default)]
 pub struct OutputModeInfo {
