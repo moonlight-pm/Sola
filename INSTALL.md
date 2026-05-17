@@ -169,6 +169,13 @@ above.
 - **Steam games don't work / crash River** — only run Steam via
   `gamescope -- steam`. Direct `steam` hits River bugs the patch
   doesn't cover.
+- **`error: 'river' has been renamed to/replaced by 'river-classic'`**
+  during `nixos-rebuild` — your flake has
+  `inputs.sola.inputs.nixpkgs.follows = "nixpkgs"`. Remove that line
+  (see the warning under "Setup"), then re-run
+  `nix flake update sola && sudo nixos-rebuild switch --flake /etc/nixos`.
+  Sola's pinned nixpkgs has the right `pkgs.river`; following yours
+  can land on a transient revision where it's missing.
 
 For deeper issues, see `docs/vault/Distribution.md` in the repo —
 it documents every runtime requirement and its rationale.
