@@ -1,14 +1,7 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, riverPackage, ... }:
 
 let
   cfg = config.services.sola;
-
-  # River carries one patch we haven't upstreamed (Xwayland window
-  # destroy state healing). See docs/vault/Distribution.md for the
-  # rationale.
-  river-patched = pkgs.river.overrideAttrs (old: {
-    patches = (old.patches or [ ]) ++ [ ./patches/river-xwayland-destroy-state.patch ];
-  });
 
   sola-pkg = pkgs.callPackage ./sola.nix { };
 in
@@ -21,12 +14,24 @@ in
       default = sola-pkg;
       description = "The Sola package (binaries + bundled CEF).";
     };
+
+    riverPackage = lib.mkOption {
+      type = lib.types.package;
+      default = riverPackage;
+      description = ''
+        River compositor with our carried Xwayland-destroy-state
+        patch. Defaults to a river-patched built from this flake's
+        pinned nixpkgs (so it works regardless of whether the host
+        config is on stable, unstable, or anything in between).
+        Override only if you want to manage River yourself.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages = with pkgs; [
       cfg.package
-      river-patched
+      cfg.riverPackage
 
       # Sola runtime tooling.
       patchelf            # used by sola's CEF housekeeping
