@@ -24,13 +24,15 @@ gamemoderun).
 **Status:** present in 0.4.5 and `main` (codeberg.org/river/river,
 commit 6d32af3 at the time of writing). Not upstreamed.
 
-**File:** `/etc/nixos/patches/river-xwayland-destroy-state.patch`
+**File:** `nix/patches/river-xwayland-destroy-state.patch` (in this
+repo; also applied via `nix/module.nix`).
 
 **What it fixes:** River 0.4 panics with `reached unreachable code`
 when an Xwayland surface is destroyed without a preceding unmap —
-e.g. when an X client crashes mid-render or when gamescope (running
-nested) exits while children are still mapped. Reproduced reliably
-by launching `gamescope -- steam` from the launcher.
+i.e. any X client (Steam, a game, a misbehaving toolkit) that
+crashes mid-render or tears its surface down out of order. Easiest
+repro is `gamescope -- steam` exiting with children still mapped,
+but the same class of bug fires from bare Xwayland clients too.
 
 **Where:** `river/Window.zig:328` (`Window.destroy()`) hits the
 `unreachable` arm because `XwaylandWindow.handleDestroy()`
@@ -42,15 +44,8 @@ patch mirrors that logic for X11 and additionally handles `.mapped`
 gracefully (X11 does not guarantee unmap-before-destroy the way XDG
 does).
 
-**Apply (NixOS):**
-```nix
-let
-  river-patched = unstable.river.overrideAttrs (old: {
-    patches = (old.patches or [ ]) ++ [ ./patches/river-xwayland-destroy-state.patch ];
-  });
-in
-  environment.systemPackages = [ ... river-patched ... ];
-```
+**How we ship it:** `nix/module.nix` overrides `pkgs.river` and
+appends the patch. See that file for the canonical apply.
 
 **When to drop:** if `XwaylandWindow.handleDestroy` upstream gains
 the same `switch (window.state)` block that `XdgToplevel.handleDestroy`
@@ -58,19 +53,16 @@ has, the patch becomes redundant.
 
 ## Steam
 
-Works **only via gamescope nested**: `gamescope -- steam` (added as
-a launcher entry). Gamescope appears as a single Wayland client
-window on River; Steam runs inside it and its Xwayland chaos is
-contained.
+Runs directly under sola-river — just launch `steam` (or pick it
+from the launcher). No `gamescope` wrapper is required.
 
-Direct `steam` (without gamescope) crashes River 0.4 even with the
-patch above — Steam's bare Xwayland window-lifecycle dance hits
-other code paths in the WindowManagerV1 destroy machinery that we
-have not chased.
-
-The carried patch is what keeps the gamescope-nested workflow
-stable: when gamescope eventually exits (Steam crashing inside it,
-user closing it, etc.) River no longer panics on the disconnect.
+(Earlier notes here described a `gamescope -- steam` workaround
+because bare Steam used to crash river before the carried Xwayland
+destroy-state patch was in place. The patch + current river/wlroots
+combo handles Steam's Xwayland teardown cleanly, and the wrapper
+is no longer needed. Gamescope is still useful for specific games
+that need a fixed render resolution or extra HDR/scaling control,
+but it's not a sola requirement.)
 
 ## Other host packages
 
