@@ -99,5 +99,27 @@ in
     # Sola talks Wayland/DRM directly via Smithay + sctk and uses CEF's
     # GPU subprocess for the kit. Both want a working GBM / EGL stack.
     hardware.graphics.enable = true;
+
+    # The sola binaries have several hardcoded `/opt/sola/*` paths
+    # baked into the source (asset lookup, launcher app commands,
+    # log destination, cursor theme path). Nix wants everything in
+    # the store, so we shim /opt/sola/{bin,share} as symlinks into
+    # the package output and create /opt/sola/log as a real writable
+    # directory. Activation refuses to clobber a real directory at
+    # those paths — useful if you happen to be sharing a box with a
+    # `cargo make install` setup.
+    system.activationScripts.sola = ''
+      mkdir -p /opt/sola /opt/sola/log
+      chmod 1777 /opt/sola/log
+
+      for dir in bin share; do
+        target="/opt/sola/$dir"
+        if [ -L "$target" ] || [ ! -e "$target" ]; then
+          ln -sfn ${cfg.package}/$dir "$target"
+        else
+          echo "sola: /opt/sola/$dir is a real directory; leaving alone" >&2
+        fi
+      done
+    '';
   };
 }

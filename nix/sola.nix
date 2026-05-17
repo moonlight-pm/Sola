@@ -35,9 +35,10 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p $out/bin $out/lib/cef
+    mkdir -p $out/bin $out/lib/cef $out/share
     cp -r bin/. $out/bin/
     cp -r cef/. $out/lib/cef/
+    cp -r share/. $out/share/
 
     # The CEF-linking binaries shipped in the tarball have their
     # RUNPATH pre-pointed at /opt/sola/cef (so the tarball is usable

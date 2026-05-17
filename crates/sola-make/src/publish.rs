@@ -50,8 +50,10 @@ fn run_publish(explicit_version: Option<String>) -> Result<String, String> {
     let bundle = staging.join("sola");
     let bin_dir = bundle.join("bin");
     let cef_dir = bundle.join("cef");
+    let share_dir = bundle.join("share");
     fs::create_dir_all(&bin_dir).map_err(|e| format!("mkdir bin: {e}"))?;
     fs::create_dir_all(&cef_dir).map_err(|e| format!("mkdir cef: {e}"))?;
+    fs::create_dir_all(&share_dir).map_err(|e| format!("mkdir share: {e}"))?;
 
     println!(">>> staging binaries from target/release");
     for name in crate::discover_binaries() {
@@ -60,6 +62,18 @@ fn run_publish(explicit_version: Option<String>) -> Result<String, String> {
         fs::copy(&src, &dst)
             .map_err(|e| format!("copy {src} -> {}: {e}", dst.display()))?;
     }
+
+    println!(">>> staging /opt/sola/share (icons + cursors + fonts + applications)");
+    if !Path::new("/opt/sola/share").exists() {
+        return Err(
+            "/opt/sola/share not found — run `cargo make assets pull` then `cargo make install`"
+                .to_string(),
+        );
+    }
+    run(
+        "cp",
+        &["-r", "/opt/sola/share/.", share_dir.to_str().unwrap()],
+    )?;
 
     println!(">>> staging CEF Release tree");
     let cef_version = fs::read_to_string("cef-version")
