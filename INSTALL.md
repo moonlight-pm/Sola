@@ -11,6 +11,10 @@ configuration via a NixOS module. You will not compile anything.
 - x86_64. (No ARM build yet.)
 - A working GPU stack — Mesa-only (Intel/AMD) or NVIDIA proprietary.
   See "GPU notes" below.
+- SSH access to the private repo: your SSH key registered with GitHub
+  (`ssh -T git@github.com` should print "Hi <username>!"), and your
+  GitHub user added as a collaborator on `moonlight-pm/Sola`. Nix's
+  `git+ssh://` flake fetch uses the same SSH auth as `git clone`.
 
 ## Setup
 
@@ -57,12 +61,16 @@ from GitHub Releases (a few hundred MB; takes a minute or two).
 
 ### 3. Verify
 
-You should now have `sola` on your PATH:
-
 ```sh
-which sola
-sola --version
+which sola              # /run/current-system/sw/bin/sola
+which solactl           # /run/current-system/sw/bin/solactl
+ls /opt/sola/bin/       # full app set
 ```
+
+`sola` itself is a process manager that takes over the display the
+moment it starts — it does **not** accept `--version` or `--help` and
+has no safe "smoke test" invocation from inside another session. The
+above PATH/listing checks confirm the install without launching it.
 
 ## Running Sola
 
@@ -129,9 +137,19 @@ The full configuration is in `nix/module.nix`.
 When a new release is published:
 
 ```sh
-nix flake update
+nix flake update sola
 sudo nixos-rebuild switch --flake /etc/nixos
 ```
+
+Releases are tagged `vX.Y.Z` on the Sola repo. To pin to a specific
+release (instead of tracking `master`):
+
+```nix
+sola.url = "git+ssh://git@github.com/moonlight-pm/Sola?ref=v0.1.0";
+```
+
+Update by bumping the `ref=` value and re-running the two commands
+above.
 
 ## Troubleshooting
 
