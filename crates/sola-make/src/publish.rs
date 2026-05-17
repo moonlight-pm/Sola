@@ -21,11 +21,6 @@ const RELEASE_REPO: &str = "moonlight-pm/Sola";
 const REMOTE: &str = "origin";
 const BRANCH: &str = "master";
 
-/// Binaries that dynamically link `libcef.so` — their RUNPATH needs
-/// updating from the build host's `~/.cache/sola/cef-…/Release` path
-/// to a stable consumer-side location.
-const CEF_LINKING_BINS: &[&str] = &["sola-kit", "sola-monitor", "sola-settings"];
-
 pub fn publish(explicit_version: Option<String>) {
     match run_publish(explicit_version) {
         Ok(version) => println!("\n✓ Published v{version}"),
@@ -97,7 +92,7 @@ fn run_publish(explicit_version: Option<String>) -> Result<String, String> {
     )?;
 
     println!(">>> pre-patching CEF-linking binaries' RUNPATH");
-    for bin in CEF_LINKING_BINS {
+    for bin in crate::cef::CEF_LINKING_BINS {
         let path = bin_dir.join(bin);
         if !path.exists() {
             continue;

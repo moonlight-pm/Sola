@@ -19,6 +19,17 @@ use std::path::PathBuf;
 pub const CEF_VERSION: &str =
     include_str!("../../../cef-version").trim_ascii_end();
 
+/// Workspace binaries that dynamically link `libcef.so`. Their RUNPATH
+/// must resolve `libcef.so` to a real path:
+///
+///   - dev install (`cargo make install`): `~/.cache/sola/cef-<ver>/Release`
+///   - release tarball: `/opt/sola/cef` (the Nix derivation re-rpaths
+///     to its store output at install time).
+///
+/// `crates/sola-make/src/install.rs` and `publish.rs` both consume
+/// this list to keep the two install paths in sync.
+pub const CEF_LINKING_BINS: &[&str] = &["sola-kit", "sola-monitor", "sola-settings"];
+
 /// Directory name used inside the cache. Stable across version bumps
 /// only via the version-suffixed subdirectory.
 const CACHE_PREFIX: &str = "cef-";

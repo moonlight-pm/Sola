@@ -286,6 +286,17 @@ pub fn install(app: Option<&str>) {
     for name in &binaries {
         let src = format!("target/debug/{name}");
         if Path::new(&src).exists() {
+            // CEF-linking binaries need a RUNPATH that resolves libcef.so
+            // at the dev cache. Patch the build output before install_binary's
+            // cmp check so source and dest stay in sync (the prebuilt-release
+            // pipeline does the same thing in publish.rs but rpaths to
+            // /opt/sola/cef instead of the dev cache).
+            if super::cef::CEF_LINKING_BINS.contains(&name.as_str()) {
+                if let Err(e) = patchelf_cef_rpath(&src) {
+                    eprintln!("  failed to patch RUNPATH for {name}: {e}");
+                    std::process::exit(1);
+                }
+            }
             match install_binary(&src) {
                 Ok(true) => println!("  installed {name}"),
                 Ok(false) => println!("  unchanged {name}"),
@@ -316,6 +327,19 @@ pub fn install(app: Option<&str>) {
     register_mime_defaults();
 
     println!("Installed to {BIN_DIR}");
+}
+
+/// Patch a freshly built CEF-linking binary's RUNPATH to point at the
+/// dev CEF cache so it can resolve libcef.so when launched standalone
+/// or via sola-session (which does not set LD_LIBRARY_PATH for kit apps).
+/// Idempotent: patchelf rewriting the same RUNPATH yields the same bytes.
+fn patchelf_cef_rpath(bin: &str) -> Result<(), String> {
+    let release = super::cef::release_dir();
+    let rpath = format!(
+        "{}:/run/current-system/sw/share/nix-ld/lib",
+        release.display()
+    );
+    run("patchelf", &["--set-rpath", &rpath, bin])
 }
 
 fn run(program: &str, args: &[&str]) -> Result<(), String> {
