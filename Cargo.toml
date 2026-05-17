@@ -28,3 +28,10 @@ ureq = "3"
 # against the pre-installed `cargo make install-cef` cache.
 [patch.crates-io]
 download-cef = { path = "crates/download-cef-stub" }
+
+# Release builds strip DWARF debug info but keep the symbol table, so
+# stack traces from /opt/sola/log still show meaningful function names
+# while binaries shrink ~70%. `cargo make publish` relies on this for
+# the GitHub release tarball.
+[profile.release]
+strip = "debuginfo"

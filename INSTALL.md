@@ -149,3 +149,28 @@ sudo nixos-rebuild switch --flake /etc/nixos
 
 For deeper issues, see `docs/vault/Distribution.md` in the repo —
 it documents every runtime requirement and its rationale.
+
+## For maintainers: cutting a release
+
+```sh
+cargo make publish              # auto-bumps the patch of the latest vX.Y.Z tag
+cargo make publish 0.2.0        # explicit version (e.g. for minor/major bump)
+```
+
+The command:
+1. Refuses to run with a dirty working tree.
+2. `cargo build --release` (with `strip = "debuginfo"` from root
+   `Cargo.toml`, so binaries shrink ~70% while keeping function-level
+   stack traces).
+3. Stages `target/release/*` + the patched CEF Release tree from
+   `~/.cache/sola/cef-<version>/Release/`.
+4. Pre-patches the CEF-linking binaries' RUNPATH to `/opt/sola/cef`
+   (so the bundle works outside Nix too — the derivation re-rpaths
+   to the store path on install).
+5. tar + zstd-19 compresses to `sola-<version>-linux-x86_64.tar.zst`.
+6. Computes the SRI hash and rewrites `nix/release.nix`.
+7. Commits, tags `v<version>`, pushes to `github`, runs
+   `gh release create` with the tarball attached.
+
+Requires `gh` authenticated (`gh auth status`) and `patchelf` + `zstd`
+on PATH.

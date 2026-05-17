@@ -8,6 +8,7 @@
 mod assets;
 mod cef;
 mod install;
+mod publish;
 mod watch;
 
 use std::os::unix::process::CommandExt;
@@ -55,6 +56,13 @@ enum Commands {
     /// Download CEF binaries to ~/.cache/sola/cef-<version>/.
     /// Idempotent — skips if already present.
     InstallCef,
+
+    /// Build, bundle, and publish a release to GitHub Releases.
+    /// Auto-bumps the patch of the latest vX.Y.Z tag if no version given.
+    Publish {
+        /// Explicit X.Y.Z version to release. Omit to auto-bump patch.
+        version: Option<String>,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -94,6 +102,7 @@ fn main() {
                 }
             }
         }
+        Commands::Publish { version } => publish::publish(version),
     }
 }
 
@@ -167,7 +176,7 @@ pub(crate) fn resolve_crate_name(name: &str) -> String {
 /// Looks for `Cargo.toml` files in `crates/` that contain a
 /// `src/main.rs` (i.e. are binary crates), and extracts the package name.
 /// Skips sola-make itself since it's the build tool.
-fn discover_binaries() -> Vec<String> {
+pub(crate) fn discover_binaries() -> Vec<String> {
     let mut binaries = Vec::new();
     for dir in &["crates"] {
         let entries = match std::fs::read_dir(dir) {
