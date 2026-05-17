@@ -1,0 +1,40 @@
+XwaylandWindow: heal window state on destroy
+
+When an Xwayland surface is destroyed without a preceding unmap (the X
+client crashing, override-redirect tear-down, gamescope exiting), the
+listener sets `Window.impl = .destroying` while leaving `Window.state`
+at `.ready`, `.initialized`, or `.mapped`. The next
+`WindowManager.renderFinish` loop then calls `Window.destroy`, which
+asserts `unreachable` for those states.
+
+Reproduced reliably by launching Steam under gamescope nested inside
+river: gamescope's eventual exit triggered the crash on every attempt.
+
+`XdgToplevel.handleDestroy` already heals this case for XDG toplevels.
+Mirror that logic here. Unlike XDG, X11 does not guarantee
+unmap-before-destroy, so `.mapped` must be handled gracefully rather
+than asserted unreachable.
+
+diff --git a/river/XwaylandWindow.zig b/river/XwaylandWindow.zig
+index 7d16d97..6ba7e63 100644
+--- a/river/XwaylandWindow.zig
++++ b/river/XwaylandWindow.zig
+@@ -167,6 +167,18 @@ fn handleDestroy(listener: *wl.Listener(void)) void {
+
+     const window = xwindow.window;
+     window.impl = .destroying;
++    // X11 does not guarantee unmap-before-destroy the way XDG does, so the
++    // window may still be in .ready / .initialized / .mapped here. Mirror
++    // XdgToplevel.handleDestroy() and route through .closing so the next
++    // manage cycle drives Window.destroy() down its valid path instead of
++    // hitting the unreachable arm.
++    switch (window.state) {
++        .init, .closing => {},
++        .ready, .initialized, .mapped => {
++            window.state = .closing;
++            server.wm.dirtyWindowing();
++        },
++    }
+ }
+
+ fn handleAssociate(listener: *wl.Listener(void)) void {
