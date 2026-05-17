@@ -586,10 +586,12 @@ fn inject_before_head_close(html: &str, injection: &str) -> String {
 }
 
 /// Build the `<link rel="stylesheet">` block for every `Css` asset in the
-/// given bundles, in order. Apps no longer enumerate component
-/// stylesheets in their own `index.html` — adding a new kit component
-/// (or app-side stylesheet) with a `.css` extension to the relevant
-/// bundle makes it appear in every kit app automatically.
+/// given bundles, in order. Walks both `bundle.assets` (per-file
+/// `include_bytes!` entries) and `bundle.dirs` (whole-tree
+/// `include_dir!` mounts) so app bundles using either layout get their
+/// stylesheets auto-linked. Apps no longer enumerate component
+/// stylesheets in their own `index.html` — adding a `.css` file to the
+/// relevant bundle makes it appear in every kit app automatically.
 ///
 /// Bundles are walked in the order supplied; with `platform_assets()`
 /// first and the app's bundle second, app CSS naturally cascades over
@@ -599,13 +601,44 @@ fn kit_css_links(bundles: &[&assets::AssetBundle]) -> String {
     for bundle in bundles {
         for asset in bundle.assets {
             if asset.content_type == assets::ContentType::Css {
-                out.push_str("  <link rel=\"stylesheet\" href=\"");
-                out.push_str(asset.path);
-                out.push_str("\" />\n");
+                push_link(&mut out, asset.path);
             }
+        }
+        for mount in bundle.dirs {
+            walk_dir_for_css(&mut out, mount.url_prefix, mount.dir);
         }
     }
     out
+}
+
+fn push_link(out: &mut String, href: &str) {
+    out.push_str("  <link rel=\"stylesheet\" href=\"");
+    out.push_str(href);
+    out.push_str("\" />\n");
+}
+
+/// Recursively walk an `include_dir::Dir` tree, emitting a `<link>` for
+/// every file with a `.css` extension. `url_prefix` is the mount's
+/// public URL prefix; file paths come from `include_dir` relative to
+/// the tree root, so concatenation yields the same URL the asset
+/// server resolves via `find_in_dir`.
+fn walk_dir_for_css(
+    out: &mut String,
+    url_prefix: &'static str,
+    dir: &'static include_dir::Dir<'static>,
+) {
+    for file in dir.files() {
+        let path = file.path().to_string_lossy();
+        if path.ends_with(".css") {
+            let href: &'static str = Box::leak(
+                format!("{url_prefix}{path}").into_boxed_str(),
+            );
+            push_link(out, href);
+        }
+    }
+    for subdir in dir.dirs() {
+        walk_dir_for_css(out, url_prefix, subdir);
+    }
 }
 
 /// Wrap a user-supplied JS expression in an async IIFE that runs it,
