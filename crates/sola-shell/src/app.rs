@@ -490,8 +490,9 @@ impl ShellApp {
 
 
 
-    /// Same as `switcher_apps_json` but returns a `serde_json::Value` directly,
-    /// for use with `send_to_js` envelope construction.
+    /// App entries for the switcher render envelope, with icon resolved
+    /// against the `applications` registry. Returns a JSON array of
+    /// `{ app_id, name, icon, window_count }` objects.
     pub fn switcher_apps_value(&self) -> serde_json::Value {
         let entries: Vec<serde_json::Value> = self
             .switcher

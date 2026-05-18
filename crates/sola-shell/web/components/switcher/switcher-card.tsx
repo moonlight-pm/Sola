@@ -1,7 +1,7 @@
 // <SwitcherCard> — one app tile in the switcher overlay.
 //
 // Props:
-//   app      — { app_id, name, icon } entry from the switcher render envelope
+//   app      — { app_id, name, icon, window_count } entry from the switcher render envelope
 //   selected — whether this card is the active selection
 //   onHover  — callback fired on mouseenter to update selection via invoke
 
@@ -12,6 +12,7 @@ export interface AppEntry {
   app_id: string;
   name: string;
   icon: string;
+  window_count?: number;
 }
 
 interface Props {
