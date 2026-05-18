@@ -716,21 +716,30 @@ pub(crate) fn inject_kit_head(
 mod importmap_tests {
     use super::build_importmap;
 
+    /// The importmap is JSON-ish text formatted with column alignment.
+    /// Strip every space and newline so assertions don't break the next
+    /// time a longer key is added and the alignment column shifts.
+    fn normalize(s: &str) -> String {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
     #[test]
     fn importmap_resolves_app_root_to_given_path() {
-        let im = build_importmap("/menubar.tsx");
+        let im = normalize(&build_importmap("/menubar.tsx"));
         assert!(
-            im.contains("\"@sola/app-root\":            \"/menubar.tsx\""),
-            "expected app-root to map to /menubar.tsx, got:\n{im}"
+            im.contains(r#""@sola/app-root":"/menubar.tsx""#),
+            "expected @sola/app-root mapped to /menubar.tsx; full importmap:\n{}",
+            build_importmap("/menubar.tsx")
         );
     }
 
     #[test]
     fn importmap_default_root_path_works() {
-        let im = build_importmap("/main.tsx");
+        let im = normalize(&build_importmap("/main.tsx"));
         assert!(
-            im.contains("\"@sola/app-root\":            \"/main.tsx\""),
-            "expected app-root to map to /main.tsx, got:\n{im}"
+            im.contains(r#""@sola/app-root":"/main.tsx""#),
+            "expected @sola/app-root mapped to /main.tsx; full importmap:\n{}",
+            build_importmap("/main.tsx")
         );
     }
 }
