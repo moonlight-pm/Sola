@@ -265,7 +265,9 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx, evt: ChordEv
             tracing::info!("cancelling switcher via Escape");
             app.switcher.active = false;
             app.emit_registered_chords(ctx);
-            app.windows.switcher.eval_js("clear()");
+            app.windows
+                .switcher
+                .send_to_js(&serde_json::json!({"event": "clear"}));
             app.emit_composition(ctx);
             return;
         }
@@ -285,17 +287,23 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx, evt: ChordEv
             code if code == KeyCode::TAB || code == KeyCode::RIGHT => {
                 app.switcher.select_next();
                 let sel = app.switcher.selected;
-                app.windows
-                    .switcher
-                    .eval_js(&format!("setSelection({sel})"));
+                let apps = app.switcher_apps_value();
+                app.windows.switcher.send_to_js(&serde_json::json!({
+                    "event": "render",
+                    "apps": apps,
+                    "selected": sel,
+                }));
                 return;
             }
             KeyCode::LEFT => {
                 app.switcher.select_prev();
                 let sel = app.switcher.selected;
-                app.windows
-                    .switcher
-                    .eval_js(&format!("setSelection({sel})"));
+                let apps = app.switcher_apps_value();
+                app.windows.switcher.send_to_js(&serde_json::json!({
+                    "event": "render",
+                    "apps": apps,
+                    "selected": sel,
+                }));
                 return;
             }
             _ => {}
@@ -358,11 +366,12 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx, evt: ChordEv
         app.switcher.active = true;
         app.emit_registered_chords(ctx);
         app.switcher.selected = if app.switcher.apps.len() > 1 { 1 } else { 0 };
-        let json = app.switcher_apps_json();
-        app.windows.switcher.eval_js(&format!(
-            "renderSwitcher({}, {})",
-            json, app.switcher.selected
-        ));
+        let apps = app.switcher_apps_value();
+        app.windows.switcher.send_to_js(&serde_json::json!({
+            "event": "render",
+            "apps": apps,
+            "selected": app.switcher.selected,
+        }));
 
         if let (Some((ow, oh)), Some(wid)) = (
             app.zoning.output_size,
@@ -423,7 +432,9 @@ fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx) {
     tracing::info!(app_id = ?app_id, "confirming switcher");
     app.switcher.active = false;
     app.emit_registered_chords(ctx);
-    app.windows.switcher.eval_js("clear()");
+    app.windows
+        .switcher
+        .send_to_js(&serde_json::json!({"event": "clear"}));
     if let Some(ref app_id) = app_id {
         app.set_focus(app_id, ctx);
         let wid = app

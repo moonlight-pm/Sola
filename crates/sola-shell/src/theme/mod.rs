@@ -11,7 +11,7 @@ pub fn shell_default_bindings() -> BTreeMap<String, ComponentBindings> {
     map.insert("menubar".into(), menubar());
     map.insert("launcher".into(), launcher());
     map.insert("menu".into(), menu());
-    // T9 will populate switcher as it lands.
+    map.insert("switcher".into(), switcher());
     map
 }
 
@@ -143,6 +143,37 @@ pub fn menu() -> ComponentBindings {
 
     // Divider
     comp.slots.insert("divider".into(), Binding::new("border", "border-subtle"));
+
+    comp
+}
+
+/// Theme bindings for the `<Switcher>` overlay component.
+///
+/// Every `--sola-switcher-<slot>` var referenced in switcher.css must have
+/// a corresponding entry here. Slot names must be kept in sync with the CSS.
+pub fn switcher() -> ComponentBindings {
+    let mut comp = ComponentBindings::default();
+
+    // Surface / background
+    comp.slots.insert("bg".into(), Binding::new("surface", "bg-secondary"));
+    comp.slots.insert("radius".into(), Binding::new("radius", "radius-lg"));
+    comp.slots.insert("padding-block".into(), Binding::new("space", "space-xxl"));
+    comp.slots.insert("padding-inline".into(), Binding::new("space", "space-xxl"));
+    comp.slots.insert("gap".into(), Binding::new("space", "space-sm"));
+    comp.slots.insert("font-family".into(), Binding::new("font-family", "font-sans"));
+
+    // Card
+    comp.slots.insert("card-radius".into(), Binding::new("radius", "radius-md"));
+    comp.slots.insert("card-selected-bg".into(), Binding::new("accent", "accent"));
+
+    // Icon
+    comp.slots.insert("icon-fg".into(), Binding::new("text", "text-tertiary"));
+    comp.slots.insert("icon-selected-fg".into(), Binding::new("text", "text-primary"));
+
+    // Name label
+    comp.slots.insert("name-fg".into(), Binding::new("text", "text-tertiary"));
+    comp.slots.insert("name-selected-fg".into(), Binding::new("text", "text-primary"));
+    comp.slots.insert("name-size".into(), Binding::new("text-size", "text-body"));
 
     comp
 }

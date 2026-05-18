@@ -91,7 +91,11 @@ impl SolaApp for ShellApp {
             decorated: false,
             transparent: true,
             assets: SWITCHER_ASSETS,
-            initial_state: None,
+            initial_state: Some(serde_json::json!({
+                "visible": false,
+                "apps": [],
+                "selected": 0,
+            })),
             zoned: false,
             keyboard_target: false,
             root_component: Some("/switcher.tsx"),
@@ -291,11 +295,12 @@ impl ShellApp {
         };
         self.handle_windows_update(windows.clone(), ctx);
         if self.switcher.active {
-            let json = self.switcher_apps_json();
-            self.windows.switcher.eval_js(&format!(
-                "renderSwitcher({}, {})",
-                json, self.switcher.selected
-            ));
+            let apps = self.switcher_apps_value();
+            self.windows.switcher.send_to_js(&serde_json::json!({
+                "event": "render",
+                "apps": apps,
+                "selected": self.switcher.selected,
+            }));
         }
     }
 
@@ -483,11 +488,12 @@ impl ShellApp {
         self.application(app_id).map(|a| a.icon.as_str())
     }
 
-    /// JSON payload of the switcher's apps, with `icon` resolved against the
-    /// `applications` registry. Used in place of raw `switcher.apps` JSON so
-    /// the overlay can render real icons.
-    pub fn switcher_apps_json(&self) -> String {
-        let entries: Vec<Value> = self
+
+
+    /// Same as `switcher_apps_json` but returns a `serde_json::Value` directly,
+    /// for use with `send_to_js` envelope construction.
+    pub fn switcher_apps_value(&self) -> serde_json::Value {
+        let entries: Vec<serde_json::Value> = self
             .switcher
             .apps
             .iter()
@@ -509,7 +515,7 @@ impl ShellApp {
                 })
             })
             .collect();
-        serde_json::to_string(&entries).unwrap_or_default()
+        serde_json::Value::Array(entries)
     }
 
     pub fn emit_registered_chords(&self, ctx: &mut AppCtx) {
