@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde_json::Value;
 use sola_kit::{AppCtx, AppRuntimeHandle, BusRegistry, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
-    AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
+    AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, KeyChord,
     LaunchResultPayload, MenuDefinition, MenuItem, MouseClickedPayload, MouseEnteredPayload,
     RegisteredChord, Topic, TopicKind, UserAppExitedPayload, Window,
 };
@@ -490,34 +490,7 @@ impl ShellApp {
 
 
 
-    /// App entries for the switcher render envelope, with icon resolved
-    /// against the `applications` registry. Returns a JSON array of
-    /// `{ app_id, name, icon, window_count }` objects.
-    pub fn switcher_apps_value(&self) -> serde_json::Value {
-        let entries: Vec<serde_json::Value> = self
-            .switcher
-            .apps
-            .iter()
-            .map(|app| {
-                let icon = self
-                    .icon_for(&app.app_id)
-                    .map(String::from)
-                    .unwrap_or_else(|| "app".to_string());
-                let window_count = self
-                    .known_windows
-                    .iter()
-                    .filter(|w| w.app_id == app.app_id)
-                    .count() as u32;
-                serde_json::json!({
-                    "app_id": app.app_id,
-                    "name": self.display_label(&app.app_id),
-                    "icon": icon,
-                    "window_count": window_count,
-                })
-            })
-            .collect();
-        serde_json::Value::Array(entries)
-    }
+
 
     pub fn emit_registered_chords(&self, ctx: &mut AppCtx) {
         let source = self.shell_key_chords();
@@ -759,31 +732,7 @@ impl ShellApp {
         }
     }
 
-    /// Build a deduplicated list of app_ids for the switcher, ordered by MRU.
-    pub fn rebuild_switcher_apps(&self) -> Vec<SwitcherApp> {
-        let unique_app_ids: Vec<String> = self
-            .known_windows
-            .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| w.app_id.clone())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
 
-        let mut apps: Vec<SwitcherApp> = self
-            .mru_apps
-            .iter()
-            .filter(|id| unique_app_ids.contains(id))
-            .map(|id| SwitcherApp { app_id: id.clone() })
-            .collect();
-        // Append any known apps not yet in MRU.
-        for id in &unique_app_ids {
-            if !self.mru_apps.contains(id) {
-                apps.push(SwitcherApp { app_id: id.clone() });
-            }
-        }
-        apps
-    }
 
     /// Look up a window_id from the known windows list by (app_id, title).
     pub fn lookup_window_id(&self, app_id: &str, title: &str) -> Option<u32> {
@@ -1013,188 +962,11 @@ impl ShellApp {
         }
     }
 
-    /// Tell the menubar there's no focused app — clears the app name and
-    /// menu labels. Used when the last app closes.
-    fn clear_menubar_focus(&self) {
-        self.windows.menubar.send_to_js(&serde_json::json!({
-            "event": "focus",
-            "app_name": "",
-            "menu_labels": [],
-        }));
-    }
 
-    pub fn open_menu(&mut self, source: &str, menu_index: usize, anchor_x: f64, ctx: &mut AppCtx) {
-        let app_id = if source == "system" {
-            Self::APP_ID.to_string()
-        } else {
-            self.focused_app_id.clone().unwrap_or_default()
-        };
 
-        let synthesized;
-        let menu = match self.menus.get_menu(&app_id) {
-            Some(m) => m,
-            None if app_id != Self::APP_ID && !app_id.is_empty() => {
-                synthesized = synthesized_menu(&app_id, &self.display_label(&app_id));
-                &synthesized
-            }
-            None => return,
-        };
-        let Some(menu_def) = menu.menus.get(menu_index) else {
-            return;
-        };
 
-        let items: Vec<Value> = menu_def
-            .items
-            .iter()
-            .map(|item| match item {
-                MenuItem::Action {
-                    id,
-                    label,
-                    shortcut,
-                    disabled,
-                    ..
-                } => serde_json::json!({
-                    "type": "action",
-                    "id": id,
-                    "app_id": app_id,
-                    "label": label,
-                    "shortcut": shortcut.as_ref().map(|c| c.display()),
-                    "disabled": disabled,
-                }),
-                MenuItem::Divider => serde_json::json!({ "type": "divider" }),
-            })
-            .collect();
 
-        self.windows.menu.send_to_js(&serde_json::json!({
-            "event": "show",
-            "items": items,
-            "anchor_x": anchor_x,
-        }));
 
-        // Full-screen overlay below the menubar — transparent except the dropdown.
-        if let (Some((ow, oh)), Some(wid)) = (
-            self.zoning.output_size,
-            self.lookup_window_id(Self::APP_ID, "menu"),
-        ) {
-            ctx.emit(Topic::Frame(FrameUpdate {
-                window_id: wid,
-                x: 0,
-                y: zoning::MENUBAR_HEIGHT,
-                width: ow,
-                height: oh - zoning::MENUBAR_HEIGHT,
-                fullscreen: false,
-            }));
-        }
-
-        self.menu_open = true;
-        self.emit_registered_chords(ctx);
-        self.emit_composition(ctx);
-    }
-
-    pub fn close_menu(&mut self, ctx: &mut AppCtx) {
-        if !self.menu_open {
-            return;
-        }
-        self.menu_open = false;
-        self.emit_registered_chords(ctx);
-        self.windows.menu.send_to_js(&serde_json::json!({"event": "clear"}));
-        self.windows
-            .menubar
-            .send_to_js(&serde_json::json!({"event": "close_menu"}));
-        self.emit_composition(ctx);
-    }
-
-    pub fn open_launcher(&mut self, ctx: &mut AppCtx) {
-        tracing::info!(
-            already_active = self.launcher.active,
-            prior_focus = ?self.focused_window_id,
-            "open_launcher"
-        );
-        if self.launcher.active {
-            return;
-        }
-
-        // Snapshot the focus target we'll restore on close.
-        self.launcher.prior_focus = self.focused_window_id;
-
-        self.launcher.active = true;
-        self.emit_registered_chords(ctx);
-        self.launcher.apply_query(&self.applications, "");
-
-        // Launcher is a fullscreen-below-menubar overlay. The visible
-        // panel is centered by the CSS; the rest is transparent and
-        // absorbs pointer/scroll events so nothing beneath the launcher
-        // can be interacted with while it's open.
-        if let (Some((ow, oh)), Some(wid)) = (
-            self.zoning.output_size,
-            self.lookup_window_id(Self::APP_ID, "launcher"),
-        ) {
-            ctx.emit(Topic::Frame(FrameUpdate {
-                window_id: wid,
-                x: 0,
-                y: zoning::MENUBAR_HEIGHT,
-                width: ow,
-                height: oh - zoning::MENUBAR_HEIGHT,
-                fullscreen: false,
-            }));
-        }
-
-        self.emit_composition(ctx);
-
-        // Route keyboard to the launcher window.
-        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
-            ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
-        }
-
-        self.windows.launcher.send_to_js(&serde_json::json!({"event": "reset"}));
-        self.render_launcher();
-    }
-
-    pub fn close_launcher(&mut self, ctx: &mut AppCtx) {
-        tracing::info!(
-            was_active = self.launcher.active,
-            prior_focus = ?self.launcher.prior_focus,
-            "close_launcher"
-        );
-        if !self.launcher.active {
-            return;
-        }
-        let prior_wid = self.launcher.prior_focus.take();
-        self.launcher.active = false;
-        self.emit_registered_chords(ctx);
-        self.launcher.query.clear();
-        self.launcher.filtered_ids.clear();
-        self.launcher.selected = 0;
-
-        self.emit_composition(ctx);
-
-        if let Some(wid) = prior_wid {
-            ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
-        }
-    }
-
-    pub fn launch_and_close(&mut self, app_id: &str, ctx: &mut AppCtx) {
-        tracing::info!(app_id, "launch_and_close");
-        if let Some(app) = self.applications.get(app_id) {
-            tracing::info!(app_id, command = %app.command, "emitting LaunchApp");
-            ctx.emit(Topic::LaunchApp(sola_bus::topics::LaunchAppPayload {
-                app_id: app_id.to_string(),
-                command: app.command.clone(),
-            }));
-        } else {
-            tracing::warn!(app_id, "launch requested for unknown application");
-        }
-        self.close_launcher(ctx);
-    }
-
-    fn render_launcher(&self) {
-        let apps = launcher::state::render_value(&self.applications, &self.launcher.filtered_ids);
-        self.windows.launcher.send_to_js(&serde_json::json!({
-            "event": "render",
-            "apps": apps,
-            "selected": self.launcher.selected,
-        }));
-    }
 
     /// Emit `CloseApp` for the currently focused window, unless a shell overlay
     /// is active or the focused surface is the shell itself.
@@ -1217,11 +989,5 @@ impl ShellApp {
         let _ = ctx.emit(Topic::CloseApp(app_id));
     }
 
-    /// Show a transient toast message in the menubar.
-    fn push_toast(&self, message: &str) {
-        self.windows.menubar.send_to_js(&serde_json::json!({
-            "event": "toast",
-            "message": message,
-        }));
-    }
+
 }

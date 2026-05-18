@@ -32,3 +32,25 @@ pub fn setup_menubar(ctx: &mut AppCtx, initial: serde_json::Value) -> WindowHand
         root_component: Some("/menubar.tsx"),
     })
 }
+
+use crate::app::ShellApp;
+
+impl ShellApp {
+    /// Tell the menubar there's no focused app — clears the app name and
+    /// menu labels. Used when the last app closes.
+    pub(crate) fn clear_menubar_focus(&self) {
+        self.windows.menubar.send_to_js(&serde_json::json!({
+            "event": "focus",
+            "app_name": "",
+            "menu_labels": [],
+        }));
+    }
+
+    /// Show a transient toast message in the menubar.
+    pub(crate) fn push_toast(&self, message: &str) {
+        self.windows.menubar.send_to_js(&serde_json::json!({
+            "event": "toast",
+            "message": message,
+        }));
+    }
+}
