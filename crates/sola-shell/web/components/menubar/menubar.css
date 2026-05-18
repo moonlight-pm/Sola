@@ -1,0 +1,170 @@
+/* Menubar styles — references only `--sola-menubar-*` scoped theme vars.
+   No palette atoms are referenced directly. No `@font-face` (the kit
+   serves the font via the root component's theme CSS).
+
+   DOM structure (produced by the Remix v3 component factories):
+
+     <div class="sola-menubar">
+       <div class="sola-menubar-left">
+         <div class="sola-menubar-system-menu [--open]">…svg…</div>
+         <div class="sola-menubar-app-title [--open]">App Name</div>
+         <div class="sola-menubar-labels">
+           <div class="sola-menubar-label [--open]">File</div>
+           …
+         </div>
+       </div>
+       <div class="sola-menubar-tray">
+         <div class="sola-menubar-clock">HH:MM Weekday YYYY-MM-DD</div>
+         <div class="sola-menubar-toast [--visible]">…</div>
+       </div>
+     </div>
+*/
+
+/* Global resets scoped to the menubar body — the kit's index.html does
+   not carry a * { box-sizing } rule, so we set it here. */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Root bar ──────────────────────────────────────────────────────── */
+
+.sola-menubar {
+  /* The body is exactly 28px tall (MENUBAR_HEIGHT in zoning.rs).
+     We fill 100% of it, no overflow. */
+  width: 100vw;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+
+  background: var(--sola-menubar-bg);
+  color: var(--sola-menubar-fg);
+  font-family: var(--sola-menubar-font-family);
+  font-size: var(--sola-menubar-text-size);
+}
+
+/* ── Left cluster (logo + app name + menu labels) ──────────────────── */
+
+.sola-menubar-left {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ── System-menu (logo) button ─────────────────────────────────────── */
+
+.sola-menubar-system-menu {
+  padding: 0 var(--sola-menubar-label-padding-inline);
+  height: 28px;
+  display: flex;
+  align-items: center;
+  cursor: default;
+  color: var(--sola-menubar-system-menu-fg);
+  flex-shrink: 0;
+}
+
+.sola-menubar-system-menu svg {
+  width: 16px;
+  height: 16px;
+  /* fill="currentColor" in the SVG source inherits this color. */
+  fill: currentColor;
+}
+
+.sola-menubar-system-menu--open {
+  background: var(--sola-menubar-label-active-bg);
+}
+
+/* ── App title ─────────────────────────────────────────────────────── */
+
+.sola-menubar-app-title {
+  padding: 0 var(--sola-menubar-label-padding-inline);
+  height: 28px;
+  display: flex;
+  align-items: center;
+  cursor: default;
+  white-space: nowrap;
+  font-weight: 800;
+  color: var(--sola-menubar-app-name-fg);
+  flex-shrink: 0;
+}
+
+.sola-menubar-app-title--open {
+  background: var(--sola-menubar-label-active-bg);
+}
+
+/* ── Menu label list ───────────────────────────────────────────────── */
+
+.sola-menubar-labels {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sola-menubar-label {
+  padding: 0 var(--sola-menubar-label-padding-inline);
+  height: 28px;
+  display: flex;
+  align-items: center;
+  cursor: default;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.sola-menubar-label--open {
+  background: var(--sola-menubar-label-active-bg);
+}
+
+/* ── Tray (right cluster) ──────────────────────────────────────────── */
+
+.sola-menubar-tray {
+  display: flex;
+  align-items: center;
+  padding-right: var(--sola-menubar-tray-padding-right);
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* ── Clock ─────────────────────────────────────────────────────────── */
+
+.sola-menubar-clock {
+  color: var(--sola-menubar-clock-fg);
+  font-size: var(--sola-menubar-clock-size);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Toast ─────────────────────────────────────────────────────────── */
+
+.sola-menubar-toast {
+  position: fixed;
+  left: 50%;
+  top: 0;
+  height: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  max-width: 60vw;
+  font-size: var(--sola-menubar-toast-size);
+  color: var(--sola-menubar-toast-fg);
+  background: var(--sola-menubar-toast-bg);
+  border-radius: 0 0 var(--sola-menubar-toast-radius) var(--sola-menubar-toast-radius);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  /* Hidden by default; shown via --visible modifier. */
+  opacity: 0;
+  transition: opacity 200ms ease;
+  z-index: 100;
+}
+
+.sola-menubar-toast--visible {
+  opacity: 1;
+}

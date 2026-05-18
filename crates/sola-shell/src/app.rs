@@ -81,7 +81,8 @@ impl SolaApp for ShellApp {
     const APP_ID: &'static str = "sola-shell";
 
     fn new(ctx: &mut AppCtx) -> Self {
-        let menubar = setup_menubar(ctx);
+        let menubar_initial = serde_json::json!({ "focused": null });
+        let menubar = setup_menubar(ctx, menubar_initial);
 
         let switcher = ctx.add_window(WindowConfig {
             title: "switcher".into(),
@@ -163,6 +164,12 @@ impl SolaApp for ShellApp {
         };
 
         app.emit_registered_chords(ctx);
+
+        // Publish the merged kit + shell theme so every kit window receives
+        // both the kit component vars and the shell's --sola-menubar-* vars.
+        let mut theme = sola_kit::theme::kit_default_theme();
+        theme.components.extend(crate::theme::shell_default_bindings());
+        ctx.emit(Topic::Theme(theme));
 
         app
     }

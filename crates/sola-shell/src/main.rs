@@ -4,6 +4,7 @@ mod launcher;
 mod menu;
 mod menubar;
 mod switcher;
+pub mod theme;
 mod zoning;
 
 fn main() {
