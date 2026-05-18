@@ -60,14 +60,18 @@ pub struct ShellApp {
     pub launcher: LauncherState,
     pub menu_open: bool,
     pub windows: ShellWindows,
-    /// Pending focus-follows-mouse timer. `Some(())` means a timer has
-    /// been scheduled; `None` means none is pending. The inner value is
-    /// the unit type because `AppRuntimeHandle::schedule_after` does not
-    /// return a cancellable handle — we use the field purely as a boolean
-    /// flag. A stale callback firing after `cancel_pending_focus` has
-    /// cleared this field is harmless: the callback re-checks state
-    /// before acting.
-    pub pending_focus_source: Option<()>,
+    /// Pending focus-follows-mouse timer. `Some(gen)` means a timer with that
+    /// generation is in flight; `None` means none is pending.
+    /// `cef::post_delayed_task` has no cancel API, so we use a monotonic
+    /// generation counter: each new timer increments the counter and captures
+    /// its generation; the callback short-circuits if its generation no longer
+    /// matches (i.e. a newer timer has been scheduled, or the timer was
+    /// cancelled).
+    pub pending_focus_source: Option<u64>,
+    /// Monotonically-increasing generation counter for focus-hover timers.
+    /// Incremented on every `schedule_focus_from_pointer` call so that stale
+    /// callbacks can detect they've been superseded.
+    pub pending_focus_generation: u64,
     /// Captured in `after_runtime_ready`. Used by hover timers to
     /// re-enter app state via `schedule_after`.
     pub runtime: Option<AppRuntimeHandle<Self>>,
@@ -154,6 +158,7 @@ impl SolaApp for ShellApp {
                 launcher,
             },
             pending_focus_source: None,
+            pending_focus_generation: 0,
             runtime: None,
         };
 
@@ -583,8 +588,11 @@ impl ShellApp {
 
     /// Drop any pending hover-focus timer.
     fn cancel_pending_focus(&mut self) {
-        // Clear the flag. Any already-scheduled callback checks this flag on
-        // arrival and becomes a no-op if it's gone.
+        // Clear the flag. Any already-scheduled callback checks its captured
+        // generation against pending_focus_source on arrival and becomes a
+        // no-op if they differ.
+        // NOTE: We do NOT reset pending_focus_generation here — it must keep
+        // monotonically increasing so old captured generations stay stale.
         self.pending_focus_source = None;
     }
 
@@ -613,17 +621,25 @@ impl ShellApp {
             return;
         };
 
+        // Increment and capture the generation BEFORE posting the closure so
+        // the closure captures the value that was current when this timer was
+        // scheduled. cef::post_delayed_task has no cancel API, so we rely on
+        // generation matching to detect stale callbacks.
+        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+        let timer_gen = self.pending_focus_generation;
+        self.pending_focus_source = Some(timer_gen);
+
         let delay_ms = FOCUS_HOVER_DELAY.as_millis() as u64;
         handle.schedule_after(delay_ms, move |app, ctx| {
-            // If the flag was cleared by cancel_pending_focus while we were
-            // waiting, treat this as a cancelled timer and do nothing.
-            if app.pending_focus_source.is_none() {
+            // Stale-callback guard: bail if a newer timer has been scheduled
+            // (pending_focus_source holds a different generation) or if the
+            // timer was cancelled (pending_focus_source is None).
+            if app.pending_focus_source != Some(timer_gen) {
                 return;
             }
             app.pending_focus_source = None;
             app.focus_window_from_pointer(window_id, ctx);
         });
-        self.pending_focus_source = Some(());
     }
 
     fn focus_window_from_pointer(&mut self, window_id: u32, ctx: &mut AppCtx) {
