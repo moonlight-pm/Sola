@@ -712,3 +712,26 @@ pub(crate) fn inject_kit_head(
     inject_before_head_close(&with_css, BOOTSTRAP_SCRIPT)
 }
 
+#[cfg(test)]
+mod importmap_tests {
+    use super::build_importmap;
+
+    #[test]
+    fn importmap_resolves_app_root_to_given_path() {
+        let im = build_importmap("/menubar.tsx");
+        assert!(
+            im.contains("\"@sola/app-root\":            \"/menubar.tsx\""),
+            "expected app-root to map to /menubar.tsx, got:\n{im}"
+        );
+    }
+
+    #[test]
+    fn importmap_default_root_path_works() {
+        let im = build_importmap("/main.tsx");
+        assert!(
+            im.contains("\"@sola/app-root\":            \"/main.tsx\""),
+            "expected app-root to map to /main.tsx, got:\n{im}"
+        );
+    }
+}
+
