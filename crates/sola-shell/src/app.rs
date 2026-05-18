@@ -110,6 +110,7 @@ impl SolaApp for ShellApp {
             root_component: Some("/menu.tsx"),
         });
 
+        let launcher_initial = serde_json::json!({"apps": [], "selected": 0, "query": ""});
         let launcher = ctx.add_window(WindowConfig {
             title: "launcher".into(),
             size: (launcher::WIDTH, launcher::HEIGHT),
@@ -117,7 +118,7 @@ impl SolaApp for ShellApp {
             decorated: false,
             transparent: true,
             assets: LAUNCHER_ASSETS,
-            initial_state: None,
+            initial_state: Some(launcher_initial),
             zoned: false,
             keyboard_target: true,
             root_component: Some("/launcher.tsx"),
@@ -1137,7 +1138,7 @@ impl ShellApp {
             ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
         }
 
-        self.windows.launcher.eval_js("resetForOpen()");
+        self.windows.launcher.send_to_js(&serde_json::json!({"event": "reset"}));
         self.render_launcher();
     }
 
@@ -1179,9 +1180,12 @@ impl ShellApp {
     }
 
     fn render_launcher(&self) {
-        let json = launcher::state::render_json(&self.applications, &self.launcher.filtered_ids);
-        let js = format!("renderApps({}, {})", json, self.launcher.selected);
-        self.windows.launcher.eval_js(&js);
+        let apps = launcher::state::render_value(&self.applications, &self.launcher.filtered_ids);
+        self.windows.launcher.send_to_js(&serde_json::json!({
+            "event": "render",
+            "apps": apps,
+            "selected": self.launcher.selected,
+        }));
     }
 
     /// Emit `CloseApp` for the currently focused window, unless a shell overlay

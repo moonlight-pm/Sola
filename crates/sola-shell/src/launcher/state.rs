@@ -32,8 +32,11 @@ pub fn filter(apps: &ApplicationsConfig, query: &str) -> Vec<String> {
         .collect()
 }
 
-/// Serialize the filtered app list for JS rendering.
-pub fn render_json(apps: &ApplicationsConfig, ids: &[String]) -> String {
+/// Serialize the filtered app list as a structured JSON Value for use in
+/// send_to_js envelopes. Returns structured JSON (not a serialized string)
+/// `serde_json::Value` so it can be embedded in a larger JSON object
+/// without double-serialization.
+pub fn render_value(apps: &ApplicationsConfig, ids: &[String]) -> serde_json::Value {
     let entries: Vec<&Application> = ids.iter().filter_map(|id| apps.get(id)).collect();
     let json: Vec<_> = entries
         .iter()
@@ -45,7 +48,7 @@ pub fn render_json(apps: &ApplicationsConfig, ids: &[String]) -> String {
             })
         })
         .collect();
-    serde_json::to_string(&json).unwrap_or_default()
+    serde_json::Value::Array(json)
 }
 
 #[cfg(test)]

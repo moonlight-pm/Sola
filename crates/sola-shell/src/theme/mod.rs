@@ -6,12 +6,11 @@ use std::collections::BTreeMap;
 
 use sola_core::theme::{Binding, ComponentBindings};
 
-/// All shell-component bindings — merged into `kit_default_theme()`'s
-/// `components` map at startup.
 pub fn shell_default_bindings() -> BTreeMap<String, ComponentBindings> {
     let mut map = BTreeMap::new();
     map.insert("menubar".into(), menubar());
-    // T7-T9 will populate these as launcher/menu/switcher components land.
+    map.insert("launcher".into(), launcher());
+    // T8-T9 will populate these as menu/switcher components land.
     map
 }
 
@@ -69,6 +68,43 @@ pub fn menubar() -> ComponentBindings {
 
     // Body font size (15px in legacy → text-body-lg = 13px, closest available)
     comp.slots.insert("text-size".into(), Binding::new("text-size", "text-body-lg"));
+
+    comp
+}
+
+/// Theme bindings for the `<Launcher>` component.
+///
+/// Every `--sola-launcher-<slot>` var referenced in launcher.css must have
+/// a corresponding entry here. Slot names must be kept in sync with the CSS.
+///
+/// Note: `panel-shadow` is intentionally absent. CSS `box-shadow` has no
+/// corresponding `TokenKind` in sola-core (only Color/FontFamily/TextSize/
+/// Space/Radius). The shadow is hardcoded in launcher.css directly.
+pub fn launcher() -> ComponentBindings {
+    let mut comp = ComponentBindings::default();
+
+    // Panel surface
+    comp.slots.insert("panel-bg".into(), Binding::new("surface", "bg-secondary"));
+    comp.slots.insert("panel-radius".into(), Binding::new("radius", "radius-lg"));
+
+    // Default foreground / font
+    comp.slots.insert("fg".into(), Binding::new("text", "text-primary"));
+    comp.slots.insert("font-family".into(), Binding::new("font-family", "font-sans"));
+
+    // Query input
+    comp.slots.insert("query-fg".into(), Binding::new("text", "text-primary"));
+    comp.slots.insert("query-size".into(), Binding::new("text-size", "text-display"));
+    comp.slots.insert("divider".into(), Binding::new("border", "border-subtle"));
+
+    // Result rows
+    comp.slots.insert("row-fg".into(), Binding::new("text", "text-primary"));
+    comp.slots.insert("row-size".into(), Binding::new("text-size", "text-body-lg"));
+    comp.slots.insert("row-selected-bg".into(), Binding::new("accent", "accent"));
+    comp.slots.insert("row-selected-fg".into(), Binding::new("text", "text-primary"));
+
+    // Empty state
+    comp.slots.insert("empty-fg".into(), Binding::new("text", "text-tertiary"));
+    comp.slots.insert("empty-size".into(), Binding::new("text-size", "text-body"));
 
     comp
 }
