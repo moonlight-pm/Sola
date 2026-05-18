@@ -10,7 +10,8 @@ pub fn shell_default_bindings() -> BTreeMap<String, ComponentBindings> {
     let mut map = BTreeMap::new();
     map.insert("menubar".into(), menubar());
     map.insert("launcher".into(), launcher());
-    // T8-T9 will populate these as menu/switcher components land.
+    map.insert("menu".into(), menu());
+    // T9 will populate switcher as it lands.
     map
 }
 
@@ -105,6 +106,43 @@ pub fn launcher() -> ComponentBindings {
     // Empty state
     comp.slots.insert("empty-fg".into(), Binding::new("text", "text-tertiary"));
     comp.slots.insert("empty-size".into(), Binding::new("text-size", "text-body"));
+
+    comp
+}
+
+/// Theme bindings for the `<Menu>` dropdown component.
+///
+/// Every `--sola-menu-<slot>` var referenced in menu.css must have
+/// a corresponding entry here. Slot names must be kept in sync with the CSS.
+///
+/// Note: `box-shadow` has no corresponding `TokenKind` in sola-core (only
+/// Color/FontFamily/TextSize/Space/Radius). The shadow is hardcoded in
+/// menu.css directly, following the same convention as launcher.css.
+pub fn menu() -> ComponentBindings {
+    let mut comp = ComponentBindings::default();
+
+    // Surface / background
+    comp.slots.insert("bg".into(), Binding::new("surface", "bg-tertiary"));
+    comp.slots.insert("radius".into(), Binding::new("radius", "radius-lg"));
+    comp.slots.insert("padding-block".into(), Binding::new("space", "space-xs"));
+
+    // Typography
+    comp.slots.insert("font-family".into(), Binding::new("font-family", "font-sans"));
+    comp.slots.insert("item-size".into(), Binding::new("text-size", "text-body-lg"));
+
+    // Menu items
+    comp.slots.insert("item-fg".into(), Binding::new("text", "text-secondary"));
+    comp.slots.insert("item-hover-bg".into(), Binding::new("accent", "accent"));
+    comp.slots.insert("item-hover-fg".into(), Binding::new("text", "text-primary"));
+    comp.slots.insert("item-disabled-fg".into(), Binding::new("text", "text-muted"));
+
+    // Shortcut labels
+    comp.slots.insert("shortcut-fg".into(), Binding::new("text", "text-tertiary"));
+    comp.slots.insert("shortcut-size".into(), Binding::new("text-size", "text-body"));
+    comp.slots.insert("shortcut-hover-fg".into(), Binding::new("text", "text-primary"));
+
+    // Divider
+    comp.slots.insert("divider".into(), Binding::new("border", "border-subtle"));
 
     comp
 }

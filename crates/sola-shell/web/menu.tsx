@@ -1,16 +1,8 @@
-// crates/sola-shell/web/menu.tsx — placeholder; real UI lands in T8.
+// crates/sola-shell/web/menu.tsx — kit entry point for the menu surface.
 import { type Handle } from "@remix-run/ui";
+import { Menu, type MenuInitial } from "./components/menu/menu";
 
-interface Props {
-  initial: unknown;
-}
-
-export function Main(_handle: Handle<Props>) {
-  return () => (
-    <div
-      style="background: #181818; color: #fff; font-family: sans-serif; padding: 4px 12px;"
-    >
-      sola-shell · menu (placeholder)
-    </div>
-  );
+export function Main(handle: Handle<{ initial: MenuInitial | null }>) {
+  const initial: MenuInitial = handle.props.initial ?? { visible: false };
+  return () => <Menu initial={initial} />;
 }

@@ -104,7 +104,7 @@ impl SolaApp for ShellApp {
             decorated: false,
             transparent: true,
             assets: MENU_ASSETS,
-            initial_state: None,
+            initial_state: Some(serde_json::json!({"visible": false})),
             zoned: false,
             keyboard_target: false,
             root_component: Some("/menu.tsx"),
@@ -707,7 +707,7 @@ impl ShellApp {
         // Close any open menu — the focus event to JS handles the menubar UI.
         if self.menu_open {
             self.menu_open = false;
-            self.windows.menu.eval_js("clearMenu()");
+            self.windows.menu.send_to_js(&serde_json::json!({"event": "clear"}));
         }
 
         // Per-app menu chords are only registered with River while their
@@ -1058,10 +1058,11 @@ impl ShellApp {
             })
             .collect();
 
-        let json = serde_json::to_string(&items).unwrap_or_default();
-        self.windows
-            .menu
-            .eval_js(&format!("showMenu({}, {})", json, anchor_x));
+        self.windows.menu.send_to_js(&serde_json::json!({
+            "event": "show",
+            "items": items,
+            "anchor_x": anchor_x,
+        }));
 
         // Full-screen overlay below the menubar — transparent except the dropdown.
         if let (Some((ow, oh)), Some(wid)) = (
@@ -1089,7 +1090,7 @@ impl ShellApp {
         }
         self.menu_open = false;
         self.emit_registered_chords(ctx);
-        self.windows.menu.eval_js("clearMenu()");
+        self.windows.menu.send_to_js(&serde_json::json!({"event": "clear"}));
         self.windows
             .menubar
             .send_to_js(&serde_json::json!({"event": "close_menu"}));

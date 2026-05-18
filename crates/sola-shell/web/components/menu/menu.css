@@ -1,0 +1,60 @@
+/* sola-menu dropdown
+ *
+ * All colours / sizes / radii are driven by --sola-menu-* slots.
+ * Slot values are injected by the theme system; see src/theme/mod.rs::menu().
+ * Box-shadow has no TokenKind in the palette so it is hardcoded here,
+ * following the same convention established in launcher.css.
+ */
+
+.sola-menu {
+  position: absolute;
+  min-width: 180px;
+  background: var(--sola-menu-bg);
+  /* Top corners flush against the menubar; bottom corners rounded. */
+  border-radius: 0 0 var(--sola-menu-radius) var(--sola-menu-radius);
+  padding: var(--sola-menu-padding-block) 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  color: var(--sola-menu-item-fg);
+  font-family: var(--sola-menu-font-family);
+  font-size: var(--sola-menu-item-size);
+}
+
+.sola-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  cursor: default;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.sola-menu-item:hover {
+  background: var(--sola-menu-item-hover-bg);
+  color: var(--sola-menu-item-hover-fg);
+}
+
+.sola-menu-item--disabled {
+  color: var(--sola-menu-item-disabled-fg);
+  pointer-events: none;
+}
+
+.sola-menu-item-label {
+  /* Label takes natural width; shortcut floats to the right via flex. */
+}
+
+.sola-menu-item-shortcut {
+  color: var(--sola-menu-shortcut-fg);
+  font-size: var(--sola-menu-shortcut-size);
+  margin-left: 24px;
+}
+
+.sola-menu-item:hover .sola-menu-item-shortcut {
+  color: var(--sola-menu-shortcut-hover-fg);
+}
+
+.sola-menu-divider {
+  height: 1px;
+  background: var(--sola-menu-divider);
+  margin: 4px 8px;
+}
