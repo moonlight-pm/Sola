@@ -1,10 +1,8 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::rc::Weak;
 use std::time::Duration;
 
 use serde_json::Value;
-use sola_app::{AppCtx, AppRuntime, BusRegistry, SolaApp, WindowConfig, WindowHandle};
+use sola_kit::{AppCtx, AppRuntimeHandle, BusRegistry, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
     AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate, KeyChord,
     LaunchResultPayload, MenuDefinition, MenuItem, MouseClickedPayload, MouseEnteredPayload,
@@ -62,13 +60,17 @@ pub struct ShellApp {
     pub launcher: LauncherState,
     pub menu_open: bool,
     pub windows: ShellWindows,
-    /// Pending focus-follows-mouse timer. Set when the cursor enters a
-    /// non-focused app window; cleared when it fires, when the cursor
-    /// moves elsewhere, or when a click forces an immediate focus.
-    pub pending_focus_source: Option<glib::SourceId>,
-    /// Captured in `after_runtime_ready`. Used by hover timers to call
-    /// back into the shell off the GTK main loop.
-    pub runtime_weak: Option<Weak<RefCell<AppRuntime<Self>>>>,
+    /// Pending focus-follows-mouse timer. `Some(())` means a timer has
+    /// been scheduled; `None` means none is pending. The inner value is
+    /// the unit type because `AppRuntimeHandle::schedule_after` does not
+    /// return a cancellable handle — we use the field purely as a boolean
+    /// flag. A stale callback firing after `cancel_pending_focus` has
+    /// cleared this field is harmless: the callback re-checks state
+    /// before acting.
+    pub pending_focus_source: Option<()>,
+    /// Captured in `after_runtime_ready`. Used by hover timers to
+    /// re-enter app state via `schedule_after`.
+    pub runtime: Option<AppRuntimeHandle<Self>>,
 }
 
 impl SolaApp for ShellApp {
@@ -87,6 +89,7 @@ impl SolaApp for ShellApp {
             initial_state: None,
             zoned: false,
             keyboard_target: false,
+            root_component: Some("/switcher.tsx"),
         });
 
         let menu = ctx.add_window(WindowConfig {
@@ -99,6 +102,7 @@ impl SolaApp for ShellApp {
             initial_state: None,
             zoned: false,
             keyboard_target: false,
+            root_component: Some("/menu.tsx"),
         });
 
         let launcher = ctx.add_window(WindowConfig {
@@ -111,6 +115,7 @@ impl SolaApp for ShellApp {
             initial_state: None,
             zoned: false,
             keyboard_target: true,
+            root_component: Some("/launcher.tsx"),
         });
 
         let mut menus = MenuCache::new();
@@ -149,7 +154,7 @@ impl SolaApp for ShellApp {
                 launcher,
             },
             pending_focus_source: None,
-            runtime_weak: None,
+            runtime: None,
         };
 
         app.emit_registered_chords(ctx);
@@ -157,12 +162,8 @@ impl SolaApp for ShellApp {
         app
     }
 
-    fn after_runtime_ready(
-        &mut self,
-        runtime: Weak<RefCell<AppRuntime<Self>>>,
-        _ctx: &mut AppCtx,
-    ) {
-        self.runtime_weak = Some(runtime);
+    fn after_runtime_ready(&mut self, handle: AppRuntimeHandle<Self>, _ctx: &mut AppCtx) {
+        self.runtime = Some(handle);
     }
 
     fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
@@ -582,9 +583,9 @@ impl ShellApp {
 
     /// Drop any pending hover-focus timer.
     fn cancel_pending_focus(&mut self) {
-        if let Some(src) = self.pending_focus_source.take() {
-            src.remove();
-        }
+        // Clear the flag. Any already-scheduled callback checks this flag on
+        // arrival and becomes a no-op if it's gone.
+        self.pending_focus_source = None;
     }
 
     /// Schedule focus-follows-mouse for `window_id` after `FOCUS_HOVER_DELAY`.
@@ -608,22 +609,21 @@ impl ShellApp {
             return;
         }
 
-        let Some(runtime_weak) = self.runtime_weak.clone() else {
+        let Some(handle) = self.runtime.clone() else {
             return;
         };
 
-        let src = glib::timeout_add_local_once(FOCUS_HOVER_DELAY, move || {
-            let Some(runtime) = runtime_weak.upgrade() else {
+        let delay_ms = FOCUS_HOVER_DELAY.as_millis() as u64;
+        handle.schedule_after(delay_ms, move |app, ctx| {
+            // If the flag was cleared by cancel_pending_focus while we were
+            // waiting, treat this as a cancelled timer and do nothing.
+            if app.pending_focus_source.is_none() {
                 return;
-            };
-            let mut rt = runtime.borrow_mut();
-            let AppRuntime { app, ctx } = &mut *rt;
-            // Source auto-removes after firing — clear our handle so a
-            // later cancel doesn't try to remove an already-dead source.
+            }
             app.pending_focus_source = None;
             app.focus_window_from_pointer(window_id, ctx);
         });
-        self.pending_focus_source = Some(src);
+        self.pending_focus_source = Some(());
     }
 
     fn focus_window_from_pointer(&mut self, window_id: u32, ctx: &mut AppCtx) {

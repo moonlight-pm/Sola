@@ -3050,17 +3050,12 @@ dependencies = [
 name = "sola-shell"
 version = "0.1.0"
 dependencies = [
- "gdk4",
- "gio",
- "glib",
- "gtk4",
  "serde",
  "serde_json",
- "sola-app",
  "sola-bus",
  "sola-core",
+ "sola-kit",
  "tracing",
- "webkit6",
 ]
 
 [[package]]

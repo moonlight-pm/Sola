@@ -1,6 +1,5 @@
-use sola_app::asset_bundle;
+use sola_kit::asset_bundle;
 
-pub static MENU_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
-    "/index.html" => (include_str!("../../web/menu.html"), Html),
-    "/src/menu.ts" => (include_str!("../../web/src/menu.ts"), TypeScript),
+pub static MENU_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
+    "/menu.tsx" => (include_bytes!("../../web/menu.tsx"), Tsx),
 };

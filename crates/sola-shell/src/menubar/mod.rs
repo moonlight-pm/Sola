@@ -1,13 +1,12 @@
-use sola_app::{AppCtx, WindowConfig, WindowHandle, asset_bundle};
+use sola_kit::{AppCtx, WindowConfig, WindowHandle, asset_bundle};
 
 use crate::zoning;
 
 /// Embedded web assets for the shell menubar window.
-pub static MENUBAR_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
-    "/index.html" => (include_str!("../../web/index.html"), Html),
-    "/src/menubar.ts" => (include_str!("../../web/src/menubar.ts"), TypeScript),
-    "/assets/pillars.svg" => (include_str!("../../web/assets/pillars.svg"), Svg),
-    "/assets/flower.svg" => (include_str!("../../web/assets/flower.svg"), Svg),
+pub static MENUBAR_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
+    "/menubar.tsx" => (include_bytes!("../../web/menubar.tsx"), Tsx),
+    "/assets/pillars.svg" => (include_bytes!("../../web/assets/pillars.svg"), Svg),
+    "/assets/flower.svg" => (include_bytes!("../../web/assets/flower.svg"), Svg),
 };
 
 /// Create and register the menubar window.
@@ -24,5 +23,6 @@ pub fn setup_menubar(ctx: &mut AppCtx) -> WindowHandle {
         initial_state: None,
         zoned: false,
         keyboard_target: true,
+        root_component: Some("/menubar.tsx"),
     })
 }

@@ -1,6 +1,5 @@
-use sola_app::asset_bundle;
+use sola_kit::asset_bundle;
 
-pub static LAUNCHER_ASSETS: &sola_app::AssetBundle = &asset_bundle! {
-    "/index.html" => (include_str!("../../web/launcher.html"), Html),
-    "/src/launcher.ts" => (include_str!("../../web/src/launcher.ts"), TypeScript),
+pub static LAUNCHER_ASSETS: &sola_kit::AssetBundle = &asset_bundle! {
+    "/launcher.tsx" => (include_bytes!("../../web/launcher.tsx"), Tsx),
 };

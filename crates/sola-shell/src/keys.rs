@@ -11,7 +11,7 @@
 //!     when a chord fires.
 //!   - Preserves Meta-release closes switcher by registering Meta+Tab and
 //!     acting on its `ChordReleased` event.
-use sola_app::SolaApp;
+use sola_kit::SolaApp;
 use sola_bus::topics::{ChordEvent, FocusTarget, FrameUpdate, RegisteredChord, Topic};
 use sola_core::{KeyChord, KeyCode};
 
@@ -229,7 +229,7 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
 }
 
 /// Dispatch a chord event through the shell's action table.
-pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEvent) {
+pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx, evt: ChordEvent) {
     let Some(chord) = from_chord_event(&evt) else {
         tracing::debug!(
             keysym = evt.keysym,
@@ -409,7 +409,7 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEv
 /// Entry point invoked on `Topic::ChordReleased`. Mirrors Meta-release
 /// behavior from the old GTK path: while the switcher is active, the
 /// user confirms by letting go of the Super key.
-pub fn handle_chord_released(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt: ChordEvent) {
+pub fn handle_chord_released(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx, evt: ChordEvent) {
     // The bare Super_L binding (keysym=Super_L, modifiers=0) fires its
     // released event exactly when the user lifts the physical Super key.
     // That's when we commit the switcher selection.
@@ -418,7 +418,7 @@ pub fn handle_chord_released(app: &mut ShellApp, ctx: &mut sola_app::AppCtx, evt
     }
 }
 
-fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_app::AppCtx) {
+fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx) {
     let app_id = app.switcher.selected_app_id().map(String::from);
     tracing::info!(app_id = ?app_id, "confirming switcher");
     app.switcher.active = false;

@@ -1,0 +1,60 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+
+    // The vendored @remix-run/ui source under web/vendor/remix-ui/
+    // imports its own modules with explicit `.ts` / `.tsx` extensions
+    // (`import { … } from './foo.ts'`). Without this flag, every TS
+    // resolution into the vendored tree fails with TS5097.
+    "allowImportingTsExtensions": true,
+
+    "types": [],
+
+    // JSX runtime config. `react-jsx` selects the automatic runtime
+    // (TS auto-imports `jsx`/`jsxs`/`Fragment` from
+    // `<jsxImportSource>/jsx-runtime`), and `jsxImportSource` points
+    // it at our vendored Remix v3. This must mirror what swc does at
+    // request time in `crates/sola-kit/src/strip.rs` (`runtime:
+    // Automatic`, `import_source: "@remix-run/ui"`) so the editor
+    // and runtime agree on the same factory.
+    "jsx": "react-jsx",
+    "jsxImportSource": "@remix-run/ui",
+
+    "paths": {
+      "@sola/ipc": ["../../sola-kit/web/lib/ipc.ts"],
+      "@sola/kit": ["../../sola-kit/web/lib/kit.ts"],
+      "@sola/bindings-editor": ["../../sola-kit/web/lib/components/bindings-editor.tsx"],
+      "@sola/button": ["../../sola-kit/web/lib/components/button.tsx"],
+      "@sola/card": ["../../sola-kit/web/lib/components/card.tsx"],
+      "@sola/color-picker": ["../../sola-kit/web/lib/components/color-picker.tsx"],
+      "@sola/container": ["../../sola-kit/web/lib/components/container.tsx"],
+      "@sola/field": ["../../sola-kit/web/lib/components/field.tsx"],
+      "@sola/font-input": ["../../sola-kit/web/lib/components/font-input.tsx"],
+      "@sola/number-input": ["../../sola-kit/web/lib/components/number-input.tsx"],
+      "@sola/popover": ["../../sola-kit/web/lib/components/popover.tsx"],
+      "@sola/popover-select": ["../../sola-kit/web/lib/components/popover-select.tsx"],
+      "@sola/root": ["../../sola-kit/web/lib/components/root.tsx"],
+      "@sola/sidebar": ["../../sola-kit/web/lib/components/sidebar.tsx"],
+      "@sola/split": ["../../sola-kit/web/lib/components/split.tsx"],
+      "@sola/stack": ["../../sola-kit/web/lib/components/stack.tsx"],
+      "@sola/swatch": ["../../sola-kit/web/lib/components/swatch.tsx"],
+      "@sola/text": ["../../sola-kit/web/lib/components/text.tsx"],
+      "@sola/text-input": ["../../sola-kit/web/lib/components/text-input.tsx"],
+      "@sola/token-value-editor": ["../../sola-kit/web/lib/components/token-value-editor.tsx"],
+      // Per-app root component. Points at menubar.tsx for LSP resolution;
+      // the runtime importmap overrides this per-window to the correct
+      // surface root (menubar, launcher, menu, or switcher).
+      "@sola/app-root": ["./menubar.tsx"],
+      "@chenglou/pretext": ["../../sola-kit/web/vendor/pretext/dist/layout.d.ts"],
+      "@remix-run/ui": ["../../sola-kit/web/vendor/remix-ui/index.ts"],
+      "@remix-run/ui/jsx-runtime": ["../../sola-kit/web/vendor/remix-ui/jsx-runtime.ts"],
+      "@remix-run/ui/*": ["../../sola-kit/web/vendor/remix-ui/*"],
+      "~/*": ["../../sola-kit/web/lib/*"],
+    },
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+}

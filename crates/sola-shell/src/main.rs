@@ -7,5 +7,5 @@ mod switcher;
 mod zoning;
 
 fn main() {
-    sola_app::run::<app::ShellApp>();
+    sola_kit::run::<app::ShellApp>();
 }
