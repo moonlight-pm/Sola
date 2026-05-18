@@ -734,7 +734,7 @@ mod importmap_tests {
     }
 
     #[test]
-    fn importmap_default_root_path_works() {
+    fn importmap_resolves_a_different_path() {
         let im = normalize(&build_importmap("/main.tsx"));
         assert!(
             im.contains(r#""@sola/app-root":"/main.tsx""#),
