@@ -678,21 +678,35 @@ fn build_eval_wrapper(expr: &str) -> String {
 /// and the `__solaRecv` bootstrap into the app's index.html.
 ///
 /// Order is intentional:
-///   1. Importmap — installed before any module loads so bare
+///   1. `window.__solaInitial` — serialised seed JSON (or `null`)
+///      injected as an inline `<script>` so it is available
+///      synchronously when `index.tsx` evaluates.
+///   2. Importmap — installed before any module loads so bare
 ///      specifiers resolve.
-///   2. Stylesheet `<link>`s — kit CSS first, app CSS second so app
+///   3. Stylesheet `<link>`s — kit CSS first, app CSS second so app
 ///      rules cascade over kit defaults. The browser begins fetching
 ///      both while the JS bootstrap runs.
-///   3. `__solaRecv` queueing stub — installed before any
+///   4. `__solaRecv` queueing stub — installed before any
 ///      `<script type="module">` runs so Rust→JS pushes that race
 ///      module loading don't drop on the floor.
+///
+/// Note: `serde_json::to_string` output is used as-is for the inline
+/// script value. Apps are responsible for ensuring their seed data
+/// does not contain literal `</script>` sequences.
 pub(crate) fn inject_kit_head(
     html: &str,
     root_component: &str,
     app_assets: &assets::AssetBundle,
+    initial_state: Option<&serde_json::Value>,
 ) -> String {
+    let initial_json = match initial_state {
+        Some(v) => serde_json::to_string(v).unwrap_or_else(|_| "null".to_string()),
+        None => "null".to_string(),
+    };
+    let initial_script = format!("<script>window.__solaInitial = {};</script>", initial_json);
+    let with_initial = inject_before_head_close(html, &initial_script);
     let importmap = build_importmap(root_component);
-    let with_map = inject_before_head_close(html, &importmap);
+    let with_map = inject_before_head_close(&with_initial, &importmap);
     let links = kit_css_links(&[assets::platform_assets(), app_assets]);
     let with_css = inject_before_head_close(&with_map, &links);
     inject_before_head_close(&with_css, BOOTSTRAP_SCRIPT)

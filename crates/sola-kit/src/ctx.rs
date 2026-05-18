@@ -55,9 +55,9 @@ impl AppCtx {
     /// Apps' `index.html` files do NOT declare an importmap — the kit
     /// owns that to keep `@sola/ipc` / `@sola/sidebar` /
     /// `@remix-run/ui` mappings consistent across every kit-based app.
-    /// If an app needs initial state, it registers an `on_js_command`
-    /// handler and the renderer fetches it via `invoke("…")` at
-    /// startup; there's no inline state injection.
+    /// If an app needs initial state, set `cfg.initial_state`; the kit
+    /// injects it as `window.__solaInitial` before the importmap, and
+    /// the kit's `index.tsx` forwards it to `<Main initial={…} />`.
     pub fn add_window(&mut self, cfg: WindowConfig) -> WindowHandle {
         let dispatcher_slot: Rc<RefCell<Option<JsDispatcher>>> = Rc::new(RefCell::new(None));
 
@@ -81,7 +81,7 @@ impl AppCtx {
             .unwrap_or_else(|| "<html><body>No index.html in bundle</body></html>".to_string());
 
         let root = cfg.root_component.unwrap_or(self.root_component);
-        let html = crate::inject_kit_head(&html_raw, root, cfg.assets);
+        let html = crate::inject_kit_head(&html_raw, root, cfg.assets, cfg.initial_state.as_ref());
 
         // Register the bundle + HTML with the static scheme handler before
         // the browser is created so the first navigation is served correctly.

@@ -13,5 +13,12 @@ import { createRoot } from "@remix-run/ui";
 import { setupKit } from "@sola/kit";
 import { Main } from "@sola/app-root";
 
+declare global {
+  interface Window {
+    __solaInitial: unknown;
+  }
+}
+
 setupKit();
-createRoot(document.body).render(<Main />);
+const initial = window.__solaInitial ?? null;
+createRoot(document.body).render(<Main initial={initial} />);

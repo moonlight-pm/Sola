@@ -22,7 +22,9 @@ const MAX_MESSAGES = 5000;
 
 type MonitorState = MessagesState & StickyState;
 
-interface MainProps {}
+interface MainProps {
+  initial: unknown;
+}
 
 export function Main(handle: Handle<MainProps>) {
   const state: MonitorState = {

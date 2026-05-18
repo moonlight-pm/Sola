@@ -40,7 +40,7 @@ function emptyState(): SettingsState {
   };
 }
 
-export function Main(handle: Handle) {
+export function Main(handle: Handle<{ initial: unknown }>) {
   let section: Section = "applications";
   let state: SettingsState = emptyState();
 

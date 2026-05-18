@@ -45,7 +45,7 @@ function resetTheme() {
   });
 }
 
-export function Main(handle: Handle) {
+export function Main(handle: Handle<{ initial: unknown }>) {
   let selectedId = showcases[0]?.id ?? "";
 
   const select = (id: string) => {

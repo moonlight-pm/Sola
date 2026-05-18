@@ -221,6 +221,24 @@ The kit's `BusPumpTask::execute` intercepts `Topic::Theme` deliveries: lowers vi
 
 Spec: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`.
 
+### Multi-window apps
+
+A single `SolaApp` can host multiple windows with different root
+components and per-window seed state. On each `ctx.add_window(cfg)`:
+
+- `cfg.root_component: Option<&'static str>` overrides
+  `SolaApp::ROOT_COMPONENT` for that window's importmap entry of
+  `@sola/app-root`. Lets one app mount different `Main` components
+  per window (e.g. sola-shell's menubar/launcher/menu/switcher).
+- `cfg.initial_state: Option<serde_json::Value>` is serialized into
+  `<script>window.__solaInitial = <json>;</script>` and injected into
+  the head of that window's `index.html`. The kit's `index.tsx` reads
+  it synchronously and passes it to `Main` via the `initial` prop.
+  `None` becomes `null`.
+
+`Main`'s signature must accept the prop:
+`function Main(handle: Handle<{ initial: T | null }>)`.
+
 ### CSS authoring
 
 Kit components ship a `web/lib/components/<name>.css` next to their `.tsx`. Class-based selectors (not tag-based — Remix components render plain DOM). Reference only `var(--sola-<component>-<slot>)` slots; inherited typography (color, font-family, font-size) cascades from the surrounding `<Root>` via normal CSS inheritance — don't re-reference `--sola-root-*` from inside other components.
