@@ -106,6 +106,19 @@ pub trait SolaApp: 'static {
     fn on_shutdown(&mut self, ctx: &mut AppCtx) {
         let _ = ctx;
     }
+
+    /// Called once, immediately after the runtime is wrapped in its
+    /// `Rc<RefCell<…>>`, and before the bus pump and JS dispatchers are
+    /// installed. The `handle` is a clonable, weak-referencing entry
+    /// point into the runtime — stash it if you need to re-enter app
+    /// state from a one-shot timer or other out-of-band callback.
+    ///
+    /// Default: no-op.
+    fn after_runtime_ready(&mut self, _handle: AppRuntimeHandle<Self>, _ctx: &mut AppCtx)
+    where
+        Self: Sized,
+    {
+    }
 }
 
 /// Runtime container — holds the user app and its context together so
@@ -288,6 +301,15 @@ pub fn run<A: SolaApp>() {
 
     // --- Wrap runtime ---
     let runtime = std::rc::Rc::new(std::cell::RefCell::new(AppRuntime { app, ctx }));
+
+    // --- Notify app that the runtime is ready ---
+    // Tight borrow scope so the JS-dispatcher loop below can also borrow.
+    {
+        let handle = AppRuntimeHandle { weak: std::rc::Rc::downgrade(&runtime) };
+        let mut rt = runtime.borrow_mut();
+        let AppRuntime { app, ctx } = &mut *rt;
+        app.after_runtime_ready(handle, ctx);
+    }
 
     // --- Install per-window JS dispatchers ---
     let window_handles: Vec<WindowHandle> = runtime.borrow().ctx.windows.clone();
@@ -496,6 +518,75 @@ fn start_bus_pump<A: SolaApp>(
 ) {
     let mut task = BusPumpTask::<A>::new(bus, runtime, registry);
     ::cef::post_task(::cef::ThreadId::from(::cef::sys::cef_thread_id_t::TID_UI), Some(&mut task));
+}
+
+// ── AppRuntimeHandle ─────────────────────────────────────────────────────────
+
+/// A clonable, weak handle into the kit's `AppRuntime`. Use it to
+/// re-enter app state from one-shot timers or other callbacks that
+/// run after the initial `SolaApp::after_runtime_ready` call returns.
+///
+/// Obtained via `SolaApp::after_runtime_ready`; stash a clone for
+/// each callback site you need.
+pub struct AppRuntimeHandle<A: SolaApp> {
+    weak: std::rc::Weak<std::cell::RefCell<AppRuntime<A>>>,
+}
+
+impl<A: SolaApp> Clone for AppRuntimeHandle<A> {
+    fn clone(&self) -> Self {
+        Self { weak: self.weak.clone() }
+    }
+}
+
+impl<A: SolaApp> AppRuntimeHandle<A> {
+    /// Re-enter the runtime. Returns `true` if the runtime is still
+    /// alive and `f` was called, `false` if it has been dropped.
+    pub fn with(&self, f: impl FnOnce(&mut A, &mut AppCtx)) -> bool {
+        let Some(rc) = self.weak.upgrade() else {
+            return false;
+        };
+        let mut rt = rc.borrow_mut();
+        let AppRuntime { app, ctx } = &mut *rt;
+        f(app, ctx);
+        true
+    }
+
+    /// Schedule a one-shot callback on the CEF UI thread after
+    /// `delay_ms` milliseconds. The callback receives mutable access
+    /// to `A` and `AppCtx` just like any other kit hook.
+    ///
+    /// Does nothing if the runtime has already been dropped by the
+    /// time the callback fires.
+    pub fn schedule_after(&self, delay_ms: u64, f: impl FnOnce(&mut A, &mut AppCtx) + 'static) {
+        let mut task = ScheduledTask::<A>::new(
+            self.clone(),
+            std::rc::Rc::new(std::cell::RefCell::new(Some(Box::new(f)))),
+        );
+        ::cef::post_delayed_task(
+            ::cef::ThreadId::from(::cef::sys::cef_thread_id_t::TID_UI),
+            Some(&mut task),
+            delay_ms as i64,
+        );
+    }
+}
+
+// ── ScheduledTask ─────────────────────────────────────────────────────────────
+
+::cef::wrap_task! {
+    struct ScheduledTask<A: SolaApp,> {
+        handle: AppRuntimeHandle<A>,
+        // Rc<RefCell<Option<…>>> gives Clone (via Rc) + interior mutability
+        // so we can take the FnOnce out of the &self execute method.
+        callback: std::rc::Rc<std::cell::RefCell<Option<Box<dyn FnOnce(&mut A, &mut AppCtx)>>>>,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            if let Some(cb) = self.callback.borrow_mut().take() {
+                self.handle.with(cb);
+            }
+        }
+    }
 }
 
 /// Synchronous bootstrap stub that installs a queueing
