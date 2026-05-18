@@ -239,6 +239,36 @@ components and per-window seed state. On each `ctx.add_window(cfg)`:
 `Main`'s signature must accept the prop:
 `function Main(handle: Handle<{ initial: T | null }>)`.
 
+### Self-scheduled callbacks
+
+Apps that need to re-enter their own runtime state from outside the bus
+/ JS / lifecycle callbacks the trait already provides — e.g. a delayed
+focus-shift timer that fires after the cursor parks on a window for
+some interval — use the kit's `AppRuntimeHandle` primitive.
+
+Opt in by implementing `SolaApp::after_runtime_ready`:
+
+```rust
+fn after_runtime_ready(&mut self, handle: AppRuntimeHandle<Self>, _ctx: &mut AppCtx) {
+    self.runtime = Some(handle);
+}
+```
+
+The handle has two methods:
+
+- `with(|app, ctx| …) -> bool` — re-enter the runtime synchronously
+  if it's still alive. Returns `false` if the runtime has been dropped
+  (shutdown path).
+- `schedule_after(delay_ms, |app, ctx| …)` — post a one-shot UI-thread
+  callback via `cef::post_delayed_task`. The closure runs inside
+  `with()` so a dropped runtime is a silent no-op. `cef::post_delayed_task`
+  has no cancel API; if you need to cancel, use a monotonic generation
+  counter and check it inside the closure (see sola-shell's
+  `pending_focus_generation` for the pattern).
+
+Apps that don't override `after_runtime_ready` ignore the handle —
+the default no-op preserves single-window app behavior.
+
 ### CSS authoring
 
 Kit components ship a `web/lib/components/<name>.css` next to their `.tsx`. Class-based selectors (not tag-based — Remix components render plain DOM). Reference only `var(--sola-<component>-<slot>)` slots; inherited typography (color, font-family, font-size) cascades from the surrounding `<Root>` via normal CSS inheritance — don't re-reference `--sola-root-*` from inside other components.

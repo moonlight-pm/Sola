@@ -879,17 +879,9 @@ impl ShellApp {
 
         self.known_windows = windows;
 
-        // Rebuild switcher apps (unique app_ids, excluding shell).
-        self.switcher.apps = {
-            let mut seen = HashSet::new();
-            self.known_windows
-                .iter()
-                .filter(|w| w.app_id != Self::APP_ID && seen.insert(w.app_id.clone()))
-                .map(|w| SwitcherApp {
-                    app_id: w.app_id.clone(),
-                })
-                .collect()
-        };
+        // Single source of truth for switcher ordering (MRU). See
+        // switcher::rebuild_switcher_apps.
+        self.switcher.apps = self.rebuild_switcher_apps();
 
         let focused_app_was_removed = self
             .focused_app_id

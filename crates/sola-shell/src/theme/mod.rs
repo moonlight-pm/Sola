@@ -103,6 +103,10 @@ pub fn launcher() -> ComponentBindings {
     comp.slots.insert("row-selected-bg".into(), Binding::new("accent", "accent"));
     comp.slots.insert("row-selected-fg".into(), Binding::new("text", "text-primary"));
 
+    // Icon colours
+    comp.slots.insert("icon-fg".into(), Binding::new("text", "text-tertiary"));
+    comp.slots.insert("icon-selected-fg".into(), Binding::new("text", "text-primary"));
+
     // Empty state
     comp.slots.insert("empty-fg".into(), Binding::new("text", "text-tertiary"));
     comp.slots.insert("empty-size".into(), Binding::new("text-size", "text-body"));

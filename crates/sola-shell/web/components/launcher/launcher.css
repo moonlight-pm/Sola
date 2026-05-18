@@ -77,11 +77,11 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #aaa;
+  color: var(--sola-launcher-icon-fg);
 }
 
 .sola-launcher-row--selected .sola-launcher-icon {
-  color: #fff;
+  color: var(--sola-launcher-icon-selected-fg);
 }
 
 .sola-launcher-label {
