@@ -49,8 +49,11 @@ pub fn menubar() -> ComponentBindings {
     // Clock font size (12px in legacy → text-caption = 11px, closest available)
     comp.slots.insert("clock-size".into(), Binding::new("text-size", "text-caption"));
 
-    // Toast background — dark reddish (danger-adjacent)
-    comp.slots.insert("toast-bg".into(), Binding::new("status", "danger"));
+    // Toast background — muted dark surface (text-muted = #484f58).
+    // Legacy used rgba(56,40,40,0.92); closest available atom without a
+    // dedicated "notice" token. text-muted carries groups ["text","border"];
+    // "text" is used here because the toast bg treats it as a colored surface.
+    comp.slots.insert("toast-bg".into(), Binding::new("text", "text-muted"));
 
     // Toast foreground — primary white
     comp.slots.insert("toast-fg".into(), Binding::new("text", "text-primary"));

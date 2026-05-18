@@ -25,7 +25,10 @@ function formatClock(now: Date): string {
 export function Tray(handle: Handle<{}>) {
   // Clock state.
   let clockText = formatClock(new Date());
-  const clockTimer = setInterval(() => {
+  // No binding needed — the interval runs for the process lifetime.
+  // A Remix v3 cleanup hook would be needed to cancel it on unmount,
+  // but the menubar is a permanent window so process lifetime == component lifetime.
+  setInterval(() => {
     clockText = formatClock(new Date());
     handle.update();
   }, 10_000);
@@ -48,12 +51,6 @@ export function Tray(handle: Handle<{}>) {
       handle.update();
     }, 5_000);
   });
-
-  // Clean up the interval when the component is removed (best-effort —
-  // the menubar is permanent but this guards against future unmounts).
-  // We'd need a Remix v3 cleanup hook here; without one we rely on the
-  // process lifetime matching the component lifetime.
-  void clockTimer;
 
   return () => {
     const toastCls = toastVisible

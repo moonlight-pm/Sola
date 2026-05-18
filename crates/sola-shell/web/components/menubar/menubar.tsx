@@ -14,7 +14,6 @@
 
 import { type Handle } from "@remix-run/ui";
 import { on as ipcOn, invoke } from "@sola/ipc";
-import { on } from "@sola/kit";
 import { SystemMenu } from "./system-menu";
 import { AppTitle } from "./app-title";
 import { MenuLabels } from "./menu-labels";
@@ -85,7 +84,7 @@ export function Menubar(handle: Handle<{ initial: MenubarInitial }>) {
   document.addEventListener("click", () => dismissMenu());
 
   return () => (
-    <div class="sola-menubar" mix={[]}>
+    <div class="sola-menubar">
       <div class="sola-menubar-left">
         <SystemMenu
           open={isOpen("system")}
