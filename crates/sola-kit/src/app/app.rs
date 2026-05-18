@@ -55,6 +55,8 @@ impl SolaApp for KitApp {
             assets: APP_ASSETS,
             zoned: true,
             keyboard_target: true,
+            root_component: None,
+            initial_state: None,
         });
 
         // Publish the storybook's app menu to the shell so the menubar

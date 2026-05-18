@@ -19,6 +19,17 @@ pub struct WindowConfig {
     pub zoned: bool,
     /// WindowPolicy: whether this window can receive keyboard input.
     pub keyboard_target: bool,
+    /// Per-window override for the Remix v3 root component path. When
+    /// `None`, the kit falls back to `SolaApp::ROOT_COMPONENT`. The
+    /// referenced file is served under `app://` from this window's
+    /// asset bundle and must export a `Main` factory.
+    pub root_component: Option<&'static str>,
+    /// Per-window seed state. When `Some`, the kit injects
+    /// `<script>window.__solaInitial = <json>;</script>` into the head
+    /// of this window's `index.html`. The kit's `index.tsx` reads it
+    /// synchronously and passes it as the `initial` prop to `Main`.
+    /// When `None`, `window.__solaInitial` is set to `null`.
+    pub initial_state: Option<serde_json::Value>,
 }
 
 /// JS dispatcher installed per window by the runtime after `A::new`.

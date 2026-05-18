@@ -42,6 +42,8 @@ impl SolaApp for MonitorApp {
             assets: APP_ASSETS,
             zoned: false,
             keyboard_target: true,
+            root_component: None,
+            initial_state: None,
         });
 
         ctx.emit(Topic::SetAppMenu(AppMenuPayload {

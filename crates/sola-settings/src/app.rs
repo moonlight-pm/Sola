@@ -114,6 +114,8 @@ impl SolaApp for SettingsApp {
             assets: APP_ASSETS,
             zoned: true,
             keyboard_target: true,
+            root_component: None,
+            initial_state: None,
         });
 
         ctx.emit(Topic::SetAppMenu(AppMenuPayload {
