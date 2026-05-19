@@ -6,10 +6,9 @@ pub use state::{MenuCache, SYNTHESIZED_CLOSE_ACTION, synthesized_menu};
 
 use serde_json::Value;
 use sola_kit::{AppCtx, SolaApp};
-use sola_bus::topics::{FrameUpdate, MenuItem, Topic};
+use sola_bus::topics::MenuItem;
 
 use crate::app::ShellApp;
-use crate::zoning;
 
 impl ShellApp {
     pub fn open_menu(&mut self, source: &str, menu_index: usize, anchor_x: f64, ctx: &mut AppCtx) {
@@ -60,21 +59,10 @@ impl ShellApp {
             "anchor_x": anchor_x,
         }));
 
-        // Full-screen overlay below the menubar — transparent except the dropdown.
-        if let (Some((ow, oh)), Some(wid)) = (
-            self.zoning.output_size,
-            self.lookup_window_id(Self::APP_ID, "menu"),
-        ) {
-            ctx.emit(Topic::Frame(FrameUpdate {
-                window_id: wid,
-                x: 0,
-                y: zoning::MENUBAR_HEIGHT,
-                width: ow,
-                height: oh - zoning::MENUBAR_HEIGHT,
-                fullscreen: false,
-            }));
-        }
-
+        // No Frame emission: the menu surface was sized to
+        // full-screen-below-menubar at the first output_geometry tick
+        // (via `emit_all_frames`). It stays at that size and position
+        // for its whole life; only composition flips on open/close.
         self.menu_open = true;
         self.emit_registered_chords(ctx);
         self.emit_composition(ctx);

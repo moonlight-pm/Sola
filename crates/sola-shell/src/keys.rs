@@ -12,7 +12,7 @@
 //!   - Preserves Meta-release closes switcher by registering Meta+Tab and
 //!     acting on its `ChordReleased` event.
 use sola_kit::SolaApp;
-use sola_bus::topics::{ChordEvent, FocusTarget, FrameUpdate, RegisteredChord, Topic};
+use sola_bus::topics::{ChordEvent, FocusTarget, RegisteredChord, Topic};
 use sola_core::{KeyChord, KeyCode};
 
 use crate::app::ShellApp;
@@ -373,19 +373,10 @@ pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx, evt: ChordEv
             "selected": app.switcher.selected,
         }));
 
-        if let (Some((ow, oh)), Some(wid)) = (
-            app.zoning.output_size,
-            app.lookup_window_id(ShellApp::APP_ID, "switcher"),
-        ) {
-            ctx.emit(Topic::Frame(FrameUpdate {
-                window_id: wid,
-                x: (ow - 800) / 2,
-                y: (oh - 400) / 2,
-                width: 800,
-                height: 400,
-                fullscreen: false,
-            }));
-        }
+        // No Frame emission: the switcher surface was sized to its
+        // centered 800x400 at the first output_geometry tick (via
+        // `emit_all_frames`). It stays there for its whole life; only
+        // composition flips on activate/deactivate.
         app.emit_composition(ctx);
         return;
     }

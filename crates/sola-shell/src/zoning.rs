@@ -174,6 +174,24 @@ impl ZoningState {
         })
     }
 
+
+    /// Frame for the switcher overlay: centered 800x400 on the output.
+    /// The switcher's window CSS draws a card grid that fills the
+    /// window; the window itself is the visible region.
+    pub fn switcher_frame(&self, window_id: u32) -> Option<FrameUpdate> {
+        let (w, h) = self.output_size?;
+        const SWITCHER_W: i32 = 800;
+        const SWITCHER_H: i32 = 400;
+        Some(FrameUpdate {
+            window_id,
+            x: (w - SWITCHER_W) / 2,
+            y: (h - SWITCHER_H) / 2,
+            width: SWITCHER_W,
+            height: SWITCHER_H,
+            fullscreen: false,
+        })
+    }
+
     /// Compute the Frame for an explicitly-zoned window.
     /// Returns None if the window has no zone assignment.
     pub fn window_frame(&self, window_id: u32) -> Option<FrameUpdate> {

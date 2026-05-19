@@ -8,10 +8,9 @@ pub const WIDTH: i32 = 560;
 pub const HEIGHT: i32 = 420;
 
 use sola_kit::{AppCtx, SolaApp};
-use sola_bus::topics::{FocusTarget, FrameUpdate, Topic};
+use sola_bus::topics::{FocusTarget, Topic};
 
 use crate::app::ShellApp;
-use crate::zoning;
 
 impl ShellApp {
     pub fn open_launcher(&mut self, ctx: &mut AppCtx) {
@@ -31,24 +30,11 @@ impl ShellApp {
         self.emit_registered_chords(ctx);
         self.launcher.apply_query(&self.applications, "");
 
-        // Launcher is a fullscreen-below-menubar overlay. The visible
-        // panel is centered by the CSS; the rest is transparent and
-        // absorbs pointer/scroll events so nothing beneath the launcher
-        // can be interacted with while it's open.
-        if let (Some((ow, oh)), Some(wid)) = (
-            self.zoning.output_size,
-            self.lookup_window_id(Self::APP_ID, "launcher"),
-        ) {
-            ctx.emit(Topic::Frame(FrameUpdate {
-                window_id: wid,
-                x: 0,
-                y: zoning::MENUBAR_HEIGHT,
-                width: ow,
-                height: oh - zoning::MENUBAR_HEIGHT,
-                fullscreen: false,
-            }));
-        }
-
+        // No Frame emission here: the launcher surface was sized to
+        // full-screen-below-menubar at the first output_geometry tick
+        // (via `emit_all_frames`) and stays there for its whole life,
+        // hidden via composition when inactive. Show/hide is a pure
+        // visibility flip — no resize+reposition lag.
         self.emit_composition(ctx);
 
         // Route keyboard to the launcher window.
