@@ -1,12 +1,16 @@
 //! `app://` scheme handler. Bridges CEF's resource model to our
 //! AssetBundle + swc TS+JSX transform.
 //!
-//! For storybook scope: a single static registration holds the most
-//! recently registered window's bundle + HTML. Multi-window apps (e.g.
-//! sola-browser) will need a per-host or per-browser dispatch — out of
-//! scope for C1.
+//! Multi-window apps (sola-shell, eventually sola-browser) need
+//! per-window dispatch — each `add_window` registers its own bundle
+//! and pre-built HTML, and the browser navigates to a window-scoped
+//! URL like `app://win3/index.html`. The scheme handler keys
+//! registrations by the URL host segment, so concurrent windows
+//! never trample each other.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // `wrap_scheme_handler_factory!` and `wrap_resource_handler!` expand to code
 // that references bare names from the cef crate (SchemeHandlerFactory,
@@ -24,22 +28,23 @@ struct RegisteredWindow {
     html: String,
 }
 
-static REGISTRATION: Mutex<Option<RegisteredWindow>> = Mutex::new(None);
+static REGISTRATIONS: Mutex<Option<HashMap<String, RegisteredWindow>>> = Mutex::new(None);
+static NEXT_HOST_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Register (or replace) the active app:// scheme target. Called from
-/// `ctx::add_window` before the Browser navigates to app:///index.html.
+/// Register a window's bundle + pre-built HTML under a freshly
+/// allocated URL host. Returns the host string; the caller is
+/// expected to navigate the browser to `app://<host>/index.html`.
 ///
-/// For storybook scope this is single-window — a second call warns and
-/// replaces the previous registration. Multi-window dispatch is post-C1.
-pub fn register_window(app_assets: &'static AssetBundle, html: String) {
-    let mut guard = REGISTRATION.lock().expect("scheme REGISTRATION poisoned");
-    if guard.is_some() {
-        tracing::warn!(
-            "cef::scheme: replacing existing app:// registration \
-             (multi-window scope is post-C1)"
-        );
-    }
-    *guard = Some(RegisteredWindow { app_assets, html });
+/// Each window gets its own host slot, so the scheme handler can
+/// dispatch by URL host instead of trampling on a single global.
+pub fn register_window(app_assets: &'static AssetBundle, html: String) -> String {
+    let id = NEXT_HOST_ID.fetch_add(1, Ordering::Relaxed);
+    let host = format!("win{id}");
+    let mut guard = REGISTRATIONS.lock().expect("scheme REGISTRATIONS poisoned");
+    guard
+        .get_or_insert_with(HashMap::new)
+        .insert(host.clone(), RegisteredWindow { app_assets, html });
+    host
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -69,11 +74,13 @@ cef::wrap_scheme_handler_factory! {
                 None => String::new(),
             };
 
-            // Strip "app://<authority>" prefix to get "<path>[?query][#frag]".
+            // Split "app://<host>/<path>[?query][#frag]" into host + path.
+            // Host is the registration key (allocated by `register_window`);
+            // path is what we look up in the bundle.
             let after_scheme = url_str.strip_prefix("app://").unwrap_or(&url_str);
-            let path_and_rest = match after_scheme.find('/') {
-                Some(i) => &after_scheme[i..],
-                None => "/",
+            let (host, path_and_rest) = match after_scheme.find('/') {
+                Some(i) => (&after_scheme[..i], &after_scheme[i..]),
+                None => (after_scheme, "/"),
             };
             // Drop query and fragment.
             let path = path_and_rest
@@ -85,13 +92,14 @@ cef::wrap_scheme_handler_factory! {
                 .unwrap_or("/");
             let path = if path.is_empty() { "/" } else { path };
 
-            let guard = REGISTRATION.lock().expect("scheme REGISTRATION poisoned");
-            let reg = match guard.as_ref() {
+            let guard = REGISTRATIONS.lock().expect("scheme REGISTRATIONS poisoned");
+            let reg = match guard.as_ref().and_then(|m| m.get(host)) {
                 Some(r) => r,
                 None => {
                     tracing::warn!(
+                        host,
                         path,
-                        "cef::scheme: request arrived before any window was registered"
+                        "cef::scheme: no registration for host"
                     );
                     return Some(make_resource(
                         b"No window registered".to_vec(),
@@ -106,6 +114,28 @@ cef::wrap_scheme_handler_factory! {
             // + initial state already injected by ctx::add_window).
             if path == "/" || path == "/index.html" {
                 return Some(make_resource(reg.html.clone().into_bytes(), "text/html"));
+            }
+
+            // /sola-assets/<rel-path> — disk-backed assets under
+            // `/opt/sola/share/...`. Routed to `sola_assets::resolve` so
+            // kit apps can reference fonts, icons, and other shared media
+            // via `app://<host>/sola-assets/...` URLs. Returns 404 if the
+            // file is missing or path-traversal is attempted.
+            if let Some(rel) = path.strip_prefix("/sola-assets/") {
+                if rel.contains("..") {
+                    tracing::warn!(path, "cef::scheme: rejected /sola-assets path traversal");
+                    return Some(make_resource(b"Not Found".to_vec(), "text/plain"));
+                }
+                match sola_assets::resolve(rel).and_then(|p| std::fs::read(&p).ok()) {
+                    Some(bytes) => {
+                        let mime = mime_for_path(rel);
+                        return Some(make_resource(bytes, mime));
+                    }
+                    None => {
+                        tracing::warn!(path, "cef::scheme: sola-assets file not found");
+                        return Some(make_resource(b"Not Found".to_vec(), "text/plain"));
+                    }
+                }
             }
 
             // Asset lookup: app bundle first, platform assets as fallback.
@@ -151,6 +181,29 @@ cef::wrap_scheme_handler_factory! {
 /// The `wrap_resource_handler!` macro's generated `StringResource::new()`
 /// takes all three fields including `pos`. This helper hides the
 /// `Arc<Mutex<usize>>` boilerplate from the factory.
+/// Pick a sensible Content-Type for a disk-served `/sola-assets/`
+/// file. Limited to the formats the kit's bundled assets actually
+/// expose (fonts, SVG icons, common bitmaps). Unknown extensions get
+/// `application/octet-stream`, which is fine for non-decoded payloads.
+fn mime_for_path(path: &str) -> &'static str {
+    let ext = path
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "json" => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
 fn make_resource(body: Vec<u8>, mime: impl Into<String>) -> ResourceHandler {
     StringResource::new(
         body,

@@ -45,17 +45,20 @@ impl Browser {
     ///     `docs/vault/Distribution.md` → "Known incompatibility —
     ///     NVIDIA proprietary driver + CEF dma-buf OSR" for details
     ///     and the path to re-enable.
-    pub fn new(surface: Rc<Surface>, initial_url: &str) -> Self {
+    pub fn new(surface: Rc<Surface>, initial_url: &str, transparent: bool) -> Self {
         // --- WindowInfo: OSR + self-drive + CPU paint transport ---
         let mut window_info = cef::WindowInfo::default();
         window_info.windowless_rendering_enabled = 1;
         window_info.external_begin_frame_enabled = 0;
         window_info.shared_texture_enabled = 0;
 
-        // --- BrowserSettings: opaque white background ---
+        // --- BrowserSettings: background color (ARGB u32) ---
+        // For `transparent` windows the alpha channel must be 0 so the
+        // Wayland surface composites onto whatever's beneath instead of
+        // an opaque flash before content paints. Opaque windows get
+        // white so the first frame matches a typical page background.
         let mut browser_settings = cef::BrowserSettings::default();
-        // Background colour is ARGB packed into u32: 0xFFFFFFFF = opaque white.
-        browser_settings.background_color = 0xFFFF_FFFFu32;
+        browser_settings.background_color = if transparent { 0x0000_0000 } else { 0xFFFF_FFFF };
 
         // --- Build the client with the OSR RenderHandler + the MessageRouter
         // hookups (LifeSpan + Request handlers + on_process_message_received).

@@ -83,12 +83,14 @@ impl AppCtx {
         let root = cfg.root_component.unwrap_or(self.root_component);
         let html = crate::inject_kit_head(&html_raw, root, cfg.assets, cfg.initial_state.as_ref());
 
-        // Register the bundle + HTML with the static scheme handler before
-        // the browser is created so the first navigation is served correctly.
-        crate::cef::scheme::register_window(cfg.assets, html);
+        // Register the bundle + HTML with the scheme handler. The handler
+        // keys registrations by URL host, so each window gets its own
+        // dispatch slot and multi-window apps don't trample each other.
+        let host = crate::cef::scheme::register_window(cfg.assets, html);
 
         let surface = Surface::new(self.wayland.clone(), &cfg, self.app_id);
-        let browser = Browser::new(surface.clone(), "app:///index.html");
+        let url = format!("app://{host}/index.html");
+        let browser = Browser::new(surface.clone(), &url, cfg.transparent);
 
         // Wire this browser's identifier to its dispatcher slot so the
         // MessageRouter's `KitBrowserHandler::on_query_str` can route

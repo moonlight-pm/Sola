@@ -429,11 +429,17 @@ impl WindowHandler for WaylandClient {
         // amortizes; this is the only iteration path.
         self.surfaces.retain(|w| w.strong_count() > 0);
 
+        // Walk every live surface looking for the one whose wl_surface
+        // matches `target_id`. The previous version picked the first
+        // upgradeable surface and then *filtered* it by id, which silently
+        // dropped configures for every non-first window — only the menubar
+        // surface ever got resized when the shell hosts four windows in
+        // one app.
         let matching = self
             .surfaces
             .iter()
-            .find_map(|w| w.upgrade())
-            .filter(|s| s.xdg_window.wl_surface().id() == target_id);
+            .filter_map(|w| w.upgrade())
+            .find(|s| s.xdg_window.wl_surface().id() == target_id);
 
         if let Some(surface) = matching {
             // sctk packs each axis as Option<NonZeroU32> ("compositor said
