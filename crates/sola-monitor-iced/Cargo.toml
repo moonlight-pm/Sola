@@ -1,0 +1,22 @@
+[package]
+name = "sola-monitor-iced"
+version = "0.1.0"
+edition = "2024"
+
+# Parallel-evaluation port of sola-monitor on iced, intentionally
+# standalone from sola-kit. We depend on sola-bus + sola-core for IPC
+# and infra, and sola-assets if we end up reaching for the shared
+# fonts/icons. The shell drives this app's window via wayland +
+# bus topics the same as any other sola app; iced via winit handles
+# xdg_toplevel configure cleanly so no special wayland glue is needed.
+
+[[bin]]
+name = "sola-monitor-iced"
+path = "src/main.rs"
+
+[dependencies]
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+serde_json = "1"
+tracing = "0.1"
