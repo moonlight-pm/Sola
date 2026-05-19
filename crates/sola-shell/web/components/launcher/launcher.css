@@ -51,6 +51,26 @@
   flex: 1 1 auto;
   overflow-y: auto;
   padding: 6px 0;
+  /* Firefox-style attrs paired with the webkit selectors below. */
+  scrollbar-color: var(--sola-launcher-scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+
+.sola-launcher-results::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sola-launcher-results::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sola-launcher-results::-webkit-scrollbar-thumb {
+  background: var(--sola-launcher-scrollbar-thumb);
+  border-radius: 4px;
+}
+
+.sola-launcher-results::-webkit-scrollbar-thumb:hover {
+  background: var(--sola-launcher-scrollbar-thumb-hover);
 }
 
 .sola-launcher-row {

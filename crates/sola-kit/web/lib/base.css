@@ -10,6 +10,24 @@
    region needs to scroll, it opts in (`overflow: auto` on its own
    container). */
 
+/* Inter — sola's house sans face. Disk-served by the kit's app://
+   scheme handler from `/opt/sola/share/fonts/Inter/`. Variable axes
+   cover the 100–900 weight range used across the shell and apps. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url('/sola-assets/fonts/Inter/InterVariable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: block;
+  src: url('/sola-assets/fonts/Inter/InterVariable-Italic.woff2') format('woff2');
+}
+
 html,
 body {
   margin: 0;

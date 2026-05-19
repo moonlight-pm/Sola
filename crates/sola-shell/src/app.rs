@@ -170,9 +170,15 @@ impl SolaApp for ShellApp {
 
         app.emit_registered_chords(ctx);
 
-        // Publish the merged kit + shell theme so every kit window receives
-        // both the kit component vars and the shell's --sola-menubar-* vars.
+        // Publish the merged kit + shell theme. Shell-side palette
+        // extensions (Inter font override, legacy menu sizes) layer onto
+        // the kit's baseline atoms before the shell component bindings
+        // attach, so menubar/menu slots resolve to the legacy values.
         let mut theme = sola_kit::theme::kit_default_theme();
+        theme
+            .palette
+            .tokens
+            .extend(crate::theme::shell_palette_extensions());
         theme.components.extend(crate::theme::shell_default_bindings());
         ctx.emit(Topic::Theme(theme));
 
@@ -820,11 +826,36 @@ impl ShellApp {
     /// Emit Frame updates for all managed windows.
     ///
     /// - Menubar: full width, fixed height.
+    /// - Launcher / menu: full-screen overlay below the menubar (each
+    ///   draws its own panel via CSS inside an otherwise-transparent
+    ///   surface).
+    /// - Switcher: centered 800x400.
     /// - Sola apps (sola-*): zoned frame, or full-screen-below-menubar default.
     /// - External apps: zoned frame only. No frame if unzoned (self-positioning).
+    ///
+    /// Shell overlays are framed eagerly (on every output_geometry,
+    /// not just at activation) so their surfaces sit at their final
+    /// dimensions while hidden. Show/hide via the composition topic is
+    /// then a pure visibility flip — no resize+reposition lag when the
+    /// user actually opens them.
     pub fn emit_all_frames(&self, ctx: &mut AppCtx) {
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
             if let Some(frame) = self.zoning.menubar_frame(wid) {
+                ctx.emit(Topic::Frame(frame));
+            }
+        }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
+            if let Some(frame) = self.zoning.default_app_frame(wid) {
+                ctx.emit(Topic::Frame(frame));
+            }
+        }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
+            if let Some(frame) = self.zoning.default_app_frame(wid) {
+                ctx.emit(Topic::Frame(frame));
+            }
+        }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
+            if let Some(frame) = self.zoning.switcher_frame(wid) {
                 ctx.emit(Topic::Frame(frame));
             }
         }

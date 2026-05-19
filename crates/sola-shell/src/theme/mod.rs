@@ -15,6 +15,39 @@ pub fn shell_default_bindings() -> BTreeMap<String, ComponentBindings> {
     map
 }
 
+/// Shell-side additions to the palette: an Inter font family override
+/// and the legacy 15px / 13px menu sizes. Inserted into `Theme.palette
+/// .tokens` before the kit + shell bindings resolve, so every kit
+/// component that resolves through `font-sans` picks up Inter, and
+/// the menubar + menu can bind to the legacy 15px size via the new
+/// `text-menu` slot.
+///
+/// `font-sans` is overwritten rather than added as a new token because
+/// every Component binding in the kit already resolves through it;
+/// adding a sibling token would require rebinding every component.
+pub fn shell_palette_extensions() -> BTreeMap<String, sola_core::theme::Token> {
+    use sola_core::theme::{Token, TokenKind};
+
+    let mut map = BTreeMap::new();
+    map.insert(
+        "font-sans".into(),
+        Token::new(
+            TokenKind::FontFamily,
+            "'Inter', system-ui, -apple-system, sans-serif",
+            &["font-family"],
+        ),
+    );
+    map.insert(
+        "text-menu".into(),
+        Token::new(TokenKind::TextSize, "15px", &["text-size"]),
+    );
+    map.insert(
+        "text-menu-shortcut".into(),
+        Token::new(TokenKind::TextSize, "13px", &["text-size"]),
+    );
+    map
+}
+
 /// Theme bindings for the `<Menubar>` component.
 ///
 /// Every `--sola-menubar-<slot>` var referenced in menubar.css must have
@@ -67,8 +100,9 @@ pub fn menubar() -> ComponentBindings {
     // Font family — DejaVu Sans (system default)
     comp.slots.insert("font-family".into(), Binding::new("font-family", "font-sans"));
 
-    // Body font size (15px in legacy → text-body-lg = 13px, closest available)
-    comp.slots.insert("text-size".into(), Binding::new("text-size", "text-body-lg"));
+    // Body font size — legacy 15px, restored via the shell-side
+    // `text-menu` palette extension.
+    comp.slots.insert("text-size".into(), Binding::new("text-size", "text-menu"));
 
     comp
 }
@@ -111,6 +145,18 @@ pub fn launcher() -> ComponentBindings {
     comp.slots.insert("empty-fg".into(), Binding::new("text", "text-tertiary"));
     comp.slots.insert("empty-size".into(), Binding::new("text-size", "text-body"));
 
+    // Scrollbar — webkit thumb colour for the results list. Track is
+    // intentionally untokenised (drawn transparent so the panel surface
+    // shows through).
+    comp.slots.insert(
+        "scrollbar-thumb".into(),
+        Binding::new("border", "border"),
+    );
+    comp.slots.insert(
+        "scrollbar-thumb-hover".into(),
+        Binding::new("text", "text-tertiary"),
+    );
+
     comp
 }
 
@@ -132,7 +178,7 @@ pub fn menu() -> ComponentBindings {
 
     // Typography
     comp.slots.insert("font-family".into(), Binding::new("font-family", "font-sans"));
-    comp.slots.insert("item-size".into(), Binding::new("text-size", "text-body-lg"));
+    comp.slots.insert("item-size".into(), Binding::new("text-size", "text-menu"));
 
     // Menu items
     comp.slots.insert("item-fg".into(), Binding::new("text", "text-secondary"));
@@ -142,7 +188,7 @@ pub fn menu() -> ComponentBindings {
 
     // Shortcut labels
     comp.slots.insert("shortcut-fg".into(), Binding::new("text", "text-tertiary"));
-    comp.slots.insert("shortcut-size".into(), Binding::new("text-size", "text-body"));
+    comp.slots.insert("shortcut-size".into(), Binding::new("text-size", "text-menu-shortcut"));
     comp.slots.insert("shortcut-hover-fg".into(), Binding::new("text", "text-primary"));
 
     // Divider
@@ -190,6 +236,7 @@ mod tests {
     #[test]
     fn shell_bindings_merge_and_validate() {
         let mut theme = kit_default_theme();
+        theme.palette.tokens.extend(shell_palette_extensions());
         theme.components.extend(shell_default_bindings());
         theme.validate().expect("merged theme must validate");
     }
