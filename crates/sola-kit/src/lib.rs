@@ -294,6 +294,16 @@ pub fn run<A: SolaApp>() {
         if !kinds.contains(&TopicKind::Evaluate) {
             kinds.push(TopicKind::Evaluate);
         }
+        // Force-subscribe to `CloseApp` so shell-initiated shutdowns
+        // reach the pump regardless of whether the app overrode
+        // `register_bus` and dropped the default registration. The
+        // pump intercepts `Topic::CloseApp(app_id)` matching this
+        // app and posts `cef::quit_message_loop` — without this,
+        // sola-session's systemd SIGTERM is the only termination
+        // signal and the app drags out a ~10s wait-then-kill cycle.
+        if !kinds.contains(&TopicKind::CloseApp) {
+            kinds.push(TopicKind::CloseApp);
+        }
         if let Err(e) = c.subscribe(&kinds) {
             tracing::warn!("failed to subscribe: {e}");
         }
@@ -412,6 +422,23 @@ pub fn run<A: SolaApp>() {
                     }
                     ::cef::quit_message_loop();
                     return;
+                }
+
+                // Framework-level CloseApp: if the incoming `CloseApp`
+                // targets THIS app, run `on_shutdown` and post a quit
+                // unconditionally — don't rely on `register_bus` having
+                // wired the default handler, since apps routinely
+                // override that to register their own topics and lose
+                // it. Symmetric with the `Shutdown` intercept above.
+                if let Topic::CloseApp(app_id) = &topic {
+                    let mut rt = self.runtime.borrow_mut();
+                    if app_id == rt.ctx.app_id {
+                        let AppRuntime { app, ctx } = &mut *rt;
+                        app.on_shutdown(ctx);
+                        drop(rt);
+                        ::cef::quit_message_loop();
+                        return;
+                    }
                 }
 
                 // Framework default for `Topic::Theme`: lower the new
