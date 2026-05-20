@@ -163,35 +163,47 @@ struct ResolvedSource {
 }
 
 /// Per-pack sync step: resolve the upstream pin, compare to the
-/// installed manifest, pull if they differ.
+/// installed manifest (both pin AND intent hash), pull if either
+/// drifts.
 fn sync_pack(name: &str, pack: &Pack, refresh: bool) {
     let dest = dest_dir(name, pack);
     let installed = read_manifest(&dest);
     let populated = dest_populated(&dest);
+    let desired_intent = pack_intent_hash(pack);
 
-    // Fast path: pinned github pack with a matching manifest needs
-    // no network at all.
+    // Fast path: pinned github pack with a matching manifest (both
+    // pin and intent) needs no network at all.
     if populated && let Some(ref inst) = installed {
-        if let Some(_slug) = pack.source.strip_prefix("github:") {
-            if !pack.rev.is_empty() && inst == &pack.rev {
-                println!("{name}: up to date ({})", short_pin(inst));
+        let intent_matches = inst.intent.as_deref() == Some(desired_intent.as_str());
+        if pack.source.starts_with("github:") && intent_matches {
+            if !pack.rev.is_empty() && inst.pin == pack.rev {
+                println!("{name}: up to date ({})", short_pin(&inst.pin));
                 return;
             }
             if pack.rev.is_empty() && !refresh {
                 println!(
                     "{name}: up to date ({}) [tracking default branch — pass --refresh to re-resolve]",
-                    short_pin(inst)
+                    short_pin(&inst.pin)
                 );
                 return;
             }
         }
         // nix-pkg always needs nix-build to know the current store
-        // path; fall through to resolve_upstream.
+        // path; an intent mismatch on any pack also falls through so
+        // we re-pull with the new file list.
     }
 
     let resolved = resolve_upstream(name, pack);
 
-    if populated && installed.as_deref() == Some(resolved.pin.as_str()) {
+    let pin_matches = installed
+        .as_ref()
+        .map(|m| m.pin == resolved.pin)
+        .unwrap_or(false);
+    let intent_matches = installed
+        .as_ref()
+        .and_then(|m| m.intent.as_deref())
+        == Some(desired_intent.as_str());
+    if populated && pin_matches && intent_matches {
         println!("{name}: up to date ({})", short_pin(&resolved.pin));
         return;
     }
@@ -200,15 +212,17 @@ fn sync_pack(name: &str, pack: &Pack, refresh: bool) {
         "no manifest"
     } else if !populated {
         "empty dest"
-    } else {
+    } else if !pin_matches {
         "pin changed"
+    } else {
+        "files changed"
     };
     println!(
         "{name}: pulling ({reason}) -> {}",
         short_pin(&resolved.pin)
     );
     pull_pack(name, pack, resolved.nix_path);
-    write_manifest(&dest, &resolved.pin);
+    write_manifest(&dest, &resolved.pin, &desired_intent);
 }
 
 /// Where a pack's content lives under `/opt/sola/share/`.
@@ -223,18 +237,68 @@ fn dest_populated(dest: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Read the installed pin from `<dest>/.solapack`, if any.
-fn read_manifest(dest: &Path) -> Option<String> {
-    fs::read_to_string(dest.join(MANIFEST_FILE))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+/// Parsed `.solapack` manifest written by a previous sync.
+struct InstalledManifest {
+    pin: String,
+    /// `None` for legacy single-line manifests written before intent
+    /// tracking landed; treated as "intent unknown → re-pull".
+    intent: Option<String>,
 }
 
-/// Write the resolved pin to `<dest>/.solapack`.
-fn write_manifest(dest: &Path, pin: &str) {
+/// Read the installed manifest, if any. Returns `None` when the file
+/// is missing or empty.
+fn read_manifest(dest: &Path) -> Option<InstalledManifest> {
+    let raw = fs::read_to_string(dest.join(MANIFEST_FILE)).ok()?;
+    let mut lines = raw.lines();
+    let pin = lines.next()?.trim().to_string();
+    if pin.is_empty() {
+        return None;
+    }
+    let intent = lines.next().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    Some(InstalledManifest { pin, intent })
+}
+
+/// Hash of the per-pack "intent" — everything other than the upstream
+/// source that affects what ends up on disk: which subtree we copy
+/// from, what flavor of copy, and (for fonts) which files. Two packs
+/// that resolve to the same pin but a different `files = [...]` list
+/// must yield different intent hashes so sync re-pulls when the user
+/// changes that list. Hash is non-cryptographic — just a change
+/// detector.
+fn pack_intent_hash(pack: &Pack) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    pack.src_dir.hash(&mut h);
+    format!("{:?}", pack.kind).hash(&mut h);
+    pack.files.len().hash(&mut h);
+    for entry in &pack.files {
+        match entry {
+            FileEntry::Plain(s) => {
+                0u8.hash(&mut h);
+                s.hash(&mut h);
+            }
+            FileEntry::Mapped {
+                from,
+                to,
+                transform,
+            } => {
+                1u8.hash(&mut h);
+                from.hash(&mut h);
+                to.hash(&mut h);
+                transform.hash(&mut h);
+            }
+        }
+    }
+    format!("{:016x}", h.finish())
+}
+
+/// Write the resolved pin + intent hash to `<dest>/.solapack`.
+/// Two-line format keeps it human-readable while still capturing the
+/// pack's intent so file-list edits invalidate the manifest.
+fn write_manifest(dest: &Path, pin: &str, intent: &str) {
     let path = dest.join(MANIFEST_FILE);
-    if let Err(e) = fs::write(&path, format!("{pin}\n")) {
+    if let Err(e) = fs::write(&path, format!("{pin}\n{intent}\n")) {
         eprintln!("failed to write {}: {e}", path.display());
         exit(1);
     }
@@ -376,15 +440,22 @@ fn remove_orphans(upstream: &Upstream) {
     }
 }
 
-/// `true` if any pack referenced in `upstream.toml` has no installed
-/// content. Used by `install` to print a single "Refreshing assets…"
-/// banner before delegating to `sync`. Avoids the per-pack chatter
-/// when there's nothing to do.
+/// `true` if any pack referenced in `upstream.toml` is missing,
+/// has no manifest, or has an out-of-date intent hash. Used by
+/// `install` to print a single "Syncing assets…" banner before
+/// delegating to `sync`. Avoids the per-pack chatter when there's
+/// nothing to do.
 pub fn needs_sync() -> bool {
     let upstream = read_upstream();
     upstream.packs.iter().any(|(name, pack)| {
         let dest = dest_dir(name, pack);
-        !dest_populated(&dest) || read_manifest(&dest).is_none()
+        if !dest_populated(&dest) {
+            return true;
+        }
+        match read_manifest(&dest) {
+            None => true,
+            Some(m) => m.intent.as_deref() != Some(pack_intent_hash(pack).as_str()),
+        }
     })
 }
 
