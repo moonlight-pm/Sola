@@ -9,11 +9,13 @@
 //! - Pack directories that are no longer declared in `upstream.toml`
 //!   are removed from `/opt/sola/share/<category>/`.
 //!
-//! The installed pin is recorded in `<dest>/.solapack` after every
-//! successful pull. `sync` reads that file to decide whether work is
-//! needed. Nothing is committed to the repo — `cargo make install`
-//! calls `sync(false)` automatically so a fresh clone bootstraps
-//! itself.
+//! The installed pin and an "intent hash" (covering `src_dir`,
+//! `kind`, and the `files` list) are recorded in `<dest>/.solapack`
+//! after every successful pull. `sync` re-pulls when either drifts —
+//! so editing a pack's `files = [...]` list invalidates the manifest
+//! even when the upstream pin is unchanged. Nothing is committed to
+//! the repo — `cargo make install` calls `sync(false)` automatically
+//! so a fresh clone bootstraps itself.
 //!
 //! Pins:
 //! - `github:` packs with a non-empty `rev` pin to that rev (no
