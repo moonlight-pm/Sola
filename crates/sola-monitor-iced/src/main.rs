@@ -21,7 +21,7 @@ use iced::widget::{
 use iced::widget::Id as ScrollId;
 use iced::widget::operation;
 use iced::widget::scrollable::RelativeOffset;
-use iced::{Color, Element, Length, Padding, Settings, Subscription, Task, Theme};
+use iced::{Color, Element, Length, Padding, Subscription, Task, Theme};
 
 use sola_bus::topics::{
     AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
@@ -78,19 +78,26 @@ fn main() -> iced::Result {
         .map_err(|_| ())
         .expect("BUS set twice");
 
-    // `Settings::id` becomes the wayland xdg_toplevel.app_id, which is
-    // what river and the shell use to identify this window — including
-    // looking up the SetAppMenu entry above. Without this set, winit
-    // picks a default that won't match our APP_ID and the shell's
-    // menubar shows nothing when this window is focused.
+    // The wayland `xdg_toplevel.app_id` is what river and the shell
+    // use to identify this window — including looking up the SetAppMenu
+    // entry above. On Linux iced reads it from
+    // `window::Settings.platform_specific.application_id`, NOT from
+    // the top-level `Settings::id` (that field is only wired to
+    // `winit::with_name` on dragonfly/freebsd/netbsd/openbsd — Linux
+    // is omitted from the cfg in iced_winit 0.14's
+    // `conversion::window_attributes`). Without setting it here, the
+    // window has empty app_id and the shell can't match our menu.
     iced::application(App::default, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .decorations(false)
-        .settings(Settings {
-            id: Some(APP_ID.into()),
-            ..Settings::default()
+        .window(iced::window::Settings {
+            platform_specific: iced::window::settings::PlatformSpecific {
+                application_id: APP_ID.into(),
+                ..Default::default()
+            },
+            ..iced::window::Settings::default()
         })
         .run()
 }
