@@ -50,6 +50,23 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
             }
             Event::Seat { id: seat } => {
                 if state.seat.is_none() {
+                    // River's compositor-rendered cursor theme (resize
+                    // cursors, wp_cursor_shape_v1 shapes, etc.) is NOT
+                    // read from XCURSOR_THEME on river itself — that
+                    // env var only influences cursors that child
+                    // processes load themselves. The theme used for
+                    // every compositor-side draw must be set per-seat
+                    // via river_seat_v1::set_xcursor_theme (since v2).
+                    // Without this call the cursor sticks at river's
+                    // internal default no matter what the env says.
+                    let theme = std::env::var("XCURSOR_THEME")
+                        .unwrap_or_else(|_| "McMojave".to_string());
+                    let size: u32 = std::env::var("XCURSOR_SIZE")
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(24);
+                    seat.set_xcursor_theme(theme.clone(), size);
+                    info!(%theme, size, "set river xcursor theme");
                     state.seat = Some(seat);
                 }
             }
