@@ -88,8 +88,8 @@ binary (postcard wire). See [[sola-bus#Encrypted payloads]].
 - River bridge pattern — sola-river speaks River's
   `river_window_manager_v1` + `river_xkb_bindings_v1` protocols and
   re-surfaces everything as typed bus topics
-- Binary resolution via `$PATH` — works on NixOS and traditional
-  distros without hardcoding
+- Binary resolution via `$PATH` — Sola targets NixOS only; no
+  hardcoded store paths
 
 ## Workspace
 

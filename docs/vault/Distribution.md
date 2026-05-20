@@ -1,8 +1,8 @@
 # Distribution
 
 What a host system needs to run Sola, and the patches we currently
-carry. Reference for packaging on NixOS and (eventually) other
-distros.
+carry. **NixOS only** — that's the target and the only system we
+test on. Cross-distro packaging is explicitly not a goal.
 
 ## Compositor
 

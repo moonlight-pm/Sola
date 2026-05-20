@@ -40,8 +40,8 @@ depends on it, so if River dies the whole session exits.
 
 All external binaries (`river`, managed children, etc.) are
 resolved via `sola_core::process::resolve_binary()` which does
-`$PATH` lookup. No hardcoded paths — works on NixOS and traditional
-distros.
+`$PATH` lookup. Sola targets NixOS only; that's the only
+distribution we test on and the only one we plan to support.
 
 ## Design Principle
 

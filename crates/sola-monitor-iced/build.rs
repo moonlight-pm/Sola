@@ -15,6 +15,8 @@
 //! AFTER LD_LIBRARY_PATH, so a user who wants to override the system
 //! library can still do so. The `--enable-new-dtags` linker flag is
 //! what makes ld emit RUNPATH instead of the older RPATH.
+//!
+//! Sola is NixOS-only by design — no cross-distro fallback needed.
 
 fn main() {
     // Re-run only if this file changes; the link args are static.
