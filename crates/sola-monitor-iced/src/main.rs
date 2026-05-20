@@ -87,12 +87,16 @@ fn main() -> iced::Result {
     // is omitted from the cfg in iced_winit 0.14's
     // `conversion::window_attributes`). Without setting it here, the
     // window has empty app_id and the shell can't match our menu.
+    // Note: `.window(...)` wholesale replaces the window settings,
+    // so `decorations: false` has to live inside this struct rather
+    // than as a separate `.decorations(false)` call (which would be
+    // overwritten by the subsequent `.window(...)`).
     iced::application(App::default, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
-        .decorations(false)
         .window(iced::window::Settings {
+            decorations: false,
             platform_specific: iced::window::settings::PlatformSpecific {
                 application_id: APP_ID.into(),
                 ..Default::default()
