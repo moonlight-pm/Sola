@@ -47,6 +47,15 @@ const F_MONO: Font = Font::with_name("JetBrains Mono");
 /// declares the family as `Roboto Condensed`.
 const F_CONDENSED: Font = Font::with_name("Roboto Condensed");
 
+/// Bold variant for button labels — the regular weight reads too thin
+/// at small sizes. Backed by the matching `RobotoCondensed-Bold.ttf`
+/// pulled by the assets pack so cosmic-text doesn't fall back to
+/// faux-bold synthesis.
+const F_CONDENSED_BOLD: Font = Font {
+    weight: iced::font::Weight::Bold,
+    ..Font::with_name("Roboto Condensed")
+};
+
 /// Default sans for "normal" text — topic/source cells, sticky title,
 /// text inputs. Variable Roboto Flex, family name `Roboto Flex`.
 const F_NORMAL: Font = Font::with_name("Roboto Flex");
@@ -58,6 +67,7 @@ const FONT_FILES: &[&str] = &[
     "JetBrainsMono/JetBrainsMono-Regular.ttf",
     "RobotoFlex/RobotoFlex.ttf",
     "RobotoCondensed/RobotoCondensed-Regular.ttf",
+    "RobotoCondensed/RobotoCondensed-Bold.ttf",
 ];
 const MAX_MESSAGES: usize = 5_000;
 const SIDEBAR_W_DEFAULT: f32 = 280.0;
@@ -66,8 +76,16 @@ const SIDEBAR_W_MAX: f32 = 700.0;
 /// Sentinel option in the topic-filter pick_list meaning "no filter".
 const FILTER_ALL: &str = "(all topics)";
 const ROW_FONT_PX: f32 = 12.0;
-const HEADER_FONT_PX: f32 = 11.0;
+const ROW_TEXT_FONT_PX: f32 = 14.0;
+const HEADER_FONT_PX: f32 = 13.0;
 const SELECTED_PAYLOAD_FONT_PX: f32 = 12.0;
+const TIME_COL_W: f32 = 100.0;
+const TOPIC_COL_W: f32 = 200.0;
+const SOURCE_COL_W: f32 = 120.0;
+/// Horizontal gap between cells in the messages row + header row.
+const CELL_GAP: f32 = 16.0;
+/// Muted color for the timestamp column.
+const TIME_COLOR: &str = "#6e7681";
 
 /// Single global BusClient for the process. iced's `application`
 /// builder doesn't thread caller-supplied state into the state
@@ -528,9 +546,9 @@ impl App {
             Space::new().width(Length::Fill),
             filter,
             topic_picker,
-            button(text(pause_label).font(F_CONDENSED).size(12))
+            button(text(pause_label).font(F_CONDENSED_BOLD).size(12))
                 .on_press(Msg::TogglePause),
-            button(text("Clear").font(F_CONDENSED).size(12)).on_press(Msg::Clear),
+            button(text("Clear").font(F_CONDENSED_BOLD).size(12)).on_press(Msg::Clear),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
@@ -544,24 +562,24 @@ impl App {
 
     fn view_messages(&self) -> Element<'_, Msg> {
         let header = row![
-            text("time")
+            text("TIME")
                 .font(F_CONDENSED)
                 .size(HEADER_FONT_PX)
-                .width(Length::Fixed(80.0)),
-            text("topic")
+                .width(Length::Fixed(TIME_COL_W)),
+            text("TOPIC")
                 .font(F_CONDENSED)
                 .size(HEADER_FONT_PX)
-                .width(Length::Fixed(200.0)),
-            text("source")
+                .width(Length::Fixed(TOPIC_COL_W)),
+            text("SOURCE")
                 .font(F_CONDENSED)
                 .size(HEADER_FONT_PX)
-                .width(Length::Fixed(120.0)),
-            text("payload")
+                .width(Length::Fixed(SOURCE_COL_W)),
+            text("PAYLOAD")
                 .font(F_CONDENSED)
                 .size(HEADER_FONT_PX)
                 .width(Length::Fill),
         ]
-        .spacing(8);
+        .spacing(CELL_GAP);
 
         let header = container(header)
             .padding(Padding::new(4.0).left(12.0).right(12.0))
@@ -597,16 +615,17 @@ impl App {
                 text(t)
                     .font(F_MONO)
                     .size(ROW_FONT_PX)
-                    .width(Length::Fixed(80.0)),
+                    .color(hex(TIME_COLOR))
+                    .width(Length::Fixed(TIME_COL_W)),
                 text(&entry.topic)
                     .font(F_NORMAL)
-                    .size(ROW_FONT_PX)
-                    .width(Length::Fixed(200.0))
+                    .size(ROW_TEXT_FONT_PX)
+                    .width(Length::Fixed(TOPIC_COL_W))
                     .wrapping(Wrapping::None),
                 text(&entry.source)
                     .font(F_NORMAL)
-                    .size(ROW_FONT_PX)
-                    .width(Length::Fixed(120.0))
+                    .size(ROW_TEXT_FONT_PX)
+                    .width(Length::Fixed(SOURCE_COL_W))
                     .wrapping(Wrapping::None),
                 // Single-line highlighted JSON preview — same colorizer
                 // as the expanded form, just with wrapping disabled so
@@ -614,8 +633,8 @@ impl App {
                 // breaking row alignment.
                 preview_payload(&entry.payload_preview),
             ]
-            .spacing(8)
-            .align_y(iced::Alignment::Start);
+            .spacing(CELL_GAP)
+            .align_y(iced::Alignment::Center);
 
             let row_content: Element<'_, Msg> = if selected && !entry.payload_pretty.is_empty()
             {
@@ -654,7 +673,7 @@ impl App {
 
     fn view_sidebar(&self) -> Element<'_, Msg> {
         let header = container(
-            text("Sticky State")
+            text("STICKY STATE")
                 .font(F_CONDENSED)
                 .size(HEADER_FONT_PX),
         )
@@ -676,16 +695,16 @@ impl App {
             let one_line = row![
                 text(&entry.topic)
                     .font(F_NORMAL)
-                    .size(ROW_FONT_PX)
+                    .size(ROW_TEXT_FONT_PX)
                     .width(Length::Fill)
                     .wrapping(Wrapping::None),
                 text(&entry.source)
                     .font(F_NORMAL)
-                    .size(ROW_FONT_PX)
+                    .size(ROW_TEXT_FONT_PX)
                     .wrapping(Wrapping::None),
             ]
-            .spacing(8)
-            .align_y(iced::Alignment::Start);
+            .spacing(CELL_GAP)
+            .align_y(iced::Alignment::Center);
 
             let row_content: Element<'_, Msg> = if selected && !entry.payload_pretty.is_empty()
             {

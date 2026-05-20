@@ -88,7 +88,7 @@ source   = "nix-pkg:roboto"
 src_dir  = "share/fonts/truetype"
 category = "fonts"
 kind     = "fonts"
-files    = ["RobotoCondensed-Regular.ttf"]
+files    = ["RobotoCondensed-Regular.ttf", "RobotoCondensed-Bold.ttf"]
 
 # Iosevka Term Slab (Nerd Font Mono variant) — the terminal font.
 # Sourced from nixpkgs because upstream release zips bundle every
