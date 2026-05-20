@@ -16,14 +16,15 @@ use iced::futures::SinkExt;
 use iced::futures::Stream;
 use iced::stream;
 use iced::widget::{
-    Space, button, column, container, mouse_area, rich_text, row, scrollable, span, text,
-    text_input,
+    Space, button, column, container, mouse_area, pick_list, rich_text, row, scrollable, span,
+    text, text_input,
 };
 use iced::widget::Id as ScrollId;
 use iced::widget::operation;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::text::{Span, Wrapping};
-use iced::{Color, Element, Font, Length, Never, Padding, Subscription, Task, Theme};
+use iced::{Color, Element, Event, Font, Length, Never, Padding, Subscription, Task, Theme};
+use iced::{event, mouse};
 
 use sola_bus::topics::{
     AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
@@ -33,7 +34,11 @@ use sola_core::KeyCode;
 
 const APP_ID: &str = "sola-monitor-iced";
 const MAX_MESSAGES: usize = 5_000;
-const SIDEBAR_W: f32 = 280.0;
+const SIDEBAR_W_DEFAULT: f32 = 280.0;
+const SIDEBAR_W_MIN: f32 = 160.0;
+const SIDEBAR_W_MAX: f32 = 700.0;
+/// Sentinel option in the topic-filter pick_list meaning "no filter".
+const FILTER_ALL: &str = "(all topics)";
 const ROW_FONT_PX: f32 = 12.0;
 const HEADER_FONT_PX: f32 = 11.0;
 const SELECTED_PAYLOAD_FONT_PX: f32 = 12.0;
@@ -112,11 +117,14 @@ fn messages_scroll_id() -> ScrollId {
     ScrollId::new("messages")
 }
 
-#[derive(Default)]
 struct App {
     messages: Vec<Entry>,
     sticky: BTreeMap<String, Entry>,
     filter: String,
+    /// Sticky topic name to filter on, or `None` for "all". The
+    /// pick_list emits the sentinel `FILTER_ALL` string to mean
+    /// none — `Msg::TopicFilterChanged` maps that back to `None`.
+    topic_filter: Option<String>,
     paused: bool,
     pause_buffer: Vec<Entry>,
     /// Currently expanded message row, by sequence number. `None`
@@ -125,6 +133,32 @@ struct App {
     /// Currently expanded sticky topic. `None` collapses every
     /// sticky entry to its one-line form.
     selected_sticky_topic: Option<String>,
+    /// Sidebar width in logical pixels. Bound to the draggable
+    /// divider between messages and the sticky panel.
+    sidebar_w: f32,
+    /// True while the user is mid-drag on the divider.
+    /// `last_cursor_x` is the previous frame's cursor x so we
+    /// can compute deltas across CursorMoved events.
+    dragging_divider: bool,
+    last_cursor_x: Option<f32>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            messages: Vec::new(),
+            sticky: BTreeMap::new(),
+            filter: String::new(),
+            topic_filter: None,
+            paused: false,
+            pause_buffer: Vec::new(),
+            selected_seq: None,
+            selected_sticky_topic: None,
+            sidebar_w: SIDEBAR_W_DEFAULT,
+            dragging_divider: false,
+            last_cursor_x: None,
+        }
+    }
 }
 
 struct Entry {
@@ -194,10 +228,17 @@ impl Entry {
 enum Msg {
     BusMessage(Arc<Message>),
     FilterChanged(String),
+    TopicFilterChanged(String),
     TogglePause,
     Clear,
     ToggleSelect(u64),
     ToggleSelectSticky(String),
+    /// User pressed the mouse button on the divider.
+    DividerPress,
+    /// Global cursor moved (only meaningful during `dragging_divider`).
+    CursorMoved(f32),
+    /// Global mouse-button-released (only meaningful during drag).
+    CursorReleased,
 }
 
 impl App {
@@ -304,6 +345,32 @@ impl App {
                     Some(topic)
                 };
             }
+            Msg::TopicFilterChanged(t) => {
+                self.topic_filter = if t == FILTER_ALL { None } else { Some(t) };
+            }
+            Msg::DividerPress => {
+                self.dragging_divider = true;
+                self.last_cursor_x = None;
+            }
+            Msg::CursorMoved(x) => {
+                if !self.dragging_divider {
+                    return Task::none();
+                }
+                if let Some(last) = self.last_cursor_x {
+                    // Sidebar is on the right — moving cursor LEFT
+                    // grows the sidebar by the negative-x delta.
+                    let delta = last - x;
+                    self.sidebar_w =
+                        (self.sidebar_w + delta).clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
+                }
+                self.last_cursor_x = Some(x);
+            }
+            Msg::CursorReleased => {
+                if self.dragging_divider {
+                    self.dragging_divider = false;
+                    self.last_cursor_x = None;
+                }
+            }
         }
         Task::none()
     }
@@ -313,16 +380,28 @@ impl App {
         let messages = self.view_messages();
         let sidebar = self.view_sidebar();
 
-        let main = row![
-            container(messages).width(Length::Fill).height(Length::Fill),
+        // 4px-wide draggable divider. The mouse_area's on_press
+        // flips us into drag mode; the global subscription's
+        // CursorMoved feeds delta updates to `sidebar_w` until the
+        // user releases the button. CursorInteraction hint is set
+        // so the cursor shows the standard col-resize affordance
+        // while hovering the divider.
+        let divider = mouse_area(
             container(
                 Space::new()
-                    .width(Length::Fixed(1.0))
-                    .height(Length::Fill)
+                    .width(Length::Fixed(4.0))
+                    .height(Length::Fill),
             )
             .style(divider_style),
+        )
+        .interaction(mouse::Interaction::ResizingHorizontally)
+        .on_press(Msg::DividerPress);
+
+        let main = row![
+            container(messages).width(Length::Fill).height(Length::Fill),
+            divider,
             container(sidebar)
-                .width(Length::Fixed(SIDEBAR_W))
+                .width(Length::Fixed(self.sidebar_w))
                 .height(Length::Fill),
         ]
         .height(Length::Fill);
@@ -336,6 +415,19 @@ impl App {
             .padding(Padding::new(4.0).left(8.0).right(8.0))
             .size(13);
 
+        let topic_options = topic_filter_options();
+        let topic_selected = self
+            .topic_filter
+            .clone()
+            .unwrap_or_else(|| FILTER_ALL.to_string());
+        let topic_picker = pick_list(
+            topic_options,
+            Some(topic_selected),
+            Msg::TopicFilterChanged,
+        )
+        .text_size(12)
+        .padding(Padding::new(4.0).left(8.0).right(8.0));
+
         let pause_label = if self.paused {
             format!("Resume ({})", self.pause_buffer.len())
         } else {
@@ -346,6 +438,7 @@ impl App {
             text("monitor").size(13),
             Space::new().width(Length::Fill),
             filter,
+            topic_picker,
             button(text(pause_label).size(12)).on_press(Msg::TogglePause),
             button(text("Clear").size(12)).on_press(Msg::Clear),
         ]
@@ -384,6 +477,11 @@ impl App {
         // `update`, so the user sees newest content without losing
         // a natural chronological reading order.
         for entry in self.messages.iter() {
+            if let Some(t) = &self.topic_filter {
+                if &entry.topic != t {
+                    continue;
+                }
+            }
             if !filter_lower.is_empty() {
                 let hay = format!(
                     "{} {} {}",
@@ -407,16 +505,11 @@ impl App {
                     .size(ROW_FONT_PX)
                     .width(Length::Fixed(120.0))
                     .wrapping(Wrapping::None),
-                // The preview cell is intentionally single-line:
-                // wrapping(None) means long payloads clip at the cell
-                // edge rather than spilling onto a second line and
-                // breaking row alignment. Selecting the row reveals
-                // the full pretty form below.
-                text(&entry.payload_preview)
-                    .size(ROW_FONT_PX)
-                    .width(Length::Fill)
-                    .font(Font::MONOSPACE)
-                    .wrapping(Wrapping::None),
+                // Single-line highlighted JSON preview — same colorizer
+                // as the expanded form, just with wrapping disabled so
+                // long payloads clip at the cell edge instead of
+                // breaking row alignment.
+                preview_payload(&entry.payload_preview),
             ]
             .spacing(8)
             .align_y(iced::Alignment::Start);
@@ -472,22 +565,12 @@ impl App {
             // Topic and a single-line payload preview share the same
             // line, same shape as the messages-list rows. Clicking
             // expands the full pretty-printed payload below.
-            let preview_text: &str = if entry.payload_preview.is_empty() {
-                "—"
-            } else {
-                &entry.payload_preview
-            };
             let one_line = row![
                 text(&entry.topic)
                     .size(ROW_FONT_PX)
                     .width(Length::Fixed(120.0))
                     .wrapping(Wrapping::None),
-                text(preview_text)
-                    .size(ROW_FONT_PX)
-                    .width(Length::Fill)
-                    .font(Font::MONOSPACE)
-                    .wrapping(Wrapping::None)
-                    .color(hex("#8b949e")),
+                preview_payload(&entry.payload_preview),
             ]
             .spacing(8)
             .align_y(iced::Alignment::Start);
@@ -526,7 +609,23 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
-        Subscription::run(bus_stream)
+        // Always-on global event listener so DividerPress can be
+        // followed by CursorMoved / CursorReleased without a tick
+        // delay from re-evaluating subscription. iced's update path
+        // bails on CursorMoved when not dragging, so the cost is
+        // a no-op call per cursor sample — fine for a debug UI.
+        Subscription::batch([
+            Subscription::run(bus_stream),
+            event::listen_with(|event, _, _| match event {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Msg::CursorMoved(position.x))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::CursorReleased)
+                }
+                _ => None,
+            }),
+        ])
     }
 }
 
@@ -612,6 +711,36 @@ fn expanded_payload(json: &str) -> Element<'static, Msg> {
         .size(SELECTED_PAYLOAD_FONT_PX)
         .on_link_click(iced::never)
         .into()
+}
+
+/// Single-line highlighted preview of a JSON payload. Width fills
+/// the parent cell; `wrapping(None)` clips at the edge so the row
+/// stays one line tall and column alignment stays intact.
+fn preview_payload(json: &str) -> Element<'static, Msg> {
+    if json.is_empty() {
+        return text("—").size(ROW_FONT_PX).color(hex("#8b949e")).into();
+    }
+    rich_text(highlight_json(json))
+        .font(Font::MONOSPACE)
+        .size(ROW_FONT_PX)
+        .wrapping(Wrapping::None)
+        .width(Length::Fill)
+        .on_link_click(iced::never)
+        .into()
+}
+
+/// Static list of options for the topic filter dropdown.
+/// `FILTER_ALL` is the sentinel "no filter" value at index 0; the
+/// rest are the topic-kind names sorted alphabetically so the user
+/// can scan them quickly.
+fn topic_filter_options() -> Vec<String> {
+    let mut v: Vec<String> = std::iter::once(FILTER_ALL.to_string())
+        .chain(TopicKind::ALL.iter().map(|k| k.as_str().to_string()))
+        .collect();
+    // Sentinel stays at index 0; sort the rest.
+    let tail = &mut v[1..];
+    tail.sort();
+    v
 }
 
 /// Single-pass JSON tokenizer that emits colored `Span`s.
