@@ -26,6 +26,15 @@ fn main() -> iced::Result {
     sola_core::log::init(APP_ID);
     tracing::info!("{APP_ID} starting");
 
+    // Auto-discover sola-river's wayland socket and set WAYLAND_DISPLAY
+    // before any iced/winit/sctk code runs. Makes the app launchable
+    // from a remote / non-graphical shell (where the inherited env
+    // doesn't have WAYLAND_DISPLAY set), matching how sola-kit apps
+    // bootstrap. 10s timeout is generous — sola is normally already
+    // up when the user launches an app.
+    let wayland_display = sola_core::env::activate_wayland_session(10_000);
+    tracing::info!(socket = %wayland_display, "wayland socket resolved");
+
     iced::application(App::default, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)

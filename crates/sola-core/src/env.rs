@@ -111,3 +111,49 @@ pub fn find_live_wayland_socket(dir: &Path) -> Option<String> {
     }
     None
 }
+
+/// Resolve which wayland socket to connect to, prioritising the name
+/// sola-river published over the inherited `$WAYLAND_DISPLAY` env (the
+/// env may be stale from a prior session). Polls
+/// `$XDG_RUNTIME_DIR/sola-wayland` for up to `timeout_ms`, then falls
+/// back to `$WAYLAND_DISPLAY`, then to `"wayland-0"`.
+///
+/// Pure: no env-var mutation, no side effects beyond filesystem reads.
+/// Use [`activate_wayland_session`] when you also want the env set.
+pub fn resolve_wayland_display(timeout_ms: u64) -> String {
+    let start = std::time::Instant::now();
+    let interval = std::time::Duration::from_millis(500);
+    loop {
+        if let Some(name) = wayland_socket() {
+            return name;
+        }
+        if (start.elapsed().as_millis() as u64) >= timeout_ms {
+            break;
+        }
+        std::thread::sleep(interval);
+    }
+    if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    "wayland-0".to_string()
+}
+
+/// Resolve the sola-river wayland socket (per [`resolve_wayland_display`])
+/// AND set `WAYLAND_DISPLAY` to it so any wayland client library — winit,
+/// sctk, raw wayland-client — picks it up without the caller having to
+/// thread the value through. Returns the resolved name for callers that
+/// want to log or use it directly.
+///
+/// Call once, early, single-threaded — before any wayland connection
+/// is opened in this process. Safe to call from a non-graphical shell
+/// where `WAYLAND_DISPLAY` isn't set by the login session; that's the
+/// whole point. `XDG_RUNTIME_DIR` must already be set in env (any
+/// active user session sets it; a fully bare environment isn't supported).
+pub fn activate_wayland_session(timeout_ms: u64) -> String {
+    let display = resolve_wayland_display(timeout_ms);
+    // SAFETY: documented as single-threaded pre-init.
+    unsafe { std::env::set_var("WAYLAND_DISPLAY", &display) };
+    display
+}

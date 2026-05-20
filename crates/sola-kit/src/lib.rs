@@ -148,30 +148,6 @@ pub fn run<A: SolaApp>() {
 
     tracing::info!("{app_id} starting");
 
-    /// Poll `$XDG_RUNTIME_DIR/sola-wayland` for up to 20s, falling back to
-    /// `$WAYLAND_DISPLAY` and then `"wayland-0"`. The name file is preferred
-    /// over the env var because sola inherits env from the user's shell,
-    /// which may be stale from a prior session.
-    fn resolve_wayland_display() -> String {
-        for attempt in 1..=40 {
-            if let Some(name) = sola_core::env::wayland_socket() {
-                return name;
-            }
-            if attempt == 1 {
-                tracing::info!("waiting for sola-river to publish wayland socket name");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-        if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
-            if !v.is_empty() {
-                tracing::warn!(name = %v, "sola-wayland name file never appeared; using WAYLAND_DISPLAY env");
-                return v;
-            }
-        }
-        tracing::error!("no wayland socket name available; defaulting to wayland-0");
-        "wayland-0".to_string()
-    }
-
     // --- GPU driver environment ---
     // NixOS keeps GPU drivers under `/run/opengl-driver/`, but only sets
     // the relevant env vars in interactive desktop sessions. sola-kit
@@ -229,10 +205,17 @@ pub fn run<A: SolaApp>() {
     sola_core::watcher::watch_own_binary();
 
     // --- Wayland socket wait ---
+    //
+    // `activate_wayland_session` polls $XDG_RUNTIME_DIR/sola-wayland
+    // for the socket name sola-river publishes and sets
+    // WAYLAND_DISPLAY so the wayland client library picks it up.
+    // Same helper sola-monitor-iced and any other non-kit sola app
+    // uses — the discovery logic lives in sola-core::env.
+    //
+    // 20s timeout covers the worst case where sola-kit launches at
+    // the same instant as sola-river and beats the socket-publish.
     let runtime_dir = sola_core::env::runtime_dir();
-    let wayland_display = resolve_wayland_display();
-    // SAFETY: single-threaded; this runs before the Wayland connection.
-    unsafe { std::env::set_var("WAYLAND_DISPLAY", &wayland_display) };
+    let wayland_display = sola_core::env::activate_wayland_session(20_000);
     let socket_path = runtime_dir.join(&wayland_display);
     for attempt in 1..=20 {
         if socket_path.exists() {
