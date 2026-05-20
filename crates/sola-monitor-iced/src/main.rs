@@ -350,25 +350,29 @@ impl App {
             }
             Msg::DividerPress => {
                 self.dragging_divider = true;
-                self.last_cursor_x = None;
+                // Don't reset last_cursor_x here — we track it
+                // continuously (even while not dragging) so the
+                // very first CursorMoved after a press already has
+                // a valid prev to delta against. Without this the
+                // drag would no-op the first frame and feel laggy.
             }
             Msg::CursorMoved(x) => {
-                if !self.dragging_divider {
-                    return Task::none();
-                }
-                if let Some(last) = self.last_cursor_x {
-                    // Sidebar is on the right — moving cursor LEFT
-                    // grows the sidebar by the negative-x delta.
-                    let delta = last - x;
-                    self.sidebar_w =
-                        (self.sidebar_w + delta).clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
-                }
+                let prev = self.last_cursor_x;
                 self.last_cursor_x = Some(x);
+                if self.dragging_divider {
+                    if let Some(prev_x) = prev {
+                        // Sidebar is on the right — moving cursor
+                        // LEFT grows the sidebar by the negative-x
+                        // delta. 1:1 with cursor motion.
+                        let delta = prev_x - x;
+                        self.sidebar_w =
+                            (self.sidebar_w + delta).clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
+                    }
+                }
             }
             Msg::CursorReleased => {
                 if self.dragging_divider {
                     self.dragging_divider = false;
-                    self.last_cursor_x = None;
                 }
             }
         }
@@ -380,22 +384,26 @@ impl App {
         let messages = self.view_messages();
         let sidebar = self.view_sidebar();
 
-        // 4px-wide draggable divider. The mouse_area's on_press
-        // flips us into drag mode; the global subscription's
-        // CursorMoved feeds delta updates to `sidebar_w` until the
-        // user releases the button. CursorInteraction hint is set
-        // so the cursor shows the standard col-resize affordance
-        // while hovering the divider.
-        let divider = mouse_area(
-            container(
-                Space::new()
-                    .width(Length::Fixed(4.0))
-                    .height(Length::Fill),
-            )
-            .style(divider_style),
+        // 10px-wide hit area with a centered 2px visible stripe.
+        // The padding pushes the visible stripe to the middle while
+        // the mouse_area covers the full hit width — that gives the
+        // user a forgiving target without making the divider look
+        // thick. mouse_area's `interaction` sets the col-resize
+        // cursor whenever the pointer is over the hit area.
+        let visible_stripe = container(
+            Space::new()
+                .width(Length::Fixed(2.0))
+                .height(Length::Fill),
         )
-        .interaction(mouse::Interaction::ResizingHorizontally)
-        .on_press(Msg::DividerPress);
+        .style(divider_style);
+
+        let divider_hit = container(visible_stripe)
+            .padding(Padding::new(0.0).left(4.0).right(4.0))
+            .height(Length::Fill);
+
+        let divider = mouse_area(divider_hit)
+            .interaction(mouse::Interaction::ResizingHorizontally)
+            .on_press(Msg::DividerPress);
 
         let main = row![
             container(messages).width(Length::Fill).height(Length::Fill),
