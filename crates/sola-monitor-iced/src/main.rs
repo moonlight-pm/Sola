@@ -16,12 +16,14 @@ use iced::futures::SinkExt;
 use iced::futures::Stream;
 use iced::stream;
 use iced::widget::{
-    Space, button, column, container, mouse_area, row, scrollable, text, text_input,
+    Space, button, column, container, mouse_area, rich_text, row, scrollable, span, text,
+    text_input,
 };
 use iced::widget::Id as ScrollId;
 use iced::widget::operation;
 use iced::widget::scrollable::RelativeOffset;
-use iced::{Color, Element, Length, Padding, Subscription, Task, Theme};
+use iced::widget::text::{Span, Wrapping};
+use iced::{Color, Element, Font, Length, Never, Padding, Subscription, Task, Theme};
 
 use sola_bus::topics::{
     AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
@@ -117,9 +119,12 @@ struct App {
     filter: String,
     paused: bool,
     pause_buffer: Vec<Entry>,
-    /// Currently expanded row, by sequence number. `None` collapses
-    /// every payload back to a single-line preview.
+    /// Currently expanded message row, by sequence number. `None`
+    /// collapses every payload back to a single-line preview.
     selected_seq: Option<u64>,
+    /// Currently expanded sticky topic. `None` collapses every
+    /// sticky entry to its one-line form.
+    selected_sticky_topic: Option<String>,
 }
 
 struct Entry {
@@ -192,6 +197,7 @@ enum Msg {
     TogglePause,
     Clear,
     ToggleSelect(u64),
+    ToggleSelectSticky(String),
 }
 
 impl App {
@@ -290,6 +296,14 @@ impl App {
                     Some(seq)
                 };
             }
+            Msg::ToggleSelectSticky(topic) => {
+                self.selected_sticky_topic = if self.selected_sticky_topic.as_ref() == Some(&topic)
+                {
+                    None
+                } else {
+                    Some(topic)
+                };
+            }
         }
         Task::none()
     }
@@ -383,35 +397,40 @@ impl App {
             let selected = self.selected_seq == Some(entry.seq);
             let t = format_clock(entry.timestamp);
 
-            // Payload cell: preview when collapsed, full pretty JSON
-            // wrapping across lines when selected.
-            let payload_cell: Element<'_, Msg> = if selected && !entry.payload_pretty.is_empty()
-            {
-                text(&entry.payload_pretty)
-                    .size(SELECTED_PAYLOAD_FONT_PX)
-                    .width(Length::Fill)
-                    .into()
-            } else {
-                text(&entry.payload_preview)
-                    .size(ROW_FONT_PX)
-                    .width(Length::Fill)
-                    .into()
-            };
-
-            let line = row![
+            let one_line = row![
                 text(t).size(ROW_FONT_PX).width(Length::Fixed(80.0)),
                 text(&entry.topic)
                     .size(ROW_FONT_PX)
-                    .width(Length::Fixed(200.0)),
+                    .width(Length::Fixed(200.0))
+                    .wrapping(Wrapping::None),
                 text(&entry.source)
                     .size(ROW_FONT_PX)
-                    .width(Length::Fixed(120.0)),
-                payload_cell,
+                    .width(Length::Fixed(120.0))
+                    .wrapping(Wrapping::None),
+                // The preview cell is intentionally single-line:
+                // wrapping(None) means long payloads clip at the cell
+                // edge rather than spilling onto a second line and
+                // breaking row alignment. Selecting the row reveals
+                // the full pretty form below.
+                text(&entry.payload_preview)
+                    .size(ROW_FONT_PX)
+                    .width(Length::Fill)
+                    .font(Font::MONOSPACE)
+                    .wrapping(Wrapping::None),
             ]
             .spacing(8)
             .align_y(iced::Alignment::Start);
 
-            let body = container(line)
+            let row_content: Element<'_, Msg> = if selected && !entry.payload_pretty.is_empty()
+            {
+                column![one_line, expanded_payload(&entry.payload_pretty)]
+                    .spacing(4)
+                    .into()
+            } else {
+                one_line.into()
+            };
+
+            let body = container(row_content)
                 .padding(Padding::new(2.0).left(12.0).right(12.0))
                 .width(Length::Fill)
                 .style(if selected {
@@ -444,20 +463,57 @@ impl App {
 
         let mut rows: Vec<Element<'_, Msg>> = Vec::new();
         for entry in self.sticky.values() {
-            let body_text = if entry.payload_preview.is_empty() {
-                "<no payload>"
+            let selected = self
+                .selected_sticky_topic
+                .as_deref()
+                .map(|t| t == entry.topic.as_str())
+                .unwrap_or(false);
+
+            // Topic and a single-line payload preview share the same
+            // line, same shape as the messages-list rows. Clicking
+            // expands the full pretty-printed payload below.
+            let preview_text: &str = if entry.payload_preview.is_empty() {
+                "—"
             } else {
                 &entry.payload_preview
             };
-            let block = column![
-                text(&entry.topic).size(11),
-                text(body_text).size(ROW_FONT_PX).color(hex("#8b949e")),
-            ]
-            .spacing(2);
-            rows.push(
-                container(block)
-                    .padding(Padding::new(6.0).left(12.0).right(12.0))
+            let one_line = row![
+                text(&entry.topic)
+                    .size(ROW_FONT_PX)
+                    .width(Length::Fixed(120.0))
+                    .wrapping(Wrapping::None),
+                text(preview_text)
+                    .size(ROW_FONT_PX)
                     .width(Length::Fill)
+                    .font(Font::MONOSPACE)
+                    .wrapping(Wrapping::None)
+                    .color(hex("#8b949e")),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Start);
+
+            let row_content: Element<'_, Msg> = if selected && !entry.payload_pretty.is_empty()
+            {
+                column![one_line, expanded_payload(&entry.payload_pretty)]
+                    .spacing(4)
+                    .into()
+            } else {
+                one_line.into()
+            };
+
+            let body = container(row_content)
+                .padding(Padding::new(4.0).left(12.0).right(12.0))
+                .width(Length::Fill)
+                .style(if selected {
+                    selected_row_style
+                } else {
+                    plain_row_style
+                });
+
+            let topic = entry.topic.clone();
+            rows.push(
+                mouse_area(body)
+                    .on_press(Msg::ToggleSelectSticky(topic))
                     .into(),
             );
         }
@@ -544,6 +600,131 @@ fn selected_row_style(_: &Theme) -> container::Style {
         background: Some(iced::Background::Color(hex("#1c2129"))),
         ..container::Style::default()
     }
+}
+
+/// Render a pretty-printed JSON payload as a syntax-highlighted
+/// rich_text widget. Mono font, GitHub-dark-ish color palette
+/// (keys blue, strings green, numbers red-orange, booleans/null
+/// orange, punctuation muted gray).
+fn expanded_payload(json: &str) -> Element<'static, Msg> {
+    rich_text(highlight_json(json))
+        .font(Font::MONOSPACE)
+        .size(SELECTED_PAYLOAD_FONT_PX)
+        .on_link_click(iced::never)
+        .into()
+}
+
+/// Single-pass JSON tokenizer that emits colored `Span`s.
+/// Best-effort — assumes the input is already valid JSON (we built
+/// it via `serde_json::to_string_pretty`). Malformed input would
+/// produce visually-wrong spans but won't panic.
+///
+/// Key vs string distinction: after closing a string, peek ahead
+/// past whitespace to see whether the next non-whitespace char is
+/// `:` — keys get the blue color, value strings get green.
+fn highlight_json(src: &str) -> Vec<Span<'static, Never>> {
+    // The `span()` helper is generic over Link and won't infer
+    // `Link = Never` from the Vec context alone; a tiny shim
+    // pins the type so the call sites stay clean.
+    fn colored(text: String, c: &str) -> Span<'static, Never> {
+        span(text).color(hex(c))
+    }
+    const C_PUNCT: &str = "#8b949e";
+    const C_KEY: &str = "#79c0ff";
+    const C_STRING: &str = "#7ee787";
+    const C_NUMBER: &str = "#ff7b72";
+    const C_LITERAL: &str = "#ffa657";
+    const C_DEFAULT: &str = "#c9d1d9";
+
+    let mut out: Vec<Span<'static, Never>> = Vec::new();
+    let bytes = src.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match b {
+            b'{' | b'}' | b'[' | b']' | b',' | b':' => {
+                out.push(colored(String::from(b as char), C_PUNCT));
+                i += 1;
+            }
+            b'"' => {
+                // Read until next unescaped quote.
+                let start = i;
+                i += 1;
+                let mut escaped = false;
+                while i < bytes.len() {
+                    let c = bytes[i];
+                    i += 1;
+                    if escaped {
+                        escaped = false;
+                    } else if c == b'\\' {
+                        escaped = true;
+                    } else if c == b'"' {
+                        break;
+                    }
+                }
+                let s_bytes = &bytes[start..i];
+                let s = String::from_utf8_lossy(s_bytes).into_owned();
+                // Peek past whitespace to see if this is a key.
+                let mut j = i;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                let is_key = j < bytes.len() && bytes[j] == b':';
+                let color = if is_key { C_KEY } else { C_STRING };
+                out.push(colored(s, color));
+            }
+            b'-' | b'0'..=b'9' => {
+                let start = i;
+                i += 1;
+                while i < bytes.len()
+                    && matches!(
+                        bytes[i],
+                        b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-'
+                    )
+                {
+                    i += 1;
+                }
+                let s = String::from_utf8_lossy(&bytes[start..i]).into_owned();
+                out.push(colored(s, C_NUMBER));
+            }
+            b't' | b'f' | b'n' => {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                let s = String::from_utf8_lossy(&bytes[start..i]).into_owned();
+                out.push(colored(s, C_LITERAL));
+            }
+            _ => {
+                // Whitespace and stragglers — keep as default color.
+                let start = i;
+                while i < bytes.len()
+                    && !matches!(
+                        bytes[i],
+                        b'{' | b'}'
+                            | b'['
+                            | b']'
+                            | b','
+                            | b':'
+                            | b'"'
+                            | b'-'
+                            | b'0'..=b'9'
+                            | b't'
+                            | b'f'
+                            | b'n'
+                    )
+                {
+                    i += 1;
+                }
+                if i > start {
+                    let s = String::from_utf8_lossy(&bytes[start..i]).into_owned();
+                    out.push(colored(s, C_DEFAULT));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// HH:MM:SS.mmm clock from a unix-seconds float. Matches the existing
