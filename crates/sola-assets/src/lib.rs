@@ -1,10 +1,10 @@
 //! Shared on-disk assets (icons, fonts, ...) for Sola.
 //!
 //! Every third-party asset lives at `/opt/sola/share/<category>/<pack>/...`
-//! and is populated by `cargo make assets pull`. Nothing is committed to
-//! the repo; nothing is rsynced by `install`. A clean clone runs `pull`
-//! once and is good for every subsequent build (see also the staleness
-//! check in `cargo make install`).
+//! and is populated by `cargo make assets sync`. Nothing is committed to
+//! the repo; nothing is rsynced by `install`. A clean clone auto-syncs
+//! the first time `cargo make install` runs and is good for every
+//! subsequent build.
 //!
 //! Nothing is compiled into consumer binaries — all data is read from disk.
 

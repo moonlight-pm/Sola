@@ -287,18 +287,17 @@ fn leak_str(s: &str) -> &'static str {
 /// system-wide. The default fallback (`~/.icons:/usr/share/icons`)
 /// is preserved when `XCURSOR_PATH` was unset.
 ///
-/// `XCURSOR_THEME` defaults to `Adwaita` so the user gets the GNOME
-/// look out of the box. Don't override an existing value — the user
-/// may have already picked something explicit.
+/// `XCURSOR_THEME` defaults to `McMojave` (vendored under
+/// `/opt/sola/share/cursors/McMojave/`). Don't override an existing
+/// value — the user may have already picked something explicit.
 fn set_cursor_env() {
     const BUNDLED: &str = "/opt/sola/share/cursors";
     let path = match std::env::var_os("XCURSOR_PATH") {
         Some(existing) => format!("{BUNDLED}:{}", existing.to_string_lossy()),
         None => format!("{BUNDLED}:~/.icons:/usr/share/icons"),
     };
-    // SAFETY: single-threaded at startup, before any spawn.
     unsafe { std::env::set_var("XCURSOR_PATH", path) };
     if std::env::var_os("XCURSOR_THEME").is_none() {
-        unsafe { std::env::set_var("XCURSOR_THEME", "Adwaita") };
+        unsafe { std::env::set_var("XCURSOR_THEME", "McMojave") };
     }
 }

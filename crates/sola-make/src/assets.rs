@@ -1,24 +1,43 @@
 //! Asset pack management.
 //!
-//! `cargo make assets pull` fetches every pack listed in
-//! `crates/sola-assets/upstream.toml` and writes it under
-//! `/opt/sola/share/<category>/<pack>/`. Nothing is committed to the
-//! repo — `cargo make install` automatically pulls when packs are
-//! missing or older than [`STALENESS_THRESHOLD`], so a fresh clone
-//! just runs install and it bootstraps itself.
+//! `cargo make assets sync` makes `/opt/sola/share/<category>/<pack>/`
+//! match every pack listed in `crates/sola-assets/upstream.toml`:
+//!
+//! - Packs whose installed pin already matches the desired pin are
+//!   skipped (no network, no copy).
+//! - Packs that are missing or out of date are pulled fresh.
+//! - Pack directories that are no longer declared in `upstream.toml`
+//!   are removed from `/opt/sola/share/<category>/`.
+//!
+//! The installed pin is recorded in `<dest>/.solapack` after every
+//! successful pull. `sync` reads that file to decide whether work is
+//! needed. Nothing is committed to the repo — `cargo make install`
+//! calls `sync(false)` automatically so a fresh clone bootstraps
+//! itself.
+//!
+//! Pins:
+//! - `github:` packs with a non-empty `rev` pin to that rev (no
+//!   network at sync time when the manifest matches).
+//! - `github:` packs with an empty `rev` track the default branch.
+//!   Their installed pin is whatever HEAD resolved to on the last
+//!   pull; pass `--refresh` to re-resolve via `git ls-remote`.
+//! - `nix-pkg:` packs pin to the resolved store path. `nix-build` is
+//!   invoked every sync (cache hit is fast); a changed store path
+//!   triggers a re-pull.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
-use std::time::{Duration, SystemTime};
 
 use serde::Deserialize;
 
 pub const UPSTREAM_TOML: &str = "crates/sola-assets/upstream.toml";
 /// Runtime location — mirrors `sola_assets::ASSETS_DIR`.
 const SHARE_ROOT: &str = "/opt/sola/share";
-/// Auto-pull when any pack is older than this (1 week).
-const STALENESS_THRESHOLD: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// Per-pack pin file (written under `<dest>/`) used by `sync` to
+/// decide whether the pack is up to date.
+const MANIFEST_FILE: &str = ".solapack";
 
 #[derive(Debug, Deserialize)]
 struct Upstream {
@@ -116,55 +135,263 @@ impl Drop for SourceRoot {
     }
 }
 
-pub fn pull() {
+/// Synchronize `/opt/sola/share` with `upstream.toml`. Skips packs
+/// that are already on the desired pin; re-pulls packs that are
+/// missing, empty, or pinned differently; removes pack directories
+/// that aren't declared in `upstream.toml`.
+///
+/// `refresh = true` re-resolves the upstream HEAD of `github:` packs
+/// with an empty `rev` so that tracking-the-default-branch packs can
+/// move forward. Without it, those packs stay pinned to whatever HEAD
+/// resolved to on the last pull.
+pub fn sync(refresh: bool) {
     let upstream = read_upstream();
     for (name, pack) in &upstream.packs {
-        pull_pack(name, pack);
+        sync_pack(name, pack, refresh);
     }
-    println!("all packs pulled");
+    remove_orphans(&upstream);
+    println!("sync complete");
 }
 
-/// Reason a pack needs (re-)pulling, if any. `None` = up to date.
-pub fn pull_reason() -> Option<String> {
-    let upstream = read_upstream();
-    let now = SystemTime::now();
-    let mut missing = Vec::new();
-    let mut stale = Vec::new();
-    for (name, pack) in &upstream.packs {
-        let dest = PathBuf::from(SHARE_ROOT).join(&pack.category).join(name);
-        let populated = fs::read_dir(&dest)
-            .map(|d| d.flatten().next().is_some())
-            .unwrap_or(false);
-        if !populated {
-            missing.push(name.clone());
+/// Resolved upstream pin for a pack plus, for nix-pkg packs, the
+/// store path that `nix-build` just yielded — caching it here lets
+/// `pull_pack` re-use the result instead of invoking `nix-build` a
+/// second time.
+struct ResolvedSource {
+    pin: String,
+    nix_path: Option<PathBuf>,
+}
+
+/// Per-pack sync step: resolve the upstream pin, compare to the
+/// installed manifest, pull if they differ.
+fn sync_pack(name: &str, pack: &Pack, refresh: bool) {
+    let dest = dest_dir(name, pack);
+    let installed = read_manifest(&dest);
+    let populated = dest_populated(&dest);
+
+    // Fast path: pinned github pack with a matching manifest needs
+    // no network at all.
+    if populated && let Some(ref inst) = installed {
+        if let Some(_slug) = pack.source.strip_prefix("github:") {
+            if !pack.rev.is_empty() && inst == &pack.rev {
+                println!("{name}: up to date ({})", short_pin(inst));
+                return;
+            }
+            if pack.rev.is_empty() && !refresh {
+                println!(
+                    "{name}: up to date ({}) [tracking default branch — pass --refresh to re-resolve]",
+                    short_pin(inst)
+                );
+                return;
+            }
+        }
+        // nix-pkg always needs nix-build to know the current store
+        // path; fall through to resolve_upstream.
+    }
+
+    let resolved = resolve_upstream(name, pack);
+
+    if populated && installed.as_deref() == Some(resolved.pin.as_str()) {
+        println!("{name}: up to date ({})", short_pin(&resolved.pin));
+        return;
+    }
+
+    let reason = if installed.is_none() {
+        "no manifest"
+    } else if !populated {
+        "empty dest"
+    } else {
+        "pin changed"
+    };
+    println!(
+        "{name}: pulling ({reason}) -> {}",
+        short_pin(&resolved.pin)
+    );
+    pull_pack(name, pack, resolved.nix_path);
+    write_manifest(&dest, &resolved.pin);
+}
+
+/// Where a pack's content lives under `/opt/sola/share/`.
+fn dest_dir(name: &str, pack: &Pack) -> PathBuf {
+    PathBuf::from(SHARE_ROOT).join(&pack.category).join(name)
+}
+
+/// `true` if `dest` exists and contains at least one entry.
+fn dest_populated(dest: &Path) -> bool {
+    fs::read_dir(dest)
+        .map(|mut d| d.next().is_some())
+        .unwrap_or(false)
+}
+
+/// Read the installed pin from `<dest>/.solapack`, if any.
+fn read_manifest(dest: &Path) -> Option<String> {
+    fs::read_to_string(dest.join(MANIFEST_FILE))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Write the resolved pin to `<dest>/.solapack`.
+fn write_manifest(dest: &Path, pin: &str) {
+    let path = dest.join(MANIFEST_FILE);
+    if let Err(e) = fs::write(&path, format!("{pin}\n")) {
+        eprintln!("failed to write {}: {e}", path.display());
+        exit(1);
+    }
+}
+
+/// Trim long pins for readable progress output. SHAs collapse to 12
+/// hex chars; store paths stay as-is (already self-explanatory).
+fn short_pin(pin: &str) -> &str {
+    if pin.starts_with("/nix/store/") {
+        return pin;
+    }
+    if pin.len() > 12 && pin.chars().all(|c| c.is_ascii_hexdigit()) {
+        return &pin[..12];
+    }
+    pin
+}
+
+/// Resolve the upstream's current pin without populating the dest.
+/// For github sources this means the rev (or `git ls-remote HEAD`
+/// for tracking-default packs); for nix-pkg sources it's the store
+/// path that `nix-build` resolves to.
+fn resolve_upstream(name: &str, pack: &Pack) -> ResolvedSource {
+    if let Some(slug) = pack.source.strip_prefix("github:") {
+        let pin = if pack.rev.is_empty() {
+            ls_remote_head(slug)
+        } else {
+            pack.rev.clone()
+        };
+        ResolvedSource { pin, nix_path: None }
+    } else if let Some(attr) = pack.source.strip_prefix("nix-pkg:") {
+        let path = nix_build_attr(attr);
+        ResolvedSource {
+            pin: path.to_string_lossy().to_string(),
+            nix_path: Some(path),
+        }
+    } else {
+        eprintln!("{name}: unsupported source format: {}", pack.source);
+        exit(1);
+    }
+}
+
+/// Query the remote's HEAD without cloning. Single network roundtrip;
+/// only used when a tracking-default pack actually needs refreshing.
+fn ls_remote_head(slug: &str) -> String {
+    let url = format!("https://github.com/{slug}.git");
+    let output = Command::new("git")
+        .args(["ls-remote", &url, "HEAD"])
+        .output()
+        .unwrap_or_else(|e| {
+            eprintln!("git ls-remote {url} failed: {e}");
+            exit(1);
+        });
+    if !output.status.success() {
+        eprintln!(
+            "git ls-remote {url} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        exit(1);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let sha = stdout
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().next())
+        .unwrap_or("")
+        .to_string();
+    if sha.is_empty() {
+        eprintln!("git ls-remote {url}: no HEAD in output");
+        exit(1);
+    }
+    sha
+}
+
+/// Resolve a nixpkgs attribute to its store path. Cheap on cache hit;
+/// repeated calls within one `sync` are avoided by stashing the result
+/// in `ResolvedSource::nix_path` for `pull_pack`'s benefit.
+fn nix_build_attr(attr: &str) -> PathBuf {
+    let output = Command::new("nix-build")
+        .args(["<nixos>", "-A", attr, "--no-out-link"])
+        .output()
+        .unwrap_or_else(|e| {
+            eprintln!("failed to run nix-build for {attr}: {e}");
+            exit(1);
+        });
+    if !output.status.success() {
+        eprintln!(
+            "nix-build failed for {attr}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        exit(1);
+    }
+    let path = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .last()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if path.is_empty() {
+        eprintln!("nix-build for {attr} produced no output path");
+        exit(1);
+    }
+    PathBuf::from(path)
+}
+
+/// Remove pack directories under `/opt/sola/share/<category>/` that
+/// aren't declared in `upstream.toml`. Only categories that currently
+/// contain at least one declared pack are scanned, so a hand-managed
+/// directory under an unrelated category name is left alone.
+fn remove_orphans(upstream: &Upstream) {
+    let categories: BTreeSet<&str> = upstream
+        .packs
+        .values()
+        .map(|p| p.category.as_str())
+        .collect();
+    let declared: BTreeSet<PathBuf> = upstream
+        .packs
+        .iter()
+        .map(|(name, pack)| dest_dir(name, pack))
+        .collect();
+
+    for category in categories {
+        let cat_path = Path::new(SHARE_ROOT).join(category);
+        let Ok(entries) = fs::read_dir(&cat_path) else {
             continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if declared.contains(&path) {
+                continue;
+            }
+            println!("removing orphan: {}", path.display());
+            if let Err(e) = fs::remove_dir_all(&path) {
+                eprintln!("failed to remove {}: {e}", path.display());
+            }
         }
-        let stale_dir = fs::metadata(&dest)
-            .and_then(|m| m.modified())
-            .map(|t| {
-                now.duration_since(t)
-                    .map(|d| d > STALENESS_THRESHOLD)
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false);
-        if stale_dir {
-            stale.push(name.clone());
-        }
     }
-    let mut parts = Vec::new();
-    if !missing.is_empty() {
-        parts.push(format!("missing: {}", missing.join(", ")));
-    }
-    if !stale.is_empty() {
-        parts.push(format!("stale (>7d): {}", stale.join(", ")));
-    }
-    (!parts.is_empty()).then(|| parts.join("; "))
 }
 
-fn pull_pack(name: &str, pack: &Pack) {
+/// `true` if any pack referenced in `upstream.toml` has no installed
+/// content. Used by `install` to print a single "Refreshing assets…"
+/// banner before delegating to `sync`. Avoids the per-pack chatter
+/// when there's nothing to do.
+pub fn needs_sync() -> bool {
+    let upstream = read_upstream();
+    upstream.packs.iter().any(|(name, pack)| {
+        let dest = dest_dir(name, pack);
+        !dest_populated(&dest) || read_manifest(&dest).is_none()
+    })
+}
+
+fn pull_pack(name: &str, pack: &Pack, nix_resolved: Option<PathBuf>) {
     println!("pulling {name} from {}", pack.source);
 
-    let root = fetch_source(name, &pack.source, &pack.rev);
+    let root = fetch_source(name, &pack.source, &pack.rev, nix_resolved);
 
     let src = root.path().join(&pack.src_dir);
     if !src.is_dir() {
@@ -175,7 +402,7 @@ fn pull_pack(name: &str, pack: &Pack) {
         exit(1);
     }
 
-    let dest = PathBuf::from(SHARE_ROOT).join(&pack.category).join(name);
+    let dest = dest_dir(name, pack);
     wipe_dir(&dest);
 
     match pack.kind {
@@ -199,9 +426,18 @@ fn pull_pack(name: &str, pack: &Pack) {
             let count = copy_cursor_files(&src, &cursors_dest);
             println!("  {count} cursors -> {}", cursors_dest.display());
             // Cursor themes need an `index.theme` next to `cursors/`.
-            // Adwaita keeps it at the repo root; copy it into place.
-            let theme_src = root.path().join("index.theme");
-            if theme_src.is_file() {
+            // XDG-conventional location is the parent of the cursors
+            // directory (McMojave's `dist/index.theme`); Adwaita keeps
+            // it at the repo root. Search both.
+            let theme_candidates = [
+                src.parent().map(|p| p.join("index.theme")),
+                Some(root.path().join("index.theme")),
+            ];
+            let theme_src = theme_candidates
+                .into_iter()
+                .flatten()
+                .find(|p| p.is_file());
+            if let Some(theme_src) = theme_src {
                 let theme_dest = dest.join("index.theme");
                 if let Err(e) = fs::copy(&theme_src, &theme_dest) {
                     eprintln!(
@@ -214,8 +450,7 @@ fn pull_pack(name: &str, pack: &Pack) {
                 println!("  index.theme -> {}", theme_dest.display());
             } else {
                 eprintln!(
-                    "{name}: warning: no index.theme at source root ({})",
-                    theme_src.display()
+                    "{name}: warning: no index.theme found next to cursors or at repo root"
                 );
             }
         }
@@ -225,7 +460,15 @@ fn pull_pack(name: &str, pack: &Pack) {
 /// Acquire a source tree for the pack. Returns a path that contains the
 /// upstream content; resource cleanup (if any) is tied to the returned
 /// `SourceRoot` via Drop.
-fn fetch_source(name: &str, source: &str, rev: &str) -> SourceRoot {
+///
+/// `nix_resolved` short-circuits the `nix-build` invocation when
+/// `sync_pack` already resolved the store path during pin resolution.
+fn fetch_source(
+    name: &str,
+    source: &str,
+    rev: &str,
+    nix_resolved: Option<PathBuf>,
+) -> SourceRoot {
     if let Some(slug) = source.strip_prefix("github:") {
         let url = format!("https://github.com/{slug}.git");
         let tmp = tempdir_for(name);
@@ -242,32 +485,15 @@ fn fetch_source(name: &str, source: &str, rev: &str) -> SourceRoot {
             run("git", &["-C", tmp_str, "checkout", "--quiet", rev]);
         }
         SourceRoot::Tmp(tmp)
-    } else if let Some(attr) = source.strip_prefix("nix-pkg:") {
-        let output = Command::new("nix-build")
-            .args(["<nixos>", "-A", attr, "--no-out-link"])
-            .output()
-            .unwrap_or_else(|e| {
-                eprintln!("failed to run nix-build for {attr}: {e}");
-                exit(1);
-            });
-        if !output.status.success() {
-            eprintln!(
-                "nix-build failed for {attr}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            exit(1);
+    } else if source.strip_prefix("nix-pkg:").is_some() {
+        if let Some(p) = nix_resolved {
+            return SourceRoot::Pinned(p);
         }
-        let path = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .last()
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if path.is_empty() {
-            eprintln!("nix-build for {attr} produced no output path");
-            exit(1);
-        }
-        SourceRoot::Pinned(PathBuf::from(path))
+        // Fall through to a fresh nix-build only if no pre-resolved
+        // path was supplied (shouldn't happen via sync_pack, but keeps
+        // the function usable from elsewhere).
+        let attr = source.strip_prefix("nix-pkg:").unwrap();
+        SourceRoot::Pinned(nix_build_attr(attr))
     } else {
         eprintln!("{name}: unsupported source format: {source}");
         exit(1);

@@ -1,8 +1,11 @@
 # Pinned upstream sources for third-party asset packs.
 #
-# `cargo make assets pull` writes every pack to /opt/sola/share/<category>/<name>/.
-# Nothing is committed; `cargo make install` auto-pulls when packs are
-# missing or older than ~1 week, so a fresh clone just runs install.
+# `cargo make assets sync` reconciles /opt/sola/share/<category>/<name>/
+# with this file: pulls missing or out-of-date packs, skips packs already
+# on the declared pin, and removes pack directories no longer listed
+# here. Nothing is committed; `cargo make install` auto-syncs on a fresh
+# checkout. For github packs with empty `rev` (tracking the default
+# branch), pass `--refresh` to re-resolve HEAD.
 #
 # Sources:
 # - `github:<owner>/<repo>` — git clone (honors `rev`).
@@ -24,13 +27,17 @@ rev      = ""
 src_dir  = "icons"
 category = "icons"
 
-# GNOME Adwaita cursor theme. Pinned because the GitHub mirror of
-# gitlab.gnome.org/GNOME/adwaita-icon-theme has no useful release tags;
-# refresh by bumping the SHA. License: LGPL-3.0 OR CC-BY-SA-3.0.
-[packs.Adwaita]
-source   = "github:GNOME/adwaita-icon-theme"
-rev      = "551245ae75fdc42cde42a8cf24ca2ccab9d3a815"
-src_dir  = "Adwaita/cursors"
+# McMojave cursor theme — macOS-style cursors. Chosen over Adwaita
+# because Adwaita's wlroots-cursor-shape lookups silently fell back to
+# default for everything except `text` and `pointer` (see
+# docs/manual/cursor-theme-loading.md). McMojave ships a flat `dist/`
+# tree with all 12 resize variants and a clean `index.theme` (no
+# `Inherits=` chain to break the lookup). Pinned by SHA because the
+# repo has no release tags. License: GPL-3.0.
+[packs.McMojave]
+source   = "github:vinceliuice/McMojave-cursors"
+rev      = "7d0bfc1f91028191cdc220b87fd335a235ee4439"
+src_dir  = "dist/cursors"
 category = "cursors"
 kind     = "cursors"
 

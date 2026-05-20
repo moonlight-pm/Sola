@@ -68,10 +68,22 @@ enum Commands {
 
 #[derive(clap::Subcommand, Debug)]
 enum AssetsAction {
-    /// Pull asset packs from their pinned upstream sources to /opt/sola/share.
-    /// `cargo make install` calls this automatically when packs are missing
-    /// or older than ~1 week, so manual invocation is rarely needed.
-    Pull,
+    /// Reconcile /opt/sola/share with crates/sola-assets/upstream.toml.
+    ///
+    /// Pulls missing packs, re-pulls packs whose pin has changed, and
+    /// removes pack directories that are no longer declared. Packs
+    /// already on the desired pin are skipped without network or
+    /// copy work. `cargo make install` calls this automatically on
+    /// fresh checkouts.
+    Sync {
+        /// For `github:` packs that track the default branch (empty
+        /// `rev` in upstream.toml), re-resolve HEAD via
+        /// `git ls-remote` and pull if it advanced. Without this
+        /// flag those packs stay pinned to whatever HEAD resolved
+        /// to on the last sync.
+        #[arg(long)]
+        refresh: bool,
+    },
 }
 
 fn main() {
@@ -79,7 +91,7 @@ fn main() {
     match cli.command {
         Commands::Build { target, release } => build_exec(target, release),
         Commands::Assets { action } => match action {
-            AssetsAction::Pull => assets::pull(),
+            AssetsAction::Sync { refresh } => assets::sync(refresh),
         },
         Commands::Install { app, watch } => {
             if watch && app.is_none() {

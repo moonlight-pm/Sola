@@ -103,8 +103,8 @@ cd Sola
 cargo make install-cef    # ~/.cache/sola/cef-<version>/ — ~1.5GB download, once
 cargo make build          # full debug build of the workspace — ~10 minutes first time
 cargo make install        # copies binaries to /opt/sola/bin (sudo)
-                          # also: `cargo make assets pull` runs automatically if
-                          # /opt/sola/share/ is missing or older than a week
+                          # also: `cargo make assets sync` runs automatically
+                          # whenever a declared pack is missing from /opt/sola/share/
 ```
 
 `cargo make install-cef` populates `~/.cache/sola/cef-<version>/Release/`

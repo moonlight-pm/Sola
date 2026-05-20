@@ -243,12 +243,14 @@ fn files_identical(a: &str, b: &str) -> Result<bool, String> {
 /// If `app` is provided, builds and installs only that app.
 /// Otherwise builds and installs all workspace binaries.
 pub fn install(app: Option<&str>) {
-    // Bootstrap third-party assets if any pack is missing or stale.
+    // Bootstrap third-party assets if any pack is missing.
     // /opt/sola/share is the single source of truth at runtime; install
     // never rsyncs it from the source tree (nothing's committed there).
-    if let Some(reason) = super::assets::pull_reason() {
-        println!("Refreshing assets ({reason})...");
-        super::assets::pull();
+    // `sync(false)` is idempotent — when every pack is already on the
+    // desired pin it's a no-op aside from a few stat() calls.
+    if super::assets::needs_sync() {
+        println!("Syncing assets...");
+        super::assets::sync(false);
     }
 
     println!("Building...");

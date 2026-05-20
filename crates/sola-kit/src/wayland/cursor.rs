@@ -4,10 +4,11 @@
 //! `Shape` and the next Wayland dispatch tick applies it to the
 //! active pointer via `wp_cursor_shape_device_v1.set_shape`.
 //!
-//! Known limitation: river+bundled-Adwaita currently renders only
-//! `text` and `pointer` shapes; others silently fall back to default.
-//! The pipeline here is verified correct — see
-//! `docs/manual/cursor-theme-loading.md` before touching this file.
+//! Theme history: river+bundled-Adwaita rendered only `text` and
+//! `pointer` shapes; everything else silently fell back to default.
+//! Switching the vendored theme to McMojave resolved it. The pipeline
+//! here is verified correct — see `docs/manual/cursor-theme-loading.md`
+//! before touching this file.
 //!
 //! The CEF UI thread and the Wayland event loop are the same thread
 //! in our setup (see `cef/handlers.rs`), so a thread-local `Cell`
