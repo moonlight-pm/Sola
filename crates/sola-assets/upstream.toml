@@ -52,6 +52,44 @@ category = "fonts"
 kind     = "fonts"
 files    = ["InterVariable.woff2", "InterVariable-Italic.woff2"]
 
+# JetBrains Mono — mono UI font used by sola-monitor-iced for row
+# bodies and JSON. Pinned SHA: the repo has releases but pulling the
+# default branch's HEAD is fine for an exploratory preview.
+# License: SIL OFL 1.1.
+[packs.JetBrainsMono]
+source   = "github:JetBrains/JetBrainsMono"
+rev      = "19371302b95d218af43299bce79ddbddd0bc364d"
+src_dir  = "fonts/ttf"
+category = "fonts"
+kind     = "fonts"
+files    = ["JetBrainsMono-Regular.ttf"]
+
+# Roboto Flex — variable Roboto with opsz/slnt/wdth/wght axes; used by
+# sola-monitor-iced for topic/source cells, sticky title, and text
+# inputs. Variable font keeps us at a single ~1.8 MB TTF that covers
+# every weight we'll want during evaluation. License: SIL OFL 1.1.
+[packs.RobotoFlex]
+source   = "github:googlefonts/roboto-flex"
+rev      = "739e06dc46ebb14cddd88b9768a6c1504d4677f6"
+src_dir  = "fonts"
+category = "fonts"
+kind     = "fonts"
+files = [
+  { from = "RobotoFlex[GRAD,XOPQ,XTRA,YOPQ,YTAS,YTDE,YTFI,YTLC,YTUC,opsz,slnt,wdth,wght].ttf", to = "RobotoFlex.ttf" },
+]
+
+# Roboto Condensed — the classic static Roboto Condensed Regular. Used
+# by sola-monitor-iced for column headers and widget text (buttons,
+# selects). Sourced from nixpkgs because the modern font lives in
+# github:google/fonts which is too large to clone fully and sparse
+# clones of font files inside it are fragile. License: Apache-2.0.
+[packs.RobotoCondensed]
+source   = "nix-pkg:roboto"
+src_dir  = "share/fonts/truetype"
+category = "fonts"
+kind     = "fonts"
+files    = ["RobotoCondensed-Regular.ttf"]
+
 # Iosevka Term Slab (Nerd Font Mono variant) — the terminal font.
 # Sourced from nixpkgs because upstream release zips bundle every
 # weight/width permutation (~240 MB); the nixpkgs derivation ships only

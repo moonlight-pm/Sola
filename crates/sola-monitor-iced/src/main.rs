@@ -33,6 +33,32 @@ use sola_bus::{BusClient, Message};
 use sola_core::KeyCode;
 
 const APP_ID: &str = "sola-monitor-iced";
+
+/// Font pack directory shared with every other sola process. Each
+/// pack is a single TTF written here by `cargo make assets sync`.
+const FONT_DIR: &str = "/opt/sola/share/fonts";
+
+/// Mono font for row bodies and JSON. JetBrainsMono-Regular.ttf
+/// declares itself as `JetBrains Mono`.
+const F_MONO: Font = Font::with_name("JetBrains Mono");
+
+/// Condensed sans for column headers and widget chrome (buttons,
+/// pick_list values). The classic static `RobotoCondensed-Regular.ttf`
+/// declares the family as `Roboto Condensed`.
+const F_CONDENSED: Font = Font::with_name("Roboto Condensed");
+
+/// Default sans for "normal" text — topic/source cells, sticky title,
+/// text inputs. Variable Roboto Flex, family name `Roboto Flex`.
+const F_NORMAL: Font = Font::with_name("Roboto Flex");
+
+/// Font files we try to register at startup, relative to [`FONT_DIR`].
+/// Missing files are warned about but not fatal so a binary built
+/// against an out-of-date `/opt/sola/share` still launches.
+const FONT_FILES: &[&str] = &[
+    "JetBrainsMono/JetBrainsMono-Regular.ttf",
+    "RobotoFlex/RobotoFlex.ttf",
+    "RobotoCondensed/RobotoCondensed-Regular.ttf",
+];
 const MAX_MESSAGES: usize = 5_000;
 const SIDEBAR_W_DEFAULT: f32 = 280.0;
 const SIDEBAR_W_MIN: f32 = 160.0;
@@ -98,10 +124,11 @@ fn main() -> iced::Result {
     // so `decorations: false` has to live inside this struct rather
     // than as a separate `.decorations(false)` call (which would be
     // overwritten by the subsequent `.window(...)`).
-    iced::application(App::default, App::update, App::view)
+    let mut app = iced::application(App::default, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
+        .default_font(F_NORMAL)
         .window(iced::window::Settings {
             decorations: false,
             platform_specific: iced::window::settings::PlatformSpecific {
@@ -109,8 +136,20 @@ fn main() -> iced::Result {
                 ..Default::default()
             },
             ..iced::window::Settings::default()
-        })
-        .run()
+        });
+    for relative in FONT_FILES {
+        let path = format!("{FONT_DIR}/{relative}");
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                tracing::info!(path = %path, bytes = bytes.len(), "registering font");
+                app = app.font(bytes);
+            }
+            Err(e) => {
+                tracing::warn!(path = %path, "skipping font: {e}");
+            }
+        }
+    }
+    app.run()
 }
 
 fn messages_scroll_id() -> ScrollId {
@@ -461,6 +500,7 @@ impl App {
     fn view_toolbar(&self) -> Element<'_, Msg> {
         let filter = text_input("filter…", &self.filter)
             .on_input(Msg::FilterChanged)
+            .font(F_NORMAL)
             .padding(Padding::new(4.0).left(8.0).right(8.0))
             .size(13);
 
@@ -474,6 +514,7 @@ impl App {
             Some(topic_selected),
             Msg::TopicFilterChanged,
         )
+        .font(F_CONDENSED)
         .text_size(12)
         .padding(Padding::new(4.0).left(8.0).right(8.0));
 
@@ -484,12 +525,12 @@ impl App {
         };
 
         let toolbar_row = row![
-            text("monitor").size(13),
             Space::new().width(Length::Fill),
             filter,
             topic_picker,
-            button(text(pause_label).size(12)).on_press(Msg::TogglePause),
-            button(text("Clear").size(12)).on_press(Msg::Clear),
+            button(text(pause_label).font(F_CONDENSED).size(12))
+                .on_press(Msg::TogglePause),
+            button(text("Clear").font(F_CONDENSED).size(12)).on_press(Msg::Clear),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
@@ -503,14 +544,22 @@ impl App {
 
     fn view_messages(&self) -> Element<'_, Msg> {
         let header = row![
-            text("time").size(HEADER_FONT_PX).width(Length::Fixed(80.0)),
+            text("time")
+                .font(F_CONDENSED)
+                .size(HEADER_FONT_PX)
+                .width(Length::Fixed(80.0)),
             text("topic")
+                .font(F_CONDENSED)
                 .size(HEADER_FONT_PX)
                 .width(Length::Fixed(200.0)),
             text("source")
+                .font(F_CONDENSED)
                 .size(HEADER_FONT_PX)
                 .width(Length::Fixed(120.0)),
-            text("payload").size(HEADER_FONT_PX).width(Length::Fill),
+            text("payload")
+                .font(F_CONDENSED)
+                .size(HEADER_FONT_PX)
+                .width(Length::Fill),
         ]
         .spacing(8);
 
@@ -545,12 +594,17 @@ impl App {
             let t = format_clock(entry.timestamp);
 
             let one_line = row![
-                text(t).size(ROW_FONT_PX).width(Length::Fixed(80.0)),
+                text(t)
+                    .font(F_MONO)
+                    .size(ROW_FONT_PX)
+                    .width(Length::Fixed(80.0)),
                 text(&entry.topic)
+                    .font(F_NORMAL)
                     .size(ROW_FONT_PX)
                     .width(Length::Fixed(200.0))
                     .wrapping(Wrapping::None),
                 text(&entry.source)
+                    .font(F_NORMAL)
                     .size(ROW_FONT_PX)
                     .width(Length::Fixed(120.0))
                     .wrapping(Wrapping::None),
@@ -599,10 +653,14 @@ impl App {
     }
 
     fn view_sidebar(&self) -> Element<'_, Msg> {
-        let header = container(text("sticky").size(HEADER_FONT_PX))
-            .padding(Padding::new(4.0).left(12.0).right(12.0))
-            .style(header_style)
-            .width(Length::Fill);
+        let header = container(
+            text("Sticky State")
+                .font(F_CONDENSED)
+                .size(HEADER_FONT_PX),
+        )
+        .padding(Padding::new(4.0).left(12.0).right(12.0))
+        .style(header_style)
+        .width(Length::Fill);
 
         let mut rows: Vec<Element<'_, Msg>> = Vec::new();
         for entry in self.sticky.values() {
@@ -612,15 +670,19 @@ impl App {
                 .map(|t| t == entry.topic.as_str())
                 .unwrap_or(false);
 
-            // Topic and a single-line payload preview share the same
-            // line, same shape as the messages-list rows. Clicking
+            // Topic + source on a single line, matching the kit's
+            // StickyPanel layout. No inline JSON preview — clicking
             // expands the full pretty-printed payload below.
             let one_line = row![
                 text(&entry.topic)
+                    .font(F_NORMAL)
                     .size(ROW_FONT_PX)
-                    .width(Length::Fixed(120.0))
+                    .width(Length::Fill)
                     .wrapping(Wrapping::None),
-                preview_payload(&entry.payload_preview),
+                text(&entry.source)
+                    .font(F_NORMAL)
+                    .size(ROW_FONT_PX)
+                    .wrapping(Wrapping::None),
             ]
             .spacing(8)
             .align_y(iced::Alignment::Start);
@@ -758,7 +820,7 @@ fn selected_row_style(_: &Theme) -> container::Style {
 /// orange, punctuation muted gray).
 fn expanded_payload(json: &str) -> Element<'static, Msg> {
     rich_text(highlight_json(json))
-        .font(Font::MONOSPACE)
+        .font(F_MONO)
         .size(SELECTED_PAYLOAD_FONT_PX)
         .on_link_click(iced::never)
         .into()
@@ -772,7 +834,7 @@ fn preview_payload(json: &str) -> Element<'static, Msg> {
         return text("—").size(ROW_FONT_PX).color(hex("#8b949e")).into();
     }
     rich_text(highlight_json(json))
-        .font(Font::MONOSPACE)
+        .font(F_MONO)
         .size(ROW_FONT_PX)
         .wrapping(Wrapping::None)
         .width(Length::Fill)
