@@ -1,33 +1,48 @@
 //! Iced port of sola-monitor. Visually parallels the existing
 //! kit-based monitor: top toolbar (filter + pause + clear), main row
 //! split between a scrollable messages list and a sticky-topics
-//! sidebar.
+//! sidebar. Click a row to expand its full pretty-printed payload.
 //!
 //! Window chrome is off — sola-shell frames + decorates every app
-//! itself via its menubar; the app surface is just content. Same
-//! convention every other sola app follows.
+//! itself via its menubar; the app surface is just content.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::futures::SinkExt;
 use iced::futures::Stream;
 use iced::stream;
 use iced::widget::{
-    Space, button, column, container, row, scrollable, text, text_input,
+    Space, button, column, container, mouse_area, row, scrollable, text, text_input,
 };
 use iced::{Color, Element, Length, Padding, Subscription, Task, Theme};
 
-use sola_bus::topics::TopicKind;
+use sola_bus::topics::{
+    AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind,
+};
 use sola_bus::{BusClient, Message};
+use sola_core::KeyCode;
 
 const APP_ID: &str = "sola-monitor-iced";
 const MAX_MESSAGES: usize = 5_000;
 const SIDEBAR_W: f32 = 280.0;
 const ROW_FONT_PX: f32 = 12.0;
 const HEADER_FONT_PX: f32 = 11.0;
+const SELECTED_PAYLOAD_FONT_PX: f32 = 12.0;
+
+/// Single global BusClient for the process. iced's `application`
+/// builder doesn't thread caller-supplied state into the state
+/// constructor, so the alternative is either a static (this) or
+/// a thread-local. Static fits since there's exactly one bus
+/// connection per process.
+static BUS: OnceLock<Arc<Mutex<BusClient>>> = OnceLock::new();
+
+fn bus() -> &'static Mutex<BusClient> {
+    BUS.get().expect("bus not initialized").as_ref()
+}
 
 fn main() -> iced::Result {
     sola_core::log::init(APP_ID);
@@ -35,6 +50,30 @@ fn main() -> iced::Result {
 
     let wayland_display = sola_core::env::activate_wayland_session(10_000);
     tracing::info!(socket = %wayland_display, "wayland socket resolved");
+
+    // Set up the bus before iced takes over the thread: connect, sub
+    // to every topic kind, publish our app menu so Cmd+Q works.
+    let mut client = BusClient::new();
+    client.connect_blocking(std::time::Duration::from_millis(250));
+    if let Err(e) = client.subscribe(TopicKind::ALL) {
+        tracing::warn!("bus subscribe failed: {e}");
+    }
+    let _ = client.emit(Topic::SetAppMenu(AppMenuPayload {
+        app_id: APP_ID.into(),
+        menus: vec![MenuDefinition {
+            label: "Monitor".into(),
+            items: vec![MenuItem::Action {
+                id: "quit".into(),
+                label: "Quit Monitor".into(),
+                shortcut: Some(KeyCode::Q.meta()),
+                disabled: false,
+                checked: false,
+            }],
+        }],
+    }));
+    BUS.set(Arc::new(Mutex::new(client)))
+        .map_err(|_| ())
+        .expect("BUS set twice");
 
     iced::application(App::default, App::update, App::view)
         .title(App::title)
@@ -51,6 +90,9 @@ struct App {
     filter: String,
     paused: bool,
     pause_buffer: Vec<Entry>,
+    /// Currently expanded row, by sequence number. `None` collapses
+    /// every payload back to a single-line preview.
+    selected_seq: Option<u64>,
 }
 
 struct Entry {
@@ -58,7 +100,11 @@ struct Entry {
     timestamp: f64,
     topic: String,
     source: String,
+    /// Single-line abbreviated form for the table preview.
     payload_preview: String,
+    /// Multi-line pretty-printed form shown when the row is selected.
+    /// Empty for rows without a payload.
+    payload_pretty: String,
     is_sticky: bool,
 }
 
@@ -66,19 +112,24 @@ impl Entry {
     fn from_message(msg: &Message, seq: u64) -> Self {
         let kind = TopicKind::from_str(&msg.topic);
         let is_sticky = kind.map(|k| k.behavior().is_sticky()).unwrap_or(false);
-        let payload_preview = match &msg.payload {
-            None => String::new(),
-            Some(bytes) if bytes.is_empty() => String::new(),
+        let (payload_preview, payload_pretty) = match &msg.payload {
+            None => (String::new(), String::new()),
+            Some(bytes) if bytes.is_empty() => (String::new(), String::new()),
             Some(bytes) => match serde_json::from_slice::<serde_json::Value>(bytes) {
                 Ok(v) => {
-                    let s = v.to_string();
-                    if s.len() > 240 {
-                        format!("{}…", &s[..240])
+                    let compact = v.to_string();
+                    let preview = if compact.len() > 240 {
+                        format!("{}…", &compact[..240])
                     } else {
-                        s
-                    }
+                        compact
+                    };
+                    let pretty = serde_json::to_string_pretty(&v).unwrap_or_default();
+                    (preview, pretty)
                 }
-                Err(_) => format!("<{} bytes>", bytes.len()),
+                Err(_) => {
+                    let s = format!("<{} bytes>", bytes.len());
+                    (s.clone(), s)
+                }
             },
         };
         let timestamp = SystemTime::now()
@@ -91,6 +142,7 @@ impl Entry {
             topic: msg.topic.clone(),
             source: msg.source.clone(),
             payload_preview,
+            payload_pretty,
             is_sticky,
         }
     }
@@ -102,6 +154,7 @@ enum Msg {
     FilterChanged(String),
     TogglePause,
     Clear,
+    ToggleSelect(u64),
 }
 
 impl App {
@@ -126,10 +179,25 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::BusMessage(message) => {
+                // Intercept our own MenuAction("quit") for Cmd+Q
+                // before treating the message as just another row to
+                // display. We still display it (matches kit-monitor
+                // behavior, useful for debugging the menu protocol),
+                // then schedule an iced shutdown.
+                let our_quit = TopicKind::from_str(&message.topic)
+                    == Some(TopicKind::MenuAction)
+                    && message
+                        .payload
+                        .as_ref()
+                        .and_then(|b| serde_json::from_slice::<MenuActionPayload>(b).ok())
+                        .map(|p| p.app_id == APP_ID && p.action_id == "quit")
+                        .unwrap_or(false);
+
                 let seq = self.messages.len() as u64 + self.pause_buffer.len() as u64;
                 let entry = Entry::from_message(&message, seq);
                 if entry.is_sticky {
-                    self.sticky.insert(entry.topic.clone(), Entry::from_message(&message, seq));
+                    self.sticky
+                        .insert(entry.topic.clone(), Entry::from_message(&message, seq));
                 }
                 if self.paused {
                     self.pause_buffer.push(entry);
@@ -138,7 +206,16 @@ impl App {
                     if self.messages.len() > MAX_MESSAGES {
                         let drop = self.messages.len() - MAX_MESSAGES;
                         self.messages.drain(0..drop);
+                        if let Some(sel) = self.selected_seq {
+                            if (sel as usize) < drop {
+                                self.selected_seq = None;
+                            }
+                        }
                     }
+                }
+
+                if our_quit {
+                    return iced::exit();
                 }
             }
             Msg::FilterChanged(s) => self.filter = s,
@@ -156,6 +233,14 @@ impl App {
             Msg::Clear => {
                 self.messages.clear();
                 self.pause_buffer.clear();
+                self.selected_seq = None;
+            }
+            Msg::ToggleSelect(seq) => {
+                self.selected_seq = if self.selected_seq == Some(seq) {
+                    None
+                } else {
+                    Some(seq)
+                };
             }
         }
         Task::none()
@@ -168,7 +253,12 @@ impl App {
 
         let main = row![
             container(messages).width(Length::Fill).height(Length::Fill),
-            container(Space::new().width(Length::Fixed(1.0)).height(Length::Fill)).style(divider_style),
+            container(
+                Space::new()
+                    .width(Length::Fixed(1.0))
+                    .height(Length::Fill)
+            )
+            .style(divider_style),
             container(sidebar)
                 .width(Length::Fixed(SIDEBAR_W))
                 .height(Length::Fill),
@@ -210,8 +300,12 @@ impl App {
     fn view_messages(&self) -> Element<'_, Msg> {
         let header = row![
             text("time").size(HEADER_FONT_PX).width(Length::Fixed(80.0)),
-            text("topic").size(HEADER_FONT_PX).width(Length::Fixed(200.0)),
-            text("source").size(HEADER_FONT_PX).width(Length::Fixed(120.0)),
+            text("topic")
+                .size(HEADER_FONT_PX)
+                .width(Length::Fixed(200.0)),
+            text("source")
+                .size(HEADER_FONT_PX)
+                .width(Length::Fixed(120.0)),
             text("payload").size(HEADER_FONT_PX).width(Length::Fill),
         ]
         .spacing(8);
@@ -234,7 +328,24 @@ impl App {
                     continue;
                 }
             }
+            let selected = self.selected_seq == Some(entry.seq);
             let t = format_clock(entry.timestamp);
+
+            // Payload cell: preview when collapsed, full pretty JSON
+            // wrapping across lines when selected.
+            let payload_cell: Element<'_, Msg> = if selected && !entry.payload_pretty.is_empty()
+            {
+                text(&entry.payload_pretty)
+                    .size(SELECTED_PAYLOAD_FONT_PX)
+                    .width(Length::Fill)
+                    .into()
+            } else {
+                text(&entry.payload_preview)
+                    .size(ROW_FONT_PX)
+                    .width(Length::Fill)
+                    .into()
+            };
+
             let line = row![
                 text(t).size(ROW_FONT_PX).width(Length::Fixed(80.0)),
                 text(&entry.topic)
@@ -243,16 +354,24 @@ impl App {
                 text(&entry.source)
                     .size(ROW_FONT_PX)
                     .width(Length::Fixed(120.0)),
-                text(&entry.payload_preview)
-                    .size(ROW_FONT_PX)
-                    .width(Length::Fill),
+                payload_cell,
             ]
-            .spacing(8);
-            let _ = entry.seq;
+            .spacing(8)
+            .align_y(iced::Alignment::Start);
+
+            let body = container(line)
+                .padding(Padding::new(2.0).left(12.0).right(12.0))
+                .width(Length::Fill)
+                .style(if selected {
+                    selected_row_style
+                } else {
+                    plain_row_style
+                });
+
+            let seq = entry.seq;
             rows.push(
-                container(line)
-                    .padding(Padding::new(2.0).left(12.0).right(12.0))
-                    .width(Length::Fill)
+                mouse_area(body)
+                    .on_press(Msg::ToggleSelect(seq))
                     .into(),
             );
         }
@@ -272,15 +391,14 @@ impl App {
 
         let mut rows: Vec<Element<'_, Msg>> = Vec::new();
         for entry in self.sticky.values() {
+            let body_text = if entry.payload_preview.is_empty() {
+                "<no payload>"
+            } else {
+                &entry.payload_preview
+            };
             let block = column![
                 text(&entry.topic).size(11),
-                text(if entry.payload_preview.is_empty() {
-                    "<no payload>"
-                } else {
-                    &entry.payload_preview
-                })
-                .size(ROW_FONT_PX)
-                .color(hex("#8b949e")),
+                text(body_text).size(ROW_FONT_PX).color(hex("#8b949e")),
             ]
             .spacing(2);
             rows.push(
@@ -305,24 +423,14 @@ impl App {
 
 fn bus_stream() -> impl Stream<Item = Msg> {
     stream::channel(64, |mut output: iced::futures::channel::mpsc::Sender<Msg>| async move {
-        let bus = Arc::new(Mutex::new(BusClient::new()));
-        {
-            let mut b = bus.lock().expect("bus poisoned");
-            b.connect_blocking(std::time::Duration::from_millis(250));
-            // subscribe_all isn't part of the wire-level API; subscribe
-            // to the full known set instead. New kinds added later
-            // require updating this list (or lifting a subscribe_all
-            // helper into BusClient).
-            if let Err(e) = b.subscribe(TopicKind::ALL) {
-                tracing::warn!("bus subscribe failed: {e}");
-            }
-        }
-        let bus_for_task = bus.clone();
+        // The bus connection + subscription are already done in main()
+        // before iced takes the thread — here we just spin a poller
+        // that forwards messages into the subscription channel.
         let (tx, mut rx) = iced::futures::channel::mpsc::unbounded::<Message>();
         std::thread::spawn(move || {
             loop {
                 {
-                    let bus = bus_for_task.lock().expect("bus poisoned");
+                    let bus = bus().lock().expect("bus poisoned");
                     bus.drain_notify();
                     while let Some(msg) = bus.try_recv() {
                         if tx.unbounded_send(msg).is_err() {
@@ -355,11 +463,6 @@ fn hex(s: &str) -> Color {
 fn toolbar_style(_: &Theme) -> container::Style {
     container::Style {
         background: Some(iced::Background::Color(hex("#161b22"))),
-        border: iced::Border {
-            color: hex("#21262d"),
-            width: 0.0,
-            radius: 0.0.into(),
-        },
         ..container::Style::default()
     }
 }
@@ -368,11 +471,6 @@ fn header_style(_: &Theme) -> container::Style {
     container::Style {
         background: Some(iced::Background::Color(hex("#161b22"))),
         text_color: Some(hex("#8b949e")),
-        border: iced::Border {
-            color: hex("#21262d"),
-            width: 0.0,
-            radius: 0.0.into(),
-        },
         ..container::Style::default()
     }
 }
@@ -380,6 +478,17 @@ fn header_style(_: &Theme) -> container::Style {
 fn divider_style(_: &Theme) -> container::Style {
     container::Style {
         background: Some(iced::Background::Color(hex("#21262d"))),
+        ..container::Style::default()
+    }
+}
+
+fn plain_row_style(_: &Theme) -> container::Style {
+    container::Style::default()
+}
+
+fn selected_row_style(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(iced::Background::Color(hex("#1c2129"))),
         ..container::Style::default()
     }
 }
