@@ -400,24 +400,27 @@ impl App {
         let messages = self.view_messages();
         let sidebar = self.view_sidebar();
 
-        // 8px-wide divider. Visible area == hit area so the cursor
-        // unambiguously enters the mouse_area's bounds and the
-        // ResizingHorizontally interaction kicks in. Padded-narrow-
-        // stripe variants were prettier but iced 0.14's
-        // mouse_area + container forwarding made the cursor change
-        // unreliable; the simpler structure works.
-        let divider = mouse_area(
-            container(
+        // 8px-wide divider. Style wraps the mouse_area (not the other
+        // way around): the mouse_area is then the leaf widget under
+        // the cursor, so its `interaction(ResizingHorizontally)` is
+        // what container/row mouse_interaction forwarding propagates
+        // up. The previous shape (mouse_area wrapping styled container)
+        // visibly drew but never produced a cursor change — likely
+        // because the container's content-forwarded mouse_interaction
+        // was reaching the chain before mouse_area got a chance to
+        // substitute its hint.
+        let divider = container(
+            mouse_area(
                 Space::new()
                     .width(Length::Fill)
                     .height(Length::Fill),
             )
-            .style(divider_style)
-            .width(Length::Fixed(8.0))
-            .height(Length::Fill),
+            .interaction(mouse::Interaction::ResizingHorizontally)
+            .on_press(Msg::DividerPress),
         )
-        .interaction(mouse::Interaction::ResizingHorizontally)
-        .on_press(Msg::DividerPress);
+        .style(divider_style)
+        .width(Length::Fixed(8.0))
+        .height(Length::Fill);
 
         let main = row![
             container(messages).width(Length::Fill).height(Length::Fill),
@@ -557,6 +560,7 @@ impl App {
             let seq = entry.seq;
             rows.push(
                 mouse_area(body)
+                    .interaction(mouse::Interaction::Pointer)
                     .on_press(Msg::ToggleSelect(seq))
                     .into(),
             );
@@ -618,6 +622,7 @@ impl App {
             let topic = entry.topic.clone();
             rows.push(
                 mouse_area(body)
+                    .interaction(mouse::Interaction::Pointer)
                     .on_press(Msg::ToggleSelectSticky(topic))
                     .into(),
             );
