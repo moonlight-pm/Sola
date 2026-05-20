@@ -16,7 +16,7 @@ use iced::futures::SinkExt;
 use iced::futures::Stream;
 use iced::stream;
 use iced::widget::{
-    Space, button, column, container, mouse_area, pick_list, rich_text, row, scrollable, span,
+    Space, button, column, container, mouse_area, pick_list, rich_text, row, scrollable, span, stack,
     text, text_input,
 };
 use iced::widget::Id as ScrollId;
@@ -429,7 +429,33 @@ impl App {
         ]
         .height(Length::Fill);
 
-        column![toolbar, main].into()
+        let body: Element<'_, Msg> = column![toolbar, main].into();
+
+        // iced has no pointer-capture API. While dragging the divider,
+        // hit-testing still runs every frame against the current widget
+        // tree — so when the cursor races ahead of the lagging divider,
+        // it crosses into a sibling that returns a different (or no)
+        // cursor shape and the cursor flickers between resize and
+        // default. AppKit / browsers solve this by routing all pointer
+        // events to the widget that received mouse-down until release;
+        // in iced the equivalent is a transparent overlay that
+        // unconditionally declares the desired cursor for the duration
+        // of the drag. Stack evaluates mouse_interaction top-down and
+        // returns the first non-None, so the overlay wins.
+        if self.dragging_divider {
+            stack![
+                body,
+                mouse_area(
+                    Space::new()
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .interaction(mouse::Interaction::ResizingColumn),
+            ]
+            .into()
+        } else {
+            body
+        }
     }
 
     fn view_toolbar(&self) -> Element<'_, Msg> {
