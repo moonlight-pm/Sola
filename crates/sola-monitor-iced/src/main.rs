@@ -137,10 +137,21 @@ struct App {
     /// divider between messages and the sticky panel.
     sidebar_w: f32,
     /// True while the user is mid-drag on the divider.
-    /// `last_cursor_x` is the previous frame's cursor x so we
-    /// can compute deltas across CursorMoved events.
     dragging_divider: bool,
+    /// Most-recent global cursor x, tracked continuously (even
+    /// when not dragging) so that `drag_anchor` can be captured
+    /// at `DividerPress` time without needing the press event
+    /// to carry a position.
     last_cursor_x: Option<f32>,
+    /// `(cursor_x_at_press, sidebar_w_at_press)`. The drag uses
+    /// the press position as a fixed anchor and recomputes
+    /// `sidebar_w` from absolute cursor displacement, NOT from
+    /// accumulated frame-deltas. Anchor-based fixes the drift
+    /// that delta-accumulation produces when the cursor moves
+    /// past the clamp range and back (a missed delta or a
+    /// clamped frame would leave the divider permanently offset
+    /// from the cursor).
+    drag_anchor: Option<(f32, f32)>,
 }
 
 impl Default for App {
@@ -157,6 +168,7 @@ impl Default for App {
             sidebar_w: SIDEBAR_W_DEFAULT,
             dragging_divider: false,
             last_cursor_x: None,
+            drag_anchor: None,
         }
     }
 }
@@ -350,29 +362,33 @@ impl App {
             }
             Msg::DividerPress => {
                 self.dragging_divider = true;
-                // Don't reset last_cursor_x here — we track it
-                // continuously (even while not dragging) so the
-                // very first CursorMoved after a press already has
-                // a valid prev to delta against. Without this the
-                // drag would no-op the first frame and feel laggy.
+                // Capture the anchor at press time. `last_cursor_x`
+                // is continuously tracked, so it's already current
+                // when the press fires.
+                if let Some(x) = self.last_cursor_x {
+                    self.drag_anchor = Some((x, self.sidebar_w));
+                }
             }
             Msg::CursorMoved(x) => {
-                let prev = self.last_cursor_x;
                 self.last_cursor_x = Some(x);
                 if self.dragging_divider {
-                    if let Some(prev_x) = prev {
-                        // Sidebar is on the right — moving cursor
-                        // LEFT grows the sidebar by the negative-x
-                        // delta. 1:1 with cursor motion.
-                        let delta = prev_x - x;
-                        self.sidebar_w =
-                            (self.sidebar_w + delta).clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
+                    if let Some((anchor_x, anchor_w)) = self.drag_anchor {
+                        // Absolute, anchor-relative: sidebar grows by
+                        // however far the cursor has moved LEFT from
+                        // the anchor (negative delta), shrinks if it
+                        // moved right. Clamping doesn't accumulate
+                        // drift — the next frame recomputes from the
+                        // anchor and the cursor re-syncs as soon as
+                        // it returns to a non-clamped position.
+                        let desired = anchor_w + (anchor_x - x);
+                        self.sidebar_w = desired.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
                     }
                 }
             }
             Msg::CursorReleased => {
                 if self.dragging_divider {
                     self.dragging_divider = false;
+                    self.drag_anchor = None;
                 }
             }
         }
@@ -384,26 +400,24 @@ impl App {
         let messages = self.view_messages();
         let sidebar = self.view_sidebar();
 
-        // 10px-wide hit area with a centered 2px visible stripe.
-        // The padding pushes the visible stripe to the middle while
-        // the mouse_area covers the full hit width — that gives the
-        // user a forgiving target without making the divider look
-        // thick. mouse_area's `interaction` sets the col-resize
-        // cursor whenever the pointer is over the hit area.
-        let visible_stripe = container(
-            Space::new()
-                .width(Length::Fixed(2.0))
-                .height(Length::Fill),
+        // 8px-wide divider. Visible area == hit area so the cursor
+        // unambiguously enters the mouse_area's bounds and the
+        // ResizingHorizontally interaction kicks in. Padded-narrow-
+        // stripe variants were prettier but iced 0.14's
+        // mouse_area + container forwarding made the cursor change
+        // unreliable; the simpler structure works.
+        let divider = mouse_area(
+            container(
+                Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .style(divider_style)
+            .width(Length::Fixed(8.0))
+            .height(Length::Fill),
         )
-        .style(divider_style);
-
-        let divider_hit = container(visible_stripe)
-            .padding(Padding::new(0.0).left(4.0).right(4.0))
-            .height(Length::Fill);
-
-        let divider = mouse_area(divider_hit)
-            .interaction(mouse::Interaction::ResizingHorizontally)
-            .on_press(Msg::DividerPress);
+        .interaction(mouse::Interaction::ResizingHorizontally)
+        .on_press(Msg::DividerPress);
 
         let main = row![
             container(messages).width(Length::Fill).height(Length::Fill),
