@@ -400,27 +400,25 @@ impl App {
         let messages = self.view_messages();
         let sidebar = self.view_sidebar();
 
-        // 8px-wide divider. Style wraps the mouse_area (not the other
-        // way around): the mouse_area is then the leaf widget under
-        // the cursor, so its `interaction(ResizingHorizontally)` is
-        // what container/row mouse_interaction forwarding propagates
-        // up. The previous shape (mouse_area wrapping styled container)
-        // visibly drew but never produced a cursor change — likely
-        // because the container's content-forwarded mouse_interaction
-        // was reaching the chain before mouse_area got a chance to
-        // substitute its hint.
-        let divider = container(
-            mouse_area(
+        // 8px-wide column separator. Interaction is `ResizingColumn`
+        // (not `ResizingHorizontally`) — it's a column-divider drag,
+        // and it maps via winit→sctk to `Shape::ColResize` whose XDG
+        // cursor name is `col-resize`. The generic `ew-resize` name
+        // that `ResizingHorizontally` would request is absent from
+        // most themes (McMojave included), and wlroots silently
+        // substitutes default when a cursor name isn't found.
+        let divider = mouse_area(
+            container(
                 Space::new()
                     .width(Length::Fill)
                     .height(Length::Fill),
             )
-            .interaction(mouse::Interaction::ResizingHorizontally)
-            .on_press(Msg::DividerPress),
+            .style(divider_style)
+            .width(Length::Fixed(8.0))
+            .height(Length::Fill),
         )
-        .style(divider_style)
-        .width(Length::Fixed(8.0))
-        .height(Length::Fill);
+        .interaction(mouse::Interaction::ResizingColumn)
+        .on_press(Msg::DividerPress);
 
         let main = row![
             container(messages).width(Length::Fill).height(Length::Fill),
