@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const BIN_DIR: &str = "/opt/sola/bin";
+pub(crate) const BIN_DIR: &str = "/opt/sola/bin";
 const LOG_DIR: &str = "/opt/sola/log";
 const SHARE_DIR: &str = "/opt/sola/share";
 
@@ -296,6 +296,32 @@ pub fn install(app: Option<&str>) {
             }
         } else {
             eprintln!("  warning: binary not found: {src}");
+        }
+    }
+
+    // Isolated crates live outside the workspace and have their own
+    // target dirs. Whole-workspace install picks them up here so the
+    // user gets a single `cargo make install` UX even when the
+    // workspace is bifurcated for feature-isolation reasons. Targeted
+    // single-app installs skip this loop entirely.
+    if app.is_none() {
+        for c in super::isolated::discover() {
+            if !super::isolated::has_binary(&c) {
+                continue;
+            }
+            let src = super::isolated::binary_path(&c, false);
+            if src.exists() {
+                match install_binary(src.to_string_lossy().as_ref()) {
+                    Ok(true) => println!("  installed {} (isolated)", c.name),
+                    Ok(false) => println!("  unchanged {} (isolated)", c.name),
+                    Err(e) => {
+                        eprintln!("  failed to install {}: {e}", c.name);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                eprintln!("  warning: isolated binary not found: {}", src.display());
+            }
         }
     }
 

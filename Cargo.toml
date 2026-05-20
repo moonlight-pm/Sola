@@ -1,5 +1,11 @@
 [workspace]
 members = ["crates/*"]
+# Kept out of the workspace so its iced deps don't unify wayland-sys
+# features across the workspace and break sola-river's runtime
+# wayland linkage (smithay-clipboard's `dlopen` default switches the
+# whole graph onto dlopen, which fails on NixOS). Build it with
+# `cargo build --manifest-path crates/sola-monitor-iced/Cargo.toml`.
+exclude = ["crates/sola-monitor-iced"]
 resolver = "3"
 
 [workspace.package]

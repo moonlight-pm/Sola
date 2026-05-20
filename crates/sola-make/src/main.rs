@@ -8,6 +8,7 @@
 mod assets;
 mod cef;
 mod install;
+mod isolated;
 mod publish;
 mod watch;
 
@@ -125,7 +126,9 @@ fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
 ///
 /// Spawns cargo as a child process. Use this when the caller needs to
 /// do further work after the build (e.g. `install`'s post-build copy
-/// steps).
+/// steps). When `target` is `None` (whole-workspace build), also walks
+/// the isolated-crates list (see `isolated::discover`) and builds each
+/// with its own manifest.
 fn build(target: Option<String>, release: bool) {
     let resolved = target.as_deref().map(resolve_crate_name);
     let args = build_args(resolved.as_deref(), release);
@@ -136,6 +139,10 @@ fn build(target: Option<String>, release: bool) {
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
+    // Whole-workspace build only — single-target requests stay focused.
+    if target.is_none() {
+        let _ = isolated::build_all(release);
+    }
 }
 
 /// `exec`-based variant for the top-level `cargo make build` command.
@@ -144,7 +151,15 @@ fn build(target: Option<String>, release: bool) {
 /// `cargo run -q -p sola-make` becomes the inner `cargo build` —
 /// one cargo process, no nested-cargo overhead, and no risk of
 /// env-var divergence between the parent and child invocation.
+///
+/// When `target` is `None` (whole-workspace build) we first build any
+/// isolated crates (status-based, separate cargo invocations — they
+/// have their own target dirs and feature graphs by design), then
+/// exec into the workspace cargo build as the final step.
 fn build_exec(target: Option<String>, release: bool) -> ! {
+    if target.is_none() {
+        let _ = isolated::build_all(release);
+    }
     let resolved = target.as_deref().map(resolve_crate_name);
     let args = build_args(resolved.as_deref(), release);
     // `exec` only returns on failure (e.g. cargo not on PATH).
@@ -175,8 +190,15 @@ pub(crate) fn resolve_crate_name(name: &str) -> String {
 ///
 /// Looks for `Cargo.toml` files in `crates/` that contain a
 /// `src/main.rs` (i.e. are binary crates), and extracts the package name.
-/// Skips sola-make itself since it's the build tool.
+/// Skips sola-make itself (it's the build tool) and any path declared
+/// in the workspace's `[workspace] exclude` list (those are isolated
+/// crates with their own target dirs — see `isolated.rs`).
 pub(crate) fn discover_binaries() -> Vec<String> {
+    let excluded_paths: std::collections::HashSet<std::path::PathBuf> = isolated::discover()
+        .into_iter()
+        .map(|c| c.path)
+        .collect();
+
     let mut binaries = Vec::new();
     for dir in &["crates"] {
         let entries = match std::fs::read_dir(dir) {
@@ -185,6 +207,9 @@ pub(crate) fn discover_binaries() -> Vec<String> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
+            if excluded_paths.contains(&path) {
+                continue;
+            }
             let has_main_rs = path.join("src/main.rs").exists();
             let cargo_toml_path = path.join("Cargo.toml");
             let has_bin_section = std::fs::read_to_string(&cargo_toml_path)
