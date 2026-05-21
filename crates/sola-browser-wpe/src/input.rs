@@ -190,6 +190,89 @@ pub fn keyboard_event_to_wpe(
     })
 }
 
+/// Cursor shape carried across the worker→iced boundary as a
+/// plain `u32` (via `AtomicU32`). Discriminants are stable; new
+/// variants append at the end. The fallback for any unknown
+/// CSS name is `Default`.
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, Default)]
+pub enum CursorKind {
+    #[default]
+    Default = 0,
+    Pointer = 1,
+    Text = 2,
+    Grab = 3,
+    Grabbing = 4,
+    Crosshair = 5,
+    Move = 6,
+    NotAllowed = 7,
+    ResizingHorizontally = 8,
+    ResizingVertically = 9,
+    Working = 10,
+}
+
+impl CursorKind {
+    pub fn from_u32(v: u32) -> Self {
+        match v {
+            1 => CursorKind::Pointer,
+            2 => CursorKind::Text,
+            3 => CursorKind::Grab,
+            4 => CursorKind::Grabbing,
+            5 => CursorKind::Crosshair,
+            6 => CursorKind::Move,
+            7 => CursorKind::NotAllowed,
+            8 => CursorKind::ResizingHorizontally,
+            9 => CursorKind::ResizingVertically,
+            10 => CursorKind::Working,
+            _ => CursorKind::Default,
+        }
+    }
+
+    pub fn to_iced(self) -> mouse::Interaction {
+        match self {
+            CursorKind::Default => mouse::Interaction::default(),
+            CursorKind::Pointer => mouse::Interaction::Pointer,
+            CursorKind::Text => mouse::Interaction::Text,
+            CursorKind::Grab => mouse::Interaction::Grab,
+            CursorKind::Grabbing => mouse::Interaction::Grabbing,
+            CursorKind::Crosshair => mouse::Interaction::Crosshair,
+            CursorKind::Move => mouse::Interaction::Move,
+            CursorKind::NotAllowed => mouse::Interaction::NotAllowed,
+            CursorKind::ResizingHorizontally => mouse::Interaction::ResizingHorizontally,
+            CursorKind::ResizingVertically => mouse::Interaction::ResizingVertically,
+            CursorKind::Working => mouse::Interaction::Wait,
+        }
+    }
+}
+
+/// Map a freedesktop CSS cursor name (the strings WebKit passes
+/// to `wpe_view_set_cursor_from_name`) to a `CursorKind`. Coverage
+/// is intentionally broad on aliases — many CSS keywords map to
+/// the same visual cursor. Unknown names fall back to `Default`.
+pub fn parse_cursor_name(name: &str) -> CursorKind {
+    match name {
+        "default" | "auto" | "context-menu" | "help" => CursorKind::Default,
+        "pointer" => CursorKind::Pointer,
+        "text" | "vertical-text" => CursorKind::Text,
+        "wait" | "progress" => CursorKind::Working,
+        "crosshair" | "cell" => CursorKind::Crosshair,
+        "grab" | "all-scroll" => CursorKind::Grab,
+        "grabbing" => CursorKind::Grabbing,
+        "move" => CursorKind::Move,
+        "not-allowed" | "no-drop" => CursorKind::NotAllowed,
+        "ew-resize" | "col-resize" | "e-resize" | "w-resize" => {
+            CursorKind::ResizingHorizontally
+        }
+        "ns-resize" | "row-resize" | "n-resize" | "s-resize" => {
+            CursorKind::ResizingVertically
+        }
+        // Corner-resize and "copy" / "alias" cursors don't have
+        // exact iced equivalents — fall through to default rather
+        // than picking a wrong one.
+        _ => CursorKind::Default,
+    }
+}
+
 /// Convenience: pull the `keyboard::Event` discriminant we care
 /// about and dispatch to `keyboard_event_to_wpe`.
 pub fn translate_keyboard(

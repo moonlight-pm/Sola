@@ -36,6 +36,11 @@ pub struct FrameSlot {
     /// Last size we asked WPE to render at (physical pixels). Used
     /// to debounce resize commands so we only fire on actual change.
     pub last_size: Mutex<(u32, u32)>,
+    /// Latest CSS-cursor state from WPE, written by the worker
+    /// thread on `wpe_view_set_cursor_from_name`. Read by
+    /// `Program::mouse_interaction`. Value is a `CursorKind`
+    /// discriminant.
+    pub cursor: Arc<std::sync::atomic::AtomicU32>,
 }
 
 #[derive(Debug)]
@@ -258,12 +263,16 @@ impl<Msg> shader::Program<Msg> for WpeProgram {
         _bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        // Default arrow. WPE doesn't yet feed CSS `cursor:` state
-        // back to us via the Platform API surface we've subclassed,
-        // so we can't legitimately switch to Pointer over a link
-        // or Text over an input. Better to be honestly-wrong-as-
-        // arrow than confidently-wrong-as-pointer.
-        mouse::Interaction::default()
+        // CSS cursor pushed by WebKit via the
+        // `wpe_view_set_cursor_from_name` vmethod we hijacked.
+        // Worker thread writes the discriminant into the shared
+        // atomic; we read it here every render. Falls back to
+        // Default if WebKit hasn't told us anything yet.
+        let raw = self
+            .slot
+            .cursor
+            .load(std::sync::atomic::Ordering::Relaxed);
+        input::CursorKind::from_u32(raw).to_iced()
     }
 }
 
@@ -385,17 +394,41 @@ impl shader::Primitive for WpePrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        // Always begin a clearing pass so the target shows black
-        // (not iced's default white) at startup and during the
-        // size-mismatch period below. That replaces the brief
-        // white flash users were seeing.
+        // Decide load op + whether to draw based on what state the
+        // pipeline is in. The earlier blanket Clear(BLACK) caused a
+        // visible black rectangle on hover transitions when iced
+        // submitted a render of a sub-region: the clear wiped the
+        // target, and any pixels not subsequently re-drawn this
+        // present went out black.
+        //
+        // Three states:
+        //   - No frame imported yet → Clear(BLACK), no draw. The
+        //     target shows black instead of iced's default white.
+        //   - Frame imported, size mismatches our last Resize → Load,
+        //     no draw. We preserve whatever was there (either the
+        //     prior black from startup, or a previous good frame
+        //     while WPE catches up to a resize).
+        //   - Frame imported, size matches → Load + draw. Normal
+        //     steady-state path.
+        let (load_op, do_draw) = match pipeline.current.as_ref() {
+            None => (wgpu::LoadOp::Clear(wgpu::Color::BLACK), false),
+            Some(current) => {
+                let requested = *self.slot.last_size.lock().unwrap();
+                if current.size == requested {
+                    (wgpu::LoadOp::Load, true)
+                } else {
+                    (wgpu::LoadOp::Load, false)
+                }
+            }
+        };
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("wpe sample pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: load_op,
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -404,20 +437,9 @@ impl shader::Primitive for WpePrimitive {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        let (Some(bg), Some(current)) = (&pipeline.bind_group, pipeline.current.as_ref()) else {
+        let Some(bg) = (do_draw).then_some(pipeline.bind_group.as_ref()).flatten() else {
             return;
         };
-
-        // Skip the draw if the imported frame's size doesn't match
-        // the size we last asked WPE for. This catches the brief
-        // post-startup window when WPE is still rendering at its
-        // headless 1024x768 default before our `Cmd::Resize`
-        // propagates to the WebProcess. Better to flash black
-        // than show a stretched intermediate frame.
-        let requested = *self.slot.last_size.lock().unwrap();
-        if current.size != requested {
-            return;
-        }
 
         pass.set_scissor_rect(
             clip_bounds.x,

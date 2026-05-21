@@ -43,6 +43,31 @@ void sola_wpe_set_buffer_callback(sola_wpe_buffer_cb cb, void *user_data) {
     s_buffer_ud = user_data;
 }
 
+static sola_wpe_cursor_cb s_cursor_cb = NULL;
+static void              *s_cursor_ud = NULL;
+
+void sola_wpe_set_cursor_callback(sola_wpe_cursor_cb cb, void *user_data) {
+    s_cursor_cb = cb;
+    s_cursor_ud = user_data;
+}
+
+/* ---- vmethod hijack for set_cursor_from_name ------------------- */
+
+/* WebKit calls wpe_view_set_cursor_from_name(view, name) whenever
+ * the CSS cursor under the pointer changes. Standard FDO cursor
+ * names: "default", "pointer", "text", "wait", "grab", "grabbing",
+ * "ew-resize", "ns-resize", "crosshair", "move", "not-allowed", …
+ * The headless backend has no native cursor surface, so by default
+ * this slot is a no-op. We override it to forward the name to the
+ * Rust side, where iced's `mouse_interaction` reads it and returns
+ * the matching `iced::mouse::Interaction`. */
+static void sola_view_set_cursor_from_name(WPEView *view, const char *name) {
+    (void)view;
+    if (s_cursor_cb) {
+        s_cursor_cb(s_cursor_ud, name ? name : "default");
+    }
+}
+
 /* ---- vmethod hijack for get_preferred_buffer_formats ------------ */
 
 /* NOTE: as of WebKit 2.52.3 this vmethod is never invoked by the
@@ -100,6 +125,16 @@ static void sola_wpe_init_once(void) {
         (WPEDisplayClass *)g_type_class_ref(WPE_TYPE_DISPLAY_HEADLESS);
     display_class->get_preferred_buffer_formats =
         sola_get_preferred_buffer_formats;
+
+    /* Hijack the headless view's set_cursor_from_name slot so we
+     * see CSS cursor changes. Same pattern as the display class:
+     * g_type_class_ref triggers class_init (installing the default
+     * which is a no-op for headless), then we overwrite the slot.
+     * The ref is intentionally leaked — the vtable must outlive
+     * any view that might still dispatch through it. */
+    WPEViewClass *view_class =
+        (WPEViewClass *)g_type_class_ref(WPE_TYPE_VIEW_HEADLESS);
+    view_class->set_cursor_from_name = sola_view_set_cursor_from_name;
 
     /* Ref WPEView so signals are registered, then look up the
      * signal id we want and install our emission hook. The hook

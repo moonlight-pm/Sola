@@ -133,6 +133,11 @@ pub struct WpeEngine {
     worker: Option<JoinHandle<()>>,
     cmd_tx: Sender<Cmd>,
     frames: Arc<Mutex<Receiver<WpeFrame>>>,
+    /// Latest CSS cursor name (encoded as `CursorKind`) WebKit
+    /// asked us to display. Written from the worker thread when
+    /// `wpe_view_set_cursor_from_name` fires, read from iced's
+    /// render thread by `mouse_interaction`.
+    cursor: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl WpeEngine {
@@ -146,6 +151,8 @@ impl WpeEngine {
         let (cmd_tx, cmd_rx) = channel::<Cmd>();
         let (frame_tx, frame_rx) = channel::<WpeFrame>();
         let (ready_tx, ready_rx) = channel::<()>();
+        let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cursor_worker = cursor.clone();
         // Queue the initial size before the worker starts. The pump
         // stashes it in `pending_resize` until the first frame
         // latches `WorkerCtx::view`, then replays it. Without this
@@ -156,7 +163,9 @@ impl WpeEngine {
         let worker = thread::Builder::new()
             .name("wpe-engine".into())
             .spawn(move || unsafe {
-                worker_main(url, width, height, frame_tx, cmd_rx, ready_tx)
+                worker_main(
+                    url, width, height, frame_tx, cmd_rx, ready_tx, cursor_worker,
+                )
             })
             .expect("spawn wpe-engine thread");
         // Block until WPE init is done. Without this, the env-var
@@ -167,7 +176,14 @@ impl WpeEngine {
             worker: Some(worker),
             cmd_tx,
             frames: Arc::new(Mutex::new(frame_rx)),
+            cursor,
         }
+    }
+
+    /// Shared handle to the current cursor shape. Reads are
+    /// non-blocking; safe to call from iced's render thread.
+    pub fn cursor_handle(&self) -> Arc<std::sync::atomic::AtomicU32> {
+        self.cursor.clone()
     }
 
     pub fn cmd_sender(&self) -> Sender<Cmd> {
@@ -201,6 +217,10 @@ struct WorkerCtx {
     /// Replayed once the first frame populates `view`. Only the
     /// most recent size is kept — older requests are obsolete.
     pending_resize: Option<(u32, u32)>,
+    /// Mirror of `WpeEngine::cursor` — the worker writes into this
+    /// from the `sola_wpe_set_cursor_callback` callback. Same Arc,
+    /// just held here so the callback's user_data resolves to it.
+    cursor: Arc<std::sync::atomic::AtomicU32>,
 }
 
 unsafe fn worker_main(
@@ -210,6 +230,7 @@ unsafe fn worker_main(
     frame_tx: Sender<WpeFrame>,
     cmd_rx: Receiver<Cmd>,
     ready_tx: Sender<()>,
+    cursor: Arc<std::sync::atomic::AtomicU32>,
 ) {
     // 1. Construct our subclass-hijacked WPEDisplayHeadless. This
     //    is what flips WebKit's internal path to the Platform API
@@ -233,17 +254,21 @@ unsafe fn worker_main(
     sys::wpe_display_set_primary(display);
     tracing::info!("WPE platform display ready (subclassed for LINEAR-only modifier)");
 
-    // 2. Install our buffer-rendered callback. The C side installs
-    //    a GObject emission hook on the WPEView signal; this just
-    //    pipes incoming frames into the channel.
+    // 2. Install our buffer-rendered + cursor callbacks. The C
+    //    side installs a GObject emission hook on the WPEView
+    //    signal (for buffers) and overrides the
+    //    `set_cursor_from_name` vmethod on WPEViewHeadlessClass
+    //    (for cursor). Both fire on this same worker thread.
     let ctx = Box::into_raw(Box::new(WorkerCtx {
         main_loop: ptr::null_mut(),
         frame_tx,
         cmd_rx,
         view: ptr::null_mut(),
         pending_resize: None,
+        cursor,
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
+    sys::sola_wpe_set_cursor_callback(Some(on_cursor_changed), ctx as *mut c_void);
 
     // 3. Build a WebKitWebView. With `isUsingWPEPlatformAPI()` true
     //    (we forced that by constructing a display above), passing
@@ -278,7 +303,29 @@ unsafe fn worker_main(
     tracing::info!("WPE engine GMainLoop exited");
 
     sys::sola_wpe_set_buffer_callback(None, ptr::null_mut());
+    sys::sola_wpe_set_cursor_callback(None, ptr::null_mut());
     let _ = Box::from_raw(ctx);
+}
+
+/// Called from C when WebKit changes the CSS cursor. `name` is
+/// a borrowed UTF-8 cstr; we copy the bytes briefly to translate,
+/// then store the discriminant in the shared atomic. iced's
+/// `mouse_interaction` polls that atomic each frame.
+unsafe extern "C" fn on_cursor_changed(
+    user_data: *mut c_void,
+    name: *const std::os::raw::c_char,
+) {
+    let ctx = &*(user_data as *mut WorkerCtx);
+    let kind = if name.is_null() {
+        crate::input::CursorKind::Default
+    } else {
+        let s = std::ffi::CStr::from_ptr(name).to_string_lossy();
+        crate::input::parse_cursor_name(&s)
+    };
+    ctx.cursor.store(
+        kind as u32,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 unsafe extern "C" fn on_buffer_rendered(

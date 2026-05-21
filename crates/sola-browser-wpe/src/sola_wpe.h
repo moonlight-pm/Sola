@@ -34,6 +34,15 @@ typedef void (*sola_wpe_buffer_cb)(void *user_data,
  * one display in flight). Pass NULL to clear. */
 void sola_wpe_set_buffer_callback(sola_wpe_buffer_cb cb, void *user_data);
 
+/* Callback fired when WebKit changes the CSS cursor for the view.
+ * `name` is a freedesktop cursor name like "default", "pointer",
+ * "text", "grab", "ew-resize", etc. Borrowed for the call only —
+ * dup it if you need to keep it. */
+typedef void (*sola_wpe_cursor_cb)(void *user_data, const char *name);
+
+/* Install the CSS-cursor callback. NULL clears. */
+void sola_wpe_set_cursor_callback(sola_wpe_cursor_cb cb, void *user_data);
+
 /* Construct a new WPEDisplay (subclass of WPEDisplayHeadless) that
  * advertises LINEAR-only buffer formats. Caller owns the reference
  * (g_object_unref to free, though the engine usually keeps it alive
