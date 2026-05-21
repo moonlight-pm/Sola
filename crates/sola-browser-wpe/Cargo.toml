@@ -36,3 +36,12 @@ iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio"
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 tracing = "0.1"
+
+# Direct GPU access for the phase-0 DMA-BUF probes. wgpu pinned to the
+# exact version iced 0.14 carries so handle types unify; wgpu-hal at
+# its matching minor for the same reason. ash is the underlying
+# Vulkan binding wgpu-hal itself uses — must match the version it
+# pulls in, otherwise vk::Image etc. are incompatible types.
+wgpu = { version = "27", features = ["vulkan-portability"] }
+wgpu-hal = { version = "27", features = ["vulkan"] }
+ash = "0.38"
