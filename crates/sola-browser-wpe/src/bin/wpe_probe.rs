@@ -32,8 +32,7 @@
 // individual unsafe calls inside unsafe fns is noise here.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::ffi::{CStr, CString, c_char, c_void};
-use std::os::fd::{BorrowedFd, FromRawFd, OwnedFd};
+use std::ffi::{CString, c_void};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::Mutex;

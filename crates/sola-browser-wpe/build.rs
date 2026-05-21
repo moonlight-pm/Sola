@@ -199,5 +199,12 @@ fn main() {
         .warnings(true)
         .extra_warnings(false)
         .flag_if_supported("-Wno-deprecated-declarations")
+        // glibc's `_FORTIFY_SOURCE requires compiling with
+        // optimization` `#warning` is emitted as -Wcpp on debug
+        // builds (nix's wrapper pre-defines `-D_FORTIFY_SOURCE=3`
+        // and we compile at -O0). `-Wno-cpp` silences exactly the
+        // category without disabling other useful #warnings or
+        // pretending the macro isn't defined.
+        .flag_if_supported("-Wno-cpp")
         .compile("sola_wpe");
 }
