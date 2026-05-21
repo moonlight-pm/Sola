@@ -52,10 +52,30 @@ fn main() -> iced::Result {
 
     let _ = sola_core::env::activate_wayland_session(10_000);
 
+    // Hide WAYLAND_DISPLAY from libWPEWebKit's init. With it set,
+    // libWPEWebKit's bundled wpe-platform-wayland module wakes up
+    // alongside our headless one and registers a hidden Wayland
+    // toplevel for the WebProcess — sola-shell sees that as a
+    // second window with app_id `org.webkit.app-<sha256>`. We
+    // restore WAYLAND_DISPLAY after `WpeEngine::spawn` returns
+    // (it blocks until WPE init is past the parts that consult
+    // the env var) so iced sees it on the main-thread side.
+    //
+    // SAFETY: single-threaded between log init and WpeEngine::spawn.
+    let saved_wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+    unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+
     // Spawn WPE first — its worker thread starts loading the URL
     // before iced has even opened a window. By the time the iced
     // shader Program's first prepare runs, a frame is usually ready.
     let engine = WpeEngine::spawn(URL, VIEW_W, VIEW_H);
+
+    if let Some(d) = saved_wayland_display {
+        // SAFETY: spawn() blocked until WPE finished the parts of
+        // init that consult WAYLAND_DISPLAY; the GMainLoop on the
+        // worker doesn't look it up. iced hasn't started yet.
+        unsafe { std::env::set_var("WAYLAND_DISPLAY", d) };
+    }
     let releaser = engine.cmd_sender();
     ENGINE.set(engine).map_err(|_| ()).expect("ENGINE set twice");
 

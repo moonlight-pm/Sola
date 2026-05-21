@@ -75,9 +75,16 @@ pub struct WpeEngine {
 }
 
 impl WpeEngine {
+    /// Spawn the WPE worker. **Blocks** until the worker has
+    /// finished the parts of WPE init that consult
+    /// `WAYLAND_DISPLAY` (display creation + view creation + URL
+    /// load kick-off). After this returns, the worker thread is
+    /// running the GMainLoop and the caller can safely restore
+    /// `WAYLAND_DISPLAY` if it manipulated it (see main.rs).
     pub fn spawn(url: &str, width: u32, height: u32) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Cmd>();
         let (frame_tx, frame_rx) = channel::<WpeFrame>();
+        let (ready_tx, ready_rx) = channel::<()>();
         // Queue the initial size before the worker starts. The pump
         // stashes it in `pending_resize` until the first frame
         // latches `WorkerCtx::view`, then replays it. Without this
@@ -87,8 +94,14 @@ impl WpeEngine {
         let url = url.to_string();
         let worker = thread::Builder::new()
             .name("wpe-engine".into())
-            .spawn(move || unsafe { worker_main(url, width, height, frame_tx, cmd_rx) })
+            .spawn(move || unsafe {
+                worker_main(url, width, height, frame_tx, cmd_rx, ready_tx)
+            })
             .expect("spawn wpe-engine thread");
+        // Block until WPE init is done. Without this, the env-var
+        // dance in main.rs wouldn't have a sync point and iced
+        // could observe WAYLAND_DISPLAY in either state.
+        let _ = ready_rx.recv();
         Self {
             worker: Some(worker),
             cmd_tx,
@@ -135,6 +148,7 @@ unsafe fn worker_main(
     _height: u32,
     frame_tx: Sender<WpeFrame>,
     cmd_rx: Receiver<Cmd>,
+    ready_tx: Sender<()>,
 ) {
     // 1. Construct our subclass-hijacked WPEDisplayHeadless. This
     //    is what flips WebKit's internal path to the Platform API
@@ -183,6 +197,14 @@ unsafe fn worker_main(
     let url_c = CString::new(url.as_str()).unwrap();
     sys::webkit_web_view_load_uri(view as *mut _, url_c.as_ptr());
     tracing::info!(url = %url, "kicked off URL load");
+
+    // Tell the spawner we're done with the parts of WPE init that
+    // examine WAYLAND_DISPLAY. The main thread is blocked in
+    // `spawn`, holding WAYLAND_DISPLAY unset, and will restore it
+    // and start iced once we signal here. After this point WPE
+    // shouldn't be opening new Wayland connections — it has its
+    // headless WPEDisplay and renders to DMA-BUFs.
+    let _ = ready_tx.send(());
 
     // 4. GMain loop. Poll the command channel from a timeout source
     //    so Release / Quit are handled alongside WPE's own events.
@@ -320,7 +342,17 @@ unsafe fn apply_resize(view: *mut sys::WPEView, width: u32, height: u32) {
             height,
             "wpe_toplevel_resize returned FALSE — backend rejected the size",
         );
-    } else {
-        tracing::info!(width, height, "wpe_toplevel_resize accepted");
+        return;
     }
+    // On Wayland backends `wpe_toplevel_resize` requests a size from
+    // the compositor and the actual size lands later via a configure
+    // event, which then triggers `wpe_toplevel_resized` /
+    // `wpe_view_resized` internally. The headless backend has no
+    // compositor round-trip — without calling the resized notifiers
+    // ourselves, the size sticks at the WPEView level but the
+    // WebProcess never gets told to re-render at the new size, so
+    // frames keep coming at the headless default (1024x768).
+    sys::wpe_toplevel_resized(toplevel, width as i32, height as i32);
+    sys::wpe_view_resized(view, width as i32, height as i32);
+    tracing::info!(width, height, "wpe_toplevel_resize accepted + notified");
 }
