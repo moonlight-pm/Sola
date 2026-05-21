@@ -106,7 +106,7 @@ impl shader::Primitive for WpePrimitive {
         };
         drop(guard);
 
-        tracing::info!(
+        tracing::trace!(
             w = frame.width,
             h = frame.height,
             stride = frame.stride,

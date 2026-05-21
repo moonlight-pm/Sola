@@ -230,7 +230,7 @@ unsafe extern "C" fn on_buffer_rendered(
     let offset = sys::wpe_buffer_dma_buf_get_offset(buffer, 0);
     let raw_fd = sys::wpe_buffer_dma_buf_get_fd(buffer, 0);
 
-    tracing::info!(
+    tracing::trace!(
         w = width,
         h = height,
         format = format!("{:#x}", format),
