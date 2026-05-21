@@ -52,6 +52,7 @@ ash = "0.38"
 # to verify exported DMA-BUFs contain real pixel data.
 png = "0.18"
 libc = "0.2"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [build-dependencies]
 pkg-config = "0.3"

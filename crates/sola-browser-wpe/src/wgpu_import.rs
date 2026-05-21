@@ -1,0 +1,237 @@
+//! DMA-BUF → `wgpu::Texture` import for frames coming out of WPE.
+//!
+//! Built on the path validated by `wgpu-dmabuf-probe` (phase 0a):
+//! `wgpu_hal::vulkan::Device::texture_from_raw` wraps a VkImage we
+//! created, then `wgpu::Device::create_texture_from_hal` produces a
+//! public `wgpu::Texture`. Difference vs the probe: now the FD comes
+//! from another process, and the producer's modifier (NVIDIA's
+//! `0x300000000606014` in the WPE case) is non-LINEAR — but the
+//! reported stride matches what LINEAR would have, and ad-hoc
+//! mmap+read produced correct pixels in `wpe-probe`, so we try
+//! LINEAR import first and only escalate to
+//! `VK_EXT_image_drm_format_modifier` if that breaks.
+//!
+//! The returned `ImportedFrame` owns the VkImage (destroyed by
+//! wgpu-hal when `texture` drops) and the VkDeviceMemory (we free
+//! it in the `_holder` Drop). The FD is consumed by
+//! `vkAllocateMemory(VkImportMemoryFdInfoKHR)` and closed by the
+//! driver when memory is freed — no separate `close` needed.
+
+use std::os::fd::{IntoRawFd, OwnedFd};
+
+use ash::vk;
+
+/// Public handle returned by `import`. Drop order matters: `texture`
+/// runs first (releases the imported VkImage via wgpu-hal), then
+/// `_holder` (frees the imported VkDeviceMemory).
+pub struct ImportedFrame {
+    pub texture: wgpu::Texture,
+    _holder: MemoryHolder,
+}
+
+impl std::fmt::Debug for ImportedFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImportedFrame")
+            .field("texture", &self.texture)
+            .finish_non_exhaustive()
+    }
+}
+
+struct MemoryHolder {
+    device: ash::Device,
+    memory: vk::DeviceMemory,
+}
+
+impl Drop for MemoryHolder {
+    fn drop(&mut self) {
+        // SAFETY: device clones share refcount via ash internals;
+        // memory was allocated by us and not yet freed.
+        unsafe { self.device.free_memory(self.memory, None) };
+    }
+}
+
+pub struct DmabufMetadata {
+    pub width: u32,
+    pub height: u32,
+    /// DRM fourcc. Currently only ARGB8888 (`0x34325241`) is wired.
+    pub format: u32,
+    pub modifier: u64,
+    pub stride: u32,
+    pub offset: u32,
+}
+
+/// Import `fd` as a sampleable `wgpu::Texture`. Takes ownership of
+/// the FD — `vkAllocateMemory` consumes it and the driver closes it
+/// when the memory is freed.
+///
+/// SAFETY: `device` must be a Vulkan-backed wgpu device.
+pub unsafe fn import(
+    device: &wgpu::Device,
+    fd: OwnedFd,
+    meta: &DmabufMetadata,
+) -> Result<ImportedFrame, ImportError> {
+    if meta.format != 0x3432_5241 {
+        return Err(ImportError::UnsupportedFormat(meta.format));
+    }
+    let vk_format = vk::Format::B8G8R8A8_UNORM;
+    let wgpu_format = wgpu::TextureFormat::Bgra8Unorm;
+
+    let raw_fd = fd.into_raw_fd();
+
+    let (texture, memory) = unsafe {
+        let guard = device
+            .as_hal::<wgpu_hal::api::Vulkan>()
+            .ok_or(ImportError::NotVulkanBackend)?;
+        let ash_device: ash::Device = guard.raw_device().clone();
+        let physical = guard.raw_physical_device();
+        let instance: &ash::Instance = guard.shared_instance().raw_instance();
+
+        // Create the consumer-side VkImage referencing external
+        // memory. LINEAR tiling for now — see module doc for the
+        // rationale (WPE-on-NVIDIA's reported modifier is non-zero
+        // but the buffer is effectively linear at our pitch). The
+        // texture_from_raw + create_texture_from_hal call gets us
+        // a wgpu::Texture wrapping it.
+        let mut external_info = vk::ExternalMemoryImageCreateInfo::default()
+            .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
+
+        let image_info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(vk_format)
+            .extent(vk::Extent3D {
+                width: meta.width,
+                height: meta.height,
+                depth: 1,
+            })
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::LINEAR)
+            .usage(vk::ImageUsageFlags::SAMPLED)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .initial_layout(vk::ImageLayout::PREINITIALIZED)
+            .push_next(&mut external_info);
+
+        let image = ash_device
+            .create_image(&image_info, None)
+            .map_err(ImportError::Vulkan)?;
+
+        let mem_reqs = ash_device.get_image_memory_requirements(image);
+        // Pick a HOST_VISIBLE memory type — same as the probe. The
+        // imported FD lives in whatever memory the producer chose;
+        // we just need a memory type the driver accepts for import.
+        let mem_type_idx = find_memory_type(
+            instance,
+            physical,
+            mem_reqs.memory_type_bits,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        )
+        .ok_or(ImportError::NoSuitableMemoryType)?;
+
+        let mut import_info = vk::ImportMemoryFdInfoKHR::default()
+            .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
+            .fd(raw_fd);
+
+        let alloc_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(mem_reqs.size)
+            .memory_type_index(mem_type_idx)
+            .push_next(&mut import_info);
+
+        let memory = ash_device
+            .allocate_memory(&alloc_info, None)
+            .map_err(ImportError::Vulkan)?;
+
+        ash_device
+            .bind_image_memory(image, memory, 0)
+            .map_err(ImportError::Vulkan)?;
+
+        let hal_texture = guard.texture_from_raw(
+            image,
+            &wgpu_hal::TextureDescriptor {
+                label: Some("wpe-imported"),
+                size: wgpu::Extent3d {
+                    width: meta.width,
+                    height: meta.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu_format,
+                usage: wgpu::TextureUses::RESOURCE,
+                memory_flags: wgpu_hal::MemoryFlags::empty(),
+                view_formats: vec![],
+            },
+            None,
+        );
+
+        let texture = device.create_texture_from_hal::<wgpu_hal::api::Vulkan>(
+            hal_texture,
+            &wgpu::TextureDescriptor {
+                label: Some("wpe-imported wgpu"),
+                size: wgpu::Extent3d {
+                    width: meta.width,
+                    height: meta.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu_format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+        );
+
+        (
+            texture,
+            MemoryHolder {
+                device: ash_device,
+                memory,
+            },
+        )
+    };
+
+    Ok(ImportedFrame {
+        texture,
+        _holder: memory,
+    })
+}
+
+#[derive(Debug)]
+pub enum ImportError {
+    NotVulkanBackend,
+    UnsupportedFormat(u32),
+    NoSuitableMemoryType,
+    Vulkan(vk::Result),
+}
+
+impl std::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImportError::NotVulkanBackend => write!(f, "wgpu is not on the Vulkan backend"),
+            ImportError::UnsupportedFormat(fmt) => {
+                write!(f, "unsupported DRM format {:#x}", fmt)
+            }
+            ImportError::NoSuitableMemoryType => write!(f, "no host-visible memory type"),
+            ImportError::Vulkan(r) => write!(f, "Vulkan error: {r:?}"),
+        }
+    }
+}
+
+impl std::error::Error for ImportError {}
+
+fn find_memory_type(
+    instance: &ash::Instance,
+    physical: vk::PhysicalDevice,
+    type_bits: u32,
+    properties: vk::MemoryPropertyFlags,
+) -> Option<u32> {
+    let props = unsafe { instance.get_physical_device_memory_properties(physical) };
+    (0..props.memory_type_count).find(|&i| {
+        (type_bits & (1 << i)) != 0
+            && props.memory_types[i as usize]
+                .property_flags
+                .contains(properties)
+    })
+}

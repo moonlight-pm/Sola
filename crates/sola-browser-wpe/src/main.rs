@@ -1,50 +1,151 @@
-//! sola-browser-wpe — custom browser with iced chrome and embedded
-//! WPEWebKit webviews. Phase-0 skeleton: opens an empty iced window
-//! and exits cleanly. Subsequent phases add the wgpu DMA-BUF import
-//! path (0a), a WPE worker subprocess that exports frames (0b), the
-//! main-process glue that imports those frames into wgpu (0c), and
-//! input forwarding (0d). See `docs/specs/2026-05-21-sola-browser-wpe.md`
-//! (TODO) for the full plan.
+//! sola-browser-wpe — phase 0c skeleton.
+//!
+//! Joins the two phase-0 halves: WPE renders a hardcoded URL,
+//! iced samples each DMA-BUF frame in a `shader::Program` and
+//! draws it as the entire window content. No chrome, no input
+//! forwarding yet — that comes in phase 1+ as we layer on the
+//! actual browser UI.
 
-use iced::widget::container;
-use iced::{Element, Length, Task};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+
+use iced::futures::SinkExt;
+use iced::futures::Stream;
+use iced::stream;
+use iced::widget::Shader;
+use iced::{Element, Length, Subscription, Task};
+
+use sola_browser_wpe::shader::{FrameSlot, WpeProgram};
+use sola_browser_wpe::wpe::WpeEngine;
 
 const APP_ID: &str = "sola-browser-wpe";
+const URL: &str = "https://example.com";
+const VIEW_W: u32 = 1280;
+const VIEW_H: u32 = 800;
+
+/// WPE engine handle — global so the iced subscription can read
+/// frames without iced needing to thread it through App state.
+/// Initialized once in `main` before `iced::application` runs.
+static ENGINE: OnceLock<WpeEngine> = OnceLock::new();
 
 fn main() -> iced::Result {
     sola_core::log::init(APP_ID);
-    tracing::info!("{APP_ID} starting (skeleton)");
+    tracing::info!("{APP_ID} starting");
 
     let _ = sola_core::env::activate_wayland_session(10_000);
 
-    iced::application(App::default, App::update, App::view)
-        .title(|_: &App| String::from(APP_ID))
-        .window(iced::window::Settings {
-            decorations: false,
-            platform_specific: iced::window::settings::PlatformSpecific {
-                application_id: APP_ID.into(),
-                ..Default::default()
-            },
-            ..iced::window::Settings::default()
-        })
-        .run()
+    // Spawn WPE first — its worker thread starts loading the URL
+    // before iced has even opened a window. By the time the iced
+    // shader Program's first prepare runs, a frame is usually ready.
+    let engine = WpeEngine::spawn(URL, VIEW_W, VIEW_H);
+    let releaser = engine.cmd_sender();
+    ENGINE.set(engine).map_err(|_| ()).expect("ENGINE set twice");
+
+    let slot = Arc::new(FrameSlot {
+        pending: Mutex::new(None),
+        releaser,
+    });
+    SLOT_FOR_STREAM
+        .set(slot.clone())
+        .map_err(|_| ())
+        .expect("SLOT_FOR_STREAM set twice");
+    let app_slot = slot.clone();
+
+    iced::application(
+        move || App {
+            slot: app_slot.clone(),
+        },
+        App::update,
+        App::view,
+    )
+    .title(|_: &App| APP_ID.into())
+    .subscription(App::subscription)
+    .window(iced::window::Settings {
+        decorations: false,
+        platform_specific: iced::window::settings::PlatformSpecific {
+            application_id: APP_ID.into(),
+            ..Default::default()
+        },
+        ..iced::window::Settings::default()
+    })
+    .run()
 }
 
-#[derive(Default)]
-struct App;
+struct App {
+    slot: Arc<FrameSlot>,
+}
 
 #[derive(Debug, Clone)]
-enum Msg {}
+enum Msg {
+    /// A new frame is ready in the slot — view() will repaint and
+    /// the shader Pipeline will pick it up on next prepare.
+    NewFrame,
+}
 
 impl App {
-    fn update(&mut self, _: Msg) -> Task<Msg> {
-        Task::none()
+    fn update(&mut self, msg: Msg) -> Task<Msg> {
+        match msg {
+            // The subscription stashed the frame in `slot.pending`
+            // before sending NewFrame; nothing for App::update to
+            // do beyond letting iced trigger a redraw.
+            Msg::NewFrame => Task::none(),
+        }
     }
 
     fn view(&self) -> Element<'_, Msg> {
-        container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        Shader::new(WpeProgram {
+            slot: self.slot.clone(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn subscription(&self) -> Subscription<Msg> {
+        Subscription::run(frame_stream)
     }
 }
+
+/// Bridge the std mpsc receiver from WpeEngine to an iced
+/// Subscription. Frames land in `slot.pending`; we emit `Msg::NewFrame`
+/// to trigger redraws.
+fn frame_stream() -> impl Stream<Item = Msg> {
+    stream::channel(64, async |mut output| {
+        // Block on the std::sync::mpsc receiver inside a blocking
+        // task. Each frame arrives, we stash it, and signal iced.
+        // The receiver is owned by ENGINE; we steal exclusive use
+        // by holding the Mutex.
+        let engine = ENGINE.get().expect("ENGINE not initialized");
+        let rx = engine.frames();
+        let slot = match SLOT_FOR_STREAM.get() {
+            Some(s) => s.clone(),
+            None => {
+                tracing::error!("SLOT_FOR_STREAM not set before subscription started");
+                return;
+            }
+        };
+        loop {
+            // spawn_blocking the recv so we don't block iced's runtime.
+            let frame = match tokio::task::spawn_blocking({
+                let rx = rx.clone();
+                move || rx.lock().unwrap().recv().ok()
+            })
+            .await
+            {
+                Ok(Some(frame)) => frame,
+                _ => break,
+            };
+            *slot.pending.lock().unwrap() = Some(frame);
+            if output.send(Msg::NewFrame).await.is_err() {
+                break;
+            }
+        }
+    })
+}
+
+/// Mirror of the App's `slot` shared with the subscription stream.
+/// Set in `main` after creating the slot. OnceLock because the
+/// iced subscription stream's closure can't capture the slot
+/// directly — it has to live in 'static land.
+static SLOT_FOR_STREAM: OnceLock<Arc<FrameSlot>> = OnceLock::new();
