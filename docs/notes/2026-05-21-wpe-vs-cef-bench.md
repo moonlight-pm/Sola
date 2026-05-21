@@ -1,5 +1,20 @@
 # WPE vs CEF — benchmark + framerate investigation
 
+## Decision (2026-05-21): **WPE**
+
+Sola ships `sola-browser` on WPE. The structural CPU advantage on
+NVIDIA proprietary (CEF can't use `on_accelerated_paint`, has to
+pay ~720 MiB/s of host-memory readback per frame on animated
+content) is decisive for our hardware target. Memory is also
+~400–700 MiB cheaper across the board.
+
+`sola-browser-cef` is kept in-tree as an archive — workspace-
+excluded, builds on demand, but no further feature work. Revisit
+only if we (a) start running on Mesa hosts where CEF's GPU
+transport works or (b) find another decisive reason to switch.
+
+---
+
 > 30-second runs on four URLs, same iced chrome, same hardware
 > (NVIDIA proprietary, RTX 3090 Ti, 120 Hz display), clean GPU
 > baseline. CEF's `windowless_frame_rate` raised from default 30

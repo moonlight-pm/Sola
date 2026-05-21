@@ -3,6 +3,16 @@ name = "sola-browser-cef"
 version = "0.1.0"
 edition = "2024"
 
+# **ARCHIVED 2026-05-21 — not under active development.**
+# Built to compare against sola-browser-wpe on NVIDIA proprietary;
+# the bench in docs/notes/2026-05-21-wpe-vs-cef-bench.md settled
+# the question in WPE's favor (CEF can't use on_accelerated_paint
+# on NVIDIA → ~70% more CPU per frame on animated content + 400-
+# 700 MiB more RSS). Crate stays in-tree as a reference for the
+# "what if we switch back" question if the host hardware ever
+# moves to Mesa. Builds on demand via `cargo make build
+# sola-browser-cef`, but no new features.
+#
 # CEF-backed sibling of sola-browser-wpe. Same iced chrome, same
 # wgpu shader sampling pipeline, same modifier-aware DMA-BUF import
 # via wgpu-hal-patched. Engine swap only — see

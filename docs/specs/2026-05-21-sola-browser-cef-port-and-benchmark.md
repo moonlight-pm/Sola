@@ -1,8 +1,23 @@
 # sola-browser-cef port + WPE/CEF performance comparison
 
-> **Goal:** Stand up a CEF-backed sibling of `sola-browser-wpe` so we
-> can measure CPU / GPU / RAM head-to-head against the WPE path on
-> the same hardware, same iced chrome, same dma-buf import pipeline.
+> **Status (2026-05-21): COMPLETE — outcome: stay on WPE.**
+>
+> The port shipped, the benchmark ran, and the comparison settled the
+> question. WPE wins per-frame efficiency by ~70 % on animated workloads
+> on NVIDIA proprietary, driven by CEF's inability to use
+> `on_accelerated_paint` and the resulting ~720 MiB/s host-memory
+> readback per paint. Memory was 400–700 MiB cheaper for WPE too.
+> Full numbers + analysis: `docs/notes/2026-05-21-wpe-vs-cef-bench.md`.
+>
+> The `sola-browser-cef` crate is kept workspace-excluded as a reference
+> implementation. Revisit if the host moves to Mesa (NVIDIA Open + NVK,
+> Intel, AMD) where CEF can use the GPU transport.
+>
+> ---
+
+> **Original goal:** Stand up a CEF-backed sibling of `sola-browser-wpe`
+> so we can measure CPU / GPU / RAM head-to-head against the WPE path
+> on the same hardware, same iced chrome, same dma-buf import pipeline.
 
 ## Why
 
