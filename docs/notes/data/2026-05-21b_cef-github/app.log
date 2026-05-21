@@ -1,0 +1,36 @@
+[2m15:23:04[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m sola-browser-cef starting
+[2m15:23:04[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m loading url [3murl[0m[2m=[0mhttps://github.com
+[2m15:23:04[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF initialized
+[2m15:23:04[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF browser created [3murl[0m[2m=[0mhttps://github.com
+[2m15:23:04[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF engine entering run_message_loop
+[2m15:23:04[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF was_resized [3mwidth[0m[2m=[0m1024 [3mheight[0m[2m=[0m768
+[2m15:23:04[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF was_resized [3mwidth[0m[2m=[0m1434 [3mheight[0m[2m=[0m2132
+[2m15:23:05[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"20.9"
+[2m15:23:06[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"19.0"
+[2m15:23:07[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"32.0"
+[2m15:23:08[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"29.9"
+[2m15:23:09[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:10[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:11[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:12[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:13[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:14[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:15[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:16[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:18[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:19[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:20[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:21[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:22[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:23[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:24[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:25[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:26[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:27[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:28[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:29[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:30[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:31[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:32[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:33[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"
+[2m15:23:34[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"30.0"

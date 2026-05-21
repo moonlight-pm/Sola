@@ -64,8 +64,10 @@ LOG_MARK_BEFORE=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
 START_EPOCH=$(date +%s)
 START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-# Launch and capture pid.
-"$BIN" > "$APP_LOG" 2>&1 &
+# Launch and capture pid. The browser binaries take the URL as
+# their first positional argv (default falls back to a hardcoded
+# constant in the binary, but we want the bench to control it).
+"$BIN" "$URL" > "$APP_LOG" 2>&1 &
 ROOT_PID=$!
 
 # Initialize CSV headers.

@@ -21,7 +21,11 @@ use sola_browser_cef::cef::CefEngine;
 use sola_browser_cef::shader::{CefProgram, FrameSlot};
 
 const APP_ID: &str = "sola-browser-cef";
-const URL: &str = "https://slate.auto";
+/// Default URL when no argv is given. Override with `sola-browser-cef <url>`.
+/// Note CEF re-execs this binary for each subprocess (renderer/GPU/utility/
+/// zygote); the URL only matters in the *browser* process. The subprocesses
+/// already exited from `dispatch_subprocess` before this constant is read.
+const DEFAULT_URL: &str = "https://slate.auto";
 const VIEW_W: u32 = 1280;
 const VIEW_H: u32 = 800;
 
@@ -45,7 +49,9 @@ fn main() -> ExitCode {
 
     let _ = sola_core::env::activate_wayland_session(10_000);
 
-    let engine = CefEngine::spawn(APP_ID, URL, VIEW_W, VIEW_H);
+    let url = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_URL.to_string());
+    tracing::info!(%url, "loading url");
+    let engine = CefEngine::spawn(APP_ID, &url, VIEW_W, VIEW_H);
     let releaser = engine.cmd_sender();
     ENGINE.set(engine).map_err(|_| ()).expect("ENGINE set twice");
 

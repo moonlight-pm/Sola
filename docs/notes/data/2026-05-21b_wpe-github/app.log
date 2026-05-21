@@ -1,0 +1,8 @@
+[2m15:22:31[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m sola-browser-wpe starting
+[2m15:22:31[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m loading url [3murl[0m[2m=[0mhttps://github.com
+[2m15:22:31[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m WPE platform display ready (subclassed for LINEAR-only modifier)
+[2m15:22:31[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m created WebKitWebView via Platform API path
+[2m15:22:31[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m kicked off URL load [3murl[0m[2m=[0mhttps://github.com
+[2m15:22:31[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m WPE engine entering GMainLoop
+
+** (WPEWebProcess:2): WARNING **: 15:22:32.149: Can't connect to a11y bus: Could not connect: No such file or directory

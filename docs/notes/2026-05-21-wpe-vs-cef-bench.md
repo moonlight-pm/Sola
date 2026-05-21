@@ -1,104 +1,176 @@
-# WPE vs CEF — benchmark + WPE framerate investigation
+# WPE vs CEF — benchmark + framerate investigation
 
-> 30-second runs of `sola-browser-{wpe,cef}` across four URLs. Same
-> iced chrome, same hardware (NVIDIA proprietary, RTX 3090 Ti),
-> clean GPU baseline (no other GPU workload running). Raw CSVs in
-> `docs/notes/data/2026-05-21_*`. Harness: `bench/run-bench.sh`,
-> `bench/summarize.py`.
+> 30-second runs on four URLs, same iced chrome, same hardware
+> (NVIDIA proprietary, RTX 3090 Ti, 120 Hz display), clean GPU
+> baseline. Raw CSVs in `docs/notes/data/2026-05-21b_*`. Harness:
+> `bench/run-bench.sh`, `bench/summarize.py`.
+
+> **Earlier draft retracted.** The first version of this report
+> showed every URL with near-identical numbers and concluded WPE
+> always emitted ~110 fps. That was a bug in the binaries —
+> the URL was hardcoded to `slate.auto` and the harness's URL
+> argument was being ignored. Fixed by adding argv parsing
+> (`std::env::args().nth(1)`); these numbers come from honest
+> per-URL runs.
 
 ## Headline numbers (medians across 30 s)
 
-| URL              | engine | tree CPU% | tree RSS (MiB) | shader FPS  | GPU util% | GPU mem MiB |
-| ---------------- | ------ | --------: | -------------: | ----------: | --------: | ----------: |
-| about:blank      | WPE    |    54.2   |     1214.7     |    110.7    |    32.5   |    1.4 GiB¹ |
-|                  | CEF    |    26.3   |     1666.9     |     8.0 ²   |    27.0   |    1.4 GiB¹ |
-| slate.auto       | WPE    |    56.9   |     1234.6     |    110.9    |    32.0   |    1.4 GiB¹ |
-|                  | CEF    |    27.0   |     1667.7     |     0.7 ²   |    22.0   |    1.4 GiB¹ |
-| github.com       | WPE    |    54.9   |     1211.6     |    111.1    |    33.0   |    1.4 GiB¹ |
-|                  | CEF    |    26.0   |     1669.7     |     9.5 ²   |    23.0   |    1.4 GiB¹ |
-| WebGL Aquarium ³ | WPE    |    53.6   |     1217.4     |    110.0    |    33.0   |    1.4 GiB¹ |
-|                  | CEF    |    26.2   |     1663.9     |     8.0 ²   |    24.0   |    1.4 GiB¹ |
+| URL                | engine | tree CPU% | RSS MiB | shader FPS  | GPU util% |
+| ------------------ | ------ | --------: | ------: | ----------: | --------: |
+| about:blank        | WPE    |   **6.2** |     451 |       0     |        24 |
+|                    | CEF    |       7.4 |    1078 |       0     |        23 |
+| slate.auto         | WPE    |     54.7  |    1208 |     111     |        33 |
+|                    | CEF    |   **25.5**|    1659 |       0.8 ⁱ |        24 |
+| github.com         | WPE    |   **6.4** |     511 |       0     |        23 |
+|                    | CEF    |      52.0 |    1626 |      30     |        35 |
+| WebGL Aquarium     | WPE    |     38.4  |     805 |      62     |        33 |
+|                    | CEF    |      41.0 |    1405 |      30     |        34 |
 
-¹ GPU memory is whole-card (NVIDIA doesn't expose per-process via nvidia-smi). System baseline before launch was ~1.3 GiB (sola-shell, compositor, etc.) so the per-engine contribution is ~50–100 MiB, well within noise.
+ⁱ One sample over 30 s. CEF only paints on actual change; with
+slate.auto mostly static after first paint, on_paint went silent.
 
-² CEF FPS samples are sparse because Chromium only repaints on actual change. Most runs registered exactly one fps sample (a single second with a visible paint).
+## Big-picture findings
 
-³ webglsamples.org/aquarium — JS+WebGL canvas. CEF's CPU stayed flat at 26 %, suggesting the WebGL canvas isn't actually driving extra on_paint events through CEF's CPU-OSR pipeline at the rate the page expects (consistent with CEF's default `windowless_frame_rate = 30` cap, but still surprising that we only see ~8 imports/s).
+- **WPE does not "always emit frames"** — verified by
+  `about:blank` and `github.com` both sitting at **0 shader fps,
+  ~6 % CPU**. The earlier (URL-bug) draft showed otherwise; that
+  was wrong.
+- **CEF caps OSR at 30 fps by default** (`windowless_frame_rate`).
+  Visible in `webgl aquarium` and `github.com` topping out at
+  exactly 30. Even on a 60 fps animation, CEF will not exceed
+  30 paints/s until we override this.
+- **For genuine animation, WPE is roughly 2× more
+  frame-efficient than CEF on this hardware.** WebGL Aquarium:
+  WPE 38 % CPU at 62 fps (~0.6 % CPU per fps) vs CEF 41 % CPU
+  at 30 fps (~1.4 % CPU per fps). This is dominated by CEF's
+  CPU OSR readback — `on_paint` memcpys a full 1434×2132 BGRA
+  buffer per frame, which is ~12 MiB at 30 Hz = ~360 MiB/s
+  through main memory.
+- **WPE wins memory uniformly** by 400–600 MiB. Same shape as
+  before — CEF's helper-process model has more per-process
+  fixed cost.
 
-## Read in one line
+## Per-question answers
 
-CEF wins steady-state CPU by ~2×. WPE wins memory by ~25 %. **The CPU gap is dominated by WPE's pipeline producing 110+ frames/sec even on `about:blank`** — once that's mitigated the CPU comparison would tighten significantly.
+### Q1: How Chromium/CEF sends frames
 
-## WPE framerate — what's going on
+The `RenderHandler::OnPaint` (or `OnAcceleratedPaint`) callback
+delivers a **full-viewport BGRA buffer every time**. There are no
+deltas at the callback boundary — even a 1-pixel cursor blink
+emits the whole frame.
 
-WPE's headless backend re-emits frames at the WebProcess's natural render rate (110+ fps here) regardless of whether anything on the page changed. CEF, by contrast, only emits on actual visual change. That asymmetry shows up directly in CPU% — most of WPE's overhead is doing work the page didn't ask for.
+What *is* delta-aware is the *production* cost inside Chromium:
 
-### Why the env-var fix doesn't apply
+- Viz tracks damage per **tile** (typical tile size 256×256).
+- The render pass only re-rasterizes dirty tiles into the GPU
+  texture, then composites the whole texture out.
+- On the CEF CPU-OSR path (what we use on NVIDIA), that GPU
+  texture is then read back into a CPU BGRA buffer and handed to
+  us in `OnPaint`. The readback is full-viewport regardless of
+  damage.
 
-WebKit ships `WEBKIT_DISPLAY_REFRESH_THROTTLE_FPS=N` for exactly this kind of throttling. It's read by `Source/WebKit/UIProcess/glib/DisplayLinkGLib.cpp` and gates the *DisplayLink* on top of a real DRM VBlank source. With our `WPEDisplayHeadless`, there is no DRM CRTC, no vblank monitor, no DisplayLink — so the env var is silently ignored. Verified empirically: setting `WEBKIT_DISPLAY_REFRESH_THROTTLE_FPS=30` gave us 110 fps anyway.
+The cap is `WindowInfo::windowless_frame_rate`, default **30**.
+Even on a 60 fps animated page, CEF will not deliver more than
+30 paints/s through OSR unless this is bumped. We left it at
+default; the WebGL Aquarium and github.com both topping out at
+exactly 30 fps confirms it's the binding limit.
 
-### What the headless backend actually does
+### Q2: WebGL Aquarium at 8 fps — what did that mean?
 
-`Source/WebKit/WPEPlatform/wpe/headless/WPEViewHeadless.cpp` (`wpewebkit-2.52.3` branch, identical to `main`) drives frame emission with a GSource timer. The intent reads like a 60 fps throttle:
+That number came from the URL-bug run — every binary was actually
+loading slate.auto, not the aquarium. With the URL bug fixed:
 
-```cpp
-static gboolean wpeViewHeadlessRenderBuffer(WPEView* view, WPEBuffer* buffer, ...) {
-    auto* priv = WPE_VIEW_HEADLESS(view)->priv;
-    priv->pendingBuffer = buffer;
-    auto now = g_get_monotonic_time();
-    if (!priv->lastFrameTime)
-        priv->lastFrameTime = now;
-    auto next = priv->lastFrameTime + (G_USEC_PER_SEC / 60); // ← 16.667 ms slot
-    priv->lastFrameTime = now;                                // ← BUG-ish (see below)
-    if (next <= now)
-        g_source_set_ready_time(priv->frameSource.get(), 0);
-    else
-        g_source_set_ready_time(priv->frameSource.get(), next);
-    return TRUE;
-}
-```
+- WebGL Aquarium in **CEF**: 30 fps. That's the
+  `windowless_frame_rate` ceiling, not an aquarium-specific issue.
+- WebGL Aquarium in **WPE**: 62 fps. Close to 60, slightly above
+  because the headless backend ticks on monotonic time with a
+  small per-frame slack rather than a hard 16.667 ms cap.
 
-`next` is intended to be 16.667 ms after the previous frame, but `lastFrameTime` is reassigned to `now` (the time of the current `render_buffer` *call*, not the time of the last frame *emission*). When WebProcess submits at 8 ms intervals (120 fps), the third call computes `next = 8 ms + 16.667 ms = 24.667 ms`, which is in the past by the time the fourth call lands at 24 ms — so `ready_time = 0` (fire immediately). The timer effectively becomes "single-frame coalescing" with no actual rate cap.
+Both are animating; CEF is just capped at half.
 
-Net effect: WPE headless emits frames at the WebProcess's submission rate. Our WebProcess is rendering at ~110 fps and we see ~110 fps out the door.
+### Q3: Why ~110 fps on a 120 Hz display?
 
-## Mitigations, ranked by effort × impact
+Almost certainly the iced/wgpu redraw path being vsync-bound on
+your 120 Hz monitor, not anything inside WPE.
 
-1. **Live with it (easiest).** Document the asymmetry in benchmark reports and move on. Pro: zero changes. Con: WPE always looks "worse" on CPU.
+- WPE WebProcess produces frames on its own internal compositor
+  schedule (no precise vsync; tick driven by GLib timer).
+- Our `frame_stream` subscription puts each frame in
+  `slot.pending` and posts a `Msg::NewFrame`. Multiple new frames
+  arriving before iced has redrawn are collapsed — iced batches
+  redraws to **one per surface present**.
+- wgpu's surface present mode is iced's default = `Fifo` (vsync).
+- On a 120 Hz monitor, that's ~120 Hz max with overhead
+  → ~110–117 fps in steady state, exactly what we measure.
 
-2. **Client-side throttle in `shader::prepare`** (~10 lines, in this repo). Track `last_frame_uploaded_at`; if a new frame arrives <16.667 ms after the previous, skip the wgpu import + bind-group rebuild but *still* call `Cmd::Release` so WPE's buffer pool doesn't stall. Saves iced + wgpu CPU but not WPE-WebProcess CPU. Halves our portion of the cost.
+So: on a 60 Hz display the same WPE binary would show ~58 fps on
+slate.auto, not 111. The cap is your display, not WPE.
 
-3. **Backpressure via delayed release** (~20 lines, in this repo). Queue the `Cmd::Release` with a 16 ms timer instead of sending it on every new frame. WPE's buffer pool fills, `render_buffer` blocks waiting for a free slot, WebProcess throttles itself. Saves WPE-WebProcess CPU too — but depends on pool size (WPE Platform headless uses 3 buffers by default, so this should work).
+What WPE *does* contribute is producing frames at all on a
+mostly-static page — slate.auto has continuous animation
+(background gradient or similar) that triggers a new buffer
+every WebProcess tick. CEF deduplicates this away to ~1 fps
+because Chromium's compositor recognizes "same content, no
+damage" and skips the paint.
 
-4. **Patch `WPEViewHeadless.cpp`** (one-line fix, upstream WebKit). Move `priv->lastFrameTime = now;` inside the `if (next <= now)` branch (or update it to `next` rather than `now`). This is the proper fix — it makes the 60 fps cap actually work. Worth filing as a WebKit bug at <https://bugs.webkit.org/>; same code path serves any other consumer of `WPEViewHeadless` so they'd want this too.
+### So is there a WPE framerate problem at all?
 
-5. **Substitute our own toplevel/view** — would require subclassing or `wrap_` macros that the WPE Platform API doesn't currently expose for the headless backend. Bigger lift than #4 and downstream of fixing upstream.
+Less than the earlier (wrong) writeup suggested. There's still
+**one** real asymmetry on animated pages: WPE keeps the iced
+redraw loop saturated at vsync because it emits a new buffer for
+every WebProcess compositor tick, even if the visible delta is
+imperceptible. CEF's deduplication saves work that WPE doesn't.
+On slate.auto specifically that's the 54 % vs 25 % gap.
 
-Recommendation: do **#3 (delayed release)** now if you want a fair benchmark today, **#4 (upstream patch)** if this becomes a sola-shipped thing. Avoid #2 alone because it leaves the WebProcess CPU cost on the table.
+Mitigations from the earlier draft still apply if you want WPE
+to match CEF's "only redraw on visible change" behaviour:
 
-## Memory delta — what's CEF spending it on
+1. **Client-side throttle in `shader::prepare`** (~10 LoC). Skip
+   the wgpu work if a frame arrives <16.67 ms after the previous,
+   but still `Cmd::Release` so WPE doesn't stall. Halves *our*
+   redraw cost, doesn't help WebProcess.
+2. **Delayed `Cmd::Release`** (~20 LoC). Hold buffers ~16 ms
+   before releasing. WPE's buffer pool fills, WebProcess
+   backpressures. Saves WPE-side CPU too.
+3. **Content-hash skip** — keep a SHA of the last imported
+   frame's pixels, skip import if identical. Closest to CEF's
+   behaviour but cost-shifts the work to the hash. Likely not
+   worth it.
 
-CEF runs ~9 processes; WPE runs ~8. CEF's helper processes each carry V8 isolates, Skia per-process state, and sandbox overhead. Estimated split of CEF's ~1.65 GB:
+The previous draft also pointed at a suspected bug in
+`WPEViewHeadless.cpp`'s rate limiter (`lastFrameTime = now`
+assignment outside the throttle branch). That code is still
+fishy, but it's *not* the source of the high fps numbers we
+saw — those were the URL bug.
 
-- Main browser process: ~250 MiB
-- GPU process: ~150 MiB (CPU OSR path on this hardware — would be smaller on Mesa)
-- Renderer (Blink): ~700 MiB on slate.auto (page-content-dependent)
-- Network, utility, zygotes: ~550 MiB combined
+## Memory tradeoff still holds
 
-The WPE comparison's 1.23 GB is mostly UIProcess + WPEWebProcess + WPENetworkProcess, fewer process boundaries.
-
-For multi-tab/multi-window workloads CEF's per-window memory cost rises linearly; WPE's doesn't grow as fast because more state is shared in the UIProcess.
+CEF runs ~9 processes, WPE ~8. CEF's 400–600 MiB premium across
+URLs reflects per-process V8/Skia/sandbox fixed cost. For
+multi-window/multi-tab use, CEF's memory will grow faster than
+WPE's because more state is per-process in Chromium.
 
 ## Visual quality
 
-Side-by-side at the same window size on slate.auto: WPE text reads slightly softer, CEF crisper. Same Skia raster backend in both, different glyph hinting / subpixel positioning / CSS-pixel rounding. Not a defect either way.
+Side-by-side at the same viewport size: WPE text reads slightly
+softer, CEF crisper. Same Skia raster backend, different glyph
+hinting / subpixel positioning. Not a defect either way.
 
-## Caveats baked into all numbers
+## Caveats baked in
 
-- CEF is on **CPU OSR** (`on_paint` → `queue.write_texture`) because NVIDIA proprietary can't drive `on_accelerated_paint`. On Mesa stacks (Intel / AMD / NVK), CEF's CPU% should drop further because the GPU process renders directly into a dma-buf.
-- WPE is on **GPU dma-buf** (zero-copy import via modifier-aware Vulkan) — best path it has on NVIDIA.
-- `ps -o %cpu` is averaged since process start, not interval. Good for "2× delta" calls, not for "5% delta" calls.
-- Single 30-second run per (engine, URL). Variance not measured; should add an N-iteration wrapper.
+- CEF is on **CPU OSR** (`on_paint` → `queue.write_texture`)
+  because NVIDIA proprietary can't drive `on_accelerated_paint`.
+  On a Mesa stack (Intel / AMD / NVK), CEF's CPU% on animated
+  pages should drop dramatically because the GPU process would
+  render directly into a dma-buf instead of reading back to a
+  CPU buffer.
+- WPE is on **GPU dma-buf** (zero-copy modifier-aware Vulkan
+  import) — best path on NVIDIA.
+- `ps -o %cpu` is averaged since process start, not interval.
+  Good for "2× delta" calls, less so for "5% delta" calls.
+- One 30 s run per (engine, URL). Variance not measured.
+- `windowless_frame_rate=30` left at default — CEF would be
+  closer to WPE on animated pages if bumped to 60 or 120.
 
 ## Reproduce
 
@@ -113,14 +185,20 @@ for site in blank slate github webgl; do
     github) url="https://github.com" ;;
     webgl)  url="https://webglsamples.org/aquarium/aquarium.html" ;;
   esac
-  bench/run-bench.sh wpe "$url" 30 "docs/notes/data/2026-05-21_wpe-${site}"
-  bench/run-bench.sh cef "$url" 30 "docs/notes/data/2026-05-21_cef-${site}"
+  bench/run-bench.sh wpe "$url" 30 "docs/notes/data/2026-05-21b_wpe-${site}"
+  bench/run-bench.sh cef "$url" 30 "docs/notes/data/2026-05-21b_cef-${site}"
 done
 ```
 
-## Next experiments worth running
+## Next experiments
 
-- **Mitigation #3 (delayed release)** applied to sola-browser-wpe, re-run the same matrix, compare to current WPE numbers. Expected: CPU drops from ~55 % toward ~30 %.
-- **Speedometer 3** on both — pure JS perf (V8 vs JSC) with no rendering bias. The harness as written would work; just point it at `https://browserbench.org/Speedometer3.0/` and a 120 s duration.
-- **N=3 iterations** per URL with cold-cache resets between runs, to filter out first-launch noise.
-- **A real WebGL workload at known FPS** — the aquarium page in CEF only delivered ~8 paints/s in our run, which suggests CEF's `windowless_frame_rate` (default 30) or some other cap is gating it. If we want a true GPU-saturation comparison we may need to raise that.
+- **Bump CEF `windowless_frame_rate` to 60 or 120** — would let CEF
+  match WPE's frame rate on the WebGL aquarium and is the
+  fairest setting for a paint-throughput comparison. One line
+  in `cef.rs`'s `BrowserSettings`.
+- **Run Speedometer 3** — pure JS perf (V8 vs JSC), no rendering
+  bias. Useful even with the OSR caps in place since the cost is
+  in the renderer process.
+- **N=3 iterations per URL** to filter cold-cache noise.
+- **Run on a 60 Hz display** to confirm the 110 fps shader rate
+  is vsync-bound, not WPE-bound.

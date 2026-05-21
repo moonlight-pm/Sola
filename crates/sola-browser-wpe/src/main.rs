@@ -20,7 +20,8 @@ use sola_browser_wpe::shader::{FrameSlot, WpeProgram};
 use sola_browser_wpe::wpe::WpeEngine;
 
 const APP_ID: &str = "sola-browser-wpe";
-const URL: &str = "https://slate.auto";
+/// Default URL when no argv is given. Override with `sola-browser-wpe <url>`.
+const DEFAULT_URL: &str = "https://slate.auto";
 const VIEW_W: u32 = 1280;
 const VIEW_H: u32 = 800;
 
@@ -68,7 +69,9 @@ fn main() -> iced::Result {
     // Spawn WPE first — its worker thread starts loading the URL
     // before iced has even opened a window. By the time the iced
     // shader Program's first prepare runs, a frame is usually ready.
-    let engine = WpeEngine::spawn(URL, VIEW_W, VIEW_H);
+    let url = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_URL.to_string());
+    tracing::info!(%url, "loading url");
+    let engine = WpeEngine::spawn(&url, VIEW_W, VIEW_H);
 
     if let Some(d) = saved_wayland_display {
         // SAFETY: spawn() blocked until WPE finished the parts of

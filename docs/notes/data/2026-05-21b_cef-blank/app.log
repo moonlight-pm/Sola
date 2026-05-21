@@ -1,0 +1,7 @@
+[2m15:20:54[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m sola-browser-cef starting
+[2m15:20:54[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m loading url [3murl[0m[2m=[0mabout:blank
+[2m15:20:54[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF initialized
+[2m15:20:54[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF browser created [3murl[0m[2m=[0mabout:blank
+[2m15:20:54[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF engine entering run_message_loop
+[2m15:20:54[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF was_resized [3mwidth[0m[2m=[0m1024 [3mheight[0m[2m=[0m768
+[2m15:20:54[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF was_resized [3mwidth[0m[2m=[0m1434 [3mheight[0m[2m=[0m2132
