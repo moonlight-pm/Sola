@@ -23,8 +23,46 @@ pkgs.mkShell {
     # planned rebuild cycle.
     pkgs.libwpe
     pkgs.libwpe-fdo
+    # libxkbcommon is included transitively from WPEKeymapXKB.h —
+    # bindgen needs its include path even though we don't bind any
+    # xkbcommon functions ourselves.
+    pkgs.libxkbcommon
+    # libEGL — wpe_fdo_initialize_for_egl_display() takes an
+    # EGLDisplay, which we get via eglGetDisplay(EGL_DEFAULT_DISPLAY).
+    # WPE's WebProcess also needs it for the GPU side rendering.
+    pkgs.libGL
   ];
   nativeBuildInputs = [
     pkgs.pkg-config
+    # Rust toolchain so `nix-shell --pure` still has cargo/rustc.
+    # Keeps cargo on the same nixpkgs Rust as everything else.
+    pkgs.cargo
+    pkgs.rustc
+    # bindgen needs libclang at build time. LIBCLANG_PATH below points
+    # the bindgen build-dep at it.
+    pkgs.clang
+    # cargo needs a CA bundle to fetch from crates.io under --pure.
+    pkgs.cacert
   ];
+
+  # Surface the CA bundle through the env vars cargo / rustls / curl
+  # honor — without these, `cargo fetch` fails SSL handshake.
+  SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+  NIX_SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+
+  # bindgen's libloading scan won't find libclang under --pure without
+  # an explicit pointer; LIBCLANG_PATH is the standard env var bindgen
+  # honors.
+  LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+
+  # WebKit looks here for WPEWebProcess / WPENetworkProcess / WPEGPUProcess
+  # at runtime. Without it the engine can't fork its workers and the
+  # first webkit_web_view_load_uri call hangs forever.
+  WEBKIT_EXEC_PATH =
+    let
+      wpewebkit = pkgs.callPackage ./default.nix {
+        inherit (pkgs.gst_all_1) gst-plugins-base gst-plugins-bad;
+      };
+    in
+    "${wpewebkit}/libexec/wpe-webkit-2.0";
 }
