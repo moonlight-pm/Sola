@@ -7,3 +7,7 @@
 # next to their Cargo.toml (cargo's default for non-workspace manifests).
 crates/*/target/
 crates/*/Cargo.lock
+
+# nix-build result symlinks
+/result
+/result-*
