@@ -65,7 +65,56 @@ pub enum Cmd {
     /// Program whenever the iced widget bounds change.
     Resize { width: u32, height: u32 },
     Release { token: ResourceToken },
+    /// Forward a user input event into WPE. Materialized to a
+    /// WPEEvent GObject on the worker thread and dispatched via
+    /// `wpe_view_event`.
+    Input(InputEvent),
+    /// Toggle view focus. Iced delivers keyboard events only to
+    /// focused widgets, but WPE has its own focus state which
+    /// needs explicit `wpe_view_focus_in` / `wpe_view_focus_out`.
+    Focus(bool),
     Quit,
+}
+
+/// A user input event in a thread-safe shape. Sent over the cmd
+/// channel from iced (main thread) to the WPE worker, which turns
+/// it into a `WPEEvent` and dispatches via `wpe_view_event`.
+#[derive(Debug, Clone)]
+pub enum InputEvent {
+    /// Pointer motion. `x`/`y` are in WPE view-local pixels.
+    PointerMove { x: f64, y: f64, modifiers: u32, time_ms: u32 },
+    /// Pointer button down/up. `button` is the X11/WPE convention:
+    /// 1 = left, 2 = middle, 3 = right. `press_count` is filled in
+    /// by the worker via `wpe_view_compute_press_count`.
+    PointerButton {
+        down: bool,
+        x: f64,
+        y: f64,
+        button: u32,
+        modifiers: u32,
+        time_ms: u32,
+    },
+    /// Scroll. `delta_x` / `delta_y` are in CSS pixels (or wheel
+    /// "ticks" if `precise` is false).
+    Scroll {
+        x: f64,
+        y: f64,
+        delta_x: f64,
+        delta_y: f64,
+        precise: bool,
+        modifiers: u32,
+        time_ms: u32,
+    },
+    /// Keyboard key down/up. `keyval` is the X11 keysym
+    /// (`XK_*`); `keycode` is the hardware scancode (0 if we
+    /// can't determine it — WebKit primarily uses `keyval`).
+    Key {
+        down: bool,
+        keyval: u32,
+        keycode: u32,
+        modifiers: u32,
+        time_ms: u32,
+    },
 }
 
 pub struct WpeEngine {
@@ -309,6 +358,20 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
                     token.buffer as *mut sys::WPEBuffer,
                 );
             }
+            Ok(Cmd::Input(ev)) => {
+                if !ctx.view.is_null() {
+                    dispatch_input(ctx.view, ev);
+                }
+            }
+            Ok(Cmd::Focus(focused)) => {
+                if !ctx.view.is_null() {
+                    if focused {
+                        sys::wpe_view_focus_in(ctx.view);
+                    } else {
+                        sys::wpe_view_focus_out(ctx.view);
+                    }
+                }
+            }
             Ok(Cmd::Quit) => {
                 sys::g_main_loop_quit(ctx.main_loop);
                 return 0; /* G_SOURCE_REMOVE */
@@ -321,6 +384,90 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
         }
     }
     1 /* G_SOURCE_CONTINUE */
+}
+
+/// Materialize an `InputEvent` as a WPEEvent GObject and dispatch
+/// to the view. Each event constructor takes ownership of the
+/// new event ref; `wpe_view_event` consumes it (we don't need to
+/// `wpe_event_unref` ourselves).
+unsafe fn dispatch_input(view: *mut sys::WPEView, ev: InputEvent) {
+    let mouse_src = sys::WPEInputSource_WPE_INPUT_SOURCE_MOUSE;
+    let kbd_src = sys::WPEInputSource_WPE_INPUT_SOURCE_KEYBOARD;
+    let event = match ev {
+        InputEvent::PointerMove { x, y, modifiers, time_ms } => {
+            sys::wpe_event_pointer_move_new(
+                sys::WPEEventType_WPE_EVENT_POINTER_MOVE,
+                view,
+                mouse_src,
+                time_ms,
+                modifiers,
+                x,
+                y,
+                0.0, /* delta_x — unused for absolute moves */
+                0.0,
+            )
+        }
+        InputEvent::PointerButton { down, x, y, button, modifiers, time_ms } => {
+            let type_ = if down {
+                sys::WPEEventType_WPE_EVENT_POINTER_DOWN
+            } else {
+                sys::WPEEventType_WPE_EVENT_POINTER_UP
+            };
+            // press_count drives single/double/triple-click on the
+            // web side. WPE keeps the per-view bookkeeping for us.
+            let press_count = if down {
+                sys::wpe_view_compute_press_count(view, x, y, button, time_ms)
+            } else {
+                1
+            };
+            sys::wpe_event_pointer_button_new(
+                type_,
+                view,
+                mouse_src,
+                time_ms,
+                modifiers,
+                button,
+                x,
+                y,
+                press_count,
+            )
+        }
+        InputEvent::Scroll { x, y, delta_x, delta_y, precise, modifiers, time_ms } => {
+            sys::wpe_event_scroll_new(
+                view,
+                mouse_src,
+                time_ms,
+                modifiers,
+                delta_x,
+                delta_y,
+                if precise { 1 } else { 0 },
+                0, /* is_stop — only relevant for kinetic/touchpad scroll */
+                x,
+                y,
+            )
+        }
+        InputEvent::Key { down, keyval, keycode, modifiers, time_ms } => {
+            let type_ = if down {
+                sys::WPEEventType_WPE_EVENT_KEYBOARD_KEY_DOWN
+            } else {
+                sys::WPEEventType_WPE_EVENT_KEYBOARD_KEY_UP
+            };
+            sys::wpe_event_keyboard_new(
+                type_,
+                view,
+                kbd_src,
+                time_ms,
+                modifiers,
+                keycode,
+                keyval,
+            )
+        }
+    };
+    if event.is_null() {
+        tracing::warn!("wpe_event_*_new returned null; dropping input");
+        return;
+    }
+    sys::wpe_view_event(view, event);
 }
 
 /// Resize the view's toplevel. WPE's WebProcess picks this up and

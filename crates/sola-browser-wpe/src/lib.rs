@@ -12,3 +12,4 @@ pub mod wpe_sys;
 pub mod wpe;
 pub mod wgpu_import;
 pub mod shader;
+pub mod input;

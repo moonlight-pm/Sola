@@ -15,12 +15,14 @@
 
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
+use std::time::Instant;
 
 use iced::widget::shader;
-use iced::{Rectangle, mouse};
+use iced::{Rectangle, keyboard, mouse};
 
+use crate::input;
 use crate::wgpu_import::{self, DmabufMetadata, ImportedFrame};
-use crate::wpe::{Cmd, ResourceToken, WpeFrame};
+use crate::wpe::{Cmd, InputEvent, ResourceToken, WpeFrame};
 
 /// Shared between the App (which fills `pending`) and the shader
 /// Pipeline (which drains it on next prepare). The `releaser`
@@ -52,8 +54,50 @@ pub struct WpePrimitive {
     pub slot: Arc<FrameSlot>,
 }
 
+/// Per-program state iced manages for us. Holds the running
+/// modifier set and a session start time so input events get a
+/// monotonic 32-bit millisecond timestamp (the shape WPE wants).
+#[derive(Debug)]
+pub struct ProgramState {
+    modifiers: keyboard::Modifiers,
+    /// Set the first time `update` runs; subsequent timestamps are
+    /// `(now - started).as_millis() as u32`. Wraps after ~49 days,
+    /// fine for a browser session.
+    started: Option<Instant>,
+    /// Last bounds we saw — used by event flows that don't carry
+    /// bounds directly (none currently, but kept for when keyboard
+    /// events arrive without focus/cursor context).
+    last_bounds: Rectangle,
+    /// Scale factor seen at the last `update` / `prepare` —
+    /// used to project cursor positions into WPE view pixels.
+    last_scale: f32,
+}
+
+impl Default for ProgramState {
+    fn default() -> Self {
+        Self {
+            modifiers: keyboard::Modifiers::default(),
+            started: None,
+            last_bounds: Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            },
+            last_scale: 1.0,
+        }
+    }
+}
+
+impl ProgramState {
+    fn now_ms(&mut self) -> u32 {
+        let started = *self.started.get_or_insert_with(Instant::now);
+        started.elapsed().as_millis() as u32
+    }
+}
+
 impl<Msg> shader::Program<Msg> for WpeProgram {
-    type State = ();
+    type State = ProgramState;
     type Primitive = WpePrimitive;
 
     fn draw(
@@ -65,6 +109,126 @@ impl<Msg> shader::Program<Msg> for WpeProgram {
         WpePrimitive {
             slot: self.slot.clone(),
         }
+    }
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &iced::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<iced::widget::shader::Action<Msg>> {
+        state.last_bounds = bounds;
+        // `update()` doesn't get the viewport. Derive scale from the
+        // size `prepare()` last asked WPE for vs the widget's logical
+        // width — both are present and consistent because we send
+        // `Cmd::Resize { width: bounds.width * scale, height: ... }`
+        // from `prepare`. On a freshly-mounted shader (before the
+        // first prepare ran) we fall back to last-known scale.
+        let (req_w, _req_h) = *self.slot.last_size.lock().unwrap();
+        let scale = if bounds.width > 0.0 {
+            (req_w as f32 / bounds.width).max(0.5)
+        } else {
+            state.last_scale
+        };
+        state.last_scale = scale;
+        let time_ms = state.now_ms();
+        let mods_now = state.modifiers;
+
+        match event {
+            iced::Event::Mouse(m) => {
+                let cur = cursor.position_in(bounds)?;
+                let (x, y) = input::project_cursor(
+                    iced::Point::new(bounds.x + cur.x, bounds.y + cur.y),
+                    bounds,
+                    scale,
+                );
+                let modifiers = input::modifiers_to_wpe(mods_now);
+                let ev = match m {
+                    mouse::Event::CursorMoved { .. } => Some(InputEvent::PointerMove {
+                        x,
+                        y,
+                        modifiers,
+                        time_ms,
+                    }),
+                    mouse::Event::ButtonPressed(b) => {
+                        input::button_to_wpe(*b).map(|button| InputEvent::PointerButton {
+                            down: true,
+                            x,
+                            y,
+                            button,
+                            modifiers,
+                            time_ms,
+                        })
+                    }
+                    mouse::Event::ButtonReleased(b) => {
+                        input::button_to_wpe(*b).map(|button| InputEvent::PointerButton {
+                            down: false,
+                            x,
+                            y,
+                            button,
+                            modifiers,
+                            time_ms,
+                        })
+                    }
+                    mouse::Event::WheelScrolled { delta } => {
+                        let (delta_x, delta_y, precise) = input::scroll_delta_to_wpe(*delta);
+                        Some(InputEvent::Scroll {
+                            x,
+                            y,
+                            delta_x,
+                            delta_y,
+                            precise,
+                            modifiers,
+                            time_ms,
+                        })
+                    }
+                    // Cursor enter / leave: don't synthesize WPE events
+                    // yet — most pages don't need them and they're easy
+                    // to add later if hover state matters.
+                    _ => None,
+                };
+                if let Some(e) = ev {
+                    let _ = self.slot.releaser.send(Cmd::Input(e));
+                    return Some(iced::widget::shader::Action::capture());
+                }
+            }
+            iced::Event::Keyboard(k) => {
+                // Track the modifier set ourselves so we can stamp
+                // it onto mouse events that arrive without their
+                // own modifier snapshot.
+                if let keyboard::Event::ModifiersChanged(m) = k {
+                    state.modifiers = *m;
+                }
+                if let Some(e) = input::translate_keyboard(k, time_ms) {
+                    let _ = self.slot.releaser.send(Cmd::Input(e));
+                    return Some(iced::widget::shader::Action::capture());
+                }
+            }
+            iced::Event::Window(w) => {
+                use iced::window::Event as WE;
+                match w {
+                    WE::Focused => {
+                        let _ = self.slot.releaser.send(Cmd::Focus(true));
+                    }
+                    WE::Unfocused => {
+                        let _ = self.slot.releaser.send(Cmd::Focus(false));
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn mouse_interaction(
+        &self,
+        _state: &Self::State,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        mouse::Interaction::Pointer
     }
 }
 
