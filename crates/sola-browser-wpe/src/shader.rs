@@ -55,22 +55,27 @@ pub struct WpePrimitive {
 }
 
 /// Per-program state iced manages for us. Holds the running
-/// modifier set and a session start time so input events get a
-/// monotonic 32-bit millisecond timestamp (the shape WPE wants).
+/// modifier set, session start time (for monotonic 32-bit ms
+/// timestamps WPE wants), and a bitmask of pointer buttons
+/// currently held down so we can OR the matching
+/// `WPE_MODIFIER_POINTER_BUTTON*` bits into PointerMove events
+/// — that's how WebKit knows a move is a drag rather than a
+/// hover.
 #[derive(Debug)]
 pub struct ProgramState {
     modifiers: keyboard::Modifiers,
-    /// Set the first time `update` runs; subsequent timestamps are
-    /// `(now - started).as_millis() as u32`. Wraps after ~49 days,
-    /// fine for a browser session.
     started: Option<Instant>,
-    /// Last bounds we saw — used by event flows that don't carry
-    /// bounds directly (none currently, but kept for when keyboard
-    /// events arrive without focus/cursor context).
     last_bounds: Rectangle,
-    /// Scale factor seen at the last `update` / `prepare` —
-    /// used to project cursor positions into WPE view pixels.
     last_scale: f32,
+    /// OR of `WPE_MODIFIER_POINTER_BUTTON{1..5}` for every
+    /// pointer button currently held. Updated on
+    /// ButtonPressed / ButtonReleased.
+    held_button_mods: u32,
+    /// Last cursor position in WPE view pixels — used to
+    /// compute delta_x/delta_y on PointerMove (WebKit reads
+    /// these for relative-motion features like pointer lock,
+    /// and they're cheap to maintain).
+    last_pointer: Option<(f64, f64)>,
 }
 
 impl Default for ProgramState {
@@ -85,6 +90,8 @@ impl Default for ProgramState {
                 height: 0.0,
             },
             last_scale: 1.0,
+            held_button_mods: 0,
+            last_pointer: None,
         }
     }
 }
@@ -143,32 +150,52 @@ impl<Msg> shader::Program<Msg> for WpeProgram {
                     bounds,
                     scale,
                 );
-                let modifiers = input::modifiers_to_wpe(mods_now);
+                let kbd_mods = input::modifiers_to_wpe(mods_now);
                 let ev = match m {
-                    mouse::Event::CursorMoved { .. } => Some(InputEvent::PointerMove {
-                        x,
-                        y,
-                        modifiers,
-                        time_ms,
-                    }),
-                    mouse::Event::ButtonPressed(b) => {
-                        input::button_to_wpe(*b).map(|button| InputEvent::PointerButton {
-                            down: true,
+                    mouse::Event::CursorMoved { .. } => {
+                        // delta vs previous position so drag-detect /
+                        // pointer-lock-style features see motion.
+                        let (dx, dy) = match state.last_pointer {
+                            Some((px, py)) => (x - px, y - py),
+                            None => (0.0, 0.0),
+                        };
+                        state.last_pointer = Some((x, y));
+                        Some(InputEvent::PointerMove {
                             x,
                             y,
-                            button,
-                            modifiers,
+                            delta_x: dx,
+                            delta_y: dy,
+                            // OR in held-button bits — WebKit needs
+                            // these on every move during a drag to
+                            // know the button is still down.
+                            modifiers: kbd_mods | state.held_button_mods,
                             time_ms,
                         })
                     }
+                    mouse::Event::ButtonPressed(b) => {
+                        input::button_to_wpe(*b).map(|button| {
+                            state.held_button_mods |= input::button_to_modifier(button);
+                            InputEvent::PointerButton {
+                                down: true,
+                                x,
+                                y,
+                                button,
+                                modifiers: kbd_mods | state.held_button_mods,
+                                time_ms,
+                            }
+                        })
+                    }
                     mouse::Event::ButtonReleased(b) => {
-                        input::button_to_wpe(*b).map(|button| InputEvent::PointerButton {
-                            down: false,
-                            x,
-                            y,
-                            button,
-                            modifiers,
-                            time_ms,
+                        input::button_to_wpe(*b).map(|button| {
+                            state.held_button_mods &= !input::button_to_modifier(button);
+                            InputEvent::PointerButton {
+                                down: false,
+                                x,
+                                y,
+                                button,
+                                modifiers: kbd_mods | state.held_button_mods,
+                                time_ms,
+                            }
                         })
                     }
                     mouse::Event::WheelScrolled { delta } => {
@@ -179,13 +206,16 @@ impl<Msg> shader::Program<Msg> for WpeProgram {
                             delta_x,
                             delta_y,
                             precise,
-                            modifiers,
+                            modifiers: kbd_mods | state.held_button_mods,
                             time_ms,
                         })
                     }
-                    // Cursor enter / leave: don't synthesize WPE events
-                    // yet — most pages don't need them and they're easy
-                    // to add later if hover state matters.
+                    mouse::Event::CursorLeft => {
+                        // Drop pointer state so the next entry starts
+                        // fresh (no spurious huge delta).
+                        state.last_pointer = None;
+                        None
+                    }
                     _ => None,
                 };
                 if let Some(e) = ev {
@@ -228,7 +258,12 @@ impl<Msg> shader::Program<Msg> for WpeProgram {
         _bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        mouse::Interaction::Pointer
+        // Default arrow. WPE doesn't yet feed CSS `cursor:` state
+        // back to us via the Platform API surface we've subclassed,
+        // so we can't legitimately switch to Pointer over a link
+        // or Text over an input. Better to be honestly-wrong-as-
+        // arrow than confidently-wrong-as-pointer.
+        mouse::Interaction::default()
     }
 }
 
@@ -328,6 +363,7 @@ impl shader::Primitive for WpePrimitive {
         pipeline.current = Some(CurrentFrame {
             _imported: imported,
             token: new_token,
+            size: (frame.width, frame.height),
         });
 
         // FPS counter — log every ~1s. Bench harness scrapes this
@@ -349,16 +385,17 @@ impl shader::Primitive for WpePrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        let Some(bg) = &pipeline.bind_group else {
-            return;
-        };
+        // Always begin a clearing pass so the target shows black
+        // (not iced's default white) at startup and during the
+        // size-mismatch period below. That replaces the brief
+        // white flash users were seeing.
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("wpe sample pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -367,6 +404,21 @@ impl shader::Primitive for WpePrimitive {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+        let (Some(bg), Some(current)) = (&pipeline.bind_group, pipeline.current.as_ref()) else {
+            return;
+        };
+
+        // Skip the draw if the imported frame's size doesn't match
+        // the size we last asked WPE for. This catches the brief
+        // post-startup window when WPE is still rendering at its
+        // headless 1024x768 default before our `Cmd::Resize`
+        // propagates to the WebProcess. Better to flash black
+        // than show a stretched intermediate frame.
+        let requested = *self.slot.last_size.lock().unwrap();
+        if current.size != requested {
+            return;
+        }
+
         pass.set_scissor_rect(
             clip_bounds.x,
             clip_bounds.y,
@@ -383,6 +435,13 @@ impl shader::Primitive for WpePrimitive {
 struct CurrentFrame {
     _imported: ImportedFrame,
     token: ResourceToken,
+    /// Pixel size of the imported DMA-BUF. Compared in `render()`
+    /// against the size we last requested from WPE — if WPE is
+    /// still catching up (e.g. immediately after window open,
+    /// frames arrive at the headless 1024x768 default before our
+    /// resize propagates), we skip drawing so the user sees the
+    /// clear color instead of a stretched intermediate frame.
+    size: (u32, u32),
 }
 
 #[derive(Debug)]

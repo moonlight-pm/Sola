@@ -81,8 +81,20 @@ pub enum Cmd {
 /// it into a `WPEEvent` and dispatches via `wpe_view_event`.
 #[derive(Debug, Clone)]
 pub enum InputEvent {
-    /// Pointer motion. `x`/`y` are in WPE view-local pixels.
-    PointerMove { x: f64, y: f64, modifiers: u32, time_ms: u32 },
+    /// Pointer motion. `x`/`y` are in WPE view-local pixels;
+    /// `delta_x`/`delta_y` are the change since the previous
+    /// PointerMove (0.0 for the first move). `modifiers` MUST
+    /// include `WPE_MODIFIER_POINTER_BUTTON*` bits for any
+    /// currently-held buttons — that's how WebKit distinguishes
+    /// a drag from a plain hover.
+    PointerMove {
+        x: f64,
+        y: f64,
+        delta_x: f64,
+        delta_y: f64,
+        modifiers: u32,
+        time_ms: u32,
+    },
     /// Pointer button down/up. `button` is the X11/WPE convention:
     /// 1 = left, 2 = middle, 3 = right. `press_count` is filled in
     /// by the worker via `wpe_view_compute_press_count`.
@@ -394,7 +406,7 @@ unsafe fn dispatch_input(view: *mut sys::WPEView, ev: InputEvent) {
     let mouse_src = sys::WPEInputSource_WPE_INPUT_SOURCE_MOUSE;
     let kbd_src = sys::WPEInputSource_WPE_INPUT_SOURCE_KEYBOARD;
     let event = match ev {
-        InputEvent::PointerMove { x, y, modifiers, time_ms } => {
+        InputEvent::PointerMove { x, y, delta_x, delta_y, modifiers, time_ms } => {
             sys::wpe_event_pointer_move_new(
                 sys::WPEEventType_WPE_EVENT_POINTER_MOVE,
                 view,
@@ -403,8 +415,8 @@ unsafe fn dispatch_input(view: *mut sys::WPEView, ev: InputEvent) {
                 modifiers,
                 x,
                 y,
-                0.0, /* delta_x — unused for absolute moves */
-                0.0,
+                delta_x,
+                delta_y,
             )
         }
         InputEvent::PointerButton { down, x, y, button, modifiers, time_ms } => {
@@ -415,10 +427,14 @@ unsafe fn dispatch_input(view: *mut sys::WPEView, ev: InputEvent) {
             };
             // press_count drives single/double/triple-click on the
             // web side. WPE keeps the per-view bookkeeping for us.
+            // UP events MUST use press_count=0; otherwise WebKit's
+            // click-synthesis path (mousedown+mouseup → click) won't
+            // fire, which breaks link navigation and form submit.
+            // See `WPEWaylandSeat.cpp:178` for the upstream reference.
             let press_count = if down {
                 sys::wpe_view_compute_press_count(view, x, y, button, time_ms)
             } else {
-                1
+                0
             };
             sys::wpe_event_pointer_button_new(
                 type_,

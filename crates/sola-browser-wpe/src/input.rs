@@ -53,6 +53,24 @@ pub fn button_to_wpe(b: mouse::Button) -> Option<u32> {
     })
 }
 
+/// Map a WPE button number to its `WPE_MODIFIER_POINTER_BUTTONn`
+/// bit. WPE's seat tracks which buttons are *currently held* in
+/// the modifier set of every `PointerMove` event; the web engine
+/// uses these bits to distinguish a drag (button held during
+/// move) from a plain hover. Buttons outside 1–5 produce 0,
+/// meaning "no button modifier" — fine since those aren't in
+/// the modifier-bit ABI.
+pub fn button_to_modifier(button: u32) -> u32 {
+    match button {
+        1 => sys::WPEModifiers_WPE_MODIFIER_POINTER_BUTTON1,
+        2 => sys::WPEModifiers_WPE_MODIFIER_POINTER_BUTTON2,
+        3 => sys::WPEModifiers_WPE_MODIFIER_POINTER_BUTTON3,
+        4 => sys::WPEModifiers_WPE_MODIFIER_POINTER_BUTTON4,
+        5 => sys::WPEModifiers_WPE_MODIFIER_POINTER_BUTTON5,
+        _ => 0,
+    }
+}
+
 /// Project a cursor `point` (window-local CSS pixels) into the
 /// WPE view's coordinate system (pixels at the size we last sent
 /// via `Cmd::Resize`). The shader widget always fills the window
