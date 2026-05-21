@@ -1,32 +1,32 @@
-//! iced `shader::Program` that samples the currently-imported CEF
-//! frame as a fullscreen quad.
+//! iced `shader::Program` that samples the most recent CEF frame
+//! as a fullscreen quad.
 //!
-//! Ownership flow per frame:
-//! 1. CEF worker thread emits a `CefFrame` (FD + metadata + token).
-//! 2. App's subscription receives it, stashes in `slot.pending`,
-//!    requests an iced redraw.
-//! 3. Next render cycle: `Primitive::prepare` runs on iced's render
-//!    thread. It takes the pending frame, imports as a wgpu texture
-//!    (via `wgpu_import::import`), swaps in the bind group, and
-//!    sends a `Cmd::Release` back to the CEF worker for the
-//!    previously-displayed frame's token so CEF can recycle that
-//!    buffer.
-//! 4. `Primitive::render` issues the fullscreen-triangle draw call.
+//! Flow per frame:
+//! 1. CEF worker thread copies `on_paint` BGRA bytes into a
+//!    `CefFrame` and pushes through the channel.
+//! 2. iced subscription stashes the frame in `slot.pending` and
+//!    triggers a redraw.
+//! 3. `Primitive::prepare` on the render thread takes the frame,
+//!    (re-)creates the destination wgpu::Texture if dimensions
+//!    changed, uploads via `queue.write_texture`, and rebuilds the
+//!    bind group.
+//! 4. `Primitive::render` issues a fullscreen-triangle draw call.
+//!
+//! No DMA-BUF, no FD lifetime, no resource Release back to CEF —
+//! the buffer CEF handed us was already memcpy'd out in `on_paint`.
 
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
 use iced::widget::shader;
 use iced::{Rectangle, mouse};
 
-use crate::wgpu_import::{self, DmabufMetadata, ImportedFrame};
-use crate::cef::{Cmd, ResourceToken, CefFrame};
+use crate::cef::{CefFrame, Cmd};
+use crate::cpu_import::{self, UploadedFrame};
 
 /// Shared between the App (which fills `pending`) and the shader
-/// Pipeline (which drains it on next prepare). The `releaser`
-/// channel goes back to the CEF worker thread so we can hand
-/// recycled buffer-resource tokens back when a new frame replaces
-/// an old one — and so the shader Program can request resizes when
+/// Pipeline (which drains it on next prepare). `releaser` lets the
+/// shader Program send `Cmd::Resize` back to the CEF worker when
 /// the iced widget bounds change.
 pub struct FrameSlot {
     pub pending: Mutex<Option<CefFrame>>,
@@ -36,15 +36,15 @@ pub struct FrameSlot {
     pub last_size: Mutex<(u32, u32)>,
 }
 
-#[derive(Debug)]
-pub struct CefProgram {
-    pub slot: Arc<FrameSlot>,
-}
-
 impl std::fmt::Debug for FrameSlot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FrameSlot").finish_non_exhaustive()
     }
+}
+
+#[derive(Debug)]
+pub struct CefProgram {
+    pub slot: Arc<FrameSlot>,
 }
 
 #[derive(Debug)]
@@ -75,15 +75,10 @@ impl shader::Primitive for CefPrimitive {
         &self,
         pipeline: &mut Self::Pipeline,
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        queue: &wgpu::Queue,
         bounds: &Rectangle,
         viewport: &iced::widget::shader::Viewport,
     ) {
-        // Mirror the iced widget's physical size to CEF so the
-        // WebProcess re-lays out at the actual viewport size
-        // instead of the headless default (1024x768). Runs on
-        // every prepare but only sends a Cmd when the size
-        // actually changes.
         let scale = viewport.scale_factor() as f32;
         let req_w = (bounds.width * scale).round().max(1.0) as u32;
         let req_h = (bounds.height * scale).round().max(1.0) as u32;
@@ -91,13 +86,10 @@ impl shader::Primitive for CefPrimitive {
         if *last != (req_w, req_h) {
             *last = (req_w, req_h);
             drop(last);
-            let _ = self
-                .slot
-                .releaser
-                .send(Cmd::Resize {
-                    width: req_w,
-                    height: req_h,
-                });
+            let _ = self.slot.releaser.send(Cmd::Resize {
+                width: req_w,
+                height: req_h,
+            });
         }
 
         let mut guard = self.slot.pending.lock().unwrap();
@@ -106,65 +98,36 @@ impl shader::Primitive for CefPrimitive {
         };
         drop(guard);
 
-        tracing::info!(
-            w = frame.width,
-            h = frame.height,
-            stride = frame.stride,
-            "shader::prepare: importing new CEF frame",
-        );
-
-        let new_token = frame.token;
-        let meta = DmabufMetadata {
-            width: frame.width,
-            height: frame.height,
-            format: frame.format,
-            modifier: frame.modifier,
-            stride: frame.stride,
-            offset: frame.offset,
+        let need_new_texture = match &pipeline.current {
+            Some(cur) => cur.size != (frame.width, frame.height),
+            None => true,
         };
-        let imported = match unsafe { wgpu_import::import(device, frame.fd, &meta) } {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!("wgpu_import::import failed: {e}");
-                // Don't send Release for `new_token` either — CEF
-                // already considers the buffer in flight; releasing
-                // a buffer we never "consumed" would confuse it.
-                return;
-            }
-        };
-
-        let view = imported
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        pipeline.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("cef-shader bg"),
-            layout: &pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
-                },
-            ],
-        }));
-
-        // Release the previous frame's buffer back to CEF so it can
-        // recycle it. Order matters — `pipeline.current` Drop runs
-        // *after* this swap, so the previous wgpu::Texture stays
-        // alive until we've already told CEF the underlying buffer
-        // is free. That's safe because wgpu's texture wraps the
-        // *imported* memory, not the producer's memory; the producer
-        // (CEF) reuses its own buffer pool independently.
-        if let Some(prev) = pipeline.current.take() {
-            let _ = self.slot.releaser.send(Cmd::Release { token: prev.token });
+        if need_new_texture {
+            let texture = cpu_import::create_texture(device, frame.width, frame.height);
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            pipeline.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("cef-shader bg"),
+                layout: &pipeline.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
+                    },
+                ],
+            }));
+            pipeline.current = Some(CurrentFrame {
+                _uploaded: UploadedFrame { texture },
+                size: (frame.width, frame.height),
+            });
         }
-        pipeline.current = Some(CurrentFrame {
-            _imported: imported,
-            token: new_token,
-        });
+
+        if let Some(cur) = pipeline.current.as_ref() {
+            cpu_import::upload(queue, &cur._uploaded.texture, &frame);
+        }
     }
 
     fn render(
@@ -206,8 +169,8 @@ impl shader::Primitive for CefPrimitive {
 
 #[derive(Debug)]
 struct CurrentFrame {
-    _imported: ImportedFrame,
-    token: ResourceToken,
+    _uploaded: UploadedFrame,
+    size: (u32, u32),
 }
 
 #[derive(Debug)]

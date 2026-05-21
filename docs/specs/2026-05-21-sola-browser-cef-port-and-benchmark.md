@@ -93,42 +93,63 @@ decisions. After the benchmark, if both stick around, refactor.
 - `cargo make build sola-browser-cef` succeeds (binary may
   `todo!()` inside `cef.rs`; that's fine for scaffold).
 
-## Phase B — Minimal CEF browser → DMA-BUF frames
+## Phase B — Minimal CEF browser → CPU pixel frames
 
-This is the actual port work. Modeled directly on
-`sola-kit/src/cef/browser.rs`.
+This is the actual port work. Modeled on `sola-kit/src/cef/browser.rs`
++ `cef/handlers.rs`, but using the CPU OSR transport rather than
+dma-buf (see "Pre-implementation discovery" above).
 
-- CEF process lifecycle:
-  - `cef::execute_process(args, None, None)` early in `main` — if
-    return is `>= 0`, we're a CEF subprocess (renderer / GPU /
-    network), exit immediately.
-  - `cef::initialize` with `Settings` configured for OSR (no
-    sandbox on NixOS, multi-threaded message loop disabled —
-    we drive the loop ourselves on the engine thread).
-  - `cef::shutdown` on engine drop.
+- CEF process lifecycle (`cef.rs::CefEngine::dispatch_subprocess` +
+  `spawn`):
+  - `cef::sys::cef_api_hash(CEF_API_VERSION, 0)` at process top.
+    Required by CEF 133+ before any other CEF call.
+  - `cef::execute_process(args, app, null)` — returns `>= 0` for
+    subprocesses (renderer / GPU / utility / zygote), `-1` for the
+    browser process. The wrapper exits subprocesses with the
+    returned code.
+  - `cef::initialize(args, settings, app, null)` in the browser
+    process with `Settings { no_sandbox: 1,
+    windowless_rendering_enabled: 1, external_message_pump: 0,
+    multi_threaded_message_loop: 0 }`. `framework_dir_path`,
+    `resources_dir_path`, `locales_dir_path`,
+    `browser_subprocess_path`, `root_cache_path` populated from
+    the build-time `SOLA_BROWSER_CEF_DIR` env (mirror
+    `sola-kit/src/cef/distribution.rs`).
+  - `cef::run_message_loop()` blocks until quit; we run it on the
+    engine worker thread so `iced::application().run()` keeps the
+    main thread.
+  - `cef::shutdown()` on quit.
 - Off-screen browser:
-  - `WindowInfo` with `windowless_rendering_enabled = true` and
-    `shared_texture_enabled = true` (this is what enables
-    `on_accelerated_paint`).
-  - `BrowserSettings` with default values.
+  - `WindowInfo { windowless_rendering_enabled: 1,
+    shared_texture_enabled: 0, external_begin_frame_enabled: 0 }`.
+    `shared_texture_enabled = 0` is the CPU path — `on_paint`
+    fires with a `*const u8` BGRA buffer per frame.
+  - `BrowserSettings { background_color: 0xFFFFFFFF }` (opaque
+    white default; web content paints on top).
   - `browser_host_create_browser_sync(window_info, client, url,
     settings, None, None)`.
-- `RenderHandler` (via `wrap_client!`):
+- `RenderHandler` (`wrap_client!`-generated `CefClient`):
   - `view_rect(browser, rect)` — out-param the current size from
-    `CefEngine::current_size` (atomic / mutex).
-  - `on_accelerated_paint(browser, paint_element_type, dirty_rects,
-    info)` — pull `info.shared_texture_handle` (Linux: a dma-buf
-    fd + plane layout array), dup the fd, build a `CefFrame` with
-    the same shape as `WpeFrame`, send into the frame channel.
-  - `on_paint` (software path) — ignore. If
-    `on_accelerated_paint` ever silently falls back to it, log
-    loudly and abort — the comparison is invalid without GPU
-    rendering on both sides.
-- Resize:
-  - `Cmd::Resize { width, height }` updates `current_size`, then
-    calls `browser.host().was_resized()` so CEF re-renders at the
-    new size.
-- Same `FrameSlot::last_size` debounce on the iced side as WPE.
+    a `Mutex<(u32,u32)>` shared with the resize command.
+  - `on_paint(browser, paint_element_type, dirty_rects, buffer,
+    width, height)` — `paint_element_type == PET_VIEW` only
+    (ignore popup). Copy the buffer into a `Vec<u8>`
+    (`width * height * 4` bytes, BGRA), wrap it in a `CefFrame`,
+    send through the frame channel.
+  - `on_accelerated_paint` — implemented as a panic'ing stub. If
+    NVIDIA ever starts producing accelerated frames, we want to
+    notice loudly rather than silently mis-render.
+- Resize (`Cmd::Resize`):
+  - Update the shared `Mutex<(u32,u32)>` so `view_rect` sees the
+    new size on its next invocation.
+  - `browser.host().was_resized()` from the CEF UI thread (post a
+    task if we're not already on it).
+- Frame upload path (`cpu_import.rs`, replacing `wgpu_import.rs`):
+  - Maintain a single `wgpu::Texture` sized to the current frame
+    dimensions. On size change, recreate; otherwise reuse.
+  - `queue.write_texture` with the BGRA bytes each frame.
+  - Format: `Bgra8UnormSrgb` (CEF emits sRGB-encoded BGRA, same
+    as WPE; same washed-out trap if we use `Bgra8Unorm`).
 
 ## Phase C — Run both with the same URL and confirm visual parity
 
@@ -181,15 +202,36 @@ In order of complexity (script will run all, recording each):
   startup ms / steady CPU% / steady RSS MB / GPU util % / GPU mem MB / fps.
 - Raw CSVs alongside in `docs/notes/data/`.
 
-## Open questions
+## Pre-implementation discovery — CEF OSR on NVIDIA
 
-- **CEF OSR on NVIDIA proprietary:** does
-  `on_accelerated_paint` actually get called, or does CEF fall
-  back to software rendering when it can't get GBM? sola-kit
-  has it working in some configuration — confirm we hit the
-  accelerated path on this box before declaring the port done.
-  If CEF software-renders while WPE GPU-renders, the comparison
-  is meaningless.
+**Answered before Phase B:** CEF's dma-buf OSR transport
+(`on_accelerated_paint`) doesn't work on this NVIDIA proprietary box.
+sola-kit's `cef::browser::Browser::new` documents this in detail
+(lines 41-47) and intentionally uses `shared_texture_enabled = 0`
+to fall back to CPU OSR (`on_paint`) with wl_shm memcpy. Root cause:
+NVIDIA's libEGL doesn't expose the `EGL_MESA_*` extensions that
+CEF's GPU process needs to allocate exportable dma-buf textures.
+Re-enable conditions are in `docs/vault/Distribution.md` ("When to
+revisit dma-buf"); the short list is "Mesa NVK or Intel/AMD".
+
+**Impact on this port:**
+- `sola-browser-cef` uses `on_paint` (CPU pixel buffer) instead of
+  `on_accelerated_paint`. No dma-buf, no modifier handling.
+- The shared `wgpu_import.rs` from sola-browser-wpe is *not*
+  copied — we replace it with a `cpu_import.rs` that uploads
+  pixel bytes to a `wgpu::Texture` via `queue.write_texture` each
+  frame.
+- The benchmark must report this asymmetry honestly. We are
+  comparing the *best path each engine has on this hardware*:
+  WPE = zero-copy GPU dma-buf with modifier-aware sampling,
+  CEF = CPU memcpy upload. The expected CPU / bandwidth delta
+  in favor of WPE is real and actionable — it tells us CEF needs
+  FHS-shimmed Mesa libEGL (or Mesa NVK) to be GPU-competitive
+  on this stack. If the user later switches the host to
+  NVIDIA Open + Mesa NVK, flipping `shared_texture_enabled = 1`
+  re-runs the comparison on equal footing.
+
+## Open questions
 - **Modifier delta:** CEF on Linux historically used LINEAR
   modifiers via Mesa; on NVIDIA we'll likely get the same
   block-linear we get from WPE (or worse — software fallback).

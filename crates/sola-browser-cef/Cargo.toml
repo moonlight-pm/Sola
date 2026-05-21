@@ -45,7 +45,17 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 # No bindgen, no pkg-config — CEF is the only system dep and it
 # comes in pre-built via sola-make.
 
-# Patch wgpu-hal to one with `VK_EXT_image_drm_format_modifier`
-# enabled. Same patch as sola-browser-wpe; see crates/wgpu-hal-patched/.
+# `download-cef` stub: identical to the workspace root's patch. We
+# need it explicitly here because workspace-excluded crates only honor
+# their own `[patch.crates-io]`. Without it `cef-dll-sys` re-downloads
+# a 1.3 GB unpatched libcef.so into `target/.../build/.../out/` and
+# the loader picks that one (no NixOS-friendly RUNPATH) over the
+# patched one in `~/.cache/sola/`.
+#
+# `wgpu-hal` patched to enable `VK_EXT_image_drm_format_modifier`.
+# Not actively used on the CEF (CPU upload) path, but keeping the
+# dependency surface identical to sola-browser-wpe so benchmark
+# comparisons aren't muddied by a wgpu version delta.
 [patch.crates-io]
+download-cef = { path = "../download-cef-stub" }
 wgpu-hal = { path = "../wgpu-hal-patched" }

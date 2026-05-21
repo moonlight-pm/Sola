@@ -1,10 +1,12 @@
 //! sola-browser-cef — CEF-backed sibling of sola-browser-wpe.
 //!
-//! Same iced chrome, same `shader::Program` sampling DMA-BUF frames,
-//! same modifier-aware wgpu import path. Engine differs: CEF off-
-//! screen-rendering with `on_accelerated_paint` instead of WPE's
-//! Platform API `buffer-rendered`.
+//! Same iced chrome, same `shader::Program` sampling a frame texture.
+//! Engine differs: CEF off-screen-rendering via `on_paint` (CPU OSR)
+//! on this NVIDIA box, because CEF's dma-buf `on_accelerated_paint`
+//! transport doesn't work on NVIDIA proprietary — see the project
+//! plan in `docs/specs/2026-05-21-sola-browser-cef-port-and-benchmark.md`.
 
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -28,21 +30,22 @@ const VIEW_H: u32 = 800;
 /// Initialized once in `main` before `iced::application` runs.
 static ENGINE: OnceLock<CefEngine> = OnceLock::new();
 
-fn main() -> iced::Result {
+fn main() -> ExitCode {
+    // CEF subprocess gate — must run *before* logger init so renderer
+    // / GPU / utility workers don't open the shared log file. CEF
+    // re-execs this binary for every helper process; the gate
+    // returns Some(exit_code) for workers and None for the browser
+    // process.
+    if let Some(code) = CefEngine::dispatch_subprocess(APP_ID) {
+        return code;
+    }
+
     sola_core::log::init(APP_ID);
     tracing::info!("{APP_ID} starting");
 
-    // CEF subprocess fan-out: when this binary is re-exec'd as a
-    // renderer / GPU / network helper, `cef::execute_process`
-    // returns >= 0 and we exit immediately. The browser process
-    // gets -1 and falls through to the rest of main.
-    if let Some(code) = CefEngine::dispatch_subprocess() {
-        std::process::exit(code);
-    }
-
     let _ = sola_core::env::activate_wayland_session(10_000);
 
-    let engine = CefEngine::spawn(URL, VIEW_W, VIEW_H);
+    let engine = CefEngine::spawn(APP_ID, URL, VIEW_W, VIEW_H);
     let releaser = engine.cmd_sender();
     ENGINE.set(engine).map_err(|_| ()).expect("ENGINE set twice");
 
@@ -57,7 +60,7 @@ fn main() -> iced::Result {
         .expect("SLOT_FOR_STREAM set twice");
     let app_slot = slot.clone();
 
-    iced::application(
+    let result = iced::application(
         move || App {
             slot: app_slot.clone(),
         },
@@ -74,7 +77,13 @@ fn main() -> iced::Result {
         },
         ..iced::window::Settings::default()
     })
-    .run()
+    .run();
+
+    if let Err(e) = result {
+        tracing::error!("iced::application returned: {e}");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
 }
 
 struct App {

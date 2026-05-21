@@ -47,6 +47,15 @@ fn main() {
         cef_dir.display()
     );
 
+    // Bake NixOS-friendly RUNPATH so the binary works outside a
+    // nix-shell. `/run/current-system/sw/lib` carries
+    // libwayland-client.so (winit dlopens it), and
+    // `/run/opengl-driver/lib` carries libEGL_nvidia.so + its
+    // dispatch. Same recipe as sola-browser-wpe's build.rs.
+    println!("cargo:rustc-link-arg=-Wl,--enable-new-dtags");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/run/current-system/sw/lib");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/run/opengl-driver/lib");
+
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../cef-version");
 }
