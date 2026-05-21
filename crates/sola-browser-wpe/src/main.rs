@@ -33,6 +33,13 @@ fn main() -> iced::Result {
     sola_core::log::init(APP_ID);
     tracing::info!("{APP_ID} starting");
 
+    // Tell WPE where its helper processes live. Baked at build time
+    // from `pkg-config --variable=exec_prefix wpe-webkit-2.0` (see
+    // build.rs); we set the env var here so the binary works the
+    // same whether run inside the dev shell or from /opt/sola/bin.
+    // SAFETY: single-threaded program startup, before any spawn.
+    unsafe { std::env::set_var("WEBKIT_EXEC_PATH", env!("WEBKIT_EXEC_PATH")) };
+
     let _ = sola_core::env::activate_wayland_session(10_000);
 
     // Spawn WPE first — its worker thread starts loading the URL

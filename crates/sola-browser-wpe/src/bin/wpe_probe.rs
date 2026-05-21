@@ -38,11 +38,11 @@ use std::path::PathBuf;
 use std::ptr;
 use std::sync::Mutex;
 
-// bindgen-generated FFI for everything WPE / WebKit / GLib.
-mod wpe {
-    #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case, dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/wpe_bindings.rs"));
-}
+// Re-use the lib's bindgen-generated FFI. Inline `include!` used
+// to work but cargo's link-lib directives only propagate to bins
+// that pull in the package's library — using the shared module
+// pins us to the same link flags as `sola-browser-wpe` itself.
+use sola_browser_wpe::wpe_sys as wpe;
 
 const URL: &str = "https://example.com";
 const WIDTH: u32 = 1024;

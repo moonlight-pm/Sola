@@ -25,6 +25,11 @@ fn main() {
 
     println!("cargo:rustc-link-arg=-Wl,--enable-new-dtags");
     println!("cargo:rustc-link-arg=-Wl,-rpath,/run/current-system/sw/lib");
+    // NVIDIA's libEGL_nvidia.so + dispatch lib live here. Without this
+    // in RUNPATH, an installed binary outside the nix-shell falls back
+    // to whatever Mesa libEGL it finds (or nothing) and the WPE GPU
+    // setup fails with "failed to get driver name for fd -1".
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/run/opengl-driver/lib");
 
     // Resolve every WPE-side module via pkg-config. The `probe()`
     // call emits cargo:rustc-link-search / rustc-link-lib for us and
@@ -93,6 +98,33 @@ fn main() {
         );
     }
     println!("cargo:rustc-env=WPE_BACKEND_FDO_SO={}", backend_so.display());
+
+    // WEBKIT_EXEC_PATH must point at the libexec dir holding the
+    // WPEWebProcess / WPENetworkProcess / WPEGPUProcess helpers. WPE
+    // looks for them at runtime; in the nix-shell it comes from the
+    // shell's env, but an installed binary needs to set it itself.
+    // wpe-webkit-2.0.pc exposes `exec_prefix` which points at the
+    // package root; the helpers live at `<exec_prefix>/libexec/wpe-webkit-2.0/`.
+    let wpe_exec_prefix = std::process::Command::new("pkg-config")
+        .args(["--variable=exec_prefix", "wpe-webkit-2.0"])
+        .output()
+        .expect("running pkg-config for exec_prefix")
+        .stdout;
+    let wpe_exec_prefix = String::from_utf8(wpe_exec_prefix)
+        .expect("pkg-config exec_prefix not utf8")
+        .trim()
+        .to_string();
+    let webkit_exec_path = PathBuf::from(&wpe_exec_prefix).join("libexec/wpe-webkit-2.0");
+    if !webkit_exec_path.is_dir() {
+        panic!(
+            "expected WebKit helper dir at {} but it does not exist",
+            webkit_exec_path.display()
+        );
+    }
+    println!(
+        "cargo:rustc-env=WEBKIT_EXEC_PATH={}",
+        webkit_exec_path.display()
+    );
 
     // Bake every link path into RUNPATH so the produced binary can
     // be run outside the nix-shell that built it.

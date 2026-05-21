@@ -94,19 +94,70 @@ pub fn discover() -> Vec<IsolatedCrate> {
 /// Build a single isolated crate with its own manifest. Each crate has
 /// its own `target/` directory (cargo's default when a manifest isn't
 /// part of a workspace), so feature unification is contained.
+///
+/// If `crates/<name>/shell.nix` exists, the cargo invocation is
+/// wrapped with `nix-shell <shell.nix> --run …` so the crate's
+/// declared build environment (pkg-config / native libs / extra
+/// env vars) is in scope. The crate's shell.nix is responsible for
+/// providing cargo + rustc itself when invoked under `--pure`; we
+/// don't pass `--pure` here so the system PATH is inherited.
 pub fn build(c: &IsolatedCrate, release: bool) -> bool {
     let manifest = c.path.join("Cargo.toml");
-    let mut args = vec!["build".to_string(), "--manifest-path".to_string()];
-    args.push(manifest.to_string_lossy().into_owned());
+    let shell_nix = c.path.join("shell.nix");
+    let mut cargo_args = vec!["build".to_string(), "--manifest-path".to_string()];
+    cargo_args.push(manifest.to_string_lossy().into_owned());
     if release {
-        args.push("--release".to_string());
+        cargo_args.push("--release".to_string());
     }
-    println!("  building isolated crate: {}", c.name);
-    let status = Command::new("cargo")
-        .args(&args)
-        .status()
-        .expect("failed to run cargo build for isolated crate");
+
+    let status = if shell_nix.is_file() {
+        println!(
+            "  building isolated crate: {} (via nix-shell {})",
+            c.name,
+            shell_nix.display()
+        );
+        // `cargo build --manifest-path …` gets shelled into the env
+        // declared by the crate's shell.nix. Quote the inner command
+        // for the shell.
+        let cargo_cmd = format!(
+            "cargo {}",
+            cargo_args
+                .iter()
+                .map(|a| shell_quote(a))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        Command::new("nix-shell")
+            .arg(shell_nix.to_string_lossy().into_owned())
+            .arg("--run")
+            .arg(cargo_cmd)
+            .status()
+            .expect("failed to run nix-shell for isolated crate")
+    } else {
+        println!("  building isolated crate: {}", c.name);
+        Command::new("cargo")
+            .args(&cargo_args)
+            .status()
+            .expect("failed to run cargo build for isolated crate")
+    };
     status.success()
+}
+
+/// Minimal POSIX-shell quoting — wraps `s` in single quotes and
+/// escapes any literal single quotes inside it. Sufficient for the
+/// cargo argv we hand to `nix-shell --run`.
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Path to a built binary inside an isolated crate's own `target/`.
