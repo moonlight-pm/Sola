@@ -40,6 +40,26 @@ fn main() -> iced::Result {
     // SAFETY: single-threaded program startup, before any spawn.
     unsafe { std::env::set_var("WEBKIT_EXEC_PATH", env!("WEBKIT_EXEC_PATH")) };
 
+    // Force WPE to allocate DMA-BUFs with ARGB8888 format and the
+    // LINEAR modifier (0). Without this the WebProcess uses
+    // NVIDIA's preferred block-linear layout (modifier
+    // 0x300000000e08014 on the 3090 Ti), and wgpu — which can't
+    // enable VK_EXT_image_drm_format_modifier from the public API —
+    // samples those tile-ordered bytes as if they were row-major,
+    // producing visual garbage. The `scanout` usage is the key
+    // trick: scanout buffers must be LINEAR on most hardware,
+    // including NVIDIA's GBM allocator, so requesting it
+    // effectively constrains the modifier without us needing a
+    // working `get_preferred_buffer_formats` path (which WebKit
+    // 2.52.3 doesn't currently consult, see sola_wpe.c).
+    //
+    // Documented at:
+    //   https://people.igalia.com/aperez/Documentation/wpe-webkit/environment-variables.html
+    // and parsed in WebKit's AcceleratedSurfaceDMABuf.cpp.
+    //
+    // SAFETY: same as above.
+    unsafe { std::env::set_var("WPE_BUFFER_FORMAT", "AR24:0:scanout") };
+
     let _ = sola_core::env::activate_wayland_session(10_000);
 
     // Spawn WPE first — its worker thread starts loading the URL

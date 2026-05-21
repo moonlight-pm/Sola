@@ -91,27 +91,20 @@ pub unsafe fn import(
         let physical = guard.raw_physical_device();
         let instance: &ash::Instance = guard.shared_instance().raw_instance();
 
-        // One-time warning if the modifier-aware import path isn't
-        // available on this wgpu device. Without
-        // VK_EXT_image_drm_format_modifier we can only treat
-        // imported VkImages as LINEAR — which works for buffers
-        // with `modifier == 0` but produces tile-pattern garbage on
-        // NVIDIA (where buffers come back with block-linear
-        // modifiers like `0x300000000606014`). Tracked as the
-        // remaining gap to get WPE rendering correctly through
-        // wgpu; see commit log around phase 0c for the path.
+        // Keep the warning around so future-us notices if WPE ever
+        // sends a non-LINEAR buffer past `WPE_BUFFER_FORMAT=AR24:0:scanout`
+        // (set in main.rs). wgpu doesn't enable
+        // VK_EXT_image_drm_format_modifier from the public API; we
+        // sample as LINEAR, which silently produces tile-pattern
+        // garbage if the source isn't actually linear.
         static LOGGED: std::sync::Once = std::sync::Once::new();
         LOGGED.call_once(|| {
-            let exts = guard.enabled_device_extensions();
-            let has_modifier = exts
-                .iter()
-                .any(|c| c.to_bytes() == b"VK_EXT_image_drm_format_modifier");
-            if !has_modifier && meta.modifier != 0 {
+            if meta.modifier != 0 {
                 tracing::warn!(
                     modifier = format!("{:#x}", meta.modifier),
-                    "VK_EXT_image_drm_format_modifier NOT enabled in wgpu — \
-                     non-LINEAR DMA-BUFs will render garbled (tile-pattern artifacts). \
-                     wgpu-hal needs patching to expose this extension."
+                    "imported DMA-BUF has non-LINEAR modifier — \
+                     wgpu samples it as LINEAR and will render garbage. \
+                     Check that WPE_BUFFER_FORMAT=AR24:0:scanout is in effect."
                 );
             }
         });
