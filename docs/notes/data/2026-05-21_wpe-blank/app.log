@@ -1,0 +1,44 @@
+[2m13:20:32[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m sola-browser-wpe starting
+[2m13:20:32[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m WPE platform display ready (subclassed for LINEAR-only modifier)
+[2m13:20:32[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m created WebKitWebView via Platform API path
+[2m13:20:32[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m kicked off URL load [3murl[0m[2m=[0mhttps://slate.auto
+[2m13:20:32[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m WPE engine entering GMainLoop
+
+** (WPEWebProcess:2): WARNING **: 13:20:33.226: Can't connect to a11y bus: Could not connect: No such file or directory
+Failed to load cookie file from cookie: Read-only file system
+Failed to load cookie file from cookie: Read-only file system
+[2m13:20:34[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m wpe_toplevel_resize accepted + notified [3mwidth[0m[2m=[0m1434 [3mheight[0m[2m=[0m2132
+[2m13:20:34[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m wgpu Vulkan device has VK_EXT_image_drm_format_modifier [3mhas_modifier[0m[2m=[0mtrue
+[2m13:20:34[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"22.7"
+
+** (process:653643): CRITICAL **: 13:20:34.490: void wpe_view_buffer_released(WPEView *, WPEBuffer *): assertion 'WPE_IS_BUFFER(buffer)' failed
+
+** (process:653643): CRITICAL **: 13:20:34.490: void wpe_view_buffer_released(WPEView *, WPEBuffer *): assertion 'WPE_IS_BUFFER(buffer)' failed
+[2m13:20:35[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"111.4"
+[2m13:20:36[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"117.2"
+[2m13:20:37[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"117.0"
+[2m13:20:38[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"115.9"
+[2m13:20:39[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"111.5"
+[2m13:20:40[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"109.4"
+[2m13:20:41[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"108.4"
+[2m13:20:42[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"105.8"
+[2m13:20:43[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"112.4"
+[2m13:20:44[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"108.9"
+[2m13:20:45[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"109.1"
+[2m13:20:46[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"111.3"
+[2m13:20:47[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"110.7"
+[2m13:20:48[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"111.4"
+[2m13:20:49[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"109.7"
+[2m13:20:50[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"110.7"
+[2m13:20:51[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"108.3"
+[2m13:20:52[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"113.4"
+[2m13:20:53[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"112.1"
+[2m13:20:54[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"108.8"
+[2m13:20:55[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"112.6"
+[2m13:20:56[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"103.2"
+[2m13:20:57[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"112.1"
+[2m13:20:58[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"113.9"
+[2m13:20:59[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"108.1"
+[2m13:21:00[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"109.3"
+[2m13:21:01[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"113.9"
+[2m13:21:02[0m [1;32m INFO[0m [36m[browser-wpe][0m [36msola::browser_wpe[0m shader fps [3mfps[0m[2m=[0m"108.1"

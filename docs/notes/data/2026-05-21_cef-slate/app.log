@@ -1,7 +1,7 @@
-[2m12:54:04[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m sola-browser-cef starting
-[2m12:54:05[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF initialized
-[2m12:54:05[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF browser created [3murl[0m[2m=[0mhttps://slate.auto
-[2m12:54:05[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF engine entering run_message_loop
-[2m12:54:05[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF was_resized [3mwidth[0m[2m=[0m1024 [3mheight[0m[2m=[0m768
-[2m12:54:05[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF was_resized [3mwidth[0m[2m=[0m1434 [3mheight[0m[2m=[0m2132
-[2m12:54:06[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"0.8"
+[2m13:17:40[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m sola-browser-cef starting
+[2m13:17:40[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF initialized
+[2m13:17:40[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF browser created [3murl[0m[2m=[0mhttps://slate.auto
+[2m13:17:40[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF engine entering run_message_loop
+[2m13:17:41[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF was_resized [3mwidth[0m[2m=[0m1024 [3mheight[0m[2m=[0m768
+[2m13:17:41[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m CEF was_resized [3mwidth[0m[2m=[0m1434 [3mheight[0m[2m=[0m2132
+[2m13:17:42[0m [1;32m INFO[0m [36m[browser-cef][0m [36msola::browser_cef[0m shader fps [3mfps[0m[2m=[0m"0.7"

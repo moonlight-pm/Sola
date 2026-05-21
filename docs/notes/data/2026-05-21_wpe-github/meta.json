@@ -1,9 +1,9 @@
 {
   "engine": "wpe",
-  "url": "https://slate.auto",
+  "url": "https://github.com",
   "duration_s": 30,
-  "start_iso": "2026-05-21T19:17:07Z",
-  "end_iso": "2026-05-21T19:17:39Z",
+  "start_iso": "2026-05-21T19:18:12Z",
+  "end_iso": "2026-05-21T19:18:43Z",
   "binary": "crates/sola-browser-wpe/target/debug/sola-browser-wpe",
   "host": "novus",
   "kernel": "6.12.82"
