@@ -168,6 +168,25 @@ pub unsafe fn import(
             .bind_image_memory(image, memory, 0)
             .map_err(ImportError::Vulkan)?;
 
+        // Pre-transition the import VkImage to SHADER_READ_ONLY_OPTIMAL
+        // before wgpu sees it. wgpu-core hardcodes imported textures'
+        // tracker state to UNINITIALIZED → its first-use barrier
+        // transitions from `oldLayout = UNDEFINED`, which per Vulkan
+        // spec allows the driver to discard contents. NVIDIA's
+        // proprietary driver appears permissive for CPU-written
+        // memory (0a's checkerboard worked without this) but
+        // genuinely discards for GPU-written DMA-BUFs coming from
+        // another context (WPE's GPU process here, in 0c → black
+        // window). By transitioning explicitly to the target layout
+        // first, wgpu's redundant UNDEFINED → READ barrier becomes
+        // a no-op on the GPU side and contents survive.
+        transition_to_shader_read(
+            &ash_device,
+            guard.raw_queue(),
+            guard.queue_family_index(),
+            image,
+        );
+
         let hal_texture = guard.texture_from_raw(
             image,
             &wgpu_hal::TextureDescriptor {
@@ -243,6 +262,86 @@ impl std::fmt::Display for ImportError {
 }
 
 impl std::error::Error for ImportError {}
+
+/// One-shot transition of the imported VkImage from PREINITIALIZED
+/// (the layout we created it in) to SHADER_READ_ONLY_OPTIMAL.
+/// Synchronous: submits with a fence and waits before returning so
+/// the queue is in a known state by the time wgpu samples the
+/// texture. Same pattern as the phase-0a probe's fix that turned
+/// out to be unnecessary there but is needed here (GPU-written
+/// source vs CPU-written source).
+unsafe fn transition_to_shader_read(
+    device: &ash::Device,
+    queue: vk::Queue,
+    queue_family: u32,
+    image: vk::Image,
+) {
+    let pool_info = vk::CommandPoolCreateInfo::default()
+        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
+        .queue_family_index(queue_family);
+    let pool = device
+        .create_command_pool(&pool_info, None)
+        .expect("vkCreateCommandPool (transition)");
+
+    let alloc_info = vk::CommandBufferAllocateInfo::default()
+        .command_pool(pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(1);
+    let cmds = device
+        .allocate_command_buffers(&alloc_info)
+        .expect("vkAllocateCommandBuffers (transition)");
+    let cmd = cmds[0];
+
+    device
+        .begin_command_buffer(
+            cmd,
+            &vk::CommandBufferBeginInfo::default()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+        )
+        .expect("vkBeginCommandBuffer (transition)");
+
+    let barrier = vk::ImageMemoryBarrier::default()
+        .old_layout(vk::ImageLayout::PREINITIALIZED)
+        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        .src_access_mask(vk::AccessFlags::empty())
+        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+        .image(image)
+        .subresource_range(vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        });
+
+    device.cmd_pipeline_barrier(
+        cmd,
+        vk::PipelineStageFlags::TOP_OF_PIPE,
+        vk::PipelineStageFlags::FRAGMENT_SHADER,
+        vk::DependencyFlags::empty(),
+        &[],
+        &[],
+        &[barrier],
+    );
+    device
+        .end_command_buffer(cmd)
+        .expect("vkEndCommandBuffer (transition)");
+
+    let fence = device
+        .create_fence(&vk::FenceCreateInfo::default(), None)
+        .expect("vkCreateFence (transition)");
+    let submit = vk::SubmitInfo::default().command_buffers(&cmds);
+    device
+        .queue_submit(queue, &[submit], fence)
+        .expect("vkQueueSubmit (transition)");
+    device
+        .wait_for_fences(&[fence], true, u64::MAX)
+        .expect("vkWaitForFences (transition)");
+    device.destroy_fence(fence, None);
+    device.destroy_command_pool(pool, None);
+}
 
 fn find_memory_type(
     instance: &ash::Instance,
