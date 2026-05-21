@@ -2,3 +2,8 @@
 /.worktrees
 /.superpowers
 /.serena
+
+# Isolated workspace-exclude crates have their own target/ + Cargo.lock
+# next to their Cargo.toml (cargo's default for non-workspace manifests).
+crates/*/target/
+crates/*/Cargo.lock

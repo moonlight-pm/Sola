@@ -1,0 +1,38 @@
+[package]
+name = "sola-browser-wpe"
+version = "0.1.0"
+edition = "2024"
+
+# Custom browser with our own iced chrome and embedded WPEWebKit
+# webviews. Same binary serves two modes:
+# - browser:     `sola-browser-wpe [<url>]`   — full chrome, vertical tabs
+# - wrapped app: `sola-browser-wpe --app <url> [--profile <name>]`
+#                                              — no chrome, full-window webview
+#
+# Workspace-excluded for the same reason as sola-monitor-iced: iced's
+# transitive `smithay-clipboard` flips wayland-sys into dlopen mode,
+# which would break sola-river's runtime wayland linkage if unified
+# across the workspace. Build from this directory or via sola-make,
+# which discovers and installs isolated crates alongside.
+
+[[bin]]
+name = "sola-browser-wpe"
+path = "src/main.rs"
+
+# Standalone probes for phase-0 de-risking. Each one exercises a
+# single piece of the engine end-to-end in isolation so a failure
+# tells us exactly which part broke. Drop them once the smoke test
+# is green.
+[[bin]]
+name = "wgpu-dmabuf-probe"
+path = "src/bin/wgpu_dmabuf_probe.rs"
+
+[[bin]]
+name = "wpe-probe"
+path = "src/bin/wpe_probe.rs"
+
+[dependencies]
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+tracing = "0.1"

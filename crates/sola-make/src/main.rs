@@ -168,7 +168,17 @@ fn build(target: Option<String>, release: bool) {
 /// isolated crates (status-based, separate cargo invocations — they
 /// have their own target dirs and feature graphs by design), then
 /// exec into the workspace cargo build as the final step.
+///
+/// When `target` is `Some(name)` and `name` matches an isolated crate,
+/// build that crate alone (no workspace build, no exec). Otherwise
+/// fall through to the normal workspace path.
 fn build_exec(target: Option<String>, release: bool) -> ! {
+    if let Some(name) = target.as_deref() {
+        if let Some(c) = isolated::discover().into_iter().find(|c| c.name == name) {
+            let ok = isolated::build(&c, release);
+            exit(if ok { 0 } else { 1 });
+        }
+    }
     if target.is_none() {
         let _ = isolated::build_all(release);
     }
