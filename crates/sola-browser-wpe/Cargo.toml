@@ -58,3 +58,13 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 pkg-config = "0.3"
 bindgen = "0.72"
 cc = "1"
+
+# Patch wgpu-hal to one with `VK_EXT_image_drm_format_modifier`
+# enabled on the Vulkan device. Without it, calls to vkCreateImage
+# with `vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT` (which we need to
+# sample WPE's block-linear DMA-BUF output on NVIDIA proprietary)
+# fail with VK_ERROR_FORMAT_NOT_SUPPORTED. Patch is a 5-line
+# addition to adapter.rs that enables the extension when the
+# device advertises it. See crates/wgpu-hal-patched/.
+[patch.crates-io]
+wgpu-hal = { path = "../wgpu-hal-patched" }

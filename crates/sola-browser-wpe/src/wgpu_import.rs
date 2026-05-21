@@ -91,33 +91,57 @@ pub unsafe fn import(
         let physical = guard.raw_physical_device();
         let instance: &ash::Instance = guard.shared_instance().raw_instance();
 
-        // Keep the warning around so future-us notices if WPE ever
-        // sends a non-LINEAR buffer past `WPE_BUFFER_FORMAT=AR24:0:scanout`
-        // (set in main.rs). wgpu doesn't enable
-        // VK_EXT_image_drm_format_modifier from the public API; we
-        // sample as LINEAR, which silently produces tile-pattern
-        // garbage if the source isn't actually linear.
+        // Verify our wgpu-hal fork enabled VK_EXT_image_drm_format_modifier.
+        // If not, modifier-aware vkCreateImage will fail with
+        // VK_ERROR_FORMAT_NOT_SUPPORTED.
         static LOGGED: std::sync::Once = std::sync::Once::new();
         LOGGED.call_once(|| {
-            if meta.modifier != 0 {
+            let exts = guard.enabled_device_extensions();
+            let has_modifier = exts
+                .iter()
+                .any(|c| c.to_bytes() == b"VK_EXT_image_drm_format_modifier");
+            tracing::info!(
+                has_modifier,
+                "wgpu Vulkan device has VK_EXT_image_drm_format_modifier",
+            );
+            if !has_modifier {
                 tracing::warn!(
-                    modifier = format!("{:#x}", meta.modifier),
-                    "imported DMA-BUF has non-LINEAR modifier — \
-                     wgpu samples it as LINEAR and will render garbage. \
-                     Check that WPE_BUFFER_FORMAT=AR24:0:scanout is in effect."
+                    "VK_EXT_image_drm_format_modifier NOT enabled — \
+                     the wgpu-hal patch at crates/wgpu-hal-patched isn't \
+                     in effect (check [patch.crates-io] in Cargo.toml)."
                 );
             }
         });
 
         // Create the consumer-side VkImage referencing external
-        // memory. LINEAR tiling for now — see module doc for the
-        // rationale (WPE-on-NVIDIA's reported modifier is non-zero
-        // but the buffer is effectively linear at our pitch). The
-        // texture_from_raw + create_texture_from_hal call gets us
-        // a wgpu::Texture wrapping it.
+        // memory. For non-LINEAR modifiers we have to use
+        // DRM_FORMAT_MODIFIER_EXT tiling + push the explicit
+        // modifier-info struct onto the pNext chain so the driver
+        // knows the tile layout. For LINEAR (modifier == 0) we
+        // could in theory use either path; we use the modifier
+        // path uniformly so we have a single code path.
         let mut external_info = vk::ExternalMemoryImageCreateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
 
+        let plane_layouts = [vk::SubresourceLayout {
+            offset: meta.offset as u64,
+            size: 0, /* must be 0 per VUID-VkSubresourceLayout-size-09604 */
+            row_pitch: meta.stride as u64,
+            array_pitch: 0,
+            depth_pitch: 0,
+        }];
+        let mut modifier_info = vk::ImageDrmFormatModifierExplicitCreateInfoEXT::default()
+            .drm_format_modifier(meta.modifier)
+            .plane_layouts(&plane_layouts);
+
+        // Per VK_EXT_image_drm_format_modifier spec the initial
+        // layout MUST be UNDEFINED when tiling is
+        // DRM_FORMAT_MODIFIER_EXT. wgpu's first-use barrier will
+        // transition UNDEFINED → SHADER_READ_ONLY_OPTIMAL, which
+        // for modifier-tagged images preserves the imported
+        // content (unlike the LINEAR + PREINITIALIZED case which
+        // needed our explicit pre-transition to survive the
+        // "discard contents" semantics of UNDEFINED on NVIDIA).
         let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .format(vk_format)
@@ -129,26 +153,36 @@ pub unsafe fn import(
             .mip_levels(1)
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::LINEAR)
+            .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
             .usage(vk::ImageUsageFlags::SAMPLED)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .initial_layout(vk::ImageLayout::PREINITIALIZED)
-            .push_next(&mut external_info);
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .push_next(&mut external_info)
+            .push_next(&mut modifier_info);
 
         let image = ash_device
             .create_image(&image_info, None)
             .map_err(ImportError::Vulkan)?;
 
         let mem_reqs = ash_device.get_image_memory_requirements(image);
-        // Pick a HOST_VISIBLE memory type — same as the probe. The
-        // imported FD lives in whatever memory the producer chose;
-        // we just need a memory type the driver accepts for import.
+        // Memory type: a DEVICE_LOCAL type is correct for
+        // GPU-rendered DMA-BUFs. Falls back to "anything that
+        // matches type_bits" if the driver doesn't expose
+        // DEVICE_LOCAL for this allocation type.
         let mem_type_idx = find_memory_type(
             instance,
             physical,
             mem_reqs.memory_type_bits,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
         )
+        .or_else(|| {
+            find_memory_type(
+                instance,
+                physical,
+                mem_reqs.memory_type_bits,
+                vk::MemoryPropertyFlags::empty(),
+            )
+        })
         .ok_or(ImportError::NoSuitableMemoryType)?;
 
         let mut import_info = vk::ImportMemoryFdInfoKHR::default()
@@ -167,25 +201,6 @@ pub unsafe fn import(
         ash_device
             .bind_image_memory(image, memory, 0)
             .map_err(ImportError::Vulkan)?;
-
-        // Pre-transition the import VkImage to SHADER_READ_ONLY_OPTIMAL
-        // before wgpu sees it. wgpu-core hardcodes imported textures'
-        // tracker state to UNINITIALIZED → its first-use barrier
-        // transitions from `oldLayout = UNDEFINED`, which per Vulkan
-        // spec allows the driver to discard contents. NVIDIA's
-        // proprietary driver appears permissive for CPU-written
-        // memory (0a's checkerboard worked without this) but
-        // genuinely discards for GPU-written DMA-BUFs coming from
-        // another context (WPE's GPU process here, in 0c → black
-        // window). By transitioning explicitly to the target layout
-        // first, wgpu's redundant UNDEFINED → READ barrier becomes
-        // a no-op on the GPU side and contents survive.
-        transition_to_shader_read(
-            &ash_device,
-            guard.raw_queue(),
-            guard.queue_family_index(),
-            image,
-        );
 
         let hal_texture = guard.texture_from_raw(
             image,
@@ -259,88 +274,6 @@ impl std::fmt::Display for ImportError {
             ImportError::Vulkan(r) => write!(f, "Vulkan error: {r:?}"),
         }
     }
-}
-
-impl std::error::Error for ImportError {}
-
-/// One-shot transition of the imported VkImage from PREINITIALIZED
-/// (the layout we created it in) to SHADER_READ_ONLY_OPTIMAL.
-/// Synchronous: submits with a fence and waits before returning so
-/// the queue is in a known state by the time wgpu samples the
-/// texture. Same pattern as the phase-0a probe's fix that turned
-/// out to be unnecessary there but is needed here (GPU-written
-/// source vs CPU-written source).
-unsafe fn transition_to_shader_read(
-    device: &ash::Device,
-    queue: vk::Queue,
-    queue_family: u32,
-    image: vk::Image,
-) {
-    let pool_info = vk::CommandPoolCreateInfo::default()
-        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
-        .queue_family_index(queue_family);
-    let pool = device
-        .create_command_pool(&pool_info, None)
-        .expect("vkCreateCommandPool (transition)");
-
-    let alloc_info = vk::CommandBufferAllocateInfo::default()
-        .command_pool(pool)
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(1);
-    let cmds = device
-        .allocate_command_buffers(&alloc_info)
-        .expect("vkAllocateCommandBuffers (transition)");
-    let cmd = cmds[0];
-
-    device
-        .begin_command_buffer(
-            cmd,
-            &vk::CommandBufferBeginInfo::default()
-                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-        )
-        .expect("vkBeginCommandBuffer (transition)");
-
-    let barrier = vk::ImageMemoryBarrier::default()
-        .old_layout(vk::ImageLayout::PREINITIALIZED)
-        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::SHADER_READ)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .image(image)
-        .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1,
-        });
-
-    device.cmd_pipeline_barrier(
-        cmd,
-        vk::PipelineStageFlags::TOP_OF_PIPE,
-        vk::PipelineStageFlags::FRAGMENT_SHADER,
-        vk::DependencyFlags::empty(),
-        &[],
-        &[],
-        &[barrier],
-    );
-    device
-        .end_command_buffer(cmd)
-        .expect("vkEndCommandBuffer (transition)");
-
-    let fence = device
-        .create_fence(&vk::FenceCreateInfo::default(), None)
-        .expect("vkCreateFence (transition)");
-    let submit = vk::SubmitInfo::default().command_buffers(&cmds);
-    device
-        .queue_submit(queue, &[submit], fence)
-        .expect("vkQueueSubmit (transition)");
-    device
-        .wait_for_fences(&[fence], true, u64::MAX)
-        .expect("vkWaitForFences (transition)");
-    device.destroy_fence(fence, None);
-    device.destroy_command_pool(pool, None);
 }
 
 fn find_memory_type(
