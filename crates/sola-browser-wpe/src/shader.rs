@@ -165,6 +165,17 @@ impl shader::Primitive for WpePrimitive {
             _imported: imported,
             token: new_token,
         });
+
+        // FPS counter — log every ~1s. Bench harness scrapes this
+        // out of the log file.
+        pipeline.fps_count += 1;
+        let elapsed = pipeline.fps_window_start.elapsed();
+        if elapsed >= std::time::Duration::from_secs(1) {
+            let fps = pipeline.fps_count as f64 / elapsed.as_secs_f64();
+            tracing::info!(fps = format!("{:.1}", fps), "shader fps");
+            pipeline.fps_count = 0;
+            pipeline.fps_window_start = std::time::Instant::now();
+        }
     }
 
     fn render(
@@ -217,6 +228,11 @@ pub struct WpePipeline {
     sampler: wgpu::Sampler,
     bind_group: Option<wgpu::BindGroup>,
     current: Option<CurrentFrame>,
+    /// FPS counter — tracks frames imported since `fps_window_start`
+    /// and logs at info every ~1s. Picked up by the bench harness
+    /// out of /opt/sola/log/sola.log.
+    fps_count: u64,
+    fps_window_start: std::time::Instant,
 }
 
 impl shader::Pipeline for WpePipeline {
@@ -299,6 +315,8 @@ impl shader::Pipeline for WpePipeline {
             sampler,
             bind_group: None,
             current: None,
+            fps_count: 0,
+            fps_window_start: std::time::Instant::now(),
         }
     }
 }

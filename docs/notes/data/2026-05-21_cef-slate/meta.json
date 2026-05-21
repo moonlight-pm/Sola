@@ -1,0 +1,10 @@
+{
+  "engine": "cef",
+  "url": "https://slate.auto",
+  "duration_s": 30,
+  "start_iso": "2026-05-21T18:54:04Z",
+  "end_iso": "2026-05-21T18:54:35Z",
+  "binary": "crates/sola-browser-cef/target/debug/sola-browser-cef",
+  "host": "novus",
+  "kernel": "6.12.82"
+}
