@@ -226,7 +226,12 @@
     // It gets in the way a lot and does not prevent bugs in practice.
     clippy::pattern_type_mismatch,
     // We should investigate these.
-    clippy::large_enum_variant
+    clippy::large_enum_variant,
+    // **Sola fork**: silence one upstream `MutexGuard<glow::Context>`
+    // signature that newer rustc lints as a mixed elided/named
+    // lifetime. Lives in the GLES backend we don't use; not worth
+    // diff-ing individual files in the vendored copy.
+    mismatched_lifetime_syntaxes
 )]
 #![warn(
     clippy::alloc_instead_of_core,

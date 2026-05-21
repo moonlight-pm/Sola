@@ -78,8 +78,13 @@ pub unsafe fn import(
     if meta.format != 0x3432_5241 && meta.format != 0x3432_5258 {
         return Err(ImportError::UnsupportedFormat(meta.format));
     }
-    let vk_format = vk::Format::B8G8R8A8_UNORM;
-    let wgpu_format = wgpu::TextureFormat::Bgra8Unorm;
+    // sRGB-encoded color. WPE's WebProcess renders sRGB pixels and
+    // iced's swapchain target is sRGB-encoded too, so we need the
+    // GPU to sRGB-decode on sample (Bgra8UnormSrgb) — sampling as
+    // linear (Bgra8Unorm) would chain two sRGB encodes and produce
+    // a washed-out / desaturated frame.
+    let vk_format = vk::Format::B8G8R8A8_SRGB;
+    let wgpu_format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
     let raw_fd = fd.into_raw_fd();
 

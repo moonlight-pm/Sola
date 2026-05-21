@@ -20,7 +20,7 @@ use sola_browser_wpe::shader::{FrameSlot, WpeProgram};
 use sola_browser_wpe::wpe::WpeEngine;
 
 const APP_ID: &str = "sola-browser-wpe";
-const URL: &str = "https://example.com";
+const URL: &str = "https://slate.auto";
 const VIEW_W: u32 = 1280;
 const VIEW_H: u32 = 800;
 
@@ -62,6 +62,10 @@ fn main() -> iced::Result {
     let slot = Arc::new(FrameSlot {
         pending: Mutex::new(None),
         releaser,
+        // Seed with the same dimensions we passed to spawn so the
+        // shader Program's first prepare won't redundantly fire
+        // another Resize for the size WPE is already targeting.
+        last_size: Mutex::new((VIEW_W, VIEW_H)),
     });
     SLOT_FOR_STREAM
         .set(slot.clone())

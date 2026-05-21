@@ -26,10 +26,14 @@ use crate::wpe::{Cmd, ResourceToken, WpeFrame};
 /// Pipeline (which drains it on next prepare). The `releaser`
 /// channel goes back to the WPE worker thread so we can hand
 /// recycled buffer-resource tokens back when a new frame replaces
-/// an old one.
+/// an old one — and so the shader Program can request resizes when
+/// the iced widget bounds change.
 pub struct FrameSlot {
     pub pending: Mutex<Option<WpeFrame>>,
     pub releaser: Sender<Cmd>,
+    /// Last size we asked WPE to render at (physical pixels). Used
+    /// to debounce resize commands so we only fire on actual change.
+    pub last_size: Mutex<(u32, u32)>,
 }
 
 #[derive(Debug)]
@@ -72,9 +76,30 @@ impl shader::Primitive for WpePrimitive {
         pipeline: &mut Self::Pipeline,
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
-        _bounds: &Rectangle,
-        _viewport: &iced::widget::shader::Viewport,
+        bounds: &Rectangle,
+        viewport: &iced::widget::shader::Viewport,
     ) {
+        // Mirror the iced widget's physical size to WPE so the
+        // WebProcess re-lays out at the actual viewport size
+        // instead of the headless default (1024x768). Runs on
+        // every prepare but only sends a Cmd when the size
+        // actually changes.
+        let scale = viewport.scale_factor() as f32;
+        let req_w = (bounds.width * scale).round().max(1.0) as u32;
+        let req_h = (bounds.height * scale).round().max(1.0) as u32;
+        let mut last = self.slot.last_size.lock().unwrap();
+        if *last != (req_w, req_h) {
+            *last = (req_w, req_h);
+            drop(last);
+            let _ = self
+                .slot
+                .releaser
+                .send(Cmd::Resize {
+                    width: req_w,
+                    height: req_h,
+                });
+        }
+
         let mut guard = self.slot.pending.lock().unwrap();
         let Some(frame) = guard.take() else {
             return;

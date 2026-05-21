@@ -60,6 +60,10 @@ unsafe impl Send for ResourceToken {}
 unsafe impl Sync for ResourceToken {}
 
 pub enum Cmd {
+    /// Request a new viewport size. Applied to the WPEView's
+    /// toplevel via `wpe_toplevel_resize`; sent by the shader
+    /// Program whenever the iced widget bounds change.
+    Resize { width: u32, height: u32 },
     Release { token: ResourceToken },
     Quit,
 }
@@ -74,6 +78,12 @@ impl WpeEngine {
     pub fn spawn(url: &str, width: u32, height: u32) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Cmd>();
         let (frame_tx, frame_rx) = channel::<WpeFrame>();
+        // Queue the initial size before the worker starts. The pump
+        // stashes it in `pending_resize` until the first frame
+        // latches `WorkerCtx::view`, then replays it. Without this
+        // WPE's headless default (1024x768) leaks through as the
+        // first frame's dimensions.
+        let _ = cmd_tx.send(Cmd::Resize { width, height });
         let url = url.to_string();
         let worker = thread::Builder::new()
             .name("wpe-engine".into())
@@ -108,6 +118,15 @@ struct WorkerCtx {
     main_loop: *mut sys::GMainLoop,
     frame_tx: Sender<WpeFrame>,
     cmd_rx: Receiver<Cmd>,
+    /// Latched on the first `buffer-rendered` we observe so the
+    /// command pump can resolve `wpe_view_get_toplevel` for resize
+    /// without going through WebKit APIs. Null until the first
+    /// frame arrives.
+    view: *mut sys::WPEView,
+    /// Resize commands that arrived before `view` was latched.
+    /// Replayed once the first frame populates `view`. Only the
+    /// most recent size is kept — older requests are obsolete.
+    pending_resize: Option<(u32, u32)>,
 }
 
 unsafe fn worker_main(
@@ -146,6 +165,8 @@ unsafe fn worker_main(
         main_loop: ptr::null_mut(),
         frame_tx,
         cmd_rx,
+        view: ptr::null_mut(),
+        pending_resize: None,
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
 
@@ -183,6 +204,17 @@ unsafe extern "C" fn on_buffer_rendered(
     buffer: *mut sys::WPEBufferDMABuf,
 ) {
     let ctx = &mut *(user_data as *mut WorkerCtx);
+
+    // Latch the view ptr on the first frame so cmd_pump can target
+    // it for resize. The WebKitWebView wraps a WPEView internally
+    // but doesn't expose it via public API — observing buffer
+    // emissions is how we capture it.
+    if ctx.view.is_null() {
+        ctx.view = view;
+        if let Some((w, h)) = ctx.pending_resize.take() {
+            apply_resize(view, w, h);
+        }
+    }
 
     let buffer_base = buffer as *mut sys::WPEBuffer;
     let width = sys::wpe_buffer_get_width(buffer_base);
@@ -237,6 +269,16 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
     let ctx = &mut *(data as *mut WorkerCtx);
     loop {
         match ctx.cmd_rx.try_recv() {
+            Ok(Cmd::Resize { width, height }) => {
+                if ctx.view.is_null() {
+                    // View not yet observed via buffer-rendered;
+                    // remember the most recent size and replay
+                    // once we have a view ptr.
+                    ctx.pending_resize = Some((width, height));
+                } else {
+                    apply_resize(ctx.view, width, height);
+                }
+            }
             Ok(Cmd::Release { token }) => {
                 // Tell WPE we're done with this buffer; it may now
                 // recycle the underlying DMA-BUF.
@@ -257,4 +299,28 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
         }
     }
     1 /* G_SOURCE_CONTINUE */
+}
+
+/// Resize the view's toplevel. WPE's WebProcess picks this up and
+/// produces subsequent buffers at the new size. Idempotent — calling
+/// with the same size as before is a no-op inside WPE.
+unsafe fn apply_resize(view: *mut sys::WPEView, width: u32, height: u32) {
+    if view.is_null() {
+        return;
+    }
+    let toplevel = sys::wpe_view_get_toplevel(view);
+    if toplevel.is_null() {
+        tracing::warn!("wpe_view_get_toplevel returned null; cannot resize");
+        return;
+    }
+    let ok = sys::wpe_toplevel_resize(toplevel, width as i32, height as i32);
+    if ok == 0 {
+        tracing::warn!(
+            width,
+            height,
+            "wpe_toplevel_resize returned FALSE — backend rejected the size",
+        );
+    } else {
+        tracing::info!(width, height, "wpe_toplevel_resize accepted");
+    }
 }
