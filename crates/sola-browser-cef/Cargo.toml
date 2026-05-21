@@ -1,0 +1,51 @@
+[package]
+name = "sola-browser-cef"
+version = "0.1.0"
+edition = "2024"
+
+# CEF-backed sibling of sola-browser-wpe. Same iced chrome, same
+# wgpu shader sampling pipeline, same modifier-aware DMA-BUF import
+# via wgpu-hal-patched. Engine swap only — see
+# `docs/specs/2026-05-21-sola-browser-cef-port-and-benchmark.md`.
+#
+# Workspace-excluded for the same reason as the WPE sibling: iced's
+# transitive `smithay-clipboard` flips `wayland-sys` into dlopen
+# mode, which would break sola-river's runtime wayland linkage if
+# unified across the workspace.
+
+[[bin]]
+name = "sola-browser-cef"
+path = "src/main.rs"
+
+[dependencies]
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+tracing = "0.1"
+
+# wgpu pinned to the exact version iced 0.14 carries so handle types
+# unify; wgpu-hal at its matching minor for the same reason. ash is
+# the underlying Vulkan binding wgpu-hal itself uses.
+wgpu = { version = "27", features = ["vulkan-portability"] }
+wgpu-hal = { version = "27", features = ["vulkan"] }
+ash = "0.38"
+
+# CEF binding. Version pinned to match `cef-version` at workspace
+# root — sola-make's `install-cef` reads the same file and downloads
+# the matching binary distribution into `~/.cache/sola/cef-<ver>/`.
+# Do NOT enable `accelerated_osr` — that pulls wgpu/ash/metal into
+# CEF's own importer, which we don't use. We import DMA-BUFs through
+# `wgpu-hal-patched` exactly like the WPE crate does.
+cef = "147.1.0"
+
+libc = "0.2"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+[build-dependencies]
+# No bindgen, no pkg-config — CEF is the only system dep and it
+# comes in pre-built via sola-make.
+
+# Patch wgpu-hal to one with `VK_EXT_image_drm_format_modifier`
+# enabled. Same patch as sola-browser-wpe; see crates/wgpu-hal-patched/.
+[patch.crates-io]
+wgpu-hal = { path = "../wgpu-hal-patched" }
