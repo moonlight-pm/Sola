@@ -22,4 +22,13 @@
 #include <gbm.h>
 #include <fcntl.h>
 
+/* WPE Platform API (new, modifier-negotiating). The umbrella
+ * `wpe/wpe.h` already pulls in the base classes; the headless impl
+ * lives behind its own include. */
+#include <wpe/headless/wpe-headless.h>
+
+/* Our local GObject subclasses. Built into the binary via build.rs
+ * (cc-rs). */
+#include "sola_wpe.h"
+
 #include <wpe/webkit.h>

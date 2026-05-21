@@ -52,6 +52,11 @@ fn main() {
         "wpe-1.0",
         "wpebackend-fdo-1.0",
         "wpe-webkit-2.0",
+        // WPE Platform API (new, modifier-negotiating). The
+        // headless implementation lives in libWPEWebKit-2.0.so
+        // itself; the .pc just adds include paths.
+        "wpe-platform-2.0",
+        "wpe-platform-headless-2.0",
     ];
 
     let mut include_paths = Vec::new();
@@ -151,6 +156,7 @@ fn main() {
         // every glibc declaration through transitive includes.
         .allowlist_function("wpe_.*")
         .allowlist_function("webkit_.*")
+        .allowlist_function("sola_wpe_.*")
         .allowlist_function("g_main_.*")
         .allowlist_function("g_timeout_.*")
         .allowlist_function("g_object_unref")
@@ -177,4 +183,21 @@ fn main() {
     bindings
         .write_to_file(out.join("wpe_bindings.rs"))
         .expect("failed to write wpe_bindings.rs");
+
+    // Compile the small GObject subclasses we use to advertise
+    // LINEAR-only buffer modifiers to WPE and to capture rendered
+    // frames via the WPEView::render_buffer vmethod. See
+    // src/sola_wpe.c for the rationale.
+    println!("cargo:rerun-if-changed=src/sola_wpe.c");
+    println!("cargo:rerun-if-changed=src/sola_wpe.h");
+    let mut cc_build = cc::Build::new();
+    cc_build.file("src/sola_wpe.c");
+    for p in &include_paths {
+        cc_build.include(p);
+    }
+    cc_build
+        .warnings(true)
+        .extra_warnings(false)
+        .flag_if_supported("-Wno-deprecated-declarations")
+        .compile("sola_wpe");
 }

@@ -1,42 +1,37 @@
 //! WPE engine wrapper used by the main browser binary.
 //!
-//! WPE's data structures (exportable backend, GMainLoop, WebKitWebView)
-//! are not thread-safe — they live on a single thread, the one that
-//! runs `g_main_loop_run`. We dedicate a worker thread to that loop
-//! and shuttle data over channels:
+//! Migrated from the libwpe + libwpe-fdo path to the WPE Platform
+//! API (wpe-platform-2.0 + wpe-platform-headless-2.0). The Platform
+//! API lets the consumer advertise modifier preferences via
+//! `WPEDisplay::get_preferred_buffer_formats`, which is the
+//! mechanism we need to ask for ARGB8888 + LINEAR so wgpu (without
+//! VK_EXT_image_drm_format_modifier) can sample buffers correctly.
 //!
-//! - **Outbound** (worker → main): `FrameChan` carries each new
-//!   `WpeFrame` (FD ownership transferred, plus a token identifying
-//!   the original `wl_resource*` so the main thread can ask us to
-//!   release it later).
-//! - **Inbound** (main → worker): `CmdChan` carries control messages
-//!   — currently just `Release { token }` (consumer is done with a
-//!   frame and WPE may recycle the buffer) and `Quit` (shutdown).
+//! See `src/sola_wpe.c` for the GObject vmethod hijack that makes
+//! this work without subclassing the FINAL `WPEDisplayHeadless`.
 //!
-//! The worker thread polls the inbound channel from a GLib idle
-//! source so commands are processed alongside WPE's own events.
-//!
-//! For the spike: hardcoded URL, hardcoded view size, no input
-//! forwarding yet, no profile / cookies setup.
+//! WebKit silently switches its internal renderer path to the
+//! Platform API the first time any WPEDisplay subclass instance is
+//! constructed (it checks via `g_type_class_peek(WPE_TYPE_DISPLAY)
+//! != NULL`). Past that point `webkit_web_view_new(NULL)` builds a
+//! WebView using the primary WPEDisplay.
 
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use std::ffi::{CString, c_void};
-use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::ptr;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::{self, JoinHandle};
 
-// bindgen-generated FFI re-exported from main.rs's `wpe` module so
-// every binary in the crate sees the same symbol set.
 use crate::wpe_sys as sys;
 
-/// One frame as it crosses thread boundaries. The FD is dup'd by the
-/// worker before sending; the main thread owns it and closes it
-/// (via the imported `VkDeviceMemory`'s lifetime) when done.
+/// One frame as it crosses thread boundaries. The FD is dup'd by
+/// the worker before sending so iced can own the lifetime
+/// independent of WPE's buffer-recycle cycle.
 pub struct WpeFrame {
     pub fd: OwnedFd,
     pub width: u32,
@@ -46,17 +41,21 @@ pub struct WpeFrame {
     pub modifier: u64,
     pub stride: u32,
     pub offset: u32,
-    /// Opaque token the consumer hands back via `Cmd::Release` when
-    /// it's done with the frame. Internally the raw `wl_resource*`
-    /// the WPE callback gave us — never dereferenced off the worker
-    /// thread.
+    /// Opaque tokens the consumer hands back via `Cmd::Release`
+    /// when it's done with the frame. The pair (view, buffer) is
+    /// what `wpe_view_buffer_released` needs.
     pub token: ResourceToken,
 }
 
-/// `Send + Sync`-safe wrapper around the raw `wl_resource*` we get
-/// from the WPE callback. Always treated as opaque off-worker.
+/// `Send + Sync`-safe wrapper around the raw `WPEView*` +
+/// `WPEBuffer*` pair we get from the buffer-arrival callback.
+/// Always treated as opaque off the worker thread.
 #[derive(Clone, Copy, Debug)]
-pub struct ResourceToken(pub *mut c_void);
+pub struct ResourceToken {
+    pub view: *mut c_void,
+    pub buffer: *mut c_void,
+}
+
 unsafe impl Send for ResourceToken {}
 unsafe impl Sync for ResourceToken {}
 
@@ -66,19 +65,12 @@ pub enum Cmd {
 }
 
 pub struct WpeEngine {
-    /// Worker thread handle. Joined on `WpeEngine::shutdown`.
     worker: Option<JoinHandle<()>>,
     cmd_tx: Sender<Cmd>,
-    /// Frame receiver wrapped in `Arc<Mutex<_>>` so the iced
-    /// subscription stream can borrow it across awaits without
-    /// owning the engine itself.
     frames: Arc<Mutex<Receiver<WpeFrame>>>,
 }
 
 impl WpeEngine {
-    /// Spawn the worker, initialize WPE, load `url`, start producing
-    /// frames at `width × height`. Returns once the worker is up and
-    /// the GMainLoop is running.
     pub fn spawn(url: &str, width: u32, height: u32) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Cmd>();
         let (frame_tx, frame_rx) = channel::<WpeFrame>();
@@ -94,15 +86,10 @@ impl WpeEngine {
         }
     }
 
-    /// Sender end of the command channel — clone and hand to the
-    /// shader pipeline so it can post `Cmd::Release` when a new
-    /// frame replaces an old one.
     pub fn cmd_sender(&self) -> Sender<Cmd> {
         self.cmd_tx.clone()
     }
 
-    /// Shared handle to the frame receiver. The subscription stream
-    /// locks this to call `recv()` on a blocking task.
     pub fn frames(&self) -> Arc<Mutex<Receiver<WpeFrame>>> {
         self.frames.clone()
     }
@@ -117,11 +104,7 @@ impl WpeEngine {
 
 // ---- worker thread ------------------------------------------------
 
-/// State the GLib callbacks read and write. Held inside the worker
-/// thread's frame; pointer captured by callback closures as a typed
-/// `*mut WorkerCtx`.
 struct WorkerCtx {
-    exportable: *mut sys::wpe_view_backend_exportable_fdo,
     main_loop: *mut sys::GMainLoop,
     frame_tx: Sender<WpeFrame>,
     cmd_rx: Receiver<Cmd>,
@@ -129,181 +112,125 @@ struct WorkerCtx {
 
 unsafe fn worker_main(
     url: String,
-    width: u32,
-    height: u32,
+    _width: u32,
+    _height: u32,
     frame_tx: Sender<WpeFrame>,
     cmd_rx: Receiver<Cmd>,
 ) {
-    // Same init sequence as the standalone wpe-probe: backend lib by
-    // absolute path → GBM-platform EGL display → wpe_fdo_initialize
-    // → exportable view backend → WebKitWebView → load URL → run
-    // GMainLoop.
-    let backend_so = CString::new(env!("WPE_BACKEND_FDO_SO")).unwrap();
-    if !sys::wpe_loader_init(backend_so.as_ptr()) {
-        panic!("wpe_loader_init failed for {}", env!("WPE_BACKEND_FDO_SO"));
+    // 1. Construct our subclass-hijacked WPEDisplayHeadless. This
+    //    is what flips WebKit's internal path to the Platform API
+    //    (see `isUsingWPEPlatformAPI` in libWPEWebKit, which just
+    //    checks `g_type_class_peek(WPE_TYPE_DISPLAY) != NULL`).
+    let display = sys::sola_wpe_display_new();
+    if display.is_null() {
+        panic!("sola_wpe_display_new returned null");
     }
+    let mut err: *mut sys::GError = ptr::null_mut();
+    if sys::wpe_display_connect(display, &mut err) == 0 {
+        let msg = if !err.is_null() {
+            std::ffi::CStr::from_ptr((*err).message)
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            "(no error)".into()
+        };
+        panic!("wpe_display_connect failed: {msg}");
+    }
+    sys::wpe_display_set_primary(display);
+    tracing::info!("WPE platform display ready (subclassed for LINEAR-only modifier)");
 
-    let render_node = CString::new("/dev/dri/renderD128").unwrap();
-    let drm_fd = libc::open(render_node.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC);
-    if drm_fd < 0 {
-        panic!(
-            "open(/dev/dri/renderD128) failed: {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    let gbm_dev = sys::gbm_create_device(drm_fd);
-    if gbm_dev.is_null() {
-        panic!("gbm_create_device returned null");
-    }
-
-    type EglGetPlatformDisplayFn = unsafe extern "C" fn(
-        platform: sys::EGLenum,
-        native_display: *mut c_void,
-        attrib_list: *const sys::EGLAttrib,
-    ) -> sys::EGLDisplay;
-    let name = CString::new("eglGetPlatformDisplay").unwrap();
-    let func = sys::eglGetProcAddress(name.as_ptr())
-        .expect("eglGetProcAddress(eglGetPlatformDisplay) returned null");
-    let get_pdpy: EglGetPlatformDisplayFn = std::mem::transmute(func);
-    let egl_dpy = get_pdpy(
-        sys::EGL_PLATFORM_GBM_KHR,
-        gbm_dev as *mut c_void,
-        ptr::null(),
-    );
-    if egl_dpy.is_null() {
-        panic!("eglGetPlatformDisplay(GBM) returned EGL_NO_DISPLAY");
-    }
-    let mut major = 0;
-    let mut minor = 0;
-    if sys::eglInitialize(egl_dpy, &mut major, &mut minor) == 0 {
-        panic!("eglInitialize failed");
-    }
-    tracing::info!(major, minor, "EGL display initialized on GBM platform");
-
-    if !sys::wpe_fdo_initialize_for_egl_display(egl_dpy) {
-        panic!("wpe_fdo_initialize_for_egl_display failed");
-    }
-
+    // 2. Install our buffer-rendered callback. The C side installs
+    //    a GObject emission hook on the WPEView signal; this just
+    //    pipes incoming frames into the channel.
     let ctx = Box::into_raw(Box::new(WorkerCtx {
-        exportable: ptr::null_mut(),
         main_loop: ptr::null_mut(),
         frame_tx,
         cmd_rx,
     }));
+    sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
 
-    let client = sys::wpe_view_backend_exportable_fdo_client {
-        export_buffer_resource: Some(cb_export_buffer_resource),
-        export_dmabuf_resource: Some(cb_export_dmabuf_resource),
-        export_shm_buffer: Some(cb_export_shm_buffer),
-        _wpe_reserved0: None,
-        _wpe_reserved1: None,
-    };
-    let exportable = sys::wpe_view_backend_exportable_fdo_create(
-        &client as *const _ as *mut _,
-        ctx as *mut c_void,
-        width,
-        height,
-    );
-    if exportable.is_null() {
-        panic!("wpe_view_backend_exportable_fdo_create returned null");
-    }
-    (*ctx).exportable = exportable;
-    tracing::info!("created exportable view backend");
-
-    let view_backend = sys::wpe_view_backend_exportable_fdo_get_view_backend(exportable);
-    let wk_backend = sys::webkit_web_view_backend_new(view_backend, None, ptr::null_mut());
-    let view = sys::webkit_web_view_new(wk_backend);
+    // 3. Build a WebKitWebView. With `isUsingWPEPlatformAPI()` true
+    //    (we forced that by constructing a display above), passing
+    //    NULL as the backend tells WebKit to create one from the
+    //    primary WPEDisplay.
+    let view = sys::webkit_web_view_new(ptr::null_mut());
     if view.is_null() {
-        panic!("webkit_web_view_new returned null");
+        panic!("webkit_web_view_new(NULL) returned null");
     }
-    tracing::info!("created WebKitWebView");
+    tracing::info!("created WebKitWebView via Platform API path");
 
     let url_c = CString::new(url.as_str()).unwrap();
     sys::webkit_web_view_load_uri(view as *mut _, url_c.as_ptr());
     tracing::info!(url = %url, "kicked off URL load");
 
+    // 4. GMain loop. Poll the command channel from a timeout source
+    //    so Release / Quit are handled alongside WPE's own events.
     let main_loop = sys::g_main_loop_new(ptr::null_mut(), 0);
     (*ctx).main_loop = main_loop;
-
-    // Poll the inbound command channel from a GLib idle source so
-    // Cmd::Release / Cmd::Quit are handled on the worker thread
-    // alongside WPE's own events. Low frequency (60 Hz) is fine for
-    // release-buffer latency since we already produce a frame at a
-    // time.
     sys::g_timeout_add(16, Some(cb_pump_cmds), ctx as *mut c_void);
 
-    tracing::info!(url = url, "WPE engine entering GMainLoop");
+    tracing::info!("WPE engine entering GMainLoop");
     sys::g_main_loop_run(main_loop);
     tracing::info!("WPE engine GMainLoop exited");
 
+    sys::sola_wpe_set_buffer_callback(None, ptr::null_mut());
     let _ = Box::from_raw(ctx);
 }
 
-unsafe extern "C" fn cb_export_dmabuf_resource(
-    data: *mut c_void,
-    res: *mut sys::wpe_view_backend_exportable_fdo_dmabuf_resource,
+unsafe extern "C" fn on_buffer_rendered(
+    user_data: *mut c_void,
+    view: *mut sys::WPEView,
+    buffer: *mut sys::WPEBufferDMABuf,
 ) {
-    let ctx = &mut *(data as *mut WorkerCtx);
-    let res = &*res;
-    tracing::info!(
-        w = res.width,
-        h = res.height,
-        format = format!("{:#x}", res.format),
-        modifier = format!("{:#x}", res.modifiers[0]),
-        n_planes = res.n_planes,
-        stride = res.strides[0],
-        fd = res.fds[0],
-        "WPE produced DMA-BUF frame",
-    );
-    if res.n_planes != 1 {
-        tracing::warn!(n_planes = res.n_planes, "ignoring multi-plane frame");
-        sys::wpe_view_backend_exportable_fdo_dispatch_release_buffer(
-            ctx.exportable,
-            res.buffer_resource,
-        );
-        sys::wpe_view_backend_exportable_fdo_dispatch_frame_complete(ctx.exportable);
+    let ctx = &mut *(user_data as *mut WorkerCtx);
+
+    let buffer_base = buffer as *mut sys::WPEBuffer;
+    let width = sys::wpe_buffer_get_width(buffer_base);
+    let height = sys::wpe_buffer_get_height(buffer_base);
+    let n_planes = sys::wpe_buffer_dma_buf_get_n_planes(buffer);
+    if n_planes != 1 {
+        tracing::warn!(n_planes, "ignoring multi-plane frame");
         return;
     }
-    let dup_fd = libc::fcntl(res.fds[0], libc::F_DUPFD_CLOEXEC, 0);
+    let format = sys::wpe_buffer_dma_buf_get_format(buffer);
+    let modifier = sys::wpe_buffer_dma_buf_get_modifier(buffer);
+    let stride = sys::wpe_buffer_dma_buf_get_stride(buffer, 0);
+    let offset = sys::wpe_buffer_dma_buf_get_offset(buffer, 0);
+    let raw_fd = sys::wpe_buffer_dma_buf_get_fd(buffer, 0);
+
+    tracing::info!(
+        w = width,
+        h = height,
+        format = format!("{:#x}", format),
+        modifier = format!("{:#x}", modifier),
+        stride,
+        fd = raw_fd,
+        "WPE produced DMA-BUF frame",
+    );
+
+    let dup_fd = libc::fcntl(raw_fd, libc::F_DUPFD_CLOEXEC, 0);
     if dup_fd < 0 {
         tracing::warn!(err = ?std::io::Error::last_os_error(), "dup of dmabuf fd failed");
         return;
     }
+
     let frame = WpeFrame {
         fd: OwnedFd::from_raw_fd(dup_fd),
-        width: res.width,
-        height: res.height,
-        format: res.format,
-        modifier: res.modifiers[0],
-        stride: res.strides[0],
-        offset: res.offsets[0],
-        token: ResourceToken(res.buffer_resource as *mut c_void),
+        width: width as u32,
+        height: height as u32,
+        format,
+        modifier,
+        stride,
+        offset,
+        token: ResourceToken {
+            view: view as *mut c_void,
+            buffer: buffer as *mut c_void,
+        },
     };
     if ctx.frame_tx.send(frame).is_err() {
-        // Consumer is gone — shut down the loop.
         tracing::info!("frame channel closed, quitting GMainLoop");
         sys::g_main_loop_quit(ctx.main_loop);
     }
-    // dispatch_frame_complete tells WPE we're ready for the next
-    // frame on this slot. The original buffer_resource will be
-    // released when the consumer sends Cmd::Release back.
-    sys::wpe_view_backend_exportable_fdo_dispatch_frame_complete(ctx.exportable);
-}
-
-unsafe extern "C" fn cb_export_buffer_resource(
-    _data: *mut c_void,
-    _resource: *mut sys::wl_resource,
-) {
-    // wl_resource buffers are the non-dmabuf shape we don't use.
-}
-
-unsafe extern "C" fn cb_export_shm_buffer(
-    _data: *mut c_void,
-    _buf: *mut sys::wpe_fdo_shm_exported_buffer,
-) {
-    // SHM buffers indicate WPE fell back to software rendering —
-    // worth knowing if it happens but not actionable here.
-    tracing::warn!("WPE produced SHM (software-render) buffer; expected DMA-BUF");
 }
 
 unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
@@ -311,9 +238,11 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
     loop {
         match ctx.cmd_rx.try_recv() {
             Ok(Cmd::Release { token }) => {
-                sys::wpe_view_backend_exportable_fdo_dispatch_release_buffer(
-                    ctx.exportable,
-                    token.0 as *mut _,
+                // Tell WPE we're done with this buffer; it may now
+                // recycle the underlying DMA-BUF.
+                sys::wpe_view_buffer_released(
+                    token.view as *mut sys::WPEView,
+                    token.buffer as *mut sys::WPEBuffer,
                 );
             }
             Ok(Cmd::Quit) => {

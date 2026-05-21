@@ -70,7 +70,12 @@ pub unsafe fn import(
     fd: OwnedFd,
     meta: &DmabufMetadata,
 ) -> Result<ImportedFrame, ImportError> {
-    if meta.format != 0x3432_5241 {
+    // DRM fourcc 'AR24' = ARGB8888 (with alpha), 'XR24' = XRGB8888
+    // (alpha bits ignored). Both lay out as BGRA / BGRX bytes in
+    // memory — wgpu's Bgra8Unorm samples them identically; treating
+    // XRGB as BGRA just means the implicit-1.0 alpha channel comes
+    // from the X bits, which is what we want.
+    if meta.format != 0x3432_5241 && meta.format != 0x3432_5258 {
         return Err(ImportError::UnsupportedFormat(meta.format));
     }
     let vk_format = vk::Format::B8G8R8A8_UNORM;

@@ -57,3 +57,4 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 [build-dependencies]
 pkg-config = "0.3"
 bindgen = "0.72"
+cc = "1"
