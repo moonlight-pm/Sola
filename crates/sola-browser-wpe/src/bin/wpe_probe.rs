@@ -47,7 +47,9 @@ mod wpe {
 const URL: &str = "https://example.com";
 const WIDTH: u32 = 1024;
 const HEIGHT: u32 = 768;
-const FRAMES_TO_CAPTURE: u32 = 5;
+/// Static pages like example.com render once and idle. One frame is
+/// enough to prove the pipeline. Bump for dynamic-content probes.
+const FRAMES_TO_CAPTURE: u32 = 1;
 const OUT_DIR: &str = "/tmp";
 const TIMEOUT_SECONDS: u32 = 20;
 
@@ -87,18 +89,56 @@ unsafe fn run() {
         std::process::exit(1);
     }
 
-    // 2. Initialize the FDO backend for EGL. We get the default EGL
-    //    display via eglGetDisplay(EGL_DEFAULT_DISPLAY=NULL) — cog
-    //    does the same. The dmabuf-only init path
-    //    (wpe_fdo_initialize_dmabuf) trips the WebProcess into
-    //    "EGL bad attribute" when it tries to wrap its render output;
-    //    going through the EGL display path keeps the engine's
-    //    internal pipeline coherent.
-    let egl_dpy = wpe::eglGetDisplay(ptr::null_mut());
-    if egl_dpy.is_null() {
-        eprintln!("eglGetDisplay returned EGL_NO_DISPLAY");
+    // 2. Get an EGL display via the GBM platform. The "default" EGL
+    //    display lands on Mesa's loader, which can't find a device
+    //    on our NVIDIA system ("failed to get driver name for fd
+    //    -1"). The correct headless pattern is:
+    //      open(renderD128) → gbm_create_device(fd) →
+    //      eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, gbm_dev, NULL)
+    //    libglvnd then dispatches to NVIDIA's libEGL implementation.
+    let render_node = CString::new("/dev/dri/renderD128").unwrap();
+    let drm_fd = libc::open(render_node.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC);
+    if drm_fd < 0 {
+        eprintln!("open(/dev/dri/renderD128) failed: {}", std::io::Error::last_os_error());
         std::process::exit(1);
     }
+    let gbm_dev = wpe::gbm_create_device(drm_fd);
+    if gbm_dev.is_null() {
+        eprintln!("gbm_create_device returned null");
+        std::process::exit(1);
+    }
+    // eglGetPlatformDisplay isn't always exported via the EGL 1.4
+    // headers; pull it as an extension function pointer so we don't
+    // require the EGL 1.5 symbol at link time.
+    type EglGetPlatformDisplayFn = unsafe extern "C" fn(
+        platform: wpe::EGLenum,
+        native_display: *mut c_void,
+        attrib_list: *const wpe::EGLAttrib,
+    ) -> wpe::EGLDisplay;
+    let get_pdpy_name = CString::new("eglGetPlatformDisplay").unwrap();
+    let get_pdpy_fn = wpe::eglGetProcAddress(get_pdpy_name.as_ptr());
+    if get_pdpy_fn.is_none() {
+        eprintln!("eglGetProcAddress(eglGetPlatformDisplay) returned null");
+        std::process::exit(1);
+    }
+    let get_pdpy: EglGetPlatformDisplayFn = std::mem::transmute(get_pdpy_fn);
+    let egl_dpy = get_pdpy(
+        wpe::EGL_PLATFORM_GBM_KHR,
+        gbm_dev as *mut c_void,
+        ptr::null(),
+    );
+    if egl_dpy.is_null() {
+        eprintln!("eglGetPlatformDisplay(GBM) returned EGL_NO_DISPLAY");
+        std::process::exit(1);
+    }
+    let mut major: wpe::EGLint = 0;
+    let mut minor: wpe::EGLint = 0;
+    if wpe::eglInitialize(egl_dpy, &mut major, &mut minor) == 0 {
+        eprintln!("eglInitialize failed");
+        std::process::exit(1);
+    }
+    tracing::info!(major, minor, "EGL display initialized on GBM platform");
+
     if !wpe::wpe_fdo_initialize_for_egl_display(egl_dpy) {
         eprintln!("wpe_fdo_initialize_for_egl_display failed");
         std::process::exit(1);
@@ -203,8 +243,13 @@ unsafe extern "C" fn on_export_dmabuf_resource(
 unsafe extern "C" fn on_timeout(_user_data: *mut c_void) -> wpe::gboolean {
     let mut guard = STATE.lock().unwrap();
     let state = guard.as_mut().expect("STATE init");
+    if state.frames_seen == 0 {
+        eprintln!("FAIL: timeout after {TIMEOUT_SECONDS}s with zero frames");
+        unsafe { wpe::g_main_loop_quit(state.main_loop) };
+        std::process::exit(2);
+    }
     eprintln!(
-        "timeout after {TIMEOUT_SECONDS}s — only saw {} frames",
+        "timeout after {TIMEOUT_SECONDS}s — saw {} frames (target was {FRAMES_TO_CAPTURE})",
         state.frames_seen
     );
     unsafe { wpe::g_main_loop_quit(state.main_loop) };

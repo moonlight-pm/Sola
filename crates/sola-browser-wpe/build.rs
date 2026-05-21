@@ -39,8 +39,11 @@ fn main() {
         // ourselves bind any xkbcommon functions.
         "xkbcommon",
         // libEGL — wpe_fdo_initialize_for_egl_display takes an
-        // EGLDisplay, we get one via eglGetDisplay(EGL_DEFAULT_DISPLAY).
+        // EGLDisplay. We get a *real* one via the GBM platform path
+        // (see probe), not the default display (which lands on Mesa
+        // and fails on NVIDIA).
         "egl",
+        "gbm",
         "wpe-1.0",
         "wpebackend-fdo-1.0",
         "wpe-webkit-2.0",
@@ -121,7 +124,11 @@ fn main() {
         .allowlist_function("g_object_unref")
         .allowlist_function("g_signal_connect_data")
         .allowlist_function("egl.*")
+        .allowlist_function("gbm_.*")
+        .allowlist_function("open")
         .allowlist_var("EGL_.*")
+        .allowlist_var("GBM_.*")
+        .allowlist_var("O_.*")
         .allowlist_type("Wpe.*")
         .allowlist_type("WebKit.*")
         .allowlist_type("WPE.*")

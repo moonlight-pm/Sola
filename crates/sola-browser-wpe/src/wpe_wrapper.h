@@ -18,5 +18,8 @@
 #include <wpe/unstable/fdo-dmabuf.h>
 
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <gbm.h>
+#include <fcntl.h>
 
 #include <wpe/webkit.h>

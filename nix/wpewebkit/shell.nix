@@ -28,9 +28,17 @@ pkgs.mkShell {
     # xkbcommon functions ourselves.
     pkgs.libxkbcommon
     # libEGL — wpe_fdo_initialize_for_egl_display() takes an
-    # EGLDisplay, which we get via eglGetDisplay(EGL_DEFAULT_DISPLAY).
-    # WPE's WebProcess also needs it for the GPU side rendering.
+    # EGLDisplay, which we get via eglGetPlatformDisplay against a
+    # GBM device (the headless-render pattern). WPE's WebProcess
+    # also needs the GL stack for its own rendering.
     pkgs.libGL
+    # libgbm — needed to make an EGL display from a DRM render node.
+    # Without it, eglGetDisplay(EGL_DEFAULT_DISPLAY) lands on Mesa's
+    # default loader and fails with "failed to get driver name for
+    # fd -1" on NVIDIA hardware. The proper headless pattern is
+    # open(renderD128) → gbm_create_device(fd) →
+    # eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, gbm_dev, NULL).
+    pkgs.libgbm
   ];
   nativeBuildInputs = [
     pkgs.pkg-config
