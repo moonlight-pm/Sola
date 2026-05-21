@@ -179,8 +179,13 @@ clangStdenv.mkDerivation (finalAttrs: {
     libseccomp
     wayland
     wayland-protocols
-    # The WPE-specific bits — these are what makes this different from
-    # the GTK port and what gives us the DMA-BUF export pipeline.
+    # The WPE-specific bits — what differentiates us from the GTK port
+    # and gives us the DMA-BUF export pipeline. Kept in buildInputs
+    # (not propagatedBuildInputs) so a propagation tweak doesn't blow
+    # the derivation hash and force a full rebuild. Consumers must add
+    # libwpe + libwpe-fdo themselves; nix/wpewebkit/shell.nix handles
+    # this transparently. Promote to propagated on the next deliberate
+    # rebuild.
     libwpe
     libwpe-fdo
   ]
