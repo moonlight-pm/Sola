@@ -185,6 +185,11 @@ fn worker_main(
 
     let mut browser_settings = cef::BrowserSettings::default();
     browser_settings.background_color = 0xFFFF_FFFF;
+    // Raise OSR paint rate from CEF's default 30 fps to 60 fps so
+    // animated pages aren't gated below WPE's natural rate. CEF
+    // hard-caps at 60 in the C-API (per cef_browser_settings.h); to
+    // exceed that we'd need a different transport entirely.
+    browser_settings.windowless_frame_rate = 60;
 
     let render_handler = BrowserRenderHandler::new();
     let life_span_handler = BrowserLifeSpanHandler::new();

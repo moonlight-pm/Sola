@@ -1,0 +1,10 @@
+{
+  "engine": "wpe",
+  "url": "https://slate.auto",
+  "duration_s": 30,
+  "start_iso": "2026-05-21T21:42:36Z",
+  "end_iso": "2026-05-21T21:43:08Z",
+  "binary": "crates/sola-browser-wpe/target/debug/sola-browser-wpe",
+  "host": "novus",
+  "kernel": "6.12.82"
+}
