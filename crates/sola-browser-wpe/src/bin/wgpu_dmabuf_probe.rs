@@ -16,31 +16,6 @@
 //! window with no artifacts and stable colors across frames. If it
 //! renders, the import path is real and every later phase can rely on
 //! it.
-//!
-//! ## Finding — wgpu first-use barrier on imported textures
-//!
-//! `wgpu_core::Device::create_texture_from_hal` hardcodes the new
-//! texture's tracker state to `TextureUses::UNINITIALIZED`, which
-//! maps to `vk::ImageLayout::UNDEFINED`. The first time the texture
-//! is used as a resource, wgpu issues a barrier with
-//! `oldLayout = UNDEFINED` → `SHADER_READ_ONLY_OPTIMAL`. Per Vulkan
-//! spec this allows the driver to **discard contents**, and on Mesa
-//! that's exactly what happens when the image is genuinely in
-//! UNDEFINED.
-//!
-//! Workaround that works on Mesa: transition the image to
-//! `SHADER_READ_ONLY_OPTIMAL` via our own one-shot command buffer
-//! *before* handing it to wgpu (see `transition_to_shader_read`).
-//! wgpu still emits its redundant UNDEFINED→READ barrier, but Mesa
-//! treats it as a no-op since the image is already in the target
-//! layout — contents survive.
-//!
-//! This pattern carries forward to the WPE integration: whoever
-//! writes to the image must leave it in a known sampleable layout
-//! before we sample, and we transition again on our side after
-//! import if needed. The "wgpu thinks it's UNDEFINED, but is
-//! actually already in the right layout" trick is what makes the
-//! whole approach viable on today's wgpu.
 
 use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
 
@@ -396,25 +371,6 @@ fn build_imported_dmabuf(device: &wgpu::Device) -> ImportedDmabuf {
         let (import_image, import_memory) =
             allocate_import_image(instance, physical, &ash_device, import_fd);
 
-        // 4b. Transition the imported image PREINITIALIZED →
-        // SHADER_READ_ONLY_OPTIMAL via a one-shot command buffer
-        // *before* wgpu-hal sees it. wgpu-core hardcodes the tracker
-        // state of imported textures to `UNINITIALIZED` → its
-        // first-use barrier has `oldLayout = UNDEFINED`, which per
-        // Vulkan spec allows the driver to discard contents (and
-        // Mesa does). The hope is that doing our own transition
-        // first puts the image in a state where wgpu's redundant
-        // UNDEFINED → SHADER_READ_ONLY_OPTIMAL becomes a no-op on
-        // the GPU side. If the probe still renders white after this,
-        // we've confirmed wgpu's barrier is destructive regardless
-        // and need either a wgpu patch or a different architecture.
-        transition_to_shader_read(
-            &ash_device,
-            guard.raw_queue(),
-            guard.queue_family_index(),
-            import_image,
-        );
-
         // 5. Hand the import VkImage to wgpu-hal. With `None` drop
         // callback, wgpu-hal destroys this VkImage when the resulting
         // Texture drops — saves us from tracking it.
@@ -629,89 +585,6 @@ unsafe fn allocate_import_image(
     tracing::info!(fd = raw_fd, "imported memory fd into VkImage");
 
     (image, memory)
-}
-
-/// One-shot transition of `image` from PREINITIALIZED to
-/// SHADER_READ_ONLY_OPTIMAL with HOST_WRITE → SHADER_READ access.
-/// Synchronous: submits with a fence and waits before returning.
-unsafe fn transition_to_shader_read(
-    device: &ash::Device,
-    queue: vk::Queue,
-    queue_family: u32,
-    image: vk::Image,
-) {
-    let pool_info = vk::CommandPoolCreateInfo::default()
-        .flags(vk::CommandPoolCreateFlags::TRANSIENT)
-        .queue_family_index(queue_family);
-    let pool = unsafe { device.create_command_pool(&pool_info, None) }
-        .expect("vkCreateCommandPool (transition)");
-
-    let alloc_info = vk::CommandBufferAllocateInfo::default()
-        .command_pool(pool)
-        .level(vk::CommandBufferLevel::PRIMARY)
-        .command_buffer_count(1);
-    let cmds = unsafe { device.allocate_command_buffers(&alloc_info) }
-        .expect("vkAllocateCommandBuffers (transition)");
-    let cmd = cmds[0];
-
-    unsafe {
-        device
-            .begin_command_buffer(
-                cmd,
-                &vk::CommandBufferBeginInfo::default()
-                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-            )
-            .expect("vkBeginCommandBuffer (transition)");
-    }
-
-    let barrier = vk::ImageMemoryBarrier::default()
-        .old_layout(vk::ImageLayout::PREINITIALIZED)
-        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .src_access_mask(vk::AccessFlags::HOST_WRITE)
-        .dst_access_mask(vk::AccessFlags::SHADER_READ)
-        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-        .image(image)
-        .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1,
-        });
-
-    unsafe {
-        device.cmd_pipeline_barrier(
-            cmd,
-            vk::PipelineStageFlags::HOST,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &[barrier],
-        );
-        device
-            .end_command_buffer(cmd)
-            .expect("vkEndCommandBuffer (transition)");
-    }
-
-    let fence = unsafe {
-        device
-            .create_fence(&vk::FenceCreateInfo::default(), None)
-            .expect("vkCreateFence (transition)")
-    };
-    let submit = vk::SubmitInfo::default().command_buffers(&cmds);
-    unsafe {
-        device
-            .queue_submit(queue, &[submit], fence)
-            .expect("vkQueueSubmit (transition)");
-        device
-            .wait_for_fences(&[fence], true, u64::MAX)
-            .expect("vkWaitForFences (transition)");
-        device.destroy_fence(fence, None);
-        device.destroy_command_pool(pool, None);
-    }
-    tracing::info!("transitioned import image PREINITIALIZED → SHADER_READ_ONLY_OPTIMAL");
 }
 
 fn find_memory_type(
