@@ -207,19 +207,30 @@ Iced's `Extended::Background` has 8 tiers (`weakest…strongest`); our
 The full mapping lives in `theme::sola_extended`. Rebinding a slot is
 a one-line edit there — no component-code change.
 
-### Live theme reload (v0.2)
+### Live theme reload
 
-Iced's `app.theme(&self) -> Theme` runs every render, so the wiring
-for `Topic::Theme` is straightforward:
+Wired and shipping. Both kit consumers (sola-monitor + storybook)
+react to `Topic::Theme` deliveries in real time:
 
-1. App stores `Arc<iced::Theme>` (or just `iced::Theme`) in state.
-2. Bus subscription on `Topic::Theme` produces an
-   `iced::Subscription` event; `update` rebuilds the theme via
-   `sola_core::theme::Theme → iced::Theme::custom_with_fn(...)` and
-   swaps it into state.
-3. Next render iced calls `theme(&self)` and sees the new value.
+1. App stores `iced::Theme` in state, initialized to
+   `sola_kit::theme::default_theme()`.
+2. `sola_kit::app::bus_subscription()` drives an `iced::Subscription`
+   that yields `Arc<sola_bus::Message>`; apps `.map(Msg::Bus)` it.
+3. The bus subscriber decodes `Topic::Theme(bus_theme)` and calls
+   `sola_kit::theme::from_bus_theme(&bus_theme)` — translates the
+   v1 bus palette (`bg-primary` / `bg-secondary` / `bg-tertiary` /
+   `border` / `text-primary` / `text-tertiary` / `accent` /
+   `success` / `danger`, with `warning` falling back to the kit
+   default since the seed palette doesn't carry one) into a fresh
+   `iced::Theme::custom_with_fn(...)`.
+4. App stores the new theme; iced calls `theme(&self)` on the next
+   render and the whole UI reflows colors.
 
-We avoid global state because iced's existing mechanism is enough.
+The kit's `bus_subscription` polls the bus client's sync `try_recv`
+on an 8ms thread and forwards into an iced mpsc channel — the bus
+client only has one receiver per process, so apps that want bus
+events use this helper (do NOT also call `bus().lock().try_recv()`
+directly, you'll race for messages).
 
 ### Escape hatch
 
@@ -278,24 +289,22 @@ migration.
 
 In rough priority order:
 
-1. **Live theme reloads.** Wire `Topic::Theme` into the kit so apps'
-   `theme(&self)` callbacks return a fresh `iced::Theme` built from
-   the bus payload. See "Live theme reload" above for the design.
-2. **Third consumer.** Port one of: sola-settings (small, well-scoped),
+1. **Third consumer.** Port one of: sola-settings (small, well-scoped),
    sola-shell's launcher (visual, exercises layout components), or a
    brand-new app that wants iced from day one. Whatever the third app
    wants, that's what gets promoted into the kit next. (Storybook is
    the second consumer; it dogfoods every existing component.)
-3. **Refactor sola-monitor onto kit components.** It currently
-   carries its own divider_style, hex helper, row containers etc. —
-   small file, easy migration once we touch it.
-4. **`run::<A>()` entry point.** Once two apps' `main()` functions look
+2. **Theme page reads live iced palette.** The storybook's Theme
+   page currently shows the kit's compile-time `hex::*` constants.
+   Refactor it to render the active `iced::Theme`'s extended-palette
+   tiers so the same page demonstrates live reload visually.
+3. **`run::<A>()` entry point.** Once two apps' `main()` functions look
    nearly identical (modulo the typed update/view/subscription
    closures), bundle them into one generic function. Don't ship before
    the duplication is real.
-5. **Grow components inline** as the third consumer needs them
+4. **Grow components inline** as the third consumer needs them
    (list-row, tabs, breadcrumbs, segmented control, slider styling,
    checkbox styling, ...). One at a time.
 
-Items 1–3 unblock most other work. 4+ are improvements that pay off
+Items 1–2 unblock most other work. 3+ are improvements that pay off
 proportionally to kit adoption.

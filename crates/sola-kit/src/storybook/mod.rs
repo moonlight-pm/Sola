@@ -10,9 +10,12 @@
 //! `Page` variant, add a `pages::<name>::view()` module, hand it to
 //! the sidebar list.
 
-use iced::widget::{container, row, scrollable};
-use iced::{Element, Length, Padding};
+use std::sync::Arc;
 
+use iced::widget::{container, row, scrollable};
+use iced::{Element, Length, Padding, Subscription};
+
+use sola_bus::topics::{MenuActionPayload, Topic};
 use sola_kit::components::{SidebarItem, sidebar};
 use sola_kit::theme;
 
@@ -79,6 +82,9 @@ pub enum Msg {
     Select(Page),
     Toolbar(pages::toolbar::Msg),
     Field(pages::field::Msg),
+    /// Bus message arriving via [`sola_kit::app::bus_subscription`].
+    /// Wrapped in `Arc` to keep cloning cheap for iced's mpsc fanout.
+    Bus(Arc<sola_bus::Message>),
     /// Demo placeholder for showcases whose components require an
     /// `on_press` (or similar callback) message but don't model
     /// interaction in the storybook.
@@ -89,6 +95,10 @@ pub struct Storybook {
     page: Page,
     toolbar: pages::toolbar::State,
     field: pages::field::State,
+    /// Live iced theme — initialized to the kit default and replaced
+    /// on every `Topic::Theme` delivery via
+    /// [`sola_kit::theme::from_bus_theme`].
+    theme: iced::Theme,
 }
 
 impl Storybook {
@@ -97,6 +107,7 @@ impl Storybook {
             page: Page::Welcome,
             toolbar: pages::toolbar::State::default(),
             field: pages::field::State::default(),
+            theme: theme::default_theme(),
         }
     }
 
@@ -105,7 +116,11 @@ impl Storybook {
     }
 
     pub fn theme(&self) -> iced::Theme {
-        theme::default_theme()
+        self.theme.clone()
+    }
+
+    pub fn subscription(&self) -> Subscription<Msg> {
+        sola_kit::app::bus_subscription().map(Msg::Bus)
     }
 
     pub fn update(&mut self, msg: Msg) {
@@ -113,6 +128,17 @@ impl Storybook {
             Msg::Select(page) => self.page = page,
             Msg::Toolbar(m) => self.toolbar.update(m),
             Msg::Field(m) => self.field.update(m),
+            Msg::Bus(message) => match Topic::parse(&message) {
+                Some(Topic::Theme(bus_theme)) => {
+                    self.theme = theme::from_bus_theme(&bus_theme);
+                }
+                Some(Topic::MenuAction(MenuActionPayload { app_id, action_id }))
+                    if app_id == "sola-kit" && action_id == "quit" =>
+                {
+                    std::process::exit(0);
+                }
+                _ => {}
+            },
             Msg::Noop => {}
         }
     }

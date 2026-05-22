@@ -34,7 +34,7 @@ impl State {
 pub fn view(state: &State) -> Element<'_, Msg> {
     let buttons = ["Pause", "Clear", "Reset"];
     let bar = buttons.iter().fold(row![].spacing(6), |r, label| {
-        r.push(toolbar_button(label).on_press(Msg::Clicked(label)))
+        r.push(toolbar_button(*label).on_press(Msg::Clicked(*label)))
     });
 
     let demo = container(bar)

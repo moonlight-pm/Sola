@@ -23,7 +23,7 @@ fn main() -> iced::Result {
     startup(APP_ID);
 
     BusSetup::new(APP_ID)
-        .subscribe(&[TopicKind::Theme])
+        .subscribe(&[TopicKind::Theme, TopicKind::MenuAction])
         .app_menu("Kit", [("quit", "Quit Kit", KeyCode::Q.meta())])
         .install();
 
@@ -33,6 +33,7 @@ fn main() -> iced::Result {
         storybook::Storybook::view,
     )
     .title(storybook::Storybook::title)
+    .subscription(storybook::Storybook::subscription)
     .theme(storybook::Storybook::theme)
     .default_font(F_NORMAL)
     .window(window_settings(APP_ID));

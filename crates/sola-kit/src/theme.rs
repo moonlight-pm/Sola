@@ -42,6 +42,8 @@ use iced::theme::palette::{
     Background, Danger, Extended, Pair, Palette, Primary, Secondary, Success, Warning,
 };
 
+use sola_core::theme::Theme as BusTheme;
+
 /// Theme name reported by `Theme::name()` — appears in `pick_list`
 /// theme switchers and in the iced debug overlay.
 pub const THEME_NAME: &str = "sola";
@@ -136,4 +138,88 @@ pub fn parse(s: &str) -> Color {
     let g = u8::from_str_radix(&s[2..4], 16).expect("gg") as f32 / 255.0;
     let b = u8::from_str_radix(&s[4..6], 16).expect("bb") as f32 / 255.0;
     Color::from_rgb(r, g, b)
+}
+
+/// Try to parse `#rrggbb`, returning `None` on malformed input. Used
+/// when ingesting bus theme atoms whose values arrive as untrusted
+/// strings — a malformed swatch becomes a fallback rather than a
+/// panic.
+fn try_parse(s: &str) -> Option<Color> {
+    let s = s.trim_start_matches('#');
+    if s.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()? as f32 / 255.0;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()? as f32 / 255.0;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()? as f32 / 255.0;
+    Some(Color::from_rgb(r, g, b))
+}
+
+/// Translate a bus theme (`sola_core::theme::Theme`) into the kit's
+/// iced theme. Atom names follow the v1 palette catalog seeded by
+/// `sola_core::theme::Palette::seed` — `bg-primary` / `bg-secondary`
+/// / `bg-tertiary` / `border` / `text-primary` / `text-tertiary` /
+/// `accent` / `success` / `danger`. Missing or malformed atoms fall
+/// back to the kit's compile-time defaults so a partial bus theme
+/// still produces a usable iced theme.
+///
+/// Wire this into an app's update fn:
+///
+/// ```ignore
+/// Msg::BusMessage(msg) => {
+///     if let Topic::Theme(bus_theme) = &msg.topic {
+///         self.theme = sola_kit::theme::from_bus_theme(bus_theme);
+///     }
+/// }
+/// ```
+///
+/// Then return `self.theme.clone()` from `App::theme(&self)`. iced
+/// re-renders on the next frame and the new palette flows through
+/// every component style fn automatically.
+pub fn from_bus_theme(bus: &BusTheme) -> Theme {
+    let lookup = |name: &str, fallback: &str| -> Color {
+        bus.palette
+            .tokens
+            .get(name)
+            .and_then(|t| try_parse(&t.value))
+            .unwrap_or_else(|| parse(fallback))
+    };
+
+    let bg = lookup("bg-primary", hex::BG);
+    let bg_raised = lookup("bg-secondary", hex::BG_RAISED);
+    let bg_hover = lookup("bg-tertiary", hex::BG_HOVER);
+    let border = lookup("border", hex::BORDER);
+    let fg = lookup("text-primary", hex::FG);
+    let fg_muted = lookup("text-tertiary", hex::FG_MUTED);
+    let accent = lookup("accent", hex::ACCENT);
+    let success = lookup("success", hex::SUCCESS);
+    let warning = lookup("warning", hex::WARNING);
+    let danger = lookup("danger", hex::DANGER);
+
+    Theme::custom_with_fn(
+        THEME_NAME.to_string(),
+        Palette { background: bg, text: fg, primary: accent, success, warning, danger },
+        move |palette| Extended {
+            background: Background {
+                base: Pair::new(bg, fg),
+                weakest: Pair::new(bg, fg),
+                weaker: Pair::new(bg_raised, fg),
+                weak: Pair::new(bg_raised, fg),
+                neutral: Pair::new(bg_hover, fg),
+                strong: Pair::new(bg_hover, fg),
+                stronger: Pair::new(border, fg),
+                strongest: Pair::new(border, fg),
+            },
+            primary: Primary::generate(palette.primary, bg, fg),
+            secondary: Secondary {
+                base: Pair::new(border, fg_muted),
+                weak: Pair::new(bg_hover, fg_muted),
+                strong: Pair::new(border, fg),
+            },
+            success: Success::generate(palette.success, bg, fg),
+            warning: Warning::generate(palette.warning, bg, fg),
+            danger: Danger::generate(palette.danger, bg, fg),
+            is_dark: true,
+        },
+    )
 }

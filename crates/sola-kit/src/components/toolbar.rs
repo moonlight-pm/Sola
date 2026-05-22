@@ -10,6 +10,7 @@
 //! directly.
 
 use iced::widget::{button, text};
+use iced::widget::text::IntoFragment;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
 use crate::fonts;
@@ -17,7 +18,12 @@ use crate::fonts;
 /// Compact toolbar button with the kit's condensed-bold label font and
 /// shrink-to-content width. Returns the configured button without an
 /// `on_press` so the caller picks whether to enable it.
-pub fn toolbar_button<'a, Message>(label: &'a str) -> button::Button<'a, Message>
+///
+/// `label` accepts both `&str` and `String` (anything that's
+/// `IntoFragment` — matches iced's own `text(...)` signature).
+pub fn toolbar_button<'a, Message>(
+    label: impl IntoFragment<'a>,
+) -> button::Button<'a, Message>
 where
     Message: Clone + 'a,
 {
@@ -31,7 +37,7 @@ where
 /// already-wired buttons in a `Vec<Element>`. Equivalent to
 /// `toolbar_button(label).on_press(msg).into()`.
 pub fn toolbar_button_msg<'a, Message>(
-    label: &'a str,
+    label: impl IntoFragment<'a>,
     on_press: Message,
 ) -> Element<'a, Message>
 where

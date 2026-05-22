@@ -10,11 +10,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use iced::futures::SinkExt;
-use iced::futures::Stream;
-use iced::stream;
 use iced::widget::{
-    Space, button, column, container, mouse_area, pick_list, rich_text, row, scrollable, span, stack,
+    Space, column, container, mouse_area, pick_list, rich_text, row, scrollable, span, stack,
     text, text_input,
 };
 use iced::widget::Id as ScrollId;
@@ -27,9 +24,11 @@ use iced::{event, mouse};
 use sola_bus::topics::{MenuActionPayload, Topic, TopicKind};
 use sola_bus::Message;
 use sola_core::KeyCode;
-use sola_kit::app::{BusSetup, bus, startup, window_settings};
-use sola_kit::fonts::{self, CONDENSED as F_CONDENSED, CONDENSED_BOLD as F_CONDENSED_BOLD, MONO as F_MONO, NORMAL as F_NORMAL};
-use sola_kit::theme::{default_theme, parse as hex};
+use sola_kit::app::{BusSetup, startup, window_settings};
+use sola_kit::components::text as kit_text;
+use sola_kit::components::toolbar_button;
+use sola_kit::fonts::{self, CONDENSED as F_CONDENSED, MONO as F_MONO, NORMAL as F_NORMAL};
+use sola_kit::theme::{default_theme, from_bus_theme, parse as hex};
 
 const APP_ID: &str = "sola-monitor";
 
@@ -48,8 +47,6 @@ const TOPIC_COL_W: f32 = 200.0;
 const SOURCE_COL_W: f32 = 120.0;
 /// Horizontal gap between cells in the messages row + header row.
 const CELL_GAP: f32 = 16.0;
-/// Muted color for the timestamp column.
-const TIME_COLOR: &str = "#6e7681";
 
 fn main() -> iced::Result {
     startup(APP_ID);
@@ -113,6 +110,11 @@ struct App {
     /// clamped frame would leave the divider permanently offset
     /// from the cursor).
     drag_anchor: Option<(f32, f32)>,
+    /// Live iced theme — replaced on every `Topic::Theme` delivery
+    /// via `sola_kit::theme::from_bus_theme`. Initialized to the
+    /// kit's default so the first frame renders before the bus
+    /// replay arrives.
+    theme: Theme,
 }
 
 impl Default for App {
@@ -130,6 +132,7 @@ impl Default for App {
             dragging_divider: false,
             last_cursor_x: None,
             drag_anchor: None,
+            theme: default_theme(),
         }
     }
 }
@@ -220,21 +223,27 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        default_theme()
+        self.theme.clone()
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::BusMessage(message) => {
+                // Live theme reload: any Topic::Theme delivery
+                // (sticky-replay on connect, or a later edit from
+                // sola-settings) rebuilds the iced theme and is
+                // picked up on the next render via `App::theme`.
+                let parsed = Topic::parse(&message);
+                if let Some(Topic::Theme(bus_theme)) = &parsed {
+                    self.theme = from_bus_theme(bus_theme);
+                }
+
                 // Intercept our own MenuAction("quit") for Cmd+Q.
-                // We decode via Topic::parse (postcard) since the
-                // payload is not JSON on the wire.
-                let our_quit = match Topic::parse(&message) {
-                    Some(Topic::MenuAction(MenuActionPayload { app_id, action_id })) => {
-                        app_id == APP_ID && action_id == "quit"
-                    }
-                    _ => false,
-                };
+                let our_quit = matches!(
+                    &parsed,
+                    Some(Topic::MenuAction(MenuActionPayload { app_id, action_id }))
+                        if app_id == APP_ID && action_id == "quit"
+                );
 
                 let seq = self.messages.len() as u64 + self.pause_buffer.len() as u64;
                 let entry = Entry::from_message(&message, seq);
@@ -440,9 +449,8 @@ impl App {
             Space::new().width(Length::Fill),
             filter,
             topic_picker,
-            button(text(pause_label).font(F_CONDENSED_BOLD).size(12))
-                .on_press(Msg::TogglePause),
-            button(text("Clear").font(F_CONDENSED_BOLD).size(12)).on_press(Msg::Clear),
+            toolbar_button(pause_label).on_press(Msg::TogglePause),
+            toolbar_button("Clear").on_press(Msg::Clear),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
@@ -509,7 +517,7 @@ impl App {
                 text(t)
                     .font(F_MONO)
                     .size(ROW_FONT_PX)
-                    .color(hex(TIME_COLOR))
+                    .style(kit_text::muted)
                     .width(Length::Fixed(TIME_COL_W)),
                 text(&entry.topic)
                     .font(F_NORMAL)
@@ -641,7 +649,7 @@ impl App {
         // bails on CursorMoved when not dragging, so the cost is
         // a no-op call per cursor sample — fine for a debug UI.
         Subscription::batch([
-            Subscription::run(bus_stream),
+            sola_kit::app::bus_subscription().map(Msg::BusMessage),
             event::listen_with(|event, _, _| match event {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     Some(Msg::CursorMoved(position.x))
@@ -655,58 +663,40 @@ impl App {
     }
 }
 
-fn bus_stream() -> impl Stream<Item = Msg> {
-    stream::channel(64, |mut output: iced::futures::channel::mpsc::Sender<Msg>| async move {
-        // The bus connection + subscription are already done in main()
-        // before iced takes the thread — here we just spin a poller
-        // that forwards messages into the subscription channel.
-        let (tx, mut rx) = iced::futures::channel::mpsc::unbounded::<Message>();
-        std::thread::spawn(move || {
-            loop {
-                {
-                    let bus = bus().lock().expect("bus poisoned");
-                    bus.drain_notify();
-                    while let Some(msg) = bus.try_recv() {
-                        if tx.unbounded_send(msg).is_err() {
-                            return;
-                        }
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_millis(8));
-            }
-        });
-        use iced::futures::StreamExt;
-        while let Some(msg) = rx.next().await {
-            if output.send(Msg::BusMessage(Arc::new(msg))).await.is_err() {
-                break;
-            }
-        }
-    })
-}
-
 // ── Styling helpers ────────────────────────────────────────────────
 //
-// `hex(...)` is re-exported from `sola_kit::theme::parse` at the top
-// of the file (alias kept for in-file brevity).
+// Chrome styles resolve via `theme.extended_palette()` — same surface
+// every kit component reads through. The `hex(...)` helper (re-exported
+// from `sola_kit::theme::parse`) is reserved for JSON syntax-highlight
+// colors and the selected-row tint, neither of which fits the kit's
+// atom vocabulary cleanly.
 
-fn toolbar_style(_: &Theme) -> container::Style {
+/// In-between dark tint for the currently-expanded message row.
+/// Sits perceptibly above `BG` but below the kit's `BG_HOVER` so
+/// selection reads as "open" rather than "hovered". Local escape
+/// hatch — doesn't belong in the kit palette because no other app
+/// has asked for this specific shade.
+const SELECTED_ROW_BG: &str = "#1c2129";
+
+fn toolbar_style(t: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(hex("#161b22"))),
+        background: Some(iced::Background::Color(t.extended_palette().background.weaker.color)),
         ..container::Style::default()
     }
 }
 
-fn header_style(_: &Theme) -> container::Style {
+fn header_style(t: &Theme) -> container::Style {
+    let p = t.extended_palette();
     container::Style {
-        background: Some(iced::Background::Color(hex("#161b22"))),
-        text_color: Some(hex("#8b949e")),
+        background: Some(iced::Background::Color(p.background.weaker.color)),
+        text_color: Some(p.secondary.base.text),
         ..container::Style::default()
     }
 }
 
-fn divider_style(_: &Theme) -> container::Style {
+fn divider_style(t: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(hex("#21262d"))),
+        background: Some(iced::Background::Color(t.extended_palette().background.strong.color)),
         ..container::Style::default()
     }
 }
@@ -717,7 +707,7 @@ fn plain_row_style(_: &Theme) -> container::Style {
 
 fn selected_row_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(hex("#1c2129"))),
+        background: Some(iced::Background::Color(hex(SELECTED_ROW_BG))),
         ..container::Style::default()
     }
 }
@@ -739,7 +729,7 @@ fn expanded_payload(json: &str) -> Element<'static, Msg> {
 /// stays one line tall and column alignment stays intact.
 fn preview_payload(json: &str) -> Element<'static, Msg> {
     if json.is_empty() {
-        return text("—").size(ROW_FONT_PX).color(hex("#8b949e")).into();
+        return text("—").size(ROW_FONT_PX).style(kit_text::muted).into();
     }
     rich_text(highlight_json(json))
         .font(F_MONO)

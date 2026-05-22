@@ -16,7 +16,13 @@
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use iced::futures::SinkExt;
+use iced::futures::Stream;
+use iced::futures::StreamExt;
+use iced::stream;
+use iced::Subscription;
 use sola_bus::BusClient;
+use sola_bus::Message;
 use sola_bus::topics::{
     AppMenuPayload, MenuDefinition, MenuItem, Topic, TopicKind,
 };
@@ -189,4 +195,55 @@ pub fn startup(app_id: &str) -> String {
 /// Promote logic here once we have a second app to compare against.
 pub fn run<A: App>() -> String {
     startup(A::APP_ID)
+}
+
+/// Iced subscription that drains the kit's bus client into a stream of
+/// `Arc<Message>`. Apps wire it into their `subscription` callback and
+/// `.map(...)` into their own message enum:
+///
+/// ```ignore
+/// fn subscription(&self) -> Subscription<Msg> {
+///     sola_kit::app::bus_subscription().map(Msg::Bus)
+/// }
+/// ```
+///
+/// Internally spawns a polling thread (the bus client's sync `recv`
+/// API doesn't expose a futures-friendly stream) that forwards every
+/// arriving message into an unbounded channel; the channel feeds
+/// iced's `stream::channel` so iced wakes the runtime on each event.
+/// Polling cadence is 8ms — keeps latency below a 120Hz frame budget
+/// while staying cheap when no traffic is flowing.
+///
+/// Use this OR a manual `bus().lock().try_recv()` loop, not both —
+/// the bus client has a single receiver per process.
+pub fn bus_subscription() -> Subscription<Arc<Message>> {
+    Subscription::run(bus_stream)
+}
+
+/// Underlying stream constructor for [`bus_subscription`]. Exposed
+/// for callers who want to control how it's wrapped (e.g. tagging
+/// with a unique key via `Subscription::run_with_id`).
+pub fn bus_stream() -> impl Stream<Item = Arc<Message>> {
+    stream::channel(64, |mut output: iced::futures::channel::mpsc::Sender<Arc<Message>>| async move {
+        let (tx, mut rx) = iced::futures::channel::mpsc::unbounded::<Message>();
+        std::thread::spawn(move || {
+            loop {
+                {
+                    let client = bus().lock().expect("bus poisoned");
+                    client.drain_notify();
+                    while let Some(msg) = client.try_recv() {
+                        if tx.unbounded_send(msg).is_err() {
+                            return;
+                        }
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(8));
+            }
+        });
+        while let Some(msg) = rx.next().await {
+            if output.send(Arc::new(msg)).await.is_err() {
+                break;
+            }
+        }
+    })
 }
