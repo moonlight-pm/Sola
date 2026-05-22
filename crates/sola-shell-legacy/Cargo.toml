@@ -1,10 +1,10 @@
 [package]
-name = "sola-shell"
+name = "sola-shell-legacy"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "sola-shell"
+name = "sola-shell-legacy"
 path = "src/main.rs"
 
 [dependencies]
