@@ -254,6 +254,39 @@ unsafe fn worker_main(
     sys::wpe_display_set_primary(display);
     tracing::info!("WPE platform display ready (subclassed for LINEAR-only modifier)");
 
+    // Bump font-hinting from default SLIGHT to FULL for crisper
+    // text. WPE's WPESettings defaults are registered with
+    // SLIGHT hinting + RGB subpixel + antialias on (see
+    // `WPESettings.cpp` defaultSettings table). FULL hinting
+    // snaps glyph features to the pixel grid more aggressively
+    // and gives sharper edges at the expense of slight
+    // distortion of the glyph's true shape — usually the right
+    // tradeoff for body text on a desktop browser.
+    let settings = sys::wpe_display_get_settings(display);
+    if !settings.is_null() {
+        let key = std::ffi::CString::new("/wpe-platform/font-hinting-style").unwrap();
+        let mut err: *mut sys::GError = ptr::null_mut();
+        let ok = sys::wpe_settings_set_byte(
+            settings,
+            key.as_ptr(),
+            sys::WPESettingsHintingStyle_WPE_SETTINGS_HINTING_STYLE_FULL as u8,
+            sys::WPESettingsSource_WPE_SETTINGS_SOURCE_APPLICATION,
+            &mut err,
+        );
+        if ok == 0 {
+            let msg = if !err.is_null() {
+                std::ffi::CStr::from_ptr((*err).message)
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                "(no error)".into()
+            };
+            tracing::warn!("font-hinting-style=FULL rejected: {msg}");
+        } else {
+            tracing::info!("WPE font hinting set to FULL");
+        }
+    }
+
     // 2. Install our buffer-rendered + cursor callbacks. The C
     //    side installs a GObject emission hook on the WPEView
     //    signal (for buffers) and overrides the
