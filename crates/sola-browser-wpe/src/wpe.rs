@@ -60,22 +60,30 @@ unsafe impl Send for ResourceToken {}
 unsafe impl Sync for ResourceToken {}
 
 pub enum Cmd {
-    /// Request a new viewport size. Applied to the WPEView's
-    /// toplevel via `wpe_toplevel_resize`; sent by the shader
-    /// Program whenever the iced widget bounds change.
+    /// Request a new viewport size for the active tab. The shader
+    /// Program sends this when its widget bounds change.
     Resize { width: u32, height: u32 },
+    /// Hand a DMA-BUF back to WPE (any tab — `Release` carries
+    /// the WPE view + buffer pointer in the token).
     Release { token: ResourceToken },
-    /// Forward a user input event into WPE. Materialized to a
-    /// WPEEvent GObject on the worker thread and dispatched via
-    /// `wpe_view_event`.
+    /// Forward a user input event to the active tab.
     Input(InputEvent),
-    /// Toggle view focus. Iced delivers keyboard events only to
-    /// focused widgets, but WPE has its own focus state which
-    /// needs explicit `wpe_view_focus_in` / `wpe_view_focus_out`.
+    /// Toggle CEF focus on the active tab.
     Focus(bool),
-    /// Navigation operation (back/forward/reload/etc). Dispatched
-    /// to webkit_web_view_* on the worker thread.
+    /// Navigation (back/forward/reload/etc) on the active tab.
     Nav(NavCmd),
+    /// Open a new tab with `id` and load `url`. The chrome picks
+    /// the id (monotonic counter on the iced side) so it knows
+    /// what to call the tab before the worker has acked.
+    OpenTab { id: TabId, url: String },
+    /// Close a tab by id. The chrome must keep the engine's
+    /// `active_tab` in sync — call `SetActiveTab` first if you're
+    /// closing the active tab.
+    CloseTab(TabId),
+    /// Switch which tab the engine considers active. Subsequent
+    /// `Resize` / `Input` / `Nav` / `Focus` cmds target this tab,
+    /// and the iced subscription only forwards its frames.
+    SetActiveTab(TabId),
     Quit,
 }
 
@@ -88,6 +96,31 @@ pub enum NavCmd {
     Reload,
     Stop,
     LoadUrl(String),
+}
+
+
+/// Per-tab identifier. Allocated by the engine (monotonic
+/// counter) when a tab is opened. Stable for the tab's lifetime;
+/// the iced chrome uses it to drive cmds and to key the tab strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TabId(pub u64);
+
+/// Per-tab metadata visible to iced. Snapshot only — engine owns
+/// the live state and pushes a fresh `Vec<TabInfo>` into the
+/// shared `Arc<Mutex<Vec<TabInfo>>>` whenever anything changes.
+#[derive(Debug, Clone)]
+pub struct TabInfo {
+    pub id: TabId,
+    pub url: String,
+    pub title: String,
+}
+
+/// Frame plus the tab that produced it. The iced subscription
+/// drops frames whose `tab_id` isn't the active tab so we don't
+/// burn import work on hidden tabs.
+pub struct TaggedFrame {
+    pub tab_id: TabId,
+    pub frame: WpeFrame,
 }
 
 /// A user input event in a thread-safe shape. Sent over the cmd
@@ -146,67 +179,96 @@ pub enum InputEvent {
 pub struct WpeEngine {
     worker: Option<JoinHandle<()>>,
     cmd_tx: Sender<Cmd>,
-    frames: Arc<Mutex<Receiver<WpeFrame>>>,
+    /// Receiver of (tab_id, frame) tuples. iced filters by active
+    /// tab before importing.
+    frames: Arc<Mutex<Receiver<TaggedFrame>>>,
     /// Latest CSS cursor name (encoded as `CursorKind`) WebKit
-    /// asked us to display. Written from the worker thread when
-    /// `wpe_view_set_cursor_from_name` fires, read from iced's
-    /// render thread by `mouse_interaction`.
+    /// asked us to display for the active tab.
     cursor: Arc<std::sync::atomic::AtomicU32>,
-    /// Current URL of the loaded page (whatever WebKit reports
-    /// via `webkit_web_view_get_uri`). Updated on the worker
-    /// thread from the GObject `notify::uri` signal. Read by
-    /// the chrome to populate the URL bar.
-    url: Arc<Mutex<String>>,
+    /// Snapshot of all open tabs (id/url/title). Worker rebuilds
+    /// this whenever tabs are opened/closed or URL/title changes.
+    /// Read by the chrome to render the tab strip + URL bar.
+    tabs: Arc<Mutex<Vec<TabInfo>>>,
+    /// Currently active tab id (or u64::MAX if no tabs). Atomic
+    /// so the iced subscription can filter frames without
+    /// acquiring a mutex per frame.
+    active_tab: Arc<std::sync::atomic::AtomicU64>,
+    /// Monotonic counter for assigning tab ids — kept on the
+    /// chrome side so it can mint ids before sending
+    /// `Cmd::OpenTab` without waiting for an ack.
+    next_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl WpeEngine {
     /// Spawn the WPE worker. **Blocks** until the worker has
     /// finished the parts of WPE init that consult
-    /// `WAYLAND_DISPLAY` (display creation + view creation + URL
-    /// load kick-off). After this returns, the worker thread is
-    /// running the GMainLoop and the caller can safely restore
-    /// `WAYLAND_DISPLAY` if it manipulated it (see main.rs).
+    /// `WAYLAND_DISPLAY` (display creation + initial-tab
+    /// creation + URL load kick-off). After this returns, the
+    /// worker thread is running the GMainLoop and the caller can
+    /// safely restore `WAYLAND_DISPLAY` if it manipulated it
+    /// (see main.rs).
     pub fn spawn(url: &str, width: u32, height: u32) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Cmd>();
-        let (frame_tx, frame_rx) = channel::<WpeFrame>();
+        let (frame_tx, frame_rx) = channel::<TaggedFrame>();
         let (ready_tx, ready_rx) = channel::<()>();
         let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let cursor_worker = cursor.clone();
-        let url_state = Arc::new(Mutex::new(url.to_string()));
-        let url_worker = url_state.clone();
-        // Queue the initial size before the worker starts.
+        let tabs_snapshot = Arc::new(Mutex::new(Vec::<TabInfo>::new()));
+        let active_atomic = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let next_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
+
+        let initial_id = TabId(next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        active_atomic.store(initial_id.0, std::sync::atomic::Ordering::Relaxed);
+
+        // Queue: set initial size, then open the first tab, then
+        // activate it. The pump processes these in order on the
+        // worker thread.
         let _ = cmd_tx.send(Cmd::Resize { width, height });
-        let url_owned = url.to_string();
+        let _ = cmd_tx.send(Cmd::OpenTab {
+            id: initial_id,
+            url: url.to_string(),
+        });
+        let _ = cmd_tx.send(Cmd::SetActiveTab(initial_id));
+
+        let cursor_w = cursor.clone();
+        let snapshot_w = tabs_snapshot.clone();
+        let active_w = active_atomic.clone();
         let worker = thread::Builder::new()
             .name("wpe-engine".into())
             .spawn(move || unsafe {
                 worker_main(
-                    url_owned,
-                    width,
-                    height,
-                    frame_tx,
-                    cmd_rx,
-                    ready_tx,
-                    cursor_worker,
-                    url_worker,
+                    width, height, frame_tx, cmd_rx, ready_tx, cursor_w, snapshot_w, active_w,
                 )
             })
             .expect("spawn wpe-engine thread");
         let _ = ready_rx.recv();
+
         Self {
             worker: Some(worker),
             cmd_tx,
             frames: Arc::new(Mutex::new(frame_rx)),
             cursor,
-            url: url_state,
+            tabs: tabs_snapshot,
+            active_tab: active_atomic,
+            next_id,
         }
     }
 
-    /// Shared handle to the current page URL. Updated by the
-    /// engine on WebKit's `notify::uri` signal; safe to read
-    /// from any thread.
-    pub fn url_handle(&self) -> Arc<Mutex<String>> {
-        self.url.clone()
+    /// Mint a fresh tab id. Send it back via `Cmd::OpenTab` to
+    /// have the worker actually create the WebKitWebView.
+    pub fn alloc_tab_id(&self) -> TabId {
+        TabId(self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Shared snapshot of all open tabs. The worker rewrites this
+    /// whenever a tab opens/closes/url-changes/title-changes.
+    pub fn tabs_handle(&self) -> Arc<Mutex<Vec<TabInfo>>> {
+        self.tabs.clone()
+    }
+
+    /// Atomic id of the currently-active tab. iced reads to filter
+    /// frames in its subscription.
+    pub fn active_tab_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
+        self.active_tab.clone()
     }
 
     /// Shared handle to the current cursor shape. Reads are
@@ -219,7 +281,7 @@ impl WpeEngine {
         self.cmd_tx.clone()
     }
 
-    pub fn frames(&self) -> Arc<Mutex<Receiver<WpeFrame>>> {
+    pub fn frames(&self) -> Arc<Mutex<Receiver<TaggedFrame>>> {
         self.frames.clone()
     }
 
@@ -235,39 +297,48 @@ impl WpeEngine {
 
 struct WorkerCtx {
     main_loop: *mut sys::GMainLoop,
-    frame_tx: Sender<WpeFrame>,
+    frame_tx: Sender<TaggedFrame>,
     cmd_rx: Receiver<Cmd>,
-    /// Latched on the first `buffer-rendered` we observe so the
-    /// command pump can resolve `wpe_view_get_toplevel` for resize
-    /// without going through WebKit APIs. Null until the first
-    /// frame arrives.
-    view: *mut sys::WPEView,
-    /// Resize commands that arrived before `view` was latched.
-    /// Replayed once the first frame populates `view`. Only the
-    /// most recent size is kept — older requests are obsolete.
-    pending_resize: Option<(u32, u32)>,
-    /// Mirror of `WpeEngine::cursor` — the worker writes into this
-    /// from the `sola_wpe_set_cursor_callback` callback.
+    tabs: Vec<TabState>,
+    active: TabId,
+    last_size: (u32, u32),
     cursor: Arc<std::sync::atomic::AtomicU32>,
-    /// The WebKitWebView created in `worker_main`. Held so the
-    /// command pump can dispatch nav commands
-    /// (webkit_web_view_go_back, etc.) to it.
+    tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
+    active_atomic: Arc<std::sync::atomic::AtomicU64>,
+    /// Per-tab signal callbacks (`notify::uri`, `notify::title`)
+    /// set this flag whenever they update a tab's URL or title.
+    /// The cmd pump checks it each tick and rebuilds the
+    /// shared `Vec<TabInfo>` snapshot. Cheap to check; spares us
+    /// from having to rebuild on every iced poll.
+    snapshot_dirty: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Per-tab state living on the worker thread. The webview ptr is
+/// owned by us (we never `g_object_unref` it — WebKit recycles
+/// via the WPEDisplay lifecycle). `wpe_view` is the
+/// `webkit_web_view_get_wpe_view()` result, latched at create
+/// time so input + resize have a stable handle.
+struct TabState {
+    id: TabId,
     webview: *mut sys::WebKitWebView,
-    /// Mirror of `WpeEngine::url` — updated from the GObject
-    /// `notify::uri` signal whenever WebKit's current URL changes.
-    /// iced reads via the shared Arc<Mutex<String>>.
+    wpe_view: *mut sys::WPEView,
+    /// Shared with the iced chrome for the URL bar. Updated on
+    /// the `notify::uri` signal.
     url: Arc<Mutex<String>>,
+    /// Shared with the iced chrome for the tab strip. Updated
+    /// on the `notify::title` signal.
+    title: Arc<Mutex<String>>,
 }
 
 unsafe fn worker_main(
-    url: String,
-    _width: u32,
-    _height: u32,
-    frame_tx: Sender<WpeFrame>,
+    width: u32,
+    height: u32,
+    frame_tx: Sender<TaggedFrame>,
     cmd_rx: Receiver<Cmd>,
     ready_tx: Sender<()>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
-    url_state: Arc<Mutex<String>>,
+    tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
+    active_atomic: Arc<std::sync::atomic::AtomicU64>,
 ) {
     let display = sys::sola_wpe_display_new();
     if display.is_null() {
@@ -291,42 +362,23 @@ unsafe fn worker_main(
         main_loop: ptr::null_mut(),
         frame_tx,
         cmd_rx,
-        view: ptr::null_mut(),
-        pending_resize: None,
+        tabs: Vec::new(),
+        active: TabId(u64::MAX),
+        last_size: (width, height),
         cursor,
-        webview: ptr::null_mut(),
-        url: url_state,
+        tabs_snapshot,
+        active_atomic,
+        snapshot_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
     sys::sola_wpe_set_cursor_callback(Some(on_cursor_changed), ctx as *mut c_void);
 
-    let view = sys::webkit_web_view_new(ptr::null_mut());
-    if view.is_null() {
-        panic!("webkit_web_view_new(NULL) returned null");
-    }
-    (*ctx).webview = view;
-    tracing::info!("created WebKitWebView via Platform API path");
-
-    // Subscribe to `notify::uri` so the chrome's URL bar reflects
-    // whatever WebKit decides the current URL is (post-redirect,
-    // post-navigation, etc.). The callback runs on this same
-    // worker thread; user_data is our WorkerCtx ptr.
-    let signal_name = CString::new("notify::uri").unwrap();
-    sys::g_signal_connect_data(
-        view as *mut c_void,
-        signal_name.as_ptr(),
-        Some(std::mem::transmute::<
-            unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void),
-            unsafe extern "C" fn(),
-        >(on_notify_uri)),
-        ctx as *mut c_void,
-        None,
-        0, /* GConnectFlags = 0 */
-    );
-
-    let url_c = CString::new(url.as_str()).unwrap();
-    sys::webkit_web_view_load_uri(view as *mut _, url_c.as_ptr());
-    tracing::info!(url = %url, "kicked off URL load");
+    // Drain the queued cmds that `spawn` enqueued (Resize +
+    // OpenTab + SetActiveTab) before entering the main loop, so
+    // the first tab exists and has a viewport size by the time
+    // iced starts presenting. Anything that arrives after the
+    // initial drain gets picked up by the timer pump.
+    drain_initial_cmds(&mut *ctx);
 
     let _ = ready_tx.send(());
 
@@ -343,28 +395,17 @@ unsafe fn worker_main(
     let _ = Box::from_raw(ctx);
 }
 
-/// GObject `notify::<property>` callback signature:
-/// `void (*)(GObject*, GParamSpec*, gpointer)`. We hooked it on
-/// the `uri` property of the WebKitWebView. Fires whenever
-/// WebKit's `uri` property changes — load start, redirect, hash
-/// change, etc. We just read the current URI back and stash it
-/// in shared state.
-unsafe extern "C" fn on_notify_uri(
-    object: *mut c_void,
-    _pspec: *mut c_void,
-    user_data: *mut c_void,
-) {
-    let ctx = &*(user_data as *mut WorkerCtx);
-    let uri_ptr = sys::webkit_web_view_get_uri(object as *mut sys::WebKitWebView);
-    let uri = if uri_ptr.is_null() {
-        String::new()
-    } else {
-        std::ffi::CStr::from_ptr(uri_ptr)
-            .to_string_lossy()
-            .into_owned()
-    };
-    *ctx.url.lock().unwrap() = uri;
+/// Process every command currently in the channel synchronously,
+/// without entering the GMainLoop. Used during init so the
+/// queued `OpenTab` / `SetActiveTab` cmds run *before* we signal
+/// the spawner ready (i.e. before iced starts).
+unsafe fn drain_initial_cmds(ctx: &mut WorkerCtx) {
+    while let Ok(cmd) = ctx.cmd_rx.try_recv() {
+        process_cmd(ctx, cmd);
+    }
 }
+
+
 
 /// Called from C when WebKit changes the CSS cursor. `name` is
 /// a borrowed UTF-8 cstr; we copy the bytes briefly to translate,
@@ -394,16 +435,17 @@ unsafe extern "C" fn on_buffer_rendered(
 ) {
     let ctx = &mut *(user_data as *mut WorkerCtx);
 
-    // Latch the view ptr on the first frame so cmd_pump can target
-    // it for resize. The WebKitWebView wraps a WPEView internally
-    // but doesn't expose it via public API — observing buffer
-    // emissions is how we capture it.
-    if ctx.view.is_null() {
-        ctx.view = view;
-        if let Some((w, h)) = ctx.pending_resize.take() {
-            apply_resize(view, w, h);
+    // Identify which tab this WPEView belongs to. We capture
+    // wpe_view at tab-create time via
+    // `webkit_web_view_get_wpe_view`, so the lookup is just
+    // pointer-equality on a short list.
+    let tab_id = match find_tab_by_view(ctx, view) {
+        Some(t) => t.id,
+        None => {
+            tracing::warn!("buffer-rendered for unknown WPEView; dropping");
+            return;
         }
-    }
+    };
 
     let buffer_base = buffer as *mut sys::WPEBuffer;
     let width = sys::wpe_buffer_get_width(buffer_base);
@@ -418,16 +460,6 @@ unsafe extern "C" fn on_buffer_rendered(
     let stride = sys::wpe_buffer_dma_buf_get_stride(buffer, 0);
     let offset = sys::wpe_buffer_dma_buf_get_offset(buffer, 0);
     let raw_fd = sys::wpe_buffer_dma_buf_get_fd(buffer, 0);
-
-    tracing::trace!(
-        w = width,
-        h = height,
-        format = format!("{:#x}", format),
-        modifier = format!("{:#x}", modifier),
-        stride,
-        fd = raw_fd,
-        "WPE produced DMA-BUF frame",
-    );
 
     let dup_fd = libc::fcntl(raw_fd, libc::F_DUPFD_CLOEXEC, 0);
     if dup_fd < 0 {
@@ -448,7 +480,7 @@ unsafe extern "C" fn on_buffer_rendered(
             buffer: buffer as *mut c_void,
         },
     };
-    if ctx.frame_tx.send(frame).is_err() {
+    if ctx.frame_tx.send(TaggedFrame { tab_id, frame }).is_err() {
         tracing::info!("frame channel closed, quitting GMainLoop");
         sys::g_main_loop_quit(ctx.main_loop);
     }
@@ -458,46 +490,10 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
     let ctx = &mut *(data as *mut WorkerCtx);
     loop {
         match ctx.cmd_rx.try_recv() {
-            Ok(Cmd::Resize { width, height }) => {
-                if ctx.view.is_null() {
-                    // View not yet observed via buffer-rendered;
-                    // remember the most recent size and replay
-                    // once we have a view ptr.
-                    ctx.pending_resize = Some((width, height));
-                } else {
-                    apply_resize(ctx.view, width, height);
+            Ok(cmd) => {
+                if !process_cmd(ctx, cmd) {
+                    return 0; /* G_SOURCE_REMOVE — Quit */
                 }
-            }
-            Ok(Cmd::Release { token }) => {
-                // Tell WPE we're done with this buffer; it may now
-                // recycle the underlying DMA-BUF.
-                sys::wpe_view_buffer_released(
-                    token.view as *mut sys::WPEView,
-                    token.buffer as *mut sys::WPEBuffer,
-                );
-            }
-            Ok(Cmd::Input(ev)) => {
-                if !ctx.view.is_null() {
-                    dispatch_input(ctx.view, ev);
-                }
-            }
-            Ok(Cmd::Focus(focused)) => {
-                if !ctx.view.is_null() {
-                    if focused {
-                        sys::wpe_view_focus_in(ctx.view);
-                    } else {
-                        sys::wpe_view_focus_out(ctx.view);
-                    }
-                }
-            }
-            Ok(Cmd::Nav(nav)) => {
-                if !ctx.webview.is_null() {
-                    dispatch_nav(ctx.webview, nav);
-                }
-            }
-            Ok(Cmd::Quit) => {
-                sys::g_main_loop_quit(ctx.main_loop);
-                return 0; /* G_SOURCE_REMOVE */
             }
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => {
@@ -506,7 +502,280 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
             }
         }
     }
+    // Tabs' notify::uri / notify::title callbacks set this flag
+    // when they update per-tab state. We rebuild the shared
+    // Vec<TabInfo> snapshot here, on the pump's cadence (≤16 ms),
+    // so the chrome's poll loop sees fresh URL/title.
+    if ctx.snapshot_dirty.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        rebuild_snapshot(&*ctx);
+    }
     1 /* G_SOURCE_CONTINUE */
+}
+
+/// Process one Cmd. Returns `false` to signal "stop pumping"
+/// (Quit); `true` to continue. Centralises the cmd handling so
+/// both the initial drain and the GLib timer pump share logic.
+unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd) -> bool {
+    match cmd {
+        Cmd::Resize { width, height } => {
+            ctx.last_size = (width, height);
+            if let Some(tab) = active_tab(ctx) {
+                if !tab.wpe_view.is_null() {
+                    apply_resize(tab.wpe_view, width, height);
+                }
+            }
+        }
+        Cmd::Release { token } => {
+            sys::wpe_view_buffer_released(
+                token.view as *mut sys::WPEView,
+                token.buffer as *mut sys::WPEBuffer,
+            );
+        }
+        Cmd::Input(ev) => {
+            if let Some(tab) = active_tab(ctx) {
+                if !tab.wpe_view.is_null() {
+                    dispatch_input(tab.wpe_view, ev);
+                }
+            }
+        }
+        Cmd::Focus(focused) => {
+            if let Some(tab) = active_tab(ctx) {
+                if !tab.wpe_view.is_null() {
+                    if focused {
+                        sys::wpe_view_focus_in(tab.wpe_view);
+                    } else {
+                        sys::wpe_view_focus_out(tab.wpe_view);
+                    }
+                }
+            }
+        }
+        Cmd::Nav(nav) => {
+            if let Some(tab) = active_tab(ctx) {
+                if !tab.webview.is_null() {
+                    dispatch_nav(tab.webview, nav);
+                }
+            }
+        }
+        Cmd::OpenTab { id, url } => {
+            open_tab(ctx, id, url);
+        }
+        Cmd::CloseTab(id) => {
+            close_tab(ctx, id);
+        }
+        Cmd::SetActiveTab(id) => {
+            // Tab must exist (chrome should never send a SetActiveTab
+            // for an unknown id, but tolerate it by ignoring).
+            if let Some(tab) = ctx.tabs.iter().find(|t| t.id == id) {
+                ctx.active = id;
+                ctx.active_atomic
+                    .store(id.0, std::sync::atomic::Ordering::Relaxed);
+                // Force the newly-active tab to (re-)render at the
+                // current viewport size. Background tabs may have
+                // been resized to a different size during their
+                // previous turn as active, or never resized at all
+                // if they were just opened — either way the user
+                // should see a fresh, correctly-sized frame
+                // immediately.
+                if !tab.wpe_view.is_null() {
+                    apply_resize(tab.wpe_view, ctx.last_size.0, ctx.last_size.1);
+                }
+            }
+        }
+        Cmd::Quit => {
+            sys::g_main_loop_quit(ctx.main_loop);
+            return false;
+        }
+    }
+    true
+}
+
+/// Linear scan for the active tab. Stable as long as we keep tab
+/// count low (a handful) — no need for a HashMap.
+fn active_tab(ctx: &WorkerCtx) -> Option<&TabState> {
+    ctx.tabs.iter().find(|t| t.id == ctx.active)
+}
+
+fn find_tab_by_view<'a>(ctx: &'a WorkerCtx, view: *mut sys::WPEView) -> Option<&'a TabState> {
+    ctx.tabs.iter().find(|t| t.wpe_view == view)
+}
+
+#[allow(dead_code)]
+fn find_tab_by_webview<'a>(
+    ctx: &'a WorkerCtx,
+    webview: *mut sys::WebKitWebView,
+) -> Option<&'a TabState> {
+    ctx.tabs.iter().find(|t| t.webview == webview)
+}
+
+/// Per-tab signal-callback context. We Box::into_raw one of these
+/// per webview and pass it as `user_data` to
+/// `g_signal_connect_data`. The closure-notify free fn at
+/// `free_tab_signal_ctx` drops the Box when the webview is
+/// destroyed.
+struct TabSignalCtx {
+    url: Arc<Mutex<String>>,
+    title: Arc<Mutex<String>>,
+    snapshot: Arc<Mutex<Vec<TabInfo>>>,
+    /// Snapshot rebuild needs *all* tabs' current url/title; we
+    /// can't see them from here. Set this flag and the pump-tick
+    /// rebuilds on its next iteration.
+    snapshot_dirty: Arc<std::sync::atomic::AtomicBool>,
+}
+
+unsafe extern "C" fn free_tab_signal_ctx(data: *mut c_void, _closure: *mut sys::_GClosure) {
+    let _ = Box::from_raw(data as *mut TabSignalCtx);
+}
+
+unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String) {
+    let webview = sys::webkit_web_view_new(ptr::null_mut());
+    if webview.is_null() {
+        tracing::warn!(?id, "webkit_web_view_new returned null; tab not opened");
+        return;
+    }
+    let wpe_view = sys::webkit_web_view_get_wpe_view(webview);
+    if wpe_view.is_null() {
+        tracing::warn!(?id, "webkit_web_view_get_wpe_view returned null");
+    }
+
+    let url = Arc::new(Mutex::new(initial_url.clone()));
+    let title = Arc::new(Mutex::new(String::new()));
+
+    // Per-tab signal context for notify::uri and notify::title.
+    // Two separate Boxes so the destroy-notify on each signal
+    // frees its own — both can be safely dropped independently.
+    let dirty = ctx.snapshot_dirty.clone();
+    let snap = ctx.tabs_snapshot.clone();
+    let url_arc = url.clone();
+    let title_arc = title.clone();
+    let make_sig_ctx = || {
+        Box::into_raw(Box::new(TabSignalCtx {
+            url: url_arc.clone(),
+            title: title_arc.clone(),
+            snapshot: snap.clone(),
+            snapshot_dirty: dirty.clone(),
+        })) as *mut c_void
+    };
+
+    let uri_signal = CString::new("notify::uri").unwrap();
+    sys::g_signal_connect_data(
+        webview as *mut c_void,
+        uri_signal.as_ptr(),
+        Some(std::mem::transmute::<
+            unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void),
+            unsafe extern "C" fn(),
+        >(on_notify_uri_tab)),
+        make_sig_ctx(),
+        Some(free_tab_signal_ctx),
+        0,
+    );
+
+    let title_signal = CString::new("notify::title").unwrap();
+    sys::g_signal_connect_data(
+        webview as *mut c_void,
+        title_signal.as_ptr(),
+        Some(std::mem::transmute::<
+            unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void),
+            unsafe extern "C" fn(),
+        >(on_notify_title_tab)),
+        make_sig_ctx(),
+        Some(free_tab_signal_ctx),
+        0,
+    );
+
+    let url_c = CString::new(initial_url.as_str()).unwrap();
+    sys::webkit_web_view_load_uri(webview as *mut _, url_c.as_ptr());
+
+    // Resize the new tab to whatever iced is currently displaying.
+    if !wpe_view.is_null() {
+        apply_resize(wpe_view, ctx.last_size.0, ctx.last_size.1);
+    }
+
+    ctx.tabs.push(TabState {
+        id,
+        webview,
+        wpe_view,
+        url,
+        title,
+    });
+    rebuild_snapshot(ctx);
+    tracing::info!(?id, url = %initial_url, tabs = ctx.tabs.len(), "opened tab");
+}
+
+unsafe fn close_tab(ctx: &mut WorkerCtx, id: TabId) {
+    let pos = match ctx.tabs.iter().position(|t| t.id == id) {
+        Some(p) => p,
+        None => return,
+    };
+    let tab = ctx.tabs.remove(pos);
+    // Drop our reference to the WebKitWebView. We never explicitly
+    // `g_object_ref`'d it (webkit_web_view_new returns a floating
+    // ref that sinks into the platform's view), so a single
+    // g_object_unref balances it.
+    if !tab.webview.is_null() {
+        sys::g_object_unref(tab.webview as *mut c_void);
+    }
+    rebuild_snapshot(ctx);
+    tracing::info!(?id, remaining = ctx.tabs.len(), "closed tab");
+}
+
+/// Rewrite the shared `Vec<TabInfo>` from the current tab state.
+/// Called whenever tabs are opened/closed or a per-tab URL/title
+/// changes (via the snapshot_dirty flag, checked at pump time).
+fn rebuild_snapshot(ctx: &WorkerCtx) {
+    let new: Vec<TabInfo> = ctx
+        .tabs
+        .iter()
+        .map(|t| TabInfo {
+            id: t.id,
+            url: t.url.lock().unwrap().clone(),
+            title: t.title.lock().unwrap().clone(),
+        })
+        .collect();
+    *ctx.tabs_snapshot.lock().unwrap() = new;
+}
+
+/// `notify::uri` callback. user_data is a Box<TabSignalCtx>; we
+/// read the new URI off the webview and update the tab's url
+/// Arc, then flag the snapshot dirty so the next pump tick
+/// rebuilds the chrome-visible Vec.
+unsafe extern "C" fn on_notify_uri_tab(
+    object: *mut c_void,
+    _pspec: *mut c_void,
+    user_data: *mut c_void,
+) {
+    let cb = &*(user_data as *const TabSignalCtx);
+    let uri_ptr = sys::webkit_web_view_get_uri(object as *mut sys::WebKitWebView);
+    let uri = if uri_ptr.is_null() {
+        String::new()
+    } else {
+        std::ffi::CStr::from_ptr(uri_ptr)
+            .to_string_lossy()
+            .into_owned()
+    };
+    *cb.url.lock().unwrap() = uri;
+    cb.snapshot_dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = &cb.snapshot; // keep the shared Arc alive without warning
+}
+
+unsafe extern "C" fn on_notify_title_tab(
+    object: *mut c_void,
+    _pspec: *mut c_void,
+    user_data: *mut c_void,
+) {
+    let cb = &*(user_data as *const TabSignalCtx);
+    let title_ptr = sys::webkit_web_view_get_title(object as *mut sys::WebKitWebView);
+    let title = if title_ptr.is_null() {
+        String::new()
+    } else {
+        std::ffi::CStr::from_ptr(title_ptr)
+            .to_string_lossy()
+            .into_owned()
+    };
+    *cb.title.lock().unwrap() = title;
+    cb.snapshot_dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = &cb.snapshot;
 }
 
 /// Materialize an `InputEvent` as a WPEEvent GObject and dispatch
