@@ -20,6 +20,14 @@ edition = "2024"
 [lib]
 # default — uses src/lib.rs
 
+# Storybook binary. Each kit-shipped component gets a showcase page so
+# the kit itself is dogfooded — every regression shows up here first.
+# Apps consume the kit by path-depending on it; the storybook is just
+# another iced consumer that happens to live in-tree.
+[[bin]]
+name = "sola-kit"
+path = "src/main.rs"
+
 [dependencies]
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
 sola-bus = { path = "../sola-bus" }

@@ -4,9 +4,11 @@ The kit that Sola apps build on. v0 — small surface, grows with
 demand. Successor to [[sola-kit-legacy]] (CEF + Remix v3); the two
 coexist while shell-side apps migrate.
 
-**Status (2026-05-21):** v0 shipped. First consumer is `sola-monitor`.
-Surface intentionally minimal — we add to it when a second consumer
-arrives and we can see the shape of the duplication.
+**Status (2026-05-22):** v0 ships a lib + the `sola-kit` storybook
+binary. First external consumer is `sola-monitor`; the storybook is
+the second consumer (dogfoods every kit component the moment it
+lands). Component lineup approaches parity with the legacy kit's
+visible vocabulary — see "What lives in the kit" below.
 
 ## Why a new kit
 
@@ -35,7 +37,7 @@ works.
 ## What lives in the kit (today)
 
 ```
-crates/sola-kit/                  (library only, no binary)
+crates/sola-kit/                  (library + storybook binary)
 ├── Cargo.toml                    iced 0.14 wayland/wgpu/tokio
 ├── src/
 │   ├── lib.rs                    re-exports + crate docs
@@ -43,12 +45,33 @@ crates/sola-kit/                  (library only, no binary)
 │   │                             startup(), App trait (marker)
 │   ├── fonts.rs                  MONO/NORMAL/CONDENSED/CONDENSED_BOLD,
 │   │                             load_all() reads /opt/sola/share/fonts
-│   ├── theme.rs                  default_theme() → iced::Theme,
-│   │                             parse() (#rrggbb), hex atom constants
-│   └── components/
-│       ├── mod.rs                public surface
-│       ├── divider.rs            vertical_divider(on_press)
-│       └── toolbar.rs            toolbar_button(label)
+│   ├── theme.rs                  default_theme() + sola_extended generator
+│   │                             — binds hex atoms to iced palette slots
+│   ├── components/
+│   │   ├── mod.rs                public surface
+│   │   ├── badge.rs              status pill (Neutral/Accent/Success/...)
+│   │   ├── button.rs             named style fns (primary/secondary/...)
+│   │   ├── card.rs               elevated container chrome
+│   │   ├── divider.rs            vertical_divider(on_press)
+│   │   ├── field.rs              label + input + help text row
+│   │   ├── popover.rs            floating-panel chrome
+│   │   ├── sidebar.rs            sidebar(items) — vertical nav column
+│   │   ├── split.rs              two-pane row with kit divider
+│   │   ├── swatch.rs             color preview tile
+│   │   ├── text.rs               heading/subheading/body/caption/code +
+│   │   │                         muted/accent/success/warning/danger styles
+│   │   ├── text_input.rs         kit-styled text input
+│   │   └── toolbar.rs            toolbar_button + toolbar style fn
+│   ├── main.rs                   `sola-kit` binary entry — boots iced
+│   │                             with the storybook below
+│   └── storybook/                binary-only modules; not part of lib
+│       ├── mod.rs                Storybook app, Page enum, layout
+│       └── pages/                one showcase per kit component
+│           ├── welcome.rs        + theme.rs (palette atoms + slot map)
+│           ├── text.rs           typography reference
+│           ├── button.rs         + badge.rs / card.rs / field.rs
+│           ├── divider.rs        + popover.rs / sidebar.rs / split.rs
+│           └── toolbar.rs        stateful (click-count demo)
 ```
 
 Build / consume:
@@ -154,38 +177,58 @@ What we explicitly *don't* do:
 The bar for a new kit component is: **two apps want it, and they want
 the same thing**. Until then it lives in the app.
 
-## Theme publishing — the design problem
+## Theme & styling — the design
 
-The legacy kit ships a token system (palette + per-component bindings)
-broadcast over `Topic::Theme` as CSS. iced can't consume CSS, so the
-existing bus protocol doesn't lower cleanly into an iced app.
+We chose the pure-iced approach: every kit component's style is a
+function of `&iced::Theme`. The kit's "binding layer" is a custom
+extended-palette generator (`theme::sola_extended`) handed to
+`Theme::custom_with_fn`. Component style fns then read from
+`theme.extended_palette()` exactly like `iced::button::primary` does
+— no global, no side struct, no parallel styling pipeline.
 
-Today the iced kit ships a single hardcoded palette resolved at
-startup (`default_theme()` in `theme.rs`). That's enough for v0 —
-the monitor's colors all come from `sola_kit::theme::parse(hex::*)`
-constants, and we can change them in one place.
+### How atoms map to iced slots
 
-For v0.2 we want bus-driven theme:
+Iced's `Extended::Background` has 8 tiers (`weakest…strongest`); our
+10 hex atoms compress into iced's vocabulary like this:
 
-1. `sola-core::theme::Theme` already defines the token vocabulary
-   (atoms + selection groups + per-component bindings). Both kits
-   should resolve from this shared shape.
-2. The iced kit subscribes to `Topic::Theme` and recomputes
-   `iced::Theme::custom(...)` whenever it changes — this needs a
-   `theme()` method that reads from a hot-swappable cell rather
-   than returning the same value every call. Iced 0.14 supports
-   this through the `theme` callback; the cell can live next to
-   the bus singleton in `app.rs`.
-3. Per-component slot resolution (`var(--sola-sidebar-bg)`) maps to
-   per-component `style` fn closures. We'll publish a small set of
-   slot-aware style fns that look up scoped bindings the same way
-   the legacy kit's CSS does, but resolve to `iced::Color` instead
-   of CSS variables.
+| atom         | iced slot(s)                              | typical use            |
+| ------------ | ----------------------------------------- | ---------------------- |
+| `BG`         | `background.base` / `weakest`             | window canvas          |
+| `BG_RAISED`  | `background.weaker` / `weak`              | sidebars, cards        |
+| `BG_HOVER`   | `background.neutral` / `strong`           | hover / selected rows  |
+| `BORDER`     | `background.stronger` / `strongest`       | hairlines              |
+| `FG`         | `background.*.text` / `palette.text`      | body text              |
+| `FG_MUTED`   | `secondary.base.text`                     | captions, deemphasized |
+| `ACCENT`     | `primary.base` (weak/strong auto-derived) | links, active rows     |
+| `SUCCESS`    | `success.base`                            | confirmations          |
+| `WARNING`    | `warning.base`                            | non-blocking issues    |
+| `DANGER`     | `danger.base`                             | errors, destructive    |
 
-None of that is built yet — the issue is that we need a kit consumer
-that actually wants live theme reloads before we design the surface.
-The monitor will likely be that consumer once we move it onto the
-sidebar component.
+The full mapping lives in `theme::sola_extended`. Rebinding a slot is
+a one-line edit there — no component-code change.
+
+### Live theme reload (v0.2)
+
+Iced's `app.theme(&self) -> Theme` runs every render, so the wiring
+for `Topic::Theme` is straightforward:
+
+1. App stores `Arc<iced::Theme>` (or just `iced::Theme`) in state.
+2. Bus subscription on `Topic::Theme` produces an
+   `iced::Subscription` event; `update` rebuilds the theme via
+   `sola_core::theme::Theme → iced::Theme::custom_with_fn(...)` and
+   swaps it into state.
+3. Next render iced calls `theme(&self)` and sees the new value.
+
+We avoid global state because iced's existing mechanism is enough.
+
+### Escape hatch
+
+When an atom genuinely doesn't fit any iced slot (e.g. an overlay
+glow tint), publish it as a `pub const` in `theme::hex` and
+reference it directly from one component's style fn. Same shape as
+the legacy kit's `--sola-…` escape hatches that bypassed the
+binding system. Use sparingly — every direct `hex::*` reference is
+debt against the unified theme surface.
 
 See [[Topics]] for the `Topic::Theme` shape and `sola-core/src/theme/`
 for the shared type story.
@@ -214,8 +257,20 @@ migration.
 | `crates/sola-kit/src/app.rs`                        | `BusSetup`, `bus()`, `window_settings`, etc.    |
 | `crates/sola-kit/src/fonts.rs`                      | font constants + `load_all()`                   |
 | `crates/sola-kit/src/theme.rs`                      | `default_theme()`, hex atoms, `parse()`         |
+| `crates/sola-kit/src/components/badge.rs`           | status pill (5 tones)                           |
+| `crates/sola-kit/src/components/button.rs`          | primary / secondary / ghost / danger style fns  |
+| `crates/sola-kit/src/components/card.rs`            | elevated container chrome                       |
 | `crates/sola-kit/src/components/divider.rs`         | draggable column divider                        |
+| `crates/sola-kit/src/components/field.rs`           | label + input + help text row                   |
+| `crates/sola-kit/src/components/popover.rs`         | floating-panel chrome (visual only)             |
+| `crates/sola-kit/src/components/sidebar.rs`         | vertical nav column with active row             |
+| `crates/sola-kit/src/components/split.rs`           | two-pane row with kit divider                   |
+| `crates/sola-kit/src/components/swatch.rs`          | color preview tile                              |
+| `crates/sola-kit/src/components/text.rs`            | typography helpers + tone style fns             |
+| `crates/sola-kit/src/components/text_input.rs`      | kit-styled text input                           |
 | `crates/sola-kit/src/components/toolbar.rs`         | pre-styled toolbar button                       |
+| `crates/sola-kit/src/main.rs`                       | `sola-kit` storybook binary entry               |
+| `crates/sola-kit/src/storybook/`                    | binary-only showcase pages                      |
 | `crates/sola-monitor/src/main.rs`                   | canonical first consumer — read for the pattern |
 | `crates/sola-kit-legacy/`                           | mothballed CEF/Remix kit — see [[sola-kit-legacy]] |
 
@@ -223,20 +278,24 @@ migration.
 
 In rough priority order:
 
-1. **Live theme reloads.** Subscribe to `Topic::Theme`, recompute
-   `iced::Theme::custom(...)` on change, push to running app.
-2. **Second consumer.** Port one of: sola-settings (small, well-scoped),
+1. **Live theme reloads.** Wire `Topic::Theme` into the kit so apps'
+   `theme(&self)` callbacks return a fresh `iced::Theme` built from
+   the bus payload. See "Live theme reload" above for the design.
+2. **Third consumer.** Port one of: sola-settings (small, well-scoped),
    sola-shell's launcher (visual, exercises layout components), or a
-   brand-new app that wants iced from day one. Whatever the second app
-   wants, that's what gets promoted into the kit next.
-3. **Slot-aware style fns.** Component-level `var(--sola-…)` resolution
-   in iced — `kit::components::sidebar::style(theme, slot)` etc.
+   brand-new app that wants iced from day one. Whatever the third app
+   wants, that's what gets promoted into the kit next. (Storybook is
+   the second consumer; it dogfoods every existing component.)
+3. **Refactor sola-monitor onto kit components.** It currently
+   carries its own divider_style, hex helper, row containers etc. —
+   small file, easy migration once we touch it.
 4. **`run::<A>()` entry point.** Once two apps' `main()` functions look
    nearly identical (modulo the typed update/view/subscription
    closures), bundle them into one generic function. Don't ship before
    the duplication is real.
-5. **Inline shared widgets** as the second consumer needs them
-   (sidebar, list-row, badge, status pill, etc.). One at a time.
+5. **Grow components inline** as the third consumer needs them
+   (list-row, tabs, breadcrumbs, segmented control, slider styling,
+   checkbox styling, ...). One at a time.
 
-Items 1–2 unblock most other work. 3+ are improvements that pay off
+Items 1–3 unblock most other work. 4+ are improvements that pay off
 proportionally to kit adoption.

@@ -10,35 +10,34 @@
 //! default when the requested name isn't found.
 
 use iced::widget::{Space, container, mouse_area};
-use iced::{Border, Element, Length, mouse};
+use iced::{Border, Element, Length, Theme, mouse};
 
-use crate::theme;
-
-/// Container style for the divider's visible track. References the
-/// kit's BORDER atom so the divider blends with the surrounding
-/// hairlines. Pass via `.style(divider_style)`.
-pub fn divider_style(_t: &iced::Theme) -> container::Style {
+/// Container style for the divider's visible track — the hairline
+/// color from the kit palette so it blends with surrounding 1px
+/// borders. Pass via `.style(sola_kit::components::divider::style)`.
+pub fn style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
     container::Style {
-        background: Some(theme::parse(theme::hex::BORDER).into()),
+        background: Some(p.background.stronger.color.into()),
         border: Border::default(),
         ..container::Style::default()
     }
 }
 
-/// 8px-wide vertical draggable divider. Caller wires the
-/// `on_press` message and listens for cursor motion / release at
-/// the application level — the divider itself doesn't track drag
-/// state because iced has no pointer-capture API; the consumer
-/// already needs to manage cursor + release events to handle the
-/// race where the cursor escapes the divider's hit-rect during a
-/// fast drag (see sola-monitor's `App` for the canonical pattern).
+/// 8px-wide vertical draggable divider. Caller wires the `on_press`
+/// message and listens for cursor motion / release at the application
+/// level — the divider itself doesn't track drag state because iced
+/// has no pointer-capture API; the consumer already needs to manage
+/// cursor + release events to handle the race where the cursor
+/// escapes the divider's hit-rect during a fast drag (see
+/// sola-monitor's `App` for the canonical pattern).
 pub fn vertical_divider<'a, Message>(on_press: Message) -> Element<'a, Message>
 where
     Message: Clone + 'a,
 {
     mouse_area(
         container(Space::new().width(Length::Fill).height(Length::Fill))
-            .style(divider_style)
+            .style(style)
             .width(Length::Fixed(8.0))
             .height(Length::Fill),
     )

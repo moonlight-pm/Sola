@@ -23,7 +23,7 @@ crates/
   sola-bus/            # IPC bus host + client library
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
   sola-app/            # WebView app framework (GTK4 + WebKit6, legacy)
-  sola-kit/            # Iced-based app kit (new) — workspace-excluded, lib-only
+  sola-kit/            # Iced-based app kit (new) — workspace-excluded; lib + `sola-kit` storybook binary
   sola-kit-legacy/     # Old CEF + Remix v3 kit — kept alive for sola-shell + sola-settings until ported
   sola-assets/         # Vendored icon/asset bundles
   sola-browser/        # WebKit browser
