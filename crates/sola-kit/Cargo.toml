@@ -1,68 +1,28 @@
 [package]
 name = "sola-kit"
-version.workspace = true
-edition.workspace = true
+version = "0.1.0"
+edition = "2024"
+
+# Iced-based Sola app kit. Successor to the CEF/Remix-v3 kit
+# (now `sola-kit-legacy`). Provides:
+#   - app scaffolding (`sola_kit::run::<A>()` — bus, fonts, window,
+#     theme wired up so apps don't repeat boilerplate)
+#   - the canonical sola palette as an `iced::Theme`
+#   - shared font constants + loading helper
+#   - reusable iced widgets / styles under `sola_kit::components`
+#
+# Library only. Standalone from the workspace because iced's
+# transitive `smithay-clipboard` flips wayland-sys into dlopen mode,
+# which would break sola-river's direct wayland linkage if unified
+# across the workspace. Consumers are workspace-excluded for the
+# same reason (see workspace `Cargo.toml`).
 
 [lib]
 # default — uses src/lib.rs
 
-[[bin]]
-name = "sola-kit"
-path = "src/app/main.rs"
-
 [dependencies]
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
 sola-bus = { path = "../sola-bus" }
-sola-assets = { path = "../sola-assets" }
 sola-core = { path = "../sola-core" }
-
-# CEF binding (version pinned to match CEF_VERSION in sola-make). The
-# crate's actual version is 147.1.0+147.0.10 — the `+147.0.10` is build
-# metadata documenting the underlying CEF; Cargo ignores it in version
-# requirements, so dropping it silences the "metadata will be ignored"
-# warning while still resolving to the same crate.
-# Do NOT enable the `accelerated_osr` feature — that pulls in wgpu/ash/metal
-# for a Vulkan-based dma-buf importer we don't need. We import dma-bufs via
-# zwp_linux_dmabuf_v1 directly through smithay-client-toolkit.
-cef = "147.1.0"
-
-# Wayland client side
-smithay-client-toolkit = "0.19"
-wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
-
-# Existing kit code (unchanged)
-swc_core = { version = "65", features = [
-  "common",
-  "ecma_ast",
-  "ecma_parser",
-  "ecma_parser_typescript",
-  "ecma_codegen",
-  "ecma_transforms",
-  "ecma_transforms_react",
-  "ecma_transforms_typescript",
-  "ecma_visit",
-] }
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
-
-# Direct syscalls for the pre-CEF stderr filter (pipe / dup / dup2). The
-# filter intercepts a known noisy `eprintln!` left in cef-rs at
-# src/string.rs:508 ("Invalid UTF-16 string"), so we need a few libc
-# primitives in the same process. Tiny crate, no transitive deps.
-libc = "0.2"
-
-# Compile-time directory embedding for vendored web assets
-# (web/vendor/remix-ui/, etc). The macro bakes file contents into a
-# `Dir<'static>` tree of `&'static [u8]` slices, so `AssetBundle`
-# fallback lookup is a constant-time map without per-file
-# `include_bytes!` boilerplate. No runtime dependencies; build-only
-# proc-macro pulls.
-include_dir = "0.7"
-
-# No `[build-dependencies]`: `build.rs` is dependency-free (just std)
-# and reads the pinned CEF version from the workspace-root `cef-version`
-# file via `include_str!`. Keeping `sola-make` out of sola-kit's build
-# graph stops `ureq`/`ring`/`rustls`/`bzip2`/`tar` from being pulled in
-# (they live only in `sola-make` for the `install-cef` subcommand) so
-# alternation with `cargo make build` doesn't trigger spurious rebuilds.

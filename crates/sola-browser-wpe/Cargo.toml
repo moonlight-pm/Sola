@@ -9,7 +9,7 @@ edition = "2024"
 # - wrapped app: `sola-browser-wpe --app <url> [--profile <name>]`
 #                                              — no chrome, full-window webview
 #
-# Workspace-excluded for the same reason as sola-monitor-iced: iced's
+# Workspace-excluded for the same reason as sola-monitor: iced's
 # transitive `smithay-clipboard` flips wayland-sys into dlopen mode,
 # which would break sola-river's runtime wayland linkage if unified
 # across the workspace. Build from this directory or via sola-make,

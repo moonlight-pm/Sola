@@ -1,249 +1,68 @@
-//! Kit-level theme composition. sola-core owns the *types* and the
-//! *palette seed* (brand atoms); this module composes the kit's
-//! per-component bindings on top to produce the canonical default
-//! theme that `KitApp::new` publishes on `Topic::Theme` at startup.
+//! Theme — iced `Theme` flavored with the canonical sola palette.
+//!
+//! The legacy CEF kit ships a richer token system (palette + per-component
+//! bindings, broadcast as CSS over `Topic::Theme`). Iced apps can't consume
+//! CSS, so for now we resolve the same color story to an
+//! `iced::theme::Palette` at startup and ship it as a `Theme::custom`.
+//!
+//! Wiring this to the live `Topic::Theme` bus update is a v0.2 task — see
+//! `docs/vault/sola-kit.md` for the migration plan. Until then, every kit
+//! app calls [`default_theme`] once at startup and that's it.
 
-use sola_core::theme::{Palette, Theme};
+use iced::{Color, Theme};
 
-use crate::components;
+/// Theme name reported back to iced — appears in `Theme::name()` and is
+/// what `pick_list(Theme::ALL, …)` would display if we ever exposed it.
+pub const THEME_NAME: &str = "sola";
 
-/// The kit's default theme — palette atoms from sola-core plus
-/// bindings for every kit-shipped component (button, root, sidebar).
-///
-/// Apps should treat this as a "factory reset" baseline; the canonical
-/// owner of the live theme is sola-shell (or sola-bus, whoever owns
-/// the persistent `Topic::Theme` payload). Until that ownership move
-/// happens, the storybook seeds the bus with this on startup.
-pub fn kit_default_theme() -> Theme {
-    Theme {
-        palette: Palette::seed(),
-        components: components::all_bindings(),
-    }
+/// Canonical sola palette as raw hex strings — the source of truth that
+/// the iced `Palette` below mirrors. Keep these in sync if you tweak
+/// either; we deliberately don't share atoms with the legacy kit yet
+/// because that protocol is CSS-oriented (see crate docs).
+pub mod hex {
+    pub const BG: &str = "#0d1117";
+    pub const FG: &str = "#c9d1d9";
+    pub const ACCENT: &str = "#58a6ff";
+    pub const SUCCESS: &str = "#3fb950";
+    pub const WARNING: &str = "#d29922";
+    pub const DANGER: &str = "#f85149";
+    /// Muted variant of the foreground — used for secondary text
+    /// (timestamps, deemphasized cells).
+    pub const FG_MUTED: &str = "#6e7681";
+    /// Slightly lifted background — used for panels, sticky cards,
+    /// and other surfaces that should read as "above" the canvas.
+    pub const BG_RAISED: &str = "#161b22";
+    /// Even more lifted — hover / selected rows.
+    pub const BG_HOVER: &str = "#21262d";
+    /// 1px hairline color used for dividers between cells.
+    pub const BORDER: &str = "#30363d";
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn kit_default_theme_validates() {
-        kit_default_theme()
-            .validate()
-            .expect("kit default theme must validate");
-    }
-
-    /// Golden snapshot of the kit's full rendered `:root { … }` block.
-    /// This is what every kit window actually sees; any palette or
-    /// binding edit shows up as a diff. Update the expected string
-    /// deliberately.
-    #[test]
-    fn kit_default_theme_to_css_is_stable() {
-        let css = kit_default_theme().to_css();
-        let expected = "\
-:root {
-  /* atoms */
-  --accent: #00d4ff;
-  --accent-dim: rgba(0, 212, 255, 0.12);
-  --bg-hover: #1a2030;
-  --bg-primary: #0d1117;
-  --bg-secondary: #161b22;
-  --bg-tertiary: #1c2129;
-  --border: #2d333b;
-  --border-subtle: #21262d;
-  --danger: #f85149;
-  --font-mono: Iosevka Term Slab;
-  --font-sans: DejaVu Sans;
-  --radius-lg: 6px;
-  --radius-md: 4px;
-  --radius-sm: 3px;
-  --space-lg: 16px;
-  --space-md: 12px;
-  --space-sm: 8px;
-  --space-xl: 20px;
-  --space-xs: 4px;
-  --space-xxl: 24px;
-  --success: #3fb950;
-  --text-accent: #58a6ff;
-  --text-body: 12px;
-  --text-body-lg: 13px;
-  --text-caption: 11px;
-  --text-display: 20px;
-  --text-heading: 16px;
-  --text-muted: #484f58;
-  --text-primary: #e6edf3;
-  --text-secondary: #8b949e;
-  --text-tertiary: #6e7681;
-
-  /* badge */
-  --sola-badge-danger-bg: var(--danger);
-  --sola-badge-danger-text: var(--text-primary);
-  --sola-badge-info-bg: var(--bg-tertiary);
-  --sola-badge-info-text: var(--text-accent);
-  --sola-badge-neutral-bg: var(--bg-tertiary);
-  --sola-badge-neutral-text: var(--text-secondary);
-  --sola-badge-padding-block: var(--space-xs);
-  --sola-badge-padding-inline: var(--space-sm);
-  --sola-badge-radius: var(--radius-sm);
-  --sola-badge-success-bg: var(--success);
-  --sola-badge-success-text: var(--text-primary);
-  --sola-badge-text-size: var(--text-caption);
-  --sola-badge-warning-bg: var(--danger);
-  --sola-badge-warning-text: var(--text-primary);
-
-  /* bindings-editor */
-  --sola-bindings-editor-label-color: var(--text-secondary);
-
-  /* button */
-  --sola-button-danger-bg: var(--danger);
-  --sola-button-danger-text: var(--text-primary);
-  --sola-button-default-bg: var(--bg-tertiary);
-  --sola-button-default-bg-hover: var(--bg-hover);
-  --sola-button-default-border: var(--border);
-  --sola-button-default-text: var(--text-primary);
-  --sola-button-focus-ring: var(--accent);
-  --sola-button-gap: var(--space-xs);
-  --sola-button-ghost-bg-hover: var(--bg-hover);
-  --sola-button-ghost-text: var(--text-secondary);
-  --sola-button-padding-block: var(--space-sm);
-  --sola-button-padding-inline: var(--space-md);
-  --sola-button-primary-bg: var(--accent);
-  --sola-button-primary-text: var(--text-primary);
-  --sola-button-radius: var(--radius-md);
-  --sola-button-text-size: var(--text-body);
-
-  /* card */
-  --sola-card-bg: var(--bg-secondary);
-  --sola-card-border: var(--border-subtle);
-  --sola-card-padding-block: var(--space-lg);
-  --sola-card-padding-inline: var(--space-xl);
-  --sola-card-radius: var(--radius-lg);
-
-  /* color-picker */
-  --sola-color-picker-gap: var(--space-sm);
-  --sola-color-picker-label-color: var(--text-secondary);
-  --sola-color-picker-label-size: var(--text-caption);
-  --sola-color-picker-preview-border: var(--border-subtle);
-  --sola-color-picker-preview-height: var(--space-xxl);
-  --sola-color-picker-preview-radius: var(--radius-sm);
-  --sola-color-picker-slider-thumb-bg: var(--text-primary);
-  --sola-color-picker-slider-thumb-border: var(--bg-primary);
-  --sola-color-picker-slider-thumb-shadow: var(--border);
-  --sola-color-picker-slider-track-bg: var(--bg-primary);
-  --sola-color-picker-value-color: var(--text-tertiary);
-
-  /* container */
-  --sola-container-padding-block: var(--space-xl);
-  --sola-container-padding-inline: var(--space-xxl);
-
-  /* field */
-  --sola-field-error-color: var(--danger);
-  --sola-field-gap: var(--space-xs);
-  --sola-field-help-color: var(--text-tertiary);
-  --sola-field-label-color: var(--text-secondary);
-  --sola-field-label-size: var(--text-caption);
-
-  /* font-input */
-  --sola-font-input-muted-text: var(--text-secondary);
-  --sola-font-input-option-bg-hover: var(--bg-hover);
-  --sola-font-input-option-bg-selected: var(--bg-tertiary);
-  --sola-font-input-option-text: var(--text-primary);
-  --sola-font-input-trigger-bg: var(--bg-tertiary);
-  --sola-font-input-trigger-border: var(--border-subtle);
-  --sola-font-input-trigger-padding-block: var(--space-xs);
-  --sola-font-input-trigger-padding-inline: var(--space-sm);
-  --sola-font-input-trigger-radius: var(--radius-md);
-  --sola-font-input-trigger-text: var(--text-primary);
-
-  /* number-input */
-  --sola-number-input-bg: var(--bg-tertiary);
-  --sola-number-input-border: var(--border);
-  --sola-number-input-border-focus: var(--accent);
-  --sola-number-input-padding-block: var(--space-xs);
-  --sola-number-input-padding-inline: var(--space-sm);
-  --sola-number-input-radius: var(--radius-md);
-  --sola-number-input-step-bg-active: var(--bg-secondary);
-  --sola-number-input-step-bg-hover: var(--bg-hover);
-  --sola-number-input-step-color: var(--text-secondary);
-  --sola-number-input-text: var(--text-primary);
-  --sola-number-input-unit-color: var(--text-secondary);
-
-  /* popover */
-  --sola-popover-bg: var(--bg-secondary);
-  --sola-popover-border: var(--border-subtle);
-  --sola-popover-offset: var(--space-xs);
-  --sola-popover-padding: var(--space-md);
-  --sola-popover-radius: var(--radius-md);
-
-  /* popover-select */
-  --sola-popover-select-bg: var(--bg-tertiary);
-  --sola-popover-select-border: var(--border);
-  --sola-popover-select-border-focus: var(--accent);
-  --sola-popover-select-chevron-color: var(--text-secondary);
-  --sola-popover-select-option-bg-hover: var(--bg-hover);
-  --sola-popover-select-option-bg-selected: var(--bg-tertiary);
-  --sola-popover-select-option-text: var(--text-primary);
-  --sola-popover-select-text: var(--text-primary);
-
-  /* root */
-  --sola-root-bg: var(--bg-primary);
-  --sola-root-font: var(--font-sans);
-  --sola-root-scrollbar-size: var(--space-sm);
-  --sola-root-scrollbar-thumb: var(--border);
-  --sola-root-scrollbar-thumb-hover: var(--text-muted);
-  --sola-root-scrollbar-track: var(--bg-primary);
-  --sola-root-text: var(--text-primary);
-  --sola-root-text-size: var(--text-body);
-
-  /* sidebar */
-  --sola-sidebar-bg: var(--bg-secondary);
-  --sola-sidebar-gap: var(--space-xs);
-  --sola-sidebar-item-bg-active: var(--accent-dim);
-  --sola-sidebar-item-bg-hover: var(--bg-hover);
-  --sola-sidebar-item-icon-active: var(--accent);
-  --sola-sidebar-item-icon-idle: var(--text-secondary);
-  --sola-sidebar-item-padding-block: var(--space-sm);
-  --sola-sidebar-item-padding-inline: var(--space-md);
-  --sola-sidebar-item-stripe: var(--accent);
-  --sola-sidebar-item-text-active: var(--text-primary);
-  --sola-sidebar-item-text-idle: var(--text-secondary);
-  --sola-sidebar-item-text-size: var(--text-body);
-  --sola-sidebar-padding-block: var(--space-md);
-  --sola-sidebar-padding-inline: var(--space-sm);
-  --sola-sidebar-section-label-color: var(--text-tertiary);
-  --sola-sidebar-section-label-size: var(--text-caption);
-
-  /* split */
-  --sola-split-divider: var(--border-subtle);
-  --sola-split-divider-hover: var(--border);
-
-  /* swatch */
-  --sola-swatch-border: var(--border-subtle);
-  --sola-swatch-radius: var(--radius-sm);
-
-  /* text */
-  --sola-text-body-lg-size: var(--text-body-lg);
-  --sola-text-body-size: var(--text-body);
-  --sola-text-caption-size: var(--text-caption);
-  --sola-text-display-size: var(--text-display);
-  --sola-text-heading-size: var(--text-heading);
-  --sola-text-label-color: var(--text-secondary);
-  --sola-text-label-size: var(--text-caption);
-  --sola-text-muted-color: var(--text-secondary);
-  --sola-text-subtle-color: var(--text-tertiary);
-
-  /* text-input */
-  --sola-text-input-bg: var(--bg-tertiary);
-  --sola-text-input-border: var(--border);
-  --sola-text-input-border-focus: var(--accent);
-  --sola-text-input-border-invalid: var(--danger);
-  --sola-text-input-padding-block: var(--space-xs);
-  --sola-text-input-padding-inline: var(--space-sm);
-  --sola-text-input-placeholder-color: var(--text-muted);
-  --sola-text-input-radius: var(--radius-md);
-  --sola-text-input-text: var(--text-primary);
-  --sola-text-input-text-size: var(--text-body);
+/// Build the canonical sola iced theme. Apps call this in their
+/// `theme(&self) -> Theme` method. Returning a fresh `Theme::custom`
+/// per call is cheap (palette is `Copy`).
+pub fn default_theme() -> Theme {
+    Theme::custom(
+        THEME_NAME.to_string(),
+        iced::theme::Palette {
+            background: parse(hex::BG),
+            text: parse(hex::FG),
+            primary: parse(hex::ACCENT),
+            success: parse(hex::SUCCESS),
+            warning: parse(hex::WARNING),
+            danger: parse(hex::DANGER),
+        },
+    )
 }
-";
-        assert_eq!(css, expected);
-    }
+
+/// Parse `#rrggbb` into an iced `Color`. Panics on malformed input —
+/// the inputs are compile-time constants in this crate, so the panic
+/// is a self-check rather than a runtime concern.
+pub fn parse(s: &str) -> Color {
+    let s = s.trim_start_matches('#');
+    assert_eq!(s.len(), 6, "expected #rrggbb, got {s:?}");
+    let r = u8::from_str_radix(&s[0..2], 16).expect("rr") as f32 / 255.0;
+    let g = u8::from_str_radix(&s[2..4], 16).expect("gg") as f32 / 255.0;
+    let b = u8::from_str_radix(&s[4..6], 16).expect("bb") as f32 / 255.0;
+    Color::from_rgb(r, g, b)
 }

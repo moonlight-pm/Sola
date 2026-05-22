@@ -1,60 +1,17 @@
-//! Rust-side per-component metadata for kit-shipped UI components.
-//! Each submodule owns one component's default theme bindings; the
-//! frontend (Tsx/CSS) lives under `web/lib/components/<name>.*` and
-//! is registered in `assets::platform_assets()`. Every entry here
-//! has a real DOM-rendering counterpart.
+//! Reusable iced widgets and styles.
 //!
-//! Adding a new kit component is a single-crate change:
-//!   1. Drop `web/lib/components/<name>.{tsx,css}`.
-//!   2. Add `<name>.rs` here exposing `pub fn bindings() ->
-//!      ComponentBindings`.
-//!   3. Register the Tsx/CSS in `assets.rs::platform_assets`, the
-//!      .tsx in `lib.rs::build_importmap`, and `<name>` in
-//!      `all_bindings()` below.
+//! Grows as real apps need shared pieces. Each component lives in
+//! its own submodule and exports a small public surface — usually
+//! one factory function returning `Element<'a, Message>` and any
+//! related style helpers.
+//!
+//! Naming convention: lowercase function names that match iced's own
+//! widget-constructor style (`button`, `row`, …). Avoid wrapping
+//! constructors in structs unless the component carries non-trivial
+//! state.
 
-use std::collections::BTreeMap;
+pub mod divider;
+pub mod toolbar;
 
-use sola_core::theme::ComponentBindings;
-
-pub mod badge;
-pub mod bindings_editor;
-pub mod button;
-pub mod card;
-pub mod color_picker;
-pub mod field;
-pub mod font_input;
-pub mod number_input;
-pub mod container;
-pub mod popover;
-pub mod popover_select;
-pub mod root;
-pub mod sidebar;
-pub mod split;
-pub mod swatch;
-pub mod text;
-pub mod text_input;
-
-pub fn all_bindings() -> BTreeMap<String, ComponentBindings> {
-    let mut map = BTreeMap::new();
-    map.insert("badge".into(), badge::bindings());
-    map.insert("bindings-editor".into(), bindings_editor::bindings());
-    map.insert("button".into(), button::bindings());
-    map.insert("card".into(), card::bindings());
-    map.insert("color-picker".into(), color_picker::bindings());
-    map.insert("container".into(), container::bindings());
-    map.insert("field".into(), field::bindings());
-    map.insert("font-input".into(), font_input::bindings());
-    map.insert("number-input".into(), number_input::bindings());
-    map.insert("popover".into(), popover::bindings());
-    map.insert("popover-select".into(), popover_select::bindings());
-    map.insert("root".into(), root::bindings());
-    map.insert("sidebar".into(), sidebar::bindings());
-    map.insert("split".into(), split::bindings());
-    map.insert("swatch".into(), swatch::bindings());
-    map.insert("text".into(), text::bindings());
-    map.insert("text-input".into(), text_input::bindings());
-    // token-value-editor is a pure dispatcher with no own slots, so
-    // it's intentionally not registered — empty entries would just
-    // produce dead section headers in the rendered CSS.
-    map
-}
+pub use divider::{vertical_divider, divider_style};
+pub use toolbar::toolbar_button;

@@ -13,6 +13,6 @@ toml = "0.8"
 # crates/sola-make/src/cef.rs::download_and_extract). This drops
 # `ureq`/`ring`/`rustls`/`bzip2`/`tar` from the workspace dep graph,
 # which avoids cargo recompiling them every time we alternate between
-# `cargo build -p sola-kit` and `cargo make build sola-kit` (those
+# `cargo build -p sola-kit-legacy` and `cargo make build sola-kit-legacy` (those
 # crates were shared with cef-dll-sys's `download-cef` build-dep at
 # different feature unifications, causing perpetual cascade).

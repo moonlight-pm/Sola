@@ -8,7 +8,10 @@ name = "sola-settings"
 path = "src/main.rs"
 
 [dependencies]
-sola-kit = { path = "../sola-kit" }
+# Settings still rides the mothballed kit until it's ported to the new
+# iced sola-kit; depend via the package rename so `use sola_kit::…`
+# stays unchanged internally.
+sola-kit = { path = "../sola-kit-legacy", package = "sola-kit-legacy" }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 serde = { version = "1", features = ["derive"] }

@@ -22,12 +22,13 @@ crates/
   sola/                # Process manager (binary entry point)
   sola-bus/            # IPC bus host + client library
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
-  sola-app/            # WebView app framework (GTK4 + WebKit6)
-  sola-kit/            # WebView app framework + design-token kit + storybook (parallel to sola-app)
+  sola-app/            # WebView app framework (GTK4 + WebKit6, legacy)
+  sola-kit/            # Iced-based app kit (new) — workspace-excluded, lib-only
+  sola-kit-legacy/     # Old CEF + Remix v3 kit — kept alive for sola-shell + sola-settings until ported
   sola-assets/         # Vendored icon/asset bundles
   sola-browser/        # WebKit browser
   sola-make/           # Build/install orchestration (xtask)
-  sola-monitor/        # System monitor / bus audit
+  sola-monitor/        # System monitor / bus audit (iced, first sola-kit consumer)
   sola-river/          # River compositor bridge (bus ↔ wayland)
   sola-session/        # User-app session manager
   sola-settings/       # Settings panel

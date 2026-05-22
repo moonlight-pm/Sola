@@ -8,7 +8,10 @@ name = "sola-shell"
 path = "src/main.rs"
 
 [dependencies]
-sola-kit = { path = "../../crates/sola-kit" }
+# Shell still rides the mothballed kit until it's ported to the new
+# iced sola-kit; depend via the package rename so `use sola_kit::…`
+# stays unchanged internally.
+sola-kit = { path = "../../crates/sola-kit-legacy", package = "sola-kit-legacy" }
 sola-bus = { path = "../../crates/sola-bus" }
 sola-core = { path = "../../crates/sola-core" }
 tracing = "0.1"

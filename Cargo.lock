@@ -1450,12 +1450,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
-name = "hex"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
 name = "hkdf"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2963,7 +2957,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sola-kit"
+name = "sola-kit-legacy"
 version = "0.1.0"
 dependencies = [
  "cef",
@@ -2990,19 +2984,6 @@ dependencies = [
  "notify",
  "serde",
  "toml 0.8.23",
-]
-
-[[package]]
-name = "sola-monitor"
-version = "0.1.0"
-dependencies = [
- "hex",
- "include_dir",
- "serde_json",
- "sola-bus",
- "sola-core",
- "sola-kit",
- "tracing",
 ]
 
 [[package]]
@@ -3042,7 +3023,7 @@ dependencies = [
  "serde_json",
  "sola-bus",
  "sola-core",
- "sola-kit",
+ "sola-kit-legacy",
  "tracing",
 ]
 
@@ -3054,7 +3035,7 @@ dependencies = [
  "serde_json",
  "sola-bus",
  "sola-core",
- "sola-kit",
+ "sola-kit-legacy",
  "tracing",
 ]
 

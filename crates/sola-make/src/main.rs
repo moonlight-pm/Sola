@@ -357,7 +357,7 @@ mod tests {
     }
 
     /// A crate with [[bin]] in Cargo.toml but no src/main.rs must still be
-    /// discovered. This verifies the fix that allows sola-kit (whose binary is
+    /// discovered. This verifies the fix that allows sola-kit-legacy (whose binary is
     /// at src/app/main.rs) to be found by the all-apps install path.
     #[test]
     fn discover_binaries_finds_bin_section_without_main_rs() {

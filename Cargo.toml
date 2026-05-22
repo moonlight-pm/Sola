@@ -1,12 +1,17 @@
 [workspace]
 members = ["crates/*"]
-# Kept out of the workspace so its iced deps don't unify wayland-sys
+# Kept out of the workspace so their iced deps don't unify wayland-sys
 # features across the workspace and break sola-river's runtime
 # wayland linkage (smithay-clipboard's `dlopen` default switches the
-# whole graph onto dlopen, which fails on NixOS). Build it with
-# `cargo build --manifest-path crates/sola-monitor-iced/Cargo.toml`.
+# whole graph onto dlopen, which fails on NixOS).
+#
+# `sola-kit` (the new iced kit, lib-only) and `sola-monitor` (its first
+# consumer) live in this list; new iced apps go here too. Build any of
+# them with `cargo build --manifest-path crates/<name>/Cargo.toml` or
+# via `cargo make build` which discovers them through this list.
 exclude = [
-    "crates/sola-monitor-iced",
+    "crates/sola-kit",
+    "crates/sola-monitor",
     "crates/sola-browser-wpe",
     "crates/sola-browser-cef",
     "crates/wgpu-hal-patched",

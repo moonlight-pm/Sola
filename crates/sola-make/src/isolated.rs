@@ -22,9 +22,9 @@ use std::process::Command;
 
 /// One isolated crate to build / install.
 pub struct IsolatedCrate {
-    /// Path relative to the workspace root (e.g. "crates/sola-monitor-iced").
+    /// Path relative to the workspace root (e.g. "crates/sola-monitor").
     pub path: PathBuf,
-    /// Package name from the crate's `Cargo.toml` (e.g. "sola-monitor-iced").
+    /// Package name from the crate's `Cargo.toml` (e.g. "sola-monitor").
     /// Also the produced binary name; we don't support multi-bin
     /// isolated crates because none of our use cases need it yet.
     pub name: String,
