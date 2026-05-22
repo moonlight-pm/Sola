@@ -490,8 +490,13 @@ impl shader::Pipeline for WpePipeline {
             label: Some("wpe sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            // Nearest, not linear. Texture and target are 1:1 by
+            // construction (we Cmd::Resize WPE to match iced's
+            // widget bounds, and skip draw on mismatch), so any
+            // blending in the sampler is wasted work that smears
+            // text glyphs WebKit already hinted to pixel grid.
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
