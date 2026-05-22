@@ -223,3 +223,18 @@ pub fn from_bus_theme(bus: &BusTheme) -> Theme {
         },
     )
 }
+
+/// Produce a bus theme (`sola_core::theme::Theme`) representing the kit's
+/// compile-time default palette.
+///
+/// # Design note
+/// The inverse of `from_bus_theme` would need to reverse-engineer named token
+/// values from an iced `Theme`'s `Extended` palette — a lossy operation because
+/// iced derives many colours from a few atoms. Rather than propagate a lossy
+/// approximation onto the bus, this function returns a canned `BusTheme::default()`
+/// (seeded with the v1 atom catalog via `Palette::seed`) that matches exactly
+/// what `default_theme()` reads back. If the shell later lets users edit themes,
+/// the real bus value should come from the theme editor, not from this function.
+pub fn to_bus_theme() -> BusTheme {
+    BusTheme::default()
+}
