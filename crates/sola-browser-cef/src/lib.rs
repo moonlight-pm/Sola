@@ -5,4 +5,5 @@
 
 pub mod cef;
 pub mod cpu_import;
+pub mod input;
 pub mod shader;

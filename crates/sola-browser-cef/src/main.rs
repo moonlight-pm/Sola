@@ -55,10 +55,12 @@ fn main() -> ExitCode {
     let releaser = engine.cmd_sender();
     ENGINE.set(engine).map_err(|_| ()).expect("ENGINE set twice");
 
+    let cursor = ENGINE.get().expect("ENGINE was just set").cursor_handle();
     let slot = Arc::new(FrameSlot {
         pending: Mutex::new(None),
         releaser,
         last_size: Mutex::new((VIEW_W, VIEW_H)),
+        cursor,
     });
     SLOT_FOR_STREAM
         .set(slot.clone())

@@ -15,14 +15,17 @@
 //! No DMA-BUF, no FD lifetime, no resource Release back to CEF —
 //! the buffer CEF handed us was already memcpy'd out in `on_paint`.
 
+use std::sync::atomic::AtomicU32;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use iced::widget::shader;
-use iced::{Rectangle, mouse};
+use iced::{Rectangle, keyboard, mouse};
 
-use crate::cef::{CefFrame, Cmd};
+use crate::cef::{CefFrame, Cmd, InputEvent};
 use crate::cpu_import::{self, UploadedFrame};
+use crate::input;
 
 /// Shared between the App (which fills `pending`) and the shader
 /// Pipeline (which drains it on next prepare). `releaser` lets the
@@ -34,6 +37,10 @@ pub struct FrameSlot {
     /// Last size we asked CEF to render at (physical pixels). Used
     /// to debounce resize commands so we only fire on actual change.
     pub last_size: Mutex<(u32, u32)>,
+    /// Latest CSS-cursor state from CEF, written by the worker
+    /// thread on `DisplayHandler::on_cursor_change`. Value is a
+    /// `CursorKind` discriminant. Read by `mouse_interaction`.
+    pub cursor: Arc<AtomicU32>,
 }
 
 impl std::fmt::Debug for FrameSlot {
@@ -52,8 +59,21 @@ pub struct CefPrimitive {
     pub slot: Arc<FrameSlot>,
 }
 
+/// Mirror of sola-browser-wpe's ProgramState. Tracks modifiers,
+/// held mouse-button mask (OR'd into PointerMove modifiers so
+/// CEF sees drags as drags), and a session-start `Instant` (not
+/// strictly needed for CEF events, which carry no timestamp, but
+/// kept for parity).
+#[derive(Debug, Default)]
+pub struct ProgramState {
+    modifiers: keyboard::Modifiers,
+    last_scale: f32,
+    held_button_mods: u32,
+    _started: Option<Instant>,
+}
+
 impl<Msg> shader::Program<Msg> for CefProgram {
-    type State = ();
+    type State = ProgramState;
     type Primitive = CefPrimitive;
 
     fn draw(
@@ -65,6 +85,146 @@ impl<Msg> shader::Program<Msg> for CefProgram {
         CefPrimitive {
             slot: self.slot.clone(),
         }
+    }
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &iced::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<iced::widget::shader::Action<Msg>> {
+        let (req_w, _req_h) = *self.slot.last_size.lock().unwrap();
+        let scale = if bounds.width > 0.0 {
+            (req_w as f32 / bounds.width).max(0.5)
+        } else if state.last_scale > 0.0 {
+            state.last_scale
+        } else {
+            1.0
+        };
+        state.last_scale = scale;
+        let mods_now = state.modifiers;
+
+        match event {
+            iced::Event::Mouse(m) => {
+                let cur = cursor.position_in(bounds)?;
+                let (x, y) = input::project_cursor(
+                    iced::Point::new(bounds.x + cur.x, bounds.y + cur.y),
+                    bounds,
+                    scale,
+                );
+                let kbd_mods = input::modifiers_to_cef(mods_now);
+                let ev = match m {
+                    mouse::Event::CursorMoved { .. } => Some(input::pointer_move(
+                        x,
+                        y,
+                        state.held_button_mods,
+                        kbd_mods,
+                    )),
+                    mouse::Event::ButtonPressed(b) => {
+                        input::button_to_wpe_like(*b).map(|button| {
+                            state.held_button_mods |= input::button_to_modifier(button);
+                            input::pointer_button(
+                                true,
+                                button,
+                                x,
+                                y,
+                                state.held_button_mods,
+                                kbd_mods,
+                            )
+                        })
+                    }
+                    mouse::Event::ButtonReleased(b) => {
+                        input::button_to_wpe_like(*b).map(|button| {
+                            state.held_button_mods &= !input::button_to_modifier(button);
+                            input::pointer_button(
+                                false,
+                                button,
+                                x,
+                                y,
+                                state.held_button_mods,
+                                kbd_mods,
+                            )
+                        })
+                    }
+                    mouse::Event::WheelScrolled { delta } => {
+                        let (dx, dy, precise) = input::scroll_delta_to_cef(*delta);
+                        Some(input::scroll(
+                            x,
+                            y,
+                            dx,
+                            dy,
+                            precise,
+                            state.held_button_mods,
+                            kbd_mods,
+                        ))
+                    }
+                    _ => None,
+                };
+                if let Some(e) = ev {
+                    let _ = self.slot.releaser.send(Cmd::Input(e));
+                    return Some(iced::widget::shader::Action::capture());
+                }
+            }
+            iced::Event::Keyboard(k) => {
+                if let keyboard::Event::ModifiersChanged(m) = k {
+                    state.modifiers = *m;
+                }
+                let translated = match k {
+                    keyboard::Event::KeyPressed {
+                        key, modifiers, text, ..
+                    } => input::key_to_vk(key).map(|vk| InputEvent::Key {
+                        down: true,
+                        vk,
+                        character: input::key_to_character(
+                            text.as_ref().and_then(|t| t.chars().next()),
+                            key,
+                        ),
+                        modifiers: input::modifiers_to_cef(*modifiers),
+                    }),
+                    keyboard::Event::KeyReleased {
+                        key, modifiers, ..
+                    } => input::key_to_vk(key).map(|vk| InputEvent::Key {
+                        down: false,
+                        vk,
+                        character: None,
+                        modifiers: input::modifiers_to_cef(*modifiers),
+                    }),
+                    keyboard::Event::ModifiersChanged(_) => None,
+                };
+                if let Some(e) = translated {
+                    let _ = self.slot.releaser.send(Cmd::Input(e));
+                    return Some(iced::widget::shader::Action::capture());
+                }
+            }
+            iced::Event::Window(w) => {
+                use iced::window::Event as WE;
+                match w {
+                    WE::Focused => {
+                        let _ = self.slot.releaser.send(Cmd::Focus(true));
+                    }
+                    WE::Unfocused => {
+                        let _ = self.slot.releaser.send(Cmd::Focus(false));
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn mouse_interaction(
+        &self,
+        _state: &Self::State,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        let raw = self
+            .slot
+            .cursor
+            .load(std::sync::atomic::Ordering::Relaxed);
+        input::CursorKind::from_u32(raw).to_iced()
     }
 }
 
@@ -148,16 +308,33 @@ impl shader::Primitive for CefPrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        let Some(bg) = &pipeline.bind_group else {
-            return;
+        // Same conditional clear/load pattern as sola-browser-wpe.
+        // Three states:
+        //   - No frame uploaded yet → Clear(BLACK), no draw. Beats
+        //     iced's default white at startup.
+        //   - Frame uploaded, size matches → Load + draw.
+        //   - Frame uploaded but size mismatches our last Resize →
+        //     Load, skip draw. Previous content (or the startup
+        //     black) stays visible while CEF catches up.
+        let (load_op, do_draw) = match pipeline.current.as_ref() {
+            None => (wgpu::LoadOp::Clear(wgpu::Color::BLACK), false),
+            Some(current) => {
+                let requested = *self.slot.last_size.lock().unwrap();
+                if current.size == requested {
+                    (wgpu::LoadOp::Load, true)
+                } else {
+                    (wgpu::LoadOp::Load, false)
+                }
+            }
         };
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("cef sample pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
+                    load: load_op,
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -166,6 +343,10 @@ impl shader::Primitive for CefPrimitive {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
+        let Some(bg) = (do_draw).then_some(pipeline.bind_group.as_ref()).flatten() else {
+            return;
+        };
+
         pass.set_scissor_rect(
             clip_bounds.x,
             clip_bounds.y,

@@ -54,7 +54,49 @@ pub enum Cmd {
     /// and posts a UI-thread task that calls `host().was_resized()`
     /// so CEF re-rasterises at the new size.
     Resize { width: u32, height: u32 },
+    /// Forward a user input event into CEF. Translated to the
+    /// appropriate `BrowserHost::send_*_event` call on the CEF
+    /// UI thread.
+    Input(InputEvent),
+    /// Toggle CEF focus on the OSR view. iced delivers keyboard
+    /// events only to focused widgets, but CEF tracks focus
+    /// independently and needs an explicit `set_focus` call.
+    Focus(bool),
     Quit,
+}
+
+/// Thread-safe input event shape. Mirrors the layout in
+/// sola-browser-wpe but uses CEF's coordinate + modifier
+/// conventions (integer pixels, `EVENTFLAG_*` bits).
+#[derive(Debug, Clone)]
+pub enum InputEvent {
+    PointerMove { x: i32, y: i32, modifiers: u32 },
+    PointerButton {
+        down: bool,
+        x: i32,
+        y: i32,
+        button: u32, /* 1=L, 2=M, 3=R — see input::button_to_modifier */
+        modifiers: u32,
+    },
+    Scroll {
+        x: i32,
+        y: i32,
+        delta_x: i32,
+        delta_y: i32,
+        precise: bool,
+        modifiers: u32,
+    },
+    /// Keyboard event. `vk` is the Windows-style virtual-key code
+    /// (per Chromium `keyboard_codes.h`), `character` is the
+    /// post-shift Unicode codepoint to send as a CHAR event for
+    /// printable input (None for non-printable keys like arrows
+    /// or function keys).
+    Key {
+        down: bool,
+        vk: u32,
+        character: Option<u16>,
+        modifiers: u32,
+    },
 }
 
 /// Engine handle held by the main thread. Owns the worker thread
@@ -64,6 +106,10 @@ pub struct CefEngine {
     worker: Option<JoinHandle<()>>,
     cmd_tx: Sender<Cmd>,
     frames: Arc<Mutex<Receiver<CefFrame>>>,
+    /// Latest CSS cursor pushed by CEF's `OnCursorChange`. Encoded
+    /// as a `CursorKind` discriminant; shader's `mouse_interaction`
+    /// reads this every render. Worker thread writes.
+    cursor: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl CefEngine {
@@ -102,16 +148,27 @@ impl CefEngine {
     pub fn spawn(app_id: &'static str, url: &str, width: u32, height: u32) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Cmd>();
         let (frame_tx, frame_rx) = channel::<CefFrame>();
+        let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cursor_worker = cursor.clone();
         let url = url.to_string();
         let worker = thread::Builder::new()
             .name("cef-engine".into())
-            .spawn(move || worker_main(app_id, url, width, height, frame_tx, cmd_rx))
+            .spawn(move || {
+                worker_main(app_id, url, width, height, frame_tx, cmd_rx, cursor_worker)
+            })
             .expect("spawn cef-engine thread");
         Self {
             worker: Some(worker),
             cmd_tx,
             frames: Arc::new(Mutex::new(frame_rx)),
+            cursor,
         }
+    }
+
+    /// Shared handle to the latest cursor shape. Non-blocking read,
+    /// safe to call from iced's render thread.
+    pub fn cursor_handle(&self) -> Arc<std::sync::atomic::AtomicU32> {
+        self.cursor.clone()
     }
 
     pub fn cmd_sender(&self) -> Sender<Cmd> {
@@ -143,6 +200,7 @@ struct CefThreadState {
     frame_tx: Sender<CefFrame>,
     cmd_rx: RefCell<Option<Receiver<Cmd>>>,
     browser: RefCell<Option<cef::Browser>>,
+    cursor: Arc<std::sync::atomic::AtomicU32>,
 }
 
 thread_local! {
@@ -162,12 +220,14 @@ fn worker_main(
     height: u32,
     frame_tx: Sender<CefFrame>,
     cmd_rx: Receiver<Cmd>,
+    cursor: Arc<std::sync::atomic::AtomicU32>,
 ) {
     let state = Rc::new(CefThreadState {
         size: Mutex::new((width, height)),
         frame_tx,
         cmd_rx: RefCell::new(Some(cmd_rx)),
         browser: RefCell::new(None),
+        cursor,
     });
     CEF_STATE.with(|s| {
         s.set(state.clone()).map_err(|_| ()).expect("CEF_STATE set twice");
@@ -193,7 +253,8 @@ fn worker_main(
 
     let render_handler = BrowserRenderHandler::new();
     let life_span_handler = BrowserLifeSpanHandler::new();
-    let mut client = BrowserClient::new(render_handler, life_span_handler);
+    let display_handler = BrowserDisplayHandler::new();
+    let mut client = BrowserClient::new(render_handler, life_span_handler, display_handler);
 
     let url_c = cef::CefString::from(url.as_str());
     let inner = cef::browser_host_create_browser_sync(
@@ -400,12 +461,38 @@ cef::wrap_life_span_handler! {
     }
 }
 
+// ── DisplayHandler (cursor + console / status) ────────────────────
+
+cef::wrap_display_handler! {
+    pub struct BrowserDisplayHandler {}
+
+    impl DisplayHandler {
+        fn on_cursor_change(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _cursor: cef::sys::cef_cursor_handle_t,
+            type_: cef::CursorType,
+            _custom_cursor_info: Option<&cef::CursorInfo>,
+        ) -> ::std::os::raw::c_int {
+            let kind = crate::input::cef_cursor_to_kind(type_);
+            cef_state().cursor.store(
+                kind as u32,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            // 1 = we handled it. CEF won't try to set a native-window
+            // cursor (there's none in OSR anyway).
+            1
+        }
+    }
+}
+
 // ── Client ────────────────────────────────────────────────────────
 
 cef::wrap_client! {
     pub struct BrowserClient {
         pub render_handler: cef::RenderHandler,
         pub life_span_handler: cef::LifeSpanHandler,
+        pub display_handler: cef::DisplayHandler,
     }
 
     impl Client {
@@ -415,6 +502,10 @@ cef::wrap_client! {
 
         fn life_span_handler(&self) -> Option<cef::LifeSpanHandler> {
             Some(self.life_span_handler.clone())
+        }
+
+        fn display_handler(&self) -> Option<cef::DisplayHandler> {
+            Some(self.display_handler.clone())
         }
     }
 }
@@ -446,6 +537,20 @@ cef::wrap_task! {
                             }
                         }
                     }
+                    Ok(Cmd::Input(ev)) => {
+                        if let Some(browser) = state.browser.borrow().as_ref() {
+                            if let Some(host) = browser.host() {
+                                dispatch_input(&host, ev);
+                            }
+                        }
+                    }
+                    Ok(Cmd::Focus(focused)) => {
+                        if let Some(browser) = state.browser.borrow().as_ref() {
+                            if let Some(host) = browser.host() {
+                                host.set_focus(if focused { 1 } else { 0 });
+                            }
+                        }
+                    }
                     Ok(Cmd::Quit) => {
                         cef::quit_message_loop();
                         should_continue = false;
@@ -468,6 +573,69 @@ cef::wrap_task! {
                     Some(&mut next),
                     16,
                 );
+            }
+        }
+    }
+}
+
+// ── Input dispatch (runs on CEF UI thread via CmdPumpTask) ────────
+
+/// Materialize an `InputEvent` as CEF `MouseEvent` / `KeyEvent`
+/// and hand it to the browser host. Per CEF's docs a key press
+/// is three events: RAWKEYDOWN → optional CHAR (for printable
+/// input) → KEYUP. KeyEvent::default() sets `size` correctly so
+/// CEF accepts it.
+fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
+    use cef::{KeyEvent, KeyEventType, MouseButtonType, MouseEvent};
+    match ev {
+        InputEvent::PointerMove { x, y, modifiers } => {
+            let me = MouseEvent { x, y, modifiers };
+            host.send_mouse_move_event(Some(&me), 0);
+        }
+        InputEvent::PointerButton { down, x, y, button, modifiers } => {
+            let me = MouseEvent { x, y, modifiers };
+            let bt = match button {
+                1 => MouseButtonType::LEFT,
+                2 => MouseButtonType::MIDDLE,
+                3 => MouseButtonType::RIGHT,
+                _ => return,
+            };
+            // CEF wants click_count > 0 (typically 1 for single,
+            // 2 for double); it does its own double-click detection
+            // by time/position. 1 is a safe default.
+            host.send_mouse_click_event(Some(&me), bt, if down { 0 } else { 1 }, 1);
+        }
+        InputEvent::Scroll { x, y, delta_x, delta_y, precise, modifiers } => {
+            let mut me = MouseEvent { x, y, modifiers };
+            if precise {
+                me.modifiers |= cef::sys::cef_event_flags_t::EVENTFLAG_PRECISION_SCROLLING_DELTA.0;
+            }
+            host.send_mouse_wheel_event(Some(&me), delta_x, delta_y);
+        }
+        InputEvent::Key { down, vk, character, modifiers } => {
+            // RAWKEYDOWN / KEYUP carry the VK code. CHAR carries
+            // the produced text character (post-shift). For
+            // printable input we send RAWKEYDOWN then CHAR on the
+            // way down; for non-printable (arrows, function keys)
+            // we send only RAWKEYDOWN/KEYUP.
+            let mut ke = KeyEvent::default();
+            ke.modifiers = modifiers;
+            ke.windows_key_code = vk as i32;
+            ke.native_key_code = 0;
+            ke.is_system_key = 0;
+            if down {
+                ke.type_ = KeyEventType::RAWKEYDOWN;
+                host.send_key_event(Some(&ke));
+                if let Some(ch) = character {
+                    let mut char_ev = ke.clone();
+                    char_ev.type_ = KeyEventType::CHAR;
+                    char_ev.character = ch;
+                    char_ev.unmodified_character = ch;
+                    host.send_key_event(Some(&char_ev));
+                }
+            } else {
+                ke.type_ = KeyEventType::KEYUP;
+                host.send_key_event(Some(&ke));
             }
         }
     }
