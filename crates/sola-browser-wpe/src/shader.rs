@@ -441,6 +441,27 @@ impl shader::Primitive for WpePrimitive {
             return;
         };
 
+        // The fullscreen triangle covers NDC -1..1. Without
+        // `set_viewport`, that maps across the entire surface
+        // texture and the WPE buffer's top-left lands at the
+        // window's top-left — putting the page's first scanline
+        // under the chrome bar. Scissor only clips writes, it
+        // doesn't re-map UVs. set_viewport, by contrast, remaps
+        // NDC -1..1 to a sub-rect of the target, which is what
+        // we want: triangle covers the widget bounds exactly,
+        // UVs interpolate across the widget bounds, page top
+        // lands at the widget's top edge.
+        pass.set_viewport(
+            clip_bounds.x as f32,
+            clip_bounds.y as f32,
+            clip_bounds.width as f32,
+            clip_bounds.height as f32,
+            0.0,
+            1.0,
+        );
+        // Scissor still belt-and-braces — if iced ever passes us
+        // a clip_bounds smaller than the widget bounds (clipped
+        // by an ancestor container), scissor enforces it.
         pass.set_scissor_rect(
             clip_bounds.x,
             clip_bounds.y,
