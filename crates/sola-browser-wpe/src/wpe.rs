@@ -73,7 +73,21 @@ pub enum Cmd {
     /// focused widgets, but WPE has its own focus state which
     /// needs explicit `wpe_view_focus_in` / `wpe_view_focus_out`.
     Focus(bool),
+    /// Navigation operation (back/forward/reload/etc). Dispatched
+    /// to webkit_web_view_* on the worker thread.
+    Nav(NavCmd),
     Quit,
+}
+
+/// Navigation actions the chrome triggers. Each maps 1:1 to a
+/// `webkit_web_view_*` call.
+#[derive(Debug, Clone)]
+pub enum NavCmd {
+    Back,
+    Forward,
+    Reload,
+    Stop,
+    LoadUrl(String),
 }
 
 /// A user input event in a thread-safe shape. Sent over the cmd
@@ -138,6 +152,11 @@ pub struct WpeEngine {
     /// `wpe_view_set_cursor_from_name` fires, read from iced's
     /// render thread by `mouse_interaction`.
     cursor: Arc<std::sync::atomic::AtomicU32>,
+    /// Current URL of the loaded page (whatever WebKit reports
+    /// via `webkit_web_view_get_uri`). Updated on the worker
+    /// thread from the GObject `notify::uri` signal. Read by
+    /// the chrome to populate the URL bar.
+    url: Arc<Mutex<String>>,
 }
 
 impl WpeEngine {
@@ -153,31 +172,41 @@ impl WpeEngine {
         let (ready_tx, ready_rx) = channel::<()>();
         let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let cursor_worker = cursor.clone();
-        // Queue the initial size before the worker starts. The pump
-        // stashes it in `pending_resize` until the first frame
-        // latches `WorkerCtx::view`, then replays it. Without this
-        // WPE's headless default (1024x768) leaks through as the
-        // first frame's dimensions.
+        let url_state = Arc::new(Mutex::new(url.to_string()));
+        let url_worker = url_state.clone();
+        // Queue the initial size before the worker starts.
         let _ = cmd_tx.send(Cmd::Resize { width, height });
-        let url = url.to_string();
+        let url_owned = url.to_string();
         let worker = thread::Builder::new()
             .name("wpe-engine".into())
             .spawn(move || unsafe {
                 worker_main(
-                    url, width, height, frame_tx, cmd_rx, ready_tx, cursor_worker,
+                    url_owned,
+                    width,
+                    height,
+                    frame_tx,
+                    cmd_rx,
+                    ready_tx,
+                    cursor_worker,
+                    url_worker,
                 )
             })
             .expect("spawn wpe-engine thread");
-        // Block until WPE init is done. Without this, the env-var
-        // dance in main.rs wouldn't have a sync point and iced
-        // could observe WAYLAND_DISPLAY in either state.
         let _ = ready_rx.recv();
         Self {
             worker: Some(worker),
             cmd_tx,
             frames: Arc::new(Mutex::new(frame_rx)),
             cursor,
+            url: url_state,
         }
+    }
+
+    /// Shared handle to the current page URL. Updated by the
+    /// engine on WebKit's `notify::uri` signal; safe to read
+    /// from any thread.
+    pub fn url_handle(&self) -> Arc<Mutex<String>> {
+        self.url.clone()
     }
 
     /// Shared handle to the current cursor shape. Reads are
@@ -218,9 +247,16 @@ struct WorkerCtx {
     /// most recent size is kept — older requests are obsolete.
     pending_resize: Option<(u32, u32)>,
     /// Mirror of `WpeEngine::cursor` — the worker writes into this
-    /// from the `sola_wpe_set_cursor_callback` callback. Same Arc,
-    /// just held here so the callback's user_data resolves to it.
+    /// from the `sola_wpe_set_cursor_callback` callback.
     cursor: Arc<std::sync::atomic::AtomicU32>,
+    /// The WebKitWebView created in `worker_main`. Held so the
+    /// command pump can dispatch nav commands
+    /// (webkit_web_view_go_back, etc.) to it.
+    webview: *mut sys::WebKitWebView,
+    /// Mirror of `WpeEngine::url` — updated from the GObject
+    /// `notify::uri` signal whenever WebKit's current URL changes.
+    /// iced reads via the shared Arc<Mutex<String>>.
+    url: Arc<Mutex<String>>,
 }
 
 unsafe fn worker_main(
@@ -231,11 +267,8 @@ unsafe fn worker_main(
     cmd_rx: Receiver<Cmd>,
     ready_tx: Sender<()>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
+    url_state: Arc<Mutex<String>>,
 ) {
-    // 1. Construct our subclass-hijacked WPEDisplayHeadless. This
-    //    is what flips WebKit's internal path to the Platform API
-    //    (see `isUsingWPEPlatformAPI` in libWPEWebKit, which just
-    //    checks `g_type_class_peek(WPE_TYPE_DISPLAY) != NULL`).
     let display = sys::sola_wpe_display_new();
     if display.is_null() {
         panic!("sola_wpe_display_new returned null");
@@ -254,11 +287,6 @@ unsafe fn worker_main(
     sys::wpe_display_set_primary(display);
     tracing::info!("WPE platform display ready (subclassed for LINEAR-only modifier)");
 
-    // 2. Install our buffer-rendered + cursor callbacks. The C
-    //    side installs a GObject emission hook on the WPEView
-    //    signal (for buffers) and overrides the
-    //    `set_cursor_from_name` vmethod on WPEViewHeadlessClass
-    //    (for cursor). Both fire on this same worker thread.
     let ctx = Box::into_raw(Box::new(WorkerCtx {
         main_loop: ptr::null_mut(),
         frame_tx,
@@ -266,34 +294,42 @@ unsafe fn worker_main(
         view: ptr::null_mut(),
         pending_resize: None,
         cursor,
+        webview: ptr::null_mut(),
+        url: url_state,
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
     sys::sola_wpe_set_cursor_callback(Some(on_cursor_changed), ctx as *mut c_void);
 
-    // 3. Build a WebKitWebView. With `isUsingWPEPlatformAPI()` true
-    //    (we forced that by constructing a display above), passing
-    //    NULL as the backend tells WebKit to create one from the
-    //    primary WPEDisplay.
     let view = sys::webkit_web_view_new(ptr::null_mut());
     if view.is_null() {
         panic!("webkit_web_view_new(NULL) returned null");
     }
+    (*ctx).webview = view;
     tracing::info!("created WebKitWebView via Platform API path");
+
+    // Subscribe to `notify::uri` so the chrome's URL bar reflects
+    // whatever WebKit decides the current URL is (post-redirect,
+    // post-navigation, etc.). The callback runs on this same
+    // worker thread; user_data is our WorkerCtx ptr.
+    let signal_name = CString::new("notify::uri").unwrap();
+    sys::g_signal_connect_data(
+        view as *mut c_void,
+        signal_name.as_ptr(),
+        Some(std::mem::transmute::<
+            unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void),
+            unsafe extern "C" fn(),
+        >(on_notify_uri)),
+        ctx as *mut c_void,
+        None,
+        0, /* GConnectFlags = 0 */
+    );
 
     let url_c = CString::new(url.as_str()).unwrap();
     sys::webkit_web_view_load_uri(view as *mut _, url_c.as_ptr());
     tracing::info!(url = %url, "kicked off URL load");
 
-    // Tell the spawner we're done with the parts of WPE init that
-    // examine WAYLAND_DISPLAY. The main thread is blocked in
-    // `spawn`, holding WAYLAND_DISPLAY unset, and will restore it
-    // and start iced once we signal here. After this point WPE
-    // shouldn't be opening new Wayland connections — it has its
-    // headless WPEDisplay and renders to DMA-BUFs.
     let _ = ready_tx.send(());
 
-    // 4. GMain loop. Poll the command channel from a timeout source
-    //    so Release / Quit are handled alongside WPE's own events.
     let main_loop = sys::g_main_loop_new(ptr::null_mut(), 0);
     (*ctx).main_loop = main_loop;
     sys::g_timeout_add(16, Some(cb_pump_cmds), ctx as *mut c_void);
@@ -305,6 +341,29 @@ unsafe fn worker_main(
     sys::sola_wpe_set_buffer_callback(None, ptr::null_mut());
     sys::sola_wpe_set_cursor_callback(None, ptr::null_mut());
     let _ = Box::from_raw(ctx);
+}
+
+/// GObject `notify::<property>` callback signature:
+/// `void (*)(GObject*, GParamSpec*, gpointer)`. We hooked it on
+/// the `uri` property of the WebKitWebView. Fires whenever
+/// WebKit's `uri` property changes — load start, redirect, hash
+/// change, etc. We just read the current URI back and stash it
+/// in shared state.
+unsafe extern "C" fn on_notify_uri(
+    object: *mut c_void,
+    _pspec: *mut c_void,
+    user_data: *mut c_void,
+) {
+    let ctx = &*(user_data as *mut WorkerCtx);
+    let uri_ptr = sys::webkit_web_view_get_uri(object as *mut sys::WebKitWebView);
+    let uri = if uri_ptr.is_null() {
+        String::new()
+    } else {
+        std::ffi::CStr::from_ptr(uri_ptr)
+            .to_string_lossy()
+            .into_owned()
+    };
+    *ctx.url.lock().unwrap() = uri;
 }
 
 /// Called from C when WebKit changes the CSS cursor. `name` is
@@ -431,6 +490,11 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
                     }
                 }
             }
+            Ok(Cmd::Nav(nav)) => {
+                if !ctx.webview.is_null() {
+                    dispatch_nav(ctx.webview, nav);
+                }
+            }
             Ok(Cmd::Quit) => {
                 sys::g_main_loop_quit(ctx.main_loop);
                 return 0; /* G_SOURCE_REMOVE */
@@ -531,6 +595,29 @@ unsafe fn dispatch_input(view: *mut sys::WPEView, ev: InputEvent) {
         return;
     }
     sys::wpe_view_event(view, event);
+}
+
+
+/// Dispatch a `NavCmd` to the WebKitWebView. Runs on the worker
+/// thread (the only thread allowed to touch WebKit APIs).
+unsafe fn dispatch_nav(webview: *mut sys::WebKitWebView, nav: NavCmd) {
+    match nav {
+        NavCmd::Back => sys::webkit_web_view_go_back(webview),
+        NavCmd::Forward => sys::webkit_web_view_go_forward(webview),
+        NavCmd::Reload => sys::webkit_web_view_reload(webview),
+        NavCmd::Stop => sys::webkit_web_view_stop_loading(webview),
+        NavCmd::LoadUrl(url) => {
+            let c = match CString::new(url.as_str()) {
+                Ok(c) => c,
+                Err(_) => {
+                    tracing::warn!(url = %url, "url contains NUL byte, ignoring");
+                    return;
+                }
+            };
+            sys::webkit_web_view_load_uri(webview, c.as_ptr());
+            tracing::info!(url = %url, "Nav::LoadUrl");
+        }
+    }
 }
 
 /// Resize the view's toplevel. WPE's WebProcess picks this up and

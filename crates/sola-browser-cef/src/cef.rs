@@ -62,7 +62,22 @@ pub enum Cmd {
     /// events only to focused widgets, but CEF tracks focus
     /// independently and needs an explicit `set_focus` call.
     Focus(bool),
+    /// Navigation operation (back/forward/reload/etc). Dispatched
+    /// on the CEF UI thread to `browser.go_back()` etc.
+    Nav(NavCmd),
     Quit,
+}
+
+/// Navigation actions the chrome triggers. 1:1 with CEF browser
+/// API calls; same enum shape as sola-browser-wpe's NavCmd so the
+/// chrome can be engine-agnostic.
+#[derive(Debug, Clone)]
+pub enum NavCmd {
+    Back,
+    Forward,
+    Reload,
+    Stop,
+    LoadUrl(String),
 }
 
 /// Thread-safe input event shape. Mirrors the layout in
@@ -110,6 +125,10 @@ pub struct CefEngine {
     /// as a `CursorKind` discriminant; shader's `mouse_interaction`
     /// reads this every render. Worker thread writes.
     cursor: Arc<std::sync::atomic::AtomicU32>,
+    /// Current page URL. Updated on the worker thread when CEF
+    /// fires `DisplayHandler::on_address_change`. Read by the
+    /// chrome to populate the URL bar.
+    url: Arc<Mutex<String>>,
 }
 
 impl CefEngine {
@@ -150,11 +169,22 @@ impl CefEngine {
         let (frame_tx, frame_rx) = channel::<CefFrame>();
         let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let cursor_worker = cursor.clone();
-        let url = url.to_string();
+        let url_state = Arc::new(Mutex::new(url.to_string()));
+        let url_worker = url_state.clone();
+        let url_owned = url.to_string();
         let worker = thread::Builder::new()
             .name("cef-engine".into())
             .spawn(move || {
-                worker_main(app_id, url, width, height, frame_tx, cmd_rx, cursor_worker)
+                worker_main(
+                    app_id,
+                    url_owned,
+                    width,
+                    height,
+                    frame_tx,
+                    cmd_rx,
+                    cursor_worker,
+                    url_worker,
+                )
             })
             .expect("spawn cef-engine thread");
         Self {
@@ -162,7 +192,14 @@ impl CefEngine {
             cmd_tx,
             frames: Arc::new(Mutex::new(frame_rx)),
             cursor,
+            url: url_state,
         }
+    }
+
+    /// Shared handle to the current page URL. Updated on
+    /// CEF's `on_address_change`; safe to read from any thread.
+    pub fn url_handle(&self) -> Arc<Mutex<String>> {
+        self.url.clone()
     }
 
     /// Shared handle to the latest cursor shape. Non-blocking read,
@@ -201,6 +238,7 @@ struct CefThreadState {
     cmd_rx: RefCell<Option<Receiver<Cmd>>>,
     browser: RefCell<Option<cef::Browser>>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
+    url: Arc<Mutex<String>>,
 }
 
 thread_local! {
@@ -221,6 +259,7 @@ fn worker_main(
     frame_tx: Sender<CefFrame>,
     cmd_rx: Receiver<Cmd>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
+    url_state: Arc<Mutex<String>>,
 ) {
     let state = Rc::new(CefThreadState {
         size: Mutex::new((width, height)),
@@ -228,6 +267,7 @@ fn worker_main(
         cmd_rx: RefCell::new(Some(cmd_rx)),
         browser: RefCell::new(None),
         cursor,
+        url: url_state,
     });
     CEF_STATE.with(|s| {
         s.set(state.clone()).map_err(|_| ()).expect("CEF_STATE set twice");
@@ -235,9 +275,6 @@ fn worker_main(
 
     initialize_cef(app_id);
 
-    // Create the OSR browser. `WindowInfo` flags chosen to match
-    // sola-kit's CPU OSR path (NVIDIA proprietary can't do
-    // `on_accelerated_paint`).
     let mut window_info = cef::WindowInfo::default();
     window_info.windowless_rendering_enabled = 1;
     window_info.external_begin_frame_enabled = 0;
@@ -245,10 +282,6 @@ fn worker_main(
 
     let mut browser_settings = cef::BrowserSettings::default();
     browser_settings.background_color = 0xFFFF_FFFF;
-    // Raise OSR paint rate from CEF's default 30 fps to 60 fps so
-    // animated pages aren't gated below WPE's natural rate. CEF
-    // hard-caps at 60 in the C-API (per cef_browser_settings.h); to
-    // exceed that we'd need a different transport entirely.
     browser_settings.windowless_frame_rate = 60;
 
     let render_handler = BrowserRenderHandler::new();
@@ -269,9 +302,6 @@ fn worker_main(
     tracing::info!(url = %url, "CEF browser created");
     *state.browser.borrow_mut() = Some(inner);
 
-    // Recurring task that pumps the cmd_rx on the UI thread. CEF's
-    // message loop owns the thread; we can't have our own select
-    // loop, so we re-post ourselves every ~16 ms (≈ 60 Hz).
     let mut pump = CmdPumpTask::new();
     cef::post_delayed_task(
         cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI),
@@ -483,6 +513,26 @@ cef::wrap_display_handler! {
             // cursor (there's none in OSR anyway).
             1
         }
+
+        fn on_address_change(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            frame: Option<&mut cef::Frame>,
+            url: Option<&cef::CefString>,
+        ) {
+            // Only main-frame navigations update the address bar.
+            // Sub-frames (iframes) fire this too but their URL
+            // shouldn't drive the chrome.
+            let is_main = frame
+                .as_ref()
+                .map(|f| f.is_main() != 0)
+                .unwrap_or(false);
+            if !is_main {
+                return;
+            }
+            let s = url.map(|u| u.to_string()).unwrap_or_default();
+            *cef_state().url.lock().unwrap() = s;
+        }
     }
 }
 
@@ -549,6 +599,11 @@ cef::wrap_task! {
                             if let Some(host) = browser.host() {
                                 host.set_focus(if focused { 1 } else { 0 });
                             }
+                        }
+                    }
+                    Ok(Cmd::Nav(nav)) => {
+                        if let Some(browser) = state.browser.borrow().as_ref() {
+                            dispatch_nav(browser, nav);
                         }
                     }
                     Ok(Cmd::Quit) => {
@@ -636,6 +691,24 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
             } else {
                 ke.type_ = KeyEventType::KEYUP;
                 host.send_key_event(Some(&ke));
+            }
+        }
+    }
+}
+
+/// Dispatch a `NavCmd` to the live CEF browser. Runs on the CEF
+/// UI thread (called from the cmd pump).
+fn dispatch_nav(browser: &cef::Browser, nav: NavCmd) {
+    match nav {
+        NavCmd::Back => browser.go_back(),
+        NavCmd::Forward => browser.go_forward(),
+        NavCmd::Reload => browser.reload(),
+        NavCmd::Stop => browser.stop_load(),
+        NavCmd::LoadUrl(url) => {
+            if let Some(frame) = browser.main_frame() {
+                let url_c = cef::CefString::from(url.as_str());
+                frame.load_url(Some(&url_c));
+                tracing::info!(url = %url, "Nav::LoadUrl");
             }
         }
     }
