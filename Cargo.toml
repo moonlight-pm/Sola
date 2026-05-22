@@ -12,6 +12,7 @@ members = ["crates/*"]
 exclude = [
     "crates/sola-kit",
     "crates/sola-monitor",
+    "crates/sola-shell",
     "crates/sola-browser-wpe",
     "crates/sola-browser-cef",
     "crates/wgpu-hal-patched",
