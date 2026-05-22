@@ -1,3 +1,8 @@
+# Empty [workspace] table — see comment in sola-kit/Cargo.toml. Required
+# so cargo doesn't bind to a parent workspace when this crate is built
+# from inside a git worktree.
+[workspace]
+
 [package]
 name = "sola-monitor"
 version = "0.1.0"
