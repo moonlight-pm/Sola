@@ -1,11 +1,7 @@
-//! sola-browser-cef — CEF-backed browser with iced chrome.
-//!
-//! Same overall shape as `sola-browser-wpe::main`. Differences are
-//! all in the engine boundary: CEF subprocess gate before logger,
-//! CEF lifecycle (init → run_message_loop → shutdown) instead of
-//! WPE's GMain loop, no WAYLAND_DISPLAY env-var dance.
+//! sola-browser-cef — CEF-backed browser with iced chrome + tabs.
 
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -15,33 +11,26 @@ use std::time::Duration;
 use iced::futures::SinkExt;
 use iced::futures::Stream;
 use iced::stream;
-use iced::widget::{Shader, button, column, row, text, text_input};
+use iced::widget::{Shader, button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length, Subscription, Task};
 
-use sola_browser_cef::cef::{CefEngine, Cmd, NavCmd};
+use sola_browser_cef::cef::{CefEngine, Cmd, NavCmd, TabId, TabInfo};
 use sola_browser_cef::shader::{CefProgram, FrameSlot};
 
 const APP_ID: &str = "sola-browser-cef";
-/// Default URL when no argv is given. Override with `sola-browser-cef <url>`.
-/// Note CEF re-execs this binary for each subprocess (renderer/GPU/utility/
-/// zygote); the URL only matters in the *browser* process. The subprocesses
-/// already exited from `dispatch_subprocess` before this constant is read.
 const DEFAULT_URL: &str = "https://slate.auto";
 const VIEW_W: u32 = 1280;
 const VIEW_H: u32 = 800;
+const TAB_STRIP_HEIGHT: f32 = 28.0;
 const CHROME_HEIGHT: f32 = 36.0;
 
-/// CEF engine handle — global so the iced subscription can read
-/// frames without iced needing to thread it through App state.
-/// Initialized once in `main` before `iced::application` runs.
 static ENGINE: OnceLock<CefEngine> = OnceLock::new();
+static SLOT_FOR_STREAM: OnceLock<Arc<FrameSlot>> = OnceLock::new();
+static ACTIVE_TAB_FOR_STREAM: OnceLock<Arc<AtomicU64>> = OnceLock::new();
 
 fn main() -> ExitCode {
     // CEF subprocess gate — must run *before* logger init so renderer
-    // / GPU / utility workers don't open the shared log file. CEF
-    // re-execs this binary for every helper process; the gate
-    // returns Some(exit_code) for workers and None for the browser
-    // process.
+    // / GPU / utility workers don't open the shared log file.
     if let Some(code) = CefEngine::dispatch_subprocess(APP_ID) {
         return code;
     }
@@ -55,7 +44,8 @@ fn main() -> ExitCode {
     tracing::info!(%url, "loading url");
     let engine = CefEngine::spawn(APP_ID, &url, VIEW_W, VIEW_H);
     let releaser = engine.cmd_sender();
-    let url_handle = engine.url_handle();
+    let tabs_handle = engine.tabs_handle();
+    let active_handle = engine.active_tab_handle();
     let cursor = engine.cursor_handle();
     ENGINE.set(engine).map_err(|_| ()).expect("ENGINE set twice");
 
@@ -69,24 +59,29 @@ fn main() -> ExitCode {
         .set(slot.clone())
         .map_err(|_| ())
         .expect("SLOT_FOR_STREAM set twice");
+    ACTIVE_TAB_FOR_STREAM
+        .set(active_handle.clone())
+        .map_err(|_| ())
+        .expect("ACTIVE_TAB_FOR_STREAM set twice");
 
     let result = iced::application(
         move || App {
             slot: slot.clone(),
             releaser: releaser.clone(),
-            engine_url: url_handle.clone(),
+            tabs_handle: tabs_handle.clone(),
+            active_handle: active_handle.clone(),
+            cached_tabs: Vec::new(),
+            cached_active: TabId(active_handle.load(Ordering::Relaxed)),
             url_field: url.clone(),
-            last_engine_url: url.clone(),
+            last_seen_url: url.clone(),
         },
         App::update,
         App::view,
     )
-    .title(|app: &App| {
-        if app.url_field.is_empty() {
-            APP_ID.into()
-        } else {
-            format!("{APP_ID} — {}", app.url_field)
-        }
+    .title(|app: &App| match app.active_tab_info() {
+        Some(t) if !t.title.is_empty() => format!("{APP_ID} — {}", t.title),
+        Some(t) if !t.url.is_empty() => format!("{APP_ID} — {}", t.url),
+        _ => APP_ID.into(),
     })
     .subscription(App::subscription)
     .window(iced::window::Settings {
@@ -109,9 +104,12 @@ fn main() -> ExitCode {
 struct App {
     slot: Arc<FrameSlot>,
     releaser: Sender<Cmd>,
-    engine_url: Arc<Mutex<String>>,
+    tabs_handle: Arc<Mutex<Vec<TabInfo>>>,
+    active_handle: Arc<AtomicU64>,
+    cached_tabs: Vec<TabInfo>,
+    cached_active: TabId,
     url_field: String,
-    last_engine_url: String,
+    last_seen_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -122,10 +120,17 @@ enum Msg {
     NavReload,
     UrlInput(String),
     UrlSubmit,
+    OpenTab,
+    CloseTab(TabId),
+    ActivateTab(TabId),
     Tick,
 }
 
 impl App {
+    fn active_tab_info(&self) -> Option<&TabInfo> {
+        self.cached_tabs.iter().find(|t| t.id == self.cached_active)
+    }
+
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::NewFrame => {}
@@ -142,21 +147,110 @@ impl App {
             Msg::UrlSubmit => {
                 let url = normalize_url(&self.url_field);
                 self.url_field = url.clone();
+                self.last_seen_url = url.clone();
                 let _ = self.releaser.send(Cmd::Nav(NavCmd::LoadUrl(url)));
             }
+            Msg::OpenTab => {
+                let id = ENGINE.get().expect("ENGINE").alloc_tab_id();
+                let _ = self.releaser.send(Cmd::OpenTab {
+                    id,
+                    url: DEFAULT_URL.to_string(),
+                });
+                let _ = self.releaser.send(Cmd::SetActiveTab(id));
+                self.cached_active = id;
+                self.active_handle.store(id.0, Ordering::Relaxed);
+            }
+            Msg::CloseTab(id) => {
+                let was_active = self.cached_active == id;
+                if was_active {
+                    if let Some(new_active) = self.pick_new_active_after_close(id) {
+                        let _ = self.releaser.send(Cmd::SetActiveTab(new_active));
+                        self.cached_active = new_active;
+                        self.active_handle.store(new_active.0, Ordering::Relaxed);
+                    }
+                }
+                let _ = self.releaser.send(Cmd::CloseTab(id));
+            }
+            Msg::ActivateTab(id) => {
+                let _ = self.releaser.send(Cmd::SetActiveTab(id));
+                self.cached_active = id;
+                self.active_handle.store(id.0, Ordering::Relaxed);
+                self.last_seen_url.clear();
+            }
             Msg::Tick => {
-                let current = self.engine_url.lock().unwrap().clone();
-                if current != self.last_engine_url {
-                    self.last_engine_url = current.clone();
-                    self.url_field = current;
+                self.cached_tabs = self.tabs_handle.lock().unwrap().clone();
+                let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
+                self.cached_active = engine_active;
+                let active_url = self.active_tab_info().map(|t| t.url.clone());
+                if let Some(url) = active_url {
+                    if url != self.last_seen_url {
+                        self.last_seen_url = url.clone();
+                        self.url_field = url;
+                    }
                 }
             }
         }
         Task::none()
     }
 
+    fn pick_new_active_after_close(&self, closing: TabId) -> Option<TabId> {
+        let idx = self.cached_tabs.iter().position(|t| t.id == closing)?;
+        self.cached_tabs
+            .get(idx + 1)
+            .or_else(|| {
+                if idx == 0 {
+                    None
+                } else {
+                    self.cached_tabs.get(idx - 1)
+                }
+            })
+            .map(|t| t.id)
+    }
+
     fn view(&self) -> Element<'_, Msg> {
-        let chrome = row![
+        let tab_strip = self.view_tab_strip();
+        let chrome = self.view_chrome();
+        let webview = Shader::new(CefProgram {
+            slot: self.slot.clone(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        column![tab_strip, chrome, webview].into()
+    }
+
+    fn view_tab_strip(&self) -> Element<'_, Msg> {
+        let mut tabs_row = row![].spacing(2);
+        for t in &self.cached_tabs {
+            let label = if !t.title.is_empty() {
+                truncate(&t.title, 28)
+            } else if !t.url.is_empty() {
+                truncate(&t.url, 28)
+            } else {
+                String::from("Loading…")
+            };
+            let activate_btn: Element<'_, Msg> = button(text(label))
+                .on_press(Msg::ActivateTab(t.id))
+                .into();
+            let close_btn: Element<'_, Msg> = button(text("×"))
+                .on_press(Msg::CloseTab(t.id))
+                .into();
+            tabs_row = tabs_row.push(row![activate_btn, close_btn].spacing(2));
+        }
+        let plus = button(text("+")).on_press(Msg::OpenTab);
+        let scrolling = scrollable(tabs_row)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::default(),
+            ))
+            .width(Length::Fill);
+        container(row![scrolling, plus].spacing(4).padding(4))
+            .height(Length::Fixed(TAB_STRIP_HEIGHT + 8.0))
+            .width(Length::Fill)
+            .into()
+    }
+
+    fn view_chrome(&self) -> Element<'_, Msg> {
+        row![
             button(text("←")).on_press(Msg::NavBack),
             button(text("→")).on_press(Msg::NavForward),
             button(text("↻")).on_press(Msg::NavReload),
@@ -168,15 +262,8 @@ impl App {
         ]
         .spacing(4)
         .padding(4)
-        .height(Length::Fixed(CHROME_HEIGHT));
-
-        let webview = Shader::new(CefProgram {
-            slot: self.slot.clone(),
-        })
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-        column![chrome, webview].into()
+        .height(Length::Fixed(CHROME_HEIGHT))
+        .into()
     }
 
     fn subscription(&self) -> Subscription<Msg> {
@@ -184,6 +271,16 @@ impl App {
             Subscription::run(frame_stream),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
         ])
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
     }
 }
 
@@ -212,22 +309,30 @@ fn frame_stream() -> impl Stream<Item = Msg> {
                 return;
             }
         };
+        let active = match ACTIVE_TAB_FOR_STREAM.get() {
+            Some(a) => a.clone(),
+            None => {
+                tracing::error!("ACTIVE_TAB_FOR_STREAM not set before subscription started");
+                return;
+            }
+        };
         loop {
-            let frame = match tokio::task::spawn_blocking({
+            let tagged = match tokio::task::spawn_blocking({
                 let rx = rx.clone();
                 move || rx.lock().unwrap().recv().ok()
             })
             .await
             {
-                Ok(Some(frame)) => frame,
+                Ok(Some(f)) => f,
                 _ => break,
             };
-            *slot.pending.lock().unwrap() = Some(frame);
+            if tagged.tab_id.0 != active.load(Ordering::Relaxed) {
+                continue;
+            }
+            *slot.pending.lock().unwrap() = Some(tagged.frame);
             if output.send(Msg::NewFrame).await.is_err() {
                 break;
             }
         }
     })
 }
-
-static SLOT_FOR_STREAM: OnceLock<Arc<FrameSlot>> = OnceLock::new();

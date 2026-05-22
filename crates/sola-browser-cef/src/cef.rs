@@ -49,22 +49,25 @@ pub struct CefFrame {
 }
 
 pub enum Cmd {
-    /// Request a new viewport size. Updates the shared
-    /// `Mutex<(u32,u32)>` that `RenderHandler::view_rect` reports
-    /// and posts a UI-thread task that calls `host().was_resized()`
-    /// so CEF re-rasterises at the new size.
+    /// Request a new viewport size for the active tab.
     Resize { width: u32, height: u32 },
-    /// Forward a user input event into CEF. Translated to the
-    /// appropriate `BrowserHost::send_*_event` call on the CEF
-    /// UI thread.
+    /// Forward a user input event to the active tab.
     Input(InputEvent),
-    /// Toggle CEF focus on the OSR view. iced delivers keyboard
-    /// events only to focused widgets, but CEF tracks focus
-    /// independently and needs an explicit `set_focus` call.
+    /// Toggle CEF focus on the active tab.
     Focus(bool),
-    /// Navigation operation (back/forward/reload/etc). Dispatched
-    /// on the CEF UI thread to `browser.go_back()` etc.
+    /// Navigation (back/forward/reload/etc) on the active tab.
     Nav(NavCmd),
+    /// Open a new tab with `id` and load `url`. The chrome picks
+    /// the id (via `CefEngine::alloc_tab_id`) so it can name the
+    /// tab before the worker has acked.
+    OpenTab { id: TabId, url: String },
+    /// Close a tab by id. Caller must switch active first if
+    /// closing the active tab.
+    CloseTab(TabId),
+    /// Switch which tab the engine considers active. Subsequent
+    /// `Resize` / `Input` / `Nav` / `Focus` cmds target this tab,
+    /// and the iced subscription only forwards its frames.
+    SetActiveTab(TabId),
     Quit,
 }
 
@@ -78,6 +81,24 @@ pub enum NavCmd {
     Reload,
     Stop,
     LoadUrl(String),
+}
+
+
+/// Per-tab identifier. Same shape as `sola-browser-wpe::wpe::TabId`
+/// so the iced chrome can be (eventually) engine-agnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TabId(pub u64);
+
+#[derive(Debug, Clone)]
+pub struct TabInfo {
+    pub id: TabId,
+    pub url: String,
+    pub title: String,
+}
+
+pub struct TaggedFrame {
+    pub tab_id: TabId,
+    pub frame: CefFrame,
 }
 
 /// Thread-safe input event shape. Mirrors the layout in
@@ -120,15 +141,22 @@ pub enum InputEvent {
 pub struct CefEngine {
     worker: Option<JoinHandle<()>>,
     cmd_tx: Sender<Cmd>,
-    frames: Arc<Mutex<Receiver<CefFrame>>>,
+    /// Receiver of (tab_id, frame) tuples. iced filters by active
+    /// tab before importing.
+    frames: Arc<Mutex<Receiver<TaggedFrame>>>,
     /// Latest CSS cursor pushed by CEF's `OnCursorChange`. Encoded
     /// as a `CursorKind` discriminant; shader's `mouse_interaction`
-    /// reads this every render. Worker thread writes.
+    /// reads this every render.
     cursor: Arc<std::sync::atomic::AtomicU32>,
-    /// Current page URL. Updated on the worker thread when CEF
-    /// fires `DisplayHandler::on_address_change`. Read by the
-    /// chrome to populate the URL bar.
-    url: Arc<Mutex<String>>,
+    /// Snapshot of all open tabs (id/url/title). Worker rebuilds
+    /// this whenever tabs are opened/closed or URL/title changes.
+    tabs: Arc<Mutex<Vec<TabInfo>>>,
+    /// Currently active tab id. Atomic so the iced subscription
+    /// can filter frames without acquiring a mutex per frame.
+    active_tab: Arc<std::sync::atomic::AtomicU64>,
+    /// Monotonic counter for assigning tab ids — chrome-side, so
+    /// it can mint ids before sending `Cmd::OpenTab`.
+    next_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl CefEngine {
@@ -137,24 +165,15 @@ impl CefEngine {
     /// utility / zygote), `cef::execute_process` handles the worker
     /// loop and returns its exit code; we propagate it. The browser
     /// process gets `None` and continues normally.
-    ///
-    /// `app_id` flows through `BrowserCefApp::on_before_command_line_processing`
-    /// so all CEF helper windows (DevTools, etc.) report the same
-    /// `xdg_toplevel.app_id` as the primary surface.
     pub fn dispatch_subprocess(app_id: &'static str) -> Option<ExitCode> {
-        // CEF 133+ requires `cef_api_hash` before any other CEF call.
-        // Pins the API version (experimental floating tag 999999).
         unsafe {
             cef::sys::cef_api_hash(cef::sys::CEF_API_VERSION, 0);
         }
-
         let args = cef::args::Args::new();
         let main_args = args.as_main_args();
-
         let mut app = BrowserCefApp::new(app_id);
         let result =
             cef::execute_process(Some(main_args), Some(&mut app), std::ptr::null_mut());
-
         if result >= 0 {
             Some(ExitCode::from(result.clamp(0, 255) as u8))
         } else {
@@ -162,48 +181,69 @@ impl CefEngine {
         }
     }
 
-    /// Spawn the CEF engine. Initializes CEF, creates the OSR
-    /// browser, and runs the message loop on a dedicated thread.
+    /// Spawn the CEF engine. Initializes CEF, opens the initial
+    /// tab with `url`, runs the message loop on a dedicated
+    /// thread.
     pub fn spawn(app_id: &'static str, url: &str, width: u32, height: u32) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Cmd>();
-        let (frame_tx, frame_rx) = channel::<CefFrame>();
+        let (frame_tx, frame_rx) = channel::<TaggedFrame>();
         let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let cursor_worker = cursor.clone();
-        let url_state = Arc::new(Mutex::new(url.to_string()));
-        let url_worker = url_state.clone();
-        let url_owned = url.to_string();
+        let tabs_snapshot = Arc::new(Mutex::new(Vec::<TabInfo>::new()));
+        let active_atomic = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let next_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
+
+        let initial_id = TabId(next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        active_atomic.store(initial_id.0, std::sync::atomic::Ordering::Relaxed);
+
+        // Queue: size, then open initial tab, then activate it.
+        // Processed by the pump on the worker side once the
+        // CEF message loop is running.
+        let _ = cmd_tx.send(Cmd::Resize { width, height });
+        let _ = cmd_tx.send(Cmd::OpenTab {
+            id: initial_id,
+            url: url.to_string(),
+        });
+        let _ = cmd_tx.send(Cmd::SetActiveTab(initial_id));
+
+        let cursor_w = cursor.clone();
+        let snap_w = tabs_snapshot.clone();
+        let active_w = active_atomic.clone();
         let worker = thread::Builder::new()
             .name("cef-engine".into())
             .spawn(move || {
                 worker_main(
-                    app_id,
-                    url_owned,
-                    width,
-                    height,
-                    frame_tx,
-                    cmd_rx,
-                    cursor_worker,
-                    url_worker,
+                    app_id, width, height, frame_tx, cmd_rx, cursor_w, snap_w, active_w,
                 )
             })
             .expect("spawn cef-engine thread");
+
         Self {
             worker: Some(worker),
             cmd_tx,
             frames: Arc::new(Mutex::new(frame_rx)),
             cursor,
-            url: url_state,
+            tabs: tabs_snapshot,
+            active_tab: active_atomic,
+            next_id,
         }
     }
 
-    /// Shared handle to the current page URL. Updated on
-    /// CEF's `on_address_change`; safe to read from any thread.
-    pub fn url_handle(&self) -> Arc<Mutex<String>> {
-        self.url.clone()
+    /// Mint a fresh tab id. Send back via `Cmd::OpenTab` to
+    /// actually create the browser.
+    pub fn alloc_tab_id(&self) -> TabId {
+        TabId(self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 
-    /// Shared handle to the latest cursor shape. Non-blocking read,
-    /// safe to call from iced's render thread.
+    /// Shared snapshot of all open tabs.
+    pub fn tabs_handle(&self) -> Arc<Mutex<Vec<TabInfo>>> {
+        self.tabs.clone()
+    }
+
+    /// Atomic id of the currently-active tab.
+    pub fn active_tab_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
+        self.active_tab.clone()
+    }
+
     pub fn cursor_handle(&self) -> Arc<std::sync::atomic::AtomicU32> {
         self.cursor.clone()
     }
@@ -212,7 +252,7 @@ impl CefEngine {
         self.cmd_tx.clone()
     }
 
-    pub fn frames(&self) -> Arc<Mutex<Receiver<CefFrame>>> {
+    pub fn frames(&self) -> Arc<Mutex<Receiver<TaggedFrame>>> {
         self.frames.clone()
     }
 
@@ -233,12 +273,39 @@ impl CefEngine {
 // ──────────────────────────────────────────────────────────────────
 
 struct CefThreadState {
+    /// Most recent viewport size requested by iced. Reported back
+    /// from `RenderHandler::view_rect` for every browser (all
+    /// tabs share the iced widget's bounds). Updated by
+    /// `Cmd::Resize` and consulted on tab switch.
     size: Mutex<(u32, u32)>,
-    frame_tx: Sender<CefFrame>,
+    frame_tx: Sender<TaggedFrame>,
     cmd_rx: RefCell<Option<Receiver<Cmd>>>,
-    browser: RefCell<Option<cef::Browser>>,
+    /// Live tabs. Ordering is presentation order in the tab strip
+    /// (iced chrome controls insert/remove positions).
+    tabs: RefCell<Vec<CefTabState>>,
+    /// Active tab id, also mirrored in `active_atomic` for the
+    /// iced subscription's frame filter.
+    active: std::cell::Cell<TabId>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
+    /// Snapshot of `tabs` (id/url/title) — shared with iced for
+    /// rendering the tab strip + URL bar.
+    tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
+    /// Shared mirror of `active` for the iced side.
+    active_atomic: Arc<std::sync::atomic::AtomicU64>,
+    /// Set by on_address_change / on_title_change; checked at
+    /// the next cmd-pump tick to rebuild the shared snapshot.
+    snapshot_dirty: std::cell::Cell<bool>,
+}
+
+/// Per-tab state. The Browser handle outlives until close;
+/// `browser_id` is `browser.identifier()` cached for fast lookup
+/// on every paint / address-change callback.
+struct CefTabState {
+    id: TabId,
+    browser_id: i32,
+    browser: cef::Browser,
     url: Arc<Mutex<String>>,
+    title: Arc<Mutex<String>>,
 }
 
 thread_local! {
@@ -253,54 +320,30 @@ fn cef_state() -> Rc<CefThreadState> {
 
 fn worker_main(
     app_id: &'static str,
-    url: String,
     width: u32,
     height: u32,
-    frame_tx: Sender<CefFrame>,
+    frame_tx: Sender<TaggedFrame>,
     cmd_rx: Receiver<Cmd>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
-    url_state: Arc<Mutex<String>>,
+    tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
+    active_atomic: Arc<std::sync::atomic::AtomicU64>,
 ) {
     let state = Rc::new(CefThreadState {
         size: Mutex::new((width, height)),
         frame_tx,
         cmd_rx: RefCell::new(Some(cmd_rx)),
-        browser: RefCell::new(None),
+        tabs: RefCell::new(Vec::new()),
+        active: std::cell::Cell::new(TabId(u64::MAX)),
         cursor,
-        url: url_state,
+        tabs_snapshot,
+        active_atomic,
+        snapshot_dirty: std::cell::Cell::new(false),
     });
     CEF_STATE.with(|s| {
         s.set(state.clone()).map_err(|_| ()).expect("CEF_STATE set twice");
     });
 
     initialize_cef(app_id);
-
-    let mut window_info = cef::WindowInfo::default();
-    window_info.windowless_rendering_enabled = 1;
-    window_info.external_begin_frame_enabled = 0;
-    window_info.shared_texture_enabled = 0;
-
-    let mut browser_settings = cef::BrowserSettings::default();
-    browser_settings.background_color = 0xFFFF_FFFF;
-    browser_settings.windowless_frame_rate = 60;
-
-    let render_handler = BrowserRenderHandler::new();
-    let life_span_handler = BrowserLifeSpanHandler::new();
-    let display_handler = BrowserDisplayHandler::new();
-    let mut client = BrowserClient::new(render_handler, life_span_handler, display_handler);
-
-    let url_c = cef::CefString::from(url.as_str());
-    let inner = cef::browser_host_create_browser_sync(
-        Some(&window_info),
-        Some(&mut client),
-        Some(&url_c),
-        Some(&browser_settings),
-        None,
-        None,
-    )
-    .expect("cef::browser_host_create_browser_sync returned None");
-    tracing::info!(url = %url, "CEF browser created");
-    *state.browser.borrow_mut() = Some(inner);
 
     let mut pump = CmdPumpTask::new();
     cef::post_delayed_task(
@@ -424,7 +467,7 @@ cef::wrap_render_handler! {
         // the duration of this call — we memcpy out.
         fn on_paint(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             type_: cef::PaintElementType,
             _dirty_rects: Option<&[cef::Rect]>,
             buffer: *const u8,
@@ -439,16 +482,25 @@ cef::wrap_render_handler! {
             if width <= 0 || height <= 0 || buffer.is_null() {
                 return;
             }
+            // Identify which tab this paint belongs to. CEF gives
+            // us the source Browser; we map its identifier to our
+            // TabId. If the tab has been closed but a paint is
+            // still in-flight, drop the frame.
+            let state = cef_state();
+            let Some(browser) = browser else { return };
+            let Some(tab_id) = tab_by_browser_id(&state, browser.identifier()) else {
+                return;
+            };
             let len = (width as usize) * (height as usize) * 4;
             let bytes = unsafe { std::slice::from_raw_parts(buffer, len) }.to_vec();
-            tracing::trace!(w = width, h = height, bytes = len, "CEF on_paint");
+            tracing::trace!(w = width, h = height, bytes = len, ?tab_id, "CEF on_paint");
             let frame = CefFrame {
                 pixels: Arc::new(bytes),
                 width: width as u32,
                 height: height as u32,
             };
             let state = cef_state();
-            if state.frame_tx.send(frame).is_err() {
+            if state.frame_tx.send(TaggedFrame { tab_id, frame }).is_err() {
                 // Receiver dropped — iced is shutting down. Tell
                 // the CEF loop to exit so we shut down cleanly.
                 tracing::info!("frame channel closed, quitting CEF message loop");
@@ -481,12 +533,31 @@ cef::wrap_life_span_handler! {
     pub struct BrowserLifeSpanHandler {}
 
     impl LifeSpanHandler {
-        fn on_before_close(&self, _browser: Option<&mut cef::Browser>) {
-            // Last browser closing — drop our cached reference so
-            // CEF can finish teardown, then quit the message loop.
+        fn on_before_close(&self, browser: Option<&mut cef::Browser>) {
+            // CEF tells us this browser is going away. Drop it
+            // from our tab list (idempotent — the cmd-side
+            // `close_tab` may have already removed it; this fires
+            // even on the last close cmd). If this was the very
+            // last tab, quit the message loop so the engine
+            // worker exits cleanly.
             let state = cef_state();
-            state.browser.borrow_mut().take();
-            cef::quit_message_loop();
+            if let Some(b) = browser {
+                let bid = b.identifier();
+                let removed = {
+                    let mut tabs = state.tabs.borrow_mut();
+                    if let Some(pos) = tabs.iter().position(|t| t.browser_id == bid) {
+                        Some(tabs.remove(pos))
+                    } else {
+                        None
+                    }
+                };
+                if removed.is_some() {
+                    rebuild_snapshot(&state);
+                }
+            }
+            if state.tabs.borrow().is_empty() {
+                cef::quit_message_loop();
+            }
         }
     }
 }
@@ -516,7 +587,7 @@ cef::wrap_display_handler! {
 
         fn on_address_change(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             frame: Option<&mut cef::Frame>,
             url: Option<&cef::CefString>,
         ) {
@@ -531,7 +602,28 @@ cef::wrap_display_handler! {
                 return;
             }
             let s = url.map(|u| u.to_string()).unwrap_or_default();
-            *cef_state().url.lock().unwrap() = s;
+            let state = cef_state();
+            let Some(browser) = browser else { return };
+            let bid = browser.identifier();
+            if let Some(tab) = state.tabs.borrow().iter().find(|t| t.browser_id == bid) {
+                *tab.url.lock().unwrap() = s;
+                state.snapshot_dirty.set(true);
+            }
+        }
+
+        fn on_title_change(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            title: Option<&cef::CefString>,
+        ) {
+            let s = title.map(|t| t.to_string()).unwrap_or_default();
+            let state = cef_state();
+            let Some(browser) = browser else { return };
+            let bid = browser.identifier();
+            if let Some(tab) = state.tabs.borrow().iter().find(|t| t.browser_id == bid) {
+                *tab.title.lock().unwrap() = s;
+                state.snapshot_dirty.set(true);
+            }
         }
     }
 }
@@ -568,8 +660,6 @@ cef::wrap_task! {
     impl Task {
         fn execute(&self) {
             let state = cef_state();
-            // Re-borrow the receiver each tick — we own it for the
-            // life of the worker thread.
             let cmd_rx_guard = state.cmd_rx.borrow();
             let Some(rx) = cmd_rx_guard.as_ref() else {
                 return;
@@ -578,38 +668,11 @@ cef::wrap_task! {
             let mut should_continue = true;
             loop {
                 match rx.try_recv() {
-                    Ok(Cmd::Resize { width, height }) => {
-                        *state.size.lock().unwrap() = (width, height);
-                        if let Some(browser) = state.browser.borrow().as_ref() {
-                            if let Some(host) = browser.host() {
-                                host.was_resized();
-                                tracing::info!(width, height, "CEF was_resized");
-                            }
+                    Ok(cmd) => {
+                        if !process_cmd(&state, cmd) {
+                            should_continue = false;
+                            break;
                         }
-                    }
-                    Ok(Cmd::Input(ev)) => {
-                        if let Some(browser) = state.browser.borrow().as_ref() {
-                            if let Some(host) = browser.host() {
-                                dispatch_input(&host, ev);
-                            }
-                        }
-                    }
-                    Ok(Cmd::Focus(focused)) => {
-                        if let Some(browser) = state.browser.borrow().as_ref() {
-                            if let Some(host) = browser.host() {
-                                host.set_focus(if focused { 1 } else { 0 });
-                            }
-                        }
-                    }
-                    Ok(Cmd::Nav(nav)) => {
-                        if let Some(browser) = state.browser.borrow().as_ref() {
-                            dispatch_nav(browser, nav);
-                        }
-                    }
-                    Ok(Cmd::Quit) => {
-                        cef::quit_message_loop();
-                        should_continue = false;
-                        break;
                     }
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -621,6 +684,10 @@ cef::wrap_task! {
             }
             drop(cmd_rx_guard);
 
+            if state.snapshot_dirty.replace(false) {
+                rebuild_snapshot(&state);
+            }
+
             if should_continue {
                 let mut next = CmdPumpTask::new();
                 cef::post_delayed_task(
@@ -631,6 +698,175 @@ cef::wrap_task! {
             }
         }
     }
+}
+
+/// Process one Cmd. Returns `false` for Quit (caller stops the
+/// pump); `true` otherwise.
+fn process_cmd(state: &CefThreadState, cmd: Cmd) -> bool {
+    match cmd {
+        Cmd::Resize { width, height } => {
+            *state.size.lock().unwrap() = (width, height);
+            if let Some(tab) = active_tab(state) {
+                if let Some(host) = tab.browser.host() {
+                    host.was_resized();
+                }
+            }
+        }
+        Cmd::Input(ev) => {
+            if let Some(tab) = active_tab(state) {
+                if let Some(host) = tab.browser.host() {
+                    dispatch_input(&host, ev);
+                }
+            }
+        }
+        Cmd::Focus(focused) => {
+            if let Some(tab) = active_tab(state) {
+                if let Some(host) = tab.browser.host() {
+                    host.set_focus(if focused { 1 } else { 0 });
+                }
+            }
+        }
+        Cmd::Nav(nav) => {
+            if let Some(tab) = active_tab(state) {
+                dispatch_nav(&tab.browser, nav);
+            }
+        }
+        Cmd::OpenTab { id, url } => {
+            open_tab(state, id, url);
+        }
+        Cmd::CloseTab(id) => {
+            close_tab(state, id);
+        }
+        Cmd::SetActiveTab(id) => {
+            let exists = state.tabs.borrow().iter().any(|t| t.id == id);
+            if exists {
+                state.active.set(id);
+                state
+                    .active_atomic
+                    .store(id.0, std::sync::atomic::Ordering::Relaxed);
+                // Re-trigger a paint for the newly-active tab.
+                // was_resized() is the cheapest forced-repaint trigger
+                // CEF exposes; it asks the WebProcess for a fresh
+                // composited frame at the same size, which iced
+                // will receive and import.
+                if let Some(tab) = active_tab(state) {
+                    if let Some(host) = tab.browser.host() {
+                        host.was_resized();
+                    }
+                }
+            }
+        }
+        Cmd::Quit => {
+            cef::quit_message_loop();
+            return false;
+        }
+    }
+    true
+}
+
+/// Borrowed lookup of the active tab. Returns `None` if the
+/// active id doesn't match any open tab — e.g. between
+/// SetActiveTab on the iced side and the corresponding cmd
+/// landing on the worker.
+fn active_tab(state: &CefThreadState) -> Option<std::cell::Ref<'_, CefTabState>> {
+    let active = state.active.get();
+    let tabs = state.tabs.borrow();
+    let idx = tabs.iter().position(|t| t.id == active)?;
+    Some(std::cell::Ref::map(tabs, |v| &v[idx]))
+}
+
+/// Look up the tab that owns a given CEF Browser identifier.
+/// Called from RenderHandler::on_paint and DisplayHandler
+/// callbacks, both of which receive the browser and need to
+/// route per-tab.
+fn tab_by_browser_id(state: &CefThreadState, browser_id: i32) -> Option<TabId> {
+    state
+        .tabs
+        .borrow()
+        .iter()
+        .find(|t| t.browser_id == browser_id)
+        .map(|t| t.id)
+}
+
+fn open_tab(state: &CefThreadState, id: TabId, initial_url: String) {
+    let mut window_info = cef::WindowInfo::default();
+    window_info.windowless_rendering_enabled = 1;
+    window_info.external_begin_frame_enabled = 0;
+    window_info.shared_texture_enabled = 0;
+
+    let mut browser_settings = cef::BrowserSettings::default();
+    browser_settings.background_color = 0xFFFF_FFFF;
+    browser_settings.windowless_frame_rate = 60;
+
+    // One handler set per tab. Cheap — they're cef::Rc handles
+    // wrapping our tiny Boxes; copying does refcount work only.
+    let render_handler = BrowserRenderHandler::new();
+    let life_span_handler = BrowserLifeSpanHandler::new();
+    let display_handler = BrowserDisplayHandler::new();
+    let mut client = BrowserClient::new(render_handler, life_span_handler, display_handler);
+
+    let url_c = cef::CefString::from(initial_url.as_str());
+    let browser = match cef::browser_host_create_browser_sync(
+        Some(&window_info),
+        Some(&mut client),
+        Some(&url_c),
+        Some(&browser_settings),
+        None,
+        None,
+    ) {
+        Some(b) => b,
+        None => {
+            tracing::warn!(?id, "browser_host_create_browser_sync returned None");
+            return;
+        }
+    };
+    let browser_id = browser.identifier();
+
+    let url = Arc::new(Mutex::new(initial_url.clone()));
+    let title = Arc::new(Mutex::new(String::new()));
+
+    state.tabs.borrow_mut().push(CefTabState {
+        id,
+        browser_id,
+        browser,
+        url,
+        title,
+    });
+    rebuild_snapshot(state);
+    tracing::info!(?id, browser_id, url = %initial_url, "opened tab");
+}
+
+fn close_tab(state: &CefThreadState, id: TabId) {
+    let removed = {
+        let mut tabs = state.tabs.borrow_mut();
+        let Some(pos) = tabs.iter().position(|t| t.id == id) else {
+            return;
+        };
+        tabs.remove(pos)
+    };
+    // Ask CEF to actually close the browser. The browser handle
+    // will drop with `removed` going out of scope; CEF tears down
+    // the renderer process when the last reference is gone.
+    if let Some(host) = removed.browser.host() {
+        host.close_browser(1);
+    }
+    drop(removed);
+    rebuild_snapshot(state);
+    tracing::info!(?id, "closed tab");
+}
+
+fn rebuild_snapshot(state: &CefThreadState) {
+    let new: Vec<TabInfo> = state
+        .tabs
+        .borrow()
+        .iter()
+        .map(|t| TabInfo {
+            id: t.id,
+            url: t.url.lock().unwrap().clone(),
+            title: t.title.lock().unwrap().clone(),
+        })
+        .collect();
+    *state.tabs_snapshot.lock().unwrap() = new;
 }
 
 // ── Input dispatch (runs on CEF UI thread via CmdPumpTask) ────────

@@ -347,6 +347,19 @@ impl shader::Primitive for CefPrimitive {
             return;
         };
 
+        // Map NDC -1..1 to the widget bounds so the fullscreen
+        // triangle's UV interpolates across just the webview
+        // area. Without set_viewport, the texture maps across the
+        // whole surface and the page's first scanline lands at
+        // y=0 (under the chrome). Same fix as sola-browser-wpe.
+        pass.set_viewport(
+            clip_bounds.x as f32,
+            clip_bounds.y as f32,
+            clip_bounds.width as f32,
+            clip_bounds.height as f32,
+            0.0,
+            1.0,
+        );
         pass.set_scissor_rect(
             clip_bounds.x,
             clip_bounds.y,
