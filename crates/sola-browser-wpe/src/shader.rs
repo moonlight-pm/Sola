@@ -299,14 +299,6 @@ impl shader::Primitive for WpePrimitive {
         if *last != (req_w, req_h) {
             *last = (req_w, req_h);
             drop(last);
-            tracing::info!(
-                bounds_w = bounds.width,
-                bounds_h = bounds.height,
-                scale = scale,
-                req_w = req_w,
-                req_h = req_h,
-                "shader::prepare requesting WPE resize",
-            );
             let _ = self
                 .slot
                 .releaser
