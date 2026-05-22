@@ -157,3 +157,80 @@ pub fn activate_wayland_session(timeout_ms: u64) -> String {
     unsafe { std::env::set_var("WAYLAND_DISPLAY", &display) };
     display
 }
+
+/// Block until `$XDG_RUNTIME_DIR/<display>` exists, or the timeout
+/// elapses. The name returned by [`activate_wayland_session`] points
+/// at a socket that river *intends* to publish, but on a fresh boot
+/// the name file can land microseconds before the socket itself is
+/// bind-ready. Wayland clients (winit, sctk, smithay-clipboard)
+/// connect early enough that this race produces "no such file or
+/// directory" failures.
+///
+/// Returns `true` if the socket appeared, `false` on timeout. Caller
+/// chooses whether timeout is fatal — kit `startup()` logs and
+/// continues so partial bus connectivity is still observable.
+pub fn wait_for_wayland_socket(display: &str, timeout_ms: u64) -> bool {
+    let path = runtime_dir().join(display);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    let step = std::time::Duration::from_millis(50);
+    loop {
+        if path.exists() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(step);
+    }
+}
+
+/// Point NixOS-specific GPU dispatch env at `/run/opengl-driver/` so
+/// any wgpu/EGL/VAAPI/Vulkan client launched from a TTY (where the
+/// desktop session never ran to set these) can actually find vendor
+/// ICDs and dispatch onto the GPU.
+///
+/// Sets, only if unset:
+///
+/// - `__EGL_VENDOR_LIBRARY_DIRS` — libglvnd's vendor-ICD search path.
+///   Without it libEGL.so loads but dispatches to nothing → wgpu's
+///   GL backend silently produces empty geometry.
+/// - `LIBVA_DRIVERS_PATH` — VA-API decoder DSO directory.
+/// - `VK_ICD_FILENAMES` — explicit Vulkan ICD path. wgpu's Vulkan
+///   backend (the default on Linux) can't initialise without this on
+///   NixOS — the loader has no fallback search.
+/// - `GSETTINGS_BACKEND=memory` — Chromium/GLib probe GSettings on
+///   start; with no schema source in scope they spam
+///   `g_settings_schema_source_lookup` failures. Memory backend
+///   returns empty values, which is what missing schemas would
+///   produce anyway.
+///
+/// Currently pins `VK_ICD_FILENAMES` to the NVIDIA ICD because the
+/// dev box is NVIDIA-only. Cross-vendor support waits until we have
+/// a Mesa-on-NixOS test rig.
+///
+/// Call once, single-threaded, before any GPU library initialises —
+/// in practice that's right after `activate_wayland_session` in each
+/// kit's `startup()`.
+pub fn activate_gpu_env() {
+    // SAFETY: documented as single-threaded pre-init.
+    unsafe {
+        if std::env::var_os("__EGL_VENDOR_LIBRARY_DIRS").is_none() {
+            std::env::set_var(
+                "__EGL_VENDOR_LIBRARY_DIRS",
+                "/run/opengl-driver/share/glvnd/egl_vendor.d",
+            );
+        }
+        if std::env::var_os("LIBVA_DRIVERS_PATH").is_none() {
+            std::env::set_var("LIBVA_DRIVERS_PATH", "/run/opengl-driver/lib/dri");
+        }
+        if std::env::var_os("VK_ICD_FILENAMES").is_none() {
+            std::env::set_var(
+                "VK_ICD_FILENAMES",
+                "/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.x86_64.json",
+            );
+        }
+        if std::env::var_os("GSETTINGS_BACKEND").is_none() {
+            std::env::set_var("GSETTINGS_BACKEND", "memory");
+        }
+    }
+}

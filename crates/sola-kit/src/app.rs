@@ -174,7 +174,19 @@ pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
 /// not including) the iced builder.
 ///
 /// 1. `sola_core::log::init(app_id)`
-/// 2. `sola_core::env::activate_wayland_session(20s)`
+/// 2. `sola_core::env::activate_wayland_session(20s)` — sets
+///    `WAYLAND_DISPLAY` so winit's wayland client finds the river
+///    socket.
+/// 3. `sola_core::env::wait_for_wayland_socket(10s)` — blocks until
+///    the socket file actually exists. river publishes the name file
+///    a beat before the socket is bind-ready on cold boot; winit
+///    connects fast enough to race that, so the wait is required.
+/// 4. `sola_core::env::activate_gpu_env()` — points NixOS GPU
+///    dispatch env (`VK_ICD_FILENAMES`, `__EGL_VENDOR_LIBRARY_DIRS`,
+///    `LIBVA_DRIVERS_PATH`, `GSETTINGS_BACKEND`) at
+///    `/run/opengl-driver/` so wgpu/EGL/Vulkan can initialise when
+///    the app is launched from a bare TTY (no desktop session to
+///    set them via `pam_env` or `~/.profile`).
 ///
 /// Returns the resolved Wayland socket name so the caller can log it.
 /// Apps that need different log init or a different Wayland timeout
@@ -184,6 +196,13 @@ pub fn startup(app_id: &str) -> String {
     tracing::info!("{app_id} starting");
     let socket = sola_core::env::activate_wayland_session(20_000);
     tracing::info!(socket = %socket, "wayland socket resolved");
+    if sola_core::env::wait_for_wayland_socket(&socket, 10_000) {
+        tracing::info!(socket = %socket, "wayland socket ready");
+    } else {
+        tracing::warn!(socket = %socket, "wayland socket not present after 10s — connecting anyway");
+    }
+    sola_core::env::activate_gpu_env();
+    tracing::debug!("nixos gpu dispatch env activated");
     socket
 }
 

@@ -149,57 +149,14 @@ pub fn run<A: SolaApp>() {
     tracing::info!("{app_id} starting");
 
     // --- GPU driver environment ---
-    // NixOS keeps GPU drivers under `/run/opengl-driver/`, but only sets
-    // the relevant env vars in interactive desktop sessions. sola-kit
-    // launched from a TTY inherits a shell env without them, so:
-    //
-    //   - `__EGL_VENDOR_LIBRARY_DIRS` points libglvnd at NixOS's
-    //     `/run/opengl-driver/share/glvnd/egl_vendor.d/{10_nvidia,50_mesa}.json`
-    //     so it can find vendor ICDs. Without this, libEGL.so loads but
-    //     dispatches to nothing → the GPU process can't initialize Skia
-    //     ("Unable to initialize SkSurface") and OnAcceleratedPaint
-    //     never fires.
-    //   - `LIBVA_DRIVERS_PATH` and `VK_ICD_FILENAMES` cover the analogous
-    //     dispatch for VA-API and Vulkan drivers respectively.
-    //
-    // Setting these here (before cef::init::initialize forks subprocesses)
-    // ensures every CEF worker inherits them.
-    //
-    // SAFETY: single-threaded at this point.
-    unsafe {
-        if std::env::var_os("__EGL_VENDOR_LIBRARY_DIRS").is_none() {
-            std::env::set_var(
-                "__EGL_VENDOR_LIBRARY_DIRS",
-                "/run/opengl-driver/share/glvnd/egl_vendor.d",
-            );
-        }
-        if std::env::var_os("LIBVA_DRIVERS_PATH").is_none() {
-            std::env::set_var("LIBVA_DRIVERS_PATH", "/run/opengl-driver/lib/dri");
-        }
-        if std::env::var_os("VK_ICD_FILENAMES").is_none() {
-            std::env::set_var(
-                "VK_ICD_FILENAMES",
-                "/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.x86_64.json",
-            );
-        }
-        // Chromium probes GSettings (proxy config, GTK theme, locale) on
-        // startup. On a minimal NixOS with no desktop session in scope,
-        // GLib finds no schema files anywhere on `XDG_DATA_DIRS` and
-        // logs:
-        //
-        //   GLib-GIO-CRITICAL: g_settings_schema_source_lookup:
-        //                      assertion 'source != NULL' failed
-        //   Invalid UTF-16 string
-        //
-        // (the UTF-16 line is GLib trying to decode a string out of the
-        // NULL schema lookup result.) Forcing the in-memory backend
-        // skips schema discovery entirely; Chromium's queries return
-        // empty values, which is what missing schemas would have given
-        // it anyway, with no behavioural change.
-        if std::env::var_os("GSETTINGS_BACKEND").is_none() {
-            std::env::set_var("GSETTINGS_BACKEND", "memory");
-        }
-    }
+    // NixOS keeps GPU drivers under `/run/opengl-driver/`, but only
+    // sets the relevant env vars inside interactive desktop sessions.
+    // Apps launched from a TTY inherit a shell env without them —
+    // EGL/VAAPI/Vulkan all need explicit pointers. Hoisted into
+    // `sola_core::env` so the iced kit + future apps share the same
+    // setup; called here before `cef::init::initialize` forks
+    // worker subprocesses so they inherit the redirected env.
+    sola_core::env::activate_gpu_env();
 
     // --- Binary self-watch ---
     sola_core::watcher::watch_own_binary();
@@ -209,25 +166,19 @@ pub fn run<A: SolaApp>() {
     // `activate_wayland_session` polls $XDG_RUNTIME_DIR/sola-wayland
     // for the socket name sola-river publishes and sets
     // WAYLAND_DISPLAY so the wayland client library picks it up.
-    // Same helper sola-monitor and any other non-kit sola app uses
-    // — the discovery logic lives in sola-core::env.
+    // `wait_for_wayland_socket` then blocks until the socket file is
+    // actually bind-ready (river publishes the name file a beat
+    // before the socket on cold boot). Same helpers the iced kit
+    // uses — discovery + wait lives in sola-core::env.
     //
-    // 20s timeout covers the worst case where sola-kit launches at
+    // 20s timeout covers the worst case where the app launches at
     // the same instant as sola-river and beats the socket-publish.
-    let runtime_dir = sola_core::env::runtime_dir();
     let wayland_display = sola_core::env::activate_wayland_session(20_000);
-    let socket_path = runtime_dir.join(&wayland_display);
-    for attempt in 1..=20 {
-        if socket_path.exists() {
-            tracing::info!(path = %socket_path.display(), "wayland socket ready");
-            break;
-        }
-        if attempt == 20 {
-            tracing::error!(path = %socket_path.display(), "wayland socket not found after 10s");
-            std::process::exit(1);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(500));
+    if !sola_core::env::wait_for_wayland_socket(&wayland_display, 10_000) {
+        tracing::error!(socket = %wayland_display, "wayland socket not found after 10s");
+        std::process::exit(1);
     }
+    tracing::info!(socket = %wayland_display, "wayland socket ready");
 
     // --- CEF initialize (browser process) ---
     cef::init::initialize(app_id);
