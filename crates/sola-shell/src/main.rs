@@ -8,6 +8,11 @@ use sola_kit::app::{BusSetup, startup, window_settings};
 use sola_kit::fonts::{self, NORMAL as F_NORMAL};
 
 mod app;
+pub mod keys;
+pub mod launcher;
+pub mod menu;
+pub mod switcher;
+pub mod zoning;
 
 const APP_ID: &str = "sola-shell";
 
