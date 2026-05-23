@@ -5,7 +5,7 @@
 use sola_bus::topics::TopicKind;
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup};
-use sola_kit::fonts::{self, NORMAL as F_NORMAL};
+use sola_kit::fonts::{self, INTER};
 
 mod app;
 pub mod components;
@@ -34,7 +34,7 @@ fn main() -> iced::Result {
             .title(app::Shell::title)
             .subscription(app::Shell::subscription)
             .theme(app::Shell::theme)
-            .default_font(F_NORMAL);
+            .default_font(INTER);
     for bytes in fonts::load_all() {
         iced_daemon = iced_daemon.font(bytes);
     }

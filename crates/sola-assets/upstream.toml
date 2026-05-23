@@ -42,15 +42,18 @@ category = "cursors"
 kind     = "cursors"
 
 # Inter — open-source UI font that closely matches Apple's San Francisco
-# (which is license-restricted to Apple platforms). Variable WOFF2
-# covers all weights/italics in two files. License: SIL OFL 1.1.
+# (which is license-restricted to Apple platforms). Variable TTF covers
+# all weights/italics in two files. License: SIL OFL 1.1.
+#
+# Fetched from nixpkgs because the upstream rsms/inter repo only ships
+# WOFF/WOFF2 in its git tree — cosmic-text (iced's text shaper) needs
+# TTF/OTF, so we pull the nixpkgs-built TTF derivation.
 [packs.Inter]
-source   = "github:rsms/inter"
-rev      = ""
-src_dir  = "docs/font-files"
+source   = "nix-pkg:inter"
+src_dir  = "share/fonts/truetype"
 category = "fonts"
 kind     = "fonts"
-files    = ["InterVariable.woff2", "InterVariable-Italic.woff2"]
+files    = ["InterVariable.ttf", "InterVariable-Italic.ttf"]
 
 # JetBrains Mono — mono UI font used by sola-monitor for row
 # bodies and JSON. Pinned SHA: the repo has releases but pulling the

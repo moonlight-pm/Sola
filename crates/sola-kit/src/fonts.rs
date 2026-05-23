@@ -16,6 +16,13 @@ pub const FONT_DIR: &str = "/opt/sola/share/fonts";
 /// declares itself as `JetBrains Mono`.
 pub const MONO: Font = Font::with_name("JetBrains Mono");
 
+/// Inter — open-source UI font that closely matches Apple's San
+/// Francisco. The desktop variant ships as `InterVariable.ttf` and
+/// declares family name `Inter`. Used by sola-shell for the
+/// menubar / launcher / switcher / menu so the desktop chrome
+/// reads the way it did under the legacy CEF shell.
+pub const INTER: Font = Font::with_name("Inter");
+
 /// Default sans for body / UI text — variable Roboto Flex,
 /// family name `Roboto Flex`.
 pub const NORMAL: Font = Font::with_name("Roboto Flex");
@@ -40,6 +47,8 @@ pub const FONT_FILES: &[&str] = &[
     "RobotoFlex/RobotoFlex.ttf",
     "RobotoCondensed/RobotoCondensed-Regular.ttf",
     "RobotoCondensed/RobotoCondensed-Bold.ttf",
+    "Inter/InterVariable.ttf",
+    "Inter/InterVariable-Italic.ttf",
 ];
 
 /// Read the kit's standard font files off disk. Caller passes the
