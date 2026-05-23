@@ -5,40 +5,42 @@
 //! `on_output_geometry` have real bodies in this task; all others are stubs
 //! that will be filled in as each window comes online (Tasks 5–10).
 
+use std::time::Duration;
+
+use iced::Task;
 use sola_bus::topics::{
     AppMenuPayload, Application, ChordEvent, LaunchResultPayload, MouseClickedPayload,
     MouseEnteredPayload, OutputGeometry, Topic, UserAppExitedPayload, Window,
 };
 use sola_core::theme::Theme as BusTheme;
 
-use super::Shell;
+use super::{Msg, Shell};
 
 impl Shell {
     /// Parse a raw bus message and dispatch to the matching handler.
-    /// Unknown topics are silently ignored — the shell only subscribes to
-    /// the set it cares about, but the bus may deliver others during a
-    /// reconnect replay.
-    pub fn handle_bus(&mut self, message: &sola_bus::Message) {
+    /// Returns a `Task` if any handler schedules async work (e.g. toast expiry).
+    /// Unknown topics are silently ignored.
+    pub fn handle_bus(&mut self, message: &sola_bus::Message) -> Task<Msg> {
         let Some(topic) = Topic::parse(message) else {
-            return;
+            return Task::none();
         };
         match topic {
-            Topic::Theme(t) => self.on_theme(t),
-            Topic::OutputGeometry(g) => self.on_output_geometry(g),
-            Topic::Windows(w) => self.on_windows(w),
-            Topic::SetAppMenu(m) => self.on_set_app_menu(m),
-            Topic::Application(a) => self.on_application(a),
-            Topic::Chord(c) => self.on_chord(c),
-            Topic::ChordReleased(c) => self.on_chord_released(c),
-            Topic::MouseEntered(e) => self.on_mouse_entered(e),
-            Topic::MouseClicked(e) => self.on_mouse_clicked(e),
-            Topic::MouseLeft => self.on_mouse_left(),
+            Topic::Theme(t) => { self.on_theme(t); Task::none() }
+            Topic::OutputGeometry(g) => { self.on_output_geometry(g); Task::none() }
+            Topic::Windows(w) => { self.on_windows(w); Task::none() }
+            Topic::SetAppMenu(m) => { self.on_set_app_menu(m); Task::none() }
+            Topic::Application(a) => { self.on_application(a); Task::none() }
+            Topic::Chord(c) => { self.on_chord(c); Task::none() }
+            Topic::ChordReleased(c) => { self.on_chord_released(c); Task::none() }
+            Topic::MouseEntered(e) => { self.on_mouse_entered(e); Task::none() }
+            Topic::MouseClicked(e) => { self.on_mouse_clicked(e); Task::none() }
+            Topic::MouseLeft => { self.on_mouse_left(); Task::none() }
             Topic::LaunchResult(r) => self.on_launch_result(r),
             Topic::UserAppExited(e) => self.on_user_app_exited(e),
-            Topic::Zones(z) => self.on_zones(z),
+            Topic::Zones(z) => { self.on_zones(z); Task::none() }
             // All other topics (mail, terminal, monitor, etc.) are not consumed
             // by sola-shell; ignore them quietly.
-            _ => {}
+            _ => Task::none(),
         }
     }
 
@@ -52,82 +54,182 @@ impl Shell {
     }
 
     /// Store output geometry so windows can be positioned.
-    ///
-    /// TODO Task 5+: emit `Topic::Frame` to reposition windows after geometry
-    /// changes (e.g. on monitor hotplug). For now just record the size.
     fn on_output_geometry(&mut self, g: OutputGeometry) {
-        // OutputGeometry fields are i32 (matching the Wayland wire format).
         self.output_size = Some((g.width, g.height));
+    }
+
+    /// Receive the full window list from sola-river.
+    /// Rebuilds the window registry, derives focus changes, and updates the
+    /// MRU list. The menubar reflects the new focused app implicitly via
+    /// `view()` re-rendering after state mutation.
+    fn on_windows(&mut self, windows: Vec<Window>) {
+        // Collect old and new app_id sets to detect additions and removals.
+        let old_app_ids: std::collections::HashSet<String> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != "sola-shell")
+            .map(|w| w.app_id.clone())
+            .collect();
+        let new_app_ids: std::collections::HashSet<String> = windows
+            .iter()
+            .filter(|w| w.app_id != "sola-shell")
+            .map(|w| w.app_id.clone())
+            .collect();
+
+        let added: Vec<String> = new_app_ids
+            .iter()
+            .filter(|id| !old_app_ids.contains(id.as_str()))
+            .cloned()
+            .collect();
+        let removed: Vec<String> = old_app_ids
+            .iter()
+            .filter(|id| !new_app_ids.contains(id.as_str()))
+            .cloned()
+            .collect();
+
+        // Rebuild lookup map.
+        self.window_id_by_key.clear();
+        for w in &windows {
+            self.window_id_by_key
+                .insert((w.app_id.clone(), w.title.clone()), w.window_id);
+        }
+        self.known_windows = windows;
+
+        // Track removed apps: clean up MRU and focused state.
+        let focused_app_was_removed = self
+            .focused_app_id
+            .as_deref()
+            .map(|f| removed.iter().any(|r| r == f))
+            .unwrap_or(false);
+        for id in &removed {
+            self.mru_apps.retain(|m| m != id);
+            self.mru_window_by_app.remove(id);
+            if self.focused_app_id.as_deref() == Some(id.as_str()) {
+                self.focused_app_id = None;
+                self.focused_window_id = None;
+            }
+        }
+
+        // Focus the newest app if one appeared.
+        if let Some(id) = added.first() {
+            self.set_focus(id);
+            if let Some(wid) = self.lookup_any_window_id(id) {
+                self.focused_window_id = Some(wid);
+                self.mru_window_by_app.insert(id.clone(), wid);
+            }
+        } else if focused_app_was_removed {
+            // Focused app closed — fall back to next MRU, or clear.
+            if let Some(next) = self.mru_apps.first().cloned() {
+                let wid = self
+                    .mru_window_by_app
+                    .get(&next)
+                    .copied()
+                    .or_else(|| self.lookup_any_window_id(&next));
+                self.set_focus(&next);
+                if let Some(wid) = wid {
+                    self.focused_window_id = Some(wid);
+                    self.mru_window_by_app.insert(next.clone(), wid);
+                }
+            }
+            // If mru_apps is empty, focused_app_id is already None — the
+            // menubar view will render an empty title.
+        }
+    }
+
+    /// Receive an app's menu definition (keyed sticky per app_id).
+    fn on_set_app_menu(&mut self, m: AppMenuPayload) {
+        self.menus.set_menu(m);
+    }
+
+    /// Update focus state and MRU ordering for the given app_id.
+    /// Does not emit bus events — in the iced port, the menubar view re-renders
+    /// automatically when `focused_app_id` changes.
+    fn set_focus(&mut self, app_id: &str) {
+        self.focused_app_id = Some(app_id.to_string());
+        self.mru_apps.retain(|m| m != app_id);
+        self.mru_apps.insert(0, app_id.to_string());
+    }
+
+    /// Look up any window_id for an app_id (first match in known_windows).
+    fn lookup_any_window_id(&self, app_id: &str) -> Option<u32> {
+        self.known_windows
+            .iter()
+            .find(|w| w.app_id == app_id)
+            .map(|w| w.window_id)
+    }
+
+    // -------------------------------------------------------------------------
+    // Handlers with task return (toast scheduling)
+    // -------------------------------------------------------------------------
+
+    /// Receive the result of a Topic::LaunchApp request.
+    /// On failure: surface a toast in the menubar and schedule its expiry.
+    fn on_launch_result(&mut self, r: LaunchResultPayload) -> Task<Msg> {
+        if r.ok {
+            return Task::none();
+        }
+        let msg = format!(
+            "Failed to launch {}: {}",
+            r.app_id,
+            r.error.as_deref().unwrap_or("unknown error")
+        );
+        self.menubar.push_toast(msg);
+        let toast_gen = self.menubar.toast_generation;
+        Task::perform(
+            tokio::time::sleep(Duration::from_secs(5)),
+            move |_| Msg::ToastExpire(toast_gen),
+        )
+    }
+
+    /// A user app process exited.
+    fn on_user_app_exited(&mut self, e: UserAppExitedPayload) -> Task<Msg> {
+        let msg = if let Some(sig) = e.signal {
+            format!("{} killed (signal {})", e.app_id, sig)
+        } else {
+            let code = e.code.unwrap_or(0);
+            if code != 0 {
+                format!("{} exited (code {})", e.app_id, code)
+            } else {
+                return Task::none();
+            }
+        };
+        self.menubar.push_toast(msg);
+        let toast_gen = self.menubar.toast_generation;
+        Task::perform(
+            tokio::time::sleep(Duration::from_secs(5)),
+            move |_| Msg::ToastExpire(toast_gen),
+        )
     }
 
     // -------------------------------------------------------------------------
     // Stub handlers — bodies filled in by later tasks
     // -------------------------------------------------------------------------
 
-    /// Receive the full window list from sola-river.
-    /// TODO Task 5: wire menubar update; Task 7: dismiss menu on focus change.
-    fn on_windows(&mut self, _w: Vec<Window>) {
-        // TODO Task 5 (menubar): update focused-app display.
-        // TODO Task 7 (menu):    close menu on focus change.
-    }
-
-    /// Receive an app's menu definition (keyed sticky per app_id).
-    /// TODO Task 5: insert into MenuCache and refresh menubar.
-    fn on_set_app_menu(&mut self, _m: AppMenuPayload) {
-        // TODO Task 5 (menubar): self.menus.insert(...); push to menubar window.
-    }
-
     /// Receive a user-defined application entry from the bus.
     /// TODO Task 10: append/update self.applications and refresh launcher.
-    fn on_application(&mut self, _a: Application) {
-        // TODO Task 10 (chord/bus): update self.applications catalog.
-    }
+    fn on_application(&mut self, _a: Application) {}
 
     /// Receive a chord event (key press).
     /// TODO Task 10: dispatch to launcher toggle, switcher cycle, etc.
-    fn on_chord(&mut self, _c: ChordEvent) {
-        // TODO Task 10 (chord wiring): Meta+Space → launcher; Super → switcher.
-    }
+    fn on_chord(&mut self, _c: ChordEvent) {}
 
     /// Receive a chord-released event (key release).
     /// TODO Task 10: confirm switcher selection on Super_L release.
-    fn on_chord_released(&mut self, _c: ChordEvent) {
-        // TODO Task 10 (chord wiring): Super_L release → switcher confirm.
-    }
+    fn on_chord_released(&mut self, _c: ChordEvent) {}
 
     /// Cursor entered a window surface.
     /// TODO Task 10: start focus-hover timer (pending_focus_generation).
-    fn on_mouse_entered(&mut self, _e: MouseEnteredPayload) {
-        // TODO Task 10 (chord/bus): schedule focus-follows-mouse timer.
-    }
+    fn on_mouse_entered(&mut self, _e: MouseEnteredPayload) {}
 
     /// Mouse button pressed on a window surface.
     /// TODO Task 7: dismiss open menu on click outside shell.
-    fn on_mouse_clicked(&mut self, _e: MouseClickedPayload) {
-        // TODO Task 7 (menu): close menu on outside click.
-    }
+    fn on_mouse_clicked(&mut self, _e: MouseClickedPayload) {}
 
     /// Cursor left all tracked surfaces.
     /// TODO Task 10: cancel pending focus-hover timer.
-    fn on_mouse_left(&mut self) {
-        // TODO Task 10 (chord/bus): cancel focus-hover timer (increment generation).
-    }
-
-    /// Receive the result of a Topic::LaunchApp request.
-    /// TODO Task 8: on failure, surface error in launcher.
-    fn on_launch_result(&mut self, _r: LaunchResultPayload) {
-        // TODO Task 8 (launcher): surface launch errors.
-    }
-
-    /// A user app process exited.
-    /// TODO Task 10: remove from known_windows / MRU if still present.
-    fn on_user_app_exited(&mut self, _e: UserAppExitedPayload) {
-        // TODO Task 10 (chord/bus): clean up window state on exit.
-    }
+    fn on_mouse_left(&mut self) {}
 
     /// Receive the current zone-assignment map.
     /// TODO Task 10: update self.zoning and re-emit Topic::Composition.
-    fn on_zones(&mut self, _z: std::collections::HashMap<String, sola_bus::topics::Zone>) {
-        // TODO Task 10 (chord/bus): apply zone assignments, recompose.
-    }
+    fn on_zones(&mut self, _z: std::collections::HashMap<String, sola_bus::topics::Zone>) {}
 }

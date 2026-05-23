@@ -4,13 +4,15 @@
 
 use sola_bus::topics::TopicKind;
 use sola_core::KeyCode;
-use sola_kit::app::{BusSetup, startup, window_settings};
+use sola_kit::app::{BusSetup, startup};
 use sola_kit::fonts::{self, NORMAL as F_NORMAL};
 
 mod app;
+pub mod components;
 pub mod keys;
 pub mod launcher;
 pub mod menu;
+pub mod menubar;
 pub mod switcher;
 pub mod zoning;
 
@@ -24,14 +26,17 @@ fn main() -> iced::Result {
         .app_menu("Shell", [("quit", "Quit Shell", KeyCode::Q.meta())])
         .install();
 
-    let mut iced_app = iced::application(app::Shell::default, app::Shell::update, app::Shell::view)
-        .title(app::Shell::title)
-        .subscription(app::Shell::subscription)
-        .theme(app::Shell::theme)
-        .default_font(F_NORMAL)
-        .window(window_settings(APP_ID));
+    // Use iced::daemon so we can open multiple windows and dispatch view()
+    // per window::Id.  The daemon opens no default window; our boot task
+    // opens the menubar immediately.
+    let mut iced_daemon =
+        iced::daemon(app::Shell::boot, app::Shell::update, app::Shell::view)
+            .title(app::Shell::title)
+            .subscription(app::Shell::subscription)
+            .theme(app::Shell::theme)
+            .default_font(F_NORMAL);
     for bytes in fonts::load_all() {
-        iced_app = iced_app.font(bytes);
+        iced_daemon = iced_daemon.font(bytes);
     }
-    iced_app.run()
+    iced_daemon.run()
 }
