@@ -12,5 +12,8 @@ pub fn format_clock(now: &DateTime<Local>) -> String {
 
 /// Render the clock as an iced text widget.
 pub fn clock_widget<Msg: 'static>(now: &DateTime<Local>) -> Element<'_, Msg> {
-    text(format_clock(now)).into()
+    text(format_clock(now))
+        .font(sola_kit::fonts::INTER_MEDIUM)
+        .size(13)
+        .into()
 }

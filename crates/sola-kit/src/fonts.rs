@@ -23,6 +23,14 @@ pub const MONO: Font = Font::with_name("JetBrains Mono");
 /// reads the way it did under the legacy CEF shell.
 pub const INTER: Font = Font::with_name("Inter");
 
+/// Inter Medium (weight 500) — used for menubar chrome labels and the clock
+/// so they read at the same visual weight as the legacy CEF shell's 500-weight
+/// Inter text at 13 px.
+pub const INTER_MEDIUM: Font = Font {
+    weight: iced::font::Weight::Medium,
+    ..Font::with_name("Inter")
+};
+
 /// Default sans for body / UI text — variable Roboto Flex,
 /// family name `Roboto Flex`.
 pub const NORMAL: Font = Font::with_name("Roboto Flex");

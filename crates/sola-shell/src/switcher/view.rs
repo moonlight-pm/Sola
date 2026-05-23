@@ -97,29 +97,15 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .collect();
 
     // --- card strip ---
+    // No background/border/shadow on the strip itself — the switcher window
+    // is transparent, so the strip chrome must also be invisible.  Only the
+    // selected card container paints its own highlight.
     let strip: Element<'_, Msg> = container(
         row(cards)
             .spacing(12)
             .align_y(Alignment::Center),
     )
     .padding(Padding::new(24.0))
-    .style(|theme: &iced::Theme| {
-        let p = theme.extended_palette();
-        iced::widget::container::Style {
-            background: Some(iced::Background::Color(p.background.base.color)),
-            border: iced::Border {
-                color: p.background.strong.color,
-                width: 1.0,
-                radius: 12.0.into(),
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.4),
-                offset: iced::Vector::new(0.0, 12.0),
-                blur_radius: 32.0,
-            },
-            ..Default::default()
-        }
-    })
     .into();
 
     // Center the strip horizontally and vertically.

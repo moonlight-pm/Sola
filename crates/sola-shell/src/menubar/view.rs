@@ -4,9 +4,10 @@
 //!   [≡] [App Name] [Menu1] [Menu2] … ──────────────── [toast] [clock]
 //!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
 
-use iced::widget::{button, container, mouse_area, row, text};
+use iced::widget::{container, mouse_area, row, text};
 use iced::{Element, Length};
 use sola_kit::components::icon_colored;
+use sola_kit::fonts::INTER_MEDIUM;
 
 use crate::app::Msg;
 use crate::components::clock::clock_widget;
@@ -17,14 +18,18 @@ use crate::menu::state::synthesized_menu;
 pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mb = &shell.menubar;
 
-    // ── System-menu button ────────────────────────────────────────────
+    // ── System-menu icon ──────────────────────────────────────────────
     // Tinted with the theme's muted foreground (≈ text-secondary #6e7681)
     // to match legacy --sola-menubar-system-menu-fg.
+    // Use mouse_area + container (not button) so iced doesn't paint the
+    // primary-palette blue background over it.
     let system_fg = iced::Color::from_rgb(0x6e as f32 / 255.0, 0x76 as f32 / 255.0, 0x81 as f32 / 255.0);
-    let system_btn: Element<'_, Msg> = button(icon_colored("sola/pillars", 16, system_fg))
-        .on_press(Msg::OpenMenu { index: 0, is_system: true })
-        .padding([2, 8])
-        .into();
+    let system_btn: Element<'_, Msg> = mouse_area(
+        container(icon_colored("sola/pillars", 16, system_fg))
+            .padding([2, 8]),
+    )
+    .on_press(Msg::OpenMenu { index: 0, is_system: true })
+    .into();
 
     // ── Focused-app title ─────────────────────────────────────────────
     // Bold text of the focused app's display name (first menu label, or
@@ -33,15 +38,23 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let clickable = has_menu(shell);
     let app_title: Element<'_, Msg> = if clickable {
         mouse_area(
-            container(text(app_title_str))
-                .padding([2, 8]),
+            container(
+                text(app_title_str)
+                    .font(INTER_MEDIUM)
+                    .size(13),
+            )
+            .padding([2, 8]),
         )
         .on_press(Msg::OpenMenu { index: 0, is_system: false })
         .into()
     } else {
-        container(text(app_title_str))
-            .padding([2, 8])
-            .into()
+        container(
+            text(app_title_str)
+                .font(INTER_MEDIUM)
+                .size(13),
+        )
+        .padding([2, 8])
+        .into()
     };
 
     // ── App-menu labels (menus[1..]) ──────────────────────────────────
@@ -131,8 +144,12 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
         .skip(1)
         .map(|(index, menu)| {
             mouse_area(
-                container(text(menu.label.clone()))
-                    .padding([2, 8]),
+                container(
+                    text(menu.label.clone())
+                        .font(INTER_MEDIUM)
+                        .size(13),
+                )
+                .padding([2, 8]),
             )
             .on_press(Msg::OpenMenu { index, is_system: false })
             .on_enter(Msg::HoverMenu { index })

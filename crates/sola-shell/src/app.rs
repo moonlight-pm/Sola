@@ -70,6 +70,8 @@ pub enum Msg {
     SwitcherConfirm,
     /// Cancel without focus change: deactivate.
     SwitcherCancel,
+    /// Focus-hover timer fired: raise `window_id` if `generation` still matches.
+    FocusHoverFire { window_id: u32, generation: u64 },
     Noop,
 }
 
@@ -413,8 +415,32 @@ impl Shell {
         Self::APP_ID.to_string()
     }
 
-    pub fn theme(&self, _window: iced::window::Id) -> iced::Theme {
-        self.theme.clone()
+    pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
+        // The menubar is opaque — return the full themed palette so its
+        // background is painted by the iced renderer.
+        //
+        // All overlay windows (menu, launcher, switcher) are OS-level
+        // transparent (`settings.transparent = true`), but iced still paints
+        // the window background colour returned by `style()`.  `style()`
+        // reads `extended_palette().background.base.color` from whatever
+        // theme we hand it.  To make the overlay windows truly see-through
+        // we return a theme whose palette background is TRANSPARENT; the
+        // card chrome inside each overlay paints its own opaque region via
+        // container styles.
+        if Some(window) == self.menubar_window_id {
+            self.theme.clone()
+        } else {
+            // Build a transparent-background variant of the current theme.
+            let p = self.theme.palette();
+            iced::Theme::custom_with_fn(
+                "sola-overlay".to_string(),
+                iced::theme::Palette {
+                    background: iced::Color::TRANSPARENT,
+                    ..p
+                },
+                iced::theme::palette::Extended::generate,
+            )
+        }
     }
 
     /// Estimate the left-edge X of menu label `index` in the menubar row.
@@ -705,6 +731,31 @@ impl Shell {
                 self.switcher.active = false;
                 self.emit_composition();
                 self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::FocusHoverFire { window_id, generation } => {
+                // Only act if the generation matches — any mouse-enter or
+                // mouse-left bump cancels the pending fire.
+                if generation != self.pending_focus_generation {
+                    return iced::Task::none();
+                }
+                // Look up app_id from known_windows; skip shell surfaces.
+                let app_id = self
+                    .known_windows
+                    .iter()
+                    .find(|w| w.window_id == window_id && w.app_id != Self::APP_ID)
+                    .map(|w| w.app_id.clone());
+                if let Some(ref id) = app_id {
+                    self.bus_set_focus(id);
+                    self.focused_window_id = Some(window_id);
+                    self.mru_window_by_app.insert(id.clone(), window_id);
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(sola_bus::topics::Topic::Focus(
+                            sola_bus::topics::FocusTarget { window_id },
+                        ));
+                    }
+                    self.emit_composition();
+                }
                 iced::Task::none()
             }
             Msg::Noop => iced::Task::none(),

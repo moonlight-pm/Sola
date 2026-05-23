@@ -34,9 +34,9 @@ impl Shell {
             Topic::Application(a) => { self.on_application(a); Task::none() }
             Topic::Chord(c) => self.on_chord(c),
             Topic::ChordReleased(c) => self.on_chord_released(c),
-            Topic::MouseEntered(e) => { self.on_mouse_entered(e); Task::none() }
+            Topic::MouseEntered(e) => self.on_mouse_entered(e),
             Topic::MouseClicked(e) => { self.on_mouse_clicked(e); Task::none() }
-            Topic::MouseLeft => { self.on_mouse_left(); Task::none() }
+            Topic::MouseLeft => self.on_mouse_left(),
             Topic::LaunchResult(r) => self.on_launch_result(r),
             Topic::UserAppExited(e) => self.on_user_app_exited(e),
             Topic::Zones(z) => { self.on_zones(z); Task::none() }
@@ -471,8 +471,27 @@ impl Shell {
     // -------------------------------------------------------------------------
 
     /// Cursor entered a window surface.
-    /// TODO: start focus-hover timer (pending_focus_generation pattern).
-    fn on_mouse_entered(&mut self, _e: MouseEnteredPayload) {}
+    /// Starts a 500 ms focus-hover timer; if the cursor stays, raise that window.
+    fn on_mouse_entered(&mut self, e: MouseEnteredPayload) -> Task<Msg> {
+        // Skip shell surfaces — hovering the menubar must not steal focus.
+        let is_shell = self
+            .known_windows
+            .iter()
+            .any(|w| w.window_id == e.window_id && w.app_id == Self::APP_ID);
+        if is_shell {
+            return Task::none();
+        }
+
+        // Bump generation to cancel any previous pending fire.
+        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+        let focus_gen = self.pending_focus_generation;
+        let wid = e.window_id;
+
+        Task::perform(
+            tokio::time::sleep(Duration::from_millis(500)),
+            move |_| Msg::FocusHoverFire { window_id: wid, generation: focus_gen },
+        )
+    }
 
     /// Mouse button pressed on a window surface.
     /// If a menu is open and the click lands on a non-shell window, close it.
@@ -480,9 +499,20 @@ impl Shell {
         if !self.menu_open {
             return;
         }
-        // known_windows INCLUDES shell surfaces (sola-river includes them in
-        // Topic::Windows).  Any click on a tracked window_id means the user
-        // clicked outside the menu popover region — dismiss it.
+        // Dismiss the menu only when the user clicks a non-shell window.
+        // known_windows includes shell surfaces (sola-river reports them in
+        // Topic::Windows), so we must exclude clicks on our own surfaces —
+        // otherwise clicking a menubar label fires both OpenMenu AND this
+        // dismiss handler, racing the open.
+        let clicked_shell = self
+            .known_windows
+            .iter()
+            .any(|w| w.window_id == e.window_id && w.app_id == Self::APP_ID);
+        if clicked_shell {
+            // Click is on a shell surface (menubar, menu overlay, etc.) —
+            // let the normal OpenMenu / CloseMenu messages handle it.
+            return;
+        }
         let is_app_window = self
             .known_windows
             .iter()
@@ -496,8 +526,11 @@ impl Shell {
     }
 
     /// Cursor left all tracked surfaces.
-    /// TODO: cancel pending focus-hover timer.
-    fn on_mouse_left(&mut self) {}
+    /// Cancels any pending focus-hover timer by bumping the generation counter.
+    fn on_mouse_left(&mut self) -> Task<Msg> {
+        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+        Task::none()
+    }
 
     // -------------------------------------------------------------------------
     // Zone snapshot
