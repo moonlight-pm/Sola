@@ -41,7 +41,7 @@ pub struct KitApp {
 }
 
 impl SolaApp for KitApp {
-    const APP_ID: &'static str = "sola-kit";
+    const APP_ID: &'static str = "sola-kit-legacy";
 
     fn new(ctx: &mut AppCtx) -> Self {
         let theme = kit_default_theme();

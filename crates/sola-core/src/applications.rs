@@ -218,6 +218,12 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/globe".into(),
         },
         Application {
+            app_id: "sola-kit".into(),
+            label: "Kit".into(),
+            command: "/opt/sola/bin/sola-kit".into(),
+            icon: "lucide/palette".into(),
+        },
+        Application {
             app_id: "sola-kit-legacy".into(),
             label: "Kit (Legacy)".into(),
             command: "/opt/sola/bin/sola-kit-legacy".into(),
