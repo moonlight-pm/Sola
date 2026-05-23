@@ -1,14 +1,12 @@
 //! Menubar window view.
 //!
 //! Layout (left-to-right):
-//!   [●] [App Name] [Menu1] [Menu2] … ──────────────── [toast] [clock]
+//!   [≡] [App Name] [Menu1] [Menu2] … ──────────────── [toast] [clock]
 //!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
-//!
-//! The `●` system-menu button is a placeholder — replaced by the Sola
-//! icon/logo in Task 6.
 
 use iced::widget::{button, container, mouse_area, row, text};
 use iced::{Element, Font, Length};
+use sola_kit::components::icon;
 
 use crate::app::Msg;
 use crate::components::clock::clock_widget;
@@ -19,8 +17,8 @@ use crate::menu::state::synthesized_menu;
 pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mb = &shell.menubar;
 
-    // ── System-menu button (placeholder — icon in Task 6) ─────────────
-    let system_btn: Element<'_, Msg> = button(text("●"))
+    // ── System-menu button ────────────────────────────────────────────
+    let system_btn: Element<'_, Msg> = button(icon("lucide/menu", 18))
         .on_press(Msg::OpenMenu { index: 0, is_system: true })
         .padding([2, 8])
         .into();

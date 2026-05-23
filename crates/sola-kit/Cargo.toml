@@ -38,8 +38,9 @@ name = "sola-kit"
 path = "src/main.rs"
 
 [dependencies]
-iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg"] }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
+sola-assets = { path = "../sola-assets" }
 serde_json = "1"
 tracing = "0.1"
