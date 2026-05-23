@@ -1,13 +1,18 @@
 //! Shell — central state for the iced shell. Bus dispatch lives in
 //! `bus.rs`; per-window handlers are filled in by tasks 5-10.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sola_bus::topics::{ApplicationsConfig, Window};
+use sola_bus::topics::{
+    ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate, MenuActionPayload,
+    RegisteredChord, Topic, Window,
+};
+use sola_core::{KeyChord, KeyCode};
 use sola_kit::theme;
 
+use crate::keys;
 use crate::launcher::state::LauncherState;
 use crate::menu::state::MenuCache;
 use crate::menubar;
@@ -23,7 +28,9 @@ pub enum WindowKind {
     Menu,
     Launcher,
     Switcher,
-}#[derive(Clone, Debug)]
+}
+
+#[derive(Clone, Debug)]
 pub enum Msg {
     Bus(Arc<sola_bus::Message>),
     /// Fired by `iced::window::open`'s Task when a window's OS handle is ready.
@@ -43,28 +50,18 @@ pub enum Msg {
     ClockTick,
     /// Expire the toast for `generation` if it matches the current generation.
     ToastExpire(u64),
-    // --- Launcher messages (Task 8) ---
+    // --- Launcher messages ---
     /// Open the launcher: snapshot focus, reset query, focus text input.
-    /// Chord wiring (Meta+Space toggle) is in on_chord — Task 10.
     OpenLauncher,
     /// Close the launcher and restore prior focus.
-    /// Escape and outside-click both route here.
-    /// Composition emit is deferred to Task 10.
     CloseLauncher,
     /// Query text changed — re-filter application list.
     LauncherQuery(String),
     /// Arrow-key navigation within the filtered list.
-    /// Up/Down increment/decrement `launcher.selected`.
     LauncherNav { up: bool },
     /// Launch the selected application and close the launcher.
-    /// Also fired on row button click (Task 10 refines click→index routing).
     Launch,
-    // --- Switcher messages (Task 9) ---
-    // Chord wiring: Meta+Tab/Right → SwitcherNav { next: true },
-    //               Meta+Left     → SwitcherNav { next: false },
-    //               Super_L release → SwitcherConfirm,
-    //               Escape        → SwitcherCancel.
-    // All four are dispatched from on_chord / on_chord_released in Task 10.
+    // --- Switcher messages ---
     /// Cycle switcher selection forward (next=true) or backward (next=false).
     SwitcherNav { next: bool },
     /// Hover-select: mouse entered card at `index`.
@@ -74,7 +71,9 @@ pub enum Msg {
     /// Cancel without focus change: deactivate.
     SwitcherCancel,
     Noop,
-}pub struct Shell {
+}
+
+pub struct Shell {
     pub theme: iced::Theme,
 
     // iced window ids — None until the daemon opens each window.
@@ -126,9 +125,12 @@ pub enum Msg {
 }
 
 impl Shell {
-    /// Boot the daemon: initialise state and immediately open the menubar window.
-    /// Returns `(Self, Task<Msg>)` — the Task opens the menubar window and
-    /// maps the resulting `window::Id` into `Msg::WindowOpened(Menubar, id)`.
+    /// Wayland app_id / bus app_id for the shell's own surfaces.
+    pub const APP_ID: &'static str = "sola-shell";
+
+    /// Boot the daemon: initialise state and immediately open all four windows.
+    /// Returns `(Self, Task<Msg>)` — the Task opens the windows and maps the
+    /// resulting `window::Id` into `Msg::WindowOpened(Kind, id)`.
     pub fn boot() -> (Self, iced::Task<Msg>) {
         let theme = theme::default_theme();
 
@@ -140,7 +142,7 @@ impl Shell {
             let _ = bus.emit(sola_bus::topics::Topic::Theme(bus_theme));
         }
 
-        // Pre-allocate window ids and produce open tasks for menubar + menu + launcher + switcher.
+        // Pre-allocate window ids and produce open tasks for all four windows.
         let (menubar_id, menubar_task) = menubar::open_window();
         let (menu_id, menu_task) = crate::menu::open_window();
         let (launcher_id, launcher_task) = crate::launcher::open_window();
@@ -180,8 +182,229 @@ impl Shell {
         (state, task)
     }
 
-    pub fn title(&self, _window: iced::window::Id) -> String {
-        "sola-shell".to_string()
+    // -------------------------------------------------------------------------
+    // Window lookup helpers
+    // -------------------------------------------------------------------------
+
+    /// Look up a window_id by (app_id, title). sola-river includes shell surfaces
+    /// in Topic::Windows with the title set by the iced `title()` callback.
+    pub fn lookup_window_id(&self, app_id: &str, title: &str) -> Option<u32> {
+        self.window_id_by_key
+            .get(&(app_id.to_string(), title.to_string()))
+            .copied()
+    }
+
+    // -------------------------------------------------------------------------
+    // Emit helpers — compute and push bus topics from current state
+    // -------------------------------------------------------------------------
+
+    /// Build the composition list (bottom to top) and emit Topic::Composition.
+    ///
+    /// Stack order (bottom → top):
+    ///   1. Shell menubar — always at bottom.
+    ///   2. App windows ordered by MRU (least recent first), per-app MRU window on top.
+    ///   3. Shell overlays when active (menu, switcher, launcher — launcher on top).
+    pub fn emit_composition(&self) {
+        let mut entries: Vec<CompositionEntry> = Vec::new();
+
+        // 1. Menubar — always at the bottom.
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
+            entries.push(CompositionEntry { window_id: wid });
+        }
+
+        // 2. App windows ordered by MRU (least recent first = bottom of stack).
+        // Within each app, the per-app MRU window sits on top of its siblings.
+        let mut seen_app_ids: HashSet<&str> = HashSet::new();
+        for app_id in self.mru_apps.iter().rev() {
+            if app_id.as_str() == Self::APP_ID {
+                continue;
+            }
+            seen_app_ids.insert(app_id.as_str());
+            let top_wid = self.mru_window_by_app.get(app_id).copied();
+            for w in &self.known_windows {
+                if w.app_id == *app_id && Some(w.window_id) != top_wid {
+                    entries.push(CompositionEntry { window_id: w.window_id });
+                }
+            }
+            if let Some(wid) = top_wid {
+                if self
+                    .known_windows
+                    .iter()
+                    .any(|w| w.window_id == wid && w.app_id == *app_id)
+                {
+                    entries.push(CompositionEntry { window_id: wid });
+                }
+            }
+        }
+        // Apps not yet in MRU.
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID || seen_app_ids.contains(w.app_id.as_str()) {
+                continue;
+            }
+            entries.push(CompositionEntry { window_id: w.window_id });
+        }
+
+        // 3. Shell overlays on top when active.
+        if self.menu_open {
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
+        }
+        if self.switcher.active {
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
+        }
+        if self.launcher.active {
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
+        }
+
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::Composition(entries));
+        }
+    }
+
+    /// Emit Topic::RegisteredChords based on current overlay state and focused app.
+    ///
+    /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+Grave,
+    /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Bare Super_L
+    /// always registered so ChordReleased fires for switcher confirm. Escape
+    /// registered only while an overlay is active.
+    pub fn emit_registered_chords(&self) {
+        let source = self.shell_key_chords();
+        let mut chords: Vec<RegisteredChord> = Vec::with_capacity(source.len() * 2 + 2);
+        for c in &source {
+            chords.push(keys::to_registered(c));
+            // Numpad keys have a different keysym when NumLock is off;
+            // register both so zoning fires regardless of NumLock state.
+            if let Some(alt) = keys::to_registered_alt(c) {
+                chords.push(alt);
+            }
+        }
+        // Bare Super_L (no modifiers) so we receive ChordReleased when the user
+        // lets the Super key go — used to confirm the app switcher.
+        chords.push(RegisteredChord {
+            keysym: keys::KEYSYM_SUPER_L,
+            modifiers: 0,
+        });
+        // While any overlay is active, grab Escape so the user can dismiss it
+        // regardless of which surface owns input focus. Deregistered as soon as
+        // the overlay closes so terminal apps keep their Escape.
+        if self.launcher.active || self.switcher.active || self.menu_open {
+            chords.push(RegisteredChord {
+                keysym: keys::KEYSYM_ESCAPE,
+                modifiers: 0,
+            });
+        }
+        chords.sort_by_key(|c| (c.modifiers, c.keysym));
+        chords.dedup();
+
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::RegisteredChords(chords));
+        }
+    }
+
+    /// Build the list of chords the shell wants River to grab.
+    pub fn shell_key_chords(&self) -> Vec<KeyChord> {
+        // Shell-own menu bindings (e.g. Exit Sola shortcut).
+        let mut bindings: Vec<KeyChord> = self
+            .menus
+            .key_bindings_for(Self::APP_ID)
+            .into_iter()
+            .filter(|b| b.meta)
+            .collect();
+
+        // Focused app's menu shortcuts (meta-bound only, only while focused so
+        // River doesn't grab them globally when other clients have focus).
+        if let Some(focused) = self.focused_app_id.as_deref() {
+            if focused != Self::APP_ID {
+                bindings.extend(
+                    self.menus
+                        .key_bindings_for(focused)
+                        .into_iter()
+                        .filter(|b| b.meta),
+                );
+            }
+        }
+
+        // Fixed shell chords.
+        bindings.push(KeyCode::TAB.meta());   // Meta+Tab → switcher
+        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle app windows
+        bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
+        bindings.push(KeyCode::Q.meta());     // Meta+Q → close focused app
+
+        // Meta+Numpad zones a window.
+        for &raw in crate::zoning::ZONING_KEYCODES {
+            bindings.push(KeyChord {
+                keycode: KeyCode::from(raw),
+                ..KeyCode::TAB.meta()
+            });
+        }
+
+        bindings.sort_by_key(|b| (b.keycode.raw(), b.meta, b.alt, b.ctrl, b.shift));
+        bindings.dedup();
+        bindings
+    }
+
+    /// Emit Topic::Frame for all shell windows and any explicitly-zoned app windows.
+    ///
+    /// Shell overlays are framed eagerly (even when hidden) so show/hide via
+    /// Topic::Composition is a pure visibility flip with no resize lag.
+    pub fn emit_all_frames(&self) {
+        let mut frames: Vec<FrameUpdate> = Vec::new();
+
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
+            if let Some(f) = self.zoning.menubar_frame(wid) { frames.push(f); }
+        }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
+            if let Some(f) = self.zoning.default_app_frame(wid) { frames.push(f); }
+        }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
+            if let Some(f) = self.zoning.default_app_frame(wid) { frames.push(f); }
+        }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
+            if let Some(f) = self.zoning.switcher_frame(wid) { frames.push(f); }
+        }
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID { continue; }
+            if let Some(f) = self.zoning.window_frame(w.window_id) {
+                frames.push(f);
+            } else if w.app_id.starts_with("sola-") {
+                if let Some(f) = self.zoning.default_app_frame(w.window_id) {
+                    frames.push(f);
+                }
+            }
+        }
+
+        if !frames.is_empty() {
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                for f in frames {
+                    let _ = bus.emit(Topic::Frame(f));
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // iced Application interface
+    // -------------------------------------------------------------------------
+
+    pub fn title(&self, window: iced::window::Id) -> String {
+        if Some(window) == self.menubar_window_id {
+            return "menubar".to_string();
+        }
+        if Some(window) == self.menu_window_id {
+            return "menu".to_string();
+        }
+        if Some(window) == self.launcher_window_id {
+            return "launcher".to_string();
+        }
+        if Some(window) == self.switcher_window_id {
+            return "switcher".to_string();
+        }
+        Self::APP_ID.to_string()
     }
 
     pub fn theme(&self, _window: iced::window::Id) -> iced::Theme {
@@ -191,8 +414,8 @@ impl Shell {
     /// Estimate the left-edge X of menu label `index` in the menubar row.
     ///
     /// This is font-metric math, not a post-layout measurement.  It gives a
-    /// reasonable approximation until Task 10 wires up real geometry or a
-    /// custom widget provides exact bounds.
+    /// reasonable approximation until real geometry is available via
+    /// MenuLabelPosition events.
     ///
     /// Layout is:
     ///   [system-btn ~34px] [app-title: (chars×7.5)+16] [label[1]: ...] ...
@@ -218,7 +441,6 @@ impl Shell {
         let title_w = title_label.len() as f32 * CHAR_WIDTH + PAD_H;
 
         if index == 0 {
-            // The system-menu/app-title slot — leftmost.
             return SYSTEM_BTN_W;
         }
 
@@ -250,8 +472,6 @@ impl Shell {
             Msg::Bus(arc) => self.handle_bus(&arc),
             Msg::WindowOpened(_kind, _id) => {
                 // Window id was pre-allocated in boot(); the OS confirmed it.
-                // Nothing else needed here for now; future tasks will store
-                // launcher/menu/switcher ids similarly.
                 iced::Task::none()
             }
             Msg::ClockTick => {
@@ -263,8 +483,6 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::OpenMenu { index, is_system: _ } => {
-                // Prefer a previously-measured position; fall back to font-metric
-                // math if label_positions hasn't been populated yet.
                 self.menu_anchor_x = self
                     .menubar
                     .label_positions
@@ -274,11 +492,11 @@ impl Shell {
                     .unwrap_or_else(|| self.estimate_label_x(index));
                 self.menu_open = true;
                 self.current_open_index = Some(index);
-                // TODO Task 10: emit Topic::Composition to make menu surface visible.
+                self.emit_composition();
+                self.emit_registered_chords();
                 iced::Task::none()
             }
             Msg::HoverMenu { index } => {
-                // Hover-sweep: only switch if a *different* menu is already open.
                 if self.menu_open && self.current_open_index != Some(index) {
                     self.menu_anchor_x = self
                         .menubar
@@ -294,14 +512,13 @@ impl Shell {
             Msg::CloseMenu => {
                 self.menu_open = false;
                 self.current_open_index = None;
-                // TODO Task 10: emit Topic::Composition to hide menu surface.
+                self.emit_composition();
+                self.emit_registered_chords();
                 iced::Task::none()
             }
             Msg::MenuAction { app_id, action_id } => {
-                // Route to bus then close.
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                    use sola_bus::topics::Topic;
-                    if app_id == "sola-shell" && action_id == "exit" {
+                    if app_id == Self::APP_ID && action_id == "exit" {
                         let _ = bus.emit(Topic::Shutdown);
                     } else if action_id == "_close" {
                         if let Some(ref focused) = self.focused_app_id.clone() {
@@ -309,17 +526,17 @@ impl Shell {
                         }
                     } else {
                         let _ = bus.emit(Topic::MenuAction(
-                            sola_bus::topics::MenuActionPayload { app_id, action_id },
+                            MenuActionPayload { app_id, action_id },
                         ));
                     }
                 }
                 self.menu_open = false;
                 self.current_open_index = None;
-                // TODO Task 10: emit Topic::Composition to hide menu surface.
+                self.emit_composition();
+                self.emit_registered_chords();
                 iced::Task::none()
             }
             Msg::MenuLabelPosition { index, x } => {
-                // Grow the vec to fit if needed, then store.
                 if self.menubar.label_positions.len() <= index {
                     self.menubar.label_positions.resize(index + 1, 0.0);
                 }
@@ -328,27 +545,33 @@ impl Shell {
             }
             // --- Launcher ---
             Msg::OpenLauncher => {
-                // Snapshot the currently focused window so we can restore it
-                // on close.
                 self.launcher.prior_focus = self.focused_window_id;
                 self.launcher.active = true;
-                // Reset query and rebuild the filtered list.
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, "");
-                // TODO Task 10: emit Topic::Composition to make launcher surface visible.
-                // TODO Task 10: emit Topic::Focus { window_id: launcher_window_id } to
-                //               route keyboard to the launcher surface.
-                // Focus the query input inside iced so typing goes straight
-                // to the search field.
+                self.emit_composition();
+                self.emit_registered_chords();
+                // Emit Topic::Focus to route keyboard to the launcher surface.
+                if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
+                }
+                // Also focus the query input inside iced.
                 iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
                     crate::launcher::view::QUERY_INPUT_ID,
                 ))
             }
             Msg::CloseLauncher => {
                 self.launcher.active = false;
-                // TODO Task 10: emit Topic::Composition to hide launcher surface.
-                // TODO Task 10: emit Topic::Focus { window_id: prior_focus } to restore
-                //               keyboard routing to the previously focused app.
+                self.emit_composition();
+                self.emit_registered_chords();
+                // Restore focus to the previously focused app window.
+                if let Some(wid) = self.launcher.prior_focus {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
+                }
                 iced::Task::none()
             }
             Msg::LauncherQuery(text) => {
@@ -362,16 +585,13 @@ impl Shell {
                     return iced::Task::none();
                 }
                 if up {
-                    self.launcher.selected =
-                        self.launcher.selected.saturating_sub(1);
+                    self.launcher.selected = self.launcher.selected.saturating_sub(1);
                 } else {
-                    self.launcher.selected =
-                        (self.launcher.selected + 1).min(len - 1);
+                    self.launcher.selected = (self.launcher.selected + 1).min(len - 1);
                 }
                 iced::Task::none()
             }
             Msg::Launch => {
-                // Look up the selected app and emit Topic::LaunchApp.
                 let app_id = self
                     .launcher
                     .filtered_ids
@@ -380,7 +600,6 @@ impl Shell {
                 if let Some(ref id) = app_id {
                     if let Some(app) = self.applications.get(id) {
                         if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                            use sola_bus::topics::Topic;
                             let _ = bus.emit(Topic::LaunchApp(
                                 sola_bus::topics::LaunchAppPayload {
                                     app_id: id.clone(),
@@ -390,10 +609,15 @@ impl Shell {
                         }
                     }
                 }
-                // Close the launcher after launch.
                 self.launcher.active = false;
-                // TODO Task 10: emit Topic::Composition to hide launcher surface.
-                // TODO Task 10: emit Topic::Focus { window_id: prior_focus }.
+                self.emit_composition();
+                self.emit_registered_chords();
+                // Restore focus to the previously focused window.
+                if let Some(wid) = self.launcher.prior_focus {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
+                }
                 iced::Task::none()
             }
             // --- Switcher ---
@@ -411,26 +635,36 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::SwitcherConfirm => {
-                if self.switcher.active {
-                    // Find the MRU window for the selected app and emit Topic::Focus.
-                    if let Some(app_id) = self.switcher.selected_app_id() {
-                        if let Some(&window_id) = self.mru_window_by_app.get(app_id) {
-                            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                                use sola_bus::topics::Topic;
-                                let _ = bus.emit(Topic::Focus(
-                                    sola_bus::topics::FocusTarget { window_id },
-                                ));
-                            }
+                let app_id = self
+                    .switcher
+                    .selected_app_id()
+                    .map(|s| s.to_string());
+                self.switcher.active = false;
+
+                if let Some(ref app_id) = app_id {
+                    // Update focus and MRU.
+                    self.bus_set_focus(app_id);
+                    let wid = self
+                        .mru_window_by_app
+                        .get(app_id)
+                        .copied()
+                        .or_else(|| self.lookup_any_window_id(app_id));
+                    if let Some(wid) = wid {
+                        self.focused_window_id = Some(wid);
+                        self.mru_window_by_app.insert(app_id.clone(), wid);
+                        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                            let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
                         }
                     }
                 }
-                self.switcher.active = false;
-                // TODO Task 10: emit Topic::Composition to hide switcher surface.
+                self.emit_composition();
+                self.emit_registered_chords();
                 iced::Task::none()
             }
             Msg::SwitcherCancel => {
                 self.switcher.active = false;
-                // TODO Task 10: emit Topic::Composition to hide switcher surface.
+                self.emit_composition();
+                self.emit_registered_chords();
                 iced::Task::none()
             }
             Msg::Noop => iced::Task::none(),
@@ -451,8 +685,7 @@ impl Shell {
         if Some(window) == self.switcher_window_id {
             return crate::switcher::view::view(self);
         }
-        // Fallback for any window we don't recognise yet (shouldn't happen
-        // under normal operation, but prevents a panic).
+        // Fallback — shouldn't happen under normal operation.
         iced::widget::container(iced::widget::text(""))
             .width(iced::Length::Fill)
             .height(iced::Length::Fill)
