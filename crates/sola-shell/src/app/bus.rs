@@ -214,8 +214,23 @@ impl Shell {
     // -------------------------------------------------------------------------
 
     /// Receive a user-defined application entry from the bus.
-    /// TODO Task 10: append/update self.applications and refresh launcher.
-    fn on_application(&mut self, _a: Application) {}
+    /// Extends the application catalog; if the launcher is active, re-runs
+    /// the filter so new entries appear immediately.
+    fn on_application(&mut self, a: Application) {
+        // add() is a no-op if the app_id already exists; use update() to
+        // replace an existing entry (e.g. second Topic::Application replay).
+        if self.applications.get(&a.app_id).is_some() {
+            let _ = self.applications.update(&a.app_id.clone(), a);
+        } else {
+            let _ = self.applications.add(a);
+        }
+        // Re-filter if the launcher is currently visible.
+        if self.launcher.active {
+            let apps = self.applications.clone();
+            let query = self.launcher.query.clone();
+            self.launcher.apply_query(&apps, &query);
+        }
+    }
 
     /// Receive a chord event (key press).
     /// TODO Task 10: dispatch to launcher toggle, switcher cycle, etc.

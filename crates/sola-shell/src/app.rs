@@ -21,7 +21,8 @@ pub mod bus;
 pub enum WindowKind {
     Menubar,
     Menu,
-    // Launcher, Switcher — added in Tasks 8-9.
+    Launcher,
+    // Switcher — added in Task 9.
 }#[derive(Clone, Debug)]
 pub enum Msg {
     Bus(Arc<sola_bus::Message>),
@@ -42,6 +43,22 @@ pub enum Msg {
     ClockTick,
     /// Expire the toast for `generation` if it matches the current generation.
     ToastExpire(u64),
+    // --- Launcher messages (Task 8) ---
+    /// Open the launcher: snapshot focus, reset query, focus text input.
+    /// Chord wiring (Meta+Space toggle) is in on_chord — Task 10.
+    OpenLauncher,
+    /// Close the launcher and restore prior focus.
+    /// Escape and outside-click both route here.
+    /// Composition emit is deferred to Task 10.
+    CloseLauncher,
+    /// Query text changed — re-filter application list.
+    LauncherQuery(String),
+    /// Arrow-key navigation within the filtered list.
+    /// Up/Down increment/decrement `launcher.selected`.
+    LauncherNav { up: bool },
+    /// Launch the selected application and close the launcher.
+    /// Also fired on row button click (Task 10 refines click→index routing).
+    Launch,
     Noop,
 }pub struct Shell {
     pub theme: iced::Theme,
@@ -49,6 +66,7 @@ pub enum Msg {
     // iced window ids — None until the daemon opens each window.
     pub menubar_window_id: Option<iced::window::Id>,
     pub menu_window_id: Option<iced::window::Id>,
+    pub launcher_window_id: Option<iced::window::Id>,
 
     // Focus
     pub focused_app_id: Option<String>,
@@ -107,18 +125,21 @@ impl Shell {
             let _ = bus.emit(sola_bus::topics::Topic::Theme(bus_theme));
         }
 
-        // Pre-allocate window ids and produce open tasks for menubar + menu.
+        // Pre-allocate window ids and produce open tasks for menubar + menu + launcher.
         let (menubar_id, menubar_task) = menubar::open_window();
         let (menu_id, menu_task) = crate::menu::open_window();
+        let (launcher_id, launcher_task) = crate::launcher::open_window();
         let task = iced::Task::batch([
             menubar_task.map(|id| Msg::WindowOpened(WindowKind::Menubar, id)),
             menu_task.map(|id| Msg::WindowOpened(WindowKind::Menu, id)),
+            launcher_task.map(|id| Msg::WindowOpened(WindowKind::Launcher, id)),
         ]);
 
         let state = Self {
             theme,
             menubar_window_id: Some(menubar_id),
             menu_window_id: Some(menu_id),
+            launcher_window_id: Some(launcher_id),
             focused_app_id: None,
             focused_window_id: None,
             mru_apps: Vec::new(),
@@ -287,6 +308,76 @@ impl Shell {
                 self.menubar.label_positions[index] = x;
                 iced::Task::none()
             }
+            // --- Launcher ---
+            Msg::OpenLauncher => {
+                // Snapshot the currently focused window so we can restore it
+                // on close.
+                self.launcher.prior_focus = self.focused_window_id;
+                self.launcher.active = true;
+                // Reset query and rebuild the filtered list.
+                let apps = self.applications.clone();
+                self.launcher.apply_query(&apps, "");
+                // TODO Task 10: emit Topic::Composition to make launcher surface visible.
+                // TODO Task 10: emit Topic::Focus { window_id: launcher_window_id } to
+                //               route keyboard to the launcher surface.
+                // Focus the query input inside iced so typing goes straight
+                // to the search field.
+                iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
+                    crate::launcher::view::QUERY_INPUT_ID,
+                ))
+            }
+            Msg::CloseLauncher => {
+                self.launcher.active = false;
+                // TODO Task 10: emit Topic::Composition to hide launcher surface.
+                // TODO Task 10: emit Topic::Focus { window_id: prior_focus } to restore
+                //               keyboard routing to the previously focused app.
+                iced::Task::none()
+            }
+            Msg::LauncherQuery(text) => {
+                let apps = self.applications.clone();
+                self.launcher.apply_query(&apps, &text);
+                iced::Task::none()
+            }
+            Msg::LauncherNav { up } => {
+                let len = self.launcher.filtered_ids.len();
+                if len == 0 {
+                    return iced::Task::none();
+                }
+                if up {
+                    self.launcher.selected =
+                        self.launcher.selected.saturating_sub(1);
+                } else {
+                    self.launcher.selected =
+                        (self.launcher.selected + 1).min(len - 1);
+                }
+                iced::Task::none()
+            }
+            Msg::Launch => {
+                // Look up the selected app and emit Topic::LaunchApp.
+                let app_id = self
+                    .launcher
+                    .filtered_ids
+                    .get(self.launcher.selected)
+                    .cloned();
+                if let Some(ref id) = app_id {
+                    if let Some(app) = self.applications.get(id) {
+                        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                            use sola_bus::topics::Topic;
+                            let _ = bus.emit(Topic::LaunchApp(
+                                sola_bus::topics::LaunchAppPayload {
+                                    app_id: id.clone(),
+                                    command: app.command.clone(),
+                                },
+                            ));
+                        }
+                    }
+                }
+                // Close the launcher after launch.
+                self.launcher.active = false;
+                // TODO Task 10: emit Topic::Composition to hide launcher surface.
+                // TODO Task 10: emit Topic::Focus { window_id: prior_focus }.
+                iced::Task::none()
+            }
             Msg::Noop => iced::Task::none(),
         }
     }
@@ -298,6 +389,9 @@ impl Shell {
         }
         if Some(window) == self.menu_window_id {
             return crate::menu::view::view(self);
+        }
+        if Some(window) == self.launcher_window_id {
+            return crate::launcher::view::view(self);
         }
         // Fallback for any window we don't recognise yet (shouldn't happen
         // under normal operation, but prevents a panic).
