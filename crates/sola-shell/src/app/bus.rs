@@ -142,6 +142,17 @@ impl Shell {
             self.current_open_index = None;
             // TODO Task 10: emit Topic::Composition to hide the menu surface.
         }
+
+        // Re-derive the switcher app list whenever windows change while active.
+        // This keeps the switcher accurate if an app opens/closes during a
+        // Meta+Tab session.
+        if self.switcher.active {
+            crate::switcher::state::rebuild_apps(
+                &mut self.switcher,
+                &self.mru_apps.clone(),
+                &self.known_windows.clone(),
+            );
+        }
     }
 
     /// Receive an app's menu definition (keyed sticky per app_id).

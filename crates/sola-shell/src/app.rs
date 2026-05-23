@@ -22,7 +22,7 @@ pub enum WindowKind {
     Menubar,
     Menu,
     Launcher,
-    // Switcher — added in Task 9.
+    Switcher,
 }#[derive(Clone, Debug)]
 pub enum Msg {
     Bus(Arc<sola_bus::Message>),
@@ -59,6 +59,20 @@ pub enum Msg {
     /// Launch the selected application and close the launcher.
     /// Also fired on row button click (Task 10 refines click→index routing).
     Launch,
+    // --- Switcher messages (Task 9) ---
+    // Chord wiring: Meta+Tab/Right → SwitcherNav { next: true },
+    //               Meta+Left     → SwitcherNav { next: false },
+    //               Super_L release → SwitcherConfirm,
+    //               Escape        → SwitcherCancel.
+    // All four are dispatched from on_chord / on_chord_released in Task 10.
+    /// Cycle switcher selection forward (next=true) or backward (next=false).
+    SwitcherNav { next: bool },
+    /// Hover-select: mouse entered card at `index`.
+    SwitcherHover { index: usize },
+    /// Confirm selection: focus the MRU window of the selected app, deactivate.
+    SwitcherConfirm,
+    /// Cancel without focus change: deactivate.
+    SwitcherCancel,
     Noop,
 }pub struct Shell {
     pub theme: iced::Theme,
@@ -67,6 +81,7 @@ pub enum Msg {
     pub menubar_window_id: Option<iced::window::Id>,
     pub menu_window_id: Option<iced::window::Id>,
     pub launcher_window_id: Option<iced::window::Id>,
+    pub switcher_window_id: Option<iced::window::Id>,
 
     // Focus
     pub focused_app_id: Option<String>,
@@ -125,14 +140,16 @@ impl Shell {
             let _ = bus.emit(sola_bus::topics::Topic::Theme(bus_theme));
         }
 
-        // Pre-allocate window ids and produce open tasks for menubar + menu + launcher.
+        // Pre-allocate window ids and produce open tasks for menubar + menu + launcher + switcher.
         let (menubar_id, menubar_task) = menubar::open_window();
         let (menu_id, menu_task) = crate::menu::open_window();
         let (launcher_id, launcher_task) = crate::launcher::open_window();
+        let (switcher_id, switcher_task) = crate::switcher::open_window();
         let task = iced::Task::batch([
             menubar_task.map(|id| Msg::WindowOpened(WindowKind::Menubar, id)),
             menu_task.map(|id| Msg::WindowOpened(WindowKind::Menu, id)),
             launcher_task.map(|id| Msg::WindowOpened(WindowKind::Launcher, id)),
+            switcher_task.map(|id| Msg::WindowOpened(WindowKind::Switcher, id)),
         ]);
 
         let state = Self {
@@ -140,6 +157,7 @@ impl Shell {
             menubar_window_id: Some(menubar_id),
             menu_window_id: Some(menu_id),
             launcher_window_id: Some(launcher_id),
+            switcher_window_id: Some(switcher_id),
             focused_app_id: None,
             focused_window_id: None,
             mru_apps: Vec::new(),
@@ -378,6 +396,43 @@ impl Shell {
                 // TODO Task 10: emit Topic::Focus { window_id: prior_focus }.
                 iced::Task::none()
             }
+            // --- Switcher ---
+            Msg::SwitcherNav { next } => {
+                if next {
+                    self.switcher.select_next();
+                } else {
+                    self.switcher.select_prev();
+                }
+                iced::Task::none()
+            }
+            Msg::SwitcherHover { index } => {
+                self.switcher.selected =
+                    index.min(self.switcher.apps.len().saturating_sub(1));
+                iced::Task::none()
+            }
+            Msg::SwitcherConfirm => {
+                if self.switcher.active {
+                    // Find the MRU window for the selected app and emit Topic::Focus.
+                    if let Some(app_id) = self.switcher.selected_app_id() {
+                        if let Some(&window_id) = self.mru_window_by_app.get(app_id) {
+                            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                                use sola_bus::topics::Topic;
+                                let _ = bus.emit(Topic::Focus(
+                                    sola_bus::topics::FocusTarget { window_id },
+                                ));
+                            }
+                        }
+                    }
+                }
+                self.switcher.active = false;
+                // TODO Task 10: emit Topic::Composition to hide switcher surface.
+                iced::Task::none()
+            }
+            Msg::SwitcherCancel => {
+                self.switcher.active = false;
+                // TODO Task 10: emit Topic::Composition to hide switcher surface.
+                iced::Task::none()
+            }
             Msg::Noop => iced::Task::none(),
         }
     }
@@ -392,6 +447,9 @@ impl Shell {
         }
         if Some(window) == self.launcher_window_id {
             return crate::launcher::view::view(self);
+        }
+        if Some(window) == self.switcher_window_id {
+            return crate::switcher::view::view(self);
         }
         // Fallback for any window we don't recognise yet (shouldn't happen
         // under normal operation, but prevents a panic).

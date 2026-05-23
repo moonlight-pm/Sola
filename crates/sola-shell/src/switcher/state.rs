@@ -38,6 +38,55 @@ impl SwitcherState {
     }
 }
 
+/// Derive the ordered app list for the switcher.
+///
+/// Contract:
+/// - `mru` is the shell's `mru_apps` (most-recently-used app_ids, front = most recent).
+/// - `known` is `shell.known_windows` (all currently open windows from sola-river).
+/// - `applications` is the shell's app catalog (for label/icon look-up, not needed here).
+///
+/// Result: MRU-ordered `SwitcherApp` entries for apps that have ≥1 open window,
+/// followed by any open apps not yet in the MRU list.
+/// The shell itself (`app_id == "sola-shell"`) is excluded.
+pub fn rebuild_apps(
+    state: &mut SwitcherState,
+    mru: &[String],
+    known: &[sola_bus::topics::Window],
+) {
+    use std::collections::HashSet;
+
+    // Unique app_ids that have at least one open window, excluding shell itself.
+    let open_ids: HashSet<&str> = known
+        .iter()
+        .filter(|w| w.app_id != "sola-shell")
+        .map(|w| w.app_id.as_str())
+        .collect();
+
+    // MRU-ordered first.
+    let mut apps: Vec<SwitcherApp> = mru
+        .iter()
+        .filter(|id| open_ids.contains(id.as_str()))
+        .map(|id| SwitcherApp { app_id: id.clone() })
+        .collect();
+
+    // Append any open apps not yet in MRU.
+    let in_result: HashSet<String> = apps.iter().map(|a| a.app_id.clone()).collect();
+    let to_add: Vec<SwitcherApp> = open_ids
+        .iter()
+        .filter(|id| !in_result.contains(**id))
+        .map(|id| SwitcherApp { app_id: id.to_string() })
+        .collect();
+    apps.extend(to_add);
+
+    state.apps = apps;
+    // Clamp selection to valid range.
+    if state.apps.is_empty() {
+        state.selected = 0;
+    } else {
+        state.selected = state.selected.min(state.apps.len() - 1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
