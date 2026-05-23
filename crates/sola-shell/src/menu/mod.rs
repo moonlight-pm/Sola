@@ -1,83 +1,36 @@
-pub mod assets;
+//! Menu subsystem.
+//!
+//! `state` holds `MenuCache` and `synthesized_menu` — pure data, no window
+//! logic. Window management (opening, closing, rendering the dropdown) lands
+//! in Task 7.
+//! Menu dropdown window — state, lifecycle, and view entry point.
+//!
+//! The menu window is a full-overlay transparent surface that sits below
+//! the menubar and above all other windows in composition.  It is opened
+//! at startup and hidden by composition until `Shell::menu_open` is true.
+//! Anchor X positioning is computed from `Shell::menu_anchor_x`, which is
+//! populated from `MenubarState::label_positions` (font-metric estimates).
+
 pub mod state;
+pub mod view;
 
-pub use assets::MENU_ASSETS;
-pub use state::{MenuCache, SYNTHESIZED_CLOSE_ACTION, synthesized_menu};
+use iced::window;
+use sola_kit::app::window_settings;
 
-use serde_json::Value;
-use sola_kit::{AppCtx, SolaApp};
-use sola_bus::topics::MenuItem;
+/// Placeholder height below the menubar (28 px).  Real geometry is wired
+/// in Task 10 when Topic::OutputGeometry fires.
+const MENU_WINDOW_HEIGHT: f32 = 1052.0; // 1080 − 28
 
-use crate::app::ShellApp;
-
-impl ShellApp {
-    pub fn open_menu(&mut self, source: &str, menu_index: usize, anchor_x: f64, ctx: &mut AppCtx) {
-        let app_id = if source == "system" {
-            Self::APP_ID.to_string()
-        } else {
-            self.focused_app_id.clone().unwrap_or_default()
-        };
-
-        let synthesized;
-        let menu = match self.menus.get_menu(&app_id) {
-            Some(m) => m,
-            None if app_id != Self::APP_ID && !app_id.is_empty() => {
-                synthesized = synthesized_menu(&app_id, &self.display_label(&app_id));
-                &synthesized
-            }
-            None => return,
-        };
-        let Some(menu_def) = menu.menus.get(menu_index) else {
-            return;
-        };
-
-        let items: Vec<Value> = menu_def
-            .items
-            .iter()
-            .map(|item| match item {
-                MenuItem::Action {
-                    id,
-                    label,
-                    shortcut,
-                    disabled,
-                    ..
-                } => serde_json::json!({
-                    "type": "action",
-                    "id": id,
-                    "app_id": app_id,
-                    "label": label,
-                    "shortcut": shortcut.as_ref().map(|c| c.display()),
-                    "disabled": disabled,
-                }),
-                MenuItem::Divider => serde_json::json!({ "type": "divider" }),
-            })
-            .collect();
-
-        self.windows.menu.send_to_js(&serde_json::json!({
-            "event": "show",
-            "items": items,
-            "anchor_x": anchor_x,
-        }));
-
-        // No Frame emission: the menu surface was sized to
-        // full-screen-below-menubar at the first output_geometry tick
-        // (via `emit_all_frames`). It stays at that size and position
-        // for its whole life; only composition flips on open/close.
-        self.menu_open = true;
-        self.emit_registered_chords(ctx);
-        self.emit_composition(ctx);
-    }
-
-    pub fn close_menu(&mut self, ctx: &mut AppCtx) {
-        if !self.menu_open {
-            return;
-        }
-        self.menu_open = false;
-        self.emit_registered_chords(ctx);
-        self.windows.menu.send_to_js(&serde_json::json!({"event": "clear"}));
-        self.windows
-            .menubar
-            .send_to_js(&serde_json::json!({"event": "close_menu"}));
-        self.emit_composition(ctx);
-    }
+/// Open the menu overlay window and return `(id, Task<Id>)`.
+/// Width matches the assumed 1920px output; Task 10 corrects geometry from
+/// Topic::OutputGeometry.  Position is (0, 28) — immediately below the menubar.
+pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
+    let mut settings = window_settings("sola-shell");
+    settings.size = iced::Size::new(1920.0, MENU_WINDOW_HEIGHT);
+    settings.position =
+        iced::window::Position::Specific(iced::Point::new(0.0, 28.0));
+    settings.resizable = false;
+    settings.decorations = false;
+    settings.transparent = true;
+    window::open(settings)
 }

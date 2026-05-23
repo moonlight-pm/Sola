@@ -1,21 +1,42 @@
+//! sola-shell — iced-native desktop shell. Replaces the CEF/Remix v3
+//! shell (preserved as `sola-shell-legacy`). Four windows on one
+//! iced multi-window application.
+
+use sola_bus::topics::TopicKind;
+use sola_core::KeyCode;
+use sola_kit::app::{BusSetup, startup};
+use sola_kit::fonts::{self, NORMAL as F_NORMAL};
+
 mod app;
-mod keys;
-mod launcher;
-mod menu;
-mod menubar;
-mod switcher;
-pub mod theme;
-mod zoning;
+pub mod components;
+pub mod keys;
+pub mod launcher;
+pub mod menu;
+pub mod menubar;
+pub mod switcher;
+pub mod zoning;
 
-use std::process::ExitCode;
+const APP_ID: &str = "sola-shell";
 
-use sola_kit::SolaApp;
+fn main() -> iced::Result {
+    startup(APP_ID);
 
-fn main() -> ExitCode {
-    // Subprocess gate — CEF re-execs this binary as renderer/GPU/util/zygote.
-    if let Some(code) = sola_kit::cef::short_circuit_if_subprocess(app::ShellApp::APP_ID) {
-        return code;
+    BusSetup::new(APP_ID)
+        .subscribe(TopicKind::ALL)
+        .app_menu("Shell", [("quit", "Quit Shell", KeyCode::Q.meta())])
+        .install();
+
+    // Use iced::daemon so we can open multiple windows and dispatch view()
+    // per window::Id.  The daemon opens no default window; our boot task
+    // opens the menubar immediately.
+    let mut iced_daemon =
+        iced::daemon(app::Shell::boot, app::Shell::update, app::Shell::view)
+            .title(app::Shell::title)
+            .subscription(app::Shell::subscription)
+            .theme(app::Shell::theme)
+            .default_font(F_NORMAL);
+    for bytes in fonts::load_all() {
+        iced_daemon = iced_daemon.font(bytes);
     }
-    sola_kit::run::<app::ShellApp>();
-    ExitCode::SUCCESS
+    iced_daemon.run()
 }

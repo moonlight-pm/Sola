@@ -1,9 +1,3 @@
-//! Zone-snapping state: output geometry, window-zone assignments,
-//! config persistence, and frame computation.
-//!
-//! All methods that previously called `ctx.emit(Topic::Frame(...))` or
-//! `ctx.emit(Topic::Zones(...))` now return the data instead; the caller
-//! (Shell::update) emits on their behalf.
 use std::collections::{HashMap, HashSet};
 
 use sola_bus::topics::{FrameUpdate, OutputGeometry, Zone};
@@ -55,8 +49,6 @@ impl ZoningState {
     /// Take the current zone map if the local state has mutated
     /// since the last call. Returns `None` when nothing changed, so
     /// the caller can skip the emit/persist cost.
-    ///
-    /// Caller emits `Topic::Zones` in Task 10.
     pub fn take_zones_update(&mut self) -> Option<HashMap<String, Zone>> {
         if !self.zones_dirty {
             return None;
@@ -88,8 +80,6 @@ impl ZoningState {
     /// Apply the config zone to a window if its app has a saved zone
     /// and no window for that app has been zoned yet.
     /// Only sola-* apps persist zones — external apps are zoned manually.
-    ///
-    /// Caller emits `Topic::Frame` for the returned value in Task 10.
     pub fn apply_config_zone(&mut self, app_id: &str, window_id: u32) -> Option<FrameUpdate> {
         if !app_id.starts_with("sola-") || self.config_applied.contains(app_id) {
             return None;
@@ -105,9 +95,6 @@ impl ZoningState {
     }
 
     /// Handle a zone snap keycode for the focused window.
-    ///
-    /// Returns the `FrameUpdate` to emit. Caller emits `Topic::Frame` and
-    /// calls `take_zones_update()` → `Topic::Zones` in Task 10.
     pub fn handle_key(&mut self, code: u32, focused_window_id: Option<u32>) -> Option<FrameUpdate> {
         let zone = zone_for_keycode(code)?;
 
@@ -186,6 +173,7 @@ impl ZoningState {
             fullscreen: false,
         })
     }
+
 
     /// Frame for the switcher overlay: centered 800x400 on the output.
     /// The switcher's window CSS draws a card grid that fills the
@@ -266,185 +254,5 @@ fn compute_frame(zone: Zone, window_id: u32, output_w: i32, output_h: i32) -> Fr
         // own max_size / work-area assumptions. Every other zone is a
         // normal toplevel.
         fullscreen: matches!(zone, Zone::Cinema),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn state_with_output(w: i32, h: i32) -> ZoningState {
-        let mut s = ZoningState::new();
-        s.set_output_size(&OutputGeometry { width: w, height: h });
-        s
-    }
-
-    // Helper: compute a frame for a zone on a 1920×1080 output.
-    fn frame_for(zone: Zone) -> FrameUpdate {
-        compute_frame(zone, 1, 1920, 1080)
-    }
-
-    // Usable height for most zones (below menubar).
-    const UH: i32 = 1080 - MENUBAR_HEIGHT; // 1052
-
-    // --- Zone geometry parity with legacy shell ---
-
-    #[test]
-    fn zone_left() {
-        // Zone::Left rect = (0.0, 0.0, 0.28, 1.0)
-        let f = frame_for(Zone::Left);
-        assert_eq!(f.x, 0);
-        assert_eq!(f.y, MENUBAR_HEIGHT);
-        assert_eq!(f.width, (0.28 * 1920.0f64).round() as i32);
-        assert_eq!(f.height, UH);
-        assert!(!f.fullscreen);
-    }
-
-    #[test]
-    fn zone_right() {
-        // Zone::Right rect = (0.72, 0.0, 0.28, 1.0)
-        let f = frame_for(Zone::Right);
-        assert_eq!(f.x, (0.72 * 1920.0f64).round() as i32);
-        assert_eq!(f.y, MENUBAR_HEIGHT);
-        assert_eq!(f.width, (0.28 * 1920.0f64).round() as i32);
-        assert_eq!(f.height, UH);
-        assert!(!f.fullscreen);
-    }
-
-    #[test]
-    fn zone_top_middle() {
-        // Zone::TopMiddle rect = (0.28, 0.0, 0.44, 0.7)
-        let f = frame_for(Zone::TopMiddle);
-        assert_eq!(f.x, (0.28 * 1920.0f64).round() as i32);
-        assert_eq!(f.y, MENUBAR_HEIGHT);
-        assert_eq!(f.width, (0.44 * 1920.0f64).round() as i32);
-        assert_eq!(f.height, (0.7 * UH as f64).round() as i32);
-        assert!(!f.fullscreen);
-    }
-
-    #[test]
-    fn zone_bottom_middle() {
-        // Zone::BottomMiddle rect = (0.28, 0.7, 0.44, 0.3)
-        let f = frame_for(Zone::BottomMiddle);
-        assert_eq!(f.x, (0.28 * 1920.0f64).round() as i32);
-        assert_eq!(f.y, MENUBAR_HEIGHT + (0.7 * UH as f64).round() as i32);
-        assert_eq!(f.width, (0.44 * 1920.0f64).round() as i32);
-        assert_eq!(f.height, (0.3 * UH as f64).round() as i32);
-        assert!(!f.fullscreen);
-    }
-
-    #[test]
-    fn zone_full_middle() {
-        // Zone::FullMiddle rect = (0.28, 0.0, 0.44, 1.0)
-        let f = frame_for(Zone::FullMiddle);
-        assert_eq!(f.x, (0.28 * 1920.0f64).round() as i32);
-        assert_eq!(f.y, MENUBAR_HEIGHT);
-        assert_eq!(f.width, (0.44 * 1920.0f64).round() as i32);
-        assert_eq!(f.height, UH);
-        assert!(!f.fullscreen);
-    }
-
-    #[test]
-    fn zone_fullscreen() {
-        // Zone::Fullscreen rect = (0.0, 0.0, 1.0, 1.0) — still below menubar
-        let f = frame_for(Zone::Fullscreen);
-        assert_eq!(f.x, 0);
-        assert_eq!(f.y, MENUBAR_HEIGHT);
-        assert_eq!(f.width, 1920);
-        assert_eq!(f.height, UH);
-        assert!(!f.fullscreen);
-    }
-
-    #[test]
-    fn zone_top() {
-        // Zone::Top rect = (0.0, 0.0, 1.0, 0.7)
-        let f = frame_for(Zone::Top);
-        assert_eq!(f.x, 0);
-        assert_eq!(f.y, MENUBAR_HEIGHT);
-        assert_eq!(f.width, 1920);
-        assert_eq!(f.height, (0.7 * UH as f64).round() as i32);
-        assert!(!f.fullscreen);
-    }
-
-    #[test]
-    fn zone_bottom() {
-        // Zone::Bottom rect = (0.0, 0.7, 1.0, 0.3)
-        let f = frame_for(Zone::Bottom);
-        assert_eq!(f.x, 0);
-        assert_eq!(f.y, MENUBAR_HEIGHT + (0.7 * UH as f64).round() as i32);
-        assert_eq!(f.width, 1920);
-        assert_eq!(f.height, (0.3 * UH as f64).round() as i32);
-        assert!(!f.fullscreen);
-    }
-
-    #[test]
-    fn zone_cinema_covers_full_output_with_fullscreen_flag() {
-        // Zone::Cinema rect = (0.0, 0.0, 1.0, 1.0) — covers full output, no menubar offset
-        let f = frame_for(Zone::Cinema);
-        assert_eq!(f.x, 0);
-        assert_eq!(f.y, 0);
-        assert_eq!(f.width, 1920);
-        assert_eq!(f.height, 1080);
-        assert!(f.fullscreen, "Cinema must set fullscreen flag");
-    }
-
-    // --- ZoningState integration ---
-
-    #[test]
-    fn handle_key_returns_none_without_geometry() {
-        let mut s = ZoningState::new();
-        s.set_focused("sola-browser".to_string());
-        let result = s.handle_key(KeyCode::KP_4.raw(), Some(42));
-        assert!(result.is_none(), "no geometry cached → no frame");
-    }
-
-    #[test]
-    fn handle_key_returns_none_without_focused_app() {
-        let mut s = state_with_output(1920, 1080);
-        let result = s.handle_key(KeyCode::KP_4.raw(), Some(42));
-        assert!(result.is_none(), "no focused app → no frame");
-    }
-
-    #[test]
-    fn handle_key_snaps_window_and_marks_sola_zone_dirty() {
-        let mut s = state_with_output(1920, 1080);
-        s.set_focused("sola-browser".to_string());
-        let frame = s.handle_key(KeyCode::KP_4.raw(), Some(99));
-        assert!(frame.is_some());
-        assert_eq!(frame.unwrap().window_id, 99);
-        // sola-* app: zones_dirty should be set
-        let update = s.take_zones_update();
-        assert!(update.is_some());
-        // second take returns None
-        assert!(s.take_zones_update().is_none());
-    }
-
-    #[test]
-    fn handle_key_does_not_mark_external_app_dirty() {
-        let mut s = state_with_output(1920, 1080);
-        s.set_focused("firefox".to_string());
-        let frame = s.handle_key(KeyCode::KP_6.raw(), Some(7));
-        assert!(frame.is_some());
-        assert!(s.take_zones_update().is_none(), "external app must not dirty zones");
-    }
-
-    #[test]
-    fn menubar_frame_spans_full_width_at_top() {
-        let s = state_with_output(1920, 1080);
-        let f = s.menubar_frame(1).unwrap();
-        assert_eq!(f.x, 0);
-        assert_eq!(f.y, 0);
-        assert_eq!(f.width, 1920);
-        assert_eq!(f.height, MENUBAR_HEIGHT);
-    }
-
-    #[test]
-    fn switcher_frame_is_centered() {
-        let s = state_with_output(1920, 1080);
-        let f = s.switcher_frame(2).unwrap();
-        assert_eq!(f.x, (1920 - 800) / 2);
-        assert_eq!(f.y, (1080 - 400) / 2);
-        assert_eq!(f.width, 800);
-        assert_eq!(f.height, 400);
     }
 }

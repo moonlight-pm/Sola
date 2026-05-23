@@ -1,13 +1,4 @@
-//! Launcher filter state.
-//!
-//! `LauncherState` tracks whether the launcher overlay is active, which apps
-//! pass the current query, and which entry is selected.
-//!
-//! Window management (opening, closing, rendering to iced) lands in Task 5.
-//! `render_value` from the legacy shell is omitted here: the iced launcher
-//! will use typed Rust data rather than JSON envelopes, so the serialization
-//! helper has no equivalent in the new stack.
-use sola_core::applications::ApplicationsConfig;
+use sola_core::applications::{Application, ApplicationsConfig};
 
 #[derive(Default)]
 pub struct LauncherState {
@@ -41,10 +32,28 @@ pub fn filter(apps: &ApplicationsConfig, query: &str) -> Vec<String> {
         .collect()
 }
 
+/// Serialize the filtered app list as a structured JSON Value for use in
+/// send_to_js envelopes. Returns structured JSON (not a serialized string)
+/// `serde_json::Value` so it can be embedded in a larger JSON object
+/// without double-serialization.
+pub fn render_value(apps: &ApplicationsConfig, ids: &[String]) -> serde_json::Value {
+    let entries: Vec<&Application> = ids.iter().filter_map(|id| apps.get(id)).collect();
+    let json: Vec<_> = entries
+        .iter()
+        .map(|a| {
+            serde_json::json!({
+                "app_id": a.app_id,
+                "label": a.label,
+                "icon": a.icon,
+            })
+        })
+        .collect();
+    serde_json::Value::Array(json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sola_core::applications::Application;
 
     fn fixture() -> ApplicationsConfig {
         ApplicationsConfig {
@@ -106,26 +115,5 @@ mod tests {
             state.filtered_ids.first().map(String::as_str),
             Some("firefox")
         );
-    }
-
-    #[test]
-    fn apply_query_stores_query_string() {
-        let apps = fixture();
-        let mut state = LauncherState::default();
-        state.apply_query(&apps, "term");
-        assert_eq!(state.query, "term");
-    }
-
-    #[test]
-    fn uppercase_query_matches_lowercase_label() {
-        let ids = filter(&fixture(), "FIRE");
-        assert_eq!(ids, vec!["firefox"]);
-    }
-
-    #[test]
-    fn config_order_preserved() {
-        // "i" is contained in Firefox, Terminal, Files — all three, in config order.
-        let ids = filter(&fixture(), "i");
-        assert_eq!(ids, vec!["firefox", "sola-terminal", "files"]);
     }
 }

@@ -1,785 +1,229 @@
+//! Shell — central state for the iced shell. Bus dispatch lives in
+//! `bus.rs`; per-window handlers are filled in by tasks 5-10.
+
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::Value;
-use sola_kit::{AppCtx, AppRuntimeHandle, BusRegistry, SolaApp, WindowConfig, WindowHandle};
 use sola_bus::topics::{
-    AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, KeyChord,
-    LaunchResultPayload, MenuDefinition, MenuItem, MouseClickedPayload, MouseEnteredPayload,
-    RegisteredChord, Topic, TopicKind, UserAppExitedPayload, Window,
+    ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate, MenuActionPayload,
+    RegisteredChord, Topic, Window,
 };
-use sola_core::KeyCode;
-use sola_core::applications::{Application, builtin_apps, is_builtin};
+use sola_core::{KeyChord, KeyCode};
+use sola_kit::theme;
 
-/// Initial `applications` list — just the built-ins. User entries
-/// arrive later as `Topic::Application` sticky replays from the bus
-/// and get appended in `on_application`.
-fn initial_applications() -> ApplicationsConfig {
-    ApplicationsConfig {
-        apps: builtin_apps(),
-    }
+use crate::keys;
+use crate::launcher::state::LauncherState;
+use crate::menu::state::MenuCache;
+use crate::menubar;
+use crate::menubar::MenubarState;
+use crate::switcher::state::SwitcherState;
+use crate::zoning::ZoningState;
+
+pub mod bus;
+
+#[derive(Clone, Debug)]
+pub enum WindowKind {
+    Menubar,
+    Menu,
+    Launcher,
+    Switcher,
 }
 
-/// Hover dwell before focus-follows-mouse switches focus. Below this,
-/// sweeping the cursor across windows leaves focus where it was.
-const FOCUS_HOVER_DELAY: Duration = Duration::from_millis(500);
-
-use crate::launcher::{self, LAUNCHER_ASSETS, LauncherState};
-use crate::menu::{MENU_ASSETS, MenuCache, SYNTHESIZED_CLOSE_ACTION, synthesized_menu};
-use crate::menubar::setup_menubar;
-use crate::switcher::{SWITCHER_ASSETS, SwitcherState};
-use crate::zoning::{self, ZoningState};
-
-pub struct ShellWindows {
-    pub menubar: WindowHandle,
-    pub menu: WindowHandle,
-    pub switcher: WindowHandle,
-    pub launcher: WindowHandle,
+#[derive(Clone, Debug)]
+pub enum Msg {
+    Bus(Arc<sola_bus::Message>),
+    /// Fired by `iced::window::open`'s Task when a window's OS handle is ready.
+    WindowOpened(WindowKind, iced::window::Id),
+    /// Open the menu at the given app-menu index (0 = app-name slot).
+    /// `is_system` true means the system-menu button was pressed.
+    OpenMenu { index: usize, is_system: bool },
+    /// Hover over a menu label — only re-opens if a different menu is already open.
+    HoverMenu { index: usize },
+    /// Close the currently open menu (backdrop click, focus change, Escape, etc.)
+    CloseMenu,
+    /// User selected a menu action: route to bus and close menu.
+    MenuAction { app_id: String, action_id: String },
+    /// Menubar view reports the laid-out X position of a label at `index`.
+    MenuLabelPosition { index: usize, x: f32 },
+    /// Clock subscription tick.
+    ClockTick,
+    /// Expire the toast for `generation` if it matches the current generation.
+    ToastExpire(u64),
+    // --- Launcher messages ---
+    /// Open the launcher: snapshot focus, reset query, focus text input.
+    OpenLauncher,
+    /// Close the launcher and restore prior focus.
+    CloseLauncher,
+    /// Query text changed — re-filter application list.
+    LauncherQuery(String),
+    /// Arrow-key navigation within the filtered list.
+    LauncherNav { up: bool },
+    /// Launch the selected application and close the launcher.
+    Launch,
+    // --- Switcher messages ---
+    /// Cycle switcher selection forward (next=true) or backward (next=false).
+    SwitcherNav { next: bool },
+    /// Hover-select: mouse entered card at `index`.
+    SwitcherHover { index: usize },
+    /// Confirm selection: focus the MRU window of the selected app, deactivate.
+    SwitcherConfirm,
+    /// Cancel without focus change: deactivate.
+    SwitcherCancel,
+    Noop,
 }
 
-/// Lightweight app entry for the switcher (grouped by app_id).
-#[derive(Clone)]
-pub struct SwitcherApp {
-    pub app_id: String,
-}
+pub struct Shell {
+    pub theme: iced::Theme,
 
-pub struct ShellApp {
+    // iced window ids — None until the daemon opens each window.
+    pub menubar_window_id: Option<iced::window::Id>,
+    pub menu_window_id: Option<iced::window::Id>,
+    pub launcher_window_id: Option<iced::window::Id>,
+    pub switcher_window_id: Option<iced::window::Id>,
+
+    // Focus
     pub focused_app_id: Option<String>,
     pub focused_window_id: Option<u32>,
+
+    // MRU (most-recently-used)
     pub mru_apps: Vec<String>,
     /// Most-recently-focused window per app, for switcher restore.
     pub mru_window_by_app: HashMap<String, u32>,
-    /// All known windows from sola-river, keyed by window_id.
+
+    // Window registry (from Topic::Windows — sola-river)
     pub known_windows: Vec<Window>,
-    /// Maps (app_id, title) to window_id for lookup.
+    /// Maps (app_id, title) → window_id for fast lookup.
     pub window_id_by_key: HashMap<(String, String), u32>,
+
+    // Application catalog (built-ins + user entries from Topic::Application)
     pub applications: ApplicationsConfig,
+
+    // Menu cache (built up from Topic::SetAppMenu replays)
     pub menus: MenuCache,
-    pub zoning: ZoningState,
+
+    // Output geometry (from Topic::OutputGeometry; i32 matches OutputGeometry fields)
+    pub output_size: Option<(i32, i32)>,
+
+    // Per-window / per-surface state
+    pub menu_open: bool,
+    pub menu_anchor_x: f32,
+    /// Index of the currently open menu (menus[n] of the focused app).
+    /// None when no menu is open.
+    pub current_open_index: Option<usize>,
     pub switcher: SwitcherState,
     pub launcher: LauncherState,
-    pub menu_open: bool,
-    pub windows: ShellWindows,
-    /// Pending focus-follows-mouse timer. `Some(gen)` means a timer with that
-    /// generation is in flight; `None` means none is pending.
-    /// `cef::post_delayed_task` has no cancel API, so we use a monotonic
-    /// generation counter: each new timer increments the counter and captures
-    /// its generation; the callback short-circuits if its generation no longer
-    /// matches (i.e. a newer timer has been scheduled, or the timer was
-    /// cancelled).
-    pub pending_focus_source: Option<u64>,
-    /// Monotonically-increasing generation counter for focus-hover timers.
-    /// Incremented on every `schedule_focus_from_pointer` call so that stale
-    /// callbacks can detect they've been superseded.
+    pub zoning: ZoningState,
+
+    // Menubar state (clock, toast, label positions)
+    pub menubar: MenubarState,
+
+    // Focus-hover generation counter (replaces legacy AppRuntimeHandle pattern).
+    // Incremented on every schedule_focus_from_pointer call so stale timer
+    // callbacks can detect they've been superseded.
     pub pending_focus_generation: u64,
-    /// Captured in `after_runtime_ready`. Used by hover timers to
-    /// re-enter app state via `schedule_after`.
-    pub runtime: Option<AppRuntimeHandle<Self>>,
 }
 
-impl SolaApp for ShellApp {
-    const APP_ID: &'static str = "sola-shell";
+impl Shell {
+    /// Wayland app_id / bus app_id for the shell's own surfaces.
+    pub const APP_ID: &'static str = "sola-shell";
 
-    fn new(ctx: &mut AppCtx) -> Self {
-        let menubar_initial = serde_json::json!({ "focused": null });
-        let menubar = setup_menubar(ctx, menubar_initial);
+    /// Boot the daemon: initialise state and immediately open all four windows.
+    /// Returns `(Self, Task<Msg>)` — the Task opens the windows and maps the
+    /// resulting `window::Id` into `Msg::WindowOpened(Kind, id)`.
+    pub fn boot() -> (Self, iced::Task<Msg>) {
+        let theme = theme::default_theme();
 
-        let switcher = ctx.add_window(WindowConfig {
-            title: "switcher".into(),
-            size: (800, 400),
-            position: Some((560, 340)),
-            decorated: false,
-            transparent: true,
-            assets: SWITCHER_ASSETS,
-            initial_state: Some(serde_json::json!({
-                "visible": false,
-                "apps": [],
-                "selected": 0,
-            })),
-            zoned: false,
-            keyboard_target: false,
-            root_component: Some("/switcher.tsx"),
-        });
+        // Seed Topic::Theme at startup so other kit apps have a sticky value
+        // to replay against on connect. main() installs BusSetup before iced
+        // starts, so the bus lock is safe here.
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let bus_theme = theme::to_bus_theme();
+            let _ = bus.emit(sola_bus::topics::Topic::Theme(bus_theme));
+        }
 
-        let menu = ctx.add_window(WindowConfig {
-            title: "menu".into(),
-            size: (220, 300),
-            position: Some((0, zoning::MENUBAR_HEIGHT)),
-            decorated: false,
-            transparent: true,
-            assets: MENU_ASSETS,
-            initial_state: Some(serde_json::json!({"visible": false})),
-            zoned: false,
-            keyboard_target: false,
-            root_component: Some("/menu.tsx"),
-        });
+        // Pre-allocate window ids and produce open tasks for all four windows.
+        let (menubar_id, menubar_task) = menubar::open_window();
+        let (menu_id, menu_task) = crate::menu::open_window();
+        let (launcher_id, launcher_task) = crate::launcher::open_window();
+        let (switcher_id, switcher_task) = crate::switcher::open_window();
+        let task = iced::Task::batch([
+            menubar_task.map(|id| Msg::WindowOpened(WindowKind::Menubar, id)),
+            menu_task.map(|id| Msg::WindowOpened(WindowKind::Menu, id)),
+            launcher_task.map(|id| Msg::WindowOpened(WindowKind::Launcher, id)),
+            switcher_task.map(|id| Msg::WindowOpened(WindowKind::Switcher, id)),
+        ]);
 
-        let launcher_initial = serde_json::json!({"apps": [], "selected": 0, "query": ""});
-        let launcher = ctx.add_window(WindowConfig {
-            title: "launcher".into(),
-            size: (launcher::WIDTH, launcher::HEIGHT),
-            position: Some((700, 340)),
-            decorated: false,
-            transparent: true,
-            assets: LAUNCHER_ASSETS,
-            initial_state: Some(launcher_initial),
-            zoned: false,
-            keyboard_target: true,
-            root_component: Some("/launcher.tsx"),
-        });
-
-        let mut menus = MenuCache::new();
-        // Register the shell's system menu (for shortcut lookup).
-        menus.set_menu(AppMenuPayload {
-            app_id: Self::APP_ID.into(),
-            menus: vec![MenuDefinition {
-                label: "Sola".into(),
-                items: vec![MenuItem::Action {
-                    id: "exit".into(),
-                    label: "Exit Sola".into(),
-                    shortcut: Some(KeyCode::BACKSPACE.meta().shift()),
-                    disabled: false,
-                    checked: false,
-                }],
-            }],
-        });
-
-        let app = Self {
+        let state = Self {
+            theme,
+            menubar_window_id: Some(menubar_id),
+            menu_window_id: Some(menu_id),
+            launcher_window_id: Some(launcher_id),
+            switcher_window_id: Some(switcher_id),
             focused_app_id: None,
             focused_window_id: None,
             mru_apps: Vec::new(),
             mru_window_by_app: HashMap::new(),
             known_windows: Vec::new(),
             window_id_by_key: HashMap::new(),
-            applications: initial_applications(),
-            menus,
-            zoning: ZoningState::new(),
+            applications: ApplicationsConfig { apps: sola_core::applications::builtin_apps() },
+            menus: MenuCache::new(),
+            output_size: None,
+            menu_open: false,
+            menu_anchor_x: 0.0,
+            current_open_index: None,
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
-            menu_open: false,
-            windows: ShellWindows {
-                menubar,
-                menu,
-                switcher,
-                launcher,
-            },
-            pending_focus_source: None,
+            zoning: ZoningState::new(),
+            menubar: MenubarState::new(),
             pending_focus_generation: 0,
-            runtime: None,
         };
 
-        app.emit_registered_chords(ctx);
-
-        // Publish the merged kit + shell theme. Shell-side palette
-        // extensions (Inter font override, legacy menu sizes) layer onto
-        // the kit's baseline atoms before the shell component bindings
-        // attach, so menubar/menu slots resolve to the legacy values.
-        let mut theme = sola_kit::theme::kit_default_theme();
-        theme
-            .palette
-            .tokens
-            .extend(crate::theme::shell_palette_extensions());
-        theme.components.extend(crate::theme::shell_default_bindings());
-        ctx.emit(Topic::Theme(theme));
-
-        app
+        (state, task)
     }
 
-    fn after_runtime_ready(&mut self, handle: AppRuntimeHandle<Self>, _ctx: &mut AppCtx) {
-        self.runtime = Some(handle);
-    }
+    // -------------------------------------------------------------------------
+    // Window lookup helpers
+    // -------------------------------------------------------------------------
 
-    fn register_bus(&mut self, bus: &mut BusRegistry<Self>, _ctx: &mut AppCtx) {
-        // Default CloseApp handler is inherited from the trait — don't re-register.
-        bus.on(TopicKind::Windows, Self::on_windows);
-        bus.on(TopicKind::Zones, Self::on_zones);
-        bus.on(TopicKind::SetAppMenu, Self::on_set_app_menu);
-        bus.on(TopicKind::OutputGeometry, Self::on_output_geometry);
-        bus.on(TopicKind::MouseEntered, Self::on_mouse_entered);
-        bus.on(TopicKind::MouseClicked, Self::on_mouse_clicked);
-        bus.on(TopicKind::MouseLeft, Self::on_mouse_left);
-        bus.on(TopicKind::Chord, Self::on_chord);
-        bus.on(TopicKind::ChordReleased, Self::on_chord_released);
-        bus.on(TopicKind::LaunchResult, Self::on_launch_result);
-        bus.on(TopicKind::UserAppExited, Self::on_user_app_exited);
-        bus.on(TopicKind::Application, Self::on_application);
-    }
-
-    fn on_js_command(
-        &mut self,
-        cmd: &str,
-        args: &Value,
-        _id: Option<u64>,
-        source: &WindowHandle,
-        ctx: &mut AppCtx,
-    ) {
-        match (source.title(), cmd) {
-            ("menubar", "open_menu") => {
-                let src = args.get("source").and_then(|v| v.as_str()).unwrap_or("app");
-                let index = args.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let anchor_x = args.get("anchor_x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                self.open_menu(src, index, anchor_x, ctx);
-            }
-            ("menubar", "close_menu") => self.close_menu(ctx),
-            ("menu", "dismiss") => self.close_menu(ctx),
-            ("menu", "action") => {
-                let app_id = args.get("app_id").and_then(|v| v.as_str()).unwrap_or("");
-                let action_id = args.get("action_id").and_then(|v| v.as_str()).unwrap_or("");
-                tracing::info!(app_id, action_id, "menu action");
-                if app_id == Self::APP_ID && action_id == "exit" {
-                    ctx.emit(Topic::Shutdown);
-                } else if action_id == SYNTHESIZED_CLOSE_ACTION {
-                    ctx.emit(Topic::CloseApp(app_id.to_string()));
-                } else {
-                    ctx.emit(Topic::MenuAction(sola_bus::topics::MenuActionPayload {
-                        app_id: app_id.to_string(),
-                        action_id: action_id.to_string(),
-                    }));
-                }
-                self.close_menu(ctx);
-            }
-            ("switcher", "select") => {
-                let index = args.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                if self.switcher.active && index < self.switcher.apps.len() {
-                    self.switcher.selected = index;
-                }
-            }
-            ("launcher", "query") => {
-                let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                self.launcher.apply_query(&self.applications, text);
-                self.render_launcher();
-            }
-            ("launcher", "nav") => {
-                let max = self.launcher.filtered_ids.len().saturating_sub(1);
-                let cur = self.launcher.selected;
-                let new_sel = if let Some(idx) = args.get("index").and_then(|v| v.as_u64()) {
-                    (idx as usize).min(max)
-                } else if let Some(dir) = args.get("dir").and_then(|v| v.as_str()) {
-                    match dir {
-                        "up" => cur.saturating_sub(1),
-                        "down" => (cur + 1).min(max),
-                        _ => cur,
-                    }
-                } else {
-                    cur
-                };
-                if new_sel != cur {
-                    self.launcher.selected = new_sel;
-                    self.render_launcher();
-                }
-            }
-            ("launcher", "launch") => {
-                let explicit = args.get("app_id").and_then(|v| v.as_str());
-                let app_id = explicit
-                    .map(str::to_string)
-                    .or_else(|| {
-                        self.launcher
-                            .filtered_ids
-                            .get(self.launcher.selected)
-                            .cloned()
-                    })
-                    .unwrap_or_default();
-                tracing::info!(
-                    %app_id,
-                    explicit = explicit.is_some(),
-                    "launcher cmd 'launch' received"
-                );
-                self.launch_and_close(&app_id, ctx);
-            }
-            ("launcher", "close") => {
-                self.close_launcher(ctx);
-            }
-            _ => {}
-        }
-    }
-}
-
-impl ShellApp {
-    fn on_windows(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
-        let Topic::Windows(windows) = delivery.topic else {
-            return;
-        };
-        self.handle_windows_update(windows.clone(), ctx);
-        if self.switcher.active {
-            let apps = self.switcher_apps_value();
-            self.windows.switcher.send_to_js(&serde_json::json!({
-                "event": "render",
-                "apps": apps,
-                "selected": self.switcher.selected,
-            }));
-        }
-    }
-
-    fn on_zones(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
-        let Topic::Zones(zones) = delivery.topic else {
-            return;
-        };
-        tracing::info!(count = zones.len(), "zones updated");
-        self.zoning.set_zones(zones.clone());
-        // Re-apply config zones to any windows already known. New
-        // windows that arrive after this will pick up the mapping via
-        // apply_config_zone in handle_windows_update.
-        let windows: Vec<(String, u32)> = self
-            .known_windows
-            .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| (w.app_id.clone(), w.window_id))
-            .collect();
-        for (app_id, wid) in windows {
-            if let Some(frame) = self.zoning.apply_config_zone(&app_id, wid) {
-                ctx.emit(Topic::Frame(frame));
-            }
-        }
-    }
-
-    fn on_set_app_menu(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
-        let Topic::SetAppMenu(payload) = delivery.topic else {
-            return;
-        };
-        self.menus.set_menu(payload.clone());
-
-        self.emit_registered_chords(ctx);
-
-        if self.focused_app_id.as_deref() == Some(&payload.app_id) {
-            let app_name = payload
-                .menus
-                .first()
-                .map(|d| d.label.as_str())
-                .unwrap_or(&payload.app_id);
-            let menu_labels: Vec<String> = payload.menus.iter().map(|d| d.label.clone()).collect();
-            self.windows.menubar.send_to_js(&serde_json::json!({
-                "event": "focus",
-                "app_name": app_name,
-                "menu_labels": menu_labels,
-            }));
-        }
-    }
-
-    fn on_output_geometry(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
-        let Topic::OutputGeometry(geo) = delivery.topic else {
-            return;
-        };
-        self.zoning.set_output_size(geo);
-        self.emit_all_frames(ctx);
-        self.emit_composition(ctx);
-    }
-
-    fn on_mouse_entered(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
-        let Topic::MouseEntered(MouseEnteredPayload { window_id }) = delivery.topic else {
-            return;
-        };
-        self.schedule_focus_from_pointer(*window_id);
-    }
-
-    fn on_mouse_clicked(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
-        let Topic::MouseClicked(MouseClickedPayload { window_id }) = delivery.topic else {
-            return;
-        };
-        // A click is an explicit signal — bypass the hover dwell and
-        // focus immediately, dropping any pending hover timer.
-        self.cancel_pending_focus();
-        // While a menubar menu is open we run in macOS-style menu mode:
-        // a click on any non-shell window (i.e. outside the menubar and
-        // dropdown surfaces) dismisses the menu. Clicks landing on the
-        // menu/menubar surfaces are handled by their own JS.
-        if self.menu_open {
-            let on_shell = self
-                .known_windows
-                .iter()
-                .find(|w| w.window_id == *window_id)
-                .map(|w| w.app_id == Self::APP_ID)
-                .unwrap_or(false);
-            if !on_shell {
-                self.close_menu(ctx);
-            }
-            return;
-        }
-        self.focus_window_from_pointer(*window_id, ctx);
-    }
-
-    fn on_mouse_left(&mut self, _delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
-        // Cursor left all known windows — drop any pending hover focus
-        // so we don't switch into an app the user has moved away from.
-        self.cancel_pending_focus();
-    }
-
-    fn on_chord(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
-        let Topic::Chord(evt) = delivery.topic else { return };
-        crate::keys::handle_chord(self, ctx, evt.clone());
-    }
-
-    fn on_chord_released(&mut self, delivery: &sola_bus::Delivery, ctx: &mut AppCtx) {
-        let Topic::ChordReleased(evt) = delivery.topic else {
-            return;
-        };
-        crate::keys::handle_chord_released(self, ctx, evt.clone());
-    }
-
-    fn on_launch_result(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
-        let Topic::LaunchResult(LaunchResultPayload {
-            app_id: _,
-            command,
-            ok,
-            error,
-        }) = delivery.topic
-        else {
-            return;
-        };
-        if *ok {
-            tracing::info!(command = %command, "LaunchResult ok");
-        } else {
-            tracing::warn!(
-                command = %command,
-                error = error.as_deref().unwrap_or(""),
-                "LaunchResult failed"
-            );
-            let err_msg = error.as_deref().unwrap_or("launch failed");
-            self.push_toast(&format!("{command}: {err_msg}"));
-        }
-    }
-
-    fn on_user_app_exited(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
-        let Topic::UserAppExited(UserAppExitedPayload {
-            app_id: _,
-            command,
-            code,
-            signal,
-        }) = delivery.topic
-        else {
-            return;
-        };
-        let detail = match (code, signal) {
-            (Some(c), _) => format!("exit {c}"),
-            (_, Some(s)) => format!("signal {s}"),
-            _ => "exited".to_string(),
-        };
-        tracing::warn!(
-            command = %command,
-            code = ?code,
-            signal = ?signal,
-            "user app exited"
-        );
-        self.push_toast(&format!("{command} — {detail}"));
-    }
-
-    fn on_application(&mut self, delivery: &sola_bus::Delivery, _ctx: &mut AppCtx) {
-        let Topic::Application(app) = delivery.topic else {
-            return;
-        };
-        // Built-ins live in code; the bus must not be able to shadow
-        // them or remove them with a stray emit/retract.
-        if is_builtin(&app.app_id) {
-            return;
-        }
-        self.applications.remove(&app.app_id);
-        if !delivery.retracted {
-            self.applications.apps.push(app.clone());
-        }
-        // Re-render the launcher if it's currently open so a newly
-        // added app shows up without the user having to retype.
-        if self.launcher.active {
-            let query = self.launcher.query.clone();
-            self.launcher.apply_query(&self.applications, &query);
-            self.render_launcher();
-        }
-    }
-
-    /// Look up a configured application by its `app_id`.
-    pub fn application(&self, app_id: &str) -> Option<&Application> {
-        self.applications.get(app_id)
-    }
-
-    /// Icon reference (`"<pack>/<name>"`) for an application, if configured.
-    pub fn icon_for(&self, app_id: &str) -> Option<&str> {
-        self.application(app_id).map(|a| a.icon.as_str())
-    }
-
-
-
-
-
-    pub fn emit_registered_chords(&self, ctx: &mut AppCtx) {
-        let source = self.shell_key_chords();
-        let mut chords: Vec<RegisteredChord> = Vec::with_capacity(source.len() * 2 + 2);
-        for c in &source {
-            chords.push(crate::keys::to_registered(c));
-            // Numpad keys have a different keysym when NumLock is off;
-            // register both so zoning fires regardless of state.
-            if let Some(alt) = crate::keys::to_registered_alt(c) {
-                chords.push(alt);
-            }
-        }
-        // Register bare Super_L with no modifiers so we get a released
-        // event when the user lets the Super key go. Used to confirm the
-        // app switcher (Meta+Tab opens, Meta release selects).
-        chords.push(RegisteredChord {
-            keysym: crate::keys::KEYSYM_SUPER_L,
-            modifiers: 0,
-        });
-        // While a shell overlay is active, grab Escape so the user can
-        // dismiss with one key regardless of which WebView owns DOM focus.
-        // Deregistered as soon as the overlay closes so terminal apps
-        // (vim, less, etc.) keep their Escape.
-        if self.launcher.active || self.switcher.active || self.menu_open {
-            chords.push(RegisteredChord {
-                keysym: crate::keys::KEYSYM_ESCAPE,
-                modifiers: 0,
-            });
-        }
-        chords.sort_by_key(|c| (c.modifiers, c.keysym));
-        chords.dedup();
-        ctx.emit(Topic::RegisteredChords(chords));
-    }
-
-    fn shell_key_chords(&self) -> Vec<KeyChord> {
-        // Always include the shell's own meta-bound shortcuts (e.g. Exit
-        // Sola). Then add the focused Sola app's meta shortcuts — and ONLY
-        // that app's. Registering every cached app's chords globally
-        // means River grabs them no matter who has focus, swallowing
-        // chords like Cmd+W when a non-Sola client (e.g. Zed) is focused.
-        let mut bindings: Vec<KeyChord> = self
-            .menus
-            .key_bindings_for(Self::APP_ID)
-            .into_iter()
-            .filter(|b| b.meta)
-            .collect();
-        if let Some(focused) = self.focused_app_id.as_deref() {
-            if focused != Self::APP_ID {
-                bindings.extend(
-                    self.menus
-                        .key_bindings_for(focused)
-                        .into_iter()
-                        .filter(|b| b.meta),
-                );
-            }
-        }
-
-        // Meta+Tab activates switcher.
-        bindings.push(KeyCode::TAB.meta());
-
-        // Meta+` cycles through the focused app's own windows.
-        bindings.push(KeyCode::GRAVE.meta());
-
-        // Meta+Space toggles launcher.
-        bindings.push(KeyCode::SPACE.meta());
-
-        // Meta+Q: close focused app.
-        bindings.push(KeyCode::Q.meta());
-
-        // Meta+Numpad zones a window.
-        for &keycode in zoning::ZONING_KEYCODES {
-            bindings.push(KeyChord {
-                keycode: keycode.into(),
-                ..KeyCode::TAB.meta()
-            });
-        }
-
-        bindings.sort_by_key(|b| (b.keycode, b.meta, b.alt, b.ctrl, b.shift));
-        bindings.dedup();
-
-        bindings
-    }
-
-    /// Drop any pending hover-focus timer.
-    fn cancel_pending_focus(&mut self) {
-        // Clear the flag. Any already-scheduled callback checks its captured
-        // generation against pending_focus_source on arrival and becomes a
-        // no-op if they differ.
-        // NOTE: We do NOT reset pending_focus_generation here — it must keep
-        // monotonically increasing so old captured generations stay stale.
-        self.pending_focus_source = None;
-    }
-
-    /// Schedule focus-follows-mouse for `window_id` after `FOCUS_HOVER_DELAY`.
-    /// Re-entries cancel the previous timer; the cursor must dwell on a
-    /// single window for the full delay before focus actually moves.
-    fn schedule_focus_from_pointer(&mut self, window_id: u32) {
-        self.cancel_pending_focus();
-
-        // Skip surfaces that wouldn't focus anyway: shell chrome, our own
-        // overlays' active state, or the already-focused window.
-        let Some(info) = self.known_windows.iter().find(|w| w.window_id == window_id) else {
-            return;
-        };
-        if info.app_id == Self::APP_ID {
-            return;
-        }
-        if self.menu_open || self.switcher.active || self.launcher.active {
-            return;
-        }
-        if self.focused_window_id == Some(window_id) {
-            return;
-        }
-
-        let Some(handle) = self.runtime.clone() else {
-            return;
-        };
-
-        // Increment and capture the generation BEFORE posting the closure so
-        // the closure captures the value that was current when this timer was
-        // scheduled. cef::post_delayed_task has no cancel API, so we rely on
-        // generation matching to detect stale callbacks.
-        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
-        let timer_gen = self.pending_focus_generation;
-        self.pending_focus_source = Some(timer_gen);
-
-        let delay_ms = FOCUS_HOVER_DELAY.as_millis() as u64;
-        handle.schedule_after(delay_ms, move |app, ctx| {
-            // Stale-callback guard: bail if a newer timer has been scheduled
-            // (pending_focus_source holds a different generation) or if the
-            // timer was cancelled (pending_focus_source is None).
-            if app.pending_focus_source != Some(timer_gen) {
-                return;
-            }
-            app.pending_focus_source = None;
-            app.focus_window_from_pointer(window_id, ctx);
-        });
-    }
-
-    fn focus_window_from_pointer(&mut self, window_id: u32, ctx: &mut AppCtx) {
-        let Some(info) = self.known_windows.iter().find(|w| w.window_id == window_id) else {
-            return;
-        };
-        if info.app_id == Self::APP_ID {
-            return;
-        }
-        if self.menu_open || self.switcher.active || self.launcher.active {
-            return;
-        }
-        let app_id = info.app_id.clone();
-        self.set_focus(&app_id, ctx);
-        self.focused_window_id = Some(window_id);
-        self.mru_window_by_app.insert(app_id, window_id);
-        ctx.emit(Topic::Focus(FocusTarget { window_id }));
-        self.emit_composition(ctx);
-    }
-
-    /// Advance keyboard focus to the next window of the currently
-    /// focused app. No-op if there are fewer than two such windows.
-    /// Wraps around in `known_windows` order.
-    pub fn cycle_focused_app_windows(&mut self, ctx: &mut AppCtx) {
-        let Some(app_id) = self.focused_app_id.clone() else {
-            return;
-        };
-        let windows: Vec<u32> = self
-            .known_windows
-            .iter()
-            .filter(|w| w.app_id == app_id)
-            .map(|w| w.window_id)
-            .collect();
-        if windows.len() < 2 {
-            return;
-        }
-        let cur_idx = self
-            .focused_window_id
-            .and_then(|cur| windows.iter().position(|w| *w == cur))
-            .unwrap_or(0);
-        let next_wid = windows[(cur_idx + 1) % windows.len()];
-        self.focused_window_id = Some(next_wid);
-        self.mru_window_by_app.insert(app_id, next_wid);
-        ctx.emit(Topic::Focus(FocusTarget {
-            window_id: next_wid,
-        }));
-        self.emit_composition(ctx);
-    }
-
-    pub fn set_focus(&mut self, app_id: &str, ctx: &mut AppCtx) {
-        let app_changed = self.focused_app_id.as_deref() != Some(app_id);
-        self.focused_app_id = Some(app_id.to_string());
-        self.zoning.set_focused(app_id.to_string());
-        self.mru_apps.retain(|m| m != app_id);
-        self.mru_apps.insert(0, app_id.to_string());
-
-        // Close any open menu — the focus event to JS handles the menubar UI.
-        if self.menu_open {
-            self.menu_open = false;
-            self.windows.menu.send_to_js(&serde_json::json!({"event": "clear"}));
-        }
-
-        // Per-app menu chords are only registered with River while their
-        // app is focused — otherwise (e.g.) sola-browser's Meta+W would
-        // be intercepted while a non-Sola client like Zed is focused.
-        if app_changed {
-            self.emit_registered_chords(ctx);
-        }
-
-        let synthesized;
-        let menu = match self.menus.get_menu(app_id) {
-            Some(m) => m,
-            None => {
-                synthesized = synthesized_menu(app_id, &self.display_label(app_id));
-                &synthesized
-            }
-        };
-        let app_name = menu
-            .menus
-            .first()
-            .map(|d| d.label.as_str())
-            .unwrap_or(app_id);
-        let menu_labels: Vec<String> = menu.menus.iter().map(|d| d.label.clone()).collect();
-
-        self.windows.menubar.send_to_js(&serde_json::json!({
-            "event": "focus",
-            "app_name": app_name,
-            "menu_labels": menu_labels,
-        }));
-    }
-
-    /// Resolve a human-readable label for an app_id. Falls back to the
-    /// app_id itself title-cased if no `applications` entry exists.
-    pub fn display_label(&self, app_id: &str) -> String {
-        if let Some(app) = self.applications.get(app_id) {
-            return app.label.clone();
-        }
-        let mut chars = app_id.chars();
-        match chars.next() {
-            Some(c) => c.to_uppercase().chain(chars).collect(),
-            None => String::new(),
-        }
-    }
-
-
-
-    /// Look up a window_id from the known windows list by (app_id, title).
+    /// Look up a window_id by (app_id, title). sola-river includes shell surfaces
+    /// in Topic::Windows with the title set by the iced `title()` callback.
     pub fn lookup_window_id(&self, app_id: &str, title: &str) -> Option<u32> {
         self.window_id_by_key
             .get(&(app_id.to_string(), title.to_string()))
             .copied()
     }
 
-    /// Look up any window_id for an app_id (first match).
-    pub fn lookup_any_window_id(&self, app_id: &str) -> Option<u32> {
-        self.known_windows
-            .iter()
-            .find(|w| w.app_id == app_id)
-            .map(|w| w.window_id)
-    }
+    // -------------------------------------------------------------------------
+    // Emit helpers — compute and push bus topics from current state
+    // -------------------------------------------------------------------------
 
-    /// Build the composition list (bottom to top) and emit it.
-    pub fn emit_composition(&self, ctx: &mut AppCtx) {
-        let mut entries = Vec::new();
+    /// Build the composition list (bottom to top) and emit Topic::Composition.
+    ///
+    /// Stack order (bottom → top):
+    ///   1. Shell menubar — always at bottom.
+    ///   2. App windows ordered by MRU (least recent first), per-app MRU window on top.
+    ///   3. Shell overlays when active (menu, switcher, launcher — launcher on top).
+    pub fn emit_composition(&self) {
+        let mut entries: Vec<CompositionEntry> = Vec::new();
 
-        // 1. Shell menubar — always at the bottom.
+        // 1. Menubar — always at the bottom.
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
             entries.push(CompositionEntry { window_id: wid });
         }
 
         // 2. App windows ordered by MRU (least recent first = bottom of stack).
-        // Within each app, the per-app MRU window stacks last so it sits on
-        // top of its siblings — important for Meta+` cycling and any time
-        // the same app has multiple overlapping windows.
-        let mut seen_app_ids = HashSet::new();
+        // Within each app, the per-app MRU window sits on top of its siblings.
+        let mut seen_app_ids: HashSet<&str> = HashSet::new();
         for app_id in self.mru_apps.iter().rev() {
-            if app_id == Self::APP_ID {
+            if app_id.as_str() == Self::APP_ID {
                 continue;
             }
-            seen_app_ids.insert(app_id.clone());
+            seen_app_ids.insert(app_id.as_str());
             let top_wid = self.mru_window_by_app.get(app_id).copied();
             for w in &self.known_windows {
                 if w.app_id == *app_id && Some(w.window_id) != top_wid {
-                    entries.push(CompositionEntry {
-                        window_id: w.window_id,
-                    });
+                    entries.push(CompositionEntry { window_id: w.window_id });
                 }
             }
             if let Some(wid) = top_wid {
@@ -792,18 +236,15 @@ impl ShellApp {
                 }
             }
         }
-
         // Apps not yet in MRU.
         for w in &self.known_windows {
-            if w.app_id == Self::APP_ID || seen_app_ids.contains(&w.app_id) {
+            if w.app_id == Self::APP_ID || seen_app_ids.contains(w.app_id.as_str()) {
                 continue;
             }
-            entries.push(CompositionEntry {
-                window_id: w.window_id,
-            });
+            entries.push(CompositionEntry { window_id: w.window_id });
         }
 
-        // 3. Shell panels on top when active.
+        // 3. Shell overlays on top when active.
         if self.menu_open {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
                 entries.push(CompositionEntry { window_id: wid });
@@ -820,197 +261,467 @@ impl ShellApp {
             }
         }
 
-        ctx.emit(Topic::Composition(entries));
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::Composition(entries));
+        }
     }
 
-    /// Emit Frame updates for all managed windows.
+    /// Emit Topic::RegisteredChords based on current overlay state and focused app.
     ///
-    /// - Menubar: full width, fixed height.
-    /// - Launcher / menu: full-screen overlay below the menubar (each
-    ///   draws its own panel via CSS inside an otherwise-transparent
-    ///   surface).
-    /// - Switcher: centered 800x400.
-    /// - Sola apps (sola-*): zoned frame, or full-screen-below-menubar default.
-    /// - External apps: zoned frame only. No frame if unzoned (self-positioning).
-    ///
-    /// Shell overlays are framed eagerly (on every output_geometry,
-    /// not just at activation) so their surfaces sit at their final
-    /// dimensions while hidden. Show/hide via the composition topic is
-    /// then a pure visibility flip — no resize+reposition lag when the
-    /// user actually opens them.
-    pub fn emit_all_frames(&self, ctx: &mut AppCtx) {
-        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
-            if let Some(frame) = self.zoning.menubar_frame(wid) {
-                ctx.emit(Topic::Frame(frame));
+    /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+Grave,
+    /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Bare Super_L
+    /// always registered so ChordReleased fires for switcher confirm. Escape
+    /// registered only while an overlay is active.
+    pub fn emit_registered_chords(&self) {
+        let source = self.shell_key_chords();
+        let mut chords: Vec<RegisteredChord> = Vec::with_capacity(source.len() * 2 + 2);
+        for c in &source {
+            chords.push(keys::to_registered(c));
+            // Numpad keys have a different keysym when NumLock is off;
+            // register both so zoning fires regardless of NumLock state.
+            if let Some(alt) = keys::to_registered_alt(c) {
+                chords.push(alt);
             }
+        }
+        // Bare Super_L (no modifiers) so we receive ChordReleased when the user
+        // lets the Super key go — used to confirm the app switcher.
+        chords.push(RegisteredChord {
+            keysym: keys::KEYSYM_SUPER_L,
+            modifiers: 0,
+        });
+        // While any overlay is active, grab Escape so the user can dismiss it
+        // regardless of which surface owns input focus. Deregistered as soon as
+        // the overlay closes so terminal apps keep their Escape.
+        if self.launcher.active || self.switcher.active || self.menu_open {
+            chords.push(RegisteredChord {
+                keysym: keys::KEYSYM_ESCAPE,
+                modifiers: 0,
+            });
+        }
+        chords.sort_by_key(|c| (c.modifiers, c.keysym));
+        chords.dedup();
+
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::RegisteredChords(chords));
+        }
+    }
+
+    /// Build the list of chords the shell wants River to grab.
+    pub fn shell_key_chords(&self) -> Vec<KeyChord> {
+        // Shell-own menu bindings (e.g. Exit Sola shortcut).
+        let mut bindings: Vec<KeyChord> = self
+            .menus
+            .key_bindings_for(Self::APP_ID)
+            .into_iter()
+            .filter(|b| b.meta)
+            .collect();
+
+        // Focused app's menu shortcuts (meta-bound only, only while focused so
+        // River doesn't grab them globally when other clients have focus).
+        if let Some(focused) = self.focused_app_id.as_deref() {
+            if focused != Self::APP_ID {
+                bindings.extend(
+                    self.menus
+                        .key_bindings_for(focused)
+                        .into_iter()
+                        .filter(|b| b.meta),
+                );
+            }
+        }
+
+        // Fixed shell chords.
+        bindings.push(KeyCode::TAB.meta());   // Meta+Tab → switcher
+        // TODO Future: cycle MRU windows of focused app. Not registering until
+        // implemented to avoid stealing the chord from clients.
+        // bindings.push(KeyCode::GRAVE.meta());
+        bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
+        bindings.push(KeyCode::Q.meta());     // Meta+Q → close focused app
+
+        // Meta+Numpad zones a window.
+        for &raw in crate::zoning::ZONING_KEYCODES {
+            bindings.push(KeyChord {
+                keycode: KeyCode::from(raw),
+                ..KeyCode::TAB.meta()
+            });
+        }
+
+        bindings.sort_by_key(|b| (b.keycode.raw(), b.meta, b.alt, b.ctrl, b.shift));
+        bindings.dedup();
+        bindings
+    }
+
+    /// Emit Topic::Frame for all shell windows and any explicitly-zoned app windows.
+    ///
+    /// Shell overlays are framed eagerly (even when hidden) so show/hide via
+    /// Topic::Composition is a pure visibility flip with no resize lag.
+    pub fn emit_all_frames(&self) {
+        let mut frames: Vec<FrameUpdate> = Vec::new();
+
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
+            if let Some(f) = self.zoning.menubar_frame(wid) { frames.push(f); }
         }
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
-            if let Some(frame) = self.zoning.default_app_frame(wid) {
-                ctx.emit(Topic::Frame(frame));
-            }
+            if let Some(f) = self.zoning.default_app_frame(wid) { frames.push(f); }
         }
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
-            if let Some(frame) = self.zoning.default_app_frame(wid) {
-                ctx.emit(Topic::Frame(frame));
-            }
+            if let Some(f) = self.zoning.default_app_frame(wid) { frames.push(f); }
         }
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
-            if let Some(frame) = self.zoning.switcher_frame(wid) {
-                ctx.emit(Topic::Frame(frame));
-            }
+            if let Some(f) = self.zoning.switcher_frame(wid) { frames.push(f); }
         }
         for w in &self.known_windows {
-            if w.app_id == Self::APP_ID {
-                continue;
-            }
-            if let Some(frame) = self.zoning.window_frame(w.window_id) {
-                ctx.emit(Topic::Frame(frame));
+            if w.app_id == Self::APP_ID { continue; }
+            if let Some(f) = self.zoning.window_frame(w.window_id) {
+                frames.push(f);
             } else if w.app_id.starts_with("sola-") {
-                // Sola apps get full-screen-below-menubar by default.
-                if let Some(frame) = self.zoning.default_app_frame(w.window_id) {
-                    ctx.emit(Topic::Frame(frame));
+                if let Some(f) = self.zoning.default_app_frame(w.window_id) {
+                    frames.push(f);
+                }
+            }
+        }
+
+        if !frames.is_empty() {
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                for f in frames {
+                    let _ = bus.emit(Topic::Frame(f));
                 }
             }
         }
     }
 
-    /// Handle new/removed windows from sola-river.
-    pub fn handle_windows_update(&mut self, windows: Vec<Window>, ctx: &mut AppCtx) {
-        tracing::info!(count = windows.len(), "shell received Windows");
-        let old_app_ids: HashSet<String> = self
-            .known_windows
-            .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| w.app_id.clone())
-            .collect();
-        let new_app_ids: HashSet<String> = windows
-            .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| w.app_id.clone())
-            .collect();
+    // -------------------------------------------------------------------------
+    // iced Application interface
+    // -------------------------------------------------------------------------
 
-        let added: Vec<String> = new_app_ids
-            .iter()
-            .filter(|id| !old_app_ids.contains(id.as_str()))
-            .cloned()
-            .collect();
-
-        let removed: Vec<String> = old_app_ids
-            .iter()
-            .filter(|id| !new_app_ids.contains(id.as_str()))
-            .cloned()
-            .collect();
-
-        // Rebuild lookup map.
-        self.window_id_by_key.clear();
-        for w in &windows {
-            self.window_id_by_key
-                .insert((w.app_id.clone(), w.title.clone()), w.window_id);
+    pub fn title(&self, window: iced::window::Id) -> String {
+        if Some(window) == self.menubar_window_id {
+            return "menubar".to_string();
         }
+        if Some(window) == self.menu_window_id {
+            return "menu".to_string();
+        }
+        if Some(window) == self.launcher_window_id {
+            return "launcher".to_string();
+        }
+        if Some(window) == self.switcher_window_id {
+            return "switcher".to_string();
+        }
+        Self::APP_ID.to_string()
+    }
 
-        self.known_windows = windows;
+    pub fn theme(&self, _window: iced::window::Id) -> iced::Theme {
+        self.theme.clone()
+    }
 
-        // Single source of truth for switcher ordering (MRU). See
-        // switcher::rebuild_switcher_apps.
-        self.switcher.apps = self.rebuild_switcher_apps();
+    /// Estimate the left-edge X of menu label `index` in the menubar row.
+    ///
+    /// This is font-metric math, not a post-layout measurement.  It gives a
+    /// reasonable approximation until real geometry is available via
+    /// MenuLabelPosition events.
+    ///
+    /// Layout is:
+    ///   [system-btn ~34px] [app-title: (chars×7.5)+16] [label[1]: ...] ...
+    ///
+    /// Average character width at the default ~13px font size: ~7.5px.
+    /// Padding per label: [2, 8] = 2×8 = 16px total horizontal.
+    ///
+    /// Index 0 is the app-title/system-menu (left edge ≈ 34px).
+    /// Index n≥1 is menus[n] (accumulates label widths from index 1 onward).
+    pub fn estimate_label_x(&self, index: usize) -> f32 {
+        const CHAR_WIDTH: f32 = 7.5;
+        const PAD_H: f32 = 16.0; // 2×8px horizontal padding
+        const SYSTEM_BTN_W: f32 = 34.0;
 
-        let focused_app_was_removed = self
+        // Width of the app title label (index 0 slot).
+        let title_label = self
             .focused_app_id
             .as_deref()
-            .map(|f| removed.iter().any(|r| r == f))
-            .unwrap_or(false);
-        for id in &removed {
-            self.mru_apps.retain(|m| m != id);
-            self.mru_window_by_app.remove(id);
-            self.zoning.forget_app(id);
-            if self.focused_app_id.as_deref() == Some(id.as_str()) {
-                self.focused_app_id = None;
-                self.focused_window_id = None;
-            }
+            .and_then(|id| self.menus.get_menu(id))
+            .and_then(|p| p.menus.first())
+            .map(|m| m.label.as_str())
+            .unwrap_or("");
+        let title_w = title_label.len() as f32 * CHAR_WIDTH + PAD_H;
+
+        if index == 0 {
+            return SYSTEM_BTN_W;
         }
 
-        // Clean up zone tracking for removed windows.
-        let current_wids: HashSet<u32> = self.known_windows.iter().map(|w| w.window_id).collect();
-        self.zoning
-            .window_zones
-            .retain(|wid, _| current_wids.contains(wid));
+        // Accumulate widths for labels [1..index].
+        let app_id = self.focused_app_id.as_deref().unwrap_or("");
+        let payload = self.menus.get_menu(app_id);
 
-        // For newly appeared apps, apply their saved zone config to the
-        // first window. Subsequent windows of the same app are unzoned.
-        for w in &self.known_windows {
-            if w.app_id == Self::APP_ID {
-                continue;
-            }
-            if let Some(frame) = self.zoning.apply_config_zone(&w.app_id, w.window_id) {
-                ctx.emit(Topic::Frame(frame));
-            }
+        let mut x = SYSTEM_BTN_W + title_w;
+        for i in 1..index {
+            let label_len = payload
+                .and_then(|p| p.menus.get(i))
+                .map(|m| m.label.len())
+                .unwrap_or(6); // fallback 6 chars
+            x += label_len as f32 * CHAR_WIDTH + PAD_H;
         }
+        x
+    }
 
-        // Emit frames for menubar and all explicitly-zoned windows.
-        self.emit_all_frames(ctx);
-        self.emit_composition(ctx);
+    pub fn subscription(&self) -> iced::Subscription<Msg> {
+        use iced::time;
 
-        // Focus the newest app so the user can start using it immediately.
-        // If no new app appeared but the focused app was just closed, fall
-        // back to the next MRU app — or clear the menubar entirely if there
-        // are no apps left.
-        if let Some(id) = added.first() {
-            self.set_focus(id, ctx);
-            if let Some(wid) = self.lookup_any_window_id(id) {
-                self.focused_window_id = Some(wid);
-                self.mru_window_by_app.insert(id.clone(), wid);
-                ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
-            }
-            self.emit_composition(ctx);
-        } else if focused_app_was_removed {
-            if let Some(next) = self.mru_apps.first().cloned() {
-                self.set_focus(&next, ctx);
-                let wid = self
-                    .mru_window_by_app
-                    .get(&next)
-                    .copied()
-                    .or_else(|| self.lookup_any_window_id(&next));
-                if let Some(wid) = wid {
-                    self.focused_window_id = Some(wid);
-                    self.mru_window_by_app.insert(next.clone(), wid);
-                    ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
+        let mut subs = vec![
+            sola_kit::app::bus_subscription().map(Msg::Bus),
+            time::every(Duration::from_secs(10)).map(|_| Msg::ClockTick),
+        ];
+
+        // While the launcher is active, subscribe to keyboard events so
+        // ArrowUp/Down, Enter, and Escape route to launcher messages.
+        // Printable characters are already handled by the text input's
+        // on_input callback (→ Msg::LauncherQuery). Only navigation keys
+        // need explicit routing here; they would otherwise be eaten by the
+        // chord-dispatch guard in on_chord that eats all chords while
+        // launcher.active is true.
+        if self.launcher.active {
+            let kb = iced::keyboard::listen().map(|event| {
+                use iced::keyboard::{Event, Key};
+                use iced::keyboard::key::Named;
+                match event {
+                    Event::KeyPressed { key: Key::Named(Named::ArrowUp), .. } => {
+                        Msg::LauncherNav { up: true }
+                    }
+                    Event::KeyPressed { key: Key::Named(Named::ArrowDown), .. } => {
+                        Msg::LauncherNav { up: false }
+                    }
+                    Event::KeyPressed { key: Key::Named(Named::Enter), .. } => Msg::Launch,
+                    Event::KeyPressed { key: Key::Named(Named::Escape), .. } => {
+                        Msg::CloseLauncher
+                    }
+                    _ => Msg::Noop,
                 }
-                self.emit_composition(ctx);
-            } else {
-                self.clear_menubar_focus();
-                // No focused app left — drop any per-app chords that were
-                // still registered with River.
-                self.emit_registered_chords(ctx);
+            });
+            subs.push(kb);
+        }
+
+        iced::Subscription::batch(subs)
+    }
+
+    pub fn update(&mut self, msg: Msg) -> iced::Task<Msg> {
+        match msg {
+            Msg::Bus(arc) => self.handle_bus(&arc),
+            Msg::WindowOpened(_kind, _id) => {
+                // Window id was pre-allocated in boot(); the OS confirmed it.
+                iced::Task::none()
             }
+            Msg::ClockTick => {
+                self.menubar.clock_now = chrono::Local::now();
+                iced::Task::none()
+            }
+            Msg::ToastExpire(toast_gen) => {
+                self.menubar.expire_toast(toast_gen);
+                iced::Task::none()
+            }
+            Msg::OpenMenu { index, is_system: _ } => {
+                self.menu_anchor_x = self
+                    .menubar
+                    .label_positions
+                    .get(index)
+                    .copied()
+                    .filter(|x| *x > 0.0)
+                    .unwrap_or_else(|| self.estimate_label_x(index));
+                self.menu_open = true;
+                self.current_open_index = Some(index);
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::HoverMenu { index } => {
+                if self.menu_open && self.current_open_index != Some(index) {
+                    self.menu_anchor_x = self
+                        .menubar
+                        .label_positions
+                        .get(index)
+                        .copied()
+                        .filter(|x| *x > 0.0)
+                        .unwrap_or_else(|| self.estimate_label_x(index));
+                    self.current_open_index = Some(index);
+                }
+                iced::Task::none()
+            }
+            Msg::CloseMenu => {
+                self.menu_open = false;
+                self.current_open_index = None;
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::MenuAction { app_id, action_id } => {
+                if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                    if app_id == Self::APP_ID && action_id == "exit" {
+                        let _ = bus.emit(Topic::Shutdown);
+                    } else if action_id == "_close" {
+                        if let Some(ref focused) = self.focused_app_id.clone() {
+                            let _ = bus.emit(Topic::CloseApp(focused.clone()));
+                        }
+                    } else {
+                        let _ = bus.emit(Topic::MenuAction(
+                            MenuActionPayload { app_id, action_id },
+                        ));
+                    }
+                }
+                self.menu_open = false;
+                self.current_open_index = None;
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::MenuLabelPosition { index, x } => {
+                if self.menubar.label_positions.len() <= index {
+                    self.menubar.label_positions.resize(index + 1, 0.0);
+                }
+                self.menubar.label_positions[index] = x;
+                iced::Task::none()
+            }
+            // --- Launcher ---
+            Msg::OpenLauncher => {
+                self.launcher.prior_focus = self.focused_window_id;
+                self.launcher.active = true;
+                let apps = self.applications.clone();
+                self.launcher.apply_query(&apps, "");
+                self.emit_composition();
+                self.emit_registered_chords();
+                // Emit Topic::Focus to route keyboard to the launcher surface.
+                if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
+                }
+                // Also focus the query input inside iced.
+                iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
+                    crate::launcher::view::QUERY_INPUT_ID,
+                ))
+            }
+            Msg::CloseLauncher => {
+                self.launcher.active = false;
+                self.emit_composition();
+                self.emit_registered_chords();
+                // Restore focus to the previously focused app window.
+                if let Some(wid) = self.launcher.prior_focus {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
+                }
+                iced::Task::none()
+            }
+            Msg::LauncherQuery(text) => {
+                let apps = self.applications.clone();
+                self.launcher.apply_query(&apps, &text);
+                iced::Task::none()
+            }
+            Msg::LauncherNav { up } => {
+                let len = self.launcher.filtered_ids.len();
+                if len == 0 {
+                    return iced::Task::none();
+                }
+                if up {
+                    self.launcher.selected = self.launcher.selected.saturating_sub(1);
+                } else {
+                    self.launcher.selected = (self.launcher.selected + 1).min(len - 1);
+                }
+                iced::Task::none()
+            }
+            Msg::Launch => {
+                let app_id = self
+                    .launcher
+                    .filtered_ids
+                    .get(self.launcher.selected)
+                    .cloned();
+                if let Some(ref id) = app_id {
+                    if let Some(app) = self.applications.get(id) {
+                        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                            let _ = bus.emit(Topic::LaunchApp(
+                                sola_bus::topics::LaunchAppPayload {
+                                    app_id: id.clone(),
+                                    command: app.command.clone(),
+                                },
+                            ));
+                        }
+                    }
+                }
+                self.launcher.active = false;
+                self.emit_composition();
+                self.emit_registered_chords();
+                // Restore focus to the previously focused window.
+                if let Some(wid) = self.launcher.prior_focus {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
+                }
+                iced::Task::none()
+            }
+            // --- Switcher ---
+            Msg::SwitcherNav { next } => {
+                if next {
+                    self.switcher.select_next();
+                } else {
+                    self.switcher.select_prev();
+                }
+                iced::Task::none()
+            }
+            Msg::SwitcherHover { index } => {
+                self.switcher.selected =
+                    index.min(self.switcher.apps.len().saturating_sub(1));
+                iced::Task::none()
+            }
+            Msg::SwitcherConfirm => {
+                let app_id = self
+                    .switcher
+                    .selected_app_id()
+                    .map(|s| s.to_string());
+                self.switcher.active = false;
+
+                if let Some(ref app_id) = app_id {
+                    // Update focus and MRU.
+                    self.bus_set_focus(app_id);
+                    let wid = self
+                        .mru_window_by_app
+                        .get(app_id)
+                        .copied()
+                        .or_else(|| self.lookup_any_window_id(app_id));
+                    if let Some(wid) = wid {
+                        self.focused_window_id = Some(wid);
+                        self.mru_window_by_app.insert(app_id.clone(), wid);
+                        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                            let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                        }
+                    }
+                }
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::SwitcherCancel => {
+                self.switcher.active = false;
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::Noop => iced::Task::none(),
         }
     }
 
-
-
-
-
-
-
-    /// Emit `CloseApp` for the currently focused window, unless a shell overlay
-    /// is active or the focused surface is the shell itself.
-    pub fn close_focused_app(&mut self, ctx: &mut AppCtx) {
-        if self.launcher.active || self.switcher.active || self.menu_open {
-            return;
+    /// Per-window view dispatch — called by the daemon for each dirty window.
+    pub fn view(&self, window: iced::window::Id) -> iced::Element<'_, Msg> {
+        if Some(window) == self.menubar_window_id {
+            return menubar::view::view(self);
         }
-        let Some(wid) = self.focused_window_id else {
-            return;
-        };
-        let Some(win) = self.known_windows.iter().find(|w| w.window_id == wid) else {
-            tracing::warn!(wid, "Meta+Q: focused_window_id not in known_windows");
-            return;
-        };
-        let app_id = win.app_id.clone();
-        if app_id == Self::APP_ID {
-            return;
+        if Some(window) == self.menu_window_id {
+            return crate::menu::view::view(self);
         }
-        tracing::info!(%app_id, "Meta+Q — emitting CloseApp");
-        let _ = ctx.emit(Topic::CloseApp(app_id));
+        if Some(window) == self.launcher_window_id {
+            return crate::launcher::view::view(self);
+        }
+        if Some(window) == self.switcher_window_id {
+            return crate::switcher::view::view(self);
+        }
+        // Fallback — shouldn't happen under normal operation.
+        iced::widget::container(iced::widget::text(""))
+            .width(iced::Length::Fill)
+            .height(iced::Length::Fill)
+            .into()
     }
-
-
 }

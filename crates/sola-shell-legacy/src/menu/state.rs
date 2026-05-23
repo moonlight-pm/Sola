@@ -1,10 +1,3 @@
-//! Menu cache and synthesized-menu construction.
-//!
-//! `MenuCache` stores per-app menus and provides shortcut reverse-lookup.
-//! `synthesized_menu` builds a default "Quit <App>" menu for external apps
-//! that haven't shipped their own.
-//!
-//! Window display logic (opening, rendering, closing) lands in Task 7.
 use std::collections::{HashMap, HashSet};
 
 use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem};
@@ -112,81 +105,8 @@ impl MenuCache {
         }
 
         let mut out: Vec<KeyChord> = set.into_iter().collect();
+
         out.sort_by_key(|b| (b.keycode.raw(), b.meta, b.alt, b.ctrl, b.shift));
         out
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use sola_bus::topics::MenuItem;
-
-    #[test]
-    fn synthesized_menu_has_single_quit_item() {
-        let payload = synthesized_menu("firefox", "Firefox");
-        assert_eq!(payload.app_id, "firefox");
-        assert_eq!(payload.menus.len(), 1);
-        let menu = &payload.menus[0];
-        assert_eq!(menu.label, "Firefox");
-        assert_eq!(menu.items.len(), 1);
-        match &menu.items[0] {
-            MenuItem::Action { id, label, shortcut, disabled, checked } => {
-                assert_eq!(id, SYNTHESIZED_CLOSE_ACTION);
-                assert_eq!(label, "Quit Firefox");
-                assert!(!disabled);
-                assert!(!checked);
-                let chord = shortcut.as_ref().expect("quit item must have shortcut");
-                assert_eq!(chord.keycode, KeyCode::Q);
-                assert!(chord.meta);
-                assert!(!chord.alt);
-                assert!(!chord.ctrl);
-                assert!(!chord.shift);
-            }
-            other => panic!("expected Action item, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn synthesized_menu_label_in_quit_string() {
-        // "Quit <label>" must use the provided label, not the app_id.
-        let payload = synthesized_menu("sola-browser", "Sola Browser");
-        let label = match &payload.menus[0].items[0] {
-            MenuItem::Action { label, .. } => label.clone(),
-            _ => panic!("expected Action"),
-        };
-        assert_eq!(label, "Quit Sola Browser");
-    }
-
-    #[test]
-    fn menu_cache_lookup_shortcut_finds_registered_chord() {
-        let mut cache = MenuCache::new();
-        cache.set_menu(synthesized_menu("firefox", "Firefox"));
-        let chord = KeyCode::Q.meta();
-        let hit = cache.lookup_shortcut(&chord, "firefox");
-        assert!(hit.is_some());
-        let action = hit.unwrap();
-        assert_eq!(action.app_id, "firefox");
-        assert_eq!(action.action_id, SYNTHESIZED_CLOSE_ACTION);
-    }
-
-    #[test]
-    fn menu_cache_lookup_shortcut_misses_wrong_app() {
-        let mut cache = MenuCache::new();
-        cache.set_menu(synthesized_menu("firefox", "Firefox"));
-        let chord = KeyCode::Q.meta();
-        assert!(cache.lookup_shortcut(&chord, "zed").is_none());
-    }
-
-    #[test]
-    fn menu_cache_key_bindings_for_returns_deduplicated_sorted() {
-        let mut cache = MenuCache::new();
-        cache.set_menu(synthesized_menu("firefox", "Firefox"));
-        let bindings = cache.key_bindings_for("firefox");
-        assert!(!bindings.is_empty());
-        // All bindings belong to firefox
-        for b in &bindings {
-            assert!(cache.lookup_shortcut(b, "firefox").is_some());
-        }
     }
 }

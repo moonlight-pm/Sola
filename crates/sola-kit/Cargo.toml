@@ -1,3 +1,12 @@
+# Empty [workspace] table — this crate is its own workspace, NOT a member
+# of any parent workspace. Required so cargo's workspace-walk stops here
+# when this crate is built inside a `.worktrees/<branch>/` subtree of
+# another workspace; without it, cargo would bind to the outer (master)
+# workspace whose `exclude` paths don't match the worktree's manifest
+# location. Harmless on master where the parent excludes this crate
+# anyway.
+[workspace]
+
 [package]
 name = "sola-kit"
 version = "0.1.0"
@@ -29,8 +38,9 @@ name = "sola-kit"
 path = "src/main.rs"
 
 [dependencies]
-iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg"] }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
+sola-assets = { path = "../sola-assets" }
 serde_json = "1"
 tracing = "0.1"

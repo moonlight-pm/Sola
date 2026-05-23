@@ -7,15 +7,13 @@
 //!     pair (`to_registered`).
 //!   - Converts the reverse (`from_chord_event`) so the shell can dispatch
 //!     using its existing shortcut-matching logic.
-//!   - Runs the action table (switcher, launcher, zoning, menu shortcuts)
-//!     when a chord fires.
-//!   - Preserves Meta-release closes switcher by registering Meta+Tab and
-//!     acting on its `ChordReleased` event.
-use sola_kit::SolaApp;
-use sola_bus::topics::{ChordEvent, FocusTarget, RegisteredChord, Topic};
+//!   - Provides the keycode/keysym translation tables used by zoning chord
+//!     registration.
+//!
+//! Dispatch logic (handle_chord / handle_chord_released) references Shell
+//! state; that wiring lands in Task 10 (chord dispatch into Shell::update).
+use sola_bus::topics::{ChordEvent, RegisteredChord};
 use sola_core::{KeyChord, KeyCode};
-
-use crate::app::ShellApp;
 
 // River modifier bits (from `modifiers` enum in river-window-management-v1.xml).
 const MOD_SHIFT: u32 = 1;
@@ -228,215 +226,83 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
     }
 }
 
-/// Dispatch a chord event through the shell's action table.
-pub fn handle_chord(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx, evt: ChordEvent) {
-    let Some(chord) = from_chord_event(&evt) else {
-        tracing::debug!(
-            keysym = evt.keysym,
-            modifiers = evt.modifiers,
-            "unrecognized chord"
-        );
-        return;
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sola_core::KeyCode;
 
-    tracing::debug!(
-        keycode = chord.keycode.raw(),
-        meta = chord.meta,
-        ctrl = chord.ctrl,
-        alt = chord.alt,
-        shift = chord.shift,
-        "chord fired"
-    );
-
-    // Escape dismisses whichever shell overlay is up. Only registered
-    // while one is active (see `emit_registered_chords`), so we don't
-    // steal Escape from terminal apps otherwise.
-    let bare = !chord.meta && !chord.ctrl && !chord.alt && !chord.shift;
-    if chord.keycode == KeyCode::ESCAPE && bare {
-        if app.launcher.active {
-            app.close_launcher(ctx);
-            return;
-        }
-        if app.menu_open {
-            app.close_menu(ctx);
-            return;
-        }
-        if app.switcher.active {
-            tracing::info!("cancelling switcher via Escape");
-            app.switcher.active = false;
-            app.emit_registered_chords(ctx);
-            app.windows
-                .switcher
-                .send_to_js(&serde_json::json!({"event": "clear"}));
-            app.emit_composition(ctx);
-            return;
-        }
+    #[test]
+    fn round_trip_tab() {
+        let chord = KeyChord {
+            keycode: KeyCode::TAB,
+            meta: true,
+            alt: false,
+            ctrl: false,
+            shift: false,
+        };
+        let reg = to_registered(&chord);
+        let back = from_chord_event(&ChordEvent {
+            keysym: reg.keysym,
+            modifiers: reg.modifiers,
+        })
+        .expect("round-trip must succeed for TAB");
+        assert_eq!(back.keycode, KeyCode::TAB);
+        assert!(back.meta);
+        assert!(!back.alt);
     }
 
-    // While the launcher or a dropdown menu is up, eat every other chord.
-    // We don't want zoning, menu shortcuts, or app shortcuts firing under
-    // a modal overlay. (Switcher has its own navigation branch below.)
-    if app.launcher.active || app.menu_open {
-        return;
+    #[test]
+    fn round_trip_letter_q() {
+        let chord = KeyChord {
+            keycode: KeyCode::Q,
+            meta: true,
+            alt: false,
+            ctrl: false,
+            shift: false,
+        };
+        let reg = to_registered(&chord);
+        let back = from_chord_event(&ChordEvent {
+            keysym: reg.keysym,
+            modifiers: reg.modifiers,
+        })
+        .expect("round-trip must succeed for Q");
+        assert_eq!(back.keycode, KeyCode::Q);
+        assert!(back.meta);
     }
 
-    // Switcher active: Meta+Tab (or arrow) cycles; Meta release confirms
-    // (handled in `handle_chord_released`).
-    if app.switcher.active {
-        match chord.keycode {
-            code if code == KeyCode::TAB || code == KeyCode::RIGHT => {
-                app.switcher.select_next();
-                let sel = app.switcher.selected;
-                let apps = app.switcher_apps_value();
-                app.windows.switcher.send_to_js(&serde_json::json!({
-                    "event": "render",
-                    "apps": apps,
-                    "selected": sel,
-                }));
-                return;
-            }
-            KeyCode::LEFT => {
-                app.switcher.select_prev();
-                let sel = app.switcher.selected;
-                let apps = app.switcher_apps_value();
-                app.windows.switcher.send_to_js(&serde_json::json!({
-                    "event": "render",
-                    "apps": apps,
-                    "selected": sel,
-                }));
-                return;
-            }
-            _ => {}
-        }
+    #[test]
+    fn numpad_alt_registration() {
+        let chord = KeyChord {
+            keycode: KeyCode::KP_8,
+            meta: true,
+            alt: false,
+            ctrl: false,
+            shift: false,
+        };
+        let alt = to_registered_alt(&chord).expect("KP_8 must have an alt keysym");
+        assert_eq!(alt.keysym, KEYSYM_KP_UP);
+        // Alt keysym must also round-trip.
+        let back = from_chord_event(&ChordEvent {
+            keysym: alt.keysym,
+            modifiers: alt.modifiers,
+        })
+        .expect("KP_UP keysym must round-trip to KP_8");
+        assert_eq!(back.keycode, KeyCode::KP_8);
     }
 
-    // Meta+`: cycle through the focused app's own windows. macOS-style
-    // alt-tab-within-an-app — no overlay, just advance focus to the next
-    // window of the current app on each press.
-    if chord.meta
-        && !chord.ctrl
-        && !chord.alt
-        && !chord.shift
-        && chord.keycode == KeyCode::GRAVE
-    {
-        if app.switcher.active {
-            return;
-        }
-        app.cycle_focused_app_windows(ctx);
-        return;
+    #[test]
+    fn modifier_encoding() {
+        let chord = KeyChord {
+            keycode: KeyCode::SPACE,
+            meta: true,
+            alt: false,
+            ctrl: true,
+            shift: true,
+        };
+        let mods = river_modifiers(&chord);
+        assert!(mods & MOD_SUPER != 0);
+        assert!(mods & MOD_CTRL != 0);
+        assert!(mods & MOD_SHIFT != 0);
+        assert!(mods & MOD_ALT == 0);
     }
-
-    // Shell system shortcuts (e.g. Exit Sola).
-    if let Some(action) = app.menus.lookup_shortcut(&chord, ShellApp::APP_ID) {
-        tracing::info!(action_id = %action.action_id, "shell shortcut");
-        if action.action_id == "exit" {
-            ctx.emit(Topic::Shutdown);
-        }
-        return;
-    }
-
-    // Meta+Space: toggle launcher.
-    if chord.meta && chord.keycode == KeyCode::SPACE {
-        tracing::info!(
-            launcher_active = app.launcher.active,
-            "Meta+Space chord — toggling launcher"
-        );
-        if app.launcher.active {
-            app.close_launcher(ctx);
-        } else {
-            app.open_launcher(ctx);
-        }
-        return;
-    }
-
-    // Meta+Q: close focused app.
-    if chord.meta && chord.keycode == KeyCode::Q {
-        tracing::info!("Meta+Q — close focused app");
-        app.close_focused_app(ctx);
-        return;
-    }
-
-    // Meta+Tab: activate switcher.
-    if chord.meta && chord.keycode == KeyCode::TAB {
-        if app.launcher.active {
-            app.close_launcher(ctx);
-        }
-        tracing::info!("activating switcher");
-        app.switcher.apps = app.rebuild_switcher_apps();
-        app.switcher.active = true;
-        app.emit_registered_chords(ctx);
-        app.switcher.selected = if app.switcher.apps.len() > 1 { 1 } else { 0 };
-        let apps = app.switcher_apps_value();
-        app.windows.switcher.send_to_js(&serde_json::json!({
-            "event": "render",
-            "apps": apps,
-            "selected": app.switcher.selected,
-        }));
-
-        // No Frame emission: the switcher surface was sized to its
-        // centered 800x400 at the first output_geometry tick (via
-        // `emit_all_frames`). It stays there for its whole life; only
-        // composition flips on activate/deactivate.
-        app.emit_composition(ctx);
-        return;
-    }
-
-    // Zone snapping (Meta+Numpad).
-    if let Some(frame) = app
-        .zoning
-        .handle_key(chord.keycode.raw(), app.focused_window_id)
-    {
-        ctx.emit(Topic::Frame(frame));
-        if let Some(zones) = app.zoning.take_zones_update() {
-            ctx.emit(Topic::Zones(zones));
-        }
-        return;
-    }
-
-    // Focused app menu shortcut lookup.
-    if let Some(focused) = app.focused_app_id.clone() {
-        if let Some(action) = app.menus.lookup_shortcut(&chord, &focused) {
-            tracing::info!(
-                app_id = %action.app_id,
-                action_id = %action.action_id,
-                "menu shortcut matched"
-            );
-            ctx.emit(Topic::MenuAction(action));
-        }
-    }
-}
-
-/// Entry point invoked on `Topic::ChordReleased`. Mirrors Meta-release
-/// behavior from the old GTK path: while the switcher is active, the
-/// user confirms by letting go of the Super key.
-pub fn handle_chord_released(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx, evt: ChordEvent) {
-    // The bare Super_L binding (keysym=Super_L, modifiers=0) fires its
-    // released event exactly when the user lifts the physical Super key.
-    // That's when we commit the switcher selection.
-    if evt.keysym == KEYSYM_SUPER_L && evt.modifiers == 0 && app.switcher.active {
-        confirm_switcher(app, ctx);
-    }
-}
-
-fn confirm_switcher(app: &mut ShellApp, ctx: &mut sola_kit::AppCtx) {
-    let app_id = app.switcher.selected_app_id().map(String::from);
-    tracing::info!(app_id = ?app_id, "confirming switcher");
-    app.switcher.active = false;
-    app.emit_registered_chords(ctx);
-    app.windows
-        .switcher
-        .send_to_js(&serde_json::json!({"event": "clear"}));
-    if let Some(ref app_id) = app_id {
-        app.set_focus(app_id, ctx);
-        let wid = app
-            .mru_window_by_app
-            .get(app_id)
-            .copied()
-            .or_else(|| app.lookup_any_window_id(app_id));
-        if let Some(wid) = wid {
-            app.focused_window_id = Some(wid);
-            ctx.emit(Topic::Focus(FocusTarget { window_id: wid }));
-        }
-    }
-    app.emit_composition(ctx);
 }

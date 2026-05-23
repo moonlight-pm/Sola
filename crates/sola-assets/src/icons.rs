@@ -26,6 +26,17 @@ pub fn split_ref(s: &str) -> Option<(&str, &str)> {
     (!pack.is_empty() && !name.is_empty()).then_some((pack, name))
 }
 
+/// Read the raw SVG bytes for `"<pack>/<name>"` (e.g. `"lucide/menu"`).
+///
+/// Returns `None` when the icon does not exist under `ASSETS_DIR`.
+/// The bytes are read fresh from disk on each call; callers that render
+/// frequently should cache the result (e.g. as an `iced::widget::svg::Handle`).
+pub fn read_svg(icon_ref: &str) -> Option<Vec<u8>> {
+    let (pack, name) = split_ref(icon_ref)?;
+    let file_path = path(pack, name)?;
+    std::fs::read(&file_path).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

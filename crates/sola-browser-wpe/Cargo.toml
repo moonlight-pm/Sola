@@ -1,3 +1,6 @@
+# Empty [workspace] table — see comment in sola-kit/Cargo.toml.
+[workspace]
+
 [package]
 name = "sola-browser-wpe"
 version = "0.1.0"
