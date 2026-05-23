@@ -7,7 +7,7 @@
 use iced::widget::{container, mouse_area, row, text};
 use iced::{Element, Length};
 use sola_kit::components::icon_colored;
-use sola_kit::fonts::INTER_MEDIUM;
+use sola_kit::fonts::{SF_PRO, SF_PRO_MEDIUM};
 
 use crate::app::Msg;
 use crate::components::clock::clock_widget;
@@ -40,8 +40,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         mouse_area(
             container(
                 text(app_title_str)
-                    .font(INTER_MEDIUM)
-                    .size(13),
+                    .font(SF_PRO_MEDIUM)
+                    .size(15),
             )
             .padding([2, 8]),
         )
@@ -50,8 +50,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     } else {
         container(
             text(app_title_str)
-                .font(INTER_MEDIUM)
-                .size(13),
+                .font(SF_PRO_MEDIUM)
+                .size(15),
         )
         .padding([2, 8])
         .into()
@@ -146,8 +146,8 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
             mouse_area(
                 container(
                     text(menu.label.clone())
-                        .font(INTER_MEDIUM)
-                        .size(13),
+                        .font(SF_PRO)
+                        .size(15),
                 )
                 .padding([2, 8]),
             )

@@ -13,7 +13,7 @@ use crate::app::{Msg, Shell};
 /// Render the switcher overlay for `shell`.
 ///
 /// Layout:
-///   Full-screen transparent backdrop
+///   Full-screen semi-transparent backdrop (dismisses on click)
 ///   └─ Centered card strip: `row` of switcher_card per app in `switcher.apps`
 ///      Each card: icon(52) + label, highlighted if index == selected.
 ///      Wrapped in mouse_area for hover-select.
@@ -74,9 +74,8 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                             ..Default::default()
                         }
                     } else {
-                        // No background for unselected cards — the switcher
-                        // window is transparent so only selected cards show
-                        // a highlight; the rest are fully see-through.
+                        // No background for unselected cards — only selected cards show
+                        // a highlight; the rest show the backdrop through.
                         iced::widget::container::Style {
                             background: None,
                             border: iced::Border {
@@ -97,9 +96,6 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .collect();
 
     // --- card strip ---
-    // No background/border/shadow on the strip itself — the switcher window
-    // is transparent, so the strip chrome must also be invisible.  Only the
-    // selected card container paints its own highlight.
     let strip: Element<'_, Msg> = container(
         row(cards)
             .spacing(12)
@@ -116,9 +112,20 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .center_y(Length::Fill)
         .into();
 
-    // Transparent backdrop — dismiss switcher on outside click (Cancel).
-    // Chord wiring (Meta+Tab, Super_L release, Escape) is in Task 10.
-    mouse_area(centered)
-        .on_press(Msg::SwitcherCancel)
-        .into()
+    // Backdrop: semi-transparent dark fill that dismisses on outside click.
+    // The window itself is transparent (Wayland alpha); this rgba fill
+    // creates a subtle screen dim behind the card strip.
+    mouse_area(
+        container(centered)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|_theme: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(
+                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                )),
+                ..Default::default()
+            }),
+    )
+    .on_press(Msg::SwitcherCancel)
+    .into()
 }

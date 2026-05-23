@@ -31,6 +31,20 @@ pub const INTER_MEDIUM: Font = Font {
     ..Font::with_name("Inter")
 };
 
+/// SF Pro — Apple's system font (Regular weight). Used for sola-shell menubar
+/// labels and the clock.  The TTF is placed manually by the user (Apple
+/// license) at `/opt/sola/share/fonts/SFPro/`; it is not redistributed via
+/// the asset sync.  See `crates/sola-assets/upstream.toml` for the note.
+pub const SF_PRO: Font = Font::with_name("SF Pro");
+
+/// SF Pro Medium (weight 500) — used for the focused-app title in the menubar
+/// so it reads slightly heavier than the menu-label text.  The single-weight
+/// TTF means cosmic-text may synthesise faux-medium.
+pub const SF_PRO_MEDIUM: Font = Font {
+    weight: iced::font::Weight::Medium,
+    ..Font::with_name("SF Pro")
+};
+
 /// Default sans for body / UI text — variable Roboto Flex,
 /// family name `Roboto Flex`.
 pub const NORMAL: Font = Font::with_name("Roboto Flex");
@@ -57,6 +71,12 @@ pub const FONT_FILES: &[&str] = &[
     "RobotoCondensed/RobotoCondensed-Bold.ttf",
     "Inter/InterVariable.ttf",
     "Inter/InterVariable-Italic.ttf",
+    // SF Pro — manually placed by user (Apple license, not synced).
+    // Install: cp assets/fonts/SF-Pro*.ttf assets/fonts/SF-Compact*.ttf /opt/sola/share/fonts/SFPro/
+    "SFPro/SF-Pro.ttf",
+    "SFPro/SF-Pro-Italic.ttf",
+    "SFPro/SF-Compact.ttf",
+    "SFPro/SF-Compact-Italic.ttf",
 ];
 
 /// Read the kit's standard font files off disk. Caller passes the

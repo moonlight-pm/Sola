@@ -72,6 +72,8 @@ pub enum Msg {
     SwitcherCancel,
     /// Focus-hover timer fired: raise `window_id` if `generation` still matches.
     FocusHoverFire { window_id: u32, generation: u64 },
+    /// Cycle to the next window of the currently focused app (Meta+`).
+    CycleAppWindows,
     Noop,
 }
 
@@ -337,9 +339,7 @@ impl Shell {
 
         // Fixed shell chords.
         bindings.push(KeyCode::TAB.meta());   // Meta+Tab → switcher
-        // TODO Future: cycle MRU windows of focused app. Not registering until
-        // implemented to avoid stealing the chord from clients.
-        // bindings.push(KeyCode::GRAVE.meta());
+        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::Q.meta());     // Meta+Q → close focused app
 
@@ -756,6 +756,44 @@ impl Shell {
                     }
                     self.emit_composition();
                 }
+                iced::Task::none()
+            }
+            Msg::CycleAppWindows => {
+                // Find all windows of the focused app and cycle to the next.
+                let Some(ref app_id) = self.focused_app_id.clone() else {
+                    return iced::Task::none();
+                };
+                let mut app_windows: Vec<u32> = self
+                    .known_windows
+                    .iter()
+                    .filter(|w| &w.app_id == app_id && w.app_id != Self::APP_ID)
+                    .map(|w| w.window_id)
+                    .collect();
+                app_windows.sort(); // deterministic ordering
+                if app_windows.len() <= 1 {
+                    // Single window or no windows — nothing to cycle.
+                    return iced::Task::none();
+                }
+                let current_idx = self
+                    .focused_window_id
+                    .and_then(|wid| app_windows.iter().position(|&w| w == wid))
+                    .unwrap_or(0);
+                let next_idx = (current_idx + 1) % app_windows.len();
+                let next_wid = app_windows[next_idx];
+                tracing::info!(
+                    app_id = %app_id,
+                    from = ?self.focused_window_id,
+                    to = next_wid,
+                    "Meta+` — cycling app window"
+                );
+                self.focused_window_id = Some(next_wid);
+                self.mru_window_by_app.insert(app_id.clone(), next_wid);
+                if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                    let _ = bus.emit(sola_bus::topics::Topic::Focus(
+                        sola_bus::topics::FocusTarget { window_id: next_wid },
+                    ));
+                }
+                self.emit_composition();
                 iced::Task::none()
             }
             Msg::Noop => iced::Task::none(),

@@ -191,19 +191,23 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .align_x(iced::alignment::Horizontal::Center)
         .into();
 
-    // Backdrop: full-screen mouse_area that dismisses on outside click.
-    // No background fill — the launcher window is transparent so the
-    // compositor shows app surfaces behind it through any unoccupied area.
+    // Backdrop: full-screen dim that dismisses on outside click.
+    // Dark rgba fill dims the screen behind the launcher card.
     let backdrop: Element<'_, Msg> = mouse_area(
         container(text(""))
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|_theme: &iced::Theme| iced::widget::container::Style::default()),
+            .style(|_theme: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(
+                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.65),
+                )),
+                ..Default::default()
+            }),
     )
     .on_press(Msg::CloseLauncher)
     .into();
 
-    // Stack: backdrop (layer 0) + card (layer 1).
+    // Stack: backdrop (layer 0, dims screen) + card (layer 1).
     stack![backdrop, positioned]
         .width(Length::Fill)
         .height(Length::Fill)

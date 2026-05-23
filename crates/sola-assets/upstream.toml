@@ -1,5 +1,16 @@
 # Pinned upstream sources for third-party asset packs.
 #
+# SF Pro (Apple system font) — NOT synced here.  The TTFs are Apple-licensed
+# and cannot be redistributed.  Place them manually:
+#
+#   mkdir -p /opt/sola/share/fonts/SFPro
+#   cp assets/fonts/SF-Pro.ttf assets/fonts/SF-Pro-Italic.ttf \
+#      assets/fonts/SF-Compact.ttf assets/fonts/SF-Compact-Italic.ttf \
+#      /opt/sola/share/fonts/SFPro/
+#
+# The kit registers them via FONT_FILES in crates/sola-kit/src/fonts.rs.
+# Missing files log a warning at startup and fall back to Inter.
+#
 # `cargo make assets sync` reconciles /opt/sola/share/<category>/<name>/
 # with this file: pulls missing or out-of-date packs, skips packs already
 # on the declared pin, and removes pack directories no longer listed

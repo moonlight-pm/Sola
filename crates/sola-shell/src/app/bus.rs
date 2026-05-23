@@ -93,6 +93,15 @@ impl Shell {
             .cloned()
             .collect();
 
+        // Collect removed window IDs from the OLD known_windows before we overwrite it.
+        // Used to purge per-window config_applied entries from ZoningState.
+        let removed_wids: Vec<u32> = self
+            .known_windows
+            .iter()
+            .filter(|w| removed.iter().any(|r| r == &w.app_id))
+            .map(|w| w.window_id)
+            .collect();
+
         // Rebuild lookup map (includes shell surfaces so emit_composition works).
         self.window_id_by_key.clear();
         for w in &windows {
@@ -107,12 +116,11 @@ impl Shell {
             .as_deref()
             .map(|f| removed.iter().any(|r| r == f))
             .unwrap_or(false);
+        self.zoning.forget_windows(&removed_wids);
+
         for id in &removed {
             self.mru_apps.retain(|m| m != id);
             self.mru_window_by_app.remove(id);
-            // Tell zoning to forget saved zone config for departed apps so
-            // re-launching them re-applies a fresh zone assignment.
-            self.zoning.forget_app(id);
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
                 self.focused_window_id = None;
@@ -122,6 +130,14 @@ impl Shell {
         // Clean up window-level zone tracking for windows that no longer exist.
         let current_wids: HashSet<u32> =
             self.known_windows.iter().map(|w| w.window_id).collect();
+        let orphaned_wids: Vec<u32> = self
+            .zoning
+            .window_zones
+            .keys()
+            .copied()
+            .filter(|wid| !current_wids.contains(wid))
+            .collect();
+        self.zoning.forget_windows(&orphaned_wids);
         self.zoning
             .window_zones
             .retain(|wid, _| current_wids.contains(wid));
@@ -390,6 +406,12 @@ impl Shell {
                 }
             }
             return Task::none();
+        }
+
+        // Meta+`: cycle windows of the focused app.
+        if chord.meta && chord.keycode == sola_core::KeyCode::GRAVE {
+            tracing::info!("Meta+` — cycle app windows");
+            return Task::done(Msg::CycleAppWindows);
         }
 
         // Meta+Tab: activate or cycle switcher.

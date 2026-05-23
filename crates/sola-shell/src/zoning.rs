@@ -23,9 +23,11 @@ pub struct ZoningState {
     /// been explicitly zoned (by the user or from config) are here.
     /// Windows NOT in this map keep their own geometry.
     pub window_zones: HashMap<u32, Zone>,
-    /// App IDs that have already had their config zone applied to a
-    /// window. Prevents auto-zoning every new window of the same app.
-    config_applied: HashSet<String>,
+    /// Window IDs that have already had their config zone applied.
+    /// Keyed per-window (not per-app) so every window of a multi-window
+    /// app gets its config zone applied once — fixes the Steam case where
+    /// only the first window of an app was being auto-zoned.
+    config_applied: HashSet<u32>,
     /// Set by `handle_key` when the user snaps a sola-* window.
     /// Consumed by `take_zones_update` so the caller knows to emit
     /// a fresh `Topic::Zones` for persistence.
@@ -78,20 +80,27 @@ impl ZoningState {
         self.focused_app_id = Some(app_id);
     }
 
-    /// Forget that this app has been auto-zoned this session, so the next
-    /// window for the same app_id picks up its config zone again. Called
-    /// when an app's last window disappears.
-    pub fn forget_app(&mut self, app_id: &str) {
-        self.config_applied.remove(app_id);
+    /// Forget config-zone tracking for all windows of a departed app.
+    /// Pass the set of window IDs that are being removed from the registry.
+    /// Called from `on_windows` when an app's windows disappear so that
+    /// re-launching the app gets a fresh auto-zone pass.
+    pub fn forget_windows(&mut self, removed_wids: &[u32]) {
+        for wid in removed_wids {
+            self.config_applied.remove(wid);
+        }
     }
 
     /// Apply the config zone to a window if its app has a saved zone
-    /// and no window for that app has been zoned yet.
+    /// and this specific window hasn't been auto-zoned yet this session.
     /// Only sola-* apps persist zones — external apps are zoned manually.
+    ///
+    /// Keyed per window_id (not per app_id) so every window of a
+    /// multi-window app (e.g. Steam main + popups) receives its config
+    /// zone once.
     ///
     /// Caller emits `Topic::Frame` for the returned value in Task 10.
     pub fn apply_config_zone(&mut self, app_id: &str, window_id: u32) -> Option<FrameUpdate> {
-        if !app_id.starts_with("sola-") || self.config_applied.contains(app_id) {
+        if !app_id.starts_with("sola-") || self.config_applied.contains(&window_id) {
             return None;
         }
         let zone = self.app_zone_config.get(app_id).copied()?;
@@ -99,7 +108,7 @@ impl ZoningState {
         // without mutating state so a later Apps event retries once
         // OutputGeometry has been cached.
         let (w, h) = self.output_size?;
-        self.config_applied.insert(app_id.to_string());
+        self.config_applied.insert(window_id);
         self.window_zones.insert(window_id, zone);
         Some(compute_frame(zone, window_id, w, h))
     }
@@ -153,8 +162,7 @@ impl ZoningState {
         // are zoned manually each session.
         if app_id.starts_with("sola-") {
             self.app_zone_config.insert(app_id, zone);
-            self.config_applied
-                .insert(self.focused_app_id.clone().unwrap_or_default());
+            self.config_applied.insert(window_id);
             self.zones_dirty = true;
         }
 
