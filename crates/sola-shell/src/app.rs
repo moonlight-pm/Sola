@@ -331,7 +331,9 @@ impl Shell {
 
         // Fixed shell chords.
         bindings.push(KeyCode::TAB.meta());   // Meta+Tab → switcher
-        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle app windows
+        // TODO Future: cycle MRU windows of focused app. Not registering until
+        // implemented to avoid stealing the chord from clients.
+        // bindings.push(KeyCode::GRAVE.meta());
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::Q.meta());     // Meta+Q → close focused app
 
@@ -461,10 +463,41 @@ impl Shell {
 
     pub fn subscription(&self) -> iced::Subscription<Msg> {
         use iced::time;
-        iced::Subscription::batch([
+
+        let mut subs = vec![
             sola_kit::app::bus_subscription().map(Msg::Bus),
             time::every(Duration::from_secs(10)).map(|_| Msg::ClockTick),
-        ])
+        ];
+
+        // While the launcher is active, subscribe to keyboard events so
+        // ArrowUp/Down, Enter, and Escape route to launcher messages.
+        // Printable characters are already handled by the text input's
+        // on_input callback (→ Msg::LauncherQuery). Only navigation keys
+        // need explicit routing here; they would otherwise be eaten by the
+        // chord-dispatch guard in on_chord that eats all chords while
+        // launcher.active is true.
+        if self.launcher.active {
+            let kb = iced::keyboard::listen().map(|event| {
+                use iced::keyboard::{Event, Key};
+                use iced::keyboard::key::Named;
+                match event {
+                    Event::KeyPressed { key: Key::Named(Named::ArrowUp), .. } => {
+                        Msg::LauncherNav { up: true }
+                    }
+                    Event::KeyPressed { key: Key::Named(Named::ArrowDown), .. } => {
+                        Msg::LauncherNav { up: false }
+                    }
+                    Event::KeyPressed { key: Key::Named(Named::Enter), .. } => Msg::Launch,
+                    Event::KeyPressed { key: Key::Named(Named::Escape), .. } => {
+                        Msg::CloseLauncher
+                    }
+                    _ => Msg::Noop,
+                }
+            });
+            subs.push(kb);
+        }
+
+        iced::Subscription::batch(subs)
     }
 
     pub fn update(&mut self, msg: Msg) -> iced::Task<Msg> {
