@@ -35,6 +35,7 @@ pub use card::card;
 pub use divider::vertical_divider;
 pub use field::field;
 pub use icon::icon;
+pub use icon::icon_colored;
 pub use popover::popover;
 pub use sidebar::{SIDEBAR_WIDTH, SidebarItem, sidebar};
 pub use split::split;

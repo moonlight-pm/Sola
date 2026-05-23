@@ -183,7 +183,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .width(Length::Fill)
         .height(Length::Fill)
         .padding(Padding {
-            top: 350.0,
+            top: 440.0,
             left: 0.0,
             right: 0.0,
             bottom: 0.0,
@@ -192,16 +192,13 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .into();
 
     // Backdrop: full-screen mouse_area that dismisses on outside click.
+    // No background fill — the launcher window is transparent so the
+    // compositor shows app surfaces behind it through any unoccupied area.
     let backdrop: Element<'_, Msg> = mouse_area(
         container(text(""))
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|_theme: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgba(
-                    0.0, 0.0, 0.0, 0.4,
-                ))),
-                ..Default::default()
-            }),
+            .style(|_theme: &iced::Theme| iced::widget::container::Style::default()),
     )
     .on_press(Msg::CloseLauncher)
     .into();

@@ -46,6 +46,71 @@ pub fn install_binary(src: &str) -> Result<bool, String> {
 /// `XDG_DATA_DIRS` ceremony.
 ///
 /// Returns the number of files written (skipping unchanged ones).
+/// Copy first-party icon packs from `crates/sola-assets/icons/` into
+/// `/opt/sola/share/icons/`. This is called unconditionally from
+/// `install()` so any SVG committed under `sola-assets/icons/<pack>/`
+/// is always present on disk after install — no upstream fetch required.
+///
+/// Requires `sudo` because `/opt/sola/share/` is root-owned.
+/// Returns the number of files written.
+pub fn install_first_party_icons() -> Result<usize, String> {
+    let src_root = Path::new("crates/sola-assets/icons");
+    if !src_root.is_dir() {
+        return Ok(0);
+    }
+    let dest_root = Path::new(SHARE_DIR).join("icons");
+    // Ensure the parent exists (SHARE_DIR already created by ensure_dirs).
+    run("sudo", &["mkdir", "-p", dest_root.to_string_lossy().as_ref()])?;
+    let entries = match fs::read_dir(src_root) {
+        Ok(e) => e,
+        Err(e) => return Err(format!("read_dir {}: {e}", src_root.display())),
+    };
+    let mut written = 0usize;
+    for entry in entries.flatten() {
+        let pack_src = entry.path();
+        if !pack_src.is_dir() {
+            continue;
+        }
+        let pack_name = match pack_src.file_name() {
+            Some(n) => n.to_os_string(),
+            None => continue,
+        };
+        let pack_dest = dest_root.join(&pack_name);
+        run("sudo", &["mkdir", "-p", pack_dest.to_string_lossy().as_ref()])?;
+        // copy_tree writes without sudo; pack_dest is created with sudo above
+        // but subsequent file writes need ownership.  Use sudo cp for each file.
+        let svgs = match fs::read_dir(&pack_src) {
+            Ok(e) => e,
+            Err(e) => return Err(format!("read_dir {}: {e}", pack_src.display())),
+        };
+        for svg_entry in svgs.flatten() {
+            let svg_path = svg_entry.path();
+            if svg_path.extension().and_then(|e| e.to_str()) != Some("svg") {
+                continue;
+            }
+            let dest_file = pack_dest.join(svg_entry.file_name());
+            if dest_file.exists()
+                && files_identical(
+                    svg_path.to_string_lossy().as_ref(),
+                    dest_file.to_string_lossy().as_ref(),
+                )?
+            {
+                continue;
+            }
+            run(
+                "sudo",
+                &[
+                    "cp",
+                    svg_path.to_string_lossy().as_ref(),
+                    dest_file.to_string_lossy().as_ref(),
+                ],
+            )?;
+            written += 1;
+        }
+    }
+    Ok(written)
+}
+
 pub fn install_dist_files() -> Result<usize, String> {
     let prefix = xdg_data_home();
     let crates_root = Path::new("crates");
@@ -335,6 +400,15 @@ pub fn install(app: Option<&str>) {
         Ok(n) => println!("Installed {n} dist file(s)"),
         Err(e) => {
             eprintln!("failed to install dist files: {e}");
+            std::process::exit(1);
+        }
+    }
+    // First-party icons (crates/sola-assets/icons/<pack>/*.svg → /opt/sola/share/icons/<pack>/).
+    match install_first_party_icons() {
+        Ok(0) => {}
+        Ok(n) => println!("Installed {n} first-party icon(s)"),
+        Err(e) => {
+            eprintln!("failed to install first-party icons: {e}");
             std::process::exit(1);
         }
     }

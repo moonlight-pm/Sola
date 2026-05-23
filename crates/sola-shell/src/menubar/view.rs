@@ -5,8 +5,8 @@
 //!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
 
 use iced::widget::{button, container, mouse_area, row, text};
-use iced::{Element, Font, Length};
-use sola_kit::components::icon;
+use iced::{Element, Length};
+use sola_kit::components::icon_colored;
 
 use crate::app::Msg;
 use crate::components::clock::clock_widget;
@@ -18,7 +18,10 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mb = &shell.menubar;
 
     // ── System-menu button ────────────────────────────────────────────
-    let system_btn: Element<'_, Msg> = button(icon("lucide/menu", 18))
+    // Tinted with the theme's muted foreground (≈ text-secondary #6e7681)
+    // to match legacy --sola-menubar-system-menu-fg.
+    let system_fg = iced::Color::from_rgb(0x6e as f32 / 255.0, 0x76 as f32 / 255.0, 0x81 as f32 / 255.0);
+    let system_btn: Element<'_, Msg> = button(icon_colored("sola/pillars", 16, system_fg))
         .on_press(Msg::OpenMenu { index: 0, is_system: true })
         .padding([2, 8])
         .into();
@@ -30,13 +33,13 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let clickable = has_menu(shell);
     let app_title: Element<'_, Msg> = if clickable {
         mouse_area(
-            container(text(app_title_str).font(Font::MONOSPACE))
+            container(text(app_title_str))
                 .padding([2, 8]),
         )
         .on_press(Msg::OpenMenu { index: 0, is_system: false })
         .into()
     } else {
-        container(text(app_title_str).font(Font::MONOSPACE))
+        container(text(app_title_str))
             .padding([2, 8])
             .into()
     };

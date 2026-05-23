@@ -31,37 +31,45 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         .into();
     }
 
-    // Resolve the menu to render.
-    let app_id = shell
-        .focused_app_id
-        .as_deref()
-        .unwrap_or("sola-shell");
-    let index = shell.current_open_index.unwrap_or(0);
+    // When the system-menu button was pressed, show the shell's own menu
+    // (registered by BusSetup as "sola-shell").  Otherwise show the
+    // focused app's menu at the selected index.
+    let (app_id, items): (String, Vec<MenuItem>) = if shell.current_open_is_system {
+        let shell_menu = shell.menus.get_menu(crate::app::Shell::APP_ID);
+        let items = shell_menu
+            .and_then(|p| p.menus.first())
+            .map(|m| m.items.clone())
+            .unwrap_or_default();
+        (crate::app::Shell::APP_ID.to_string(), items)
+    } else {
+        let app_id_str = shell
+            .focused_app_id
+            .as_deref()
+            .unwrap_or(crate::app::Shell::APP_ID);
+        let index = shell.current_open_index.unwrap_or(0);
 
-    // Resolve payload — either the cached menu or a synthesized one.
-    let payload = match shell.menus.get_menu(app_id) {
-        Some(p) => p.clone(),
-        None => {
-            // Synthesized menu: menus[0] only, with Quit action.
-            let label = resolve_label(shell, app_id);
-            synthesized_menu(app_id, &label)
-        }
+        let payload = match shell.menus.get_menu(app_id_str) {
+            Some(p) => p.clone(),
+            None => {
+                let label = resolve_label(shell, app_id_str);
+                synthesized_menu(app_id_str, &label)
+            }
+        };
+
+        let items = payload
+            .menus
+            .get(index)
+            .map(|m| m.items.clone())
+            .unwrap_or_default();
+        (app_id_str.to_string(), items)
     };
-
-    // Clone items out of the payload so elements don't borrow from a local.
-    let items: Vec<MenuItem> = payload
-        .menus
-        .get(index)
-        .map(|m| m.items.clone())
-        .unwrap_or_default();
-    let app_id_owned = app_id.to_string();
 
     let items_el: Element<'_, Msg> = if items.is_empty() {
         text("").into()
     } else {
         let rows: Vec<Element<'_, Msg>> = items
             .into_iter()
-            .map(|item| menu_item_view_owned(item, app_id_owned.clone()))
+            .map(|item| menu_item_view_owned(item, app_id.clone()))
             .collect();
         column(rows)
             .width(Length::Shrink)

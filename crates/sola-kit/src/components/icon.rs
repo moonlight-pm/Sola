@@ -14,7 +14,7 @@ use iced::widget::svg;
 use iced::{Element, Length};
 
 /// Return an iced Svg widget for the named icon, tinted with the active
-/// theme's text color and sized to `size × size` logical pixels.
+/// theme's foreground text color and sized to `size × size` logical pixels.
 ///
 /// `name` has the form `"<pack>/<icon>"` (e.g. `"lucide/menu"`), matching
 /// the layout of `/opt/sola/share/icons/`.
@@ -29,6 +29,21 @@ pub fn icon<'a, Msg: 'a>(name: &str, size: u16) -> Element<'a, Msg> {
         .height(Length::Fixed(size as f32))
         .style(|theme: &iced::Theme, _status| svg::Style {
             color: Some(theme.extended_palette().background.base.text),
+        })
+        .into()
+}
+
+/// Like [`icon`] but with an explicit `color` override instead of the
+/// theme's default foreground.  Use this when the target color is known
+/// at call-site (e.g. the system-menu button's `text-secondary` tint).
+pub fn icon_colored<'a, Msg: 'a>(name: &str, size: u16, color: iced::Color) -> Element<'a, Msg> {
+    let bytes = sola_assets::icons::read_svg(name).unwrap_or_default();
+    let handle = svg::Handle::from_memory(bytes);
+    svg(handle)
+        .width(Length::Fixed(size as f32))
+        .height(Length::Fixed(size as f32))
+        .style(move |_theme: &iced::Theme, _status| svg::Style {
+            color: Some(color),
         })
         .into()
 }

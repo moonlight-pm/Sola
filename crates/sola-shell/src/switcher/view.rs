@@ -74,10 +74,11 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                             ..Default::default()
                         }
                     } else {
+                        // No background for unselected cards — the switcher
+                        // window is transparent so only selected cards show
+                        // a highlight; the rest are fully see-through.
                         iced::widget::container::Style {
-                            background: Some(iced::Background::Color(
-                                p.background.weak.color,
-                            )),
+                            background: None,
                             border: iced::Border {
                                 radius: 8.0.into(),
                                 ..Default::default()

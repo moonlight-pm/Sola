@@ -111,6 +111,9 @@ pub struct Shell {
     /// Index of the currently open menu (menus[n] of the focused app).
     /// None when no menu is open.
     pub current_open_index: Option<usize>,
+    /// True when the currently open menu is the system menu (shell's own menu),
+    /// false when it's a focused-app menu.
+    pub current_open_is_system: bool,
     pub switcher: SwitcherState,
     pub launcher: LauncherState,
     pub zoning: ZoningState,
@@ -172,6 +175,7 @@ impl Shell {
             menu_open: false,
             menu_anchor_x: 0.0,
             current_open_index: None,
+            current_open_is_system: false,
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             zoning: ZoningState::new(),
@@ -515,7 +519,7 @@ impl Shell {
                 self.menubar.expire_toast(toast_gen);
                 iced::Task::none()
             }
-            Msg::OpenMenu { index, is_system: _ } => {
+            Msg::OpenMenu { index, is_system } => {
                 self.menu_anchor_x = self
                     .menubar
                     .label_positions
@@ -525,6 +529,7 @@ impl Shell {
                     .unwrap_or_else(|| self.estimate_label_x(index));
                 self.menu_open = true;
                 self.current_open_index = Some(index);
+                self.current_open_is_system = is_system;
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -545,13 +550,14 @@ impl Shell {
             Msg::CloseMenu => {
                 self.menu_open = false;
                 self.current_open_index = None;
+                self.current_open_is_system = false;
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
             }
             Msg::MenuAction { app_id, action_id } => {
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                    if app_id == Self::APP_ID && action_id == "exit" {
+                    if app_id == Self::APP_ID && (action_id == "exit" || action_id == "quit") {
                         let _ = bus.emit(Topic::Shutdown);
                     } else if action_id == "_close" {
                         if let Some(ref focused) = self.focused_app_id.clone() {
@@ -565,6 +571,7 @@ impl Shell {
                 }
                 self.menu_open = false;
                 self.current_open_index = None;
+                self.current_open_is_system = false;
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
