@@ -111,6 +111,7 @@ impl Shell {
         }
 
         // Focus the newest app if one appeared.
+        let prev_focused = self.focused_app_id.clone();
         if let Some(id) = added.first() {
             self.set_focus(id);
             if let Some(wid) = self.lookup_any_window_id(id) {
@@ -133,6 +134,13 @@ impl Shell {
             }
             // If mru_apps is empty, focused_app_id is already None — the
             // menubar view will render an empty title.
+        }
+
+        // Dismiss open menu if the focused app changed.
+        if self.menu_open && self.focused_app_id != prev_focused {
+            self.menu_open = false;
+            self.current_open_index = None;
+            // TODO Task 10: emit Topic::Composition to hide the menu surface.
         }
     }
 
@@ -222,8 +230,24 @@ impl Shell {
     fn on_mouse_entered(&mut self, _e: MouseEnteredPayload) {}
 
     /// Mouse button pressed on a window surface.
-    /// TODO Task 7: dismiss open menu on click outside shell.
-    fn on_mouse_clicked(&mut self, _e: MouseClickedPayload) {}
+    /// If a menu is open and the click lands on a non-shell window, close it.
+    fn on_mouse_clicked(&mut self, e: MouseClickedPayload) {
+        if !self.menu_open {
+            return;
+        }
+        // known_windows contains only non-sola-shell windows (sola-river omits
+        // the shell's own surfaces from Topic::Windows).  Any click on a tracked
+        // window_id means the user clicked outside the shell — dismiss the menu.
+        let is_app_window = self
+            .known_windows
+            .iter()
+            .any(|w| w.window_id == e.window_id);
+        if is_app_window {
+            self.menu_open = false;
+            self.current_open_index = None;
+            // TODO Task 10: emit Topic::Composition to hide the menu surface.
+        }
+    }
 
     /// Cursor left all tracked surfaces.
     /// TODO Task 10: cancel pending focus-hover timer.
