@@ -4,9 +4,6 @@
 //! All methods that previously called `ctx.emit(Topic::Frame(...))` or
 //! `ctx.emit(Topic::Zones(...))` now return the data instead; the caller
 //! (Shell::update) emits on their behalf.
-//!
-//! TODO (Task 10): Wire Shell::update to call `handle_key`, then emit
-//! `Topic::Frame` and optionally `Topic::Zones` from the returned values.
 use std::collections::{HashMap, HashSet};
 
 use sola_bus::topics::{FrameUpdate, OutputGeometry, Zone};

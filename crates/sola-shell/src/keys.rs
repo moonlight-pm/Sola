@@ -226,12 +226,6 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
     }
 }
 
-// TODO (Task 10): Wire handle_chord and handle_chord_released into
-// Shell::update. The dispatch logic references Shell fields (launcher,
-// switcher, zoning, menus, windows, focused_app_id, etc.) that don't
-// exist yet. The full implementations live in sola-shell-legacy/src/keys.rs
-// and can be ported mechanically once those fields are present on Shell.
-
 #[cfg(test)]
 mod tests {
     use super::*;

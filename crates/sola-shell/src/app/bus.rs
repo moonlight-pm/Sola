@@ -480,9 +480,9 @@ impl Shell {
         if !self.menu_open {
             return;
         }
-        // known_windows contains only non-sola-shell windows (sola-river omits
-        // the shell's own surfaces from Topic::Windows).  Any click on a tracked
-        // window_id means the user clicked outside the shell — dismiss the menu.
+        // known_windows INCLUDES shell surfaces (sola-river includes them in
+        // Topic::Windows).  Any click on a tracked window_id means the user
+        // clicked outside the menu popover region — dismiss it.
         let is_app_window = self
             .known_windows
             .iter()

@@ -3,15 +3,11 @@
 //! `state` holds `SwitcherState` and `SwitcherApp` — pure data.
 //! `view` renders the full-overlay card strip.
 //! `open_window` opens the persistent overlay at boot.
-//! `activate` populates the app list and sets `active = true`.
 pub mod state;
 pub mod view;
 
 use iced::window;
 use sola_kit::app::window_settings;
-
-use crate::app::Shell;
-use state::{rebuild_apps, SwitcherState};
 
 /// Full-overlay height: 1080 − 28px menubar.  Task 10 corrects from
 /// Topic::OutputGeometry.
@@ -32,14 +28,3 @@ pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     window::open(settings)
 }
 
-/// Activate the switcher: rebuild the app list from current MRU + open
-/// windows, reset selection to 0, and set `active = true`.
-///
-/// Called from the chord handler (Task 10) when Meta+Tab fires.
-/// Also call `rebuild_apps` again on subsequent Meta+Tab/Right presses
-/// to keep the list fresh while the switcher is open.
-pub fn activate(switcher: &mut SwitcherState, shell: &Shell) {
-    rebuild_apps(switcher, &shell.mru_apps, &shell.known_windows);
-    switcher.selected = 0;
-    switcher.active = true;
-}
