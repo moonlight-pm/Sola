@@ -214,6 +214,14 @@ impl Shell {
         }
 
         self.emit_composition();
+
+        // Always re-emit registered chords. At fresh boot, the shell sees
+        // only its own four windows (added/removed are empty after the
+        // app_id filter), so the early-return paths that normally call
+        // `emit_registered_chords` never fire — and sola-river never
+        // learns about Meta+Space / Meta+Tab / Meta+Q / Meta+Grave /
+        // Meta+Numpad{…}, so no keyboard chord ever reaches the shell.
+        self.emit_registered_chords();
     }
 
     /// Receive an app's menu definition. Re-emit registered chords since the

@@ -546,6 +546,7 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::OpenMenu { index, is_system } => {
+                tracing::info!(index, is_system, "Msg::OpenMenu (mouse_area on_press fired)");
                 self.menu_anchor_x = self
                     .menubar
                     .label_positions
