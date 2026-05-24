@@ -106,14 +106,11 @@ fn focused_app_title(shell: &crate::app::Shell) -> String {
         .unwrap_or_else(|| app_id.clone())
 }
 
-/// True if the focused app has a menu payload with more than zero menus.
+/// True if the focused app has a clickable menubar title. We always have
+/// at least a synthesized "Quit <App>" menu for any focused app, so the
+/// title is clickable whenever any app is focused.
 fn has_menu(shell: &crate::app::Shell) -> bool {
-    shell
-        .focused_app_id
-        .as_deref()
-        .and_then(|id| shell.menus.get_menu(id))
-        .map(|p| !p.menus.is_empty())
-        .unwrap_or(false)
+    shell.focused_app_id.is_some()
 }
 
 /// Build the app-menu label buttons (menus[1..] of the focused app).

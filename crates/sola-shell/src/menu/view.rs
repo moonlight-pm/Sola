@@ -71,8 +71,10 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             .into_iter()
             .map(|item| menu_item_view_owned(item, app_id.clone()))
             .collect();
+        // Fill the card horizontally so each row spans the full menu width
+        // and the shortcut sits flush against the right padding (macOS feel).
         column(rows)
-            .width(Length::Shrink)
+            .width(Length::Fill)
             .spacing(0)
             .into()
     };
@@ -90,6 +92,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let card_border = card_palette.background.strong.color;
     let card: Element<'_, Msg> = container(items_el)
         .padding(Padding::new(4.0))
+        .width(Length::Fixed(220.0))
         .style(move |_theme: &iced::Theme| {
             iced::widget::container::Style {
                 background: Some(iced::Background::Color(card_bg)),
