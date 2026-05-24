@@ -39,7 +39,7 @@ pub enum Msg {
     /// `is_system` true means the system-menu button was pressed.
     OpenMenu { index: usize, is_system: bool },
     /// Hover over a menu label — only re-opens if a different menu is already open.
-    HoverMenu { index: usize },
+    HoverMenu { index: usize, is_system: bool },
     /// Close the currently open menu (backdrop click, focus change, Escape, etc.)
     CloseMenu,
     /// User selected a menu action: route to bus and close menu.
@@ -582,21 +582,22 @@ impl Shell {
                 self.emit_registered_chords();
                 iced::Task::none()
             }
-            Msg::HoverMenu { index } => {
-                // HoverMenu always refers to app-menu labels (menus[1..]),
-                // never the system icon — those don't emit HoverMenu.
-                if self.menu_open
-                    && (self.current_open_index != Some(index) || self.current_open_is_system)
-                {
+            Msg::HoverMenu { index, is_system } => {
+                // Only acts when a menu is already open — hover-switches the
+                // active dropdown to whichever label the cursor entered.
+                // Hovering the same label is a no-op.
+                let same = self.current_open_index == Some(index)
+                    && self.current_open_is_system == is_system;
+                if self.menu_open && !same {
                     self.menu_anchor_x = self
                         .menubar
                         .label_positions
                         .get(index)
                         .copied()
                         .filter(|x| *x > 0.0)
-                        .unwrap_or_else(|| self.estimate_label_x(index, false));
+                        .unwrap_or_else(|| self.estimate_label_x(index, is_system));
                     self.current_open_index = Some(index);
-                    self.current_open_is_system = false;
+                    self.current_open_is_system = is_system;
                 }
                 iced::Task::none()
             }

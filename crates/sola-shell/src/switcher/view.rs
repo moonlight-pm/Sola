@@ -13,10 +13,12 @@ use crate::app::{Msg, Shell};
 /// Render the switcher overlay for `shell`.
 ///
 /// Layout:
-///   Full-screen semi-transparent backdrop (dismisses on click)
-///   └─ Centered card strip: `row` of switcher_card per app in `switcher.apps`
-///      Each card: icon(52) + label, highlighted if index == selected.
-///      Wrapped in mouse_area for hover-select.
+///   Full-screen invisible mouse_area (click-outside-to-cancel)
+///   └─ Centered backplate card sized to fit the apps with ~36px padding.
+///      Background: slight primary-tinted translucent fill (no real blur
+///      available in iced; the alpha gives a similar feel against dark
+///      backgrounds).
+///      Inside: row of switcher_card per app in `switcher.apps`.
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     if !shell.switcher.active {
         // Invisible placeholder — keeps iced from getting an empty view.
@@ -66,7 +68,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                     let p = theme.extended_palette();
                     if is_selected {
                         iced::widget::container::Style {
-                            background: Some(iced::Background::Color(p.primary.weak.color)),
+                            background: Some(iced::Background::Color(p.primary.base.color)),
                             border: iced::Border {
                                 radius: 8.0.into(),
                                 ..Default::default()
@@ -74,8 +76,6 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                             ..Default::default()
                         }
                     } else {
-                        // No background for unselected cards — only selected cards show
-                        // a highlight; the rest show the backdrop through.
                         iced::widget::container::Style {
                             background: None,
                             border: iced::Border {
@@ -88,44 +88,55 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 })
                 .into();
 
-            // Wrap in mouse_area so hovering selects the card.
             mouse_area(card_container)
                 .on_enter(Msg::SwitcherHover { index: i })
                 .into()
         })
         .collect();
 
-    // --- card strip ---
-    let strip: Element<'_, Msg> = container(
+    // Backplate close-over: derive a slight primary-tinted background and
+    // matching border from the shell's REAL theme (the per-window overlay
+    // palette is TRANSPARENT — see app.rs::theme).
+    let real = shell.theme.extended_palette();
+    let primary = real.primary.base.color;
+    let backplate_bg = iced::Color::from_rgba(primary.r, primary.g, primary.b, 0.18);
+    let backplate_border = iced::Color::from_rgba(primary.r, primary.g, primary.b, 0.35);
+
+    // --- backplate: shrink-wraps the cards with 36px padding ---
+    let backplate: Element<'_, Msg> = container(
         row(cards)
             .spacing(12)
             .align_y(Alignment::Center),
     )
-    .padding(Padding::new(24.0))
+    .padding(Padding::new(36.0))
+    .style(move |_theme: &iced::Theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(backplate_bg)),
+        border: iced::Border {
+            color: backplate_border,
+            width: 1.0,
+            radius: 16.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.45),
+            offset: iced::Vector::new(0.0, 12.0),
+            blur_radius: 32.0,
+        },
+        ..Default::default()
+    })
     .into();
 
-    // Center the strip horizontally and vertically.
-    let centered: Element<'_, Msg> = container(strip)
+    // Center the backplate on screen.
+    let centered: Element<'_, Msg> = container(backplate)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
         .into();
 
-    // Backdrop: semi-transparent dark fill that dismisses on outside click.
-    // The window itself is transparent (Wayland alpha); this rgba fill
-    // creates a subtle screen dim behind the card strip.
-    mouse_area(
-        container(centered)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(|_theme: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(
-                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                )),
-                ..Default::default()
-            }),
-    )
-    .on_press(Msg::SwitcherCancel)
-    .into()
+    // Full-screen invisible click-catcher dismisses the switcher. The
+    // backplate sits inside its own region and absorbs hover/clicks first,
+    // so clicking outside the cards is what reaches this layer.
+    mouse_area(centered)
+        .on_press(Msg::SwitcherCancel)
+        .into()
 }

@@ -33,6 +33,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         ),
     )
     .on_press(Msg::OpenMenu { index: 0, is_system: true })
+    .on_enter(Msg::HoverMenu { index: 0, is_system: true })
     .into();
 
     // ── Focused-app title ─────────────────────────────────────────────
@@ -56,6 +57,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             ),
         )
         .on_press(Msg::OpenMenu { index: 0, is_system: false })
+        .on_enter(Msg::HoverMenu { index: 0, is_system: false })
         .into()
     } else {
         container(
@@ -190,7 +192,7 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
                 ),
             )
             .on_press(Msg::OpenMenu { index, is_system: false })
-            .on_enter(Msg::HoverMenu { index })
+            .on_enter(Msg::HoverMenu { index, is_system: false })
             .into()
         })
         .collect()

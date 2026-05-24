@@ -41,20 +41,34 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
     let launcher = &shell.launcher;
 
+    // The per-window theme on the launcher surface paints a TRANSPARENT
+    // background (see app.rs::theme), so we cannot pull the card's
+    // background from the in-style palette.  Close over the shell's REAL
+    // theme to derive opaque card colours.
+    let real = shell.theme.extended_palette();
+    let card_bg = real.background.base.color;
+    let card_border = real.background.strong.color;
+    let primary_base = real.primary.base.color;
+    let primary_base_text = real.primary.base.text;
+    let bg_text = real.background.base.text;
+    let bg_weak = real.background.weak.color;
+
     // --- query text input ---
-    let query_input: Element<'_, Msg> = text_input("Search applications…", &launcher.query)
+    // Chunky: 18px text, 14px padding, no border so it reads as part of
+    // the card chrome (appliance feel, not a form).
+    let query_input: Element<'_, Msg> = text_input("Search…", &launcher.query)
         .id(WidgetId::new(QUERY_INPUT_ID))
         .on_input(Msg::LauncherQuery)
         .style(input_style)
-        .padding(Padding::new(8.0))
-        .size(16)
+        .padding(Padding::new(14.0))
+        .size(18)
         .width(Length::Fill)
         .into();
 
     // --- application rows ---
     let rows: Vec<Element<'_, Msg>> = if launcher.filtered_ids.is_empty() {
-        vec![container(text("No matching applications."))
-            .padding(Padding::new(12.0))
+        vec![container(text("No matching applications.").size(15))
+            .padding(Padding::new(16.0))
             .width(Length::Fill)
             .into()]
     } else {
@@ -69,34 +83,30 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
                 let is_selected = i == launcher.selected;
 
-                let icon_el: Element<'_, Msg> = icon(icon_name, 16);
-                let label_el: Element<'_, Msg> = text(label_str).size(14).into();
+                let icon_el: Element<'_, Msg> = icon(icon_name, 24);
+                let label_el: Element<'_, Msg> = text(label_str).size(16).into();
 
                 let row_content: Element<'_, Msg> = row![icon_el, label_el]
-                    .spacing(8)
+                    .spacing(14)
                     .align_y(Alignment::Center)
                     .into();
 
-                let app_id_clone = app_id.clone();
                 let row_btn = iced::widget::button(row_content)
                     .on_press(Msg::Launch)
                     .padding(Padding {
-                        top: 6.0,
-                        bottom: 6.0,
-                        left: 12.0,
-                        right: 12.0,
+                        top: 12.0,
+                        bottom: 12.0,
+                        left: 16.0,
+                        right: 16.0,
                     })
                     .width(Length::Fill)
-                    .style(move |theme: &iced::Theme, status| {
-                        let p = theme.extended_palette();
+                    .style(move |_theme: &iced::Theme, status| {
                         if is_selected {
                             iced::widget::button::Style {
-                                background: Some(iced::Background::Color(
-                                    p.primary.weak.color,
-                                )),
-                                text_color: p.primary.weak.text,
+                                background: Some(iced::Background::Color(primary_base)),
+                                text_color: primary_base_text,
                                 border: iced::Border {
-                                    radius: 4.0.into(),
+                                    radius: 8.0.into(),
                                     ..Default::default()
                                 },
                                 ..Default::default()
@@ -105,12 +115,10 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                             match status {
                                 iced::widget::button::Status::Hovered => {
                                     iced::widget::button::Style {
-                                        background: Some(iced::Background::Color(
-                                            p.background.weak.color,
-                                        )),
-                                        text_color: p.background.base.text,
+                                        background: Some(iced::Background::Color(bg_weak)),
+                                        text_color: bg_text,
                                         border: iced::Border {
-                                            radius: 4.0.into(),
+                                            radius: 8.0.into(),
                                             ..Default::default()
                                         },
                                         ..Default::default()
@@ -118,9 +126,9 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                                 }
                                 _ => iced::widget::button::Style {
                                     background: None,
-                                    text_color: p.background.base.text,
+                                    text_color: bg_text,
                                     border: iced::Border {
-                                        radius: 4.0.into(),
+                                        radius: 8.0.into(),
                                         ..Default::default()
                                     },
                                     ..Default::default()
@@ -129,77 +137,70 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                         }
                     });
 
-                // Suppress unused variable warning; app_id_clone used for
-                // future on_click-with-index routing (Task 10 refines selection
-                // from click index; for now Enter/click both fire Msg::Launch).
-                let _ = app_id_clone;
                 row_btn.into()
             })
             .collect()
     };
 
     let list: Element<'_, Msg> =
-        scrollable(column(rows).width(Length::Fill).spacing(2))
+        scrollable(column(rows).width(Length::Fill).spacing(4))
             .width(Length::Fill)
-            .height(Length::Fixed(320.0))
+            .height(Length::Fixed(440.0))
             .into();
 
     // --- card ---
+    // Chunky appliance card: 640px wide, 16px internal padding around the
+    // body so the rule and rows breathe.
     let card_body: Element<'_, Msg> = column![
         query_input,
         rule::horizontal(1),
-        list,
+        container(list).padding(Padding {
+            top: 8.0,
+            bottom: 8.0,
+            left: 8.0,
+            right: 8.0,
+        }),
     ]
     .spacing(0)
     .width(Length::Fill)
     .into();
 
     let card: Element<'_, Msg> = container(card_body)
-        .width(Length::Fixed(560.0))
+        .width(Length::Fixed(640.0))
         .padding(Padding::new(0.0))
-        .style(|theme: &iced::Theme| {
-            let p = theme.extended_palette();
-            iced::widget::container::Style {
-                background: Some(iced::Background::Color(p.background.base.color)),
-                border: iced::Border {
-                    color: p.background.strong.color,
-                    width: 1.0,
-                    radius: 8.0.into(),
-                },
-                shadow: iced::Shadow {
-                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-                    offset: iced::Vector::new(0.0, 8.0),
-                    blur_radius: 24.0,
-                },
-                ..Default::default()
-            }
+        .style(move |_theme: &iced::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(card_bg)),
+            border: iced::Border {
+                color: card_border,
+                width: 1.0,
+                radius: 14.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.55),
+                offset: iced::Vector::new(0.0, 16.0),
+                blur_radius: 48.0,
+            },
+            ..Default::default()
         })
         .into();
 
-    // Position card: centered horizontally, top-third vertically.
-    // Use padding-top ≈ 33% of 1052px ≈ 350px as a fixed placeholder.
-    // Task 10 corrects this from OutputGeometry.
+    // Vertically + horizontally centered card.
     let positioned: Element<'_, Msg> = container(card)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(Padding {
-            top: 440.0,
-            left: 0.0,
-            right: 0.0,
-            bottom: 0.0,
-        })
-        .align_x(iced::alignment::Horizontal::Center)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
         .into();
 
-    // Backdrop: full-screen dim that dismisses on outside click.
-    // Dark rgba fill dims the screen behind the launcher card.
+    // Backdrop: very light dim so the launcher feels overlaid on the
+    // workspace, not a modal sheet.
     let backdrop: Element<'_, Msg> = mouse_area(
         container(text(""))
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|_theme: &iced::Theme| iced::widget::container::Style {
                 background: Some(iced::Background::Color(
-                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.65),
+                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.40),
                 )),
                 ..Default::default()
             }),
@@ -207,7 +208,6 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     .on_press(Msg::CloseLauncher)
     .into();
 
-    // Stack: backdrop (layer 0, dims screen) + card (layer 1).
     stack![backdrop, positioned]
         .width(Length::Fill)
         .height(Length::Fill)

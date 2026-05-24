@@ -192,19 +192,47 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
             .into();
 
             if disabled {
-                container(item_row)
-                    .width(Length::Fill)
-                    .into()
+                container(item_row).width(Length::Fill).into()
             } else {
-                mouse_area(
-                    container(item_row)
-                        .width(Length::Fill),
-                )
-                .on_press(Msg::MenuAction {
-                    app_id,
-                    action_id: id,
-                })
-                .into()
+                // Use iced::button so we get free Hovered status styling.
+                // Active = transparent (the card paints the background);
+                // Hovered = primary fill with rounded corners (macOS feel).
+                iced::widget::button(item_row)
+                    .padding(Padding::new(0.0))
+                    .width(Length::Fill)
+                    .on_press(Msg::MenuAction {
+                        app_id,
+                        action_id: id,
+                    })
+                    .style(|theme: &iced::Theme, status| {
+                        let p = theme.extended_palette();
+                        match status {
+                            iced::widget::button::Status::Hovered
+                            | iced::widget::button::Status::Pressed => {
+                                iced::widget::button::Style {
+                                    background: Some(iced::Background::Color(
+                                        p.primary.base.color,
+                                    )),
+                                    text_color: p.primary.base.text,
+                                    border: iced::Border {
+                                        radius: 4.0.into(),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                }
+                            }
+                            _ => iced::widget::button::Style {
+                                background: None,
+                                text_color: p.background.base.text,
+                                border: iced::Border {
+                                    radius: 4.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            },
+                        }
+                    })
+                    .into()
             }
         }
     }
