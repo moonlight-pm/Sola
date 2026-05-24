@@ -373,11 +373,21 @@ impl Shell {
             }
         }
 
-        // While the launcher or a dropdown menu is up, eat every other chord.
-        // We don't want zoning, menu shortcuts, or app shortcuts firing under
-        // a modal overlay. (Switcher has its own navigation branch below.)
-        if self.launcher.active || self.menu_open {
+        // Launcher is modal — it owns the keyboard while active, so eat
+        // every other chord. (Switcher has its own navigation branch below.)
+        if self.launcher.active {
             return Task::none();
+        }
+
+        // A dropdown menu is transient — any non-Escape chord should
+        // dismiss it and then proceed normally (so Meta+Space still
+        // opens the launcher, Meta+Tab still opens the switcher, etc.
+        // even if the user left a menu hanging open).
+        if self.menu_open {
+            self.menu_open = false;
+            self.current_open_index = None;
+            self.emit_composition();
+            self.emit_registered_chords();
         }
 
         // Switcher active: Tab/Right cycles forward; Left cycles backward.
