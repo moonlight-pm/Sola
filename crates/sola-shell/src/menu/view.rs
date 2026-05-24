@@ -77,18 +77,24 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             .into()
     };
 
-    // Dropdown card — white rounded panel positioned at anchor_x from left.
+    // Dropdown card — opaque rounded panel positioned at anchor_x from left.
+    //
+    // The per-window theme on the menu surface paints a TRANSPARENT
+    // background (so the surface itself is see-through), so we cannot
+    // pull the card's background from `theme.palette()` — it would be
+    // transparent too. Instead, close over the shell's REAL theme and
+    // derive the card colours from its extended palette.
     let anchor_x = shell.menu_anchor_x;
+    let card_palette = shell.theme.extended_palette();
+    let card_bg = card_palette.background.weak.color;
+    let card_border = card_palette.background.strong.color;
     let card: Element<'_, Msg> = container(items_el)
         .padding(Padding::new(4.0))
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
+        .style(move |_theme: &iced::Theme| {
             iced::widget::container::Style {
-                background: Some(iced::Background::Color(
-                    palette.background.base.color,
-                )),
+                background: Some(iced::Background::Color(card_bg)),
                 border: iced::Border {
-                    color: palette.background.strong.color,
+                    color: card_border,
                     width: 1.0,
                     radius: 6.0.into(),
                 },
