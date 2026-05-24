@@ -449,24 +449,31 @@ impl Shell {
         )
     }
 
-    /// Estimate the left-edge X of menu label `index` in the menubar row.
+    /// Estimate the left-edge X of the menubar element identified by
+    /// `(index, is_system)`.
     ///
-    /// This is font-metric math, not a post-layout measurement.  It gives a
-    /// reasonable approximation until real geometry is available via
+    /// Font-metric math, not a post-layout measurement. Good enough for
+    /// anchoring a dropdown until real geometry arrives via
     /// MenuLabelPosition events.
     ///
-    /// Layout is:
+    /// Layout:
     ///   [system-btn ~34px] [app-title: (chars×7.5)+16] [label[1]: ...] ...
     ///
-    /// Average character width at the default ~13px font size: ~7.5px.
-    /// Padding per label: [2, 8] = 2×8 = 16px total horizontal.
-    ///
-    /// Index 0 is the app-title/system-menu (left edge ≈ 34px).
-    /// Index n≥1 is menus[n] (accumulates label widths from index 1 onward).
-    pub fn estimate_label_x(&self, index: usize) -> f32 {
+    /// - `is_system=true`  → 0 (system icon is the leftmost element)
+    /// - `index=0`         → SYSTEM_BTN_W (left edge of app title)
+    /// - `index=n` (n≥1)   → after app title and labels [1..n]
+    pub fn estimate_label_x(&self, index: usize, is_system: bool) -> f32 {
         const CHAR_WIDTH: f32 = 7.5;
         const PAD_H: f32 = 16.0; // 2×8px horizontal padding
         const SYSTEM_BTN_W: f32 = 34.0;
+
+        if is_system {
+            return 0.0;
+        }
+
+        if index == 0 {
+            return SYSTEM_BTN_W;
+        }
 
         // Width of the app title label (index 0 slot).
         let title_label = self
@@ -478,11 +485,6 @@ impl Shell {
             .unwrap_or("");
         let title_w = title_label.len() as f32 * CHAR_WIDTH + PAD_H;
 
-        if index == 0 {
-            return SYSTEM_BTN_W;
-        }
-
-        // Accumulate widths for labels [1..index].
         let app_id = self.focused_app_id.as_deref().unwrap_or("");
         let payload = self.menus.get_menu(app_id);
 
@@ -552,14 +554,27 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::OpenMenu { index, is_system } => {
-                tracing::info!(index, is_system, "Msg::OpenMenu (mouse_area on_press fired)");
+                // Toggle: clicking the same menubar element while its menu
+                // is open dismisses it (macOS behaviour).
+                let same_trigger = self.menu_open
+                    && self.current_open_index == Some(index)
+                    && self.current_open_is_system == is_system;
+                if same_trigger {
+                    self.menu_open = false;
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                    return iced::Task::none();
+                }
+
                 self.menu_anchor_x = self
                     .menubar
                     .label_positions
                     .get(index)
                     .copied()
                     .filter(|x| *x > 0.0)
-                    .unwrap_or_else(|| self.estimate_label_x(index));
+                    .unwrap_or_else(|| self.estimate_label_x(index, is_system));
                 self.menu_open = true;
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
@@ -568,15 +583,20 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::HoverMenu { index } => {
-                if self.menu_open && self.current_open_index != Some(index) {
+                // HoverMenu always refers to app-menu labels (menus[1..]),
+                // never the system icon — those don't emit HoverMenu.
+                if self.menu_open
+                    && (self.current_open_index != Some(index) || self.current_open_is_system)
+                {
                     self.menu_anchor_x = self
                         .menubar
                         .label_positions
                         .get(index)
                         .copied()
                         .filter(|x| *x > 0.0)
-                        .unwrap_or_else(|| self.estimate_label_x(index));
+                        .unwrap_or_else(|| self.estimate_label_x(index, false));
                     self.current_open_index = Some(index);
+                    self.current_open_is_system = false;
                 }
                 iced::Task::none()
             }

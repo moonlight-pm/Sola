@@ -24,9 +24,13 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // Use mouse_area + container (not button) so iced doesn't paint the
     // primary-palette blue background over it.
     let system_fg = iced::Color::from_rgb(0x6e as f32 / 255.0, 0x76 as f32 / 255.0, 0x81 as f32 / 255.0);
+    let system_active = shell.menu_open && shell.current_open_is_system;
     let system_btn: Element<'_, Msg> = mouse_area(
-        container(icon_colored("sola/pillars", 16, system_fg))
-            .padding([2, 8]),
+        highlight_container(
+            container(icon_colored("sola/pillars", 16, system_fg))
+                .padding([2, 8]),
+            system_active,
+        ),
     )
     .on_press(Msg::OpenMenu { index: 0, is_system: true })
     .into();
@@ -36,14 +40,20 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // the app label from the applications catalog, or the raw app_id).
     let app_title_str = focused_app_title(shell);
     let clickable = has_menu(shell);
+    let title_active = shell.menu_open
+        && !shell.current_open_is_system
+        && shell.current_open_index == Some(0);
     let app_title: Element<'_, Msg> = if clickable {
         mouse_area(
-            container(
-                text(app_title_str)
-                    .font(SF_PRO_MEDIUM)
-                    .size(15),
-            )
-            .padding([2, 8]),
+            highlight_container(
+                container(
+                    text(app_title_str)
+                        .font(SF_PRO_MEDIUM)
+                        .size(15),
+                )
+                .padding([2, 8]),
+                title_active,
+            ),
         )
         .on_press(Msg::OpenMenu { index: 0, is_system: false })
         .into()
@@ -76,6 +86,31 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     ]
     .height(Length::Fill)
     .into()
+}
+
+
+/// Wrap a menubar label container so it paints a highlight background
+/// when `active` is true. macOS-style: subtle translucent white over the
+/// black menubar so the open-menu trigger is visually anchored.
+fn highlight_container<'a>(
+    inner: iced::widget::Container<'a, Msg>,
+    active: bool,
+) -> iced::widget::Container<'a, Msg> {
+    container(inner).style(move |_theme: &iced::Theme| {
+        if !active {
+            return iced::widget::container::Style::default();
+        }
+        iced::widget::container::Style {
+            background: Some(iced::Background::Color(
+                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.15),
+            )),
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -140,13 +175,19 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
         .enumerate()
         .skip(1)
         .map(|(index, menu)| {
+            let active = shell.menu_open
+                && !shell.current_open_is_system
+                && shell.current_open_index == Some(index);
             mouse_area(
-                container(
-                    text(menu.label.clone())
-                        .font(SF_PRO)
-                        .size(15),
-                )
-                .padding([2, 8]),
+                highlight_container(
+                    container(
+                        text(menu.label.clone())
+                            .font(SF_PRO)
+                            .size(15),
+                    )
+                    .padding([2, 8]),
+                    active,
+                ),
             )
             .on_press(Msg::OpenMenu { index, is_system: false })
             .on_enter(Msg::HoverMenu { index })
