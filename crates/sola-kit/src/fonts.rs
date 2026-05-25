@@ -99,3 +99,68 @@ pub fn load_all() -> Vec<Vec<u8>> {
     }
     out
 }
+
+
+/// Semantic font roles — what kit components actually reach for.
+///
+/// Each field is a `Font` (a family + weight + style). Defaults bias
+/// toward SF Pro for everything UI-shaped, with JetBrains Mono for
+/// code; apps that want a different family install a custom `Fonts`
+/// at startup via [`install`]. Components never reach for a family
+/// constant directly — they call the role accessors below
+/// ([`ui`], [`ui_medium`], [`display`], [`chrome`], [`mono`]).
+///
+/// The role vocabulary mirrors how the legacy CEF kit named font
+/// tokens (`--font-ui`, `--font-display`, …). Adding a new role is a
+/// matter of adding a field, a default, and an accessor.
+#[derive(Debug, Clone)]
+pub struct Fonts {
+    /// Default body / sidebar item / button text.
+    pub ui: Font,
+    /// 500-weight UI emphasis (focused-app title, active row text).
+    pub ui_medium: Font,
+    /// Page titles, large headings.
+    pub display: Font,
+    /// Dense desktop chrome — small uppercase labels, section headers.
+    pub chrome: Font,
+    /// Code, JSON, terminal-shaped output.
+    pub mono: Font,
+}
+
+impl Default for Fonts {
+    fn default() -> Self {
+        Self {
+            ui: SF_PRO,
+            ui_medium: SF_PRO_MEDIUM,
+            display: SF_PRO_MEDIUM,
+            chrome: SF_PRO,
+            mono: MONO,
+        }
+    }
+}
+
+/// Process-wide font role table. Set once at startup via [`install`];
+/// role accessors fall back to [`Fonts::default`] until then.
+static FONTS: std::sync::OnceLock<Fonts> = std::sync::OnceLock::new();
+
+/// Install the kit's role→family mapping for this process. Call once
+/// before any view renders (typically right after [`load_all`] returns).
+/// Subsequent calls are ignored — the lock is one-shot by design so
+/// the role accessors stay branch-free.
+pub fn install(fonts: Fonts) {
+    let _ = FONTS.set(fonts);
+}
+
+/// Borrow the installed `Fonts` table, or a freshly-allocated default
+/// if no app has called [`install`] yet. The default is built once per
+/// call site — apps that touch the accessors hot should call [`install`]
+/// at boot to avoid the per-call default construction.
+fn current() -> &'static Fonts {
+    FONTS.get_or_init(Fonts::default)
+}
+
+pub fn ui() -> Font { current().ui }
+pub fn ui_medium() -> Font { current().ui_medium }
+pub fn display() -> Font { current().display }
+pub fn chrome() -> Font { current().chrome }
+pub fn mono() -> Font { current().mono }

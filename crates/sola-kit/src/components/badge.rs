@@ -26,7 +26,7 @@ pub fn badge<'a, Message: 'a>(
     label: impl text::IntoFragment<'a>,
     tone: Tone,
 ) -> Element<'a, Message, Theme> {
-    container(text(label).font(fonts::CONDENSED_BOLD).size(10))
+    container(text(label).font(fonts::ui_medium()).size(10))
         .padding(Padding::from([2, 8]))
         .style(move |t| style(t, tone))
         .into()

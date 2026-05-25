@@ -27,7 +27,7 @@ pub fn toolbar_button<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    button(text(label).font(fonts::CONDENSED_BOLD).size(12))
+    button(text(label).font(fonts::ui_medium()).size(12))
         .padding([4, 10])
         .width(Length::Shrink)
         .style(style)

@@ -86,7 +86,7 @@ where
 fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
     container(
         text(label.to_uppercase())
-            .font(fonts::CONDENSED_BOLD)
+            .font(fonts::chrome())
             .size(11)
             .style(|theme: &Theme| {
                 let p = theme.extended_palette();
@@ -101,7 +101,7 @@ fn sidebar_item<'a, Message>(item: SidebarItem<Message>) -> Element<'a, Message>
 where
     Message: Clone + 'a,
 {
-    let label = text(item.label).font(fonts::CONDENSED).size(13);
+    let label = text(item.label).font(fonts::ui()).size(13);
     let active = item.active;
     button(label)
         .style(move |t, status| item_style(t, status, active))
