@@ -223,8 +223,14 @@ fn launch<'a>(
     // can broadcast Topic::Shutdown — so sola-session never gets to
     // stop user-app scopes. pdeathsig still SIGTERMs everyone if sola
     // dies unexpectedly, so the supervision contract is unchanged.
+    //
+    // SOLA_NO_SELF_WATCH tells the kit's startup() to skip its own
+    // self-restart watcher — sola is already restarting these on
+    // binary change, so without this they'd double-restart (kit
+    // exec_self followed instantly by sola kill + launch).
     let result = unsafe {
         Command::new(&bin)
+            .env("SOLA_NO_SELF_WATCH", "1")
             .pre_exec(sola_core::process::set_pdeathsig_and_leader)
             .spawn()
     };

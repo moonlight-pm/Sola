@@ -77,6 +77,11 @@ pub const FONT_FILES: &[&str] = &[
     "SFPro/SF-Pro-Italic.ttf",
     "SFPro/SF-Compact.ttf",
     "SFPro/SF-Compact-Italic.ttf",
+    // Iosevka Fixed — manually placed by user. cosmic-text needs TTF/OTF;
+    // the WOFF2 we ship for sola-terminal won't load here.
+    // Install: cp assets/fonts/Iosevka-Fixed*.ttf /opt/sola/share/fonts/Iosevka/
+    "Iosevka/Iosevka-Fixed.ttf",
+    "Iosevka/Iosevka-Fixed-Bold.ttf",
 ];
 
 /// Read the kit's standard font files off disk. Caller passes the
@@ -178,6 +183,7 @@ pub const INSTALLED_FAMILIES: &[&str] = &[
     "Roboto Flex",
     "Roboto Condensed",
     "JetBrains Mono",
+    "Iosevka Fixed",
 ];
 
 /// Build a `Fonts` table from a per-role family-name selection.
