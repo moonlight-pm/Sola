@@ -103,6 +103,10 @@ pub enum Msg {
     /// Bus message arriving via [`sola_kit::app::bus_subscription`].
     /// Wrapped in `Arc` to keep cloning cheap for iced's mpsc fanout.
     Bus(Arc<sola_bus::Message>),
+    /// Overwrite the accent atom and broadcast the new theme. Origin
+    /// is the Theme page's preset row; any future per-atom editor
+    /// can route through a similar `Set<Atom>(Color)` variant.
+    SetAccent(iced::Color),
     /// Demo placeholder for showcases whose components require an
     /// `on_press` (or similar callback) message but don't model
     /// interaction in the storybook.
@@ -113,19 +117,25 @@ pub struct Storybook {
     page: Page,
     toolbar: pages::toolbar::State,
     field: pages::field::State,
-    /// Live iced theme — initialized to the kit default and replaced
-    /// on every `Topic::Theme` delivery via
-    /// [`sola_kit::theme::from_bus_theme`].
+    /// Editable atom set — the storybook is the source of truth for
+    /// the live theme. Mutating an atom rebuilds `theme` and re-emits
+    /// `Topic::Theme` on the bus so other kit apps update in lockstep.
+    atoms: theme::Atoms,
+    /// Live iced theme — derived from `atoms` on every edit, also
+    /// replaceable by a `Topic::Theme` delivery from another emitter.
     theme: iced::Theme,
 }
 
 impl Storybook {
     pub fn default() -> Self {
+        let atoms = theme::Atoms::default();
+        let theme = theme::iced_theme_from_atoms(&atoms);
         Self {
             page: Page::Welcome,
             toolbar: pages::toolbar::State::default(),
             field: pages::field::State::default(),
-            theme: theme::default_theme(),
+            atoms,
+            theme,
         }
     }
 
@@ -148,6 +158,12 @@ impl Storybook {
             Msg::Field(m) => self.field.update(m),
             Msg::Bus(message) => match Topic::parse(&message) {
                 Some(Topic::Theme(bus_theme)) => {
+                    // External theme delivery (e.g. sola-shell's sticky
+                    // seed on first connect, or an edit from another
+                    // editor): rebuild iced theme. We don't reverse-engineer
+                    // `atoms` from the bus theme — the storybook stays the
+                    // source of truth for its own atom set, and an external
+                    // edit just overrides the next render.
                     self.theme = theme::from_bus_theme(&bus_theme);
                 }
                 Some(Topic::MenuAction(MenuActionPayload { app_id, action_id }))
@@ -157,6 +173,21 @@ impl Storybook {
                 }
                 _ => {}
             },
+            Msg::SetAccent(color) => {
+                self.atoms.accent = color;
+                self.theme = theme::iced_theme_from_atoms(&self.atoms);
+                let bus_theme = theme::bus_theme_from_atoms(&self.atoms);
+                match sola_kit::app::bus().lock() {
+                    Ok(mut bus) => {
+                        if let Err(err) = bus.emit(Topic::Theme(bus_theme)) {
+                            tracing::warn!("failed to emit Topic::Theme: {err}");
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!("bus mutex poisoned, can't emit Topic::Theme: {err}");
+                    }
+                }
+            }
             Msg::Noop => {}
         }
     }
@@ -199,7 +230,7 @@ impl Storybook {
     fn page_view(&self) -> Element<'_, Msg> {
         match self.page {
             Page::Welcome => pages::welcome::view(),
-            Page::Theme => pages::theme::view(),
+            Page::Theme => pages::theme::view(&self.atoms),
             Page::Text => pages::text::view(),
             Page::Button => pages::button::view(),
             Page::Badge => pages::badge::view(),

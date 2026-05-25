@@ -238,3 +238,114 @@ pub fn from_bus_theme(bus: &BusTheme) -> Theme {
 pub fn to_bus_theme() -> BusTheme {
     BusTheme::default()
 }
+
+
+/// Editable atom set — every colour the iced kit's theme depends on,
+/// held as `iced::Color` so the storybook can mutate one and rebuild.
+///
+/// This is the bridge between the kit's compile-time palette (the
+/// `hex::*` constants) and the bus-side `BusTheme` schema. Both
+/// directions go through here:
+///
+///   default constants → `Atoms::default`
+///   `Atoms` → `iced::Theme` via [`iced_theme_from_atoms`]
+///   `Atoms` → `BusTheme`   via [`bus_theme_from_atoms`]
+///
+/// The storybook's editor mutates an `Atoms` value, then rebuilds and
+/// re-emits both forms; other kit apps consume the bus form via
+/// [`from_bus_theme`] and pick up the change on their next render.
+#[derive(Debug, Clone, Copy)]
+pub struct Atoms {
+    pub bg: Color,
+    pub bg_raised: Color,
+    pub bg_hover: Color,
+    pub border: Color,
+    pub fg: Color,
+    pub fg_muted: Color,
+    pub accent: Color,
+    pub success: Color,
+    pub warning: Color,
+    pub danger: Color,
+}
+
+impl Default for Atoms {
+    fn default() -> Self {
+        Self {
+            bg: parse(hex::BG),
+            bg_raised: parse(hex::BG_RAISED),
+            bg_hover: parse(hex::BG_HOVER),
+            border: parse(hex::BORDER),
+            fg: parse(hex::FG),
+            fg_muted: parse(hex::FG_MUTED),
+            accent: parse(hex::ACCENT),
+            success: parse(hex::SUCCESS),
+            warning: parse(hex::WARNING),
+            danger: parse(hex::DANGER),
+        }
+    }
+}
+
+/// Build an iced `Theme` from an editable atom set. Same shape as
+/// [`from_bus_theme`] — only the source of the colours differs.
+pub fn iced_theme_from_atoms(atoms: &Atoms) -> Theme {
+    let Atoms {
+        bg, bg_raised, bg_hover, border, fg, fg_muted, accent, success, warning, danger,
+    } = *atoms;
+    Theme::custom_with_fn(
+        THEME_NAME.to_string(),
+        Palette { background: bg, text: fg, primary: accent, success, warning, danger },
+        move |palette| Extended {
+            background: Background {
+                base: Pair::new(bg, fg),
+                weakest: Pair::new(bg, fg),
+                weaker: Pair::new(bg_raised, fg),
+                weak: Pair::new(bg_raised, fg),
+                neutral: Pair::new(bg_hover, fg),
+                strong: Pair::new(bg_hover, fg),
+                stronger: Pair::new(border, fg),
+                strongest: Pair::new(border, fg),
+            },
+            primary: Primary::generate(palette.primary, bg, fg),
+            secondary: Secondary {
+                base: Pair::new(border, fg_muted),
+                weak: Pair::new(bg_hover, fg_muted),
+                strong: Pair::new(border, fg),
+            },
+            success: Success::generate(palette.success, bg, fg),
+            warning: Warning::generate(palette.warning, bg, fg),
+            danger: Danger::generate(palette.danger, bg, fg),
+            is_dark: true,
+        },
+    )
+}
+
+/// Build a `BusTheme` from an editable atom set, overwriting only the
+/// token values [`from_bus_theme`] actually reads back. Unknown atoms
+/// (e.g. `accent-dim`, `text-secondary`) keep their seed values — the
+/// editor doesn't need to model atoms iced doesn't expose.
+pub fn bus_theme_from_atoms(atoms: &Atoms) -> BusTheme {
+    let mut t = BusTheme::default();
+    for (name, value) in [
+        ("bg-primary",   color_to_hex(atoms.bg)),
+        ("bg-secondary", color_to_hex(atoms.bg_raised)),
+        ("bg-tertiary",  color_to_hex(atoms.bg_hover)),
+        ("border",       color_to_hex(atoms.border)),
+        ("text-primary", color_to_hex(atoms.fg)),
+        ("text-tertiary", color_to_hex(atoms.fg_muted)),
+        ("accent",       color_to_hex(atoms.accent)),
+        ("success",      color_to_hex(atoms.success)),
+        ("danger",       color_to_hex(atoms.danger)),
+    ] {
+        if let Some(tok) = t.palette.tokens.get_mut(name) {
+            tok.value = value;
+        }
+    }
+    t
+}
+
+fn color_to_hex(c: Color) -> String {
+    let r = (c.r * 255.0).round().clamp(0.0, 255.0) as u8;
+    let g = (c.g * 255.0).round().clamp(0.0, 255.0) as u8;
+    let b = (c.b * 255.0).round().clamp(0.0, 255.0) as u8;
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
