@@ -390,8 +390,9 @@ impl Shell {
             self.emit_registered_chords();
         }
 
-        // Switcher active: Tab/Right cycles forward; Left cycles backward.
-        // Meta release (handled in on_chord_released) confirms.
+        // Switcher active: Tab/Right cycles forward; Left cycles backward;
+        // Meta+Q closes the *selected* app (not the front one); Meta
+        // release (handled in on_chord_released) confirms.
         if self.switcher.active {
             use sola_core::KeyCode;
             if chord.keycode == KeyCode::TAB || chord.keycode == KeyCode::RIGHT {
@@ -399,6 +400,32 @@ impl Shell {
             }
             if chord.keycode == KeyCode::LEFT {
                 return Task::done(Msg::SwitcherNav { next: false });
+            }
+            if chord.meta && chord.keycode == KeyCode::Q {
+                if let Some(target) = self.switcher.apps.get(self.switcher.selected).cloned() {
+                    tracing::info!(
+                        app_id = %target.app_id,
+                        "Meta+Q in switcher — close selected app"
+                    );
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::CloseApp(target.app_id.clone()));
+                    }
+                    // Optimistic remove — Topic::Windows from sola-river
+                    // will reconcile, but pulling the entry now keeps the
+                    // switcher visually in step with the keypress. Clamp
+                    // the selection so it still points at a real app;
+                    // dismiss the switcher entirely if we just killed the
+                    // last one.
+                    self.switcher.apps.retain(|a| a.app_id != target.app_id);
+                    if self.switcher.apps.is_empty() {
+                        return Task::done(Msg::SwitcherCancel);
+                    }
+                    if self.switcher.selected >= self.switcher.apps.len() {
+                        self.switcher.selected = self.switcher.apps.len() - 1;
+                    }
+                    self.emit_composition();
+                }
+                return Task::none();
             }
         }
 
