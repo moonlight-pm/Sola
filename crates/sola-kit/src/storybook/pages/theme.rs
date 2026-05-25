@@ -1,23 +1,23 @@
-//! Theme page — accent preset picker plus a swatch grid of every
-//! atom in `sola_kit::theme::Atoms`. Clicking a preset emits
-//! [`Msg::SetAccent`]; the storybook update rebuilds its iced theme,
-//! emits `Topic::Theme` on the bus, and every kit consumer (sola-monitor,
-//! the storybook itself) picks up the new accent on its next render.
+//! Theme page — accent preset picker, per-role font selectors, and a
+//! swatch grid of every atom in `sola_kit::theme::Atoms`. Edits emit
+//! `Msg::SetAccent` or `Msg::SetFont`; the storybook update rebuilds
+//! its iced theme, calls `sola_kit::fonts::install`, and re-emits
+//! `Topic::Theme` so every kit consumer picks up the change.
 
-use iced::widget::{column, container, mouse_area, row};
+use iced::widget::{column, container, mouse_area, pick_list, row};
 use iced::{Color, Element, Length, Padding};
 
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
-use sola_kit::theme::{self, Atoms};
+use sola_kit::fonts::INSTALLED_FAMILIES;
+use sola_kit::theme::{self, Atoms, FontSelection};
 
-use crate::storybook::Msg;
+use crate::storybook::{FontRole, Msg};
 
 const SWATCH_SIZE: f32 = 56.0;
 const PRESET_SIZE: f32 = 40.0;
+const GRID_GAP: f32 = 44.0;
 
-/// Five preset accents — the bus-side `from_bus_theme` lookup keys
-/// off `"accent"`, so any sufficiently bright colour roundtrips.
 const ACCENT_PRESETS: &[(&str, &str)] = &[
     ("Sky",     "#58a6ff"),
     ("Cyan",    "#00d4ff"),
@@ -26,19 +26,27 @@ const ACCENT_PRESETS: &[(&str, &str)] = &[
     ("Magenta", "#bc8cff"),
 ];
 
-pub fn view(atoms: &Atoms) -> Element<'_, Msg> {
+pub fn view<'a>(atoms: &'a Atoms, fonts: &'a FontSelection) -> Element<'a, Msg> {
     column![
         heading("Theme"),
         body(
-            "Click a preset to set the accent atom. The storybook rebuilds \
-             its iced theme from the editable Atoms struct and re-emits \
-             Topic::Theme so every other kit app — sola-monitor included \
-             — picks up the change on its next render."
+            "Live editor for the kit's atoms and font roles. Edits rebuild \
+             the iced theme, reinstall the fonts table, and re-emit \
+             Topic::Theme so other kit apps — sola-monitor today — update \
+             on their next render."
         )
         .style(muted),
 
         subheading("Accent"),
         presets_row(atoms.accent),
+
+        subheading("Fonts"),
+        body(
+            "Pick a family per role. Selections route through the bus, so \
+             sola-monitor's body / chrome / mono text swaps in real time."
+        )
+        .style(muted),
+        fonts_grid(fonts),
 
         subheading("Palette atoms"),
         body(
@@ -49,7 +57,7 @@ pub fn view(atoms: &Atoms) -> Element<'_, Msg> {
         .style(muted),
         atom_grid(atoms),
     ]
-    .spacing(24)
+    .spacing(28)
     .into()
 }
 
@@ -69,9 +77,6 @@ fn preset_tile<'a>(
     color: Color,
     selected: bool,
 ) -> Element<'a, Msg> {
-    // Wrap the swatch in a thin selection ring when it matches the
-    // current accent; mouse_area routes the click without painting
-    // a button surface over the colour.
     let ring = if selected { 2.0 } else { 0.0 };
     let tile = container(swatch_sized::<Msg>(color, PRESET_SIZE))
         .padding(Padding::from(ring))
@@ -87,14 +92,41 @@ fn preset_tile<'a>(
             }
         });
 
-    let stack = column![
+    column![
         mouse_area(tile).on_press(Msg::SetAccent(color)),
         caption(label).style(muted),
         code(hex_str).style(muted),
     ]
     .spacing(4)
-    .width(Length::Fixed(PRESET_SIZE + 16.0));
-    stack.into()
+    .width(Length::Fixed(PRESET_SIZE + 16.0))
+    .into()
+}
+
+fn fonts_grid(fonts: &FontSelection) -> Element<'_, Msg> {
+    column![
+        font_row("ui",        FontRole::Ui,       &fonts.ui),
+        font_row("ui_medium", FontRole::UiMedium, &fonts.ui_medium),
+        font_row("display",   FontRole::Display,  &fonts.display),
+        font_row("chrome",    FontRole::Chrome,   &fonts.chrome),
+        font_row("mono",      FontRole::Mono,     &fonts.mono),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn font_row<'a>(role_label: &'a str, role: FontRole, current: &str) -> Element<'a, Msg> {
+    let families: Vec<String> = INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect();
+    let selected = Some(current.to_string());
+    let picker = pick_list(families, selected, move |family| Msg::SetFont(role, family))
+        .width(Length::Fixed(220.0));
+
+    row![
+        container(body(role_label)).width(Length::Fixed(120.0)),
+        picker,
+    ]
+    .spacing(16)
+    .align_y(iced::Alignment::Center)
+    .into()
 }
 
 fn atom_grid(atoms: &Atoms) -> Element<'_, Msg> {
@@ -111,8 +143,8 @@ fn atom_grid(atoms: &Atoms) -> Element<'_, Msg> {
         ("DANGER",    atoms.danger,    "danger.base"),
     ];
 
-    rows.chunks(5).fold(column![].spacing(28), |col, chunk| {
-        let r = chunk.iter().fold(row![].spacing(28), |r, (name, c, slot)| {
+    rows.chunks(5).fold(column![].spacing(GRID_GAP), |col, chunk| {
+        let r = chunk.iter().fold(row![].spacing(GRID_GAP), |r, (name, c, slot)| {
             r.push(swatch_tile(name, *c, slot))
         });
         col.push(r)

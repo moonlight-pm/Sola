@@ -27,7 +27,7 @@ use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup, window_settings};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar_button;
-use sola_kit::fonts::{self, CONDENSED as F_CONDENSED, MONO as F_MONO, NORMAL as F_NORMAL};
+use sola_kit::fonts;
 use sola_kit::theme::{default_theme, from_bus_theme, parse as hex};
 
 const APP_ID: &str = "sola-monitor";
@@ -63,7 +63,7 @@ fn main() -> iced::Result {
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
-        .default_font(F_NORMAL)
+        .default_font(fonts::ui())
         .window(window_settings(APP_ID));
     for bytes in fonts::load_all() {
         app = app.font(bytes);
@@ -421,7 +421,7 @@ impl App {
     fn view_toolbar(&self) -> Element<'_, Msg> {
         let filter = text_input("filter…", &self.filter)
             .on_input(Msg::FilterChanged)
-            .font(F_NORMAL)
+            .font(fonts::ui())
             .padding(Padding::new(4.0).left(8.0).right(8.0))
             .size(13);
 
@@ -435,7 +435,7 @@ impl App {
             Some(topic_selected),
             Msg::TopicFilterChanged,
         )
-        .font(F_CONDENSED)
+        .font(fonts::chrome())
         .text_size(12)
         .padding(Padding::new(4.0).left(8.0).right(8.0));
 
@@ -465,19 +465,19 @@ impl App {
     fn view_messages(&self) -> Element<'_, Msg> {
         let header = row![
             text("TIME")
-                .font(F_CONDENSED)
+                .font(fonts::chrome())
                 .size(HEADER_FONT_PX)
                 .width(Length::Fixed(TIME_COL_W)),
             text("TOPIC")
-                .font(F_CONDENSED)
+                .font(fonts::chrome())
                 .size(HEADER_FONT_PX)
                 .width(Length::Fixed(TOPIC_COL_W)),
             text("SOURCE")
-                .font(F_CONDENSED)
+                .font(fonts::chrome())
                 .size(HEADER_FONT_PX)
                 .width(Length::Fixed(SOURCE_COL_W)),
             text("PAYLOAD")
-                .font(F_CONDENSED)
+                .font(fonts::chrome())
                 .size(HEADER_FONT_PX)
                 .width(Length::Fill),
         ]
@@ -515,17 +515,17 @@ impl App {
 
             let one_line = row![
                 text(t)
-                    .font(F_MONO)
+                    .font(fonts::mono())
                     .size(ROW_FONT_PX)
                     .style(kit_text::muted)
                     .width(Length::Fixed(TIME_COL_W)),
                 text(&entry.topic)
-                    .font(F_NORMAL)
+                    .font(fonts::ui())
                     .size(ROW_TEXT_FONT_PX)
                     .width(Length::Fixed(TOPIC_COL_W))
                     .wrapping(Wrapping::None),
                 text(&entry.source)
-                    .font(F_NORMAL)
+                    .font(fonts::ui())
                     .size(ROW_TEXT_FONT_PX)
                     .width(Length::Fixed(SOURCE_COL_W))
                     .wrapping(Wrapping::None),
@@ -576,7 +576,7 @@ impl App {
     fn view_sidebar(&self) -> Element<'_, Msg> {
         let header = container(
             text("STICKY STATE")
-                .font(F_CONDENSED)
+                .font(fonts::chrome())
                 .size(HEADER_FONT_PX),
         )
         .padding(Padding::new(4.0).left(12.0).right(12.0))
@@ -596,12 +596,12 @@ impl App {
             // expands the full pretty-printed payload below.
             let one_line = row![
                 text(&entry.topic)
-                    .font(F_NORMAL)
+                    .font(fonts::ui())
                     .size(ROW_TEXT_FONT_PX)
                     .width(Length::Fill)
                     .wrapping(Wrapping::None),
                 text(&entry.source)
-                    .font(F_NORMAL)
+                    .font(fonts::ui())
                     .size(ROW_TEXT_FONT_PX)
                     .wrapping(Wrapping::None),
             ]
@@ -718,7 +718,7 @@ fn selected_row_style(_: &Theme) -> container::Style {
 /// orange, punctuation muted gray).
 fn expanded_payload(json: &str) -> Element<'static, Msg> {
     rich_text(highlight_json(json))
-        .font(F_MONO)
+        .font(fonts::mono())
         .size(SELECTED_PAYLOAD_FONT_PX)
         .on_link_click(iced::never)
         .into()
@@ -732,7 +732,7 @@ fn preview_payload(json: &str) -> Element<'static, Msg> {
         return text("—").size(ROW_FONT_PX).style(kit_text::muted).into();
     }
     rich_text(highlight_json(json))
-        .font(F_MONO)
+        .font(fonts::mono())
         .size(ROW_FONT_PX)
         .wrapping(Wrapping::None)
         .width(Length::Fill)

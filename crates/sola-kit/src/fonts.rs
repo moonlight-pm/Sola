@@ -139,24 +139,26 @@ impl Default for Fonts {
     }
 }
 
-/// Process-wide font role table. Set once at startup via [`install`];
-/// role accessors fall back to [`Fonts::default`] until then.
-static FONTS: std::sync::OnceLock<Fonts> = std::sync::OnceLock::new();
+/// Process-wide font role table. Lazily initialised to
+/// [`Fonts::default`]; [`install`] swaps the whole table so bus-driven
+/// theme deliveries can re-pick fonts at runtime.
+static FONTS: std::sync::LazyLock<std::sync::RwLock<Fonts>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(Fonts::default()));
 
-/// Install the kit's role→family mapping for this process. Call once
-/// before any view renders (typically right after [`load_all`] returns).
-/// Subsequent calls are ignored — the lock is one-shot by design so
-/// the role accessors stay branch-free.
+/// Swap the kit's role→family mapping for this process. Re-callable —
+/// bus-driven theme deliveries call this on every `Topic::Theme` so a
+/// font edit in the storybook propagates everywhere on the next render.
 pub fn install(fonts: Fonts) {
-    let _ = FONTS.set(fonts);
+    if let Ok(mut guard) = FONTS.write() {
+        *guard = fonts;
+    }
 }
 
-/// Borrow the installed `Fonts` table, or a freshly-allocated default
-/// if no app has called [`install`] yet. The default is built once per
-/// call site — apps that touch the accessors hot should call [`install`]
-/// at boot to avoid the per-call default construction.
-fn current() -> &'static Fonts {
-    FONTS.get_or_init(Fonts::default)
+/// Snapshot the currently-installed `Fonts` table by value. The role
+/// accessors below all go through this; a momentary read lock per call
+/// is cheap and keeps callers from holding the lock across rendering.
+fn current() -> Fonts {
+    FONTS.read().map(|g| g.clone()).unwrap_or_default()
 }
 
 pub fn ui() -> Font { current().ui }
@@ -164,3 +166,54 @@ pub fn ui_medium() -> Font { current().ui_medium }
 pub fn display() -> Font { current().display }
 pub fn chrome() -> Font { current().chrome }
 pub fn mono() -> Font { current().mono }
+
+
+/// Font family names the kit ships and loads at boot. These are the
+/// values a settings UI offers in a font picker, and the strings the
+/// bus theme's `FontFamily` tokens carry. Order is roughly UI-shaped
+/// first, condensed/chrome middle, mono last.
+pub const INSTALLED_FAMILIES: &[&str] = &[
+    "SF Pro",
+    "Inter",
+    "Roboto Flex",
+    "Roboto Condensed",
+    "JetBrains Mono",
+];
+
+/// Build a `Fonts` table from a per-role family-name selection.
+/// Unknown family names round-trip back through `Font::with_name` and
+/// cosmic-text picks a fallback at shape time. `medium_for` flips the
+/// weight to Medium when the role calls for emphasis (`ui_medium`).
+pub fn fonts_from_families(
+    ui_family: &str,
+    ui_medium_family: &str,
+    display_family: &str,
+    chrome_family: &str,
+    mono_family: &str,
+) -> Fonts {
+    Fonts {
+        ui: Font::with_name(static_family(ui_family)),
+        ui_medium: medium(static_family(ui_medium_family)),
+        display: medium(static_family(display_family)),
+        chrome: Font::with_name(static_family(chrome_family)),
+        mono: Font::with_name(static_family(mono_family)),
+    }
+}
+
+fn medium(family: &'static str) -> Font {
+    Font { weight: iced::font::Weight::Medium, ..Font::with_name(family) }
+}
+
+/// `iced::Font::with_name` needs a `&'static str`. Intern incoming
+/// family names by matching against [`INSTALLED_FAMILIES`]; unknown
+/// names leak via `Box::leak` so we never have to chase lifetimes
+/// through the role accessors. Family-name churn is bounded (a handful
+/// per session even with hot edits), so the leak is acceptable.
+fn static_family(name: &str) -> &'static str {
+    for f in INSTALLED_FAMILIES {
+        if *f == name {
+            return f;
+        }
+    }
+    Box::leak(name.to_string().into_boxed_str())
+}

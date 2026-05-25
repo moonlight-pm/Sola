@@ -177,6 +177,11 @@ fn try_parse(s: &str) -> Option<Color> {
 /// re-renders on the next frame and the new palette flows through
 /// every component style fn automatically.
 pub fn from_bus_theme(bus: &BusTheme) -> Theme {
+    // Side-effect: install font role table so font tokens delivered on
+    // the bus take effect alongside the colour changes. Callers don't
+    // have to remember to do this separately.
+    crate::fonts::install(fonts_from_bus_theme(bus));
+
     let lookup = |name: &str, fallback: &str| -> Color {
         bus.palette
             .tokens
@@ -341,6 +346,80 @@ pub fn bus_theme_from_atoms(atoms: &Atoms) -> BusTheme {
         }
     }
     t
+}
+
+
+/// Per-role family selection — what `Topic::Theme` carries on the wire
+/// for the kit's font roles. Defaults match [`crate::fonts::Fonts::default`]
+/// so a fresh storybook starts with SF Pro everywhere it offers a
+/// pickable role.
+#[derive(Debug, Clone)]
+pub struct FontSelection {
+    pub ui: String,
+    pub ui_medium: String,
+    pub display: String,
+    pub chrome: String,
+    pub mono: String,
+}
+
+impl Default for FontSelection {
+    fn default() -> Self {
+        Self {
+            ui: "SF Pro".to_string(),
+            ui_medium: "SF Pro".to_string(),
+            display: "SF Pro".to_string(),
+            chrome: "SF Pro".to_string(),
+            mono: "JetBrains Mono".to_string(),
+        }
+    }
+}
+
+/// Merge font role selections into a `BusTheme`. Adds five
+/// `FontFamily`-kind tokens — `font-ui`, `font-ui-medium`, `font-display`,
+/// `font-chrome`, `font-mono` — so consumers can read them out via
+/// [`fonts_from_bus_theme`] and reinstall the role table.
+pub fn bus_theme_with_fonts(mut t: BusTheme, fonts: &FontSelection) -> BusTheme {
+    use sola_core::theme::{Token, TokenKind};
+    let writes = [
+        ("font-ui",        fonts.ui.clone()),
+        ("font-ui-medium", fonts.ui_medium.clone()),
+        ("font-display",   fonts.display.clone()),
+        ("font-chrome",    fonts.chrome.clone()),
+        ("font-mono",      fonts.mono.clone()),
+    ];
+    for (name, value) in writes {
+        t.palette.tokens.insert(
+            name.to_string(),
+            Token::new(TokenKind::FontFamily, &value, &["font-family"]),
+        );
+    }
+    t
+}
+
+/// Build a complete `BusTheme` from an atoms + fonts pair. Convenience
+/// over chaining [`bus_theme_from_atoms`] and [`bus_theme_with_fonts`].
+pub fn bus_theme_from(atoms: &Atoms, fonts: &FontSelection) -> BusTheme {
+    bus_theme_with_fonts(bus_theme_from_atoms(atoms), fonts)
+}
+
+/// Read the kit's font role tokens out of a `BusTheme` and build a
+/// `crate::fonts::Fonts` table. Missing tokens fall back to the
+/// process-wide default font selection.
+pub fn fonts_from_bus_theme(bus: &BusTheme) -> crate::fonts::Fonts {
+    let default = FontSelection::default();
+    let read = |name: &str, fallback: &str| {
+        bus.palette
+            .tokens
+            .get(name)
+            .map(|t| t.value.clone())
+            .unwrap_or_else(|| fallback.to_string())
+    };
+    let ui = read("font-ui", &default.ui);
+    let ui_medium = read("font-ui-medium", &default.ui_medium);
+    let display = read("font-display", &default.display);
+    let chrome = read("font-chrome", &default.chrome);
+    let mono = read("font-mono", &default.mono);
+    crate::fonts::fonts_from_families(&ui, &ui_medium, &display, &chrome, &mono)
 }
 
 fn color_to_hex(c: Color) -> String {

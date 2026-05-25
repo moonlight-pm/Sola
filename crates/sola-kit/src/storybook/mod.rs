@@ -103,24 +103,42 @@ pub enum Msg {
     /// Bus message arriving via [`sola_kit::app::bus_subscription`].
     /// Wrapped in `Arc` to keep cloning cheap for iced's mpsc fanout.
     Bus(Arc<sola_bus::Message>),
-    /// Overwrite the accent atom and broadcast the new theme. Origin
-    /// is the Theme page's preset row; any future per-atom editor
-    /// can route through a similar `Set<Atom>(Color)` variant.
+    /// Overwrite the accent atom and broadcast the new theme.
     SetAccent(iced::Color),
+    /// Swap one font role to a new family name. Origin is the Theme
+    /// page's per-role pick_list; the storybook update reinstalls the
+    /// fonts table and re-emits Topic::Theme.
+    SetFont(FontRole, String),
     /// Demo placeholder for showcases whose components require an
     /// `on_press` (or similar callback) message but don't model
     /// interaction in the storybook.
     Noop,
 }
 
+/// Identifies which slot in [`theme::FontSelection`] a `SetFont` edit
+/// targets. Kept here (not in `theme.rs`) because it's UI-shaped — the
+/// pick_list per role wraps each `Family` into a different `SetFont(role, ..)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontRole {
+    Ui,
+    UiMedium,
+    Display,
+    Chrome,
+    Mono,
+}
+
 pub struct Storybook {
     page: Page,
     toolbar: pages::toolbar::State,
     field: pages::field::State,
-    /// Editable atom set — the storybook is the source of truth for
+    /// Editable colour atoms — the storybook is the source of truth for
     /// the live theme. Mutating an atom rebuilds `theme` and re-emits
     /// `Topic::Theme` on the bus so other kit apps update in lockstep.
     atoms: theme::Atoms,
+    /// Editable per-role font family selection. Same edit→emit loop as
+    /// `atoms`; consumer-side `sola_kit::theme::from_bus_theme` installs
+    /// the resulting `Fonts` table as a side effect.
+    fonts: theme::FontSelection,
     /// Live iced theme — derived from `atoms` on every edit, also
     /// replaceable by a `Topic::Theme` delivery from another emitter.
     theme: iced::Theme,
@@ -129,12 +147,14 @@ pub struct Storybook {
 impl Storybook {
     pub fn default() -> Self {
         let atoms = theme::Atoms::default();
+        let fonts = theme::FontSelection::default();
         let theme = theme::iced_theme_from_atoms(&atoms);
         Self {
             page: Page::Welcome,
             toolbar: pages::toolbar::State::default(),
             field: pages::field::State::default(),
             atoms,
+            fonts,
             theme,
         }
     }
@@ -158,12 +178,10 @@ impl Storybook {
             Msg::Field(m) => self.field.update(m),
             Msg::Bus(message) => match Topic::parse(&message) {
                 Some(Topic::Theme(bus_theme)) => {
-                    // External theme delivery (e.g. sola-shell's sticky
-                    // seed on first connect, or an edit from another
-                    // editor): rebuild iced theme. We don't reverse-engineer
-                    // `atoms` from the bus theme — the storybook stays the
-                    // source of truth for its own atom set, and an external
-                    // edit just overrides the next render.
+                    // External theme delivery (sticky-replay from
+                    // sola-shell on first connect, or another editor's
+                    // edit). Rebuild iced theme — from_bus_theme also
+                    // reinstalls the fonts table as a side effect.
                     self.theme = theme::from_bus_theme(&bus_theme);
                 }
                 Some(Topic::MenuAction(MenuActionPayload { app_id, action_id }))
@@ -176,19 +194,45 @@ impl Storybook {
             Msg::SetAccent(color) => {
                 self.atoms.accent = color;
                 self.theme = theme::iced_theme_from_atoms(&self.atoms);
-                let bus_theme = theme::bus_theme_from_atoms(&self.atoms);
-                match sola_kit::app::bus().lock() {
-                    Ok(mut bus) => {
-                        if let Err(err) = bus.emit(Topic::Theme(bus_theme)) {
-                            tracing::warn!("failed to emit Topic::Theme: {err}");
-                        }
-                    }
-                    Err(err) => {
-                        tracing::warn!("bus mutex poisoned, can't emit Topic::Theme: {err}");
-                    }
+                self.broadcast_theme();
+            }
+            Msg::SetFont(role, family) => {
+                match role {
+                    FontRole::Ui => self.fonts.ui = family,
+                    FontRole::UiMedium => self.fonts.ui_medium = family,
+                    FontRole::Display => self.fonts.display = family,
+                    FontRole::Chrome => self.fonts.chrome = family,
+                    FontRole::Mono => self.fonts.mono = family,
                 }
+                // Install locally so the storybook's own widgets pick
+                // up the swap before the bus delivery loops back.
+                sola_kit::fonts::install(sola_kit::fonts::fonts_from_families(
+                    &self.fonts.ui,
+                    &self.fonts.ui_medium,
+                    &self.fonts.display,
+                    &self.fonts.chrome,
+                    &self.fonts.mono,
+                ));
+                self.broadcast_theme();
             }
             Msg::Noop => {}
+        }
+    }
+
+
+    /// Emit the current atoms + fonts as a `Topic::Theme`. Centralised
+    /// so SetAccent / SetFont stay symmetric.
+    fn broadcast_theme(&self) {
+        let bus_theme = theme::bus_theme_from(&self.atoms, &self.fonts);
+        match sola_kit::app::bus().lock() {
+            Ok(mut bus) => {
+                if let Err(err) = bus.emit(Topic::Theme(bus_theme)) {
+                    tracing::warn!("failed to emit Topic::Theme: {err}");
+                }
+            }
+            Err(err) => {
+                tracing::warn!("bus mutex poisoned, can't emit Topic::Theme: {err}");
+            }
         }
     }
 
@@ -230,7 +274,7 @@ impl Storybook {
     fn page_view(&self) -> Element<'_, Msg> {
         match self.page {
             Page::Welcome => pages::welcome::view(),
-            Page::Theme => pages::theme::view(&self.atoms),
+            Page::Theme => pages::theme::view(&self.atoms, &self.fonts),
             Page::Text => pages::text::view(),
             Page::Button => pages::button::view(),
             Page::Badge => pages::badge::view(),
