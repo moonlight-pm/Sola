@@ -16,7 +16,7 @@ use iced::widget::{container, row, scrollable};
 use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
-use sola_kit::components::{SidebarItem, sidebar};
+use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 use sola_kit::theme;
 
 pub mod pages;
@@ -41,22 +41,21 @@ pub enum Page {
 }
 
 impl Page {
-    /// Order rendered in the sidebar. Roughly grouped: foundations
-    /// first (theme, text), then primitives (button/badge/card/field),
-    /// then layout (divider/popover/sidebar/split/toolbar).
+    /// Order rendered in the sidebar. Grouped by [`Page::section`]:
+    /// Welcome (no section header) → Theme → Layout → Components.
     pub const ALL: &'static [Page] = &[
         Page::Welcome,
         Page::Theme,
+        Page::Divider,
+        Page::Split,
+        Page::Toolbar,
         Page::Text,
         Page::Button,
         Page::Badge,
         Page::Card,
         Page::Field,
-        Page::Divider,
         Page::Popover,
         Page::Sidebar,
-        Page::Split,
-        Page::Toolbar,
     ];
 
     pub fn label(self) -> &'static str {
@@ -73,6 +72,25 @@ impl Page {
             Page::Sidebar => "Sidebar",
             Page::Split => "Split",
             Page::Toolbar => "Toolbar",
+        }
+    }
+
+
+    /// Section bucket for the sidebar. `None` means the page renders
+    /// without a section header (currently only `Welcome` at the top).
+    /// Mirrors sola-kit-legacy's Theme / Layout / Components grouping.
+    pub fn section(self) -> Option<&'static str> {
+        match self {
+            Page::Welcome => None,
+            Page::Theme => Some("Theme"),
+            Page::Divider | Page::Split | Page::Toolbar => Some("Layout"),
+            Page::Text
+            | Page::Button
+            | Page::Badge
+            | Page::Card
+            | Page::Field
+            | Page::Popover
+            | Page::Sidebar => Some("Components"),
         }
     }
 }
@@ -144,10 +162,24 @@ impl Storybook {
     }
 
     pub fn view(&self) -> Element<'_, Msg> {
-        let items: Vec<SidebarItem<Msg>> = Page::ALL
-            .iter()
-            .copied()
-            .map(|p| SidebarItem::new(p.label(), Msg::Select(p)).active(p == self.page))
+        // Bucket pages into sections in `Page::ALL` order; the first
+        // section keyed by a given header wins (matches legacy's
+        // first-appearance ordering).
+        let mut buckets: Vec<(Option<&'static str>, Vec<SidebarItem<Msg>>)> = Vec::new();
+        for p in Page::ALL.iter().copied() {
+            let item = SidebarItem::new(p.label(), Msg::Select(p)).active(p == self.page);
+            let key = p.section();
+            match buckets.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, items)) => items.push(item),
+                None => buckets.push((key, vec![item])),
+            }
+        }
+        let sections: Vec<SidebarSection<Msg>> = buckets
+            .into_iter()
+            .map(|(key, items)| match key {
+                Some(label) => SidebarSection::new(label, items),
+                None => SidebarSection::unlabeled(items),
+            })
             .collect();
 
         let content = scrollable(
@@ -158,7 +190,7 @@ impl Storybook {
         .width(Length::Fill)
         .height(Length::Fill);
 
-        row![sidebar(items), content]
+        row![sidebar(sections), content]
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

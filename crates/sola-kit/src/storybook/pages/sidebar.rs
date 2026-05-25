@@ -7,35 +7,42 @@ use iced::{Element, Length};
 
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::text::{body, code, heading, muted};
-use sola_kit::components::{SidebarItem, sidebar};
+use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 
 use crate::storybook::Msg;
 
 pub fn view() -> Element<'static, Msg> {
-    // Static demo items — clicking does nothing in the showcase
-    // (consumer would route the message into its own state).
-    let items = vec![
-        SidebarItem::new("Inbox", Msg::Noop).active(true),
-        SidebarItem::new("Drafts", Msg::Noop),
-        SidebarItem::new("Sent", Msg::Noop),
-        SidebarItem::new("Archive", Msg::Noop),
-    ];
+    // Two demo sections — Mailboxes (with header) and a sectionless
+    // "Search" entry pinned on top — to exercise both the labeled and
+    // unlabeled SidebarSection paths.
+    let pinned = SidebarSection::unlabeled(vec![
+        SidebarItem::new("Search", Msg::Noop),
+    ]);
+    let mailboxes = SidebarSection::new(
+        "Mailboxes",
+        vec![
+            SidebarItem::new("Inbox", Msg::Noop).active(true),
+            SidebarItem::new("Drafts", Msg::Noop),
+            SidebarItem::new("Sent", Msg::Noop),
+            SidebarItem::new("Archive", Msg::Noop),
+        ],
+    );
 
     let demo = container(
-        row![sidebar(items), filler()]
+        row![sidebar(vec![pinned, mailboxes]), filler()]
             .width(Length::Fill)
             .height(Length::Fill),
     )
     .style(card_style)
-    .height(Length::Fixed(280.0))
+    .height(Length::Fixed(320.0))
     .width(Length::Fill);
 
     column![
         heading("Sidebar"),
-        body("Vertical column of selectable items. Active row uses BG_HOVER + accent text.")
+        body("Vertical column of selectable items grouped into optionally-labeled sections. Active row uses BG_HOVER + accent text; section headers use uppercase condensed-bold in the muted-text colour.")
             .style(muted),
         demo,
-        code("sidebar(items: Vec<SidebarItem<Msg>>)").style(muted),
+        code("sidebar(sections: Vec<SidebarSection<Msg>>)").style(muted),
     ]
     .spacing(16)
     .into()

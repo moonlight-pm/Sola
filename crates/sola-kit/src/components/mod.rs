@@ -37,7 +37,7 @@ pub use field::field;
 pub use icon::icon;
 pub use icon::icon_colored;
 pub use popover::popover;
-pub use sidebar::{SIDEBAR_WIDTH, SidebarItem, sidebar};
+pub use sidebar::{SIDEBAR_WIDTH, SidebarItem, SidebarSection, sidebar};
 pub use split::split;
 pub use swatch::{swatch, swatch_sized};
 pub use toolbar::{toolbar_button, toolbar_button_msg};

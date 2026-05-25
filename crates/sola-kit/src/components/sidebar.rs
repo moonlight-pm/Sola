@@ -1,9 +1,11 @@
-//! Vertical sidebar — column of selectable items with an active row.
+//! Vertical sidebar — column of selectable items grouped into
+//! optionally-labeled sections.
 //!
-//! Pattern: caller builds a `Vec<SidebarItem<_>>` from its own state,
-//! then hands it to `sidebar(items)`. The component is parent-controlled
-//! (no internal selection state) so the consumer's update fn stays the
-//! single source of truth for which item is active.
+//! Pattern: caller builds a `Vec<SidebarSection<_>>` (each holding its
+//! own `Vec<SidebarItem<_>>`) from its own state and hands it to
+//! `sidebar(sections)`. The component is parent-controlled (no internal
+//! selection state) so the consumer's update fn stays the single source
+//! of truth for which item is active.
 //!
 //! Style fns read from `theme.extended_palette()` only — the kit's
 //! atom→slot bindings live in [`crate::theme::sola_extended`]. To
@@ -34,28 +36,65 @@ impl<Message> SidebarItem<Message> {
     }
 }
 
+/// A group of sidebar rows with an optional uppercase header label.
+/// Unlabeled sections render as a plain item group (useful for a top
+/// "Welcome" entry that sits above the first headed section).
+pub struct SidebarSection<Message> {
+    pub label: Option<String>,
+    pub items: Vec<SidebarItem<Message>>,
+}
+
+impl<Message> SidebarSection<Message> {
+    pub fn new(label: impl Into<String>, items: Vec<SidebarItem<Message>>) -> Self {
+        Self { label: Some(label.into()), items }
+    }
+
+    pub fn unlabeled(items: Vec<SidebarItem<Message>>) -> Self {
+        Self { label: None, items }
+    }
+}
+
 /// Default sidebar width — matches the storybook's nav column. Public
 /// so consumers can lay out alongside it (`width = Fill - SIDEBAR_WIDTH`).
 pub const SIDEBAR_WIDTH: f32 = 200.0;
 
-/// Build a vertical sidebar from a list of items. The returned element
-/// fills the available height; the caller picks its parent layout
-/// (`row![sidebar(items), main]` is the common case).
 pub fn sidebar<'a, Message>(
-    items: Vec<SidebarItem<Message>>,
+    sections: Vec<SidebarSection<Message>>,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
 {
     let mut col = column![].spacing(2).padding(Padding::from([8, 6]));
-    for item in items {
-        col = col.push(sidebar_item(item));
+    for (i, section) in sections.into_iter().enumerate() {
+        if i > 0 {
+            col = col.push(Space::new().height(Length::Fixed(12.0)));
+        }
+        if let Some(label) = section.label {
+            col = col.push(section_header(label));
+        }
+        for item in section.items {
+            col = col.push(sidebar_item(item));
+        }
     }
     container(col)
         .style(style)
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Length::Fill)
         .into()
+}
+
+fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
+    container(
+        text(label.to_uppercase())
+            .font(fonts::CONDENSED_BOLD)
+            .size(11)
+            .style(|theme: &Theme| {
+                let p = theme.extended_palette();
+                iced::widget::text::Style { color: Some(p.secondary.base.text) }
+            }),
+    )
+    .padding(Padding::from([6, 10]))
+    .into()
 }
 
 fn sidebar_item<'a, Message>(item: SidebarItem<Message>) -> Element<'a, Message>
