@@ -19,15 +19,12 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mb = &shell.menubar;
 
     // ── System-menu icon ──────────────────────────────────────────────
-    // Tinted with the theme's muted foreground (≈ text-secondary #6e7681)
-    // to match legacy --sola-menubar-system-menu-fg.
-    // Use mouse_area + container (not button) so iced doesn't paint the
-    // primary-palette blue background over it.
-    let system_fg = iced::Color::from_rgb(0x6e as f32 / 255.0, 0x76 as f32 / 255.0, 0x81 as f32 / 255.0);
+    // White flower glyph; clickable region is whole padded area.
+    let system_fg = iced::Color::WHITE;
     let system_active = shell.menu_open && shell.current_open_is_system;
     let system_btn: Element<'_, Msg> = mouse_area(
         highlight_container(
-            container(icon_colored("sola/pillars", 16, system_fg))
+            container(icon_colored("sola/flower", 16, system_fg))
                 .padding([2, 8]),
             system_active,
         ),
