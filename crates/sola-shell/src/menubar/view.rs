@@ -24,8 +24,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let system_active = shell.menu_open && shell.current_open_is_system;
     let system_btn: Element<'_, Msg> = mouse_area(
         highlight_container(
-            container(icon_colored("sola/flower", 16, system_fg))
-                .padding([2, 12]),
+            container(icon_colored("sola/flower", 22, system_fg))
+                .padding([2, 8]),
             system_active,
         ),
     )
