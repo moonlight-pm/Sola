@@ -1,22 +1,10 @@
-# Empty [workspace] table — see comment in sola-kit/Cargo.toml. Required
-# so cargo doesn't bind to a parent workspace when this crate is built
-# from inside a git worktree.
-[workspace]
-
 [package]
 name = "sola-monitor"
 version = "0.1.0"
 edition = "2024"
 
-# iced-based system monitor / bus inspector. Standalone from the
-# workspace because iced's transitive deps (smithay-clipboard's
-# `dlopen` default) flip wayland-sys into dlopen mode, which would
-# break sola-river's direct wayland linkage if it unified with the
-# workspace.
-#
-# Depends on the new iced `sola-kit` (lib only, also workspace-excluded)
-# for shared app scaffolding, fonts, theme wiring, and reusable
-# components. Bus + core come straight from the workspace.
+# iced-based system monitor / bus inspector. Consumes `sola-kit` for
+# shared app scaffolding, fonts, theme wiring, and reusable components.
 
 [[bin]]
 name = "sola-monitor"

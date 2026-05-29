@@ -14,8 +14,8 @@ tracing-appender = "0.2"
 libc = "0.2"
 notify = "8"
 nix = { version = "0.31", features = ["process"] }
-toml = { workspace = true }
 which = "7"
 
 [dev-dependencies]
 postcard = { version = "1", features = ["alloc"] }
+serde_yaml_ng = { workspace = true }

@@ -1,2 +1,31 @@
 [alias]
 make = "run -q -p sola-make --"
+
+# Bake NixOS's system library path into every binary's RUNPATH so the
+# dynamic loader can find libraries that are dlopen'd at runtime.
+#
+# iced's transitive deps (smithay-clipboard + iced_winit both default to
+# wayland-backend's `dlopen` feature) flip wayland-sys into dlopen mode —
+# libwayland-client.so.0 is then loaded at runtime, not linked at build
+# time. On NixOS the library lives at `/nix/store/<hash>-wayland-*/lib/`,
+# which isn't in the dynamic loader's default search path.
+# `/run/current-system/sw/lib` is the symlink farm where every package
+# in `environment.systemPackages` exposes its runtime libs; adding it to
+# RUNPATH lets dlopen find the active libwayland + libxkbcommon + libGL
+# + everything else iced or wgpu reaches for.
+#
+# `/run/opengl-driver/lib` covers the NVIDIA / Mesa userspace libs
+# (libnvidia-glcore, libGLX_nvidia, libgbm…) that the wgpu Vulkan backend
+# dlopens.
+#
+# RUNPATH (not RPATH) via `--enable-new-dtags` is the right shape: it's
+# searched AFTER LD_LIBRARY_PATH so a user can still override the system
+# library for debugging.
+#
+# Sola is NixOS-only by design — see docs/vault/Distribution.md.
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-Wl,--enable-new-dtags",
+    "-C", "link-arg=-Wl,-rpath,/run/current-system/sw/lib",
+    "-C", "link-arg=-Wl,-rpath,/run/opengl-driver/lib",
+]

@@ -1,20 +1,24 @@
 //! Build script for sola-browser-wpe.
 //!
-//! Two jobs:
-//!
-//! 1. **RUNPATH.** Same as before: bake `/run/current-system/sw/lib`
-//!    into the binary so iced's dlopen-loaded wayland-sys finds
-//!    libwayland-client at runtime. Now also bakes the lib paths of
-//!    every package we link against (WPEWebKit + libwpe + libwpe-fdo
-//!    + GLib + libsoup) so the binary works outside a `nix-shell`.
+//! 1. **Per-pkg RUNPATH.** Workspace `.cargo/config.toml` bakes the
+//!    standard NixOS paths (`/run/current-system/sw/lib` +
+//!    `/run/opengl-driver/lib`) into every binary's RUNPATH. This
+//!    crate adds the specific nix-store paths it links against
+//!    (WPEWebKit + libwpe + libwpe-fdo + GLib + libsoup) on top, so
+//!    the binary stays loadable even if a newer system rebuild moves
+//!    the symlink farm.
 //!
 //! 2. **WPE bindings.** Runs `pkg-config` against the wpe-webkit-2.0
 //!    + wpe-1.0 + wpebackend-fdo-1.0 + glib-2.0 module set, emits
 //!    `cargo:rustc-link-lib` for each, and invokes `bindgen` against
 //!    `src/wpe_wrapper.h` to produce `$OUT_DIR/wpe_bindings.rs`.
 //!
-//! Requires `pkg-config` + the WPE packages on the build environment.
-//! Run via `nix-shell nix/wpewebkit/shell.nix --run "cargo build ..."`.
+//! WPEWebKit is exposed system-wide via `environment.systemPackages`
+//! in `/etc/nixos/configuration.nix` (it imports the vendored
+//! derivation from `/opt/sola/nix/wpewebkit/default.nix`, staged
+//! there from this workspace's `nix/wpewebkit/` tree). pkg-config,
+//! libclang headers (BINDGEN_EXTRA_CLANG_ARGS), and the GL stack
+//! all come from system config — no `nix-shell` wrapping needed.
 
 use std::env;
 use std::path::PathBuf;
@@ -23,13 +27,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/wpe_wrapper.h");
 
-    println!("cargo:rustc-link-arg=-Wl,--enable-new-dtags");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,/run/current-system/sw/lib");
-    // NVIDIA's libEGL_nvidia.so + dispatch lib live here. Without this
-    // in RUNPATH, an installed binary outside the nix-shell falls back
-    // to whatever Mesa libEGL it finds (or nothing) and the WPE GPU
-    // setup fails with "failed to get driver name for fd -1".
-    println!("cargo:rustc-link-arg=-Wl,-rpath,/run/opengl-driver/lib");
+    // Workspace .cargo/config.toml emits --enable-new-dtags + the
+    // standard NixOS RUNPATHs (/run/current-system/sw/lib +
+    // /run/opengl-driver/lib). The pkg-config loop below adds the
+    // WPE-specific nix-store paths on top.
 
     // Resolve every WPE-side module via pkg-config. The `probe()`
     // call emits cargo:rustc-link-search / rustc-link-lib for us and

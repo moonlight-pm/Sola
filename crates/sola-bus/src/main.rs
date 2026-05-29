@@ -273,7 +273,7 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
 
 /// If `event` is a persistent topic, write its current value to disk.
 /// Routes by `Topic::path_for()` — namespaced topics land in their own
-/// dedicated file, others go to the shared state.toml.
+/// dedicated file, others go to the shared state.yaml.
 ///
 /// Called with the bus lock held so the sticky map and disk stay
 /// consistent; disk writes are rare (persistent topics carry config,
@@ -284,6 +284,19 @@ fn persist_if_needed(event: &sola_bus::Message, bus: &mut BusState) {
     };
     let kind = topic.kind();
     if !kind.behavior().is_persistent() {
+        return;
+    }
+    // Defensive: a CustomTheme's `name` doubles as a filename under
+    // `theme/presets/`. Drop persists with non-kebab names instead of
+    // letting a misbehaving emitter create `Alpha.yaml` etc.
+    if let Topic::CustomTheme(named) = &topic
+        && !sola_core::theme::is_valid_theme_name(&named.name)
+    {
+        warn!(
+            topic = kind.as_str(),
+            name = %named.name,
+            "rejecting CustomTheme persist: name must match [a-z]+(-[a-z]+)*",
+        );
         return;
     }
     if kind.namespace().is_some() {
@@ -304,7 +317,7 @@ fn persist_if_needed(event: &sola_bus::Message, bus: &mut BusState) {
 
 /// Retract a persistent topic from disk. For namespaced topics, unlinks
 /// the per-topic file (interpolating any `:placeholder` from the event's
-/// keys). For unnamespaced topics, drops the section from state.toml.
+/// keys). For unnamespaced topics, drops the section from state.yaml.
 fn retract_persistent(state_path: &Path, kind: TopicKind, event: &sola_bus::Message) {
     if let Some(template) = kind.namespace() {
         let cfg = sola_core::config::sola_config_dir();
@@ -319,7 +332,7 @@ fn retract_persistent(state_path: &Path, kind: TopicKind, event: &sola_bus::Mess
                 return;
             }
         };
-        let path = cfg.join(format!("{resolved}.toml"));
+        let path = cfg.join(format!("{resolved}.yaml"));
         if let Err(e) = state::retract_namespaced(&path) {
             warn!(topic = kind.as_str(), path = %path.display(), %e, "namespaced retract failed");
         }

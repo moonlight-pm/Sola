@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub use sola_core::KeyChord;
 use sola_core::Encrypted;
 pub use sola_core::applications::{Application, ApplicationsConfig};
-pub use sola_core::theme::Theme;
+pub use sola_core::theme::{NamedTheme, Theme};
 
 use crate::define_topics;
 
@@ -467,16 +467,29 @@ define_topics! {
     #[persistent]
     MailConfig(MailConfig),
 
-    // Theme tokens edited by sola-kit, consumed by every app's WebView via
-    // the framework-level subscription. Persistent — survives bus restart
-    // and sola sessions; replays on subscribe.
-    #[persistent]
+    // Active theme tokens edited by sola-kit, consumed by every kit
+    // consumer (sola-monitor, sola-settings, …). Persistent — survives
+    // bus restart and sola sessions; replays on subscribe. Lives in its
+    // own namespace file (`~/.config/sola/theme/current.yaml`) so theme
+    // edits don't churn `state.yaml` and so the file loads even when
+    // sola-kit isn't running.
+    #[persistent(namespace = "theme/current")]
     Theme(Theme),
 
+    // User-named theme presets persisted by sola-kit's storybook. Keyed
+    // by `name` so each preset lives at
+    // `~/.config/sola/theme/presets/<name>.yaml`. Emit to add/update,
+    // retract to unlink. `name` is constrained to kebab-case (see
+    // `sola_core::theme::is_valid_theme_name`) — it doubles as the
+    // filename. The hardcoded "Default" preset is owned by Rust
+    // constants and never travels through this topic.
+    #[persistent(keys = [name], namespace = "theme/presets/:name")]
+    CustomTheme(NamedTheme),
+
     // One launchable application (user-edited; built-ins live in code).
-    // Keyed by `app_id` so each entry has its own `[[Application]]`
-    // record in `state.toml`: settings emits to add/update, retracts
-    // to remove. Renaming `app_id` is a retract+emit pair.
+    // Keyed by `app_id` so each entry has its own item under
+    // `Application:` in `state.yaml`: settings emits to add/update,
+    // retracts to remove. Renaming `app_id` is a retract+emit pair.
     // sola-shell consumes for launcher search and switcher icon lookup.
     #[persistent(keys = [app_id])]
     Application(Application),
@@ -500,7 +513,7 @@ define_topics! {
 
     // Browser singleton config (active tab id, future browser-wide
     // settings). Lives in its own namespace file so frequent active-tab
-    // changes don't churn the shared state.toml.
+    // changes don't churn the shared state.yaml.
     #[persistent(namespace = "browser")]
     BrowserConfig(BrowserConfig),
 
@@ -512,7 +525,7 @@ define_topics! {
 
     // One persisted browser tab. Keyed by `id` so each tab has its
     // own `(BrowserTab, [id])` slot in the namespace
-    // ~/.config/sola/browser/tabs/<id>.toml.
+    // ~/.config/sola/browser/tabs/<id>.yaml.
     #[persistent(keys = [id], namespace = "browser/tabs/:id")]
     BrowserTab(BrowserTab),
 
@@ -649,8 +662,8 @@ mod tests {
     }
 
     #[test]
-    fn to_toml_value_returns_none_for_non_persistent() {
-        // Only persistent topics serialize to TOML; everything else
+    fn to_yaml_value_returns_none_for_non_persistent() {
+        // Only persistent topics serialize to YAML; everything else
         // must return None regardless of behavior (ephemeral/sticky).
         let samples: Vec<Topic> = vec![
             Topic::Shutdown,
@@ -663,7 +676,7 @@ mod tests {
         ];
         for t in samples {
             assert!(
-                t.to_toml_value().is_none(),
+                t.to_yaml_value().is_none(),
                 "expected None for {:?}",
                 t.kind()
             );
@@ -671,31 +684,31 @@ mod tests {
     }
 
     #[test]
-    fn zones_roundtrips_via_toml() {
+    fn zones_roundtrips_via_yaml() {
         let mut zones: HashMap<String, Zone> = HashMap::new();
         zones.insert("sola-browser".into(), Zone::Left);
         zones.insert("sola-terminal".into(), Zone::Right);
 
         let topic = Topic::Zones(zones.clone());
         let value = topic
-            .to_toml_value()
-            .expect("Zones is persistent; must serialize to TOML");
+            .to_yaml_value()
+            .expect("Zones is persistent; must serialize to YAML");
 
-        match Topic::from_toml_section(TopicKind::Zones, value) {
+        match Topic::from_yaml_section(TopicKind::Zones, value) {
             Some(Topic::Zones(back)) => assert_eq!(back, zones),
             other => panic!("expected Zones, got {other:?}"),
         }
     }
 
     #[test]
-    fn from_toml_section_returns_none_for_non_persistent() {
-        let empty = toml::Value::Table(toml::map::Map::new());
-        assert!(Topic::from_toml_section(TopicKind::Windows, empty.clone()).is_none());
-        assert!(Topic::from_toml_section(TopicKind::Shutdown, empty).is_none());
+    fn from_yaml_section_returns_none_for_non_persistent() {
+        let empty = serde_yaml_ng::Value::Mapping(serde_yaml_ng::Mapping::new());
+        assert!(Topic::from_yaml_section(TopicKind::Windows, empty.clone()).is_none());
+        assert!(Topic::from_yaml_section(TopicKind::Shutdown, empty).is_none());
     }
 
     #[test]
-    fn application_roundtrips_via_toml() {
+    fn application_roundtrips_via_yaml() {
         let app = Application {
             app_id: "steam".into(),
             label: "Steam".into(),
@@ -704,9 +717,9 @@ mod tests {
         };
         let topic = Topic::Application(app);
         let value = topic
-            .to_toml_value()
-            .expect("Application is persistent; must serialize to TOML");
-        let restored = Topic::from_toml_section(TopicKind::Application, value)
+            .to_yaml_value()
+            .expect("Application is persistent; must serialize to YAML");
+        let restored = Topic::from_yaml_section(TopicKind::Application, value)
             .expect("section should deserialize");
         match restored {
             Topic::Application(back) => {
@@ -759,16 +772,16 @@ mod tests {
     }
 
     #[test]
-    fn terminal_config_roundtrips_via_toml() {
+    fn terminal_config_roundtrips_via_yaml() {
         let cfg = TerminalConfig {
             sidebar_width: 240,
             sidebar_collapsed: false,
         };
         let topic = Topic::TerminalConfig(cfg);
         let value = topic
-            .to_toml_value()
+            .to_yaml_value()
             .expect("persistent payload should serialize to TOML");
-        let restored = Topic::from_toml_section(TopicKind::TerminalConfig, value)
+        let restored = Topic::from_yaml_section(TopicKind::TerminalConfig, value)
             .expect("section should deserialize");
         match restored {
             Topic::TerminalConfig(back) => {
@@ -794,13 +807,13 @@ mod tests {
     }
 
     #[test]
-    fn monitor_config_roundtrips_via_toml() {
+    fn monitor_config_roundtrips_via_yaml() {
         let cfg = MonitorConfig { sidebar_width: 240 };
         let topic = Topic::MonitorConfig(cfg);
         let value = topic
-            .to_toml_value()
+            .to_yaml_value()
             .expect("persistent payload should serialize to TOML");
-        let restored = Topic::from_toml_section(TopicKind::MonitorConfig, value)
+        let restored = Topic::from_yaml_section(TopicKind::MonitorConfig, value)
             .expect("section should deserialize");
         match restored {
             Topic::MonitorConfig(back) => {
@@ -840,7 +853,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_session_roundtrip_via_toml() {
+    fn terminal_session_roundtrip_via_yaml() {
         let session = TerminalSession {
             id: "x".into(),
             tmux_session: "sola-x".into(),
@@ -849,9 +862,9 @@ mod tests {
         };
         let topic = Topic::TerminalSession(session.clone());
         let value = topic
-            .to_toml_value()
+            .to_yaml_value()
             .expect("persistent payload should serialize to TOML");
-        let restored = Topic::from_toml_section(TopicKind::TerminalSession, value)
+        let restored = Topic::from_yaml_section(TopicKind::TerminalSession, value)
             .expect("section should deserialize");
         match restored {
             Topic::TerminalSession(back) => assert_eq!(back, session),
@@ -860,14 +873,14 @@ mod tests {
     }
 
     #[test]
-    fn theme_roundtrips_via_toml() {
+    fn theme_roundtrips_via_yaml() {
         // Theme round-trips through the bus' TOML state path.
         let theme = sola_core::theme::Theme::default();
         let topic = Topic::Theme(theme.clone());
         let value = topic
-            .to_toml_value()
+            .to_yaml_value()
             .expect("Theme is persistent; must serialize to TOML");
-        let restored = Topic::from_toml_section(TopicKind::Theme, value)
+        let restored = Topic::from_yaml_section(TopicKind::Theme, value)
             .expect("section should deserialize");
         match restored {
             Topic::Theme(back) => assert_eq!(theme, back),
@@ -903,10 +916,10 @@ mod tests {
 
 /// TOML round-trip tests. Runs its own `define_topics!` invocation
 /// with a `#[persistent]` variant so we can exercise the generated
-/// `to_toml_value` / `from_toml_section` until Phase 5 adds the first
+/// `to_yaml_value` / `from_yaml_section` until Phase 5 adds the first
 /// real persistent topic.
 #[cfg(test)]
-mod persistent_toml_tests {
+mod persistent_yaml_tests {
     #[allow(dead_code)]
     mod fixture {
         use serde::{Deserialize, Serialize};
@@ -929,7 +942,7 @@ mod persistent_toml_tests {
     use std::collections::HashMap;
 
     #[test]
-    fn persistent_payload_roundtrips_via_toml() {
+    fn persistent_payload_roundtrips_via_yaml() {
         let mut zones = HashMap::new();
         zones.insert(
             "sola-browser".into(),
@@ -946,11 +959,11 @@ mod persistent_toml_tests {
 
         let topic = Topic::Zones(zones.clone());
         let value = topic
-            .to_toml_value()
-            .expect("persistent payload should serialize to TOML");
+            .to_yaml_value()
+            .expect("persistent payload should serialize to YAML");
 
         let restored =
-            Topic::from_toml_section(TopicKind::Zones, value).expect("section should deserialize");
+            Topic::from_yaml_section(TopicKind::Zones, value).expect("section should deserialize");
 
         match restored {
             Topic::Zones(decoded) => assert_eq!(decoded, zones),
@@ -960,14 +973,14 @@ mod persistent_toml_tests {
 
     #[test]
     fn non_persistent_kinds_do_not_deserialize() {
-        let value = toml::Value::Table(toml::map::Map::new());
-        assert!(Topic::from_toml_section(TopicKind::Ping, value).is_none());
+        let value = serde_yaml_ng::Value::Mapping(serde_yaml_ng::Mapping::new());
+        assert!(Topic::from_yaml_section(TopicKind::Ping, value).is_none());
     }
 
     #[test]
     fn malformed_section_returns_none() {
         // Wrong shape for a HashMap<String, Zone>: a bare string.
-        let value = toml::Value::String("oops".into());
-        assert!(Topic::from_toml_section(TopicKind::Zones, value).is_none());
+        let value = serde_yaml_ng::Value::String("oops".into());
+        assert!(Topic::from_yaml_section(TopicKind::Zones, value).is_none());
     }
 }

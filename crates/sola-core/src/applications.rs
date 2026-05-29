@@ -5,7 +5,7 @@
 //! switcher icon lookup, session reconciliation) and produced by
 //! `sola-settings`. Types live in `sola-core` so neither side owns
 //! the schema. Persistence is via the bus: `Topic::Applications` is a
-//! `#[persistent]` topic that the bus host stores in `state.toml`.
+//! `#[persistent]` topic that the bus host stores in `state.yaml`.
 
 use std::path::{Path, PathBuf};
 
@@ -185,63 +185,6 @@ impl std::fmt::Display for UpdateError {
 }
 
 impl std::error::Error for UpdateError {}
-
-/// Apps that ship with Sola. The shell merges these into the launcher
-/// list at startup, ahead of any user-configured entries with the same
-/// `app_id` (so a stray duplicate in `applications.json` can't shadow
-/// them). They are not stored on disk and can't be edited from the
-/// settings panel.
-pub fn builtin_apps() -> Vec<Application> {
-    vec![
-        Application {
-            app_id: "sola-settings".into(),
-            label: "Settings".into(),
-            command: "/opt/sola/bin/sola-settings".into(),
-            icon: "lucide/settings".into(),
-        },
-        Application {
-            app_id: "sola-monitor".into(),
-            label: "Monitor".into(),
-            command: "/opt/sola/bin/sola-monitor".into(),
-            icon: "lucide/monitor".into(),
-        },
-        Application {
-            app_id: "sola-terminal".into(),
-            label: "Terminal".into(),
-            command: "/opt/sola/bin/sola-terminal".into(),
-            icon: "lucide/terminal".into(),
-        },
-        Application {
-            app_id: "sola-browser".into(),
-            label: "Browser".into(),
-            command: "/opt/sola/bin/sola-browser".into(),
-            icon: "lucide/globe".into(),
-        },
-        Application {
-            app_id: "sola-kit".into(),
-            label: "Kit".into(),
-            command: "/opt/sola/bin/sola-kit".into(),
-            icon: "lucide/palette".into(),
-        },
-        Application {
-            app_id: "sola-kit-legacy".into(),
-            label: "Kit (Legacy)".into(),
-            command: "/opt/sola/bin/sola-kit-legacy".into(),
-            icon: "lucide/palette".into(),
-        },
-        Application {
-            app_id: "sola-shell-legacy".into(),
-            label: "Shell (Legacy)".into(),
-            command: "/opt/sola/bin/sola-shell-legacy".into(),
-            icon: "lucide/layout".into(),
-        },
-    ]
-}
-
-/// True if `app_id` belongs to a built-in shipped via [`builtin_apps`].
-pub fn is_builtin(app_id: &str) -> bool {
-    builtin_apps().iter().any(|a| a.app_id == app_id)
-}
 
 #[cfg(test)]
 mod tests {

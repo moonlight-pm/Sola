@@ -1,20 +1,18 @@
 [workspace]
 members = ["crates/*"]
-# Kept out of the workspace so their iced deps don't unify wayland-sys
-# features across the workspace and break sola-river's runtime
-# wayland linkage (smithay-clipboard's `dlopen` default switches the
-# whole graph onto dlopen, which fails on NixOS).
+# `wgpu-hal-patched` is a vendored wgpu-hal 27.0.4 with
+# `VK_EXT_image_drm_format_modifier` enabled; pulled in workspace-wide
+# via `[patch.crates-io]` below. Excluded as a member so cargo doesn't
+# try to compile it as a standalone target.
 #
-# `sola-kit` (the new iced kit, lib-only) and `sola-monitor` (its first
-# consumer) live in this list; new iced apps go here too. Build any of
-# them with `cargo build --manifest-path crates/<name>/Cargo.toml` or
-# via `cargo make build` which discovers them through this list.
+# Iced/wgpu/WPE feature unification across the rest of the workspace
+# is OK because `.cargo/config.toml` bakes `/run/current-system/sw/lib`
+# into every binary's RUNPATH, so sola-river's runtime dlopen of
+# libwayland-client finds the system lib. WPEWebKit is staged at
+# `/opt/sola/nix/wpewebkit/` and pulled into `environment.systemPackages`
+# via configuration.nix, so sola-browser-wpe's pkg-config probes
+# (wpe-webkit-2.0, wpe-platform-2.0, …) resolve system-wide.
 exclude = [
-    "crates/sola-kit",
-    "crates/sola-monitor",
-    "crates/sola-shell",
-    "crates/sola-browser-wpe",
-    "crates/sola-browser-cef",
     "crates/wgpu-hal-patched",
 ]
 resolver = "3"
@@ -30,6 +28,7 @@ lettre = { version = "0.11", default-features = false, features = ["smtp-transpo
 mail-parser = "0.9"
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
 rustls-connector = { version = "0.21", features = ["native-certs"] }
+serde_yaml_ng = "0.10"
 toml = "0.8"
 ureq = "3"
 
@@ -45,6 +44,7 @@ ureq = "3"
 # against the pre-installed `cargo make install-cef` cache.
 [patch.crates-io]
 download-cef = { path = "crates/download-cef-stub" }
+wgpu-hal = { path = "crates/wgpu-hal-patched" }
 
 # Release builds strip DWARF debug info but keep the symbol table, so
 # stack traces from /opt/sola/log still show meaningful function names

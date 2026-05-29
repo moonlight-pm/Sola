@@ -1,5 +1,4 @@
-//! sola-shell — iced-native desktop shell. Replaces the CEF/Remix v3
-//! shell (preserved as `sola-shell-legacy`). Four windows on one
+//! sola-shell — iced-native desktop shell. Four windows on one
 //! iced multi-window application.
 
 use sola_bus::topics::TopicKind;
@@ -8,6 +7,7 @@ use sola_kit::app::{BusSetup, startup};
 use sola_kit::fonts::{self, INTER};
 
 mod app;
+mod builtins;
 pub mod components;
 pub mod keys;
 pub mod launcher;

@@ -422,6 +422,54 @@ pub fn fonts_from_bus_theme(bus: &BusTheme) -> crate::fonts::Fonts {
     crate::fonts::fonts_from_families(&ui, &ui_medium, &display, &chrome, &mono)
 }
 
+
+/// Read the colour atoms out of a `BusTheme` (the inverse of
+/// [`bus_theme_from_atoms`]). Missing or malformed tokens fall back to
+/// the kit's compile-time defaults so a partial bus theme still
+/// produces a usable `Atoms` value.
+pub fn atoms_from_bus_theme(bus: &BusTheme) -> Atoms {
+    let lookup = |name: &str, fallback: &str| -> Color {
+        bus.palette
+            .tokens
+            .get(name)
+            .and_then(|t| try_parse(&t.value))
+            .unwrap_or_else(|| parse(fallback))
+    };
+    Atoms {
+        bg: lookup("bg-primary", hex::BG),
+        bg_raised: lookup("bg-secondary", hex::BG_RAISED),
+        bg_hover: lookup("bg-tertiary", hex::BG_HOVER),
+        border: lookup("border", hex::BORDER),
+        fg: lookup("text-primary", hex::FG),
+        fg_muted: lookup("text-tertiary", hex::FG_MUTED),
+        accent: lookup("accent", hex::ACCENT),
+        success: lookup("success", hex::SUCCESS),
+        warning: lookup("warning", hex::WARNING),
+        danger: lookup("danger", hex::DANGER),
+    }
+}
+
+/// Read the font roles out of a `BusTheme` as a `FontSelection`
+/// (string family names). Sibling to [`fonts_from_bus_theme`], which
+/// returns the resolved `crate::fonts::Fonts` table.
+pub fn font_selection_from_bus_theme(bus: &BusTheme) -> FontSelection {
+    let default = FontSelection::default();
+    let read = |name: &str, fallback: &str| {
+        bus.palette
+            .tokens
+            .get(name)
+            .map(|t| t.value.clone())
+            .unwrap_or_else(|| fallback.to_string())
+    };
+    FontSelection {
+        ui: read("font-ui", &default.ui),
+        ui_medium: read("font-ui-medium", &default.ui_medium),
+        display: read("font-display", &default.display),
+        chrome: read("font-chrome", &default.chrome),
+        mono: read("font-mono", &default.mono),
+    }
+}
+
 fn color_to_hex(c: Color) -> String {
     let r = (c.r * 255.0).round().clamp(0.0, 255.0) as u8;
     let g = (c.g * 255.0).round().clamp(0.0, 255.0) as u8;

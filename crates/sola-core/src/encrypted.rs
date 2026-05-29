@@ -230,9 +230,8 @@ mod tests {
 
     #[test]
     fn missing_prefix_errors() {
-        let toml_input = r#"user = "alice"
-pass = "not-age-prefixed""#;
-        let err = toml::from_str::<Creds>(toml_input).unwrap_err();
+        let yaml_input = "user: alice\npass: not-age-prefixed\n";
+        let err = serde_yaml_ng::from_str::<Creds>(yaml_input).unwrap_err();
         assert!(
             err.to_string().contains(AGE_PREFIX),
             "expected prefix mention in error, got: {err}"

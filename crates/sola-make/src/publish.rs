@@ -24,7 +24,7 @@ const BRANCH: &str = "master";
 /// Binaries that dynamically link `libcef.so` — their RUNPATH needs
 /// updating from the build host's `~/.cache/sola/cef-…/Release` path
 /// to a stable consumer-side location.
-const CEF_LINKING_BINS: &[&str] = &["sola-kit-legacy", "sola-settings"];
+const CEF_LINKING_BINS: &[&str] = &["sola-kit-legacy"];
 
 pub fn publish(explicit_version: Option<String>) {
     match run_publish(explicit_version) {

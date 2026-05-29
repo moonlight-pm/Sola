@@ -5,12 +5,25 @@
 
 use std::path::Path;
 
-use sola_core::applications::{command_exists, is_builtin, resolve_in_path};
+use sola_core::applications::resolve_in_path;
 
 /// App IDs that are part of Sola itself and should never appear as
-/// "running, not configured" candidates.
+/// "running, not configured" candidates. Kept local to sola-settings
+/// (rather than imported from sola-core) so editing the launcher
+/// builtin list — which lives in sola-shell — doesn't have to also
+/// rebuild this crate. New first-party apps go in both places.
+const SYSTEM_APP_IDS: &[&str] = &[
+    "sola-shell",
+    "sola-settings",
+    "sola-monitor",
+    "sola-terminal",
+    "sola-browser",
+    "sola-kit",
+    "sola-kit-legacy",
+];
+
 pub fn is_system_app(app_id: &str) -> bool {
-    app_id == "sola-shell" || is_builtin(app_id)
+    SYSTEM_APP_IDS.contains(&app_id)
 }
 
 /// Best-effort suggestion of a launch command for a window we just
@@ -112,8 +125,3 @@ fn cmdline_positional(pid: u32) -> Option<String> {
     Some(joined.join(" "))
 }
 
-/// True when `cmd` doesn't resolve on PATH. Thin wrapper over
-/// `command_exists` for inversion-of-intent at call sites.
-pub fn command_missing(cmd: &str) -> bool {
-    !command_exists(cmd)
-}

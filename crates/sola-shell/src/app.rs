@@ -173,7 +173,7 @@ impl Shell {
             mru_window_by_app: HashMap::new(),
             known_windows: Vec::new(),
             window_id_by_key: HashMap::new(),
-            applications: ApplicationsConfig { apps: sola_core::applications::builtin_apps() },
+            applications: ApplicationsConfig { apps: crate::builtins::builtin_apps() },
             menus: MenuCache::new(),
             output_size: None,
             menu_open: false,

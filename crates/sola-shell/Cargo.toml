@@ -1,12 +1,3 @@
-# Empty [workspace] table — this crate is its own workspace, NOT a member
-# of any parent workspace. Required so cargo's workspace-walk stops here
-# when this crate is built inside a `.worktrees/<branch>/` subtree of
-# another workspace; without it, cargo would bind to the outer (master)
-# workspace whose `exclude` paths don't match the worktree's manifest
-# location. Harmless on master where the parent excludes this crate
-# anyway.
-[workspace]
-
 [package]
 name = "sola-shell"
 version = "0.1.0"
@@ -14,10 +5,7 @@ edition = "2024"
 
 # Iced-native sola desktop shell. Successor to the CEF/Remix v3 shell
 # (now `sola-shell-legacy`). Four-window shell: menubar, launcher,
-# switcher, menu. Workspace-excluded because iced's transitive
-# smithay-clipboard flips wayland-sys into dlopen mode which would
-# unify across the workspace and break sola-river's direct wayland
-# linkage.
+# switcher, menu.
 
 [[bin]]
 name = "sola-shell"

@@ -9,7 +9,6 @@ use iced::{Color, Element, Length, Padding};
 
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
-use sola_kit::fonts::INSTALLED_FAMILIES;
 use sola_kit::theme::{self, Atoms, FontSelection};
 
 use crate::storybook::{FontRole, Msg};
@@ -26,16 +25,34 @@ const ACCENT_PRESETS: &[(&str, &str)] = &[
     ("Magenta", "#bc8cff"),
 ];
 
-pub fn view<'a>(atoms: &'a Atoms, fonts: &'a FontSelection) -> Element<'a, Msg> {
-    column![
-        heading("Theme"),
+pub fn view<'a>(
+    atoms: &'a Atoms,
+    fonts: &'a FontSelection,
+    families: &'a [String],
+    editable: bool,
+) -> Element<'a, Msg> {
+    let intro: Element<'a, Msg> = if editable {
         body(
             "Live editor for the kit's atoms and font roles. Edits rebuild \
              the iced theme, reinstall the fonts table, and re-emit \
              Topic::Theme so other kit apps — sola-monitor today — update \
              on their next render."
         )
-        .style(muted),
+        .style(muted)
+        .into()
+    } else {
+        body(
+            "Default theme — read-only. Click \"New Theme\" in the header \
+             above to fork it under a new name; edits then route to that \
+             copy."
+        )
+        .style(muted)
+        .into()
+    };
+
+    column![
+        heading("Theme"),
+        intro,
 
         subheading("Accent"),
         presets_row(atoms.accent),
@@ -46,7 +63,7 @@ pub fn view<'a>(atoms: &'a Atoms, fonts: &'a FontSelection) -> Element<'a, Msg> 
              sola-monitor's body / chrome / mono text swaps in real time."
         )
         .style(muted),
-        fonts_grid(fonts),
+        fonts_grid(fonts, families),
 
         subheading("Palette atoms"),
         body(
@@ -102,20 +119,24 @@ fn preset_tile<'a>(
     .into()
 }
 
-fn fonts_grid(fonts: &FontSelection) -> Element<'_, Msg> {
+fn fonts_grid<'a>(fonts: &'a FontSelection, families: &'a [String]) -> Element<'a, Msg> {
     column![
-        font_row("ui",        FontRole::Ui,       &fonts.ui),
-        font_row("ui_medium", FontRole::UiMedium, &fonts.ui_medium),
-        font_row("display",   FontRole::Display,  &fonts.display),
-        font_row("chrome",    FontRole::Chrome,   &fonts.chrome),
-        font_row("mono",      FontRole::Mono,     &fonts.mono),
+        font_row("ui",        FontRole::Ui,       &fonts.ui,        families),
+        font_row("ui_medium", FontRole::UiMedium, &fonts.ui_medium, families),
+        font_row("display",   FontRole::Display,  &fonts.display,   families),
+        font_row("chrome",    FontRole::Chrome,   &fonts.chrome,    families),
+        font_row("mono",      FontRole::Mono,     &fonts.mono,      families),
     ]
     .spacing(12)
     .into()
 }
 
-fn font_row<'a>(role_label: &'a str, role: FontRole, current: &str) -> Element<'a, Msg> {
-    let families: Vec<String> = INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect();
+fn font_row<'a>(
+    role_label: &'a str,
+    role: FontRole,
+    current: &str,
+    families: &'a [String],
+) -> Element<'a, Msg> {
     let selected = Some(current.to_string());
     let picker = pick_list(families, selected, move |family| Msg::SetFont(role, family))
         .width(Length::Fixed(220.0));

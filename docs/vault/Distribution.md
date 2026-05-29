@@ -72,6 +72,132 @@ side, GTK4 + WebKitGTK 6.0 are runtime requirements for every
 [[sola-app|WebView app]]. These are normal nixpkgs packages with no
 patches.
 
+## Iced / wgpu binaries — RUNPATH for dlopened libs
+
+Iced 0.14 pulls `winit` and `smithay-clipboard` in via `iced_winit`,
+both of which default to **dlopen mode** for wayland-sys (winit's
+`wayland-dlopen` is hardcoded into `iced_winit/wayland`;
+smithay-clipboard's `dlopen` is its `default`). This means every
+iced binary loads `libwayland-client.so.0` (plus `libxkbcommon`,
+`libGL`, `libnvidia-glcore`, …) at runtime via `dlopen`, not at link
+time.
+
+In a unified Cargo graph, this feature unification reaches every
+workspace binary — including `sola-river`, which doesn't itself use
+iced but inherits the wayland-sys/dlopen feature through cargo's
+feature resolver. On NixOS that means a runtime `dlopen` call needs
+to find libwayland somewhere on the dynamic-loader search path.
+
+The fix lives in workspace **`.cargo/config.toml`** as
+target-specific rustflags:
+
+```toml
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-Wl,--enable-new-dtags",
+    "-C", "link-arg=-Wl,-rpath,/run/current-system/sw/lib",
+    "-C", "link-arg=-Wl,-rpath,/run/opengl-driver/lib",
+]
+```
+
+Every workspace binary gets RUNPATH (not RPATH — `--enable-new-dtags`
+is the difference) covering both paths:
+
+- **`/run/current-system/sw/lib`** is the symlink farm where every
+  `environment.systemPackages` entry exposes its runtime libs. The
+  required entries are already in the active config: `wayland`,
+  `libxkbcommon`, `libGL`, plus the GTK4/WebKitGTK set for the
+  legacy app stack.
+- **`/run/opengl-driver/lib`** carries NVIDIA / Mesa userspace
+  libs (`libnvidia-glcore`, `libGLX_nvidia`, `libgbm`, …) that the
+  wgpu Vulkan backend reaches for. Populated by
+  `hardware.graphics.enable = true` plus the `hardware.nvidia`
+  block.
+
+Cargo's resolver v3 unifies features across the host build, so even
+the non-iced binaries (`sola`, `sola-bus`, `sola-river`, `solactl`)
+have the dlopen feature live in their dep graph. Keeping the
+RUNPATH at workspace level — not per-crate `build.rs` files —
+guarantees they all stay loadable.
+
+### Verifying the RUNPATH after a build
+
+```sh
+readelf -d /opt/sola/bin/sola-river | grep RUNPATH
+# Library runpath: [/run/current-system/sw/lib:/run/opengl-driver/lib:…]
+```
+
+If `/run/current-system/sw/lib` isn't the first or second entry,
+something stripped the workspace rustflags — check
+`.cargo/config.toml` and any per-crate `build.rs` that might be
+overriding link args.
+
+## WPEWebKit — vendored derivation, published via /opt/sola
+
+`sola-browser-wpe` links against WPEWebKit, which `nixpkgs` no
+longer ships (removed in the 25.x cog churn). We vendor a local
+derivation at `nix/wpewebkit/default.nix`.
+
+The workspace stages it to `/opt/sola/nix/wpewebkit/` so
+`configuration.nix` can reference a stable absolute path that
+doesn't depend on `/home/joshua/Workspace/Sola` existing. The Nix
+expressions live in the workspace (source of truth); the staging
+under `/opt/sola/nix/` is a copy maintained by `cargo make install`.
+
+### Required configuration.nix bits
+
+```nix
+let
+  wpewebkit = pkgs.callPackage /opt/sola/nix/wpewebkit/default.nix {
+    inherit (pkgs.gst_all_1) gst-plugins-base gst-plugins-bad;
+  };
+in
+{
+  environment.systemPackages = with pkgs; [
+    # …
+    wpewebkit
+    libwpe         # ships wpe-1.0.pc
+    libwpe-fdo     # ships wpebackend-fdo-1.0.pc
+    libglvnd       # ships egl.pc — required by sola-browser-wpe's build.rs
+    libgbm         # ships gbm.pc — same reason
+    clang          # bindgen invokes libclang; its sysroot headers come from clang
+  ];
+
+  environment.sessionVariables = {
+    LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+    # libclang ships its own resource headers (stdint.h etc.) but not
+    # the system C headers (time.h, stdio.h). bindgen invokes libclang
+    # directly, bypassing the nixpkgs `clang` wrapper that sets these
+    # flags via NIX_CFLAGS_COMPILE. Point bindgen at the glibc dev
+    # headers + libclang's resource dir explicitly:
+    BINDGEN_EXTRA_CLANG_ARGS =
+      "-isystem ${pkgs.glibc.dev}/include "
+      + "-isystem ${pkgs.llvmPackages.libclang.lib}/lib/clang/"
+      + "${lib.versions.major pkgs.llvmPackages.libclang.version}/include";
+  };
+}
+```
+
+The existing system PKG_CONFIG_PATH (`/run/current-system/sw/lib/pkgconfig`
++ `/run/current-system/sw/share/pkgconfig`) plus
+`extraOutputsToInstall = [ "dev" "lib" ]` makes pkg-config see every
+`.pc` file from every package in `systemPackages`.
+
+### Verifying
+
+```sh
+pkg-config --exists wpe-webkit-2.0 && echo OK
+pkg-config --exists egl && echo OK
+pkg-config --exists gbm && echo OK
+cargo build -p sola-browser-wpe      # builds without nix-shell
+```
+
+### Re-staging after a derivation edit
+
+If you change `nix/wpewebkit/default.nix` in the workspace, re-run
+`cargo make install` to sync the staged copy at `/opt/sola/nix/wpewebkit/`,
+then `nixos-rebuild switch` to pick up the new derivation hash.
+
 ## CEF runtime libraries (sola-kit)
 
 `sola-kit` (and any future CEF-backed Sola app) links against

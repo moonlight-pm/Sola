@@ -17,6 +17,12 @@ use std::process::{Command, exit};
 
 use clap::Parser;
 
+/// Workspace crates that ship a binary but are intentionally left out
+/// of the default `cargo make build` / `cargo make install` flows.
+/// They stay buildable via explicit `cargo make build <name>` so the
+/// source is kept warm without paying for them on every full build.
+const EXCLUDED_TARGETS: &[&str] = &["sola-browser", "sola-kit-legacy", "sola-terminal"];
+
 #[derive(Parser, Debug)]
 #[command(name = "sola-make", about = "Sola build system")]
 struct Cli {
@@ -122,11 +128,20 @@ fn main() {
 /// Construct the `cargo build` arguments for the given options.
 ///
 /// Separated from execution so it can be tested without running cargo.
+/// When no specific `target` is given, switches to a `--workspace`
+/// build with `--exclude` flags for each entry in [`EXCLUDED_TARGETS`]
+/// so retired apps don't slow the default full build.
 fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
     let mut args = vec!["build".to_string()];
     if let Some(t) = target {
         args.push("-p".to_string());
         args.push(t.to_string());
+    } else {
+        args.push("--workspace".to_string());
+        for excl in EXCLUDED_TARGETS {
+            args.push("--exclude".to_string());
+            args.push((*excl).to_string());
+        }
     }
     if release {
         args.push("--release".to_string());
@@ -212,9 +227,11 @@ pub(crate) fn resolve_crate_name(name: &str) -> String {
 ///
 /// Looks for `Cargo.toml` files in `crates/` that contain a
 /// `src/main.rs` (i.e. are binary crates), and extracts the package name.
-/// Skips sola-make itself (it's the build tool) and any path declared
-/// in the workspace's `[workspace] exclude` list (those are isolated
-/// crates with their own target dirs — see `isolated.rs`).
+/// Skips sola-make itself (it's the build tool), entries listed in
+/// [`EXCLUDED_TARGETS`] (retired apps still buildable on demand), and
+/// any path declared in the workspace's `[workspace] exclude` list
+/// (those are isolated crates with their own target dirs — see
+/// `isolated.rs`).
 pub(crate) fn discover_binaries() -> Vec<String> {
     let excluded_paths: std::collections::HashSet<std::path::PathBuf> = isolated::discover()
         .into_iter()
@@ -250,7 +267,7 @@ pub(crate) fn discover_binaries() -> Vec<String> {
                 let line = line.trim();
                 if line.starts_with("name") {
                     if let Some(name) = line.split('"').nth(1) {
-                        if name != "sola-make" {
+                        if name != "sola-make" && !EXCLUDED_TARGETS.contains(&name) {
                             binaries.push(name.to_string());
                         }
                     }
@@ -269,7 +286,22 @@ mod tests {
 
     #[test]
     fn build_args_default() {
-        assert_eq!(build_args(None, false), vec!["build"]);
+        // No target ⇒ workspace build with the excluded targets
+        // filtered out. Concrete contents pinned so accidental
+        // additions to EXCLUDED_TARGETS get noticed in review.
+        assert_eq!(
+            build_args(None, false),
+            vec![
+                "build",
+                "--workspace",
+                "--exclude",
+                "sola-browser",
+                "--exclude",
+                "sola-kit-legacy",
+                "--exclude",
+                "sola-terminal",
+            ]
+        );
     }
 
     #[test]
@@ -282,7 +314,20 @@ mod tests {
 
     #[test]
     fn build_args_release() {
-        assert_eq!(build_args(None, true), vec!["build", "--release"]);
+        assert_eq!(
+            build_args(None, true),
+            vec![
+                "build",
+                "--workspace",
+                "--exclude",
+                "sola-browser",
+                "--exclude",
+                "sola-kit-legacy",
+                "--exclude",
+                "sola-terminal",
+                "--release",
+            ]
+        );
     }
 
     #[test]

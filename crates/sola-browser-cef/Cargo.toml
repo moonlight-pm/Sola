@@ -1,6 +1,3 @@
-# Empty [workspace] table — see comment in sola-kit/Cargo.toml.
-[workspace]
-
 [package]
 name = "sola-browser-cef"
 version = "0.1.0"
@@ -17,19 +14,12 @@ edition = "2024"
 #
 # **Workflow:** when a feature lands in sola-browser-wpe, the
 # equivalent port should follow here before considering the
-# feature "done". `cargo make build sola-browser-cef` should
-# always succeed; the crate is workspace-excluded so it doesn't
-# break the default build.
+# feature "done".
 #
 # CEF-backed sibling of sola-browser-wpe. Same iced chrome, same
 # wgpu shader sampling pipeline, same modifier-aware DMA-BUF import
-# via wgpu-hal-patched. Engine swap only — see
-# `docs/specs/2026-05-21-sola-browser-cef-port-and-benchmark.md`.
-#
-# Workspace-excluded for the same reason as the WPE sibling: iced's
-# transitive `smithay-clipboard` flips `wayland-sys` into dlopen
-# mode, which would break sola-river's runtime wayland linkage if
-# unified across the workspace.
+# via wgpu-hal-patched (workspace-level `[patch.crates-io]`). Engine
+# swap only — see `docs/specs/2026-05-21-sola-browser-cef-port-and-benchmark.md`.
 
 [[bin]]
 name = "sola-browser-cef"
@@ -62,18 +52,3 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 [build-dependencies]
 # No bindgen, no pkg-config — CEF is the only system dep and it
 # comes in pre-built via sola-make.
-
-# `download-cef` stub: identical to the workspace root's patch. We
-# need it explicitly here because workspace-excluded crates only honor
-# their own `[patch.crates-io]`. Without it `cef-dll-sys` re-downloads
-# a 1.3 GB unpatched libcef.so into `target/.../build/.../out/` and
-# the loader picks that one (no NixOS-friendly RUNPATH) over the
-# patched one in `~/.cache/sola/`.
-#
-# `wgpu-hal` patched to enable `VK_EXT_image_drm_format_modifier`.
-# Not actively used on the CEF (CPU upload) path, but keeping the
-# dependency surface identical to sola-browser-wpe so benchmark
-# comparisons aren't muddied by a wgpu version delta.
-[patch.crates-io]
-download-cef = { path = "../download-cef-stub" }
-wgpu-hal = { path = "../wgpu-hal-patched" }

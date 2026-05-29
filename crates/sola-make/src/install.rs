@@ -6,6 +6,10 @@ use std::process::Command;
 pub(crate) const BIN_DIR: &str = "/opt/sola/bin";
 const LOG_DIR: &str = "/opt/sola/log";
 const SHARE_DIR: &str = "/opt/sola/share";
+/// Staged copy of the workspace `nix/` tree. configuration.nix imports
+/// the vendored WPEWebKit derivation from here so the absolute path is
+/// stable across reboots (versus `/home/joshua/Workspace/Sola`).
+const NIX_DIR: &str = "/opt/sola/nix";
 
 /// Ensure install directories exist.
 pub fn ensure_dirs() -> Result<(), String> {
@@ -109,6 +113,21 @@ pub fn install_first_party_icons() -> Result<usize, String> {
         }
     }
     Ok(written)
+}
+
+/// Mirror the workspace's `nix/` tree into `/opt/sola/nix/` so
+/// `/etc/nixos/configuration.nix` can `pkgs.callPackage` the vendored
+/// derivations (currently just `wpewebkit/`) from a stable absolute
+/// path that doesn't depend on the workspace location. Idempotent —
+/// files whose bytes already match are skipped.
+pub fn install_nix_modules() -> Result<usize, String> {
+    let src = Path::new("nix");
+    if !src.is_dir() {
+        return Ok(0);
+    }
+    let dest = Path::new(NIX_DIR);
+    fs::create_dir_all(dest).map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
+    copy_tree(src, dest)
 }
 
 pub fn install_dist_files() -> Result<usize, String> {
@@ -389,6 +408,19 @@ pub fn install(app: Option<&str>) {
             } else {
                 eprintln!("  warning: isolated binary not found: {}", src.display());
             }
+        }
+    }
+
+    // Stage the workspace `nix/` tree to `/opt/sola/nix/` so
+    // configuration.nix can import the vendored WPEWebKit derivation
+    // via a stable absolute path. Cheap when up to date (a few stat()
+    // calls); only writes when a file differs.
+    match install_nix_modules() {
+        Ok(0) => {}
+        Ok(n) => println!("Staged {n} nix file(s) to {NIX_DIR}"),
+        Err(e) => {
+            eprintln!("failed to stage nix modules: {e}");
+            std::process::exit(1);
         }
     }
 

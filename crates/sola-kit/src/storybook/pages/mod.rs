@@ -22,4 +22,3 @@ pub mod split;
 pub mod text;
 pub mod theme;
 pub mod toolbar;
-pub mod welcome;

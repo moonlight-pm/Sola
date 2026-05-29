@@ -18,26 +18,26 @@ pub fn encode_payload<T: serde::Serialize>(value: &T) -> Vec<u8> {
     postcard::to_allocvec(value).expect("failed to serialize topic payload")
 }
 
-/// Convert a persistent topic's typed payload to a TOML value for
-/// storage in `state.toml`. Returns `None` if the payload can't be
-/// represented in TOML (e.g. non-string map keys). Used by the macro-
-/// generated `Topic::to_toml_value`.
-pub fn payload_to_toml<T: serde::Serialize>(value: &T) -> Option<toml::Value> {
-    toml::Value::try_from(value).ok()
+/// Convert a persistent topic's typed payload to a YAML value for
+/// storage in `state.yaml`. Returns `None` if the payload can't be
+/// represented in YAML. Used by the macro-generated
+/// `Topic::to_yaml_value`.
+pub fn payload_to_yaml<T: serde::Serialize>(value: &T) -> Option<serde_yaml_ng::Value> {
+    serde_yaml_ng::to_value(value).ok()
 }
 
-/// Deserialize a `state.toml` section into a topic payload. Returns
+/// Deserialize a `state.yaml` section into a topic payload. Returns
 /// `None` on schema mismatch — the bus logs and leaves the topic
-/// unset. Used by the macro-generated `Topic::from_toml_section`.
-pub fn payload_from_toml<T: serde::de::DeserializeOwned>(value: toml::Value) -> Option<T> {
-    value.try_into::<T>().ok()
+/// unset. Used by the macro-generated `Topic::from_yaml_section`.
+pub fn payload_from_yaml<T: serde::de::DeserializeOwned>(value: serde_yaml_ng::Value) -> Option<T> {
+    serde_yaml_ng::from_value(value).ok()
 }
 
-/// Empty TOML table. Used as the serialized form of a persistent unit
+/// Empty YAML mapping. Used as the serialized form of a persistent unit
 /// variant (presence-only persistent signal; section exists in the
 /// file but carries no data).
-pub fn empty_toml_section() -> toml::Value {
-    toml::Value::Table(toml::map::Map::new())
+pub fn empty_yaml_section() -> serde_yaml_ng::Value {
+    serde_yaml_ng::Value::Mapping(serde_yaml_ng::Mapping::new())
 }
 
 /// Delivery behavior for a topic kind.
@@ -487,7 +487,7 @@ macro_rules! _define_topics_inner {
                 }
             }
 
-            /// Map a section name (as it appears in `state.toml`) back
+            /// Map a section name (as it appears in `state.yaml`) back
             /// to a `TopicKind`. Returns `None` for unknown sections so
             /// the bus can log and skip rather than fail to start.
             pub fn from_str(name: &str) -> Option<TopicKind> {
@@ -619,8 +619,8 @@ macro_rules! _define_topics_inner {
 
             /// Resolved on-disk path for this topic's persistent storage.
             /// For topics without a `namespace` annotation, returns the
-            /// shared `~/.config/sola/state.toml` path. For namespaced
-            /// topics, returns `~/.config/sola/<interpolated>.toml`.
+            /// shared `~/.config/sola/state.yaml` path. For namespaced
+            /// topics, returns `~/.config/sola/<interpolated>.yaml`.
             ///
             /// Panics if an interpolated key value is unsafe (slash,
             /// `..`, empty). Use `path_for_safe` for a typed error.
@@ -637,12 +637,12 @@ macro_rules! _define_topics_inner {
                 let kind = self.kind();
                 let cfg = sola_core::config::sola_config_dir();
                 match kind.namespace() {
-                    None => Ok(cfg.join("state.toml")),
+                    None => Ok(cfg.join("state.yaml")),
                     Some(template) => {
                         let names = kind.key_names();
                         let values = self.keys_for();
                         let resolved = $crate::topic::interpolate_namespace(template, names, &values)?;
-                        Ok(cfg.join(format!("{resolved}.toml")))
+                        Ok(cfg.join(format!("{resolved}.yaml")))
                     }
                 }
             }
@@ -696,29 +696,29 @@ macro_rules! _define_topics_inner {
                 }
             }
 
-            /// Serialize a persistent topic's payload to a TOML value
-            /// suitable for writing to `state.toml`. Returns `None` for
+            /// Serialize a persistent topic's payload to a YAML value
+            /// suitable for writing to `state.yaml`. Returns `None` for
             /// non-persistent variants (ephemeral / sticky topics never
             /// touch disk) and for persistent payloads whose shape
-            /// can't be represented in TOML.
+            /// can't be represented in YAML.
             #[allow(unreachable_patterns, unused_variables)]
-            pub fn to_toml_value(&self) -> Option<toml::Value> {
+            pub fn to_yaml_value(&self) -> Option<serde_yaml_ng::Value> {
                 match self {
-                    $( Topic::$pp(payload) => $crate::topic::payload_to_toml(payload), )*
-                    $( Topic::$pu => Some($crate::topic::empty_toml_section()), )*
+                    $( Topic::$pp(payload) => $crate::topic::payload_to_yaml(payload), )*
+                    $( Topic::$pu => Some($crate::topic::empty_yaml_section()), )*
                     _ => None,
                 }
             }
 
-            /// Deserialize a `state.toml` section into the matching
+            /// Deserialize a `state.yaml` section into the matching
             /// persistent topic variant. Returns `None` if `kind` is
-            /// not persistent, or if the TOML value can't be
+            /// not persistent, or if the YAML value can't be
             /// deserialized into the expected payload type.
             #[allow(unreachable_patterns, unused_variables)]
-            pub fn from_toml_section(kind: TopicKind, value: toml::Value) -> Option<Topic> {
+            pub fn from_yaml_section(kind: TopicKind, value: serde_yaml_ng::Value) -> Option<Topic> {
                 match kind {
                     $( TopicKind::$pp => {
-                        $crate::topic::payload_from_toml::<$ppt>(value).map(Topic::$pp)
+                        $crate::topic::payload_from_yaml::<$ppt>(value).map(Topic::$pp)
                     }, )*
                     $( TopicKind::$pu => Some(Topic::$pu), )*
                     _ => None,
@@ -812,24 +812,24 @@ mod tests {
     }
 
     #[test]
-    fn path_for_no_namespace_falls_back_to_state_toml() {
+    fn path_for_no_namespace_falls_back_to_state_yaml() {
         let t = Topic::UnnamedSingleton(StickyKeyed { id: "x".into(), other: 1 });
         let p = t.path_for();
-        assert_eq!(p, sola_core::config::sola_config_dir().join("state.toml"));
+        assert_eq!(p, sola_core::config::sola_config_dir().join("state.yaml"));
     }
 
     #[test]
     fn path_for_singleton_namespaced() {
         let t = Topic::NamespacedSingleton(StickyKeyed { id: "x".into(), other: 1 });
         let p = t.path_for();
-        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/single.toml"));
+        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/single.yaml"));
     }
 
     #[test]
     fn path_for_keyed_namespaced_interpolates() {
         let t = Topic::NamespacedKeyed(StickyKeyed { id: "abc".into(), other: 1 });
         let p = t.path_for();
-        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/keyed/abc.toml"));
+        assert_eq!(p, sola_core::config::sola_config_dir().join("ns/keyed/abc.yaml"));
     }
 
     #[test]
