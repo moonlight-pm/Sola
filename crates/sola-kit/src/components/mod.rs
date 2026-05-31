@@ -37,6 +37,7 @@
 pub mod badge;
 pub mod button;
 pub mod card;
+pub mod color_picker;
 pub mod divider;
 pub mod field;
 pub mod icon;
@@ -52,6 +53,7 @@ pub mod toolbar;
 pub use badge::{Tone, badge};
 pub use button::confirm_button;
 pub use card::card;
+pub use color_picker::color_picker;
 pub use divider::vertical_divider;
 pub use field::field;
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};

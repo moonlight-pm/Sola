@@ -10,12 +10,18 @@
 //! one message variant per stateful page; it's verbose but each page's
 //! state is independent and the indirection helps when pages get
 //! retired or reordered.
+//!
+//! Not every component gets its own page: `swatch` is dogfooded by the
+//! Theme page's atom grid + color picker, and `text_input` by the Field
+//! page's inputs. They're intentionally folded there rather than given
+//! standalone pages.
 
 pub mod badge;
 pub mod button;
 pub mod card;
 pub mod divider;
 pub mod field;
+pub mod icon;
 pub mod popover;
 pub mod sidebar;
 pub mod split;

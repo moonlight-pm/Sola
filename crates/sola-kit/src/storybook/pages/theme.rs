@@ -7,11 +7,12 @@
 use iced::widget::{column, container, mouse_area, pick_list, row};
 use iced::{Color, Element, Length, Padding};
 
+use sola_kit::components::color_picker::color_picker;
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
 use sola_kit::theme::{self, Atoms, FontSelection};
 
-use crate::storybook::{FontRole, Msg};
+use crate::storybook::{AtomField, FontRole, Msg};
 
 const SWATCH_SIZE: f32 = 56.0;
 const PRESET_SIZE: f32 = 40.0;
@@ -30,6 +31,7 @@ pub fn view<'a>(
     fonts: &'a FontSelection,
     families: &'a [String],
     editable: bool,
+    editing: Option<AtomField>,
 ) -> Element<'a, Msg> {
     let intro: Element<'a, Msg> = if editable {
         body(
@@ -66,13 +68,18 @@ pub fn view<'a>(
         fonts_grid(fonts, families),
 
         subheading("Palette atoms"),
-        body(
-            "Read-only for now. Component style fns reach these via \
-             theme.extended_palette() — the atom→slot bindings live in \
-             sola_kit::theme::build_theme."
-        )
+        body(if editable {
+            "Click a swatch to edit its atom with the RGB picker. \
+             Component style fns reach these via theme.extended_palette() \
+             — the atom→slot bindings live in sola_kit::theme::build_theme."
+        } else {
+            "Read-only on the Default theme. Fork it (\"New Theme\") to \
+             click a swatch and edit its atom. Component style fns reach \
+             these via theme.extended_palette() — the atom→slot bindings \
+             live in sola_kit::theme::build_theme."
+        })
         .style(muted),
-        atom_grid(atoms),
+        atom_grid(atoms, editable, editing),
     ]
     .spacing(28)
     .into()
@@ -110,7 +117,7 @@ fn preset_tile<'a>(
         });
 
     column![
-        mouse_area(tile).on_press(Msg::SetAccent(color)),
+        mouse_area(tile).on_press(Msg::SetAtom(AtomField::Accent, color)),
         caption(label).style(muted),
         code(hex_str).style(muted),
     ]
@@ -150,38 +157,88 @@ fn font_row<'a>(
     .into()
 }
 
-fn atom_grid(atoms: &Atoms) -> Element<'_, Msg> {
-    let rows: &[(&str, Color, &str)] = &[
-        ("BG",        atoms.bg,        "background.base / weakest"),
-        ("BG_RAISED", atoms.bg_raised, "background.weaker / weak"),
-        ("BG_HOVER",  atoms.bg_hover,  "background.neutral / strong"),
-        ("BORDER",    atoms.border,    "background.stronger / strongest"),
-        ("FG",        atoms.fg,        "palette.text"),
-        ("FG_MUTED",  atoms.fg_muted,  "secondary.base.text"),
-        ("ACCENT",    atoms.accent,    "primary.base"),
-        ("SUCCESS",   atoms.success,   "success.base"),
-        ("WARNING",   atoms.warning,   "warning.base"),
-        ("DANGER",    atoms.danger,    "danger.base"),
+fn atom_grid(atoms: &Atoms, editable: bool, editing: Option<AtomField>) -> Element<'_, Msg> {
+    let rows: &[(&str, AtomField, &str)] = &[
+        ("BG",        AtomField::Bg,       "background.base / weakest"),
+        ("BG_RAISED", AtomField::BgRaised, "background.weaker / weak"),
+        ("BG_HOVER",  AtomField::BgHover,  "background.neutral / strong"),
+        ("BORDER",    AtomField::Border,   "background.stronger / strongest"),
+        ("FG",        AtomField::Fg,       "palette.text"),
+        ("FG_MUTED",  AtomField::FgMuted,  "secondary.base.text"),
+        ("ACCENT",    AtomField::Accent,   "primary.base"),
+        ("SUCCESS",   AtomField::Success,  "success.base"),
+        ("WARNING",   AtomField::Warning,  "warning.base"),
+        ("DANGER",    AtomField::Danger,   "danger.base"),
     ];
 
-    rows.chunks(5).fold(column![].spacing(GRID_GAP), |col, chunk| {
-        let r = chunk.iter().fold(row![].spacing(GRID_GAP), |r, (name, c, slot)| {
-            r.push(swatch_tile(name, *c, slot))
+    let mut grid = rows.chunks(5).fold(column![].spacing(GRID_GAP), |col, chunk| {
+        let r = chunk.iter().fold(row![].spacing(GRID_GAP), |r, (name, field, slot)| {
+            r.push(swatch_tile(atoms, name, *field, slot, editable, editing))
         });
         col.push(r)
-    })
-    .into()
+    });
+
+    // Editing an atom opens its picker inline below the grid.
+    if editable {
+        if let Some(field) = editing {
+            grid = grid.push(picker_panel(atoms, field));
+        }
+    }
+    grid.into()
 }
 
-fn swatch_tile<'a>(name: &'a str, color: Color, slot: &'a str) -> Element<'a, Msg> {
+fn swatch_tile<'a>(
+    atoms: &Atoms,
+    name: &'a str,
+    field: AtomField,
+    slot: &'a str,
+    editable: bool,
+    editing: Option<AtomField>,
+) -> Element<'a, Msg> {
+    let color = field.get(atoms);
+    let tile = swatch_sized::<Msg>(color, SWATCH_SIZE);
+    // When editable, the swatch is a click target that opens its picker;
+    // the open atom gets an accent ring so the picker's subject is clear.
+    let tile: Element<'a, Msg> = if editable {
+        let selected = editing == Some(field);
+        let ring = if selected { 2.0 } else { 0.0 };
+        let framed = container(tile)
+            .padding(Padding::from(ring))
+            .style(move |theme: &iced::Theme| {
+                let p = theme.extended_palette();
+                iced::widget::container::Style {
+                    border: iced::Border {
+                        color: if selected { p.primary.base.color } else { Color::TRANSPARENT },
+                        width: ring,
+                        radius: 8.0.into(),
+                    },
+                    ..iced::widget::container::Style::default()
+                }
+            });
+        mouse_area(framed).on_press(Msg::EditAtom(field)).into()
+    } else {
+        tile
+    };
+
     column![
-        swatch_sized::<Msg>(color, SWATCH_SIZE),
+        tile,
         body(name),
-        code(color_hex(color)).style(muted),
+        code(theme::color_to_hex(color)).style(muted),
         caption(slot).style(muted),
     ]
     .spacing(6)
     .width(Length::Fixed(SWATCH_SIZE + 16.0))
+    .into()
+}
+
+/// Inline RGB picker for the atom currently being edited.
+fn picker_panel(atoms: &Atoms, field: AtomField) -> Element<'static, Msg> {
+    let color = field.get(atoms);
+    column![
+        caption("Editing — drag a channel, or click the swatch again to close").style(muted),
+        color_picker(color, move |c| Msg::SetAtom(field, c)),
+    ]
+    .spacing(8)
     .into()
 }
 
@@ -192,9 +249,3 @@ fn colors_eq(a: Color, b: Color) -> bool {
         && (a.b - b.b).abs() < eps
 }
 
-fn color_hex(c: Color) -> String {
-    let r = (c.r * 255.0).round().clamp(0.0, 255.0) as u8;
-    let g = (c.g * 255.0).round().clamp(0.0, 255.0) as u8;
-    let b = (c.b * 255.0).round().clamp(0.0, 255.0) as u8;
-    format!("#{r:02x}{g:02x}{b:02x}")
-}

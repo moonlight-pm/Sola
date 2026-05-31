@@ -1,9 +1,10 @@
 //! Storybook app — global theme header + sidebar nav + showcase pane.
 //!
 //! Each kit-shipped component (badge, button, card, divider, field,
-//! popover, sidebar, split, text, theme atoms, toolbar) gets a page in
-//! [`pages`]. The shell holds the selected page in state and re-renders
-//! on `Select(Page)`.
+//! icon, popover, sidebar, split, text, theme atoms, toolbar) gets a
+//! page in [`pages`]; `swatch` and `text_input` are folded into the
+//! Theme and Field pages respectively. The shell holds the selected
+//! page in state and re-renders on `Select(Page)`.
 //!
 //! The storybook owns a list of [`ThemePreset`]s — index 0 is always
 //! the immutable "Default" preset whose values come from
@@ -38,6 +39,7 @@ pub enum Page {
     Badge,
     Card,
     Field,
+    Icon,
     Divider,
     Popover,
     Sidebar,
@@ -58,6 +60,7 @@ impl Page {
         Page::Badge,
         Page::Card,
         Page::Field,
+        Page::Icon,
         Page::Popover,
         Page::Sidebar,
     ];
@@ -70,6 +73,7 @@ impl Page {
             Page::Badge => "Badge",
             Page::Card => "Card",
             Page::Field => "Field",
+            Page::Icon => "Icon",
             Page::Divider => "Divider",
             Page::Popover => "Popover",
             Page::Sidebar => "Sidebar",
@@ -89,6 +93,7 @@ impl Page {
             | Page::Badge
             | Page::Card
             | Page::Field
+            | Page::Icon
             | Page::Popover
             | Page::Sidebar => Some("Components"),
         }
@@ -102,9 +107,12 @@ pub enum Msg {
     Field(pages::field::Msg),
     /// Bus message arriving via [`sola_kit::app::bus_subscription`].
     Bus(Arc<sola_bus::Message>),
-    /// Overwrite the active preset's accent atom and broadcast. No-op
-    /// when Default is active.
-    SetAccent(iced::Color),
+    /// Open the inline color picker for one palette atom. No-op when
+    /// Default is active (its atoms are read-only).
+    EditAtom(AtomField),
+    /// Overwrite one atom on the active preset and broadcast. No-op when
+    /// Default is active.
+    SetAtom(AtomField, iced::Color),
     /// Swap one font role on the active preset. No-op when Default is
     /// active.
     SetFont(FontRole, String),
@@ -145,6 +153,58 @@ pub enum FontRole {
     Mono,
 }
 
+/// Identifies which editable colour atom a `SetAtom` / `EditAtom`
+/// targets. UI-shaped (the theme page's swatch grid and color picker
+/// carry it), so it lives here rather than in `theme.rs`. The
+/// get/set pair is the storybook's view onto `theme::Atoms`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AtomField {
+    Bg,
+    BgRaised,
+    BgHover,
+    Border,
+    Fg,
+    FgMuted,
+    Accent,
+    Success,
+    Warning,
+    Danger,
+}
+
+impl AtomField {
+    /// Read this atom out of an `Atoms`.
+    pub fn get(self, a: &theme::Atoms) -> iced::Color {
+        match self {
+            AtomField::Bg => a.bg,
+            AtomField::BgRaised => a.bg_raised,
+            AtomField::BgHover => a.bg_hover,
+            AtomField::Border => a.border,
+            AtomField::Fg => a.fg,
+            AtomField::FgMuted => a.fg_muted,
+            AtomField::Accent => a.accent,
+            AtomField::Success => a.success,
+            AtomField::Warning => a.warning,
+            AtomField::Danger => a.danger,
+        }
+    }
+
+    /// Write this atom into an `Atoms`.
+    pub fn set(self, a: &mut theme::Atoms, c: iced::Color) {
+        match self {
+            AtomField::Bg => a.bg = c,
+            AtomField::BgRaised => a.bg_raised = c,
+            AtomField::BgHover => a.bg_hover = c,
+            AtomField::Border => a.border = c,
+            AtomField::Fg => a.fg = c,
+            AtomField::FgMuted => a.fg_muted = c,
+            AtomField::Accent => a.accent = c,
+            AtomField::Success => a.success = c,
+            AtomField::Warning => a.warning = c,
+            AtomField::Danger => a.danger = c,
+        }
+    }
+}
+
 /// A named bundle of atoms + font selection. The storybook keeps a
 /// `Vec<ThemePreset>` with index 0 always being the immutable
 /// "Default" preset whose values match the Rust constants in
@@ -173,6 +233,10 @@ pub struct Storybook {
     /// Disarmed by any other header action so a stale armed state can't
     /// linger across navigation.
     delete_armed: bool,
+    /// Which palette atom's inline color picker is open on the Theme
+    /// page, if any. Only meaningful while an editable (non-Default)
+    /// preset is active.
+    editing_atom: Option<AtomField>,
     /// Cached pick_list options for the per-role font selectors. Built
     /// once in `default()` from `INSTALLED_FAMILIES` so each render of
     /// the Theme page doesn't reallocate five `Vec<String>`s, and
@@ -210,6 +274,7 @@ impl Storybook {
             active_theme: 0,
             naming: None,
             delete_armed: false,
+            editing_atom: None,
             family_options: sola_kit::fonts::INSTALLED_FAMILIES
                 .iter()
                 .map(|s| s.to_string())
@@ -268,12 +333,21 @@ impl Storybook {
                     _ => {}
                 }
             }
-            Msg::SetAccent(color) => {
+            Msg::EditAtom(field) => {
                 if self.is_default_active() {
-                    tracing::debug!("ignoring SetAccent — Default theme is read-only");
+                    tracing::debug!("ignoring EditAtom — Default theme is read-only");
                     return;
                 }
-                self.active_mut().atoms.accent = color;
+                // Toggle: clicking the open atom's swatch again closes it.
+                self.editing_atom =
+                    if self.editing_atom == Some(field) { None } else { Some(field) };
+            }
+            Msg::SetAtom(field, color) => {
+                if self.is_default_active() {
+                    tracing::debug!("ignoring SetAtom — Default theme is read-only");
+                    return;
+                }
+                field.set(&mut self.active_mut().atoms, color);
                 self.refresh_active_theme();
                 self.broadcast_theme();
                 self.persist_active_theme();
@@ -302,6 +376,7 @@ impl Storybook {
                 self.active_theme = idx;
                 self.naming = None;
                 self.delete_armed = false;
+                self.editing_atom = None;
                 self.refresh_active_theme();
                 self.install_active_fonts();
                 self.broadcast_theme();
@@ -349,6 +424,7 @@ impl Storybook {
             }
             Msg::DeleteActiveTheme => {
                 self.delete_armed = false;
+                self.editing_atom = None;
                 if self.is_default_active() {
                     return;
                 }
@@ -486,6 +562,13 @@ impl Storybook {
     /// startup. No-op if no live theme has been seen yet, or if none
     /// of the loaded presets matches (rare — would mean someone
     /// emitted a `Topic::Theme` that didn't come from a saved preset).
+    ///
+    /// Matching is by value, not name, because a live `Topic::Theme`
+    /// arrives anonymous (no preset name on the wire). W1 made the
+    /// atoms+fonts ⇄ bus round-trip lossless, so the equality is exact
+    /// — the earlier "lossy match" brittleness (E5) is gone. The only
+    /// residual ambiguity is two presets with byte-identical values, in
+    /// which case the first wins (harmless: they render the same).
     fn resync_active_theme(&mut self) {
         let Some(ref live) = self.last_live_theme else {
             return;
@@ -696,17 +779,75 @@ impl Storybook {
                 &self.active().fonts,
                 &self.family_options,
                 editable,
+                self.editing_atom,
             ),
             Page::Text => pages::text::view(),
             Page::Button => pages::button::view(),
             Page::Badge => pages::badge::view(),
             Page::Card => pages::card::view(),
             Page::Field => pages::field::view(&self.field).map(Msg::Field),
+            Page::Icon => pages::icon::view(),
             Page::Divider => pages::divider::view(),
             Page::Popover => pages::popover::view(),
             Page::Sidebar => pages::sidebar::view(),
             Page::Split => pages::split::view(),
             Page::Toolbar => pages::toolbar::view(&self.toolbar).map(Msg::Toolbar),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // E4: a page that isn't in `Page::ALL` is silently dropped from the
+    // sidebar with no error. This test makes that a build/test failure:
+    // the wildcard-free match is a compile-time guard (a new `Page`
+    // variant won't compile until it's listed), and the asserts ensure
+    // `VARIANTS` and `Page::ALL` stay in lockstep.
+    #[test]
+    fn every_page_variant_is_listed_in_all() {
+        const VARIANTS: &[Page] = &[
+            Page::Theme,
+            Page::Text,
+            Page::Button,
+            Page::Badge,
+            Page::Card,
+            Page::Field,
+            Page::Icon,
+            Page::Divider,
+            Page::Popover,
+            Page::Sidebar,
+            Page::Split,
+            Page::Toolbar,
+        ];
+
+        // Compile-time exhaustiveness: adding a `Page` variant forces a
+        // new arm here, prompting the author to also extend `VARIANTS`.
+        fn _exhaustive(p: Page) {
+            match p {
+                Page::Theme
+                | Page::Text
+                | Page::Button
+                | Page::Badge
+                | Page::Card
+                | Page::Field
+                | Page::Icon
+                | Page::Divider
+                | Page::Popover
+                | Page::Sidebar
+                | Page::Split
+                | Page::Toolbar => {}
+            }
+        }
+
+        for v in VARIANTS {
+            assert!(Page::ALL.contains(v), "{v:?} is missing from Page::ALL");
+        }
+        assert_eq!(
+            Page::ALL.len(),
+            VARIANTS.len(),
+            "Page::ALL has a duplicate or an entry not in VARIANTS"
+        );
     }
 }
