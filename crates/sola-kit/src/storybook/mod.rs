@@ -22,7 +22,8 @@ use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
 use sola_kit::components::{
-    SidebarItem, SidebarSection, button as kit_button, sidebar, text_input as kit_text_input,
+    ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar,
+    text_input as kit_text_input,
 };
 use sola_kit::theme;
 
@@ -113,6 +114,8 @@ pub enum Msg {
     /// Overwrite one atom on the active preset and broadcast. No-op when
     /// Default is active.
     SetAtom(AtomField, iced::Color),
+    /// A message from the open atom color picker.
+    Picker(sola_kit::components::color_picker::Message),
     /// Swap one font role on the active preset. No-op when Default is
     /// active.
     SetFont(FontRole, String),
@@ -132,6 +135,9 @@ pub enum Msg {
     /// First click of the two-stage delete — arm the confirm. No-op
     /// when Default is active (it can't be deleted).
     ArmDelete,
+    /// Auto-disarm the two-stage delete — fired ~2s after arming by the
+    /// timeout subscription, so a forgotten armed button reverts itself.
+    DisarmDelete,
     /// Remove the active preset (only allowed when it's not Default)
     /// and switch back to Default. Second click of the two-stage delete.
     DeleteActiveTheme,
@@ -237,6 +243,10 @@ pub struct Storybook {
     /// page, if any. Only meaningful while an editable (non-Default)
     /// preset is active.
     editing_atom: Option<AtomField>,
+    /// The open atom's HSV/hex picker, paired with `editing_atom`. Holds
+    /// its own HSV state so hue survives value→0; `None` when no atom is
+    /// being edited.
+    picker: Option<ColorPicker>,
     /// Cached pick_list options for the per-role font selectors. Built
     /// once in `default()` from `INSTALLED_FAMILIES` so each render of
     /// the Theme page doesn't reallocate five `Vec<String>`s, and
@@ -275,6 +285,7 @@ impl Storybook {
             naming: None,
             delete_armed: false,
             editing_atom: None,
+            picker: None,
             family_options: sola_kit::fonts::INSTALLED_FAMILIES
                 .iter()
                 .map(|s| s.to_string())
@@ -293,7 +304,18 @@ impl Storybook {
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
-        sola_kit::app::bus_subscription().map(Msg::Bus)
+        let bus = sola_kit::app::bus_subscription().map(Msg::Bus);
+        // While the delete confirm is armed, run a one-shot-ish timer
+        // that disarms it ~2s after arming (the subscription only exists
+        // while `delete_armed`, so it starts on arm and is torn down on
+        // confirm/disarm). `every` first fires ~2s after it starts.
+        if self.delete_armed {
+            let timeout = iced::time::every(std::time::Duration::from_secs(2))
+                .map(|_| Msg::DisarmDelete);
+            Subscription::batch([bus, timeout])
+        } else {
+            bus
+        }
     }
 
     pub fn update(&mut self, msg: Msg) {
@@ -339,18 +361,31 @@ impl Storybook {
                     return;
                 }
                 // Toggle: clicking the open atom's swatch again closes it.
-                self.editing_atom =
-                    if self.editing_atom == Some(field) { None } else { Some(field) };
+                if self.editing_atom == Some(field) {
+                    self.editing_atom = None;
+                    self.picker = None;
+                } else {
+                    let color = field.get(&self.active().atoms);
+                    self.editing_atom = Some(field);
+                    self.picker = Some(ColorPicker::new(color));
+                }
             }
             Msg::SetAtom(field, color) => {
-                if self.is_default_active() {
-                    tracing::debug!("ignoring SetAtom — Default theme is read-only");
-                    return;
+                self.apply_atom(field, color);
+                // Keep an open picker in sync if a preset retargets the
+                // atom it's editing (e.g. an accent preset clicked while
+                // the accent picker is open).
+                if self.editing_atom == Some(field) {
+                    self.picker = Some(ColorPicker::new(color));
                 }
-                field.set(&mut self.active_mut().atoms, color);
-                self.refresh_active_theme();
-                self.broadcast_theme();
-                self.persist_active_theme();
+            }
+            Msg::Picker(m) => {
+                let Some(picker) = self.picker.as_mut() else { return };
+                picker.update(m);
+                let color = picker.color();
+                if let Some(field) = self.editing_atom {
+                    self.apply_atom(field, color);
+                }
             }
             Msg::SetFont(role, family) => {
                 if self.is_default_active() {
@@ -377,6 +412,7 @@ impl Storybook {
                 self.naming = None;
                 self.delete_armed = false;
                 self.editing_atom = None;
+                self.picker = None;
                 self.refresh_active_theme();
                 self.install_active_fonts();
                 self.broadcast_theme();
@@ -422,9 +458,13 @@ impl Storybook {
                     self.delete_armed = true;
                 }
             }
+            Msg::DisarmDelete => {
+                self.delete_armed = false;
+            }
             Msg::DeleteActiveTheme => {
                 self.delete_armed = false;
                 self.editing_atom = None;
+                self.picker = None;
                 if self.is_default_active() {
                     return;
                 }
@@ -442,6 +482,21 @@ impl Storybook {
     /// Recompute the live iced theme from the active preset's atoms.
     fn refresh_active_theme(&mut self) {
         self.theme = theme::build_theme(&self.active().atoms);
+    }
+
+    /// Write one atom onto the active preset and propagate it: rebuild
+    /// the live theme, broadcast `Topic::Theme`, persist the preset.
+    /// No-op on the read-only Default. Shared by `SetAtom` (presets) and
+    /// `Picker` (the HSV/hex editor).
+    fn apply_atom(&mut self, field: AtomField, color: iced::Color) {
+        if self.is_default_active() {
+            tracing::debug!("ignoring atom edit — Default theme is read-only");
+            return;
+        }
+        field.set(&mut self.active_mut().atoms, color);
+        self.refresh_active_theme();
+        self.broadcast_theme();
+        self.persist_active_theme();
     }
 
     /// Push the active preset's font selection into the process-wide
@@ -780,6 +835,7 @@ impl Storybook {
                 &self.family_options,
                 editable,
                 self.editing_atom,
+                self.picker.as_ref(),
             ),
             Page::Text => pages::text::view(),
             Page::Button => pages::button::view(),

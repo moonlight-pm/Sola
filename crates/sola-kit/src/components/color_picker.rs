@@ -1,74 +1,178 @@
-//! Color picker — RGB sliders + a live hex readout for editing one
-//! `iced::Color`. Stateless: the caller owns the color and receives a
-//! new one via `on_change` whenever a channel moves. Drop it next to a
-//! [`crate::components::swatch`] showing the current value.
+//! Color picker — HSV sliders + a free-text hex field for editing one
+//! `iced::Color`.
 //!
-//! v0 edits the three RGB channels (lossless, no internal state).
-//! Free-text hex *entry* needs an in-progress buffer the caller holds,
-//! so it's deferred; the hex value is shown read-only for now. Alpha is
-//! preserved but not edited (the kit's atoms are all opaque).
+//! **Stateful** (a `ColorPicker` value, not a bare fn): HSV is the
+//! source of truth, so hue and saturation survive a trip through
+//! value = 0 / greyscale — a picker that re-derived HSV from RGB every
+//! frame would forget the hue the moment the color went black. The
+//! caller holds a `ColorPicker`, routes its [`Message`] through
+//! [`ColorPicker::update`], and reads [`ColorPicker::color`] to apply
+//! the result:
+//!
+//! ```ignore
+//! // open:
+//! self.picker = Some(ColorPicker::new(current));
+//! // in update, on Msg::Picker(m):
+//! if let Some(p) = &mut self.picker { p.update(m); self.apply(p.color()); }
+//! // in view:
+//! self.picker.as_ref().map(|p| p.view().map(Msg::Picker))
+//! ```
 
-use iced::widget::{column, row, slider};
+use std::ops::RangeInclusive;
+
+use iced::widget::{column, row, slider, text_input};
 use iced::{Color, Element, Length, Theme};
 
 use crate::components::style::{SPACE_MD, SPACE_SM};
 use crate::components::text::{caption, code, muted};
-use crate::theme::color_to_hex;
+use crate::components::text_input as kit_text_input;
+use crate::theme::{color_to_hex, try_parse};
 
-/// 0.0–1.0 channel → 0–255 byte, rounded and clamped.
-fn channel_u8(v: f32) -> u8 {
-    (v * 255.0).round().clamp(0.0, 255.0) as u8
+/// RGB (0–1 channels) → HSV with hue in 0–360°, saturation/value in 0–1.
+fn rgb_to_hsv(c: Color) -> (f32, f32, f32) {
+    let max = c.r.max(c.g).max(c.b);
+    let min = c.r.min(c.g).min(c.b);
+    let d = max - min;
+    let v = max;
+    let s = if max <= 0.0 { 0.0 } else { d / max };
+    let h = if d <= 0.0 {
+        0.0
+    } else if max == c.r {
+        60.0 * (((c.g - c.b) / d).rem_euclid(6.0))
+    } else if max == c.g {
+        60.0 * ((c.b - c.r) / d + 2.0)
+    } else {
+        60.0 * ((c.r - c.g) / d + 4.0)
+    };
+    (h.rem_euclid(360.0), s, v)
 }
 
-/// 0–255 byte → 0.0–1.0 channel.
-fn u8_channel(v: u8) -> f32 {
-    v as f32 / 255.0
+/// HSV (hue 0–360°, sat/val 0–1) + alpha → an `iced::Color`.
+fn hsv_to_rgb(h: f32, s: f32, v: f32, a: f32) -> Color {
+    let c = v * s;
+    let h6 = (h / 60.0).rem_euclid(6.0);
+    let x = c * (1.0 - (h6 % 2.0 - 1.0).abs());
+    let (r, g, b) = match h6 as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = v - c;
+    Color { r: r + m, g: g + m, b: b + m, a }
 }
 
-/// Replace the red channel, preserving green / blue / alpha.
-fn with_r(c: Color, v: u8) -> Color {
-    Color { r: u8_channel(v), ..c }
+/// Stateful HSV + hex color editor. HSV is canonical; the hex buffer is
+/// a free-text staging area so partial input (`"#1a"`) doesn't snap.
+#[derive(Debug, Clone)]
+pub struct ColorPicker {
+    h: f32,
+    s: f32,
+    v: f32,
+    a: f32,
+    hex: String,
 }
 
-/// Replace the green channel, preserving red / blue / alpha.
-fn with_g(c: Color, v: u8) -> Color {
-    Color { g: u8_channel(v), ..c }
+/// Messages the picker emits; the caller wraps them in its own message
+/// and feeds them back via [`ColorPicker::update`].
+#[derive(Debug, Clone)]
+pub enum Message {
+    Hue(f32),
+    Sat(f32),
+    Val(f32),
+    HexInput(String),
+    HexSubmit,
 }
 
-/// Replace the blue channel, preserving red / green / alpha.
-fn with_b(c: Color, v: u8) -> Color {
-    Color { b: u8_channel(v), ..c }
+impl ColorPicker {
+    /// Open a picker seeded from `color`.
+    pub fn new(color: Color) -> Self {
+        let (h, s, v) = rgb_to_hsv(color);
+        Self { h, s, v, a: color.a, hex: color_to_hex(color) }
+    }
+
+    /// The color the current HSV state resolves to.
+    pub fn color(&self) -> Color {
+        hsv_to_rgb(self.h, self.s, self.v, self.a)
+    }
+
+    /// Fold one message into the picker state.
+    pub fn update(&mut self, message: Message) {
+        match message {
+            Message::Hue(h) => {
+                self.h = h;
+                self.sync_hex();
+            }
+            Message::Sat(s) => {
+                self.s = (s / 100.0).clamp(0.0, 1.0);
+                self.sync_hex();
+            }
+            Message::Val(v) => {
+                self.v = (v / 100.0).clamp(0.0, 1.0);
+                self.sync_hex();
+            }
+            Message::HexInput(buf) => {
+                // Keep the raw buffer so partial input shows; only adopt
+                // the HSV when it parses to a full #rrggbb.
+                self.hex = buf;
+                if let Some(c) = try_parse(&self.hex) {
+                    let (h, s, v) = rgb_to_hsv(c);
+                    self.h = h;
+                    self.s = s;
+                    self.v = v;
+                }
+            }
+            Message::HexSubmit => {
+                if let Some(c) = try_parse(&self.hex) {
+                    let (h, s, v) = rgb_to_hsv(c);
+                    self.h = h;
+                    self.s = s;
+                    self.v = v;
+                }
+                // Normalise the buffer back to canonical form.
+                self.sync_hex();
+            }
+        }
+    }
+
+    fn sync_hex(&mut self) {
+        self.hex = color_to_hex(self.color());
+    }
+
+    pub fn view(&self) -> Element<'_, Message, Theme> {
+        column![
+            channel("H", self.h, 0.0..=360.0, Message::Hue),
+            channel("S", self.s * 100.0, 0.0..=100.0, Message::Sat),
+            channel("V", self.v * 100.0, 0.0..=100.0, Message::Val),
+            row![
+                text_input("#rrggbb", &self.hex)
+                    .on_input(Message::HexInput)
+                    .on_submit(Message::HexSubmit)
+                    .style(kit_text_input::style)
+                    .width(Length::Fixed(120.0)),
+                code(color_to_hex(self.color())).style(muted),
+            ]
+            .spacing(SPACE_MD)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACE_SM)
+        .into()
+    }
 }
 
-/// Build the picker for `color`. `on_change` fires with the edited
-/// color on every channel move.
-pub fn color_picker<'a, Message: Clone + 'a>(
-    color: Color,
-    on_change: impl Fn(Color) -> Message + Clone + 'a,
-) -> Element<'a, Message, Theme> {
-    let on_r = on_change.clone();
-    let on_g = on_change.clone();
-    let on_b = on_change;
-    column![
-        channel_row("R", channel_u8(color.r), move |v| on_r(with_r(color, v))),
-        channel_row("G", channel_u8(color.g), move |v| on_g(with_g(color, v))),
-        channel_row("B", channel_u8(color.b), move |v| on_b(with_b(color, v))),
-        code(color_to_hex(color)).style(muted),
-    ]
-    .spacing(SPACE_SM)
-    .into()
-}
-
-/// One labelled `0..=255` slider with its current byte value shown.
-fn channel_row<'a, Message: Clone + 'a>(
+/// One labelled slider with its current value shown to the right.
+fn channel<'a>(
     label: &'a str,
-    value: u8,
-    on_change: impl Fn(u8) -> Message + 'a,
+    value: f32,
+    range: RangeInclusive<f32>,
+    on_change: impl Fn(f32) -> Message + 'a,
 ) -> Element<'a, Message, Theme> {
     row![
         caption(label).style(muted).width(Length::Fixed(14.0)),
-        slider(0..=255u8, value, on_change).width(Length::Fixed(160.0)),
-        caption(value.to_string()).style(muted).width(Length::Fixed(28.0)),
+        slider(range, value, on_change).step(1.0).width(Length::Fixed(180.0)),
+        caption(format!("{value:.0}")).style(muted).width(Length::Fixed(34.0)),
     ]
     .spacing(SPACE_MD)
     .align_y(iced::Alignment::Center)
@@ -79,49 +183,75 @@ fn channel_row<'a, Message: Clone + 'a>(
 mod tests {
     use super::*;
 
-    #[test]
-    fn channel_u8_maps_endpoints_and_midpoint() {
-        assert_eq!(channel_u8(0.0), 0);
-        assert_eq!(channel_u8(1.0), 255);
-        // 0.5 * 255 = 127.5, rounds to 128.
-        assert_eq!(channel_u8(0.5), 128);
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
+    fn color_close(a: Color, b: Color) -> bool {
+        close(a.r, b.r) && close(a.g, b.g) && close(a.b, b.b) && close(a.a, b.a)
     }
 
     #[test]
-    fn channel_u8_clamps_out_of_range() {
-        assert_eq!(channel_u8(-0.3), 0);
-        assert_eq!(channel_u8(2.0), 255);
+    fn primaries_map_to_known_hsv() {
+        let (h, s, v) = rgb_to_hsv(Color::from_rgb(1.0, 0.0, 0.0));
+        assert!(close(h, 0.0) && close(s, 1.0) && close(v, 1.0), "red: {h},{s},{v}");
+        let (h, _, _) = rgb_to_hsv(Color::from_rgb(0.0, 1.0, 0.0));
+        assert!(close(h, 120.0), "green hue: {h}");
+        let (h, _, _) = rgb_to_hsv(Color::from_rgb(0.0, 0.0, 1.0));
+        assert!(close(h, 240.0), "blue hue: {h}");
     }
 
     #[test]
-    fn byte_channel_round_trips() {
-        for v in [0u8, 1, 64, 127, 128, 200, 255] {
-            assert_eq!(channel_u8(u8_channel(v)), v, "round-trip failed at {v}");
+    fn greys_have_zero_saturation() {
+        for g in [0.0_f32, 0.25, 0.5, 1.0] {
+            let (_, s, v) = rgb_to_hsv(Color::from_rgb(g, g, g));
+            assert!(close(s, 0.0), "grey {g} sat: {s}");
+            assert!(close(v, g), "grey {g} val: {v}");
         }
     }
 
     #[test]
-    fn with_r_sets_red_and_preserves_others() {
-        let c = Color::from_rgba(0.1, 0.2, 0.3, 0.4);
-        let out = with_r(c, 255);
-        assert_eq!(out.r, 1.0);
-        assert_eq!(out.g, c.g);
-        assert_eq!(out.b, c.b);
-        assert_eq!(out.a, c.a);
+    fn hsv_to_rgb_hits_known_corners() {
+        assert!(color_close(hsv_to_rgb(0.0, 1.0, 1.0, 1.0), Color::from_rgb(1.0, 0.0, 0.0)));
+        assert!(color_close(hsv_to_rgb(120.0, 1.0, 1.0, 1.0), Color::from_rgb(0.0, 1.0, 0.0)));
+        assert!(color_close(hsv_to_rgb(240.0, 1.0, 1.0, 1.0), Color::from_rgb(0.0, 0.0, 1.0)));
+        // Hue wraps at 360.
+        assert!(color_close(hsv_to_rgb(360.0, 1.0, 1.0, 1.0), Color::from_rgb(1.0, 0.0, 0.0)));
     }
 
     #[test]
-    fn with_g_and_b_preserve_alpha_and_siblings() {
-        let c = Color::from_rgba(0.1, 0.2, 0.3, 0.4);
-        let g = with_g(c, 0);
-        assert_eq!(g.g, 0.0);
-        assert_eq!(g.r, c.r);
-        assert_eq!(g.b, c.b);
-        assert_eq!(g.a, c.a);
-        let b = with_b(c, 128);
-        assert_eq!(channel_u8(b.b), 128);
-        assert_eq!(b.r, c.r);
-        assert_eq!(b.g, c.g);
-        assert_eq!(b.a, c.a);
+    fn round_trips_through_hsv() {
+        let samples = [
+            Color::from_rgb(0.1, 0.2, 0.3),
+            Color::from_rgb(0.9, 0.4, 0.05),
+            Color::from_rgb(0.0, 0.5, 0.5),
+            Color::from_rgba(0.33, 0.66, 0.99, 0.5),
+        ];
+        for c in samples {
+            let (h, s, v) = rgb_to_hsv(c);
+            assert!(color_close(hsv_to_rgb(h, s, v, c.a), c), "round-trip failed for {c:?}");
+        }
+    }
+
+    #[test]
+    fn picker_preserves_hue_across_zero_value() {
+        // Seed a saturated orange, drag value to 0, then back up: hue
+        // must survive (the whole point of storing HSV).
+        let mut p = ColorPicker::new(Color::from_rgb(0.9, 0.5, 0.1));
+        let (h0, s0) = (p.h, p.s);
+        p.update(Message::Val(0.0));
+        p.update(Message::Val(100.0));
+        assert!(close(p.h, h0), "hue drifted: {} vs {h0}", p.h);
+        assert!(close(p.s, s0), "sat drifted: {} vs {s0}", p.s);
+    }
+
+    #[test]
+    fn hex_input_adopts_valid_and_ignores_partial() {
+        let mut p = ColorPicker::new(Color::from_rgb(0.0, 0.0, 0.0));
+        p.update(Message::HexInput("#1a".to_string()));
+        // Partial: buffer holds it, color unchanged (still black).
+        assert!(color_close(p.color(), Color::from_rgb(0.0, 0.0, 0.0)));
+        p.update(Message::HexInput("#ff8800".to_string()));
+        assert!(color_close(p.color(), Color::from_rgb8(0xff, 0x88, 0x00)));
     }
 }

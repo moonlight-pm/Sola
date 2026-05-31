@@ -154,8 +154,8 @@ pub fn parse(s: &str) -> Color {
 /// Try to parse `#rrggbb`, returning `None` on malformed input. Used
 /// when ingesting bus theme atoms whose values arrive as untrusted
 /// strings — a malformed swatch becomes a fallback rather than a
-/// panic.
-fn try_parse(s: &str) -> Option<Color> {
+/// panic — and by the color picker's free-text hex field.
+pub fn try_parse(s: &str) -> Option<Color> {
     let s = s.trim_start_matches('#');
     if s.len() != 6 {
         return None;

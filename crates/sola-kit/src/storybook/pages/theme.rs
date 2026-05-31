@@ -7,7 +7,7 @@
 use iced::widget::{column, container, mouse_area, pick_list, row};
 use iced::{Color, Element, Length, Padding};
 
-use sola_kit::components::color_picker::color_picker;
+use sola_kit::components::ColorPicker;
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
 use sola_kit::theme::{self, Atoms, FontSelection};
@@ -32,6 +32,7 @@ pub fn view<'a>(
     families: &'a [String],
     editable: bool,
     editing: Option<AtomField>,
+    picker: Option<&'a ColorPicker>,
 ) -> Element<'a, Msg> {
     let intro: Element<'a, Msg> = if editable {
         body(
@@ -79,7 +80,7 @@ pub fn view<'a>(
              live in sola_kit::theme::build_theme."
         })
         .style(muted),
-        atom_grid(atoms, editable, editing),
+        atom_grid(atoms, editable, editing, picker),
     ]
     .spacing(28)
     .into()
@@ -157,7 +158,12 @@ fn font_row<'a>(
     .into()
 }
 
-fn atom_grid(atoms: &Atoms, editable: bool, editing: Option<AtomField>) -> Element<'_, Msg> {
+fn atom_grid<'a>(
+    atoms: &'a Atoms,
+    editable: bool,
+    editing: Option<AtomField>,
+    picker: Option<&'a ColorPicker>,
+) -> Element<'a, Msg> {
     let rows: &[(&str, AtomField, &str)] = &[
         ("BG",        AtomField::Bg,       "background.base / weakest"),
         ("BG_RAISED", AtomField::BgRaised, "background.weaker / weak"),
@@ -180,8 +186,8 @@ fn atom_grid(atoms: &Atoms, editable: bool, editing: Option<AtomField>) -> Eleme
 
     // Editing an atom opens its picker inline below the grid.
     if editable {
-        if let Some(field) = editing {
-            grid = grid.push(picker_panel(atoms, field));
+        if let Some(p) = picker {
+            grid = grid.push(picker_panel(p));
         }
     }
     grid.into()
@@ -231,12 +237,12 @@ fn swatch_tile<'a>(
     .into()
 }
 
-/// Inline RGB picker for the atom currently being edited.
-fn picker_panel(atoms: &Atoms, field: AtomField) -> Element<'static, Msg> {
-    let color = field.get(atoms);
+/// Inline HSV/hex picker for the atom currently being edited.
+fn picker_panel(picker: &ColorPicker) -> Element<'_, Msg> {
     column![
-        caption("Editing — drag a channel, or click the swatch again to close").style(muted),
-        color_picker(color, move |c| Msg::SetAtom(field, c)),
+        caption("Editing — drag a channel or type a hex; click the swatch again to close")
+            .style(muted),
+        picker.view().map(Msg::Picker),
     ]
     .spacing(8)
     .into()
