@@ -4840,6 +4840,7 @@ dependencies = [
 name = "sola-kit"
 version = "0.1.0"
 dependencies = [
+ "fontdb",
  "iced",
  "serde_json",
  "sola-assets",

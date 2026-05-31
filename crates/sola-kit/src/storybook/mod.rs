@@ -1,10 +1,10 @@
 //! Storybook app — global theme header + sidebar nav + showcase pane.
 //!
 //! Each kit-shipped component (badge, button, card, divider, field,
-//! icon, popover, sidebar, split, text, theme atoms, toolbar) gets a
-//! page in [`pages`]; `swatch` and `text_input` are folded into the
-//! Theme and Field pages respectively. The shell holds the selected
-//! page in state and re-renders on `Select(Page)`.
+//! icon, number_input, popover, readable, sidebar, split, text, theme
+//! atoms, toolbar) gets a page in [`pages`]; `swatch` and `text_input`
+//! are folded into the Theme and Field pages respectively. The shell
+//! holds the selected page in state and re-renders on `Select(Page)`.
 //!
 //! The storybook owns a list of [`ThemePreset`]s — index 0 is always
 //! the immutable "Default" preset whose values come from
@@ -41,6 +41,8 @@ pub enum Page {
     Card,
     Field,
     Icon,
+    NumberInput,
+    Readable,
     Divider,
     Popover,
     Sidebar,
@@ -62,6 +64,8 @@ impl Page {
         Page::Card,
         Page::Field,
         Page::Icon,
+        Page::NumberInput,
+        Page::Readable,
         Page::Popover,
         Page::Sidebar,
     ];
@@ -75,6 +79,8 @@ impl Page {
             Page::Card => "Card",
             Page::Field => "Field",
             Page::Icon => "Icon",
+            Page::NumberInput => "NumberInput",
+            Page::Readable => "Readable",
             Page::Divider => "Divider",
             Page::Popover => "Popover",
             Page::Sidebar => "Sidebar",
@@ -95,6 +101,8 @@ impl Page {
             | Page::Card
             | Page::Field
             | Page::Icon
+            | Page::NumberInput
+            | Page::Readable
             | Page::Popover
             | Page::Sidebar => Some("Components"),
         }
@@ -106,6 +114,7 @@ pub enum Msg {
     Select(Page),
     Toolbar(pages::toolbar::Msg),
     Field(pages::field::Msg),
+    NumberInput(pages::number_input::Msg),
     /// Bus message arriving via [`sola_kit::app::bus_subscription`].
     Bus(Arc<sola_bus::Message>),
     /// Open the inline color picker for one palette atom. No-op when
@@ -226,6 +235,7 @@ pub struct Storybook {
     page: Page,
     toolbar: pages::toolbar::State,
     field: pages::field::State,
+    number_input: pages::number_input::State,
     /// All known themes. `themes[0]` is always Default and can't be
     /// edited or deleted. Subsequent entries are user copies.
     themes: Vec<ThemePreset>,
@@ -280,16 +290,17 @@ impl Storybook {
             page: Page::Theme,
             toolbar: pages::toolbar::State::default(),
             field: pages::field::State::default(),
+            number_input: pages::number_input::State::default(),
             themes: vec![default_preset],
             active_theme: 0,
             naming: None,
             delete_armed: false,
             editing_atom: None,
             picker: None,
-            family_options: sola_kit::fonts::INSTALLED_FAMILIES
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            // Shipped families + everything fontdb finds installed, so
+            // the per-role picker can offer any system font, not just
+            // what we ship.
+            family_options: sola_kit::fonts::pickable_families(),
             theme,
             last_live_theme: None,
         }
@@ -323,6 +334,7 @@ impl Storybook {
             Msg::Select(page) => self.page = page,
             Msg::Toolbar(m) => self.toolbar.update(m),
             Msg::Field(m) => self.field.update(m),
+            Msg::NumberInput(m) => self.number_input.update(m),
             Msg::Bus(message) => {
                 let Some(topic) = Topic::parse(&message) else { return };
                 match topic {
@@ -712,10 +724,13 @@ impl Storybook {
     /// the family-name strings are warm in the shaping cache — opening
     /// a font pick_list later doesn't pay the first-shape tax.
     fn font_prewarm(&self) -> Element<'_, Msg> {
+        // Only the shipped families are worth pre-shaping; the full
+        // `family_options` list now includes every installed system
+        // font, which we don't want to lay out every frame.
         let mut r = iced::widget::Row::new().spacing(8);
-        for family in &self.family_options {
+        for family in sola_kit::fonts::INSTALLED_FAMILIES {
             r = r.push(
-                text(family.as_str())
+                text(*family)
                     .size(1)
                     .style(|_t: &iced::Theme| iced::widget::text::Style {
                         color: Some(iced::Color::TRANSPARENT),
@@ -843,6 +858,10 @@ impl Storybook {
             Page::Card => pages::card::view(),
             Page::Field => pages::field::view(&self.field).map(Msg::Field),
             Page::Icon => pages::icon::view(),
+            Page::NumberInput => {
+                pages::number_input::view(&self.number_input).map(Msg::NumberInput)
+            }
+            Page::Readable => pages::readable::view(),
             Page::Divider => pages::divider::view(),
             Page::Popover => pages::popover::view(),
             Page::Sidebar => pages::sidebar::view(),
@@ -871,6 +890,8 @@ mod tests {
             Page::Card,
             Page::Field,
             Page::Icon,
+            Page::NumberInput,
+            Page::Readable,
             Page::Divider,
             Page::Popover,
             Page::Sidebar,
@@ -889,6 +910,8 @@ mod tests {
                 | Page::Card
                 | Page::Field
                 | Page::Icon
+                | Page::NumberInput
+                | Page::Readable
                 | Page::Divider
                 | Page::Popover
                 | Page::Sidebar

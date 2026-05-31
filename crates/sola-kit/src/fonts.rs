@@ -223,3 +223,67 @@ fn static_family(name: &str) -> &'static str {
     }
     Box::leak(name.to_string().into_boxed_str())
 }
+
+
+/// Every family name an in-app font picker can offer: the shipped
+/// [`INSTALLED_FAMILIES`] plus whatever fontdb finds installed on the
+/// system, deduped and sorted. The shipped families are always present
+/// even if the system scan misses them, so a picker built on this never
+/// loses the kit's own fonts.
+pub fn pickable_families() -> Vec<String> {
+    let mut all: Vec<String> = INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect();
+    all.extend(system_families());
+    dedup_sorted(all)
+}
+
+/// Family names fontdb finds installed on the system, sorted and
+/// deduped. Empty if the scan finds nothing (e.g. a headless box with
+/// no font directories) — callers should fall back to
+/// [`INSTALLED_FAMILIES`] or use [`pickable_families`], which folds
+/// both.
+pub fn system_families() -> Vec<String> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    let names = db
+        .faces()
+        .filter_map(|f| f.families.first().map(|(name, _)| name.clone()));
+    dedup_sorted(names)
+}
+
+/// Collect into a sorted, deduplicated `Vec<String>`.
+fn dedup_sorted<I: IntoIterator<Item = String>>(iter: I) -> Vec<String> {
+    let mut v: Vec<String> = iter.into_iter().collect();
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedup_sorted_sorts_and_dedupes() {
+        let out = dedup_sorted([
+            "Inter".to_string(),
+            "Arial".to_string(),
+            "Inter".to_string(),
+            "Zed".to_string(),
+        ]);
+        assert_eq!(
+            out,
+            vec!["Arial".to_string(), "Inter".to_string(), "Zed".to_string()]
+        );
+    }
+
+    #[test]
+    fn pickable_families_always_contains_shipped() {
+        let all = pickable_families();
+        for fam in INSTALLED_FAMILIES {
+            assert!(
+                all.contains(&fam.to_string()),
+                "{fam} missing from pickable_families"
+            );
+        }
+    }
+}

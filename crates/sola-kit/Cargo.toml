@@ -32,3 +32,6 @@ sola-core = { path = "../sola-core" }
 sola-assets = { path = "../sola-assets" }
 serde_json = "1"
 tracing = "0.1"
+# System font enumeration for the font picker (matches the version
+# cosmic-text already pulls in, so no extra build cost).
+fontdb = "0.23"
