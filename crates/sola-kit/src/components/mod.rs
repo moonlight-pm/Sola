@@ -2,15 +2,33 @@
 //!
 //! Grows as real apps need shared pieces. Each component lives in its
 //! own submodule and exports a small public surface — usually one
-//! factory function returning `Element<'a, Message>` plus named style
-//! fns that mirror iced's own convention (`button::primary`,
-//! `text::body`, etc.).
+//! factory function plus named style fns that mirror iced's own
+//! convention (`button::primary`, `text::body`, etc.).
+//!
+//! ## Conventions
+//!
+//! - **Return types:** container-shaped builders that callers may want
+//!   to size or position (`card`, `popover`, `sidebar`, `field`) return
+//!   an `iced::widget::Container` so the caller can chain `.width(..)`
+//!   etc.; terminal/leaf widgets (`badge`, `swatch`, `vertical_divider`,
+//!   `icon`) return an `Element`.
+//! - **`Element` spelling:** public signatures write the theme param
+//!   explicitly — `Element<'a, Message, Theme>` — rather than relying on
+//!   the default, so the kit reads uniformly.
+//! - **Re-exports:** the top-level *widget factory* fns are re-exported
+//!   flat (`components::card`, `components::badge`, …). The *style-fn
+//!   families* stay namespaced under their module (`button::primary`,
+//!   `text::body`, `text_input::style`) — flattening them would collide
+//!   (`button::danger` vs `text::danger` vs `badge::Tone::Danger`), so
+//!   callers reach those through the module path on purpose.
+//! - **Shared primitives:** common style fragments (`filled`, `hairline`,
+//!   `dim`) and the `RADIUS_*` / `SPACE_*` scales live in [`style`].
 //!
 //! Style fns take `&iced::Theme` (and sometimes `Status`) and read
 //! from `theme.extended_palette()`. The atom→slot bindings live in
-//! [`crate::theme::sola_extended`] — component code never references
+//! [`crate::theme::build_theme`] — component code never references
 //! `theme::hex::*` directly except for escape-hatch cases iced's
-//! palette vocabulary can't carry.
+//! palette vocabulary can't carry (e.g. the popover drop shadow).
 //!
 //! Iced's `row!`/`column!` macros stay the canonical layout primitives
 //! — the kit doesn't ship a `stack` wrapper. Padded layouts use
@@ -25,17 +43,18 @@ pub mod icon;
 pub mod popover;
 pub mod sidebar;
 pub mod split;
+pub mod style;
 pub mod swatch;
 pub mod text;
 pub mod text_input;
 pub mod toolbar;
 
 pub use badge::{Tone, badge};
+pub use button::confirm_button;
 pub use card::card;
 pub use divider::vertical_divider;
 pub use field::field;
-pub use icon::icon;
-pub use icon::icon_colored;
+pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
 pub use popover::popover;
 pub use sidebar::{SIDEBAR_WIDTH, SidebarItem, SidebarSection, sidebar};
 pub use split::split;

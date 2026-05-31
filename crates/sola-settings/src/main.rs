@@ -20,7 +20,7 @@ use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, bus_subscription, startup, window_settings};
 use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 use sola_kit::fonts;
-use sola_kit::theme::{default_theme, from_bus_theme};
+use sola_kit::theme::{default_theme, theme_from_bus};
 
 mod applications;
 mod mail;
@@ -114,7 +114,8 @@ impl App {
 
                 // Live theme reload on every Topic::Theme delivery.
                 if let Some(Topic::Theme(bus_theme)) = &parsed {
-                    self.theme = from_bus_theme(bus_theme);
+                    self.theme = theme_from_bus(bus_theme);
+                    sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(bus_theme));
                 }
 
                 // CloseApp / our own MenuAction("quit") both exit.

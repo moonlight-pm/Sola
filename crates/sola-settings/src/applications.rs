@@ -468,7 +468,7 @@ fn draft_text_input<'a>(
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);
-    field(label, input, None)
+    field(label, input, None).into()
 }
 
 fn edit_text_input<'a>(
@@ -487,7 +487,7 @@ fn edit_text_input<'a>(
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);
-    field(label, input, None)
+    field(label, input, None).into()
 }
 
 // ── candidate derivation ───────────────────────────────────────────

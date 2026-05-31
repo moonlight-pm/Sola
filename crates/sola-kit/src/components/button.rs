@@ -19,39 +19,16 @@
 //! interaction states (Active / Hovered / Pressed / Disabled) by
 //! deriving from kit palette tiers.
 
-use iced::widget::button;
+use iced::widget::{button, text};
 use iced::{Background, Border, Color, Theme};
 
-/// Filled accent button — the "OK"/"Save"/"Apply" affordance. Bg is
-/// `primary.base`, hover lifts to `primary.strong`, pressed sinks to
-/// `primary.weak`. Disabled drops opacity instead of changing color
-/// so the user reads it as the same action.
+use crate::components::style::{self, RADIUS_MD, RADIUS_SM};
+
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
-    let base = button::Style {
-        background: Some(Background::Color(p.primary.base.color)),
-        text_color: p.primary.base.text,
-        border: Border { color: Color::TRANSPARENT, width: 0.0, radius: 6.0.into() },
-        shadow: Default::default(),
-        snap: false,
-    };
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(p.primary.strong.color)),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(p.primary.weak.color)),
-            ..base
-        },
-        button::Status::Disabled => disabled(base),
-        button::Status::Active => base,
-    }
+    style::filled(p.primary.base, p.primary.strong, p.primary.weak, status)
 }
 
-/// Outlined / chromeless secondary — for complementary actions like
-/// "Cancel" next to a primary. Border is the kit hairline, fill is
-/// transparent at rest and lifts to BG_HOVER on hover.
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let base = button::Style {
@@ -60,7 +37,7 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
         border: Border {
             color: p.background.stronger.color,
             width: 1.0,
-            radius: 6.0.into(),
+            radius: RADIUS_MD.into(),
         },
         shadow: Default::default(),
         snap: false,
@@ -74,20 +51,17 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
             background: Some(Background::Color(p.background.weak.color)),
             ..base
         },
-        button::Status::Disabled => disabled(base),
+        button::Status::Disabled => style::dim(base),
         button::Status::Active => base,
     }
 }
 
-/// Chromeless ghost — no fill, no border, just a text label. For
-/// in-line links, breadcrumb segments, and tertiary actions. Hover
-/// reveals a subtle background, otherwise reads as plain text.
 pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let base = button::Style {
         background: Some(Background::Color(Color::TRANSPARENT)),
         text_color: p.background.base.text,
-        border: Border { color: Color::TRANSPARENT, width: 0.0, radius: 4.0.into() },
+        border: Border { color: Color::TRANSPARENT, width: 0.0, radius: RADIUS_SM.into() },
         shadow: Default::default(),
         snap: false,
     };
@@ -102,46 +76,80 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
             text_color: p.primary.base.color,
             ..base
         },
-        button::Status::Disabled => disabled(base),
+        button::Status::Disabled => style::dim(base),
         button::Status::Active => base,
     }
 }
 
-/// Destructive action — "Delete", "Reset". Same shape as `primary`
-/// but on the danger atom so the affordance signals risk.
 pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
+    style::filled(p.danger.base, p.danger.strong, p.danger.weak, status)
+}
+
+/// Outlined danger — a restrained destructive affordance: transparent
+/// fill with a danger-colored border and text at rest, filling in on
+/// hover/press. The idle half of [`confirm_button`]; also usable alone
+/// for a low-emphasis "Delete" that the caller gates behind a confirm.
+pub fn danger_outline(theme: &Theme, status: button::Status) -> button::Style {
+    let p = theme.extended_palette();
     let base = button::Style {
-        background: Some(Background::Color(p.danger.base.color)),
-        text_color: p.danger.base.text,
-        border: Border { color: Color::TRANSPARENT, width: 0.0, radius: 6.0.into() },
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        text_color: p.danger.base.color,
+        border: Border {
+            color: p.danger.base.color,
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
         shadow: Default::default(),
         snap: false,
     };
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(p.danger.strong.color)),
+            background: Some(Background::Color(p.danger.base.color)),
+            text_color: p.danger.base.text,
             ..base
         },
         button::Status::Pressed => button::Style {
-            background: Some(Background::Color(p.danger.weak.color)),
+            background: Some(Background::Color(p.danger.strong.color)),
+            text_color: p.danger.strong.text,
             ..base
         },
-        button::Status::Disabled => disabled(base),
+        button::Status::Disabled => style::dim(base),
         button::Status::Active => base,
     }
 }
 
-/// Disable shading shared across variants. Halves the alpha of every
-/// color so disabled buttons read as "still this action, just not
-/// available right now" rather than a different button entirely.
-fn disabled(base: button::Style) -> button::Style {
-    button::Style {
-        background: base.background.map(|bg| match bg {
-            Background::Color(c) => Background::Color(Color { a: c.a * 0.5, ..c }),
-            other => other,
-        }),
-        text_color: Color { a: base.text_color.a * 0.5, ..base.text_color },
-        ..base
+/// Two-stage confirm button for destructive actions. The kit renders;
+/// the **consumer owns the `armed` flag** (and decides when to disarm —
+/// on a timeout, on navigation, or after the action commits), because
+/// iced widgets hold no internal state.
+///
+/// - `armed == false`: shows `idle_label` in [`danger_outline`]; a press
+///   sends `on_arm` (the consumer flips `armed` on).
+/// - `armed == true`: shows `confirm_label` filled via [`danger`]; a
+///   press sends `on_confirm` (the consumer performs the action and
+///   flips `armed` back off).
+///
+/// Returns the configured `Button` so the caller can chain `.padding(..)`
+/// / `.width(..)`. Pattern:
+///
+/// ```ignore
+/// confirm_button(self.delete_armed, "Delete", "Confirm?",
+///     Msg::ArmDelete, Msg::DeleteConfirmed)
+///     .padding(Padding::from([6, 14]))
+/// ```
+pub fn confirm_button<'a, Message: Clone + 'a>(
+    armed: bool,
+    idle_label: &'a str,
+    confirm_label: &'a str,
+    on_arm: Message,
+    on_confirm: Message,
+) -> button::Button<'a, Message> {
+    if armed {
+        button(text(confirm_label)).style(danger).on_press(on_confirm)
+    } else {
+        button(text(idle_label)).style(danger_outline).on_press(on_arm)
     }
 }
+
+

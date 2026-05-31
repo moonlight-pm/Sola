@@ -21,14 +21,14 @@ use iced::widget::text::{Span, Wrapping};
 use iced::{Element, Event, Length, Never, Padding, Subscription, Task, Theme};
 use iced::{event, mouse};
 
-use sola_bus::topics::{MenuActionPayload, Topic, TopicKind};
+use sola_bus::topics::{Topic, TopicKind};
 use sola_bus::Message;
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup, window_settings};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar_button;
 use sola_kit::fonts;
-use sola_kit::theme::{default_theme, from_bus_theme, parse as hex};
+use sola_kit::theme::{default_theme, parse as hex, theme_from_bus};
 
 const APP_ID: &str = "sola-monitor";
 
@@ -235,15 +235,13 @@ impl App {
                 // picked up on the next render via `App::theme`.
                 let parsed = Topic::parse(&message);
                 if let Some(Topic::Theme(bus_theme)) = &parsed {
-                    self.theme = from_bus_theme(bus_theme);
+                    self.theme = theme_from_bus(bus_theme);
+                    sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(bus_theme));
                 }
 
-                // Intercept our own MenuAction("quit") for Cmd+Q.
-                let our_quit = matches!(
-                    &parsed,
-                    Some(Topic::MenuAction(MenuActionPayload { app_id, action_id }))
-                        if app_id == APP_ID && action_id == "quit"
-                );
+                // Exit on our own MenuAction("quit") (Cmd+Q) or a
+                // CloseApp addressed to us — both via the shared helper.
+                let our_quit = sola_kit::app::is_self_quit(&message, APP_ID);
 
                 let seq = self.messages.len() as u64 + self.pause_buffer.len() as u64;
                 let entry = Entry::from_message(&message, seq);

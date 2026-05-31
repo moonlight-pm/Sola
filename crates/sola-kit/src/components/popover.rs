@@ -12,28 +12,28 @@
 //! own positioning logic.
 
 use iced::widget::{Container, container};
-use iced::{Background, Border, Element, Shadow, Theme, Vector};
+use iced::{Background, Element, Shadow, Theme, Vector};
+
+use crate::components::style::{hairline, RADIUS_LG, SPACE_LG};
 
 /// Wrap `content` in a popover-styled container. Default padding is
 /// 12px; override with `.padding(...)` if needed.
 pub fn popover<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
 ) -> Container<'a, Message, Theme> {
-    container(content).style(style).padding(12)
+    container(content).style(style).padding(SPACE_LG)
 }
 
-/// Style fn for the popover surface. Background is BG_RAISED, border
-/// is the hairline color, and a soft drop shadow lifts the panel off
-/// whatever surface is behind it. Corner radius matches the kit card.
 pub fn style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(p.background.weaker.color)),
-        border: Border {
-            color: p.background.stronger.color,
-            width: 1.0,
-            radius: 8.0.into(),
-        },
+        border: hairline(p, RADIUS_LG),
+        // Escape hatch: iced's palette vocabulary carries no shadow
+        // token, so the drop shadow is a fixed translucent black rather
+        // than a themed atom. This is the one non-palette colour in the
+        // kit's components (see the convention note in `mod.rs`); a
+        // floating panel needs the lift regardless of theme.
         shadow: Shadow {
             color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
             offset: Vector::new(0.0, 4.0),

@@ -26,7 +26,7 @@ name = "sola-kit"
 path = "src/main.rs"
 
 [dependencies]
-iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg"] }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "advanced"] }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 sola-assets = { path = "../sola-assets" }

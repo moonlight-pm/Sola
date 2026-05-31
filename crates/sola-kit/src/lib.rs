@@ -1,6 +1,7 @@
 //! Iced-based Sola app kit.
 //!
-//! Apps implement [`App`] and call [`run`]. The kit handles:
+//! An app's `main` composes the kit's building blocks (it builds its own
+//! `iced::application`/`daemon`). The kit handles:
 //!
 //! - bus connection + subscription
 //! - app-menu publishing (so `Cmd+Q` quits without per-app glue)
@@ -30,7 +31,7 @@ pub mod components;
 pub mod fonts;
 pub mod theme;
 
-pub use app::{App, BusSetup, run};
+pub use app::{BusSetup, QUIT_ACTION_ID, apply_theme_update, is_self_quit};
 pub use theme::default_theme;
 
 /// Re-export so consumers don't need a separate `iced` direct dep

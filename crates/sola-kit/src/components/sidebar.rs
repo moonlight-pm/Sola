@@ -8,13 +8,14 @@
 //! of truth for which item is active.
 //!
 //! Style fns read from `theme.extended_palette()` only — the kit's
-//! atom→slot bindings live in [`crate::theme::sola_extended`]. To
+//! atom→slot bindings live in [`crate::theme::build_theme`]. To
 //! restyle the sidebar globally, edit that mapping; this file should
 //! never see a raw `hex::*`.
 
-use iced::widget::{Space, button, column, container, text};
+use iced::widget::{Container, Space, button, column, container, text};
 use iced::{Background, Border, Color, Element, Length, Padding, Theme};
 
+use crate::components::style::{RADIUS_SM, SPACE_XS};
 use crate::fonts;
 
 /// One row in the sidebar. `active` flips on the visual state; `message`
@@ -58,13 +59,17 @@ impl<Message> SidebarSection<Message> {
 /// so consumers can lay out alongside it (`width = Fill - SIDEBAR_WIDTH`).
 pub const SIDEBAR_WIDTH: f32 = 200.0;
 
+/// Build the sidebar panel from its sections. Returns a `Container` so
+/// callers can override the kit defaults (a fixed [`SIDEBAR_WIDTH`] wide,
+/// full height) by chaining `.width(..)` / `.height(..)` before dropping
+/// it into a layout.
 pub fn sidebar<'a, Message>(
     sections: Vec<SidebarSection<Message>>,
-) -> Element<'a, Message>
+) -> Container<'a, Message, Theme>
 where
     Message: Clone + 'a,
 {
-    let mut col = column![].spacing(2).padding(Padding::from([8, 6]));
+    let mut col = column![].spacing(SPACE_XS).padding(Padding::from([8, 6]));
     for (i, section) in sections.into_iter().enumerate() {
         if i > 0 {
             col = col.push(Space::new().height(Length::Fixed(12.0)));
@@ -80,7 +85,6 @@ where
         .style(style)
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Length::Fill)
-        .into()
 }
 
 fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
@@ -111,17 +115,13 @@ where
         .into()
 }
 
-/// Container style for the sidebar track — the raised panel that the
-/// rows sit on top of. Pass via `container(...).style(sola_kit::components::sidebar::style)`.
 pub fn style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(p.background.weaker.color)),
-        border: Border {
-            color: p.background.strongest.color,
-            width: 0.0,
-            radius: 0.0.into(),
-        },
+        // No border — the sidebar track is a flat raised panel; the
+        // divider/zoning chrome around it carries any separating line.
+        border: Border::default(),
         ..container::Style::default()
     }
 }
@@ -150,16 +150,9 @@ pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 4.0.into(),
+            radius: RADIUS_SM.into(),
         },
         shadow: Default::default(),
         snap: false,
     }
-}
-
-/// Vertical filler — useful when a caller wants the sidebar to push
-/// later content to the bottom. The storybook uses this between its
-/// component list and a future "About" link.
-pub fn flex_spacer<'a, Message: 'a>() -> Element<'a, Message> {
-    Space::new().height(Length::Fill).into()
 }

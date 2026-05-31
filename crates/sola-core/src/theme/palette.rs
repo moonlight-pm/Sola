@@ -69,23 +69,29 @@ impl Palette {
         palette
             .tokens
             .insert("success".into(), Token::new(TokenKind::Color, "#3fb950", &["status"]));
-        // Fonts — picked to match what's actually installed on the
-        // target system so a freshly-flashed kit renders in its
-        // intended typeface without the user needing to install
-        // anything. DejaVu Sans is the default proportional face
-        // shipped with most Linux distros; Iosevka Term Slab is the
-        // monospace pick (the "Slab" cut has serif terminals on
-        // descenders/ascenders, which reads as deliberate-looking
-        // code without going as far as a full slab serif). Picker
-        // selections overwrite these at runtime.
-        palette.tokens.insert(
-            "font-sans".into(),
-            Token::new(TokenKind::FontFamily, "DejaVu Sans", &["font-family"]),
-        );
-        palette.tokens.insert(
-            "font-mono".into(),
-            Token::new(TokenKind::FontFamily, "Iosevka Term Slab", &["font-family"]),
-        );
+        palette
+            .tokens
+            .insert("warning".into(), Token::new(TokenKind::Color, "#d29922", &["status"]));
+        // Fonts — the kit's semantic role vocabulary
+        // (`font-ui` / `font-ui-medium` / `font-display` / `font-chrome` /
+        // `font-mono`). Defaults are the kit's role defaults: SF Pro for
+        // every UI-shaped role, JetBrains Mono for code. The kit's
+        // `fonts_from_families` applies the Medium weight to the
+        // `ui-medium` / `display` roles, so the *family* name is "SF Pro"
+        // for all four sans roles. Picker selections overwrite these at
+        // runtime.
+        for (name, family) in [
+            ("font-ui", "SF Pro"),
+            ("font-ui-medium", "SF Pro"),
+            ("font-display", "SF Pro"),
+            ("font-chrome", "SF Pro"),
+            ("font-mono", "JetBrains Mono"),
+        ] {
+            palette.tokens.insert(
+                name.into(),
+                Token::new(TokenKind::FontFamily, family, &["font-family"]),
+            );
+        }
         // Text sizes
         palette
             .tokens

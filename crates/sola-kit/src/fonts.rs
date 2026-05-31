@@ -118,7 +118,7 @@ pub fn load_all() -> Vec<Vec<u8>> {
 /// The role vocabulary mirrors how the legacy CEF kit named font
 /// tokens (`--font-ui`, `--font-display`, …). Adding a new role is a
 /// matter of adding a field, a default, and an accessor.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Fonts {
     /// Default body / sidebar item / button text.
     pub ui: Font,

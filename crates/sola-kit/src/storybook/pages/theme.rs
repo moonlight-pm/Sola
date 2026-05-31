@@ -69,7 +69,7 @@ pub fn view<'a>(
         body(
             "Read-only for now. Component style fns reach these via \
              theme.extended_palette() — the atom→slot bindings live in \
-             sola_kit::theme::iced_theme_from_atoms."
+             sola_kit::theme::build_theme."
         )
         .style(muted),
         atom_grid(atoms),

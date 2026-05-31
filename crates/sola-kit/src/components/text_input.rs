@@ -7,6 +7,8 @@
 use iced::widget::text_input;
 use iced::{Background, Border, Theme};
 
+use crate::components::style::{hairline, RADIUS_MD};
+
 /// Single style fn covering all four `text_input::Status` variants.
 /// Resting state has the canvas BG; focused lifts the border to the
 /// accent; disabled drops to the muted-text + weak-bg pair.
@@ -14,11 +16,7 @@ pub fn style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let p = theme.extended_palette();
     let active = text_input::Style {
         background: Background::Color(p.background.base.color),
-        border: Border {
-            radius: 6.0.into(),
-            width: 1.0,
-            color: p.background.stronger.color,
-        },
+        border: hairline(p, RADIUS_MD),
         icon: p.secondary.base.text,
         placeholder: p.secondary.base.text,
         value: p.background.base.text,

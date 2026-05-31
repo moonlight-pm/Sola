@@ -5,8 +5,10 @@
 //! Default tile is 56×56 with the kit hairline border and 6px corner
 //! radius. Override either via the explicit `swatch_sized` form.
 
-use iced::widget::{container, text};
-use iced::{Background, Border, Color, Element, Length, Theme};
+use iced::widget::{Space, container};
+use iced::{Background, Color, Element, Length, Theme};
+
+use crate::components::style::{hairline, RADIUS_MD};
 
 const DEFAULT_SIZE: f32 = 56.0;
 
@@ -16,29 +18,22 @@ pub fn swatch<'a, Message: 'a>(color: Color) -> Element<'a, Message, Theme> {
     swatch_sized(color, DEFAULT_SIZE)
 }
 
-/// Same as [`swatch`] but with caller-supplied side length.
 pub fn swatch_sized<'a, Message: 'a>(
     color: Color,
     size: f32,
 ) -> Element<'a, Message, Theme> {
-    container(text(""))
+    container(Space::new())
         .style(move |t| style(t, color))
         .width(Length::Fixed(size))
         .height(Length::Fixed(size))
         .into()
 }
 
-/// Style fn for the swatch container. Fill is the supplied color;
-/// border is `background.stronger` (the kit hairline).
 pub fn style(theme: &Theme, color: Color) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(color)),
-        border: Border {
-            color: p.background.stronger.color,
-            width: 1.0,
-            radius: 6.0.into(),
-        },
+        border: hairline(p, RADIUS_MD),
         ..container::Style::default()
     }
 }

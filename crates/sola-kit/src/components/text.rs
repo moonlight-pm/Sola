@@ -40,7 +40,7 @@ pub fn code<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
 
 /// Muted variant — lower-contrast text for timestamps, captions, and
 /// deemphasized chrome. Pulls `secondary.base.text` which is bound to
-/// `FG_MUTED` in [`crate::theme::sola_extended`].
+/// `FG_MUTED` in [`crate::theme::build_theme`].
 pub fn muted(theme: &Theme) -> text::Style {
     text::Style { color: Some(theme.extended_palette().secondary.base.text) }
 }

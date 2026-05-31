@@ -54,8 +54,8 @@ pub const THEME_NAME: &str = "sola";
 /// vocabulary genuinely can't carry.
 pub mod hex {
     pub const BG: &str = "#0d1117";
-    pub const FG: &str = "#c9d1d9";
-    pub const ACCENT: &str = "#58a6ff";
+    pub const FG: &str = "#e6edf3";
+    pub const ACCENT: &str = "#00d4ff";
     pub const SUCCESS: &str = "#3fb950";
     pub const WARNING: &str = "#d29922";
     pub const DANGER: &str = "#f85149";
@@ -65,40 +65,29 @@ pub mod hex {
     /// Slightly lifted background — panels, sticky cards, sidebars.
     pub const BG_RAISED: &str = "#161b22";
     /// More lifted — hover / selected rows.
-    pub const BG_HOVER: &str = "#21262d";
+    pub const BG_HOVER: &str = "#1a2030";
     /// 1px hairline color.
-    pub const BORDER: &str = "#30363d";
+    pub const BORDER: &str = "#2d333b";
 }
 
-/// Build the kit's iced theme. Apps call this from their `theme(&self)`
-/// callback; the returned `Theme::Custom` is cheap to clone (it wraps
-/// an `Arc<Custom>`).
+/// Build the kit's iced theme from its compile-time default atoms.
+/// Apps call this from their `theme(&self)` callback; the returned
+/// `Theme::Custom` is cheap to clone (it wraps an `Arc<Custom>`).
 pub fn default_theme() -> Theme {
-    Theme::custom_with_fn(
-        THEME_NAME.to_string(),
-        Palette {
-            background: parse(hex::BG),
-            text: parse(hex::FG),
-            primary: parse(hex::ACCENT),
-            success: parse(hex::SUCCESS),
-            warning: parse(hex::WARNING),
-            danger: parse(hex::DANGER),
-        },
-        sola_extended,
-    )
+    build_theme(&Atoms::default())
 }
 
-/// The binding layer — maps sola hex atoms into iced's `Extended`
-/// palette slots. Component style fns read through these slots; no
-/// component should reference `hex::*` directly unless escape-hatching.
-pub fn sola_extended(palette: Palette) -> Extended {
-    let bg = parse(hex::BG);
-    let bg_raised = parse(hex::BG_RAISED);
-    let bg_hover = parse(hex::BG_HOVER);
-    let border = parse(hex::BORDER);
-    let fg = parse(hex::FG);
-    let fg_muted = parse(hex::FG_MUTED);
-
+/// The binding layer — maps the kit's 10 colour atoms into iced's
+/// `Extended` palette slots. This is the **single** place the
+/// atom→slot layout lives; every theme the kit builds
+/// ([`build_theme`], hence [`default_theme`] and [`theme_from_bus`])
+/// routes through here. Component style fns read the resulting slots
+/// via `theme.extended_palette()`; no component references `hex::*`
+/// directly unless escape-hatching.
+fn extended_from_atoms(a: &Atoms) -> Extended {
+    let Atoms {
+        bg, bg_raised, bg_hover, border, fg, fg_muted, accent, success, warning, danger,
+    } = *a;
     Extended {
         background: Background {
             base: Pair::new(bg, fg),
@@ -112,7 +101,7 @@ pub fn sola_extended(palette: Palette) -> Extended {
         },
         // ACCENT — let iced derive weak/strong shades, no need to
         // hand-pin every tier when our palette is a single atom.
-        primary: Primary::generate(palette.primary, bg, fg),
+        primary: Primary::generate(accent, bg, fg),
         // Carries our muted-chrome story: secondary.base.color = BORDER,
         // .text = FG_MUTED. Style fns that want "deemphasized text on
         // a hairline-coloured surface" read from here.
@@ -121,11 +110,32 @@ pub fn sola_extended(palette: Palette) -> Extended {
             weak: Pair::new(bg_hover, fg_muted),
             strong: Pair::new(border, fg),
         },
-        success: Success::generate(palette.success, bg, fg),
-        warning: Warning::generate(palette.warning, bg, fg),
-        danger: Danger::generate(palette.danger, bg, fg),
+        success: Success::generate(success, bg, fg),
+        warning: Warning::generate(warning, bg, fg),
+        danger: Danger::generate(danger, bg, fg),
         is_dark: true,
     }
+}
+
+/// Build an iced `Theme` from an editable atom set — the one primitive
+/// every other theme constructor composes. The base `Palette` carries
+/// the headline atoms (so `theme.palette()` is sensible) while the
+/// generator closure installs the full sola binding via
+/// [`extended_from_atoms`].
+pub fn build_theme(atoms: &Atoms) -> Theme {
+    let a = *atoms;
+    Theme::custom_with_fn(
+        THEME_NAME.to_string(),
+        Palette {
+            background: a.bg,
+            text: a.fg,
+            primary: a.accent,
+            success: a.success,
+            warning: a.warning,
+            danger: a.danger,
+        },
+        move |_| extended_from_atoms(&a),
+    )
 }
 
 /// Parse `#rrggbb` into an iced `Color`. Panics on malformed input —
@@ -156,92 +166,33 @@ fn try_parse(s: &str) -> Option<Color> {
 }
 
 /// Translate a bus theme (`sola_core::theme::Theme`) into the kit's
-/// iced theme. Atom names follow the v1 palette catalog seeded by
-/// `sola_core::theme::Palette::seed` — `bg-primary` / `bg-secondary`
-/// / `bg-tertiary` / `border` / `text-primary` / `text-tertiary` /
-/// `accent` / `success` / `danger`. Missing or malformed atoms fall
-/// back to the kit's compile-time defaults so a partial bus theme
-/// still produces a usable iced theme.
-///
-/// Wire this into an app's update fn:
+/// iced `Theme`. **Pure**: reads the colour atoms via
+/// [`atoms_from_bus_theme`] and builds via [`build_theme`]; it does
+/// *not* mutate the process font table. Pair it with an explicit
+/// `fonts::install(fonts_from_bus_theme(bus))` (or use the
+/// `sola_kit::apply_theme_update` helper, which does both):
 ///
 /// ```ignore
-/// Msg::BusMessage(msg) => {
-///     if let Topic::Theme(bus_theme) = &msg.topic {
-///         self.theme = sola_kit::theme::from_bus_theme(bus_theme);
+/// Msg::Bus(msg) => {
+///     if let Topic::Theme(bus) = &msg.topic {
+///         self.theme = sola_kit::theme::theme_from_bus(bus);
+///         sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(bus));
 ///     }
 /// }
 /// ```
 ///
-/// Then return `self.theme.clone()` from `App::theme(&self)`. iced
-/// re-renders on the next frame and the new palette flows through
-/// every component style fn automatically.
-pub fn from_bus_theme(bus: &BusTheme) -> Theme {
-    // Side-effect: install font role table so font tokens delivered on
-    // the bus take effect alongside the colour changes. Callers don't
-    // have to remember to do this separately.
-    crate::fonts::install(fonts_from_bus_theme(bus));
-
-    let lookup = |name: &str, fallback: &str| -> Color {
-        bus.palette
-            .tokens
-            .get(name)
-            .and_then(|t| try_parse(&t.value))
-            .unwrap_or_else(|| parse(fallback))
-    };
-
-    let bg = lookup("bg-primary", hex::BG);
-    let bg_raised = lookup("bg-secondary", hex::BG_RAISED);
-    let bg_hover = lookup("bg-tertiary", hex::BG_HOVER);
-    let border = lookup("border", hex::BORDER);
-    let fg = lookup("text-primary", hex::FG);
-    let fg_muted = lookup("text-tertiary", hex::FG_MUTED);
-    let accent = lookup("accent", hex::ACCENT);
-    let success = lookup("success", hex::SUCCESS);
-    let warning = lookup("warning", hex::WARNING);
-    let danger = lookup("danger", hex::DANGER);
-
-    Theme::custom_with_fn(
-        THEME_NAME.to_string(),
-        Palette { background: bg, text: fg, primary: accent, success, warning, danger },
-        move |palette| Extended {
-            background: Background {
-                base: Pair::new(bg, fg),
-                weakest: Pair::new(bg, fg),
-                weaker: Pair::new(bg_raised, fg),
-                weak: Pair::new(bg_raised, fg),
-                neutral: Pair::new(bg_hover, fg),
-                strong: Pair::new(bg_hover, fg),
-                stronger: Pair::new(border, fg),
-                strongest: Pair::new(border, fg),
-            },
-            primary: Primary::generate(palette.primary, bg, fg),
-            secondary: Secondary {
-                base: Pair::new(border, fg_muted),
-                weak: Pair::new(bg_hover, fg_muted),
-                strong: Pair::new(border, fg),
-            },
-            success: Success::generate(palette.success, bg, fg),
-            warning: Warning::generate(palette.warning, bg, fg),
-            danger: Danger::generate(palette.danger, bg, fg),
-            is_dark: true,
-        },
-    )
+/// Then return `self.theme.clone()` from `App::theme(&self)`.
+pub fn theme_from_bus(bus: &BusTheme) -> Theme {
+    build_theme(&atoms_from_bus_theme(bus))
 }
 
-/// Produce a bus theme (`sola_core::theme::Theme`) representing the kit's
-/// compile-time default palette.
-///
-/// # Design note
-/// The inverse of `from_bus_theme` would need to reverse-engineer named token
-/// values from an iced `Theme`'s `Extended` palette — a lossy operation because
-/// iced derives many colours from a few atoms. Rather than propagate a lossy
-/// approximation onto the bus, this function returns a canned `BusTheme::default()`
-/// (seeded with the v1 atom catalog via `Palette::seed`) that matches exactly
-/// what `default_theme()` reads back. If the shell later lets users edit themes,
-/// the real bus value should come from the theme editor, not from this function.
+/// Produce a bus theme (`sola_core::theme::Theme`) representing the
+/// kit's compile-time default palette. Defined as the canonical
+/// round-trip of the default atoms, so what the shell broadcasts at
+/// boot reads back as exactly [`Atoms::default`] / [`default_theme`] —
+/// no drift between the pre-replay frame and the seeded steady state.
 pub fn to_bus_theme() -> BusTheme {
-    BusTheme::default()
+    bus_theme_from_atoms(&Atoms::default())
 }
 
 
@@ -259,7 +210,7 @@ pub fn to_bus_theme() -> BusTheme {
 /// The storybook's editor mutates an `Atoms` value, then rebuilds and
 /// re-emits both forms; other kit apps consume the bus form via
 /// [`from_bus_theme`] and pick up the change on their next render.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Atoms {
     pub bg: Color,
     pub bg_raised: Color,
@@ -290,59 +241,59 @@ impl Default for Atoms {
     }
 }
 
-/// Build an iced `Theme` from an editable atom set. Same shape as
-/// [`from_bus_theme`] — only the source of the colours differs.
-pub fn iced_theme_from_atoms(atoms: &Atoms) -> Theme {
-    let Atoms {
-        bg, bg_raised, bg_hover, border, fg, fg_muted, accent, success, warning, danger,
-    } = *atoms;
-    Theme::custom_with_fn(
-        THEME_NAME.to_string(),
-        Palette { background: bg, text: fg, primary: accent, success, warning, danger },
-        move |palette| Extended {
-            background: Background {
-                base: Pair::new(bg, fg),
-                weakest: Pair::new(bg, fg),
-                weaker: Pair::new(bg_raised, fg),
-                weak: Pair::new(bg_raised, fg),
-                neutral: Pair::new(bg_hover, fg),
-                strong: Pair::new(bg_hover, fg),
-                stronger: Pair::new(border, fg),
-                strongest: Pair::new(border, fg),
-            },
-            primary: Primary::generate(palette.primary, bg, fg),
-            secondary: Secondary {
-                base: Pair::new(border, fg_muted),
-                weak: Pair::new(bg_hover, fg_muted),
-                strong: Pair::new(border, fg),
-            },
-            success: Success::generate(palette.success, bg, fg),
-            warning: Warning::generate(palette.warning, bg, fg),
-            danger: Danger::generate(palette.danger, bg, fg),
-            is_dark: true,
-        },
-    )
+/// One row of the atom ⇄ bus-token mapping: which `Atoms` field a given
+/// palette token drives, and the compile-time fallback used when the
+/// token is missing or malformed.
+///
+/// **This is the single source of truth** consulted by both
+/// [`atoms_from_bus_theme`] (read) and [`bus_theme_from_atoms`]
+/// (write), so the read- and write-lists can never drift apart — the
+/// drift that used to make `warning` silently fail to persist. To make
+/// a new atom editable, add one row here.
+struct AtomBinding {
+    /// Bus palette token name.
+    token: &'static str,
+    /// Compile-time `hex::*` fallback when the token is absent/malformed.
+    fallback: &'static str,
+    /// Read the atom's value out of an `Atoms`.
+    get: fn(&Atoms) -> Color,
+    /// Write a value into the matching `Atoms` field.
+    set: fn(&mut Atoms, Color),
 }
 
-/// Build a `BusTheme` from an editable atom set, overwriting only the
-/// token values [`from_bus_theme`] actually reads back. Unknown atoms
-/// (e.g. `accent-dim`, `text-secondary`) keep their seed values — the
-/// editor doesn't need to model atoms iced doesn't expose.
+const ATOM_BINDINGS: &[AtomBinding] = &[
+    AtomBinding { token: "bg-primary",    fallback: hex::BG,        get: |a| a.bg,        set: |a, c| a.bg = c },
+    AtomBinding { token: "bg-secondary",  fallback: hex::BG_RAISED, get: |a| a.bg_raised, set: |a, c| a.bg_raised = c },
+    // Hover elevation reads the seed's real `bg-hover`, not `bg-tertiary`.
+    AtomBinding { token: "bg-hover",      fallback: hex::BG_HOVER,  get: |a| a.bg_hover,  set: |a, c| a.bg_hover = c },
+    AtomBinding { token: "border",        fallback: hex::BORDER,    get: |a| a.border,    set: |a, c| a.border = c },
+    AtomBinding { token: "text-primary",  fallback: hex::FG,        get: |a| a.fg,        set: |a, c| a.fg = c },
+    AtomBinding { token: "text-tertiary", fallback: hex::FG_MUTED,  get: |a| a.fg_muted,  set: |a, c| a.fg_muted = c },
+    AtomBinding { token: "accent",        fallback: hex::ACCENT,    get: |a| a.accent,    set: |a, c| a.accent = c },
+    AtomBinding { token: "success",       fallback: hex::SUCCESS,   get: |a| a.success,   set: |a, c| a.success = c },
+    AtomBinding { token: "warning",       fallback: hex::WARNING,   get: |a| a.warning,   set: |a, c| a.warning = c },
+    AtomBinding { token: "danger",        fallback: hex::DANGER,    get: |a| a.danger,    set: |a, c| a.danger = c },
+];
+
+/// Build a `BusTheme` from an editable atom set, writing every token in
+/// [`ATOM_BINDINGS`]. Starts from the seed, so atoms the kit doesn't
+/// model (`accent-dim`, `text-secondary`, sizes, radii, …) keep their
+/// seed values; the kit's own tokens are overwritten — and inserted if
+/// the seed somehow lacks them, preserving the write-list ⊇ read-list
+/// invariant.
 pub fn bus_theme_from_atoms(atoms: &Atoms) -> BusTheme {
+    use sola_core::theme::{Token, TokenKind};
     let mut t = BusTheme::default();
-    for (name, value) in [
-        ("bg-primary",   color_to_hex(atoms.bg)),
-        ("bg-secondary", color_to_hex(atoms.bg_raised)),
-        ("bg-tertiary",  color_to_hex(atoms.bg_hover)),
-        ("border",       color_to_hex(atoms.border)),
-        ("text-primary", color_to_hex(atoms.fg)),
-        ("text-tertiary", color_to_hex(atoms.fg_muted)),
-        ("accent",       color_to_hex(atoms.accent)),
-        ("success",      color_to_hex(atoms.success)),
-        ("danger",       color_to_hex(atoms.danger)),
-    ] {
-        if let Some(tok) = t.palette.tokens.get_mut(name) {
-            tok.value = value;
+    for binding in ATOM_BINDINGS {
+        let value = color_to_hex((binding.get)(atoms));
+        match t.palette.tokens.get_mut(binding.token) {
+            Some(tok) => tok.value = value,
+            None => {
+                t.palette.tokens.insert(
+                    binding.token.to_string(),
+                    Token::new(TokenKind::Color, &value, &[]),
+                );
+            }
         }
     }
     t
@@ -425,28 +376,20 @@ pub fn fonts_from_bus_theme(bus: &BusTheme) -> crate::fonts::Fonts {
 
 /// Read the colour atoms out of a `BusTheme` (the inverse of
 /// [`bus_theme_from_atoms`]). Missing or malformed tokens fall back to
-/// the kit's compile-time defaults so a partial bus theme still
-/// produces a usable `Atoms` value.
+/// the kit's compile-time defaults, so a partial bus theme still
+/// produces a usable `Atoms`. Table-driven via [`ATOM_BINDINGS`].
 pub fn atoms_from_bus_theme(bus: &BusTheme) -> Atoms {
-    let lookup = |name: &str, fallback: &str| -> Color {
-        bus.palette
+    let mut atoms = Atoms::default();
+    for binding in ATOM_BINDINGS {
+        let color = bus
+            .palette
             .tokens
-            .get(name)
+            .get(binding.token)
             .and_then(|t| try_parse(&t.value))
-            .unwrap_or_else(|| parse(fallback))
-    };
-    Atoms {
-        bg: lookup("bg-primary", hex::BG),
-        bg_raised: lookup("bg-secondary", hex::BG_RAISED),
-        bg_hover: lookup("bg-tertiary", hex::BG_HOVER),
-        border: lookup("border", hex::BORDER),
-        fg: lookup("text-primary", hex::FG),
-        fg_muted: lookup("text-tertiary", hex::FG_MUTED),
-        accent: lookup("accent", hex::ACCENT),
-        success: lookup("success", hex::SUCCESS),
-        warning: lookup("warning", hex::WARNING),
-        danger: lookup("danger", hex::DANGER),
+            .unwrap_or_else(|| parse(binding.fallback));
+        (binding.set)(&mut atoms, color);
     }
+    atoms
 }
 
 /// Read the font roles out of a `BusTheme` as a `FontSelection`
@@ -475,4 +418,82 @@ fn color_to_hex(c: Color) -> String {
     let g = (c.g * 255.0).round().clamp(0.0, 255.0) as u8;
     let b = (c.b * 255.0).round().clamp(0.0, 255.0) as u8;
     format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A2: every editable atom — including `warning` — must survive a
+    // round-trip through the bus theme. Regression guard for the
+    // writelist that used to omit `warning`.
+    #[test]
+    fn all_atoms_round_trip_through_bus() {
+        let atoms = Atoms {
+            bg: parse("#010203"),
+            bg_raised: parse("#040506"),
+            bg_hover: parse("#070809"),
+            border: parse("#0a0b0c"),
+            fg: parse("#0d0e0f"),
+            fg_muted: parse("#101112"),
+            accent: parse("#131415"),
+            success: parse("#161718"),
+            warning: parse("#191a1b"),
+            danger: parse("#1c1d1e"),
+        };
+        assert_eq!(atoms_from_bus_theme(&bus_theme_from_atoms(&atoms)), atoms);
+    }
+
+    // A1: the bus theme the kit broadcasts as its default must read back
+    // as exactly the kit's default atoms, so the brief pre-replay frame
+    // and the seeded steady state agree.
+    #[test]
+    fn default_bus_theme_reads_back_as_default_atoms() {
+        assert_eq!(atoms_from_bus_theme(&to_bus_theme()), Atoms::default());
+    }
+
+    // A3: the hover elevation must come from the seed's real `bg-hover`
+    // token (#1a2030), not `bg-tertiary` (#1c2129).
+    #[test]
+    fn hover_atom_reads_bg_hover_not_bg_tertiary() {
+        let atoms = atoms_from_bus_theme(&BusTheme::default());
+        assert_eq!(atoms.bg_hover, parse("#1a2030"));
+        assert_ne!(atoms.bg_hover, parse("#1c2129"));
+    }
+
+    // Sub-decision (A4): the seed speaks the kit's font-role vocabulary,
+    // not the old font-sans/font-mono placeholders.
+    #[test]
+    fn seed_speaks_font_role_vocabulary() {
+        let tokens = &BusTheme::default().palette.tokens;
+        for role in ["font-ui", "font-ui-medium", "font-display", "font-chrome", "font-mono"] {
+            assert!(tokens.contains_key(role), "seed missing {role}");
+        }
+        assert!(!tokens.contains_key("font-sans"), "seed still carries font-sans");
+    }
+
+    // The seed's font roles must resolve to the kit's default font table.
+    #[test]
+    fn seed_fonts_resolve_to_default_table() {
+        assert_eq!(
+            fonts_from_bus_theme(&BusTheme::default()),
+            crate::fonts::Fonts::default()
+        );
+    }
+
+    // The writelist (atoms→bus) must cover every token the readlist
+    // (bus→atoms) consumes, so no editable atom can silently fail to
+    // persist. Trivially true while both share ATOM_BINDINGS — this
+    // guards against a future split.
+    #[test]
+    fn writelist_covers_readlist() {
+        let written = bus_theme_from_atoms(&Atoms::default());
+        for binding in ATOM_BINDINGS {
+            assert!(
+                written.palette.tokens.contains_key(binding.token),
+                "atom token {} is read but never written",
+                binding.token
+            );
+        }
+    }
 }

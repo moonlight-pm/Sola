@@ -31,7 +31,7 @@ pub fn style(theme: &Theme) -> container::Style {
 /// cursor + release events to handle the race where the cursor
 /// escapes the divider's hit-rect during a fast drag (see
 /// sola-monitor's `App` for the canonical pattern).
-pub fn vertical_divider<'a, Message>(on_press: Message) -> Element<'a, Message>
+pub fn vertical_divider<'a, Message>(on_press: Message) -> Element<'a, Message, Theme>
 where
     Message: Clone + 'a,
 {

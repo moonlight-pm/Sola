@@ -121,8 +121,11 @@ pub enum Msg {
     NewThemeCommit,
     /// Dismiss the inline name input without forking.
     NewThemeCancel,
+    /// First click of the two-stage delete — arm the confirm. No-op
+    /// when Default is active (it can't be deleted).
+    ArmDelete,
     /// Remove the active preset (only allowed when it's not Default)
-    /// and switch back to Default.
+    /// and switch back to Default. Second click of the two-stage delete.
     DeleteActiveTheme,
     /// Demo placeholder for showcases whose components require an
     /// `on_press` (or similar callback) message but don't model
@@ -165,6 +168,11 @@ pub struct Storybook {
     /// `Some(buffer)` while the inline "New Theme" name input is
     /// showing; `None` when the header is in its normal layout.
     naming: Option<String>,
+    /// Two-stage delete: `false` shows the restrained "Delete" outline,
+    /// `true` (after one click) shows the filled "Confirm?" affordance.
+    /// Disarmed by any other header action so a stale armed state can't
+    /// linger across navigation.
+    delete_armed: bool,
     /// Cached pick_list options for the per-role font selectors. Built
     /// once in `default()` from `INSTALLED_FAMILIES` so each render of
     /// the Theme page doesn't reallocate five `Vec<String>`s, and
@@ -193,7 +201,7 @@ impl Storybook {
             atoms: theme::Atoms::default(),
             fonts: theme::FontSelection::default(),
         };
-        let theme = theme::iced_theme_from_atoms(&default_preset.atoms);
+        let theme = theme::build_theme(&default_preset.atoms);
         Self {
             page: Page::Theme,
             toolbar: pages::toolbar::State::default(),
@@ -201,6 +209,7 @@ impl Storybook {
             themes: vec![default_preset],
             active_theme: 0,
             naming: None,
+            delete_armed: false,
             family_options: sola_kit::fonts::INSTALLED_FAMILIES
                 .iter()
                 .map(|s| s.to_string())
@@ -233,9 +242,11 @@ impl Storybook {
                     Topic::Theme(bus_theme) => {
                         // External theme delivery (sticky-replay from
                         // sola-shell on first connect, or another editor's
-                        // edit). Rebuild iced theme — from_bus_theme also
-                        // reinstalls the fonts table as a side effect.
-                        self.theme = theme::from_bus_theme(&bus_theme);
+                        // edit). Rebuild the iced theme (pure) and
+                        // install the font role table explicitly — theme_from_bus
+                        // no longer does it as a side effect.
+                        self.theme = theme::theme_from_bus(&bus_theme);
+                        crate::fonts::install(theme::fonts_from_bus_theme(&bus_theme));
                         self.last_live_theme = Some(bus_theme);
                         self.resync_active_theme();
                     }
@@ -290,11 +301,13 @@ impl Storybook {
                 };
                 self.active_theme = idx;
                 self.naming = None;
+                self.delete_armed = false;
                 self.refresh_active_theme();
                 self.install_active_fonts();
                 self.broadcast_theme();
             }
             Msg::NewThemeStart => {
+                self.delete_armed = false;
                 let base = if self.is_default_active() {
                     "default-copy".to_string()
                 } else {
@@ -329,7 +342,13 @@ impl Storybook {
             Msg::NewThemeCancel => {
                 self.naming = None;
             }
+            Msg::ArmDelete => {
+                if !self.is_default_active() {
+                    self.delete_armed = true;
+                }
+            }
             Msg::DeleteActiveTheme => {
+                self.delete_armed = false;
                 if self.is_default_active() {
                     return;
                 }
@@ -346,7 +365,7 @@ impl Storybook {
 
     /// Recompute the live iced theme from the active preset's atoms.
     fn refresh_active_theme(&mut self) {
-        self.theme = theme::iced_theme_from_atoms(&self.active().atoms);
+        self.theme = theme::build_theme(&self.active().atoms);
     }
 
     /// Push the active preset's font selection into the process-wide
@@ -625,12 +644,25 @@ impl Storybook {
                     .style(kit_button::secondary)
                     .padding(Padding::from([6, 14]))
                     .on_press(Msg::NewThemeStart);
-                let mut del_btn = button(text("Delete"))
-                    .style(kit_button::danger)
-                    .padding(Padding::from([6, 14]));
-                if !self.is_default_active() {
-                    del_btn = del_btn.on_press(Msg::DeleteActiveTheme);
-                }
+                // Two-stage delete: outline "Delete" arms the confirm,
+                // a second click ("Confirm?") commits. Default is
+                // undeletable, so it renders disabled (no on_press).
+                let del_btn: Element<'_, Msg> = if self.is_default_active() {
+                    button(text("Delete"))
+                        .style(kit_button::danger_outline)
+                        .padding(Padding::from([6, 14]))
+                        .into()
+                } else {
+                    kit_button::confirm_button(
+                        self.delete_armed,
+                        "Delete",
+                        "Confirm?",
+                        Msg::ArmDelete,
+                        Msg::DeleteActiveTheme,
+                    )
+                    .padding(Padding::from([6, 14]))
+                    .into()
+                };
                 row![picker, new_btn, del_btn]
                     .spacing(8)
                     .align_y(iced::Alignment::Center)

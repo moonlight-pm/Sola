@@ -681,7 +681,7 @@ where
             .padding(Padding::new(6.0).left(10.0).right(10.0))
             .size(13)
             .style(kit_input::style);
-        field("Destination", dest_input, None)
+        field("Destination", dest_input, None).into()
     } else {
         iced::widget::Space::new().height(Length::Fixed(0.0)).into()
     };
@@ -766,7 +766,7 @@ fn account_input<'a>(
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);
-    field(label, input, None)
+    field(label, input, None).into()
 }
 
 fn password_input<'a>(label: &'a str, value: &'a str) -> Element<'a, MailMsg> {
@@ -777,7 +777,7 @@ fn password_input<'a>(label: &'a str, value: &'a str) -> Element<'a, MailMsg> {
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);
-    field(label, input, None)
+    field(label, input, None).into()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

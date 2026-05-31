@@ -8,6 +8,7 @@
 use iced::widget::{container, text};
 use iced::{Background, Border, Color, Element, Padding, Theme};
 
+use crate::components::style::RADIUS_PILL;
 use crate::fonts;
 
 /// Visual flavors of badge. Each maps to a palette tier in [`style`].
@@ -20,7 +21,7 @@ pub enum Tone {
     Danger,
 }
 
-/// Compact pill — condensed-bold 10px label, 4×8 padding, fully
+/// Compact pill — medium-weight 10px label, 2×8 padding, fully
 /// rounded corners. Pass a [`Tone`] for the color story.
 pub fn badge<'a, Message: 'a>(
     label: impl text::IntoFragment<'a>,
@@ -49,7 +50,7 @@ pub fn style(theme: &Theme, tone: Tone) -> container::Style {
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 999.0.into(),
+            radius: RADIUS_PILL.into(),
         },
         ..container::Style::default()
     }

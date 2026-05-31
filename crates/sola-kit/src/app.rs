@@ -13,13 +13,11 @@
 //!
 //! For now: see `sola-monitor::main` for the canonical wiring.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use iced::futures::SinkExt;
 use iced::futures::Stream;
-use iced::futures::StreamExt;
-use iced::stream;
 use iced::Subscription;
 use sola_bus::BusClient;
 use sola_bus::Message;
@@ -27,13 +25,6 @@ use sola_bus::topics::{
     AppMenuPayload, MenuDefinition, MenuItem, Topic, TopicKind,
 };
 use sola_core::KeyChord;
-
-/// Wayland xdg_toplevel.app_id and bus app id, single source of truth
-/// per app. Apps store this as `const APP_ID: &str = "sola-foo";`
-/// and pass it through [`BusSetup::connect`] + iced window settings.
-pub trait App {
-    const APP_ID: &'static str;
-}
 
 /// Bus singleton — the kit installs one global `BusClient` per
 /// process because iced's `application` builder doesn't thread
@@ -138,10 +129,12 @@ impl BusSetup {
             }
         }
         if let Some(menu) = self.app_menu {
-            let _ = client.emit(Topic::SetAppMenu(AppMenuPayload {
+            if let Err(e) = client.emit(Topic::SetAppMenu(AppMenuPayload {
                 app_id: self.app_id.into(),
                 menus: vec![menu],
-            }));
+            })) {
+                tracing::warn!(app_id = self.app_id, "publish app menu failed: {e}");
+            }
         }
         BUS.set(Arc::new(Mutex::new(client)))
             .map_err(|_| ())
@@ -219,16 +212,6 @@ pub fn startup(app_id: &str) -> String {
     socket
 }
 
-/// Placeholder for a future `sola_kit::run::<A>()` that owns iced's
-/// `application` builder end-to-end. Today it just calls
-/// [`startup`] — apps still build their own iced application by
-/// hand because each one wants different update/view/subscription
-/// types and a generic wrapper is more friction than it saves.
-/// Promote logic here once we have a second app to compare against.
-pub fn run<A: App>() -> String {
-    startup(A::APP_ID)
-}
-
 /// Iced subscription that drains the kit's bus client into a stream of
 /// `Arc<Message>`. Apps wire it into their `subscription` callback and
 /// `.map(...)` into their own message enum:
@@ -252,30 +235,175 @@ pub fn bus_subscription() -> Subscription<Arc<Message>> {
     Subscription::run(bus_stream)
 }
 
-/// Underlying stream constructor for [`bus_subscription`]. Exposed
-/// for callers who want to control how it's wrapped (e.g. tagging
-/// with a unique key via `Subscription::run_with_id`).
-pub fn bus_stream() -> impl Stream<Item = Arc<Message>> {
-    stream::channel(64, |mut output: iced::futures::channel::mpsc::Sender<Arc<Message>>| async move {
-        let (tx, mut rx) = iced::futures::channel::mpsc::unbounded::<Message>();
-        std::thread::spawn(move || {
-            loop {
-                {
-                    let client = bus().lock().expect("bus poisoned");
-                    client.drain_notify();
-                    while let Some(msg) = client.try_recv() {
-                        if tx.unbounded_send(msg).is_err() {
-                            return;
-                        }
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(8));
-            }
-        });
-        while let Some(msg) = rx.next().await {
-            if output.send(Arc::new(msg)).await.is_err() {
+/// The action id the kit's default app-menu Quit item carries, and the
+/// string [`is_self_quit`] matches. One constant instead of the `"quit"`
+/// magic string repeated across every consumer.
+pub const QUIT_ACTION_ID: &str = "quit";
+
+/// Apply a bus delivery to an app's iced theme. If `message` is a
+/// `Topic::Theme`, rebuilds `*theme` via [`crate::theme::theme_from_bus`]
+/// **and** installs the font role table via
+/// [`crate::theme::fonts_from_bus_theme`] — the explicit pairing that
+/// replaced `theme_from_bus`'s old hidden font side-effect — then returns
+/// `true`. Otherwise leaves `*theme` untouched and returns `false`.
+///
+/// ```ignore
+/// Msg::Bus(msg) => { sola_kit::app::apply_theme_update(&msg, &mut self.theme); }
+/// ```
+pub fn apply_theme_update(message: &Message, theme: &mut iced::Theme) -> bool {
+    apply_theme_topic(&Topic::parse(message), theme)
+}
+
+fn apply_theme_topic(topic: &Option<Topic>, theme: &mut iced::Theme) -> bool {
+    if let Some(Topic::Theme(bus)) = topic {
+        *theme = crate::theme::theme_from_bus(bus);
+        crate::fonts::install(crate::theme::fonts_from_bus_theme(bus));
+        true
+    } else {
+        false
+    }
+}
+
+/// Whether a bus delivery asks *this* app to quit: either its own
+/// `MenuAction(app_id, "quit")` (the Cmd+Q path) or a `CloseApp(app_id)`
+/// addressed to it. Handles both so consumers don't reinvent (and get
+/// wrong) the pair, and removes the `"quit"` magic string
+/// ([`QUIT_ACTION_ID`]).
+pub fn is_self_quit(message: &Message, app_id: &str) -> bool {
+    matches_self_quit(&Topic::parse(message), app_id)
+}
+
+fn matches_self_quit(topic: &Option<Topic>, app_id: &str) -> bool {
+    match topic {
+        Some(Topic::MenuAction(p)) => p.app_id == app_id && p.action_id == QUIT_ACTION_ID,
+        Some(Topic::CloseApp(id)) => id.as_str() == app_id,
+        _ => false,
+    }
+}
+
+/// Guards the single bus poller — the client has one process receiver,
+/// so at most one polling thread may run. Set while a [`bus_stream`]
+/// thread is alive, cleared when it exits.
+static POLLER_ACTIVE: AtomicBool = AtomicBool::new(false);
+fn bus_stream() -> impl Stream<Item = Arc<Message>> {
+    let (tx, rx) = iced::futures::channel::mpsc::unbounded::<Arc<Message>>();
+
+    // The bus client has a single process receiver, so at most one
+    // polling thread may drain it. If a poller is already running (a
+    // second `bus_subscription` in the same process), refuse rather than
+    // race `try_recv` and split the message stream.
+    if POLLER_ACTIVE.swap(true, Ordering::AcqRel) {
+        tracing::warn!(
+            "bus_subscription started while a poller is already active; \
+             returning an empty stream (one receiver per process)"
+        );
+        drop(tx);
+        return rx;
+    }
+
+    std::thread::spawn(move || {
+        loop {
+            // Exit as soon as the iced side drops the subscription, so a
+            // dropped subscription stops draining the bus instead of
+            // looping forever on failed sends.
+            if tx.is_closed() {
                 break;
             }
+            let next = match bus().lock() {
+                Ok(guard) => {
+                    guard.drain_notify();
+                    guard.try_recv()
+                }
+                Err(poisoned) => {
+                    // A peer thread panicked holding the bus mutex.
+                    // Recover the client and keep delivering rather than
+                    // panicking the poller (which would silently stop all
+                    // bus events — violating "never lose output"). Clear
+                    // the poison so we don't re-warn every tick.
+                    tracing::warn!("bus mutex poisoned; recovering and continuing");
+                    let guard = poisoned.into_inner();
+                    guard.drain_notify();
+                    let out = guard.try_recv();
+                    bus().clear_poison();
+                    out
+                }
+            };
+            match next {
+                Some(msg) => {
+                    if tx.unbounded_send(Arc::new(msg)).is_err() {
+                        break;
+                    }
+                }
+                None => std::thread::sleep(Duration::from_millis(8)),
+            }
         }
-    })
+        POLLER_ACTIVE.store(false, Ordering::Release);
+    });
+
+    rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sola_bus::topics::MenuActionPayload;
+
+    fn menu_action(app_id: &str, action_id: &str) -> Option<Topic> {
+        Some(Topic::MenuAction(MenuActionPayload {
+            app_id: app_id.to_string(),
+            action_id: action_id.to_string(),
+        }))
+    }
+
+    #[test]
+    fn self_menu_quit_matches() {
+        assert!(matches_self_quit(&menu_action("sola-foo", "quit"), "sola-foo"));
+    }
+
+    #[test]
+    fn other_app_menu_quit_ignored() {
+        assert!(!matches_self_quit(&menu_action("sola-bar", "quit"), "sola-foo"));
+    }
+
+    #[test]
+    fn non_quit_action_ignored() {
+        assert!(!matches_self_quit(&menu_action("sola-foo", "reload"), "sola-foo"));
+    }
+
+    // C3 regression: a CloseApp addressed to us must count as a self-quit
+    // (monitor used to ignore it on the bus).
+    #[test]
+    fn self_close_app_matches() {
+        assert!(matches_self_quit(
+            &Some(Topic::CloseApp("sola-foo".to_string())),
+            "sola-foo"
+        ));
+    }
+
+    #[test]
+    fn other_close_app_ignored() {
+        assert!(!matches_self_quit(
+            &Some(Topic::CloseApp("sola-bar".to_string())),
+            "sola-foo"
+        ));
+    }
+
+    #[test]
+    fn theme_topic_is_not_quit() {
+        assert!(!matches_self_quit(&Some(Topic::Theme(Default::default())), "sola-foo"));
+    }
+
+    #[test]
+    fn apply_theme_topic_applies_theme_delivery() {
+        let mut theme = iced::Theme::Light;
+        assert!(apply_theme_topic(&Some(Topic::Theme(Default::default())), &mut theme));
+        assert!(matches!(theme, iced::Theme::Custom(_)));
+    }
+
+    #[test]
+    fn apply_theme_topic_ignores_non_theme() {
+        let mut theme = iced::Theme::Light;
+        assert!(!apply_theme_topic(&menu_action("sola-foo", "quit"), &mut theme));
+        assert!(matches!(theme, iced::Theme::Light));
+    }
 }

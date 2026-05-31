@@ -1,4 +1,4 @@
-//! Pre-styled toolbar button — condensed-bold label, kit accent color
+//! Pre-styled toolbar button — medium-weight label, kit accent color
 //! when pressed, kit border on hover. Anchors the visual language for
 //! top-of-window toolbars (the monitor's pause/clear, settings panels,
 //! etc.).
@@ -13,9 +13,11 @@ use iced::widget::{button, text};
 use iced::widget::text::IntoFragment;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
+use crate::components::style::RADIUS_SM;
+
 use crate::fonts;
 
-/// Compact toolbar button with the kit's condensed-bold label font and
+/// Compact toolbar button with the kit's medium-weight label font and
 /// shrink-to-content width. Returns the configured button without an
 /// `on_press` so the caller picks whether to enable it.
 ///
@@ -39,7 +41,7 @@ where
 pub fn toolbar_button_msg<'a, Message>(
     label: impl IntoFragment<'a>,
     on_press: Message,
-) -> Element<'a, Message>
+) -> Element<'a, Message, Theme>
 where
     Message: Clone + 'a,
 {
@@ -67,7 +69,7 @@ pub fn style(theme: &Theme, status: button::Status) -> button::Style {
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 4.0.into(),
+            radius: RADIUS_SM.into(),
         },
         shadow: Default::default(),
         snap: false,
