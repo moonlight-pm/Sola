@@ -1,0 +1,17 @@
+# Developer-supplied, license-restricted fonts — NOT redistributed in this
+# repo. The developer supplies these locally; see ../README.md for where to
+# obtain them and how to install them.
+#
+# Listed by exact filename (anchored with a leading `/`) so that any
+# redistributable font added to this directory later is still tracked
+# normally — only these specific files are excluded.
+
+# SF Pro / SF Compact — Apple system fonts (Apple license).
+/SF-Pro.ttf
+/SF-Pro-Italic.ttf
+/SF-Compact.ttf
+/SF-Compact-Italic.ttf
+
+# Iosevka Fixed — staged .ttf build (consumed directly by the kit).
+/Iosevka-Fixed.ttf
+/Iosevka-Fixed-Bold.ttf
