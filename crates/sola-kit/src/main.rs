@@ -23,7 +23,15 @@ fn main() -> iced::Result {
     startup(APP_ID);
 
     BusSetup::new(APP_ID)
-        .subscribe(&[TopicKind::Theme, TopicKind::MenuAction])
+        // CustomTheme is persistent: the bus replays each saved preset
+        // on connect. Without subscribing here the storybook never
+        // receives them, so themes created in a prior session vanish on
+        // reopen even though they're still on disk.
+        .subscribe(&[
+            TopicKind::Theme,
+            TopicKind::CustomTheme,
+            TopicKind::MenuAction,
+        ])
         .app_menu("Kit", [("quit", "Quit Kit", KeyCode::Q.meta())])
         .install();
 
