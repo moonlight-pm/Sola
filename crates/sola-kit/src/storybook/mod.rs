@@ -640,6 +640,16 @@ impl Storybook {
         let Some(ref live) = self.last_live_theme else {
             return;
         };
+        // Trust the current selection if it already matches the live
+        // theme. A live `Topic::Theme` is anonymous, so the search
+        // below re-derives the active preset purely by value — and a
+        // fresh fork of Default is byte-identical to Default until it's
+        // edited, so that search would snap a just-selected fork back to
+        // whichever identical preset sorts first (Default at slot 0).
+        // Guarding on the active preset keeps an explicit selection put.
+        if &theme::bus_theme_from(&self.active().atoms, &self.active().fonts) == live {
+            return;
+        }
         let Some(idx) = self
             .themes
             .iter()
@@ -927,6 +937,56 @@ mod tests {
             Page::ALL.len(),
             VARIANTS.len(),
             "Page::ALL has a duplicate or an entry not in VARIANTS"
+        );
+    }
+
+    // A fresh fork of Default is byte-identical to Default until it's
+    // edited. `Topic::Theme` is anonymous (carries values, not a name),
+    // so resync re-derives the active preset by value — and a naive
+    // by-value search returns Default (slot 0) for the identical fork,
+    // snapping the user's just-made selection back to Default. resync
+    // must keep the active selection when it already matches the live
+    // theme.
+    #[test]
+    fn selecting_a_fresh_fork_of_default_stays_selected() {
+        let mut sb = Storybook::default();
+        let mut fork = sb.themes[0].clone();
+        fork.name = "my-copy".to_string();
+        sb.themes.push(fork);
+        sb.active_theme = 1;
+        // Echo of our own broadcast: the live theme equals the fork's
+        // (== Default's) bus form.
+        sb.last_live_theme =
+            Some(theme::bus_theme_from(&sb.themes[1].atoms, &sb.themes[1].fonts));
+
+        sb.resync_active_theme();
+
+        assert_eq!(
+            sb.active_theme, 1,
+            "a fresh fork of Default must stay selected, not snap back to Default"
+        );
+    }
+
+    // An external `Topic::Theme` whose value no longer matches the
+    // active preset must still move the selection to the matching
+    // preset (resync's actual job).
+    #[test]
+    fn resync_follows_external_theme_to_matching_preset() {
+        let mut sb = Storybook::default();
+        let mut other = sb.themes[0].clone();
+        other.name = "other".to_string();
+        other.atoms.accent = iced::Color::from_rgb(0.9, 0.1, 0.1);
+        sb.themes.push(other);
+        // Active is Default, but the live theme matches `other`.
+        sb.active_theme = 0;
+        sb.last_live_theme =
+            Some(theme::bus_theme_from(&sb.themes[1].atoms, &sb.themes[1].fonts));
+
+        sb.resync_active_theme();
+
+        assert_eq!(
+            sb.active_theme, 1,
+            "resync must follow the live theme to the matching preset"
         );
     }
 }
