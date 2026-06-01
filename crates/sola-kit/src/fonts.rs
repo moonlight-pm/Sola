@@ -88,7 +88,12 @@ pub const FONT_FILES: &[&str] = &[
 /// returned bytes to `iced::application(...).font(bytes)` (or the
 /// equivalent for whatever iced builder it has in hand). Missing
 /// files log a warning and are skipped.
+///
+/// Also calls [`ensure_system_fonts`] so a single call at startup wires
+/// up *both* the shipped fonts (via the returned bytes) and every
+/// system-installed family (directly on iced's font db).
 pub fn load_all() -> Vec<Vec<u8>> {
+    ensure_system_fonts();
     let mut out = Vec::with_capacity(FONT_FILES.len());
     for relative in FONT_FILES {
         let path = format!("{FONT_DIR}/{relative}");
@@ -103,6 +108,33 @@ pub fn load_all() -> Vec<Vec<u8>> {
         }
     }
     out
+}
+
+/// Register every system-installed font into iced's *global* font
+/// database so `Font::with_name(family)` resolves for any family the
+/// font picker offers.
+///
+/// iced 0.14 builds its `cosmic_text::FontSystem` via `new_with_fonts`,
+/// which — unlike cosmic-text's own `FontSystem::new()` — does **not**
+/// call `load_system_fonts()`. So out of the box iced can only render
+/// fonts registered through the `.font(bytes)` builder; picking a
+/// system family from the picker silently falls back to the default
+/// face (this is why a font swap appeared to do nothing). We load the
+/// system fonts straight onto iced's shared db, which is mmap-backed
+/// and lazy, so the cost is a directory scan, not a full read of every
+/// face. Idempotent — guarded to run once per process.
+pub fn ensure_system_fonts() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| match iced_graphics::text::font_system().write() {
+        Ok(mut fs) => {
+            fs.raw().db_mut().load_system_fonts();
+            tracing::info!("loaded system fonts into iced font db");
+        }
+        Err(err) => {
+            tracing::warn!("iced font system lock poisoned, skipping system fonts: {err}");
+        }
+    });
 }
 
 

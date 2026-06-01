@@ -4842,6 +4842,7 @@ version = "0.1.0"
 dependencies = [
  "fontdb",
  "iced",
+ "iced_graphics",
  "serde_json",
  "sola-assets",
  "sola-bus",

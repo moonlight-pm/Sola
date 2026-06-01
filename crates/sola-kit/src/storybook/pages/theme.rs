@@ -66,7 +66,7 @@ pub fn view<'a>(
              sola-monitor's body / chrome / mono text swaps in real time."
         )
         .style(muted),
-        fonts_grid(fonts, families),
+        fonts_grid(fonts, families, editable),
 
         subheading("Palette atoms"),
         body(if editable {
@@ -126,14 +126,17 @@ fn preset_tile<'a>(
     .width(Length::Fixed(PRESET_SIZE + 16.0))
     .into()
 }
-
-fn fonts_grid<'a>(fonts: &'a FontSelection, families: &'a [String]) -> Element<'a, Msg> {
+fn fonts_grid<'a>(
+    fonts: &'a FontSelection,
+    families: &'a [String],
+    editable: bool,
+) -> Element<'a, Msg> {
     column![
-        font_row("ui",        FontRole::Ui,       &fonts.ui,        families),
-        font_row("ui_medium", FontRole::UiMedium, &fonts.ui_medium, families),
-        font_row("display",   FontRole::Display,  &fonts.display,   families),
-        font_row("chrome",    FontRole::Chrome,   &fonts.chrome,    families),
-        font_row("mono",      FontRole::Mono,     &fonts.mono,      families),
+        font_row("ui",        FontRole::Ui,       &fonts.ui,        families, editable),
+        font_row("ui_medium", FontRole::UiMedium, &fonts.ui_medium, families, editable),
+        font_row("display",   FontRole::Display,  &fonts.display,   families, editable),
+        font_row("chrome",    FontRole::Chrome,   &fonts.chrome,    families, editable),
+        font_row("mono",      FontRole::Mono,     &fonts.mono,      families, editable),
     ]
     .spacing(12)
     .into()
@@ -144,14 +147,25 @@ fn font_row<'a>(
     role: FontRole,
     current: &str,
     families: &'a [String],
+    editable: bool,
 ) -> Element<'a, Msg> {
-    let selected = Some(current.to_string());
-    let picker = pick_list(families, selected, move |family| Msg::SetFont(role, family))
-        .width(Length::Fixed(220.0));
+    // On the read-only Default theme the picker would fire a SetFont
+    // that's dropped on the floor and snap back — show the family as
+    // plain text instead, matching the read-only atom swatches.
+    let control: Element<'a, Msg> = if editable {
+        let selected = Some(current.to_string());
+        pick_list(families, selected, move |family| Msg::SetFont(role, family))
+            .width(Length::Fixed(220.0))
+            .into()
+    } else {
+        container(body(current.to_string()))
+            .width(Length::Fixed(220.0))
+            .into()
+    };
 
     row![
         container(body(role_label)).width(Length::Fixed(120.0)),
-        picker,
+        control,
     ]
     .spacing(16)
     .align_y(iced::Alignment::Center)

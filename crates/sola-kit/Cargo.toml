@@ -27,6 +27,12 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "advanced"] }
+# Reaches iced's global font system to register system fonts (iced's
+# own `FontSystem` is built via cosmic-text's `new_with_fonts`, which
+# does NOT load system fonts — so `Font::with_name` can't resolve any
+# installed family unless we load them ourselves). Same 0.14 release
+# iced pulls in, so there's one shared global font db.
+iced_graphics = "0.14"
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 sola-assets = { path = "../sola-assets" }
