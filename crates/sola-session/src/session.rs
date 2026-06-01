@@ -118,6 +118,16 @@ impl Session {
             cmd.env("DISPLAY", display);
         }
 
+        // sola launches us (a MANAGED process) with SOLA_NO_SELF_WATCH=1
+        // so we don't double-restart — sola already respawns its managed
+        // set on binary change. But `systemd-run --scope` execs the user
+        // app as our child, so it would inherit that flag and skip its
+        // own self-watch. User apps are NOT in sola's managed set, so
+        // nothing else restarts them on redeploy — they must self-watch.
+        // Strip the flag so the kit's startup() arms watch_own_binary and
+        // `cargo make install <app>` reloads the running app.
+        cmd.env_remove("SOLA_NO_SELF_WATCH");
+
         // Inherit stdio: systemd-run proxies the scope's stdio to its
         // own, so this lands in the journal alongside sola-session.
         cmd.stdin(Stdio::null());

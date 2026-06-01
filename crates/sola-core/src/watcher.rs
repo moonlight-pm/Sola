@@ -208,3 +208,81 @@ fn extract_watched_name(event: &notify::Event, watched: &HashSet<String>) -> Opt
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+
+    /// A unique scratch dir under the system temp dir without pulling in
+    /// a tempfile dep. `current_exe` + nanos isn't available (no clock in
+    /// some sandboxes), so key off the thread-unique address of a stack
+    /// local plus the pid.
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let marker = 0u8;
+        let uniq = format!(
+            "sola-watcher-test-{}-{}-{:p}",
+            std::process::id(),
+            tag,
+            &marker
+        );
+        let dir = std::env::temp_dir().join(uniq);
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    // The whole self-restart / process-manager restart contract rests on
+    // one assumption: `install_binary`'s `cp --remove-destination` over
+    // an existing file in the watched dir produces an event the watcher
+    // reports. This is exactly how `cargo make install` replaces a
+    // binary in /opt/sola/bin — so if this regresses, nothing restarts
+    // on redeploy.
+    #[test]
+    fn cp_remove_destination_over_existing_file_is_reported() {
+        let dir = scratch_dir("cp");
+        let dest = dir.join("foo");
+        fs::write(&dest, b"old binary").expect("seed dest");
+        let src = dir.join("foo.new");
+        fs::write(&src, b"new binary, definitely different").expect("seed src");
+
+        let (tx, rx) = mpsc::channel();
+        watch_binaries(&dir, &["foo"], tx);
+        // Let the watcher arm before we touch the file.
+        thread::sleep(Duration::from_millis(300));
+
+        let status = Command::new("cp")
+            .args(["--remove-destination"])
+            .arg(&src)
+            .arg(&dest)
+            .status()
+            .expect("run cp");
+        assert!(status.success(), "cp failed");
+
+        // 500ms debounce + slack.
+        let got = rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("watcher should report the binary swap");
+        assert_eq!(got, "foo");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // Files whose basename isn't watched must not wake the watcher.
+    #[test]
+    fn unwatched_sibling_file_is_ignored() {
+        let dir = scratch_dir("ignore");
+        let (tx, rx) = mpsc::channel();
+        watch_binaries(&dir, &["foo"], tx);
+        thread::sleep(Duration::from_millis(300));
+
+        fs::write(dir.join("bar"), b"unrelated").expect("write sibling");
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(900)).is_err(),
+            "an unwatched file must not trigger a restart"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
