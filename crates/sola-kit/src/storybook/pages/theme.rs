@@ -1,13 +1,13 @@
-//! Theme page — accent preset picker, per-role font selectors, and a
-//! swatch grid of every atom in `sola_kit::theme::Atoms`. Edits emit
-//! `Msg::SetAccent` or `Msg::SetFont`; the storybook update rebuilds
+//! Theme page — per-role font selectors and a swatch grid of every atom
+//! in `sola_kit::theme::Atoms`. Clicking a swatch opens the colour
+//! picker (floated as a popover by `Storybook::view`). Edits emit
+//! `Msg::EditAtom` / `Msg::Picker` or `Msg::SetFont`; the storybook update rebuilds
 //! its iced theme, calls `sola_kit::fonts::install`, and re-emits
 //! `Topic::Theme` so every kit consumer picks up the change.
 
 use iced::widget::{column, container, mouse_area, pick_list, row};
 use iced::{Color, Element, Length, Padding};
 
-use sola_kit::components::ColorPicker;
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
 use sola_kit::theme::{self, Atoms, FontSelection};
@@ -15,16 +15,7 @@ use sola_kit::theme::{self, Atoms, FontSelection};
 use crate::storybook::{AtomField, FontRole, Msg};
 
 const SWATCH_SIZE: f32 = 56.0;
-const PRESET_SIZE: f32 = 40.0;
 const GRID_GAP: f32 = 44.0;
-
-const ACCENT_PRESETS: &[(&str, &str)] = &[
-    ("Sky",     "#58a6ff"),
-    ("Cyan",    "#00d4ff"),
-    ("Mint",    "#3fb950"),
-    ("Amber",   "#d29922"),
-    ("Magenta", "#bc8cff"),
-];
 
 pub fn view<'a>(
     atoms: &'a Atoms,
@@ -32,7 +23,6 @@ pub fn view<'a>(
     families: &'a [String],
     editable: bool,
     editing: Option<AtomField>,
-    picker: Option<&'a ColorPicker>,
 ) -> Element<'a, Msg> {
     let intro: Element<'a, Msg> = if editable {
         body(
@@ -57,9 +47,6 @@ pub fn view<'a>(
         heading("Theme"),
         intro,
 
-        subheading("Accent"),
-        presets_row(atoms.accent),
-
         subheading("Fonts"),
         body(
             "Pick a family per role. Selections route through the bus, so \
@@ -70,7 +57,7 @@ pub fn view<'a>(
 
         subheading("Palette atoms"),
         body(if editable {
-            "Click a swatch to edit its atom with the RGB picker. \
+            "Click a swatch to edit its atom in the colour picker. \
              Component style fns reach these via theme.extended_palette() \
              — the atom→slot bindings live in sola_kit::theme::build_theme."
         } else {
@@ -80,52 +67,12 @@ pub fn view<'a>(
              live in sola_kit::theme::build_theme."
         })
         .style(muted),
-        atom_grid(atoms, editable, editing, picker),
+        atom_grid(atoms, editable, editing),
     ]
     .spacing(28)
     .into()
 }
 
-fn presets_row(current: Color) -> Element<'static, Msg> {
-    let mut r = row![].spacing(16);
-    for (label, hex_str) in ACCENT_PRESETS {
-        let color = theme::parse(hex_str);
-        let selected = colors_eq(color, current);
-        r = r.push(preset_tile(label, hex_str, color, selected));
-    }
-    r.into()
-}
-
-fn preset_tile<'a>(
-    label: &'a str,
-    hex_str: &'a str,
-    color: Color,
-    selected: bool,
-) -> Element<'a, Msg> {
-    let ring = if selected { 2.0 } else { 0.0 };
-    let tile = container(swatch_sized::<Msg>(color, PRESET_SIZE))
-        .padding(Padding::from(ring))
-        .style(move |theme: &iced::Theme| {
-            let p = theme.extended_palette();
-            iced::widget::container::Style {
-                border: iced::Border {
-                    color: if ring > 0.0 { p.primary.base.color } else { Color::TRANSPARENT },
-                    width: ring,
-                    radius: 8.0.into(),
-                },
-                ..iced::widget::container::Style::default()
-            }
-        });
-
-    column![
-        mouse_area(tile).on_press(Msg::SetAtom(AtomField::Accent, color)),
-        caption(label).style(muted),
-        code(hex_str).style(muted),
-    ]
-    .spacing(4)
-    .width(Length::Fixed(PRESET_SIZE + 16.0))
-    .into()
-}
 fn fonts_grid<'a>(
     fonts: &'a FontSelection,
     families: &'a [String],
@@ -176,7 +123,6 @@ fn atom_grid<'a>(
     atoms: &'a Atoms,
     editable: bool,
     editing: Option<AtomField>,
-    picker: Option<&'a ColorPicker>,
 ) -> Element<'a, Msg> {
     let rows: &[(&str, AtomField, &str)] = &[
         ("BG",        AtomField::Bg,       "background.base / weakest"),
@@ -191,20 +137,17 @@ fn atom_grid<'a>(
         ("DANGER",    AtomField::Danger,   "danger.base"),
     ];
 
-    let mut grid = rows.chunks(5).fold(column![].spacing(GRID_GAP), |col, chunk| {
-        let r = chunk.iter().fold(row![].spacing(GRID_GAP), |r, (name, field, slot)| {
-            r.push(swatch_tile(atoms, name, *field, slot, editable, editing))
-        });
-        col.push(r)
-    });
-
-    // Editing an atom opens its picker inline below the grid.
-    if editable {
-        if let Some(p) = picker {
-            grid = grid.push(picker_panel(p));
-        }
-    }
-    grid.into()
+    // The picker for the open atom floats as a popover over the window
+    // (see `Storybook::view`), so the grid itself just marks the active
+    // swatch with a ring — it doesn't render the editor inline.
+    rows.chunks(5)
+        .fold(column![].spacing(GRID_GAP), |col, chunk| {
+            let r = chunk.iter().fold(row![].spacing(GRID_GAP), |r, (name, field, slot)| {
+                r.push(swatch_tile(atoms, name, *field, slot, editable, editing))
+            });
+            col.push(r)
+        })
+        .into()
 }
 
 fn swatch_tile<'a>(
@@ -249,23 +192,5 @@ fn swatch_tile<'a>(
     .spacing(6)
     .width(Length::Fixed(SWATCH_SIZE + 16.0))
     .into()
-}
-
-/// Inline HSV/hex picker for the atom currently being edited.
-fn picker_panel(picker: &ColorPicker) -> Element<'_, Msg> {
-    column![
-        caption("Editing — drag a channel or type a hex; click the swatch again to close")
-            .style(muted),
-        picker.view().map(Msg::Picker),
-    ]
-    .spacing(8)
-    .into()
-}
-
-fn colors_eq(a: Color, b: Color) -> bool {
-    let eps = 1.0 / 255.0;
-    (a.r - b.r).abs() < eps
-        && (a.g - b.g).abs() < eps
-        && (a.b - b.b).abs() < eps
 }
 

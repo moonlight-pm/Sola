@@ -19,6 +19,7 @@
 pub mod badge;
 pub mod button;
 pub mod card;
+pub mod color_picker;
 pub mod divider;
 pub mod field;
 pub mod icon;

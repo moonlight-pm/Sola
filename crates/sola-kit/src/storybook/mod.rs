@@ -11,7 +11,7 @@
 //! `Atoms::default()` / `FontSelection::default()`. Subsequent entries
 //! are user-created copies (via "New Theme"). Edits to atoms or fonts
 //! mutate the currently active preset; the Default is read-only and
-//! `SetAccent` / `SetFont` are no-ops while it's selected. Every edit,
+//! atom edits / `SetFont` are no-ops while it's selected. Every edit,
 //! preset switch, and delete re-emits `Topic::Theme` so other kit apps
 //! pick up the change on their next render.
 
@@ -22,7 +22,7 @@ use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
 use sola_kit::components::{
-    ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar,
+    ColorPicker, SidebarItem, SidebarSection, button as kit_button, popover, sidebar,
     text_input as kit_text_input,
 };
 use sola_kit::theme;
@@ -43,6 +43,7 @@ pub enum Page {
     Icon,
     NumberInput,
     Readable,
+    ColorPicker,
     Divider,
     Popover,
     Sidebar,
@@ -66,6 +67,7 @@ impl Page {
         Page::Icon,
         Page::NumberInput,
         Page::Readable,
+        Page::ColorPicker,
         Page::Popover,
         Page::Sidebar,
     ];
@@ -81,6 +83,7 @@ impl Page {
             Page::Icon => "Icon",
             Page::NumberInput => "NumberInput",
             Page::Readable => "Readable",
+            Page::ColorPicker => "ColorPicker",
             Page::Divider => "Divider",
             Page::Popover => "Popover",
             Page::Sidebar => "Sidebar",
@@ -103,6 +106,7 @@ impl Page {
             | Page::Icon
             | Page::NumberInput
             | Page::Readable
+            | Page::ColorPicker
             | Page::Popover
             | Page::Sidebar => Some("Components"),
         }
@@ -115,14 +119,12 @@ pub enum Msg {
     Toolbar(pages::toolbar::Msg),
     Field(pages::field::Msg),
     NumberInput(pages::number_input::Msg),
+    ColorPicker(pages::color_picker::Msg),
     /// Bus message arriving via [`sola_kit::app::bus_subscription`].
     Bus(Arc<sola_bus::Message>),
     /// Open the inline color picker for one palette atom. No-op when
     /// Default is active (its atoms are read-only).
     EditAtom(AtomField),
-    /// Overwrite one atom on the active preset and broadcast. No-op when
-    /// Default is active.
-    SetAtom(AtomField, iced::Color),
     /// A message from the open atom color picker.
     Picker(sola_kit::components::color_picker::Message),
     /// Swap one font role on the active preset. No-op when Default is
@@ -168,7 +170,7 @@ pub enum FontRole {
     Mono,
 }
 
-/// Identifies which editable colour atom a `SetAtom` / `EditAtom`
+/// Identifies which editable colour atom an `EditAtom`
 /// targets. UI-shaped (the theme page's swatch grid and color picker
 /// carry it), so it lives here rather than in `theme.rs`. The
 /// get/set pair is the storybook's view onto `theme::Atoms`.
@@ -236,6 +238,7 @@ pub struct Storybook {
     toolbar: pages::toolbar::State,
     field: pages::field::State,
     number_input: pages::number_input::State,
+    color_picker: pages::color_picker::State,
     /// All known themes. `themes[0]` is always Default and can't be
     /// edited or deleted. Subsequent entries are user copies.
     themes: Vec<ThemePreset>,
@@ -291,6 +294,7 @@ impl Storybook {
             toolbar: pages::toolbar::State::default(),
             field: pages::field::State::default(),
             number_input: pages::number_input::State::default(),
+            color_picker: pages::color_picker::State::default(),
             themes: vec![default_preset],
             active_theme: 0,
             naming: None,
@@ -335,6 +339,7 @@ impl Storybook {
             Msg::Toolbar(m) => self.toolbar.update(m),
             Msg::Field(m) => self.field.update(m),
             Msg::NumberInput(m) => self.number_input.update(m),
+            Msg::ColorPicker(m) => self.color_picker.update(m),
             Msg::Bus(message) => {
                 let Some(topic) = Topic::parse(&message) else { return };
                 match topic {
@@ -379,15 +384,6 @@ impl Storybook {
                 } else {
                     let color = field.get(&self.active().atoms);
                     self.editing_atom = Some(field);
-                    self.picker = Some(ColorPicker::new(color));
-                }
-            }
-            Msg::SetAtom(field, color) => {
-                self.apply_atom(field, color);
-                // Keep an open picker in sync if a preset retargets the
-                // atom it's editing (e.g. an accent preset clicked while
-                // the accent picker is open).
-                if self.editing_atom == Some(field) {
                     self.picker = Some(ColorPicker::new(color));
                 }
             }
@@ -498,8 +494,8 @@ impl Storybook {
 
     /// Write one atom onto the active preset and propagate it: rebuild
     /// the live theme, broadcast `Topic::Theme`, persist the preset.
-    /// No-op on the read-only Default. Shared by `SetAtom` (presets) and
-    /// `Picker` (the HSV/hex editor).
+    /// No-op on the read-only Default. Driven by `Picker` (the color
+    /// picker) as the user drags or types.
     fn apply_atom(&mut self, field: AtomField, color: iced::Color) {
         if self.is_default_active() {
             tracing::debug!("ignoring atom edit — Default theme is read-only");
@@ -722,10 +718,28 @@ impl Storybook {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        row![sidebar(sections), right]
+        let base = row![sidebar(sections), right]
             .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+
+        // While an atom is being edited on the Theme page, float the
+        // colour picker as a popover over the whole window (right side,
+        // vertically centred) so it doesn't scroll with the page or
+        // shove the grid. The edited swatch keeps its accent ring, so the
+        // subject stays clear without pixel-anchoring the panel.
+        if self.page == Page::Theme {
+            if let Some(picker) = self.picker.as_ref() {
+                let panel = container(popover(picker.view().map(Msg::Picker)))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .align_y(iced::alignment::Vertical::Center)
+                    .padding(Padding::from([0, 40]));
+                return iced::widget::stack![base, panel].into();
+            }
+        }
+
+        base.into()
     }
 
     /// Zero-height transparent strip that lays out every family name
@@ -860,7 +874,6 @@ impl Storybook {
                 &self.family_options,
                 editable,
                 self.editing_atom,
-                self.picker.as_ref(),
             ),
             Page::Text => pages::text::view(),
             Page::Button => pages::button::view(),
@@ -872,6 +885,9 @@ impl Storybook {
                 pages::number_input::view(&self.number_input).map(Msg::NumberInput)
             }
             Page::Readable => pages::readable::view(),
+            Page::ColorPicker => {
+                pages::color_picker::view(&self.color_picker).map(Msg::ColorPicker)
+            }
             Page::Divider => pages::divider::view(),
             Page::Popover => pages::popover::view(),
             Page::Sidebar => pages::sidebar::view(),
@@ -902,6 +918,7 @@ mod tests {
             Page::Icon,
             Page::NumberInput,
             Page::Readable,
+            Page::ColorPicker,
             Page::Divider,
             Page::Popover,
             Page::Sidebar,
@@ -922,6 +939,7 @@ mod tests {
                 | Page::Icon
                 | Page::NumberInput
                 | Page::Readable
+                | Page::ColorPicker
                 | Page::Divider
                 | Page::Popover
                 | Page::Sidebar
