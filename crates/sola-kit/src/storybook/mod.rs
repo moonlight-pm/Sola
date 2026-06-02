@@ -22,7 +22,7 @@ use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
 use sola_kit::components::{
-    ColorPicker, SidebarItem, SidebarSection, button as kit_button, popover, sidebar,
+    ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar,
     text_input as kit_text_input,
 };
 use sola_kit::theme;
@@ -127,6 +127,8 @@ pub enum Msg {
     EditAtom(AtomField),
     /// A message from the open atom color picker.
     Picker(sola_kit::components::color_picker::Message),
+    /// Close the open atom picker (a click outside its popover).
+    ClosePicker,
     /// Swap one font role on the active preset. No-op when Default is
     /// active.
     SetFont(FontRole, String),
@@ -386,6 +388,10 @@ impl Storybook {
                     self.editing_atom = Some(field);
                     self.picker = Some(ColorPicker::new(color));
                 }
+            }
+            Msg::ClosePicker => {
+                self.editing_atom = None;
+                self.picker = None;
             }
             Msg::Picker(m) => {
                 let Some(picker) = self.picker.as_mut() else { return };
@@ -718,28 +724,13 @@ impl Storybook {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let base = row![sidebar(sections), right]
+        // The atom colour picker is anchored to its swatch from inside
+        // the Theme page (see `pages::theme` + `popover_anchored`), so
+        // there's no window-level float to compose here.
+        row![sidebar(sections), right]
             .width(Length::Fill)
-            .height(Length::Fill);
-
-        // While an atom is being edited on the Theme page, float the
-        // colour picker as a popover over the whole window (right side,
-        // vertically centred) so it doesn't scroll with the page or
-        // shove the grid. The edited swatch keeps its accent ring, so the
-        // subject stays clear without pixel-anchoring the panel.
-        if self.page == Page::Theme {
-            if let Some(picker) = self.picker.as_ref() {
-                let panel = container(popover(picker.view().map(Msg::Picker)))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .align_x(iced::alignment::Horizontal::Right)
-                    .align_y(iced::alignment::Vertical::Center)
-                    .padding(Padding::from([0, 40]));
-                return iced::widget::stack![base, panel].into();
-            }
-        }
-
-        base.into()
+            .height(Length::Fill)
+            .into()
     }
 
     /// Zero-height transparent strip that lays out every family name
@@ -874,6 +865,7 @@ impl Storybook {
                 &self.family_options,
                 editable,
                 self.editing_atom,
+                self.picker.as_ref().map(|p| p.view().map(Msg::Picker)),
             ),
             Page::Text => pages::text::view(),
             Page::Button => pages::button::view(),

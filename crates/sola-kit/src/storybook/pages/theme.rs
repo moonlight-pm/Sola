@@ -10,6 +10,7 @@ use iced::{Color, Element, Length, Padding};
 
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
+use sola_kit::components::{popover, popover_anchored};
 use sola_kit::theme::{self, Atoms, FontSelection};
 
 use crate::storybook::{AtomField, FontRole, Msg};
@@ -23,6 +24,7 @@ pub fn view<'a>(
     families: &'a [String],
     editable: bool,
     editing: Option<AtomField>,
+    picker_view: Option<Element<'a, Msg>>,
 ) -> Element<'a, Msg> {
     let intro: Element<'a, Msg> = if editable {
         body(
@@ -67,7 +69,7 @@ pub fn view<'a>(
              live in sola_kit::theme::build_theme."
         })
         .style(muted),
-        atom_grid(atoms, editable, editing),
+        atom_grid(atoms, editable, editing, picker_view),
     ]
     .spacing(28)
     .into()
@@ -123,6 +125,7 @@ fn atom_grid<'a>(
     atoms: &'a Atoms,
     editable: bool,
     editing: Option<AtomField>,
+    mut picker_view: Option<Element<'a, Msg>>,
 ) -> Element<'a, Msg> {
     let rows: &[(&str, AtomField, &str)] = &[
         ("BG",        AtomField::Bg,       "background.base / weakest"),
@@ -137,17 +140,19 @@ fn atom_grid<'a>(
         ("DANGER",    AtomField::Danger,   "danger.base"),
     ];
 
-    // The picker for the open atom floats as a popover over the window
-    // (see `Storybook::view`), so the grid itself just marks the active
-    // swatch with a ring — it doesn't render the editor inline.
-    rows.chunks(5)
-        .fold(column![].spacing(GRID_GAP), |col, chunk| {
-            let r = chunk.iter().fold(row![].spacing(GRID_GAP), |r, (name, field, slot)| {
-                r.push(swatch_tile(atoms, name, *field, slot, editable, editing))
-            });
-            col.push(r)
-        })
-        .into()
+    // The picker for the open atom is anchored to its own swatch via
+    // `popover_anchored`; we hand the single picker element to whichever
+    // tile is being edited and the rest get `None`.
+    let mut col = column![].spacing(GRID_GAP);
+    for chunk in rows.chunks(5) {
+        let mut r = row![].spacing(GRID_GAP);
+        for (name, field, slot) in chunk {
+            let picker = if editing == Some(*field) { picker_view.take() } else { None };
+            r = r.push(swatch_tile(atoms, name, *field, slot, editable, editing, picker));
+        }
+        col = col.push(r);
+    }
+    col.into()
 }
 
 fn swatch_tile<'a>(
@@ -157,6 +162,7 @@ fn swatch_tile<'a>(
     slot: &'a str,
     editable: bool,
     editing: Option<AtomField>,
+    picker: Option<Element<'a, Msg>>,
 ) -> Element<'a, Msg> {
     let color = field.get(atoms);
     let tile = swatch_sized::<Msg>(color, SWATCH_SIZE);
@@ -178,7 +184,13 @@ fn swatch_tile<'a>(
                     ..iced::widget::container::Style::default()
                 }
             });
-        mouse_area(framed).on_press(Msg::EditAtom(field)).into()
+        let trigger = mouse_area(framed).on_press(Msg::EditAtom(field));
+        // While this atom is the one being edited, anchor its colour
+        // picker to the swatch as a popover; a click outside dismisses it.
+        match picker {
+            Some(view) => popover_anchored(trigger, popover(view), Msg::ClosePicker).into(),
+            None => trigger.into(),
+        }
     } else {
         tile
     };

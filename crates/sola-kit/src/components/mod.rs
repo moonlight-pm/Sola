@@ -61,7 +61,7 @@ pub use divider::vertical_divider;
 pub use field::field;
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
 pub use number_input::number_input;
-pub use popover::popover;
+pub use popover::{popover, popover_anchored};
 pub use readable::readable;
 pub use sidebar::{SIDEBAR_WIDTH, SidebarItem, SidebarSection, sidebar};
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
