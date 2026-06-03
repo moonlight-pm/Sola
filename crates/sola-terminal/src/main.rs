@@ -4,7 +4,7 @@ use std::sync::Arc;
 use iced::widget::{container, row, text};
 use iced::{Element, Length, Subscription, Task, Theme};
 
-use sola_bus::topics::{AppMenuPayload, MenuActionPayload, TerminalConfig, TerminalSession, Topic, TopicKind};
+use sola_bus::topics::{TerminalConfig, Topic, TopicKind};
 use sola_bus::Message;
 use sola_kit::app::{BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup, window_settings};
 use sola_kit::fonts;
@@ -20,7 +20,7 @@ mod state;
 mod term_view;
 mod tmux;
 
-pub const APP_ID: &'static str = "sola-terminal";
+const APP_ID: &str = "sola-terminal";
 
 fn main() -> iced::Result {
     startup(APP_ID);
@@ -210,7 +210,9 @@ impl App {
 
     fn republish_menu(&self) {
         if let Ok(mut client) = bus().lock() {
-            let _ = client.emit(Topic::SetAppMenu(menu::terminal_menu(self.tabs.len())));
+            if let Err(e) = client.emit(Topic::SetAppMenu(menu::terminal_menu(self.tabs.len()))) {
+                tracing::warn!("republish_menu failed: {e:?}");
+            }
         }
     }
 

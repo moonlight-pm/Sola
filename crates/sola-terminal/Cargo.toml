@@ -12,7 +12,8 @@ sola-kit = { path = "../sola-kit" }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "advanced"] }
-alacritty_terminal = "=0.26.0"
+# Phase 2 adds the "canvas" feature here (term_view grid renderer).
+alacritty_terminal = "=0.26.0"               # Phase 2: terminal grid emulation (unused in Phase 1)
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "macros", "time"] }
 nix = { version = "0.30", features = ["process", "term", "signal"] }
 libc = "0.2"
