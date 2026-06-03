@@ -8,10 +8,11 @@ name = "sola-terminal"
 path = "src/main.rs"
 
 [dependencies]
-sola-app = { path = "../sola-app" }
+sola-kit = { path = "../sola-kit" }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
-gtk4 = "0.9"
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "advanced"] }
+alacritty_terminal = "=0.26.0"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "macros", "time"] }
 nix = { version = "0.30", features = ["process", "term", "signal"] }
 libc = "0.2"
@@ -20,4 +21,3 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
-async-trait = "0.1"

@@ -1,14 +1,11 @@
 use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem};
 use sola_core::KeyCode;
 
-use crate::TerminalApp;
-use sola_app::SolaApp;
-
 /// Build the terminal app menu reflecting the actual tab count.
 /// Tabs 1-9 get Cmd+N shortcuts; tabs 10+ have no shortcut.
 pub fn terminal_menu(tab_count: usize) -> AppMenuPayload {
     AppMenuPayload {
-        app_id: TerminalApp::APP_ID.into(),
+        app_id: crate::APP_ID.into(),
         menus: vec![
             MenuDefinition {
                 label: "Terminal".into(),
