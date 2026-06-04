@@ -87,22 +87,23 @@ pub fn view<'a>(
             // from this slot — we show where it will land).
             let is_drop_target = drop_target == Some(i)
                 && state.reorder.map(|(from, _)| from) != Some(i);
-            let id = meta.id.clone();
-            // Wrap the button in a mouse_area so we can intercept the press
-            // and start a reorder gesture without breaking the button's own
-            // on_press (SelectTab).  The mouse_area fires ReorderStart(i)
-            // on press; ReorderEnd disambiguates click vs drag via the
-            // REORDER_THRESHOLD (< threshold → treated as SelectTab).
-            mouse_area(
-                button(text(label))
-                    .on_press(Msg::SelectTab(id))
-                    .style(move |theme: &Theme, status| {
-                        tab_button_style_with_drop(theme, status, is_active, is_drop_target)
-                    })
-                    .width(Length::Fill),
-            )
-            .on_press(Msg::ReorderStart(i))
-            .into()
+            // The tab row is a *non-pressable* container wrapped in a
+            // mouse_area.  An inner `button` with its own `on_press` would
+            // `shell.capture_event()` on ButtonPressed, and mouse_area bails
+            // out early on a captured event — so its `on_press(ReorderStart)`
+            // would never fire (the press would only ever SelectTab).  Using a
+            // plain container guarantees the press reaches the mouse_area.
+            //
+            // Selection is therefore driven entirely by the reorder gesture:
+            // ReorderEnd treats a sub-threshold (or zero-move) gesture as a
+            // click → select_tab.  See main.rs Msg::ReorderEnd.
+            let row = container(text(label).width(Length::Fill))
+                .width(Length::Fill)
+                .padding([4, 8])
+                .style(move |theme: &Theme| {
+                    tab_row_style(theme, is_active, is_drop_target)
+                });
+            mouse_area(row).on_press(Msg::ReorderStart(i)).into()
         })
         .collect();
     col_items.extend(tab_items);
@@ -213,6 +214,12 @@ pub const REORDER_THRESHOLD: f32 = 5.0;
 /// which existing slot the dragged tab will replace (push-down model): the
 /// dragged item is removed from `from`, then inserted at `to`, shifting
 /// everything between them by one. This is the same model used by `reordered`.
+///
+/// NOTE: the drop position is approximate. It uses an absolute `cursor_y` and
+/// fixed row metrics, and does NOT account for the `scrollable` offset. For a
+/// handful of tabs (no scroll) this is exact; for a long, scrolled tab list the
+/// computed slot will be off by the hidden scroll distance. Known limitation —
+/// not worth a full geometry rework until many-tab reordering is a real need.
 pub fn drop_index(cursor_y: f32, list_top: f32, row_h: f32, n: usize) -> usize {
     if n == 0 {
         return 0;
@@ -270,13 +277,14 @@ pub fn renumber_changed(
         .collect()
 }
 
-/// Style for a tab button, with optional drop-target highlight.
-pub fn tab_button_style_with_drop(
-    theme: &Theme,
-    _status: button::Status,
-    active: bool,
-    drop_target: bool,
-) -> button::Style {
+
+
+
+/// Style for a tab *row* rendered as a non-pressable `container` (so the
+/// wrapping `mouse_area` receives the press for the reorder gesture).
+/// Drop-target highlight wins over the active-tab highlight, otherwise
+/// transparent.
+pub fn tab_row_style(theme: &Theme, active: bool, drop_target: bool) -> container::Style {
     let p = theme.extended_palette();
     let bg = if drop_target {
         Some(Background::Color(p.primary.weak.color))
@@ -285,9 +293,9 @@ pub fn tab_button_style_with_drop(
     } else {
         Some(Background::Color(Color::TRANSPARENT))
     };
-    button::Style {
+    container::Style {
         background: bg,
-        text_color: p.background.base.text,
+        text_color: Some(p.background.base.text),
         border: Border::default(),
         shadow: Default::default(),
         snap: false,
