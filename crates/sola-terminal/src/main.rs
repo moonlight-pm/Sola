@@ -41,6 +41,25 @@ pub(crate) fn pane_size(window: iced::Size, sidebar_w: f32) -> iced::Size {
     iced::Size::new(w, window.height)
 }
 
+/// Parse a `"select_tab_{N}"` menu action id into a 0-based tab index.
+///
+/// Returns `Some(N)` when `action` has the prefix `"select_tab_"` followed by
+/// a valid `usize`; returns `None` for anything else.
+///
+/// # Examples
+/// ```
+/// assert_eq!(parse_select_tab_action("select_tab_0"), Some(0));
+/// assert_eq!(parse_select_tab_action("select_tab_3"), Some(3));
+/// assert_eq!(parse_select_tab_action("new_tab"),      None);
+/// assert_eq!(parse_select_tab_action("select_tab_"),  None);
+/// assert_eq!(parse_select_tab_action("select_tab_x"), None);
+/// ```
+fn parse_select_tab_action(action: &str) -> Option<usize> {
+    action
+        .strip_prefix("select_tab_")
+        .and_then(|n| n.parse::<usize>().ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,7 +93,58 @@ mod tests {
         assert_eq!(cols, 65);
         assert_eq!(rows, 26);
     }
+
+    // --- parse_select_tab_action ---
+
+    #[test]
+    fn parse_select_tab_action_tab_zero() {
+        assert_eq!(parse_select_tab_action("select_tab_0"), Some(0));
+    }
+
+    #[test]
+    fn parse_select_tab_action_tab_three() {
+        // menu labels Tab 4 as index 3
+        assert_eq!(parse_select_tab_action("select_tab_3"), Some(3));
+    }
+
+    #[test]
+    fn parse_select_tab_action_tab_large_index() {
+        assert_eq!(parse_select_tab_action("select_tab_99"), Some(99));
+    }
+
+    #[test]
+    fn parse_select_tab_action_unrelated_action() {
+        assert_eq!(parse_select_tab_action("new_tab"), None);
+    }
+
+    #[test]
+    fn parse_select_tab_action_close_tab() {
+        assert_eq!(parse_select_tab_action("close_tab"), None);
+    }
+
+    #[test]
+    fn parse_select_tab_action_empty_suffix() {
+        // "select_tab_" with no digits is invalid
+        assert_eq!(parse_select_tab_action("select_tab_"), None);
+    }
+
+    #[test]
+    fn parse_select_tab_action_non_numeric_suffix() {
+        assert_eq!(parse_select_tab_action("select_tab_x"), None);
+    }
+
+    #[test]
+    fn parse_select_tab_action_partial_prefix() {
+        assert_eq!(parse_select_tab_action("select_tab"), None);
+    }
+
+    #[test]
+    fn parse_select_tab_action_out_of_range_at_callsite() {
+        // index 999 parses fine; the caller guards with ids.get(index)
+        assert_eq!(parse_select_tab_action("select_tab_999"), Some(999));
+    }
 }
+
 
 fn main() -> iced::Result {
     startup(APP_ID);
@@ -210,6 +280,7 @@ impl App {
             Msg::Bus(m) => self.on_bus(&m),
             Msg::NewTab => self.new_tab(),
             Msg::CloseTab(id) => self.close_tab(&id),
+            Msg::SelectTab(id) => self.select_tab(&id),
             // Shell exited (reader hit EOF) — tear the tab down like a close.
             Msg::PtyExit(id) => self.close_tab(&id),
             // New grid content: invalidate the cached geometry so the next
@@ -590,8 +661,65 @@ impl App {
         Task::none()
     }
 
-    /// Stub: Phase 3 will handle copy/paste/new-tab/close-tab actions.
-    fn on_menu_action(&mut self, _action: &str) -> Task<Msg> {
-        Task::none()
+    /// Handle a menu action from the bus.
+    ///
+    /// Action-id strings (from `menu.rs`):
+    ///   - `"new_tab"`           — open a new tab
+    ///   - `"close_tab"`         — close the currently active tab
+    ///   - `"select_tab_{N}"`    — select the tab at 0-based index N in
+    ///                             `ids_in_order()` (e.g. `"select_tab_0"` = Tab 1)
+    ///   - `"copy"` / `"paste"`  — clipboard, Task 4.1
+    ///   - everything else       — ignored
+    fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
+        match action {
+            "new_tab" => self.new_tab(),
+            "close_tab" => {
+                if let Some(id) = self.active.clone() {
+                    self.close_tab(&id)
+                } else {
+                    Task::none()
+                }
+            }
+            "copy" | "paste" => Task::none(), // Task 4.1
+            other => {
+                if let Some(index) = parse_select_tab_action(other) {
+                    let ids = self.tabs.ids_in_order();
+                    if let Some(id) = ids.get(index) {
+                        self.select_tab(&id.clone())
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    tracing::debug!(action = %other, "on_menu_action: unknown action");
+                    Task::none()
+                }
+            }
+        }
+    }
+
+    /// Switch the active tab to `id`.
+    ///
+    /// - Ignores stale/unknown ids.
+    /// - Clears `term_cache` so the next `view` re-renders for the new tab
+    ///   (cache holds geometry for the *previously* active tab).
+    /// - Lazy-attaches meta-only tabs (boot-replayed tabs that have never been
+    ///   attached in this session) by calling `attach_tab(id, true)`.
+    fn select_tab(&mut self, id: &str) -> Task<Msg> {
+        if self.tabs.get(id).is_none() {
+            return Task::none();
+        }
+
+        self.active = Some(id.to_string());
+        // Clear cached geometry — it belongs to whichever tab was active before.
+        self.term_cache.clear();
+
+        // Lazy-attach: if this tab has no runtime yet (boot-replayed from the
+        // bus but never opened in this session) attach it now.
+        // seed_scrollback=true because it's an existing tmux session with history.
+        if self.tabs.runtime(id).is_none() {
+            self.attach_tab(id, true)
+        } else {
+            Task::none()
+        }
     }
 }
