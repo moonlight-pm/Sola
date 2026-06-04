@@ -211,13 +211,16 @@ impl Dimensions for TermDims {
 /// own `Arc` handle and calling `processor.advance` directly — either
 /// pattern is fine; only one thread should drive the `Processor`.
 pub struct Emulator {
-    pub term: Arc<FairMutex<Term<Listener>>>,
+    term: Arc<FairMutex<Term<Listener>>>,
     parser: Processor,
 }
 
 impl Emulator {
-    /// Construct a new emulator for `tab_id` with `cols × rows` grid.
-    pub fn new(_tab_id: String, cols: u16, rows: u16, listener: Listener) -> Self {
+    /// Construct a new emulator with a `cols × rows` grid.
+    ///
+    /// The tab id lives on the `Listener` (its rightful owner); the emulator
+    /// is identified by its shared `term` handle, so `new` takes no id.
+    pub fn new(cols: u16, rows: u16, listener: Listener) -> Self {
         let dims = TermDims {
             cols: cols as usize,
             rows: rows as usize,
@@ -281,16 +284,12 @@ mod tests {
 
         let (ptx, _prx) = mpsc::channel::<(String, Vec<u8>)>();
         let (ntx, _nrx) = mpsc::channel::<String>();
-        let mut e = Emulator::new(
-            "t".into(),
-            80,
-            24,
-            Listener::new("t".into(), ptx, ntx),
-        );
+        let mut e = Emulator::new(80, 24, Listener::new("t".into(), ptx, ntx));
 
         e.advance(b"hi");
 
-        let term = e.term.lock();
+        let term = e.term();
+        let term = term.lock();
         let content = term.renderable_content();
 
         // Collect all visible cells so we can query by grid position.
