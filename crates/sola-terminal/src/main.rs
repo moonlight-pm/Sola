@@ -279,7 +279,12 @@ impl App {
             // arrives. `Palette::default()` remains the pre-theme fallback.
             palette: term_view::Palette::from_kit_theme(&Atoms::default()),
             window_size: iced::Size::new(800.0, 480.0),
-            metrics: term_view::CellMetrics::default(),
+            // Size the cell box from the active mono font's real metrics. Fonts
+            // are loaded in `main()` before `App::new` runs (iced calls this
+            // constructor inside `app.run()`), so `mono_metrics()` resolves the
+            // real font here. Falls back to JetBrains Mono's 9×20 if the font
+            // can't be parsed — same as `CellMetrics::default()`.
+            metrics: term_view::CellMetrics::for_font(15.0, fonts::mono_metrics()),
             grid: (DEFAULT_COLS, DEFAULT_ROWS),
             titles: HashMap::new(),
         };
@@ -874,7 +879,18 @@ impl App {
             if let Some(Topic::Theme(bus)) = Topic::parse(m) {
                 self.palette =
                     term_view::Palette::from_kit_theme(&atoms_from_bus_theme(&bus));
-                // Re-render the grid with the new colours.
+                // `apply_theme_update` hot-swapped the font role table, so the
+                // mono FAMILY may have changed. Re-read its real metrics and
+                // rebuild the cell box (keeping the current font size), then
+                // reflow the grid so a different advance resizes the PTY/tmux to
+                // the new cell dimensions. `reflow_grid` clears `term_cache` and
+                // returns early if the grid is unchanged.
+                self.metrics =
+                    term_view::CellMetrics::for_font(self.metrics.font_size, fonts::mono_metrics());
+                self.reflow_grid();
+                // Re-render the grid with the new colours even when the grid
+                // dimensions didn't change (reflow_grid's early-return path
+                // wouldn't have cleared the cache).
                 self.term_cache.clear();
             }
             return Task::none();

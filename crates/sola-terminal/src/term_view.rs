@@ -37,7 +37,7 @@ const PAD: f32 = 6.0;
 ///
 /// `cell_w`/`cell_h` are the advance box of one cell; `font_size` is the glyph
 /// point size fed to `fill_text`. The dimensions are derived from the font's
-/// real metrics via [`CellMetrics::for_font_size`] so the grid box always
+/// real metrics via [`CellMetrics::for_font`] so the grid box always
 /// matches the glyphs that fill it — a mismatch here reads as uneven kerning.
 #[derive(Debug, Clone, Copy)]
 pub struct CellMetrics {
@@ -47,24 +47,20 @@ pub struct CellMetrics {
 }
 
 impl CellMetrics {
-    /// Advance width per em for JetBrains Mono (fixed pitch). Measured from
-    /// `JetBrainsMono-Regular.ttf`: advance 600 / unitsPerEm 1000 = 0.6.
-    /// NOTE: this ratio is specific to JetBrains Mono — a different mono
-    /// family (e.g. Iosevka, narrower) would need its own constant.
-    const ADVANCE_PER_EM: f32 = 0.6;
-    /// Line height per em for JetBrains Mono: (ascent − descent + lineGap)
-    /// / unitsPerEm = 1.32. Also family-specific.
-    const LINE_PER_EM: f32 = 1.32;
-
-    /// Derive cell geometry from a glyph point size using JetBrains Mono's
-    /// real ratios, snapping to integer pixels so glyphs land on the grid
-    /// crisply (fractional cell origins rasterize unevenly).
-    pub fn for_font_size(px: f32) -> Self {
+    /// Derive cell geometry from a glyph point size and the active mono font's
+    /// real metrics (`sola_kit::fonts::mono_metrics()` reads them off the TTF),
+    /// snapping to integer pixels so glyphs land on the grid crisply (fractional
+    /// cell origins rasterize unevenly). The advance/line ratios are NO LONGER
+    /// hardcoded to JetBrains Mono — they come from whatever family `mono()`
+    /// currently resolves to, so changing the kit's mono font reshapes the cell
+    /// box to match. The JetBrains Mono ratios survive only as
+    /// [`FontMetrics::default`], the fallback when the font can't be parsed.
+    pub fn for_font(px: f32, m: sola_kit::fonts::FontMetrics) -> Self {
         Self {
-            cell_w: (Self::ADVANCE_PER_EM * px).round(),
+            cell_w: (m.advance_per_em * px).round().max(1.0),
             // ceil for height so descenders never clip when the ratio lands
             // just over an integer.
-            cell_h: (Self::LINE_PER_EM * px).ceil(),
+            cell_h: (m.line_per_em * px).ceil().max(1.0),
             font_size: px,
         }
     }
@@ -72,9 +68,10 @@ impl CellMetrics {
 
 impl Default for CellMetrics {
     fn default() -> Self {
-        // 15px gives an exact integer advance: 0.6·15 = 9.0, and
-        // 1.32·15 = 19.8 → 20. cell_w=9 is what the layout already assumes.
-        Self::for_font_size(15.0)
+        // 15px with the JetBrains Mono fallback ratios gives an exact integer
+        // advance: 0.6·15 = 9.0, and 1.32·15 = 19.8 → 20. cell_w=9 is what the
+        // layout already assumes when no font has been resolved yet.
+        Self::for_font(15.0, sola_kit::fonts::FontMetrics::default())
     }
 }
 
@@ -641,8 +638,10 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 // `glyph_font()` reads `fonts::mono()`, which the bus theme
                 // hot-swaps via `apply_theme_update` — so the font FAMILY
                 // updates live on `Topic::Theme`. The cell geometry comes from
-                // `CellMetrics::for_font_size`, derived from the real JetBrains
-                // Mono metrics (cell_w:9, cell_h:20, font_size:15).
+                // `CellMetrics::for_font`, derived from the active mono font's
+                // real metrics (`sola_kit::fonts::mono_metrics()`); the terminal
+                // recomputes it on `Topic::Theme` so a font change reshapes the
+                // cell box to match.
                 let font = glyph_font(flags);
 
                 let (x, y) = self.cell_xy(point.line.0, point.column.0);
@@ -786,14 +785,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn for_font_size_matches_jetbrains_mono_ratios() {
-        let m = CellMetrics::for_font_size(15.0);
+    fn for_font_matches_jetbrains_mono_fallback_ratios() {
+        // The JetBrains Mono fallback ratios (FontMetrics::default) at 15px
+        // still yield the 9×20 cell the layout assumes — so when the active
+        // mono IS JetBrains Mono, behaviour is unchanged from the old
+        // hardcoded path.
+        let fm = sola_kit::fonts::FontMetrics::default();
+        let m = CellMetrics::for_font(15.0, fm);
         assert_eq!(m.font_size, 15.0);
         assert_eq!(m.cell_w, 9.0, "0.6·15 = 9.0 exactly");
         assert_eq!(m.cell_h, 20.0, "1.32·15 = 19.8 → ceil 20");
         // cell_w is always the advance ratio rounded to an integer pixel.
-        assert_eq!(m.cell_w, (0.6 * m.font_size).round());
-        // default() is the 15px derivation.
+        assert_eq!(m.cell_w, (fm.advance_per_em * m.font_size).round());
+        // default() is the 15px fallback derivation.
         let d = CellMetrics::default();
         assert_eq!((d.cell_w, d.cell_h, d.font_size), (9.0, 20.0, 15.0));
     }
@@ -820,8 +824,9 @@ mod tests {
     #[test]
     fn cols_rows_for_exact_fit() {
         // 10 cols exactly: 6 + 10·9 + 6 = 102 wide. cell_w = 9 at the default
-        // 15px size, so derive the metrics rather than hardcoding them.
-        let m = CellMetrics::for_font_size(15.0);
+        // 15px size with the JetBrains Mono fallback ratios, so derive the
+        // metrics rather than hardcoding them.
+        let m = CellMetrics::for_font(15.0, sola_kit::fonts::FontMetrics::default());
         let (cols, _rows) = cols_rows_for(iced::Size::new(6.0 + 90.0 + 6.0, 200.0), m);
         assert_eq!(cols, 10);
     }

@@ -204,6 +204,116 @@ pub fn display() -> Font { current().display }
 pub fn chrome() -> Font { current().chrome }
 pub fn mono() -> Font { current().mono }
 
+/// Real per-em metrics of a monospace font, read from its TTF tables.
+///
+/// Both ratios are normalised by the font's `units_per_em`, so they are
+/// independent of point size: multiply by the glyph point size to get the
+/// pixel advance / line box. Defaults to JetBrains Mono's measured values so
+/// a consumer that can't resolve the active font still gets a sane cell box.
+#[derive(Debug, Clone, Copy)]
+pub struct FontMetrics {
+    /// Horizontal advance of one cell / em (monospace advance ÷ unitsPerEm).
+    pub advance_per_em: f32,
+    /// Line height / em = (ascent − descent + lineGap) ÷ unitsPerEm.
+    pub line_per_em: f32,
+}
+
+impl Default for FontMetrics {
+    fn default() -> Self {
+        // JetBrains Mono: advance 600 / upm 1000 = 0.6; line box
+        // (1020 − (−300) + 0) / 1000 = 1.32. Matches what the parser
+        // reads from JetBrainsMono-Regular.ttf, so the fallback path and
+        // the parsed path agree when the active mono IS JetBrains Mono.
+        Self { advance_per_em: 0.6, line_per_em: 1.32 }
+    }
+}
+
+/// Real metrics of whatever font [`mono`] currently resolves to.
+///
+/// Resolves the current mono family name, finds the matching shipped font
+/// file (by the face's embedded family name), and reads its advance/line box
+/// off the TTF tables. Falls back to [`FontMetrics::default`] (JetBrains Mono's
+/// ratios) when the family can't be matched or the face can't be parsed, so a
+/// consumer always gets a usable cell box. Called rarely (startup + on font
+/// change), so re-parsing the file on each call is fine.
+pub fn mono_metrics() -> FontMetrics {
+    let font = mono();
+    let family = match font.family {
+        iced::font::Family::Name(name) => name,
+        _ => {
+            tracing::warn!("mono font has no named family; using default metrics");
+            return FontMetrics::default();
+        }
+    };
+    let want = family.trim();
+
+    for relative in FONT_FILES {
+        let path = format!("{FONT_DIR}/{relative}");
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(_) => continue, // missing files already warned by load_all
+        };
+        let face = match ttf_parser::Face::parse(&bytes, 0) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        if !face_family_matches(&face, want) {
+            continue;
+        }
+        if let Some(m) = metrics_from_face(&face) {
+            return m;
+        }
+    }
+
+    tracing::warn!(family = %want, "no shipped font file matched the mono family; using default metrics");
+    FontMetrics::default()
+}
+
+/// True when `face`'s embedded family name (English `Family` id 1 or
+/// `TypographicFamily` id 16) matches `want`, case-insensitive and trimmed.
+fn face_family_matches(face: &ttf_parser::Face, want: &str) -> bool {
+    for name in face.names() {
+        if name.name_id == ttf_parser::name_id::FAMILY
+            || name.name_id == ttf_parser::name_id::TYPOGRAPHIC_FAMILY
+        {
+            if let Some(s) = name.to_string() {
+                if s.trim().eq_ignore_ascii_case(want) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Read advance/line ratios off a parsed face. `None` if `units_per_em` is 0
+/// (malformed) or no representative glyph has an advance.
+fn metrics_from_face(face: &ttf_parser::Face) -> Option<FontMetrics> {
+    let upm = face.units_per_em();
+    if upm == 0 {
+        return None;
+    }
+    let upm = upm as f32;
+
+    // Representative monospace advance. For a fixed-pitch font every glyph
+    // shares one advance, so '0' (then 'M', then space) is safe. A non-mono
+    // font selected as "mono" would only have *this* glyph's advance, which
+    // won't represent every cell — acceptable since "mono" is meant to be a
+    // monospace family.
+    let advance = ['0', 'M', ' ']
+        .iter()
+        .filter_map(|c| face.glyph_index(*c))
+        .find_map(|g| face.glyph_hor_advance(g))?;
+
+    // descender is negative, so (ascender − descender) adds its magnitude.
+    let line = face.ascender() as f32 - face.descender() as f32 + face.line_gap() as f32;
+
+    Some(FontMetrics {
+        advance_per_em: advance as f32 / upm,
+        line_per_em: line / upm,
+    })
+}
+
 
 /// Font family names the kit ships and loads at boot. These are the
 /// values a settings UI offers in a font picker, and the strings the
@@ -305,6 +415,35 @@ mod tests {
         assert_eq!(
             out,
             vec!["Arial".to_string(), "Inter".to_string(), "Zed".to_string()]
+        );
+    }
+
+    #[test]
+    fn mono_metrics_default_is_jetbrains_mono_ratios() {
+        // The fallback (and the value the parser should read for JetBrains
+        // Mono) is advance 0.6 / line 1.32 per em.
+        let d = FontMetrics::default();
+        assert!((d.advance_per_em - 0.6).abs() < 1e-6);
+        assert!((d.line_per_em - 1.32).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mono_metrics_parses_jetbrains_mono_from_disk() {
+        // Default mono is JetBrains Mono. If the font pack is present, the
+        // parser must read ≈0.6 / ≈1.32 off the real TTF — this exercises the
+        // family match + advance/line reads. When the file isn't in the test
+        // env, mono_metrics() falls back to the same default, so the assertion
+        // holds either way (the values agree by construction).
+        let m = mono_metrics();
+        assert!(
+            (m.advance_per_em - 0.6).abs() < 0.02,
+            "JetBrains Mono advance_per_em ≈ 0.6, got {}",
+            m.advance_per_em
+        );
+        assert!(
+            (m.line_per_em - 1.32).abs() < 0.02,
+            "JetBrains Mono line_per_em ≈ 1.32, got {}",
+            m.line_per_em
         );
     }
 

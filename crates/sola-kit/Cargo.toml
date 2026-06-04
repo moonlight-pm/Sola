@@ -41,3 +41,8 @@ tracing = "0.1"
 # System font enumeration for the font picker (matches the version
 # cosmic-text already pulls in, so no extra build cost).
 fontdb = "0.23"
+# TTF/OTF face parser — read the active mono font's real advance/line
+# metrics so consumers (sola-terminal) can size a cell box from the
+# actual font, not a hardcoded JetBrains Mono ratio. Pure-Rust, already
+# in the tree transitively via cosmic-text.
+ttf-parser = "0.25"
