@@ -22,7 +22,7 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as GridPoint};
 use alacritty_terminal::selection::SelectionRange;
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::Term;
+use alacritty_terminal::term::{RenderableContent, Term};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
@@ -139,8 +139,29 @@ impl Palette {
                     NamedColor::Background => self.bg,
                     NamedColor::Cursor => self.cursor,
                     // The 16 base/bright names map onto our ANSI table by their
-                    // `NamedColor as usize` index (0..=15).
-                    other => self.indexed(other as usize as u8),
+                    // `NamedColor as usize` index (0..=15). Discriminants are
+                    // exactly 0..=15 so the cast is always safe.
+                    NamedColor::Black => self.indexed(0),
+                    NamedColor::Red => self.indexed(1),
+                    NamedColor::Green => self.indexed(2),
+                    NamedColor::Yellow => self.indexed(3),
+                    NamedColor::Blue => self.indexed(4),
+                    NamedColor::Magenta => self.indexed(5),
+                    NamedColor::Cyan => self.indexed(6),
+                    NamedColor::White => self.indexed(7),
+                    NamedColor::BrightBlack => self.indexed(8),
+                    NamedColor::BrightRed => self.indexed(9),
+                    NamedColor::BrightGreen => self.indexed(10),
+                    NamedColor::BrightYellow => self.indexed(11),
+                    NamedColor::BrightBlue => self.indexed(12),
+                    NamedColor::BrightMagenta => self.indexed(13),
+                    NamedColor::BrightCyan => self.indexed(14),
+                    NamedColor::BrightWhite => self.indexed(15),
+                    // Dim* / BrightForeground / DimForeground: alacritty 0.26
+                    // doesn't route these into cell colours, but their
+                    // discriminants (259+) would truncate badly under `as u8`.
+                    // Return the default foreground as a safe, visible fallback.
+                    _ => self.fg,
                 }
             }
             AnsiColor::Indexed(idx) => {
@@ -233,14 +254,24 @@ impl<Message> canvas::Program<Message> for TermView<'_> {
             frame.fill_rectangle(Point::ORIGIN, frame.size(), palette.bg);
 
             let term = self.term.lock();
+
+            // Fetch renderable content ONCE per frame and collect the
+            // display iterator into a Vec so both passes can iterate it
+            // without re-deriving the display window.
             let content = term.renderable_content();
-            let colors = content.colors;
-            let cursor = content.cursor;
-            let selection = content.selection;
+            let RenderableContent {
+                display_iter,
+                colors,
+                cursor,
+                selection,
+                display_offset,
+                ..
+            } = content;
+            let cells: Vec<_> = display_iter.collect();
 
             // ── Pass 1: backgrounds, batched into contiguous same-bg runs ──
             //
-            // We walk display_iter (row-major) and coalesce neighbouring cells
+            // We walk cells (row-major) and coalesce neighbouring cells
             // on the same row that share a bg colour into a single fill rect.
             // This avoids a fill per blank cell AND the hairline seams that
             // per-cell rects leave between fills.
@@ -260,7 +291,7 @@ impl<Message> canvas::Program<Message> for TermView<'_> {
                 }
             };
 
-            for indexed in term.renderable_content().display_iter {
+            for indexed in &cells {
                 let cell = indexed.cell;
                 let point = indexed.point;
                 if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
@@ -293,13 +324,13 @@ impl<Message> canvas::Program<Message> for TermView<'_> {
             // ── Selection highlight (render-only; Task 4.1 owns interaction) ──
             //
             // Task 4.1: mouse selection + copy. Here we only paint an existing
-            // `content.selection` if the emulator already has one.
+            // `selection` if the emulator already has one.
             if let Some(range) = selection {
-                draw_selection(frame, &range, metrics, palette.selection, content.display_offset, term.screen_lines());
+                draw_selection(frame, &range, metrics, palette.selection, display_offset, term.screen_lines());
             }
 
             // ── Pass 2: glyphs ──
-            for indexed in term.renderable_content().display_iter {
+            for indexed in &cells {
                 let cell = indexed.cell;
                 let point = indexed.point;
                 let flags = cell.flags;
@@ -488,5 +519,17 @@ mod tests {
         };
         let (cols, _rows) = cols_rows_for(iced::Size::new(6.0 + 90.0 + 6.0, 200.0), m);
         assert_eq!(cols, 10);
+    }
+
+    #[test]
+    fn cols_rows_for_clamps_rows_independently() {
+        // Default metrics: cell_w=9, cell_h=18, PAD=6.
+        // Width is wide enough for many columns: usable_w = 200 - 12 = 188 → 20 cols.
+        // Height is smaller than one cell + padding (< 12 + 18 = 30): rows clamps to 1.
+        // This catches a regression where only the cols axis was clamped.
+        let m = CellMetrics::default();
+        let (cols, rows) = cols_rows_for(iced::Size::new(200.0, 1.0), m);
+        assert!(cols >= 2, "expected multiple cols, got {cols}");
+        assert_eq!(rows, 1);
     }
 }
