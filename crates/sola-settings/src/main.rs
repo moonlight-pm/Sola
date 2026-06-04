@@ -39,15 +39,12 @@ fn main() -> iced::Result {
         .app_menu("Settings", [("quit", "Quit Settings", KeyCode::Q.meta())])
         .install();
 
-    let mut app = iced::application(App::default, App::update, App::view)
+    let app = iced::application(App::default, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::ui())
         .window(window_settings(APP_ID));
-    for bytes in fonts::load_all() {
-        app = app.font(bytes);
-    }
     app.run()
 }
 

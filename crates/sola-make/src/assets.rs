@@ -9,13 +9,13 @@
 //! - Pack directories that are no longer declared in `upstream.toml`
 //!   are removed from `/opt/sola/share/<category>/`.
 //!
-//! The installed pin and an "intent hash" (covering `src_dir`,
-//! `kind`, and the `files` list) are recorded in `<dest>/.solapack`
-//! after every successful pull. `sync` re-pulls when either drifts —
-//! so editing a pack's `files = [...]` list invalidates the manifest
-//! even when the upstream pin is unchanged. Nothing is committed to
-//! the repo — `cargo make install` calls `sync(false)` automatically
-//! so a fresh clone bootstraps itself.
+//! The installed pin and an "intent hash" (covering `src_dir` and
+//! `kind`) are recorded in `<dest>/.solapack` after every successful
+//! pull. `sync` re-pulls when either drifts — so editing a pack's
+//! `src_dir` or `kind` invalidates the manifest even when the upstream
+//! pin is unchanged. Nothing is committed to the repo — `cargo make
+//! install` calls `sync(false)` automatically so a fresh clone
+//! bootstraps itself.
 //!
 //! Pins:
 //! - `github:` packs with a non-empty `rev` pin to that rev (no
@@ -59,39 +59,18 @@ struct Pack {
     rev: String,
     /// Path (relative to source root) containing the source files.
     src_dir: String,
-    /// Destination category (e.g. "icons", "cursors", "fonts").
+    /// Destination category (e.g. "icons", "cursors").
     category: String,
     /// Pack flavor. Controls which files are copied:
     /// - `"icons"` (default): flat copy of every `.svg` from `src_dir`.
     /// - `"cursors"`: copy every file in `src_dir` (skipping `.cur` /
     ///   `.ani` Windows variants) into `<category>/<name>/cursors/`,
     ///   plus the repo-root `index.theme` into `<category>/<name>/`.
-    /// - `"fonts"`: copy each entry in `files` from `src_dir` into
-    ///   `<category>/<name>/`.
     #[serde(default)]
     kind: PackKind,
-    /// For `kind = "fonts"`: explicit list of entries to copy from
-    /// `src_dir`. Each entry is either a bare filename (copied as-is) or
-    /// a `{ from, to, transform? }` table. `transform = "ttf-to-woff2"`
-    /// runs the input through `woff2_compress` (via nix-shell) and writes
-    /// the result to `to`. Other kinds ignore this field.
-    #[serde(default)]
-    files: Vec<FileEntry>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum FileEntry {
-    /// Bare filename — copied verbatim.
-    Plain(String),
-    /// Explicit src→dest mapping with optional transform.
-    Mapped {
-        from: String,
-        to: String,
-        #[serde(default)]
-        transform: Option<String>,
-    },
-}
+
 
 #[derive(Debug, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -99,7 +78,6 @@ enum PackKind {
     #[default]
     Icons,
     Cursors,
-    Fonts,
 }
 
 fn read_upstream() -> Upstream {
@@ -261,37 +239,16 @@ fn read_manifest(dest: &Path) -> Option<InstalledManifest> {
 }
 
 /// Hash of the per-pack "intent" — everything other than the upstream
-/// source that affects what ends up on disk: which subtree we copy
-/// from, what flavor of copy, and (for fonts) which files. Two packs
-/// that resolve to the same pin but a different `files = [...]` list
-/// must yield different intent hashes so sync re-pulls when the user
-/// changes that list. Hash is non-cryptographic — just a change
-/// detector.
+/// source that affects what ends up on disk: which subtree we copy from
+/// (`src_dir`) and what flavor of copy (`kind`). A change to either must
+/// yield a different intent hash so sync re-pulls. Hash is
+/// non-cryptographic — just a change detector.
 fn pack_intent_hash(pack: &Pack) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut h = DefaultHasher::new();
     pack.src_dir.hash(&mut h);
     format!("{:?}", pack.kind).hash(&mut h);
-    pack.files.len().hash(&mut h);
-    for entry in &pack.files {
-        match entry {
-            FileEntry::Plain(s) => {
-                0u8.hash(&mut h);
-                s.hash(&mut h);
-            }
-            FileEntry::Mapped {
-                from,
-                to,
-                transform,
-            } => {
-                1u8.hash(&mut h);
-                from.hash(&mut h);
-                to.hash(&mut h);
-                transform.hash(&mut h);
-            }
-        }
-    }
     format!("{:016x}", h.finish())
 }
 
@@ -483,17 +440,6 @@ fn pull_pack(name: &str, pack: &Pack, nix_resolved: Option<PathBuf>) {
             let count = copy_svgs(&src, &dest);
             println!("  {count} SVGs -> {}", dest.display());
         }
-        PackKind::Fonts => {
-            if pack.files.is_empty() {
-                eprintln!("{name}: kind=fonts requires a non-empty `files` list");
-                exit(1);
-            }
-            fs::create_dir_all(&dest).ok();
-            for entry in &pack.files {
-                process_font_entry(name, entry, &src, &dest);
-            }
-            println!("  {} font files -> {}", pack.files.len(), dest.display());
-        }
         PackKind::Cursors => {
             let cursors_dest = dest.join("cursors");
             let count = copy_cursor_files(&src, &cursors_dest);
@@ -573,100 +519,11 @@ fn fetch_source(
     }
 }
 
-/// Copy or transform a single font entry from `src` to `dest`.
-fn process_font_entry(name: &str, entry: &FileEntry, src: &Path, dest: &Path) {
-    let (from, to, transform) = match entry {
-        FileEntry::Plain(f) => (f.as_str(), f.as_str(), None),
-        FileEntry::Mapped {
-            from,
-            to,
-            transform,
-        } => (from.as_str(), to.as_str(), transform.as_deref()),
-    };
-    let from_path = src.join(from);
-    let to_path = dest.join(to);
-    match transform {
-        None => {
-            if let Err(e) = fs::copy(&from_path, &to_path) {
-                eprintln!(
-                    "{name}: failed to copy {} -> {}: {e}",
-                    from_path.display(),
-                    to_path.display()
-                );
-                exit(1);
-            }
-        }
-        Some("ttf-to-woff2") => ttf_to_woff2(name, &from_path, &to_path),
-        Some(other) => {
-            eprintln!("{name}: unknown transform: {other}");
-            exit(1);
-        }
-    }
-}
 
-/// Compress a TTF/OTF to WOFF2 using `woff2_compress` from nixpkgs.
-/// `woff2_compress` writes `<input>.woff2` next to its input, so we stage
-/// in a tmp dir and move the result into place.
-fn ttf_to_woff2(name: &str, src: &Path, dest: &Path) {
-    let stem = src
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("font");
-    let tmp = std::env::temp_dir().join(format!(
-        "sola-woff2-{name}-{stem}-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&tmp);
-    fs::create_dir_all(&tmp).unwrap_or_else(|e| {
-        eprintln!("failed to create {}: {e}", tmp.display());
-        exit(1);
-    });
-    let staged = tmp.join(src.file_name().unwrap_or_else(|| "input".as_ref()));
-    if let Err(e) = fs::copy(src, &staged) {
-        eprintln!(
-            "{name}: failed to stage {} -> {}: {e}",
-            src.display(),
-            staged.display()
-        );
-        exit(1);
-    }
-    let staged_str = staged.to_string_lossy().into_owned();
-    run(
-        "nix-shell",
-        &[
-            "-p",
-            "woff2",
-            "--quiet",
-            "--run",
-            &format!("woff2_compress {}", shell_escape(&staged_str)),
-        ],
-    );
-    let produced = staged.with_extension("woff2");
-    if let Err(e) = fs::rename(&produced, dest).or_else(|_| fs::copy(&produced, dest).map(|_| ())) {
-        eprintln!(
-            "{name}: failed to place {} at {}: {e}",
-            produced.display(),
-            dest.display()
-        );
-        exit(1);
-    }
-    let _ = fs::remove_dir_all(&tmp);
-}
 
-/// Single-quote a string for safe inclusion in a shell command.
-fn shell_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for c in s.chars() {
-        if c == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(c);
-        }
-    }
-    out.push('\'');
-    out
-}
+
+
+
 
 fn tempdir_for(name: &str) -> PathBuf {
     let base = std::env::temp_dir().join(format!("sola-assets-{name}-{}", std::process::id()));

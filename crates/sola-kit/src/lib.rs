@@ -5,7 +5,7 @@
 //!
 //! - bus connection + subscription
 //! - app-menu publishing (so `Cmd+Q` quits without per-app glue)
-//! - font registration from `/opt/sola/share/fonts/`
+//! - system font resolution (no bundled fonts; see `fonts::ensure_system_fonts`)
 //! - window settings (no decorations, correct `xdg_toplevel.app_id`)
 //! - theme construction from the shared sola palette
 //!

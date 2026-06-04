@@ -4,7 +4,7 @@
 use sola_bus::topics::TopicKind;
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup};
-use sola_kit::fonts::{self, INTER};
+use sola_kit::fonts::INTER;
 
 mod app;
 mod builtins;
@@ -29,14 +29,11 @@ fn main() -> iced::Result {
     // Use iced::daemon so we can open multiple windows and dispatch view()
     // per window::Id.  The daemon opens no default window; our boot task
     // opens the menubar immediately.
-    let mut iced_daemon =
+    let iced_daemon =
         iced::daemon(app::Shell::boot, app::Shell::update, app::Shell::view)
             .title(app::Shell::title)
             .subscription(app::Shell::subscription)
             .theme(app::Shell::theme)
             .default_font(INTER);
-    for bytes in fonts::load_all() {
-        iced_daemon = iced_daemon.font(bytes);
-    }
     iced_daemon.run()
 }

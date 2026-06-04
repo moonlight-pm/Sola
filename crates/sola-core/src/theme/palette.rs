@@ -74,17 +74,18 @@ impl Palette {
             .insert("warning".into(), Token::new(TokenKind::Color, "#d29922", &["status"]));
         // Fonts — the kit's semantic role vocabulary
         // (`font-ui` / `font-ui-medium` / `font-display` / `font-chrome` /
-        // `font-mono`). Defaults are the kit's role defaults: SF Pro for
+        // `font-mono`). Defaults are the kit's role defaults: Inter for
         // every UI-shaped role, JetBrains Mono for code. The kit's
         // `fonts_from_families` applies the Medium weight to the
-        // `ui-medium` / `display` roles, so the *family* name is "SF Pro"
+        // `ui-medium` / `display` roles, so the *family* name is "Inter"
         // for all four sans roles. Picker selections overwrite these at
-        // runtime.
+        // runtime. Both families must be installed system-wide (see
+        // docs/manual/distribution.md).
         for (name, family) in [
-            ("font-ui", "SF Pro"),
-            ("font-ui-medium", "SF Pro"),
-            ("font-display", "SF Pro"),
-            ("font-chrome", "SF Pro"),
+            ("font-ui", "Inter"),
+            ("font-ui-medium", "Inter"),
+            ("font-display", "Inter"),
+            ("font-chrome", "Inter"),
             ("font-mono", "JetBrains Mono"),
         ] {
             palette.tokens.insert(

@@ -180,7 +180,10 @@ pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
 ///    `/run/opengl-driver/` so wgpu/EGL/Vulkan can initialise when
 ///    the app is launched from a bare TTY (no desktop session to
 ///    set them via `pam_env` or `~/.profile`).
-/// 5. `sola_core::watcher::watch_own_binary()` — re-exec this process
+/// 5. [`crate::fonts::ensure_system_fonts`] — load every system-installed
+///    font family into iced's font db so `Font::with_name(family)` resolves
+///    (Sola bundles no fonts; everything comes from system fontconfig).
+/// 6. `sola_core::watcher::watch_own_binary()` — re-exec this process
 ///    in-place when its binary at `/opt/sola/bin/<name>` changes on
 ///    disk, so `cargo make install` is enough to pick up new code
 ///    without manually quitting the running app. Skipped when
@@ -204,6 +207,7 @@ pub fn startup(app_id: &str) -> String {
     }
     sola_core::env::activate_gpu_env();
     tracing::debug!("nixos gpu dispatch env activated");
+    crate::fonts::ensure_system_fonts();
     if std::env::var_os("SOLA_NO_SELF_WATCH").is_none() {
         sola_core::watcher::watch_own_binary();
     } else {

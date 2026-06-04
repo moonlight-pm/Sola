@@ -63,7 +63,7 @@ fn run_publish(explicit_version: Option<String>) -> Result<String, String> {
             .map_err(|e| format!("copy {src} -> {}: {e}", dst.display()))?;
     }
 
-    println!(">>> staging /opt/sola/share (icons + cursors + fonts + applications)");
+    println!(">>> staging /opt/sola/share (icons + cursors + applications)");
     if !Path::new("/opt/sola/share").exists() {
         return Err(
             "/opt/sola/share not found — run `cargo make assets pull` then `cargo make install`"

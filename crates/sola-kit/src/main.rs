@@ -13,7 +13,7 @@
 use sola_bus::topics::TopicKind;
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup, window_settings};
-use sola_kit::fonts::{self, NORMAL as F_NORMAL};
+use sola_kit::fonts::{self, INTER};
 
 mod storybook;
 
@@ -35,7 +35,7 @@ fn main() -> iced::Result {
         .app_menu("Kit", [("quit", "Quit Kit", KeyCode::Q.meta())])
         .install();
 
-    let mut app = iced::application(
+    let app = iced::application(
         storybook::Storybook::default,
         storybook::Storybook::update,
         storybook::Storybook::view,
@@ -43,10 +43,7 @@ fn main() -> iced::Result {
     .title(storybook::Storybook::title)
     .subscription(storybook::Storybook::subscription)
     .theme(storybook::Storybook::theme)
-    .default_font(F_NORMAL)
+    .default_font(INTER)
     .window(window_settings(APP_ID));
-    for bytes in fonts::load_all() {
-        app = app.font(bytes);
-    }
     app.run()
 }
