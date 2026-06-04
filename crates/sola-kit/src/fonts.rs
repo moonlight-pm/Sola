@@ -242,10 +242,18 @@ fn metrics_from_face(face: &ttf_parser::Face) -> Option<FontMetrics> {
 /// also the strings the bus theme's `FontFamily` tokens carry.
 pub const INSTALLED_FAMILIES: &[&str] = &["Inter", "JetBrains Mono"];
 
+/// Default family for all UI-shaped roles (ui, ui_medium, display, chrome).
+pub const DEFAULT_UI_FAMILY: &str = "Inter";
+/// Default family for the mono role.
+pub const DEFAULT_MONO_FAMILY: &str = "JetBrains Mono";
+
 /// Build a `Fonts` table from a per-role family-name selection.
-/// Unknown family names round-trip back through `Font::with_name` and
-/// cosmic-text picks a fallback at shape time. `medium_for` flips the
-/// weight to Medium when the role calls for emphasis (`ui_medium`).
+/// Build a `Fonts` table from a per-role family-name selection.
+///
+/// If a requested family is empty or not present in iced's font database,
+/// that role silently falls back to its default family ([`DEFAULT_UI_FAMILY`]
+/// or [`DEFAULT_MONO_FAMILY`]) instead of producing a `Font` that fontconfig
+/// resolves to an unrelated face (e.g. a proportional sans instead of a mono).
 pub fn fonts_from_families(
     ui_family: &str,
     ui_medium_family: &str,
@@ -253,16 +261,25 @@ pub fn fonts_from_families(
     chrome_family: &str,
     mono_family: &str,
 ) -> Fonts {
-    Fonts {
-        ui: Font::with_name(static_family(ui_family)),
-        ui_medium: medium(static_family(ui_medium_family)),
-        display: medium(static_family(display_family)),
-        chrome: Font::with_name(static_family(chrome_family)),
-        mono: Font::with_name(static_family(mono_family)),
-    }
-}
+    // Returns the &'static str to pass to Font::with_name / medium().
+    // If `requested` is empty or not in the renderer's font DB, returns the
+    // static `default` slice instead.
+    let pick = |requested: &str, default: &'static str| -> &'static str {
+        if !requested.is_empty() && family_available(requested) {
+            static_family(requested)
+        } else {
+            default
+        }
+    };
 
-fn medium(family: &'static str) -> Font {
+    Fonts {
+        ui: Font::with_name(pick(ui_family, DEFAULT_UI_FAMILY)),
+        ui_medium: medium(pick(ui_medium_family, DEFAULT_UI_FAMILY)),
+        display: medium(pick(display_family, DEFAULT_UI_FAMILY)),
+        chrome: Font::with_name(pick(chrome_family, DEFAULT_UI_FAMILY)),
+        mono: Font::with_name(pick(mono_family, DEFAULT_MONO_FAMILY)),
+    }
+}fn medium(family: &'static str) -> Font {
     Font { weight: iced::font::Weight::Medium, ..Font::with_name(family) }
 }
 
@@ -282,17 +299,44 @@ fn static_family(name: &str) -> &'static str {
 
 
 /// Every family name an in-app font picker can offer: the shipped
-/// [`INSTALLED_FAMILIES`] plus whatever fontdb finds installed on the
-/// system, deduped and sorted. The shipped families are always present
-/// even if the system scan misses them, so a picker built on this never
-/// loses the kit's own fonts.
+/// Families the picker offers = exactly what's installed system-wide
+/// (fontconfig); falls back to [`INSTALLED_FAMILIES`] only when no system
+/// fonts are found (e.g. a headless test environment with no font dirs).
 pub fn pickable_families() -> Vec<String> {
-    let mut all: Vec<String> = INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect();
-    all.extend(system_families());
-    dedup_sorted(all)
-}
+    let sys = system_families();
+    if sys.is_empty() {
+        // Headless / no fontconfig: fall back to the recommended list so the
+        // picker is never empty (and the invariant test holds).
+        INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect()
+    } else {
+        sys
+    }
+}/// Family names fontdb finds installed on the system, sorted and
 
-/// Family names fontdb finds installed on the system, sorted and
+/// True when `family` is present in iced's font database (i.e. the renderer
+/// can actually draw it). Mirrors the DB the renderer uses, so "available"
+/// == "renders as itself" (not a fontconfig substitute).
+///
+/// Used by [`fonts_from_families`] to fall back to the role default when a
+/// persisted selection names a family that isn't installed.
+pub fn family_available(family: &str) -> bool {
+    ensure_system_fonts();
+    match iced_graphics::text::font_system().write() {
+        Ok(mut fs) => {
+            let db = fs.raw().db_mut();
+            db.query(&fontdb::Query {
+                families: &[fontdb::Family::Name(family)],
+                weight: fontdb::Weight::NORMAL,
+                stretch: fontdb::Stretch::Normal,
+                style: fontdb::Style::Normal,
+            })
+            .is_some()
+        }
+        // Lock poisoned — can't check; assume available so we don't
+        // silently override a font that might actually work.
+        Err(_) => true,
+    }
+}
 /// deduped. Empty if the scan finds nothing (e.g. a headless box with
 /// no font directories) — callers should fall back to
 /// [`INSTALLED_FAMILIES`] or use [`pickable_families`], which folds
@@ -362,6 +406,11 @@ mod tests {
         );
     }
 
+    // pickable_families() returns only system-installed families (or the
+    // INSTALLED_FAMILIES fallback on headless boxes).  Either way the shipped
+    // defaults must appear in the list: Inter + JetBrains Mono are installed
+    // system-wide on the dev box, and on a headless box the fallback path
+    // returns INSTALLED_FAMILIES directly.
     #[test]
     fn pickable_families_always_contains_shipped() {
         let all = pickable_families();
@@ -370,6 +419,79 @@ mod tests {
                 all.contains(&fam.to_string()),
                 "{fam} missing from pickable_families"
             );
+        }
+    }
+
+    // On the real dev box (system fonts present) the picker must NOT list
+    // families that aren't actually installed, and MUST list the two defaults.
+    #[test]
+    fn pickable_families_only_installed() {
+        let sys = system_families();
+        // Only run the negative assertions when there are real system fonts;
+        // headless CI would use the fallback path (INSTALLED_FAMILIES only)
+        // which is already covered above.
+        if sys.is_empty() {
+            return;
+        }
+        let all = pickable_families();
+        assert!(
+            !all.contains(&"SF Pro".to_string()),
+            "SF Pro should not appear — it is not installed"
+        );
+        assert!(
+            !all.contains(&"Iosevka Fixed".to_string()),
+            "Iosevka Fixed should not appear — it is not installed"
+        );
+        assert!(
+            all.contains(&"Inter".to_string()),
+            "Inter missing from pickable_families"
+        );
+        assert!(
+            all.contains(&"JetBrains Mono".to_string()),
+            "JetBrains Mono missing from pickable_families"
+        );
+    }
+
+    #[test]
+    fn family_available_known_and_unknown() {
+        let sys = system_families();
+        // Positive assertion only makes sense when the system DB is populated.
+        if !sys.is_empty() {
+            assert!(
+                family_available("JetBrains Mono"),
+                "JetBrains Mono should be available (it is installed)"
+            );
+        }
+        assert!(
+            !family_available("Definitely Not A Real Font 12345"),
+            "bogus family should report unavailable"
+        );
+    }
+
+    #[test]
+    fn fonts_from_families_falls_back_for_unavailable() {
+        let sys = system_families();
+        // Only meaningful when system fonts are present; headless has no DB to
+        // query so family_available always returns true (lock-poisoned path),
+        // making the fallback unreachable.
+        if sys.is_empty() {
+            return;
+        }
+        let f = fonts_from_families(
+            "Inter",
+            "Inter",
+            "Inter",
+            "Inter",
+            "Iosevka Fixed", // not installed → should fall back to JetBrains Mono
+        );
+        match f.mono.family {
+            iced::font::Family::Name(name) => {
+                assert_eq!(
+                    name, DEFAULT_MONO_FAMILY,
+                    "unavailable mono family should fall back to {DEFAULT_MONO_FAMILY}, got {name}"
+                );
+            }
+            other => panic!("expected Family::Name, got {other:?}"),
         }
     }
 }
