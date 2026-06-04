@@ -27,6 +27,55 @@ const APP_ID: &str = "sola-terminal";
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
 
+/// Compute the pane area (the canvas the terminal grid occupies) from the
+/// window size and the sidebar width.
+///
+/// The sidebar takes `sidebar_w` logical pixels on the left. The rest is the
+/// terminal pane — full height. Clamps to zero so the value is always safe to
+/// pass to [`term_view::cols_rows_for`], which does its own PAD subtraction.
+///
+/// This is a pure function so it can be tested headlessly without an iced
+/// runtime (Task 2.6).
+pub(crate) fn pane_size(window: iced::Size, sidebar_w: f32) -> iced::Size {
+    let w = (window.width - sidebar_w).max(0.0);
+    iced::Size::new(w, window.height)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use term_view::CellMetrics;
+
+    #[test]
+    fn pane_size_subtracts_sidebar() {
+        let window = iced::Size::new(800.0, 480.0);
+        let pane = pane_size(window, 200.0);
+        assert_eq!(pane.width, 600.0);
+        assert_eq!(pane.height, 480.0);
+    }
+
+    #[test]
+    fn pane_size_clamps_to_zero() {
+        // sidebar wider than window → width clamps to 0, not negative.
+        let window = iced::Size::new(100.0, 480.0);
+        let pane = pane_size(window, 200.0);
+        assert_eq!(pane.width, 0.0);
+    }
+
+    #[test]
+    fn pane_to_grid_end_to_end() {
+        // 800×480 window, 200px sidebar, CellMetrics default (9×18 cells, PAD=6).
+        // pane width  = 600 px
+        // usable_w    = 600 - 12 = 588 → floor(588/9)  = 65 cols
+        // usable_h    = 480 - 12 = 468 → floor(468/18) = 26 rows
+        let window = iced::Size::new(800.0, 480.0);
+        let pane = pane_size(window, 200.0);
+        let (cols, rows) = term_view::cols_rows_for(pane, CellMetrics::default());
+        assert_eq!(cols, 65);
+        assert_eq!(rows, 26);
+    }
+}
+
 fn main() -> iced::Result {
     startup(APP_ID);
 
@@ -85,6 +134,16 @@ struct App {
     /// Colour table for the renderer. Hardcoded dark theme for now; Task 4.4
     /// will drive it from `self.theme` (the bus theme).
     palette: term_view::Palette,
+    /// Last known window size (logical pixels). Initialised to a sane default;
+    /// updated on every `Msg::Resized`. Used by Task 2.6 resize plumbing.
+    window_size: iced::Size,
+    /// Cell metrics for the active font. Default 9×18 until font negotiation
+    /// lands (Task 4.x).
+    metrics: term_view::CellMetrics,
+    /// Current terminal grid dimensions (cols × rows). Derived from
+    /// `window_size`, sidebar width and `metrics`. Initialised to
+    /// DEFAULT_COLS×DEFAULT_ROWS; updated on every resize event.
+    grid: (u16, u16),
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +178,9 @@ impl App {
             sidebar: sidebar::SidebarState::default(),
             term_cache: canvas::Cache::default(),
             palette: term_view::Palette::default(),
+            window_size: iced::Size::new(800.0, 480.0),
+            metrics: term_view::CellMetrics::default(),
+            grid: (DEFAULT_COLS, DEFAULT_ROWS),
         };
         (app, Task::none())
     }
@@ -137,6 +199,9 @@ impl App {
             emulator::output_subscription().map(Msg::PtyOutput),
             emulator::exit_subscription().map(Msg::PtyExit),
             iced::event::listen().map(Msg::Input),
+            // Task 2.6: drive Msg::Resized whenever the window changes size.
+            // iced 0.14 API: `resize_events() -> Subscription<(Id, Size)>`.
+            iced::window::resize_events().map(|(_id, size)| Msg::Resized(size)),
         ])
     }
 
@@ -156,6 +221,7 @@ impl App {
                 Task::none()
             }
             Msg::Input(event) => self.on_input(event),
+            Msg::Resized(size) => self.on_resized(size),
             // All remaining arms are Phase 2+ stubs.
             _ => Task::none(),
         }
@@ -246,6 +312,43 @@ impl App {
         Task::none()
     }
 
+    /// Handle a window resize event (Task 2.6).
+    ///
+    /// Recomputes the terminal grid from the new window size + current sidebar
+    /// width, then drives the new dimensions into every live tab's emulator
+    /// and PTY backend. All tabs are resized, not just the active one, so
+    /// switching tabs never reveals a mis-sized grid.
+    fn on_resized(&mut self, size: iced::Size) -> Task<Msg> {
+        self.window_size = size;
+
+        let sidebar_w = if self.config.sidebar_collapsed {
+            36.0_f32
+        } else {
+            self.config.sidebar_width as f32
+        };
+        let pane = pane_size(size, sidebar_w);
+        let (cols, rows) = term_view::cols_rows_for(pane, self.metrics);
+
+        if (cols, rows) == self.grid {
+            return Task::none(); // no change — avoid churn
+        }
+        self.grid = (cols, rows);
+
+        for rt in self.tabs.runtimes_mut() {
+            rt.emulator.resize(cols, rows);
+            rt.backend.resize(cols, rows);
+            // `PtyManager::resize` does TIOCSWINSZ + tmux::resize_window but
+            // does NOT send SIGWINCH. Signal the child process group so TUIs
+            // (vim, htop, …) redraw at the new size.
+            rt.backend.sigwinch();
+        }
+
+        // Geometry changed — invalidate the cached canvas so the next frame
+        // repaints at the correct grid size.
+        self.term_cache.clear();
+        Task::none()
+    }
+
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
         // 1. Live theme reload.
         if apply_theme_update(m, &mut self.theme) {
@@ -320,8 +423,8 @@ impl App {
     /// Open (or reattach) the PTY for `id`, seed tmux scrollback into the grid,
     /// and start the reader thread.
     ///
-    /// Default grid is 80×24 until the renderer reports a real pane size (Task
-    /// 2.6 wires resize). Scrollback authority (OPEN QUESTION #2): the
+    /// Grid size is taken from `self.grid` (updated by Task 2.6 resize
+    /// plumbing). Scrollback authority (OPEN QUESTION #2): the
     /// alacritty `Grid` is the live viewport + local history; tmux is the
     /// persistence layer. The captured scrollback is a ONE-SHOT seed fed before
     /// the reader thread starts, so reattach shows history without racing live
@@ -333,7 +436,10 @@ impl App {
             return Task::none();
         };
 
-        let (cols, rows) = (DEFAULT_COLS, DEFAULT_ROWS);
+        // Use the current grid size so tabs attached after a resize come up at
+        // the right dimensions (Task 2.6). Falls back to DEFAULT_COLS/ROWS on
+        // first attach before the first Msg::Resized fires.
+        let (cols, rows) = self.grid;
 
         let listener = emulator::Listener::new(
             id.to_string(),

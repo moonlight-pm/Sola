@@ -91,6 +91,14 @@ impl Tabs {
     pub fn cwd_of(&self, id: &str) -> Option<String> {
         self.meta.get(id).and_then(|m| m.cwd.clone())
     }
+
+    /// Iterator over all live tab runtimes (mutable).
+    ///
+    /// Used by the resize path (Task 2.6) to push a new grid size into every
+    /// attached tab without knowing their ids.
+    pub fn runtimes_mut(&mut self) -> impl Iterator<Item = &mut TabRuntime> {
+        self.runtime.values_mut()
+    }
 }
 
 /// Next ordinal for a new tab: `max(existing) + 1`, or 0 when there are no
