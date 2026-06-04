@@ -17,7 +17,6 @@ use std::sync::Arc;
 use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::{LineHeight, Shaping};
 use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, mouse};
-use iced::event::Status;
 
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
