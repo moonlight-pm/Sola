@@ -1,86 +1,141 @@
-use std::collections::HashMap;
-use std::collections::VecDeque;
-use std::os::unix::io::IntoRawFd;
-use std::os::unix::process::CommandExt;
-use std::sync::{Arc, Mutex};
+//! Per-tab PTY backend wired to the alacritty emulator.
+//!
+//! Each tab owns one [`PtyBackend`] (master fd + child pid + tmux session
+//! name). The openpty + `tmux new-session -A` child-spawn logic is the same
+//! one the legacy WebView path used; only the OUTPUT path changed: instead of
+//! base64-encoding bytes into a bus event, the reader thread drives an
+//! `alacritty_terminal` `Processor` straight into the tab's shared
+//! `Term<Listener>` grid.
+//!
+//! Threading model (one reader thread per tab)
+//! -------------------------------------------
+//! - `App` state owns the `Emulator` (for the renderer + `resize`). The reader
+//!   thread does NOT call `Emulator::advance` -- that would need `&mut` to
+//!   state-owned data. Instead, at attach time we clone the term handle
+//!   (`emulator.term()` -> `Arc<FairMutex<Term<Listener>>>`) and move that
+//!   clone plus a FRESH `Processor` into the reader thread. The reader loop
+//!   locks the term, advances bytes, and notifies iced.
+//! - Terminal replies (DSR / cursor-position / DA) flow out through the
+//!   `Listener`'s `pty_write` channel as `(tab_id, bytes)`. A SINGLE
+//!   process-wide drain thread reads that channel and writes the bytes back to
+//!   the tab's master fd, looked up in a global fd registry. A tab whose fd is
+//!   gone (closed) is dropped silently -- the drain thread never panics.
 
-use base64::Engine;
+use std::collections::HashMap;
+use std::os::unix::io::{IntoRawFd, RawFd};
+use std::os::unix::process::CommandExt;
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
+
+use alacritty_terminal::sync::FairMutex;
+use alacritty_terminal::term::Term;
+use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 use tracing::{debug, warn};
 
-const OUTPUT_BUFFER_CAP: usize = 65536; // 64KB
+use crate::emulator::Listener;
 
-/// Events emitted by PTY reader threads.
-#[derive(Debug)]
-pub enum PtyEvent {
-    Data { pty_id: String, data: Vec<u8> },
-    Scrollback { pty_id: String, data: Vec<u8> },
-    Exit { pty_id: String },
+// -- Process-wide pty-write drain ----------------------------------------------
+//
+// The `Listener` inside every `Term` sends replies as `(tab_id, bytes)` on a
+// single process-wide channel. One drain thread looks up the tab's master fd in
+// a global registry and writes the bytes. Registering/unregistering the fd is
+// done by `PtyBackend` at attach/close.
+
+/// Global pty-write sender, cloned for every tab's `Listener`.
+static PTY_WRITE_TX: OnceLock<mpsc::Sender<(String, Vec<u8>)>> = OnceLock::new();
+
+/// Map of `tab_id -> master fd`, populated at attach and cleared at close.
+/// The drain thread reads it; `PtyBackend` mutates it.
+static FD_REGISTRY: OnceLock<Mutex<HashMap<String, RawFd>>> = OnceLock::new();
+
+fn fd_registry() -> &'static Mutex<HashMap<String, RawFd>> {
+    FD_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-struct OutputBuffer {
-    buf: VecDeque<u8>,
+/// Initialise the pty-write channel + drain thread exactly once.
+fn ensure_pty_write_drain() {
+    PTY_WRITE_TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<(String, Vec<u8>)>();
+        std::thread::spawn(move || {
+            // Blocking recv -- exits when every sender is dropped (process end).
+            while let Ok((tab_id, bytes)) = rx.recv() {
+                let fd = {
+                    let map = fd_registry().lock().unwrap();
+                    map.get(&tab_id).copied()
+                };
+                match fd {
+                    Some(fd) => {
+                        let n = unsafe {
+                            libc::write(fd, bytes.as_ptr() as *const libc::c_void, bytes.len())
+                        };
+                        if n < 0 {
+                            // fd closed out from under us, or transient error --
+                            // drop the reply and keep draining. Never panic.
+                            warn!(
+                                tab_id = %tab_id,
+                                "pty-write drain: write failed: {}",
+                                std::io::Error::last_os_error()
+                            );
+                        }
+                    }
+                    // Tab is gone (closed). Drop the bytes, keep going.
+                    None => {}
+                }
+            }
+        });
+        tx
+    });
 }
 
-impl OutputBuffer {
-    fn new() -> Self {
-        Self {
-            buf: VecDeque::with_capacity(OUTPUT_BUFFER_CAP),
-        }
-    }
-
-    fn push(&mut self, data: &[u8]) {
-        self.buf.extend(data);
-        if self.buf.len() > OUTPUT_BUFFER_CAP {
-            let excess = self.buf.len() - OUTPUT_BUFFER_CAP;
-            self.buf.drain(..excess);
-        }
-    }
-
-    fn snapshot(&self) -> Vec<u8> {
-        let (a, b) = self.buf.as_slices();
-        let mut v = Vec::with_capacity(a.len() + b.len());
-        v.extend_from_slice(a);
-        v.extend_from_slice(b);
-        v
-    }
+/// Returns a clone of the process-wide pty-write sender. Hand one to every
+/// `Listener` so terminal replies reach the drain thread.
+pub fn pty_write_sender() -> mpsc::Sender<(String, Vec<u8>)> {
+    ensure_pty_write_drain();
+    PTY_WRITE_TX.get().unwrap().clone()
 }
 
-/// Manages PTY instances for terminal emulation.
+fn register_fd(tab_id: &str, fd: RawFd) {
+    fd_registry().lock().unwrap().insert(tab_id.to_string(), fd);
+}
+
+fn unregister_fd(tab_id: &str) {
+    fd_registry().lock().unwrap().remove(tab_id);
+}
+
+// -- PtyBackend -- per-tab handle ----------------------------------------------
+
+/// Per-tab PTY handle: master fd + child pid + tmux session name.
 ///
-/// Background reader threads push output via `tokio::sync::mpsc::UnboundedSender<PtyEvent>`.
-pub struct PtyManager {
-    ptys: HashMap<String, PtyInstance>,
+/// Drop semantics intentionally match the legacy `PtyManager`: a plain drop
+/// (shutdown / crash) closes the master fd and SIGHUPs the tmux *client* but
+/// LEAVES THE TMUX SESSION ALIVE so it can be restored. Only an explicit
+/// [`close`](Self::close) tears down the tmux session.
+pub struct PtyBackend {
+    tab_id: String,
+    master_fd: RawFd,
+    child_pid: i32,
+    tmux_session: String,
 }
 
-pub struct PtyInstance {
-    pub master_fd: i32,
-    pub child_pid: u32,
-    output_buffer: Arc<Mutex<OutputBuffer>>,
-    pub tmux_session: Option<String>,
-}
-
-impl PtyManager {
-    pub fn new() -> Self {
-        Self {
-            ptys: HashMap::new(),
-        }
-    }
-
-    /// Spawn a new PTY running a tmux session.
+impl PtyBackend {
+    /// Open a pty, exec `tmux new-session -A -s <tmux_session>`, register the
+    /// master fd for pty-write replies, and start the reader thread that drives
+    /// `term` from the master fd.
     ///
-    /// Returns the tmux session name on success. Starts a background thread
-    /// that reads PTY output and sends `PtyEvent`s via the provided channel.
-    /// If `tmux_session` is `Some`, reattaches to an existing session;
-    /// otherwise creates a new session named after the PTY id.
-    pub fn spawn_pty(
-        &mut self,
-        id: String,
+    /// `cwd` sets the new session's start directory (ignored by tmux when the
+    /// session already exists, i.e. on reattach). The reader thread sends
+    /// `tab_id` on `notify` after each parse and on `exit` (EOF) when the
+    /// shell dies.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_or_attach(
+        tab_id: &str,
+        tmux_session: &str,
         cols: u16,
         rows: u16,
-        tmux_session: Option<String>,
-        cwd: Option<String>,
-        event_tx: tokio::sync::mpsc::UnboundedSender<PtyEvent>,
-    ) -> Result<String, String> {
+        cwd: Option<&str>,
+        term: Arc<FairMutex<Term<Listener>>>,
+        notify: mpsc::Sender<String>,
+        exit: mpsc::Sender<String>,
+    ) -> std::io::Result<Self> {
         let winsize = libc::winsize {
             ws_row: rows,
             ws_col: cols,
@@ -88,32 +143,29 @@ impl PtyManager {
             ws_ypixel: 0,
         };
 
-        let pty =
-            nix::pty::openpty(Some(&winsize), None).map_err(|e| format!("openpty failed: {e}"))?;
-
+        let pty = nix::pty::openpty(Some(&winsize), None)
+            .map_err(|e| std::io::Error::other(format!("openpty failed: {e}")))?;
         let slave_fd = pty.slave.into_raw_fd();
-        let is_reattach = tmux_session.is_some();
-        let tmux_session_name = tmux_session.unwrap_or_else(|| crate::tmux::session_name(&id));
 
         let mut cmd = crate::tmux::tmux_cmd();
         cmd.args([
             "new-session",
             "-A",
             "-s",
-            &tmux_session_name,
+            tmux_session,
             "-x",
             &cols.to_string(),
             "-y",
             &rows.to_string(),
         ]);
-        // Set start directory for new sessions (not reattach)
-        if !is_reattach {
-            if let Some(ref dir) = cwd {
-                cmd.args(["-c", dir]);
-            }
+        // Start directory only applies when tmux actually creates the session;
+        // on reattach (`-A` finds an existing session) tmux ignores `-c`.
+        if let Some(dir) = cwd {
+            cmd.args(["-c", dir]);
         }
-        // SAFETY: pre_exec runs in the child process between fork and exec.
-        // The libc calls here are async-signal-safe.
+
+        // SAFETY: pre_exec runs in the child between fork and exec; the libc
+        // calls here are async-signal-safe.
         let child = unsafe {
             cmd.env("TERM", "xterm-256color")
                 .pre_exec(move || {
@@ -128,54 +180,30 @@ impl PtyManager {
                     Ok(())
                 })
                 .spawn()
-                .map_err(|e| format!("failed to spawn tmux: {e}"))?
+                .map_err(|e| std::io::Error::other(format!("failed to spawn tmux: {e}")))?
         };
 
-        // Close slave fd in parent -- child has its own copies
+        // Parent: close slave, keep master.
         unsafe { libc::close(slave_fd) };
-
         let master_fd = pty.master.into_raw_fd();
-        let child_pid = child.id();
+        let child_pid = child.id() as i32;
 
         debug!(
-            "spawned PTY {id}: tmux={tmux_session_name}, pid={child_pid}, master_fd={master_fd}, reattach={is_reattach}"
+            tab_id = %tab_id,
+            tmux_session = %tmux_session,
+            child_pid,
+            master_fd,
+            "spawned PTY"
         );
 
-        let output_buffer = Arc::new(Mutex::new(OutputBuffer::new()));
+        // Register the fd so terminal replies can be written back.
+        register_fd(tab_id, master_fd);
 
-        self.ptys.insert(
-            id.clone(),
-            PtyInstance {
-                master_fd,
-                child_pid,
-                output_buffer: output_buffer.clone(),
-                tmux_session: Some(tmux_session_name.clone()),
-            },
-        );
-
-        // Capture scrollback BEFORE starting the reader thread so it's
-        // guaranteed to be emitted to the frontend first (no race).
-        if is_reattach {
-            match crate::tmux::capture_scrollback(&tmux_session_name) {
-                Ok(text) if !text.trim().is_empty() => {
-                    let _ = event_tx.send(PtyEvent::Scrollback {
-                        pty_id: id.clone(),
-                        data: text.into_bytes(),
-                    });
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    warn!("Failed to capture scrollback: {e}");
-                }
-            }
-        }
-
-        // Spawn background reader thread
+        // Reader thread: own a dup'd fd + the term Arc + a FRESH Processor.
         let read_fd = unsafe { libc::dup(master_fd) };
-        let pty_id = id.clone();
-        let buffer_clone = output_buffer.clone();
-
+        let reader_tab_id = tab_id.to_string();
         std::thread::spawn(move || {
+            let mut processor: Processor<StdSyncHandler> = Processor::new();
             let mut buf = [0u8; 4096];
             loop {
                 let n = unsafe {
@@ -184,51 +212,47 @@ impl PtyManager {
                 if n <= 0 {
                     break;
                 }
-
                 let chunk = &buf[..n as usize];
-
-                match buffer_clone.lock() {
-                    Ok(mut buf_lock) => buf_lock.push(chunk),
-                    Err(e) => warn!("output buffer lock poisoned: {e}"),
+                {
+                    let mut term = term.lock();
+                    processor.advance(&mut *term, chunk);
                 }
-
-                let _ = event_tx.send(PtyEvent::Data {
-                    pty_id: pty_id.clone(),
-                    data: chunk.to_vec(),
-                });
+                let _ = notify.send(reader_tab_id.clone());
             }
             unsafe { libc::close(read_fd) };
-            debug!("PTY reader thread exited for {pty_id}");
-
-            // Notify that the shell exited
-            let _ = event_tx.send(PtyEvent::Exit {
-                pty_id: pty_id.clone(),
-            });
+            debug!(tab_id = %reader_tab_id, "PTY reader thread exited (EOF)");
+            // Shell exited -- signal so `App` can close the tab.
+            let _ = exit.send(reader_tab_id.clone());
         });
 
-        Ok(tmux_session_name)
+        Ok(Self {
+            tab_id: tab_id.to_string(),
+            master_fd,
+            child_pid,
+            tmux_session: tmux_session.to_string(),
+        })
     }
 
-    /// Write data to a PTY's master fd.
-    pub fn write_pty(&self, id: &str, data: &[u8]) -> Result<(), String> {
-        let instance = self.ptys.get(id).ok_or_else(|| format!("no PTY: {id}"))?;
+    /// Write bytes to the master fd (keyboard input -> shell).
+    pub fn write(&self, bytes: &[u8]) {
         let n = unsafe {
             libc::write(
-                instance.master_fd,
-                data.as_ptr() as *const libc::c_void,
-                data.len(),
+                self.master_fd,
+                bytes.as_ptr() as *const libc::c_void,
+                bytes.len(),
             )
         };
         if n < 0 {
-            Err(format!("write failed: {}", std::io::Error::last_os_error()))
-        } else {
-            Ok(())
+            warn!(
+                tab_id = %self.tab_id,
+                "pty write failed: {}",
+                std::io::Error::last_os_error()
+            );
         }
     }
 
-    /// Resize a PTY.
-    pub fn resize_pty(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let instance = self.ptys.get(id).ok_or_else(|| format!("no PTY: {id}"))?;
+    /// Resize the pty (TIOCSWINSZ) and the tmux window to match.
+    pub fn resize(&self, cols: u16, rows: u16) {
         let winsize = libc::winsize {
             ws_row: rows,
             ws_col: cols,
@@ -237,111 +261,74 @@ impl PtyManager {
         };
         let ret = unsafe {
             libc::ioctl(
-                instance.master_fd,
+                self.master_fd,
                 libc::TIOCSWINSZ,
                 &winsize as *const libc::winsize,
             )
         };
         if ret < 0 {
-            Err(format!(
+            warn!(
+                tab_id = %self.tab_id,
                 "ioctl TIOCSWINSZ failed: {}",
                 std::io::Error::last_os_error()
-            ))
-        } else {
-            // Also resize the tmux window so its internal geometry matches
-            if let Some(ref session) = instance.tmux_session {
-                crate::tmux::resize_window(session, cols, rows);
-            }
-            Ok(())
+            );
         }
+        crate::tmux::resize_window(&self.tmux_session, cols, rows);
     }
 
-    /// Return a base64-encoded snapshot of the pty's output buffer.
-    pub fn reconnect_pty(&self, id: &str) -> Result<String, String> {
-        let instance = self.ptys.get(id).ok_or_else(|| format!("no PTY: {id}"))?;
-        let snapshot = instance
-            .output_buffer
-            .lock()
-            .map_err(|e| format!("buffer lock failed: {e}"))?
-            .snapshot();
-        Ok(base64::engine::general_purpose::STANDARD.encode(&snapshot))
-    }
-
-    /// Send SIGWINCH to the pty's process group, causing TUI apps to redraw.
-    pub fn sigwinch_pty(&self, id: &str) -> Result<(), String> {
-        let instance = self.ptys.get(id).ok_or_else(|| format!("no PTY: {id}"))?;
-        let pid = instance.child_pid as i32;
-        let ret = unsafe { libc::kill(-pid, libc::SIGWINCH) };
+    /// Send SIGWINCH to the child's process group so TUIs redraw.
+    pub fn sigwinch(&self) {
+        let ret = unsafe { libc::kill(-self.child_pid, libc::SIGWINCH) };
         if ret < 0 {
-            Err(format!(
+            warn!(
+                tab_id = %self.tab_id,
                 "kill SIGWINCH failed: {}",
                 std::io::Error::last_os_error()
-            ))
-        } else {
-            Ok(())
+            );
         }
     }
 
-    /// Close a PTY: close the master fd and kill the child process.
-    pub fn close_pty(&mut self, id: &str) -> Result<(), String> {
-        let instance = self
-            .ptys
-            .remove(id)
-            .ok_or_else(|| format!("no PTY: {id}"))?;
+    /// Explicitly tear down: unregister the fd, kill the tmux session, close
+    /// the master fd, and SIGHUP->SIGKILL the child process group. This is the
+    /// ONLY path that kills the tmux session (plain drop preserves it).
+    pub fn close(&self) {
+        debug!(tab_id = %self.tab_id, child_pid = self.child_pid, "closing PTY");
+        unregister_fd(&self.tab_id);
+        crate::tmux::kill_session(&self.tmux_session);
+        unsafe { libc::close(self.master_fd) };
 
-        debug!("closing PTY {id}: pid={}", instance.child_pid);
-
-        unsafe { libc::close(instance.master_fd) };
-
-        // Kill the tmux session
-        if let Some(ref session) = instance.tmux_session {
-            crate::tmux::kill_session(session);
-        }
-
-        // Send SIGHUP then SIGKILL to the process group
-        let pid = instance.child_pid as i32;
+        let pid = self.child_pid;
         unsafe {
             libc::kill(-pid, libc::SIGHUP);
         }
-
-        // Give it a moment, then force-kill if needed
-        let pid_owned = pid;
+        // Give it a moment, then force-kill + reap on a detached thread.
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(100));
             unsafe {
-                // Reap or force-kill
                 let mut status = 0;
-                let ret = libc::waitpid(pid_owned, &mut status, libc::WNOHANG);
+                let ret = libc::waitpid(pid, &mut status, libc::WNOHANG);
                 if ret == 0 {
-                    // Still alive
-                    libc::kill(-pid_owned, libc::SIGKILL);
-                    libc::waitpid(pid_owned, &mut status, 0);
+                    libc::kill(-pid, libc::SIGKILL);
+                    libc::waitpid(pid, &mut status, 0);
                 }
             }
         });
-
-        Ok(())
     }
 }
 
-impl Drop for PtyManager {
+impl Drop for PtyBackend {
     fn drop(&mut self) {
-        // Always preserve tmux sessions on drop. The terminal persists state
-        // to disk continuously, so sessions can always be restored. If a tab
-        // was explicitly closed by the user, close_pty already killed its
-        // tmux session. The only time Drop runs with live sessions is on
-        // shutdown or crash -- in both cases we want them to survive.
-        let ids: Vec<String> = self.ptys.keys().cloned().collect();
-        for id in ids {
-            if let Some(instance) = self.ptys.remove(&id) {
-                unsafe { libc::close(instance.master_fd) };
-                let pid = instance.child_pid as i32;
-                unsafe {
-                    libc::kill(pid, libc::SIGHUP);
-                    libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG);
-                }
-                debug!("preserving tmux session for PTY {id}, killed client pid={pid}");
-            }
+        // Preserve the tmux session (shutdown / crash path). Only close the
+        // master fd and SIGHUP the tmux *client* pid so the session survives
+        // for restore. An explicit `close()` already tore the session down and
+        // closed this fd; closing it twice is harmless (EBADF, ignored).
+        unregister_fd(&self.tab_id);
+        unsafe { libc::close(self.master_fd) };
+        let pid = self.child_pid;
+        unsafe {
+            libc::kill(pid, libc::SIGHUP);
+            libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG);
         }
+        debug!(tab_id = %self.tab_id, "PtyBackend dropped; tmux session preserved");
     }
 }

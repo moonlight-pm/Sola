@@ -22,6 +22,10 @@ mod tmux;
 
 const APP_ID: &str = "sola-terminal";
 
+/// Default grid until the renderer reports a real pane size (Task 2.6).
+const DEFAULT_COLS: u16 = 80;
+const DEFAULT_ROWS: u16 = 24;
+
 fn main() -> iced::Result {
     startup(APP_ID);
 
@@ -121,7 +125,8 @@ impl App {
     fn subscription(&self) -> Subscription<Msg> {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
-            emulator::output_subscription().map(|s| Msg::PtyOutput(s)),
+            emulator::output_subscription().map(Msg::PtyOutput),
+            emulator::exit_subscription().map(Msg::PtyExit),
             iced::event::listen().map(Msg::Input),
         ])
     }
@@ -129,7 +134,14 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(m) => self.on_bus(&m),
-            // All other arms are Phase 2+ stubs.
+            Msg::NewTab => self.new_tab(),
+            Msg::CloseTab(id) => self.close_tab(&id),
+            // Shell exited (reader hit EOF) — tear the tab down like a close.
+            Msg::PtyExit(id) => self.close_tab(&id),
+            // Task 2.5: the renderer reads `renderable_content` here. For now a
+            // redraw is implicit in iced, so just acknowledge.
+            Msg::PtyOutput(_id) => Task::none(),
+            // All remaining arms are Phase 2+ stubs.
             _ => Task::none(),
         }
     }
@@ -216,8 +228,144 @@ impl App {
         }
     }
 
-    /// Stub: Phase 2 will open/attach a PTY for this tab.
-    fn attach_tab(&mut self, _id: &str) -> Task<Msg> {
+    /// Open (or reattach) the PTY for `id`, seed tmux scrollback into the grid,
+    /// and start the reader thread.
+    ///
+    /// Default grid is 80×24 until the renderer reports a real pane size (Task
+    /// 2.6 wires resize). Scrollback authority (OPEN QUESTION #2): the
+    /// alacritty `Grid` is the live viewport + local history; tmux is the
+    /// persistence layer. The captured scrollback is a ONE-SHOT seed fed before
+    /// the reader thread starts, so reattach shows history without racing live
+    /// output. It is not re-synced afterward — the grid is authoritative once
+    /// live.
+    fn attach_tab(&mut self, id: &str) -> Task<Msg> {
+        let Some(meta) = self.tabs.get(id).cloned() else {
+            tracing::warn!(id = %id, "attach_tab: no TabMeta");
+            return Task::none();
+        };
+
+        let (cols, rows) = (DEFAULT_COLS, DEFAULT_ROWS);
+
+        let listener = emulator::Listener::new(
+            id.to_string(),
+            pty::pty_write_sender(),
+            emulator::notify_sender(),
+        );
+        let em = emulator::Emulator::new(cols, rows, listener);
+        let term = em.term();
+
+        // Seed tmux scrollback into the grid BEFORE the reader thread starts,
+        // so history shows on reattach without racing live output. Drive a
+        // one-shot Processor over the shared term handle.
+        match tmux::capture_scrollback(&meta.tmux_session) {
+            Ok(text) if !text.trim().is_empty() => {
+                // tmux capture-pane emits LF-only lines; normalise to CRLF so
+                // the parser starts each line at column 0.
+                let seed = text.replace('\n', "\r\n");
+                let mut processor: alacritty_terminal::vte::ansi::Processor<
+                    alacritty_terminal::vte::ansi::StdSyncHandler,
+                > = alacritty_terminal::vte::ansi::Processor::new();
+                let mut t = term.lock();
+                processor.advance(&mut *t, seed.as_bytes());
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(id = %id, "scrollback capture failed: {e}"),
+        }
+
+        let backend = match pty::PtyBackend::spawn_or_attach(
+            id,
+            &meta.tmux_session,
+            cols,
+            rows,
+            meta.cwd.as_deref(),
+            term,
+            emulator::notify_sender(),
+            emulator::exit_sender(),
+        ) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!(id = %id, "spawn_or_attach failed: {e}");
+                return Task::none();
+            }
+        };
+
+        self.tabs.insert_runtime(
+            id.to_string(),
+            state::TabRuntime { emulator: em, backend },
+        );
+        Task::none()
+    }
+
+    /// Mint a new tab: fresh uuid, tmux session named after it, cwd inherited
+    /// from the active tab, ordinal = max+1. Persist on the bus and attach.
+    fn new_tab(&mut self) -> Task<Msg> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let tmux_session = tmux::session_name(&id);
+
+        let active_cwd = self.active.as_deref().and_then(|a| self.tabs.cwd_of(a));
+        let cwd = state::inherit_cwd(active_cwd.as_deref());
+
+        let ordinals: Vec<u32> = self
+            .tabs
+            .ordered_meta()
+            .iter()
+            .map(|m| m.ordinal)
+            .collect();
+        let ordinal = state::next_ordinal(&ordinals);
+
+        self.tabs.upsert_meta(state::TabMeta {
+            id: id.clone(),
+            tmux_session: tmux_session.clone(),
+            cwd: cwd.clone(),
+            ordinal,
+        });
+        self.active = Some(id.clone());
+
+        // Persist on the bus (sticky TerminalSession slot keyed by id).
+        if let Ok(mut client) = bus().lock() {
+            let _ = client.emit(Topic::TerminalSession(sola_bus::topics::TerminalSession {
+                id: id.clone(),
+                tmux_session,
+                cwd,
+                ordinal,
+            }));
+        }
+
+        self.republish_menu();
+        self.attach_tab(&id)
+    }
+
+    /// Close a tab: tear down its PTY backend (kills the tmux session),
+    /// retract the persisted slot, drop the runtime, and pick a new active
+    /// tab. Reached from the close button, a menu action, and PtyExit.
+    fn close_tab(&mut self, id: &str) -> Task<Msg> {
+        // Explicit close kills tmux (plain drop would preserve it).
+        if let Some(rt) = self.tabs.runtime(id) {
+            rt.backend.close();
+        }
+
+        // Choose the next active tab from the order BEFORE removal.
+        if self.active.as_deref() == Some(id) {
+            let order = self.tabs.ids_in_order();
+            self.active = state::next_active_after_close(&order, id);
+        }
+
+        // Retract the persisted slot (sticky=false removes it from the store).
+        if let Some(meta) = self.tabs.get(id).cloned() {
+            if let Ok(mut client) = bus().lock() {
+                let _ = client.retract(Topic::TerminalSession(
+                    sola_bus::topics::TerminalSession {
+                        id: meta.id,
+                        tmux_session: meta.tmux_session,
+                        cwd: meta.cwd,
+                        ordinal: meta.ordinal,
+                    },
+                ));
+            }
+        }
+
+        self.tabs.remove(id);
+        self.republish_menu();
         Task::none()
     }
 

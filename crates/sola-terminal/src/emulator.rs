@@ -119,6 +119,68 @@ fn output_stream() -> impl Stream<Item = String> {
     iced_rx
 }
 
+// ── Process-wide exit-notify channel ──────────────────────────────────────────
+//
+// Mirrors the output-notify channel above. The per-tab reader thread sends the
+// tab-id here when the PTY hits EOF (shell exited). `exit_subscription()` feeds
+// those ids into iced as `Msg::PtyExit(tab_id)` so `App` can tear the tab down.
+
+static EXIT_TX: OnceLock<mpsc::Sender<String>> = OnceLock::new();
+static EXIT_RX: Mutex<Option<mpsc::Receiver<String>>> = Mutex::new(None);
+
+fn ensure_exit_channel() {
+    EXIT_TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<String>();
+        *EXIT_RX.lock().unwrap() = Some(rx);
+        tx
+    });
+}
+
+/// Returns a clone of the process-wide exit-notify sender. Reader threads send
+/// their tab-id here on EOF.
+pub fn exit_sender() -> mpsc::Sender<String> {
+    ensure_exit_channel();
+    EXIT_TX.get().unwrap().clone()
+}
+
+/// iced `Subscription` delivering tab-ids whose PTY reached EOF (shell exit).
+pub fn exit_subscription() -> Subscription<String> {
+    Subscription::run(exit_stream)
+}
+
+fn exit_stream() -> impl Stream<Item = String> {
+    ensure_exit_channel();
+    let rx_opt = EXIT_RX.lock().unwrap().take();
+    let (iced_tx, iced_rx) = iced::futures::channel::mpsc::unbounded::<String>();
+    match rx_opt {
+        Some(std_rx) => {
+            std::thread::spawn(move || {
+                loop {
+                    if iced_tx.is_closed() {
+                        break;
+                    }
+                    match std_rx.recv() {
+                        Ok(tab_id) => {
+                            if iced_tx.unbounded_send(tab_id).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+        None => {
+            tracing::warn!(
+                "exit_subscription called while receiver is already taken; \
+                 returning empty stream (one receiver per process)"
+            );
+            drop(iced_tx);
+        }
+    }
+    iced_rx
+}
+
 // ── Listener — EventListener impl ─────────────────────────────────────────────
 
 /// Per-tab `EventListener` wired into `Term<Listener>`.
@@ -210,6 +272,10 @@ impl Dimensions for TermDims {
 /// advances bytes by calling `emulator.advance(bytes)` or by holding its
 /// own `Arc` handle and calling `processor.advance` directly — either
 /// pattern is fine; only one thread should drive the `Processor`.
+///
+/// LIVE PATH NOTE: in the running app the reader thread (Task 2.4) holds its
+/// own thread-local `Processor` and drives `term()` directly, so this struct's
+/// `parser` field is exercised only by the headless `advance` unit test.
 pub struct Emulator {
     term: Arc<FairMutex<Term<Listener>>>,
     parser: Processor,
