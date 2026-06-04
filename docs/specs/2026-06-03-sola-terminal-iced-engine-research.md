@@ -113,3 +113,213 @@ Two-phase, ship the simple thing first:
 - **No candidate has a tested iced 0.14 + wgpu + wayland + NVIDIA terminal example.** The path is "ordinary wgpu, should work" plus strong adjacent proof (iced_term on iced 0.14; cosmic-term on glyphon/wgpu) — but the specific NVIDIA-wayland-scrolling-perf result is unproven and is the #1 spike item.
 - **alacritty_terminal's "no stable embedder API"** is an *inference* (lockstep releases, CHANGELOG breaks, iced_term pinning an exact version), not a documented upstream policy — but the practical conclusion (pin exactly, budget churn) holds regardless.
 - **Two-emulators concern** (tmux + our emulator) is not a regression — it's exactly what xterm.js does today — but the scrollback-authority decision must be made deliberately, not by default.
+
+---
+
+## Spike result
+
+Phase 2.1 throwaway render prototype:
+`crates/sola-terminal/examples/spike_render.rs`. Proves the real
+alacritty_terminal 0.26 API and that an iced `canvas` can render a live
+terminal grid fed by a raw `bash` PTY (no tmux). **Self-contained** — it
+does not touch any Phase 1 module. The only non-example change is adding
+`"canvas"` to the iced features in `crates/sola-terminal/Cargo.toml`. We
+did **not** add a separate `vte` dependency: alacritty_terminal 0.26
+re-exports it (`pub use vte;`), so the spike uses
+`alacritty_terminal::vte::ansi::Processor` directly.
+
+### How to run (USER, on the RTX 3090 Ti, inside a running sola session)
+
+```bash
+# 1. Build (no install — this is an example binary, never goes to /opt).
+cargo build -p sola-terminal --example spike_render
+
+# 2. Launch it as a wayland client of your running sola session. It calls
+#    sola_kit::app::startup() (with SOLA_NO_SELF_WATCH=1 set internally),
+#    which activates the wayland session + NixOS GPU dispatch env so wgpu
+#    /EGL come up from the TTY. Frame timing prints to stderr, so tee it:
+target/debug/examples/spike_render 2>&1 | tee /opt/sola/log/spike.log
+
+#    (A release build will render faster and is the fairer benchmark:
+#     cargo build --release -p sola-terminal --example spike_render
+#     target/release/examples/spike_render 2>&1 | tee /opt/sola/log/spike.log )
+```
+
+A 80x24 terminal window opens running bash. Type to use the shell. Each
+canvas draw logs a line like:
+
+```
+[spike] frame build  3.41ms  ema  3.55ms  (~281.7 fps)
+```
+
+`frame build` is the CPU time to build the canvas geometry (the part we
+control). The EMA smooths it. Note this is **geometry-build** time, not
+end-to-end present time — the GPU present/vsync cost is on top, but the
+build time is the figure that tells us whether the naive per-cell
+`fill_text` path is viable or whether we need batched glyph rendering.
+
+### Torture commands to type (worst-case full-screen churn)
+
+```bash
+yes | head -c 5000000          # firehose of newlines — max scroll rate
+find /                          # long, fast, wraps + scrolls continuously
+cat /var/log/*.log 2>/dev/null  # or: cat a big file — large redraw bursts
+seq 1 1000000                   # numeric scroll, tests glyph throughput
+```
+
+Read the worst sustained `ema` (and the peak single-frame `frame build`)
+during full-screen scroll.
+
+**Measured FPS/frame-time: ____**
+
+### DECISION GATE criteria (verbatim)
+
+- **≲16ms full-screen scroll → ship canvas.** The naive
+  `frame.fill_text` per-cell canvas renderer is fast enough; proceed with
+  Tasks 2.5/2.6 as written in the port plan.
+- **Otherwise (>16ms) → add a glyphon / instanced-quad renderer task
+  before shipping.** Insert a dedicated batched-glyph rendering task
+  ahead of 2.5/2.6; the per-cell canvas path does not meet the frame
+  budget and would regress vs. the xterm.js baseline under load.
+
+### Caveats the spike does NOT measure / cuts
+
+- No resize reflow (fixed 80x24 grid); no scrollback viewport; no
+  selection/clipboard; minimal input encoding (enough to type commands).
+- It leaks PTY fds on exit and never reaps bash — fine for a throwaway.
+- `frame.fill_text` warns in iced that canvas text renders on top of all
+  layers; acceptable here because the whole grid is one canvas. A real
+  port that layers a cursor *under* text, or mixes widgets, must account
+  for this — another reason the glyphon path may win regardless of FPS.
+
+## alacritty_terminal 0.26 API notes
+
+Ground-truth, read from
+`~/.cargo/registry/src/*/alacritty_terminal-0.26.0/src/` and the
+re-exported `vte-0.15.0`. **The plan's snippets were written against
+iced_term's 0.25.1 pin — these are the real 0.26 names.**
+
+### Crate layout / paths
+
+- `alacritty_terminal::Term` (re-export of `term::Term`).
+- `alacritty_terminal::sync::FairMutex<T>` — backed by `parking_lot`, so
+  `.lock()` returns a `MutexGuard` **directly (no `Result`)**, unlike
+  `std::sync::Mutex`. Also `lock_unfair`, `try_lock_unfair`, `lease`.
+- `alacritty_terminal::vte` is **re-exported** (`pub use vte;` in
+  `lib.rs`). Use `alacritty_terminal::vte::ansi::{Processor, Handler,
+  Color, NamedColor, Rgb, ...}`. **Do not add a separate `vte` dep.**
+- `alacritty_terminal::grid::Dimensions` — the trait `Term::new` wants.
+- `alacritty_terminal::index::{Point, Line(i32), Column(usize)}`.
+- `alacritty_terminal::term::cell::{Cell, Flags}`.
+- `alacritty_terminal::term::color::Colors` (the palette type).
+- `alacritty_terminal::event::{Event, EventListener, WindowSize}`.
+
+### `Term::new` and dimensions
+
+```rust
+pub fn new<D: Dimensions>(config: Config, dimensions: &D, event_proxy: T) -> Term<T>
+```
+
+- `config` is `alacritty_terminal::term::Config` (NOT a `term::Config`
+  from a `config` module). `Config::default()` works:
+  `scrolling_history: 10000`, `default_cursor_style`,
+  `vi_mode_cursor_style`, `semantic_escape_chars`, `kitty_keyboard`,
+  `osc52: Osc52::OnlyCopy`.
+- `dimensions: &D` where `D: Dimensions`. The `Dimensions` trait
+  (`grid/mod.rs`) requires only three methods: `total_lines()`,
+  `screen_lines()`, `columns()` (the rest — `last_column`,
+  `topmost_line`, `history_size`, etc. — are provided). A ready-made
+  `TermSize { columns, screen_lines }` exists at
+  `alacritty_terminal::term::test::TermSize` (`pub mod test`, **not**
+  `#[cfg(test)]`-gated, but named a test helper) — the spike defines its
+  own tiny struct instead to avoid leaning on a test helper.
+- `event_proxy: T` where `T: EventListener` — see below. `Term<T>` is
+  generic over the listener type.
+- `Term::resize<S: Dimensions>(&mut self, size: S)` for reflow (takes the
+  size **by value**, not `&`).
+
+### `EventListener` + `Event`
+
+```rust
+pub trait EventListener {
+    fn send_event(&self, _event: Event) {}   // &self, default no-op
+}
+```
+
+`Event` variants (in `event.rs`): `MouseCursorDirty`, `Title(String)`,
+`ResetTitle`, `ClipboardStore(ClipboardType, String)`,
+`ClipboardLoad(ClipboardType, Arc<dyn Fn(&str)->String + Send+Sync>)`,
+`ColorRequest(usize, Arc<dyn Fn(Rgb)->String + ...>)`,
+**`PtyWrite(String)`** (terminal replies that must be written back to the
+PTY master — DSR / cursor-position queries; the spike forwards these),
+`TextAreaSizeRequest(...)`, `CursorBlinkingChange`, **`Wakeup`** (new
+content available — but note the spike drives redraw off its own reader
+thread, not this), **`Bell`**, `Exit`, `ChildExit(ExitStatus)`.
+
+`alacritty_terminal::event::VoidListener` is a built-in no-op listener if
+you don't need PtyWrite. `WindowSize { num_lines, num_cols, cell_width,
+cell_height }` is the resize payload (all `u16`).
+
+### vte coupling — `Processor` ↔ `Term` is the `Handler` trait
+
+`Term<T: EventListener>` **implements `vte::ansi::Handler`** (term/mod.rs
+`impl<T: EventListener> Handler for Term<T>`). Feed bytes via:
+
+```rust
+let mut processor = alacritty_terminal::vte::ansi::Processor::new(); // Processor<StdSyncHandler> by default
+processor.advance(&mut term, &bytes);   // advance<H: Handler>(&mut self, handler: &mut H, bytes: &[u8])
+```
+
+`Processor` has a default `Timeout` type param (`StdSyncHandler` under
+the `std` feature) so plain `Processor::new()` / `let p: Processor`
+works. One `Processor` per PTY, kept on the reader thread; lock the
+`FairMutex<Term>` around each `advance` call.
+
+### Rendering — `renderable_content()` and cell iteration
+
+```rust
+let content: RenderableContent = term.renderable_content(); // requires T: EventListener
+```
+
+`RenderableContent<'a>` fields (term/mod.rs, all `pub`):
+- `display_iter: GridIterator<'a, Cell>` — the visible cells.
+- `selection: Option<SelectionRange>`
+- `cursor: RenderableCursor` — `{ pub shape: CursorShape, pub point: Point }`.
+- `display_offset: usize`
+- `colors: &'a Colors`
+- `mode: TermMode`
+
+`GridIterator` yields **`Indexed<&Cell>`** (`grid/mod.rs`):
+`Indexed { pub point: Point, pub cell: &Cell }` (also `Deref`s to the
+cell). So per cell: `indexed.point` (a `Point { line: Line(i32),
+column: Column(usize) }`) and `indexed.cell` (`&Cell`). For visible
+content the `line.0` values are `>= 0`; scrollback would be negative.
+
+`Cell` fields (`term/cell.rs`): `pub c: char`, `pub fg: Color`,
+`pub bg: Color`, `pub flags: Flags`. `Flags` (bitflags, `u16`) includes
+`INVERSE`, `BOLD`, `ITALIC`, `UNDERLINE`, `WRAPLINE`, `WIDE_CHAR`,
+`WIDE_CHAR_SPACER` (skip when rendering — it's the trailing half of a
+wide glyph), `DIM`, `HIDDEN`, `STRIKEOUT`, the underline variants, etc.
+
+### Colour resolution — the gotcha
+
+`Cell.fg` / `Cell.bg` are `vte::ansi::Color`:
+
+```rust
+pub enum Color { Named(NamedColor), Spec(Rgb), Indexed(u8) }
+```
+
+`Rgb { r: u8, g: u8, b: u8 }`. `NamedColor` is a C-style enum: 0..=15 are
+the ANSI base colours, then `Foreground = 256`, `Background`, `Cursor`,
+the `Dim*` and `Bright*` variants.
+
+**Critical:** `RenderableContent.colors` is `&Colors`, where
+`Colors([Option<Rgb>; 269])` — and **by default every entry is `None`**
+(alacritty ships *no* palette; the embedder is expected to populate it,
+typically from a theme). `Colors` is indexable by both `usize` and
+`NamedColor`, returning `Option<Rgb>`. So a renderer **must** supply its
+own fallback palette for `Named`/`Indexed` colours (the spike carries a
+built-in 16-colour + 256-cube table) and its own default fg/bg for
+`NamedColor::Foreground` / `Background`. This is the single biggest
+"don't trust the grid to hand you RGB" surprise — Phase 2 Task 2.5 must
+populate `term.colors` from the sola theme (or carry a fallback table).
