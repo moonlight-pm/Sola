@@ -74,10 +74,15 @@ pub fn cols_rows_for(size: iced::Size, metrics: CellMetrics) -> (u16, u16) {
 ///
 /// `renderable_content().colors` is `&Colors([Option<Rgb>; …])` and every
 /// entry is `None` by default — alacritty ships NO palette, so this struct is
-/// the source of truth for colour resolution. Hardcoded to a dark theme for
-/// now; Task 4.4 will populate it from `App::theme` (the bus theme).
-//
-// Task 4.4: drive Palette from bus theme.
+/// the source of truth for colour resolution.
+///
+/// [`Palette::default`] is the built-in dark theme, used as the FALLBACK before
+/// any bus theme arrives. [`Palette::from_kit_theme`] (Task 4.4) derives the
+/// live palette from the kit/bus theme so the terminal matches the rest of
+/// Sola and updates on `Topic::Theme`. Only the 16-entry ANSI table plus the
+/// `fg`/`bg`/`cursor`/`selection` defaults are themed — truecolor
+/// (`Color::Spec`) and `Color::Indexed` cells still resolve literally in
+/// [`Palette::resolve`].
 #[derive(Debug, Clone)]
 pub struct Palette {
     /// Default foreground (NamedColor::Foreground / unset fg).
@@ -122,6 +127,85 @@ impl Default for Palette {
 }
 
 impl Palette {
+    /// Derive the terminal palette from the kit's theme [`Atoms`] (the bus
+    /// theme's colour tokens, read via `sola_kit::theme::atoms_from_bus_theme`).
+    ///
+    /// We source from `Atoms` rather than the resulting `iced::Theme`'s
+    /// `extended_palette()` because `Atoms` carries every semantic token we
+    /// need directly — `warning` (which iced's reduced `Extended` palette does
+    /// not surface as a distinct slot), `accent`, all four background tiers
+    /// (`bg`/`bg_raised`/`bg_hover`/`border`), `fg`, and `fg_muted` — with no
+    /// lossy derivation. It is also a pure value, so the mapping is trivially
+    /// unit-testable.
+    ///
+    /// ## Mapping
+    ///
+    /// | terminal slot      | kit atom                                  |
+    /// | ------------------ | ----------------------------------------- |
+    /// | default bg         | `bg` (bg-primary)                         |
+    /// | default fg         | `fg` (text-primary)                       |
+    /// | cursor             | `accent`                                  |
+    /// | selection bg       | `accent` @ 35% alpha (muted accent wash)  |
+    ///
+    /// ### ANSI table (0..=7 normal, 8..=15 bright)
+    ///
+    /// | idx | name           | source                                   |
+    /// | --- | -------------- | ---------------------------------------- |
+    /// | 0   | black          | `bg_hover` (darkest visible bg tier)     |
+    /// | 1   | red            | `danger`                                 |
+    /// | 2   | green          | `success`                                |
+    /// | 3   | yellow         | `warning`                                |
+    /// | 4   | blue           | `accent`                                 |
+    /// | 5   | magenta        | standard `#aa33aa` (no kit atom)         |
+    /// | 6   | cyan           | standard `#33aaaa` (no kit atom)         |
+    /// | 7   | white          | `fg_muted` (muted light grey)            |
+    /// | 8   | bright black   | mix(`bg_hover`, `fg_muted`) — a grey     |
+    /// | 9   | bright red     | lighten(`danger`)                        |
+    /// | 10  | bright green   | lighten(`success`)                       |
+    /// | 11  | bright yellow  | lighten(`warning`)                       |
+    /// | 12  | bright blue    | lighten(`accent`)                        |
+    /// | 13  | bright magenta | lighten standard magenta                 |
+    /// | 14  | bright cyan    | lighten standard cyan                    |
+    /// | 15  | bright white   | `fg` (full foreground)                   |
+    ///
+    /// The four semantic ANSI slots (red/green/yellow/blue) are kept true to
+    /// their meaning so `ls --color`, `git`, and `btop` read correctly; the two
+    /// hueless kit-less slots (magenta/cyan) keep tasteful standard values. Each
+    /// bright variant is a lightened version of its normal counterpart, so the
+    /// bright row is always visibly brighter.
+    pub fn from_kit_theme(atoms: &sola_kit::theme::Atoms) -> Self {
+        // Standard magenta/cyan — the kit has no atom for these hues, so we
+        // keep recognisable values rather than inventing a tint.
+        let magenta = rgb(0xaa, 0x33, 0xaa);
+        let cyan = rgb(0x33, 0xaa, 0xaa);
+        Self {
+            bg: atoms.bg,
+            fg: atoms.fg,
+            cursor: atoms.accent,
+            // A muted accent wash, legible over any bg (alpha-blended), instead
+            // of a flat fill that could clash with a light theme.
+            selection: with_alpha(atoms.accent, 0.35),
+            ansi: [
+                atoms.bg_hover,        // 0  black
+                atoms.danger,          // 1  red
+                atoms.success,         // 2  green
+                atoms.warning,         // 3  yellow
+                atoms.accent,          // 4  blue
+                magenta,               // 5  magenta
+                cyan,                  // 6  cyan
+                atoms.fg_muted,        // 7  white
+                mix(atoms.bg_hover, atoms.fg_muted, 0.5), // 8  bright black
+                lighten(atoms.danger),  // 9  bright red
+                lighten(atoms.success), // 10 bright green
+                lighten(atoms.warning), // 11 bright yellow
+                lighten(atoms.accent),  // 12 bright blue
+                lighten(magenta),       // 13 bright magenta
+                lighten(cyan),          // 14 bright cyan
+                atoms.fg,               // 15 bright white
+            ],
+        }
+    }
+
     /// Resolve an alacritty cell colour to an iced `Color`.
     ///
     /// `colors` is the live (mostly-`None`) embedder palette from
@@ -199,6 +283,33 @@ fn rgb(r: u8, g: u8, b: u8) -> Color {
 
 fn rgb_to_iced(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.r, rgb.g, rgb.b)
+}
+
+/// Return `c` with its alpha channel replaced. Used for the selection wash so
+/// the highlight blends over whatever sits beneath it (works on light and dark
+/// themes alike) rather than a flat opaque fill.
+fn with_alpha(c: Color, a: f32) -> Color {
+    Color { a, ..c }
+}
+
+/// Linear blend of two colours: `t=0` → `a`, `t=1` → `b`. Alpha follows the
+/// same interpolation. Kept channel-space (not gamma-correct) — good enough for
+/// deriving a tasteful in-between grey for ANSI "bright black".
+fn mix(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    let lerp = |x: f32, y: f32| x + (y - x) * t;
+    Color {
+        r: lerp(a.r, b.r),
+        g: lerp(a.g, b.g),
+        b: lerp(a.b, b.b),
+        a: lerp(a.a, b.a),
+    }
+}
+
+/// Lighten a colour toward white by ~45%, giving each "bright" ANSI variant a
+/// visibly brighter version of its normal counterpart while preserving hue.
+fn lighten(c: Color) -> Color {
+    mix(c, Color::WHITE, 0.45)
 }
 
 /// Dim a colour for the `DIM` flag (alacritty's faint attribute) — scale
@@ -356,6 +467,12 @@ impl<Message> canvas::Program<Message> for TermView<'_> {
                 // yet, so bold/italic fall back to mono — only the synthetic
                 // weight/style on the Font struct distinguishes them. (NOTE:
                 // a dedicated bold/italic mono face is a follow-up.)
+                // `glyph_font()` reads `fonts::mono()`, which the bus theme
+                // hot-swaps via `apply_theme_update` — so the font FAMILY
+                // already updates live on `Topic::Theme`. The cell SIZE does
+                // not: `metrics` is fixed (cell_w:9, cell_h:18, font_size:14).
+                // Task: derive CellMetrics from the themed font size (and the
+                // real font metrics) so a font-size change reflows the grid.
                 let font = glyph_font(flags);
 
                 let (x, y) = self.cell_xy(point.line.0, point.column.0);
@@ -531,5 +648,80 @@ mod tests {
         let (cols, rows) = cols_rows_for(iced::Size::new(200.0, 1.0), m);
         assert!(cols >= 2, "expected multiple cols, got {cols}");
         assert_eq!(rows, 1);
+    }
+
+    // Task 4.4 — the kit-theme mapping. Build the palette from a hand-built
+    // Atoms with distinct, recognisable channel values and assert each slot
+    // lands where the mapping promises.
+    fn sample_atoms() -> sola_kit::theme::Atoms {
+        use sola_kit::theme::parse;
+        sola_kit::theme::Atoms {
+            bg: parse("#0d1117"),
+            bg_raised: parse("#161b22"),
+            bg_hover: parse("#1a2030"),
+            border: parse("#2d333b"),
+            fg: parse("#e6edf3"),
+            fg_muted: parse("#6e7681"),
+            accent: parse("#00d4ff"),
+            success: parse("#3fb950"),
+            warning: parse("#d29922"),
+            danger: parse("#f85149"),
+        }
+    }
+
+    #[test]
+    fn from_kit_theme_maps_defaults_and_semantic_ansi() {
+        let a = sample_atoms();
+        let p = Palette::from_kit_theme(&a);
+
+        // Defaults.
+        assert_eq!(p.bg, a.bg, "default bg ← bg-primary");
+        assert_eq!(p.fg, a.fg, "default fg ← text-primary");
+        assert_eq!(p.cursor, a.accent, "cursor ← accent");
+        // Selection is the accent wash at 35% alpha.
+        assert_eq!(p.selection.r, a.accent.r);
+        assert_eq!(p.selection.g, a.accent.g);
+        assert_eq!(p.selection.b, a.accent.b);
+        assert!((p.selection.a - 0.35).abs() < 1e-6, "selection ← accent @ 0.35");
+
+        // Semantic ANSI slots map to the matching kit atoms.
+        assert_eq!(p.ansi[1], a.danger, "ansi[1] red ← danger");
+        assert_eq!(p.ansi[2], a.success, "ansi[2] green ← success");
+        assert_eq!(p.ansi[3], a.warning, "ansi[3] yellow ← warning");
+        assert_eq!(p.ansi[4], a.accent, "ansi[4] blue ← accent");
+        assert_eq!(p.ansi[7], a.fg_muted, "ansi[7] white ← fg_muted");
+        assert_eq!(p.ansi[15], a.fg, "ansi[15] bright white ← fg");
+    }
+
+    #[test]
+    fn from_kit_theme_brights_are_brighter() {
+        let a = sample_atoms();
+        let p = Palette::from_kit_theme(&a);
+        // Each bright variant (8..=14, paired with 0..=6) must be at least as
+        // light as its normal counterpart in every channel, and strictly
+        // brighter overall — `lighten`/`mix` move toward white.
+        for (normal, bright) in [(1usize, 9usize), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14)] {
+            let n = p.ansi[normal];
+            let b = p.ansi[bright];
+            let lum = |c: Color| c.r + c.g + c.b;
+            assert!(
+                lum(b) > lum(n),
+                "bright slot {bright} not brighter than normal slot {normal}"
+            );
+        }
+    }
+
+    // The fallback dark theme must still read sensibly: red is red-dominant,
+    // green is green-dominant, blue is blue-dominant. Guards against a future
+    // edit that breaks the pre-theme palette.
+    #[test]
+    fn default_palette_primaries_have_correct_hue() {
+        let p = Palette::default();
+        let red = p.ansi[1];
+        assert!(red.r > red.g && red.r > red.b, "ansi[1] should be red-dominant");
+        let green = p.ansi[2];
+        assert!(green.g > green.r && green.g > green.b, "ansi[2] should be green-dominant");
+        let blue = p.ansi[4];
+        assert!(blue.b > blue.r && blue.b > blue.g, "ansi[4] should be blue-dominant");
     }
 }

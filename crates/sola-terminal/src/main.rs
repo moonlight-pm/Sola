@@ -9,7 +9,7 @@ use sola_bus::topics::{TerminalConfig, Topic, TopicKind};
 use sola_bus::Message;
 use sola_kit::app::{BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup, window_settings};
 use sola_kit::fonts;
-use sola_kit::theme::default_theme;
+use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 
 mod emulator;
 mod input;
@@ -247,7 +247,11 @@ impl App {
             theme: default_theme(),
             sidebar: sidebar::SidebarState::default(), // reorder_cursor_y defaults to 0.0
             term_cache: canvas::Cache::default(),
-            palette: term_view::Palette::default(),
+            // Start themed from the kit's default atoms (the same atoms
+            // `default_theme()` is built from), not the hardcoded fallback, so
+            // the grid matches the rest of Sola before the first bus theme
+            // arrives. `Palette::default()` remains the pre-theme fallback.
+            palette: term_view::Palette::from_kit_theme(&Atoms::default()),
             window_size: iced::Size::new(800.0, 480.0),
             metrics: term_view::CellMetrics::default(),
             grid: (DEFAULT_COLS, DEFAULT_ROWS),
@@ -682,8 +686,20 @@ impl App {
     }
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
-        // 1. Live theme reload.
+        // 1. Live theme reload. `apply_theme_update` rebuilds the iced widget
+        //    theme (`self.theme`) and installs the font role table. We also
+        //    drive the terminal grid's colours (`self.palette`) from the SAME
+        //    bus theme, so chrome and grid update together from one message.
+        //    Parse the topic ourselves to read the bus `Theme` for the palette;
+        //    `apply_theme_update` handles the iced-side rebuild. Both consume
+        //    only `Topic::Theme`, so there is no double-handling.
         if apply_theme_update(m, &mut self.theme) {
+            if let Some(Topic::Theme(bus)) = Topic::parse(m) {
+                self.palette =
+                    term_view::Palette::from_kit_theme(&atoms_from_bus_theme(&bus));
+                // Re-render the grid with the new colours.
+                self.term_cache.clear();
+            }
             return Task::none();
         }
 
