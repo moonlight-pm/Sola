@@ -374,14 +374,19 @@ fn collapsed_content<'a, Message: 'a>(number: u8) -> Element<'a, Message> {
         .into()
 }
 
-/// Dim trailing text (secondary label / shortcut hint).
 fn dim_label<'a, Message: 'a>(s: &str) -> Element<'a, Message> {
     text(s.to_string())
         .font(fonts::ui())
         .size(12)
         .style(|theme: &Theme| {
             let p = theme.extended_palette();
-            iced::widget::text::Style { color: Some(p.secondary.base.text) }
+            // Dim = the base foreground at reduced alpha, so the hint reads as
+            // a muted accent to the label regardless of theme (secondary.base.text
+            // is not reliably dim — it renders ~white in the active theme).
+            let c = p.background.base.text;
+            iced::widget::text::Style {
+                color: Some(iced::Color { a: 0.45, ..c }),
+            }
         })
         .into()
 }

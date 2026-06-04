@@ -230,12 +230,18 @@ impl Default for FontMetrics {
 
 /// Real metrics of whatever font [`mono`] currently resolves to.
 ///
-/// Resolves the current mono family name, finds the matching shipped font
-/// file (by the face's embedded family name), and reads its advance/line box
-/// off the TTF tables. Falls back to [`FontMetrics::default`] (JetBrains Mono's
-/// ratios) when the family can't be matched or the face can't be parsed, so a
-/// consumer always gets a usable cell box. Called rarely (startup + on font
-/// change), so re-parsing the file on each call is fine.
+/// Resolves the current mono family name, then measures it off the **same**
+/// font database iced renders from (`iced_graphics::text::font_system()`'s
+/// `fontdb::Database`). That db holds both the shipped fonts (registered via
+/// the iced builder's `.font(bytes)`) and the system fonts (loaded by
+/// [`ensure_system_fonts`]), so any family iced can actually render — including
+/// `.ttc` collections like `Iosevka Term Slab` — gets correct metrics here.
+///
+/// Falls back to a direct scan of the shipped [`FONT_FILES`] on disk (so the
+/// deterministic JetBrains-Mono path holds even before iced has populated its
+/// db), then to [`FontMetrics::default`] (JetBrains Mono's ratios) when the
+/// family can't be measured at all. Called rarely (startup + on font change),
+/// so the db query + parse on each call is fine.
 pub fn mono_metrics() -> FontMetrics {
     let font = mono();
     let family = match font.family {
@@ -247,6 +253,14 @@ pub fn mono_metrics() -> FontMetrics {
     };
     let want = family.trim();
 
+    // 1. Measure off iced's shared font db (covers shipped + system, incl. .ttc).
+    if let Some(m) = mono_metrics_from_db(want) {
+        return m;
+    }
+
+    // 2. Fallback: scan the shipped TTFs on disk. Keeps the deterministic
+    //    JetBrains-Mono path working in environments where iced hasn't
+    //    populated its db yet (e.g. headless unit tests).
     for relative in FONT_FILES {
         let path = format!("{FONT_DIR}/{relative}");
         let bytes = match std::fs::read(&path) {
@@ -265,8 +279,48 @@ pub fn mono_metrics() -> FontMetrics {
         }
     }
 
-    tracing::warn!(family = %want, "no shipped font file matched the mono family; using default metrics");
+    tracing::warn!(
+        family = %want,
+        "mono family not found in iced font db or shipped fonts; using default metrics"
+    );
     FontMetrics::default()
+}
+
+/// Query iced's shared font db for `want` and read its metrics off the matched
+/// face. Returns `None` if the family isn't in the db, the lock is poisoned, or
+/// the face can't be parsed. Handles `.ttc` collections by passing the face's
+/// `face_index` to the parser.
+fn mono_metrics_from_db(want: &str) -> Option<FontMetrics> {
+    // The db must be populated before we read it; `ensure_system_fonts` is
+    // idempotent, so calling it here is cheap on repeat.
+    ensure_system_fonts();
+
+    // cosmic-text 0.15 only exposes `db_mut()` (no `&Database` accessor), and
+    // `FontSystem::raw()` takes `&mut self`, so we need the write lock even
+    // though we only read.
+    let mut fs = match iced_graphics::text::font_system().write() {
+        Ok(fs) => fs,
+        Err(err) => {
+            tracing::warn!("iced font system lock poisoned, can't measure mono: {err}");
+            return None;
+        }
+    };
+    let db = fs.raw().db_mut();
+
+    let query = fontdb::Query {
+        families: &[fontdb::Family::Name(want)],
+        weight: fontdb::Weight::NORMAL,
+        stretch: fontdb::Stretch::Normal,
+        style: fontdb::Style::Normal,
+    };
+    let id = db.query(&query)?;
+
+    db.with_face_data(id, |data, face_index| {
+        ttf_parser::Face::parse(data, face_index)
+            .ok()
+            .and_then(|f| metrics_from_face(&f))
+    })
+    .flatten()
 }
 
 /// True when `face`'s embedded family name (English `Family` id 1 or
