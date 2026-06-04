@@ -27,7 +27,7 @@ pub fn tab_label(cwd: &Option<String>) -> String {
 }
 
 pub fn view<'a>(
-    _state: &SidebarState,
+    state: &'a SidebarState,
     tabs: &'a Tabs,
     active: Option<&str>,
     config: &TerminalConfig,
@@ -38,8 +38,18 @@ pub fn view<'a>(
         config.sidebar_width as f32
     };
 
+    // Collapse/expand toggle button at the top.
+    let toggle_label = if config.sidebar_collapsed { "»" } else { "«" };
+    let toggle_btn = button(text(toggle_label))
+        .on_press(Msg::ToggleCollapse)
+        .style(|theme: &Theme, status| tab_button_style(theme, status, false))
+        .width(Length::Fill)
+        .into();
+
+    let mut col_items: Vec<Element<'a, Msg>> = vec![toggle_btn];
+
     let ordered = tabs.ordered_meta();
-    let mut col_items: Vec<Element<'a, Msg>> = ordered
+    let tab_items: Vec<Element<'a, Msg>> = ordered
         .iter()
         .enumerate()
         .map(|(i, meta)| {
@@ -57,6 +67,7 @@ pub fn view<'a>(
                 .into()
         })
         .collect();
+    col_items.extend(tab_items);
 
     // "+ New Tab" button (hidden when collapsed to save space)
     if !config.sidebar_collapsed {
@@ -68,6 +79,8 @@ pub fn view<'a>(
                 .into(),
         );
     }
+
+    let _ = state; // drag state is held on App; sidebar just renders
 
     container(scrollable(column(col_items)))
         .width(Length::Fixed(width))
@@ -95,6 +108,27 @@ pub fn tab_button_style(
     }
 }
 
+/// Minimum sidebar width in logical pixels (drag clamp).
+pub const SIDEBAR_W_MIN: f32 = 80.0;
+/// Maximum sidebar width in logical pixels (drag clamp).
+pub const SIDEBAR_W_MAX: f32 = 250.0;
+
+/// Compute the new sidebar width from a drag gesture.
+///
+/// The sidebar grows as the cursor moves left (toward the sidebar) and shrinks
+/// as it moves right. Uses an anchor-relative formula so there is no drift when
+/// the cursor re-enters the clamped range after having exceeded it:
+///
+///   `new_width = anchor_width + (anchor_x - cursor_x)`
+///
+/// Result is clamped to `[SIDEBAR_W_MIN, SIDEBAR_W_MAX]`.
+///
+/// This is a pure function so it can be unit-tested without an iced runtime.
+pub fn dragged_width(anchor_x: f32, anchor_w: f32, cursor_x: f32) -> f32 {
+    let desired = anchor_w + (anchor_x - cursor_x);
+    desired.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +138,42 @@ mod tests {
         assert_eq!(tab_label(&Some("/home/joshua/Workspace".into())), "Workspace");
         assert_eq!(tab_label(&Some("/".into())), "/");
         assert_eq!(tab_label(&None), "shell");
+    }
+
+    // --- dragged_width ---
+
+    #[test]
+    fn dragged_width_widens_on_left_drag() {
+        // Anchor at x=200, width=120. Cursor moves left to x=150 → delta=-50 → new=170.
+        let w = dragged_width(200.0, 120.0, 150.0);
+        assert_eq!(w, 170.0);
+    }
+
+    #[test]
+    fn dragged_width_narrows_on_right_drag() {
+        // Anchor at x=200, width=160. Cursor moves right to x=240 → delta=+40 → new=120.
+        let w = dragged_width(200.0, 160.0, 240.0);
+        assert_eq!(w, 120.0);
+    }
+
+    #[test]
+    fn dragged_width_clamps_min() {
+        // A very far right drag would give negative width — clamp to MIN.
+        let w = dragged_width(200.0, 100.0, 600.0);
+        assert_eq!(w, SIDEBAR_W_MIN);
+    }
+
+    #[test]
+    fn dragged_width_clamps_max() {
+        // A very far left drag would exceed 250 — clamp to MAX.
+        let w = dragged_width(200.0, 200.0, 0.0);
+        assert_eq!(w, SIDEBAR_W_MAX);
+    }
+
+    #[test]
+    fn dragged_width_no_movement() {
+        // Cursor stays at anchor — width unchanged (clamped to valid range).
+        let w = dragged_width(200.0, 160.0, 200.0);
+        assert_eq!(w, 160.0);
     }
 }

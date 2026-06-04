@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use iced::widget::{canvas, container, row, text};
-use iced::{Element, Length, Subscription, Task, Theme};
-use iced::keyboard;
+use iced::widget::{Space, canvas, container, mouse_area, row, stack, text};
+use iced::{Element, Event, Length, Subscription, Task, Theme};
+use iced::{event, keyboard, mouse};
 
 use sola_bus::topics::{TerminalConfig, Topic, TopicKind};
 use sola_bus::Message;
@@ -272,6 +272,20 @@ impl App {
             // Task 2.6: drive Msg::Resized whenever the window changes size.
             // iced 0.14 API: `resize_events() -> Subscription<(Id, Size)>`.
             iced::window::resize_events().map(|(_id, size)| Msg::Resized(size)),
+            // Sidebar drag: always-on global cursor + release listener so the
+            // divider tracks the cursor even when it races ahead of the widget
+            // hit-test area (the cursor leaves the thin divider between frames).
+            // Cost is a no-op match per cursor sample when not dragging — same
+            // pattern as sola-monitor's DividerPress / CursorMoved / CursorReleased.
+            event::listen_with(|ev, _, _| match ev {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Msg::SidebarDragMove(position.x))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::SidebarDragEnd)
+                }
+                _ => None,
+            }),
         ])
     }
 
@@ -293,6 +307,57 @@ impl App {
             }
             Msg::Input(event) => self.on_input(event),
             Msg::Resized(size) => self.on_resized(size),
+            Msg::ToggleCollapse => {
+                self.config.sidebar_collapsed = !self.config.sidebar_collapsed;
+                // Persist the updated config on the bus (sticky — survives
+                // restarts). Emit before reflow so any observer sees the new
+                // state together with the grid change.
+                if let Ok(mut client) = bus().lock() {
+                    if let Err(e) = client.emit(Topic::TerminalConfig(self.config.clone())) {
+                        tracing::warn!("ToggleCollapse: emit TerminalConfig failed: {e:?}");
+                    }
+                }
+                self.reflow_grid();
+                Task::none()
+            }
+            Msg::SidebarDragStart => {
+                self.sidebar.dragging_divider = true;
+                // Anchor will be captured on the first SidebarDragMove, using
+                // the cursor x at that moment + the current sidebar width.
+                // This mirrors sola-monitor's DividerPress + last_cursor_x
+                // pattern: press sets the flag, the first cursor-move event
+                // (which carries the position) captures the anchor.
+                self.sidebar.drag_anchor = None;
+                Task::none()
+            }
+            Msg::SidebarDragMove(cursor_x) => {
+                if self.sidebar.dragging_divider {
+                    if let Some((anchor_x, anchor_w)) = self.sidebar.drag_anchor {
+                        let new_w = sidebar::dragged_width(anchor_x, anchor_w, cursor_x);
+                        self.config.sidebar_width = new_w as u32;
+                        self.reflow_grid();
+                    } else {
+                        // First move after press: capture the anchor.
+                        let current_w = self.config.sidebar_width as f32;
+                        self.sidebar.drag_anchor = Some((cursor_x, current_w));
+                    }
+                }
+                Task::none()
+            }
+            Msg::SidebarDragEnd => {
+                if self.sidebar.dragging_divider {
+                    self.sidebar.dragging_divider = false;
+                    self.sidebar.drag_anchor = None;
+                    // Persist the final width once on release (not on every move).
+                    if let Ok(mut client) = bus().lock() {
+                        if let Err(e) = client.emit(Topic::TerminalConfig(self.config.clone())) {
+                            tracing::warn!("SidebarDragEnd: emit TerminalConfig failed: {e:?}");
+                        }
+                    }
+                    self.reflow_grid();
+                }
+                Task::none()
+            }
             // All remaining arms are Phase 2+ stubs.
             _ => Task::none(),
         }
@@ -325,11 +390,45 @@ impl App {
                 .into(),
         };
 
-        row![
+        // 6px-wide draggable divider between sidebar and pane.
+        // Emits SidebarDragStart on press; cursor-move and release are caught
+        // by the always-on event::listen_with subscription (same pattern as
+        // sola-monitor's divider drag). Hidden when sidebar is collapsed.
+        let divider: Element<'_, Msg> = if self.config.sidebar_collapsed {
+            Space::new().into()
+        } else {
+            mouse_area(
+                container(Space::new())
+                    .width(Length::Fixed(6.0))
+                    .height(Length::Fill),
+            )
+            .interaction(mouse::Interaction::ResizingColumn)
+            .on_press(Msg::SidebarDragStart)
+            .into()
+        };
+
+        let body: Element<'_, Msg> = row![
             sidebar::view(&self.sidebar, &self.tabs, self.active.as_deref(), &self.config),
+            divider,
             pane,
         ]
-        .into()
+        .into();
+
+        // Transparent full-window overlay during drag, identical to monitor's
+        // technique: keeps the ResizingColumn cursor while the pointer races
+        // ahead of the lagging divider widget. Without this overlay, iced's
+        // per-frame hit-test crosses into the pane and snaps back to the
+        // default cursor, causing flicker.
+        if self.sidebar.dragging_divider {
+            stack![
+                body,
+                mouse_area(Space::new())
+                    .interaction(mouse::Interaction::ResizingColumn),
+            ]
+            .into()
+        } else {
+            body
+        }
     }
 
     /// Route a raw iced event. Only keyboard presses are handled here: they
@@ -385,39 +484,44 @@ impl App {
 
     /// Handle a window resize event (Task 2.6).
     ///
-    /// Recomputes the terminal grid from the new window size + current sidebar
-    /// width, then drives the new dimensions into every live tab's emulator
-    /// and PTY backend. All tabs are resized, not just the active one, so
-    /// switching tabs never reveals a mis-sized grid.
+    /// Updates `self.window_size` and delegates to `reflow_grid`.
     fn on_resized(&mut self, size: iced::Size) -> Task<Msg> {
         self.window_size = size;
+        self.reflow_grid();
+        Task::none()
+    }
 
+    /// Recompute the terminal grid dimensions from the current `window_size`,
+    /// `config` (sidebar width / collapsed state), and `metrics`, then drive
+    /// the new dimensions into every live tab.
+    ///
+    /// Called from `on_resized`, `ToggleCollapse`, and the drag-end/drag-move
+    /// handlers so the terminal tracks any change that affects the pane area.
+    /// Returns immediately without touching tabs when the grid dimensions have
+    /// not changed (avoids spurious TIOCSWINSZ churn).
+    fn reflow_grid(&mut self) {
         let sidebar_w = if self.config.sidebar_collapsed {
             36.0_f32
         } else {
             self.config.sidebar_width as f32
         };
-        let pane = pane_size(size, sidebar_w);
+        let pane = pane_size(self.window_size, sidebar_w);
         let (cols, rows) = term_view::cols_rows_for(pane, self.metrics);
 
         if (cols, rows) == self.grid {
-            return Task::none(); // no change — avoid churn
+            return; // no change — avoid churn
         }
         self.grid = (cols, rows);
 
         for rt in self.tabs.runtimes_mut() {
             rt.emulator.resize(cols, rows);
             rt.backend.resize(cols, rows);
-            // `PtyManager::resize` does TIOCSWINSZ + tmux::resize_window but
-            // does NOT send SIGWINCH. Signal the child process group so TUIs
-            // (vim, htop, …) redraw at the new size.
             rt.backend.sigwinch();
         }
 
         // Geometry changed — invalidate the cached canvas so the next frame
         // repaints at the correct grid size.
         self.term_cache.clear();
-        Task::none()
     }
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
