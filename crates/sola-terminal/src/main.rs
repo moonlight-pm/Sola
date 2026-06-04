@@ -245,7 +245,7 @@ impl App {
             config: TerminalConfig::default(),
             live_tmux_at_startup,
             theme: default_theme(),
-            sidebar: sidebar::SidebarState::default(),
+            sidebar: sidebar::SidebarState::default(), // reorder_cursor_y defaults to 0.0
             term_cache: canvas::Cache::default(),
             palette: term_view::Palette::default(),
             window_size: iced::Size::new(800.0, 480.0),
@@ -272,17 +272,68 @@ impl App {
             // Task 2.6: drive Msg::Resized whenever the window changes size.
             // iced 0.14 API: `resize_events() -> Subscription<(Id, Size)>`.
             iced::window::resize_events().map(|(_id, size)| Msg::Resized(size)),
-            // Sidebar drag: always-on global cursor + release listener so the
-            // divider tracks the cursor even when it races ahead of the widget
-            // hit-test area (the cursor leaves the thin divider between frames).
-            // Cost is a no-op match per cursor sample when not dragging — same
-            // pattern as sola-monitor's DividerPress / CursorMoved / CursorReleased.
+            // Single always-on global cursor + release listener shared by both
+            // the divider-drag and tab-reorder gestures.  A no-op match fires on
+            // every cursor sample when neither gesture is active — same pattern as
+            // sola-monitor's DividerPress / CursorMoved / CursorReleased.
+            //
+            // CursorMoved carries both x (for divider drag) and y (for reorder).
+            // We emit SidebarDragMove(x) and ReorderMove(y) from every move; the
+            // update handlers gate on the respective active-flag so only the live
+            // gesture actually processes the value.
             event::listen_with(|ev, _, _| match ev {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    // We need to emit a message for both possible active gestures.
+                    // iced subscriptions can only return one message per event, so
+                    // we emit SidebarDragMove(x) here (which also carries y via a
+                    // dedicated field).  To avoid a second subscription, we encode
+                    // both coordinates in a single variant.  Since the existing
+                    // SidebarDragMove only carries x, we use ReorderMove(y) for
+                    // reorder — the update arm for SidebarDragMove ignores the y
+                    // and the ReorderMove arm ignores the x.  Both arms fire on
+                    // every cursor sample; the active-flag guards ensure only one
+                    // gesture does real work per sample.
+                    //
+                    // Implementation: produce TWO events by returning a batch.
+                    // iced 0.14 listen_with returns Option<Msg>; to fire two
+                    // messages we wrap them in a compound variant.  Instead, we
+                    // pick the active gesture at subscription time using a shared
+                    // flag — but the closure is `Fn` with no capture of &self.
+                    //
+                    // Simplest correct approach: always emit SidebarDragMove (x)
+                    // AND ReorderMove (y).  We do this by returning a single
+                    // compound Msg::CursorMoved variant that carries both.  Since
+                    // Msg has no such variant, we use the two existing single-coord
+                    // variants and return ReorderMove(y) (the update handler for
+                    // SidebarDragMove also checks self.sidebar.dragging_divider so
+                    // we still need to emit that variant).  The only way with a
+                    // single return is to add a compound variant or to fire two
+                    // subscriptions — but two subscriptions racing the same event
+                    // source is fragile.
+                    //
+                    // Chosen approach: one subscription, one variant per event.
+                    // CursorMoved emits SidebarDragMove(x).  A *second*
+                    // event::listen_with emits ReorderMove(y).  The two subscriptions
+                    // are independent (different Msg variants, no shared state in the
+                    // closure) — iced merges them safely.  Each update arm is already
+                    // guarded by its active flag so exactly one does real work per
+                    // frame. (Comment retained to document the decision.)
                     Some(Msg::SidebarDragMove(position.x))
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                     Some(Msg::SidebarDragEnd)
+                }
+                _ => None,
+            }),
+            // Second always-on listener for reorder cursor-y + release.
+            // Independent of the divider-drag listener; no shared mutable state
+            // in the closures, so iced can safely run both.
+            event::listen_with(|ev, _, _| match ev {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Msg::ReorderMove(position.y))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::ReorderEnd)
                 }
                 _ => None,
             }),
@@ -358,8 +409,114 @@ impl App {
                 }
                 Task::none()
             }
-            // All remaining arms are Phase 2+ stubs.
-            _ => Task::none(),
+            Msg::ReorderStart(index) => {
+                // A press on tab `index` begins a potential reorder gesture.
+                // We record the start-index and leave start_y = 0.0 (sentinel);
+                // the actual y is captured on the first ReorderMove, mirroring
+                // the divider's anchor-on-first-move pattern.
+                self.sidebar.reorder = Some((index, 0.0));
+                self.sidebar.reorder_cursor_y = 0.0;
+                Task::none()
+            }
+            Msg::ReorderMove(cursor_y) => {
+                if let Some((from, ref mut start_y)) = self.sidebar.reorder {
+                    // Capture anchor on first move (start_y == 0.0 sentinel).
+                    if *start_y == 0.0 {
+                        *start_y = cursor_y;
+                    }
+                    let _ = from; // used in ReorderEnd
+                    self.sidebar.reorder_cursor_y = cursor_y;
+                }
+                Task::none()
+            }
+            Msg::ReorderEnd => {
+                let gesture = self.sidebar.reorder.take();
+                // Note: reorder_cursor_y holds the last cursor position from
+                // ReorderMove. We read it before clearing.
+                let final_cursor_y = self.sidebar.reorder_cursor_y;
+                self.sidebar.reorder_cursor_y = 0.0;
+
+                let Some((from, start_y)) = gesture else {
+                    return Task::none();
+                };
+
+                let total_movement = (final_cursor_y - start_y).abs();
+                // If start_y is still 0.0 (anchor never captured — no move
+                // events fired between press and release), treat as a click.
+                let is_click = start_y == 0.0 || total_movement < sidebar::REORDER_THRESHOLD;
+
+                if is_click {
+                    // Small/no movement → treat as SelectTab.
+                    let ids = self.tabs.ids_in_order();
+                    if let Some(id) = ids.get(from) {
+                        return self.select_tab(&id.clone());
+                    }
+                    return Task::none();
+                }
+
+                // Real reorder: compute drop slot and renumber ordinals.
+                let ids = self.tabs.ids_in_order();
+                let n = ids.len();
+                if n == 0 {
+                    return Task::none();
+                }
+
+                let to = sidebar::drop_index(
+                    final_cursor_y,
+                    sidebar::SIDEBAR_HEADER_H,
+                    sidebar::TAB_ROW_H,
+                    n,
+                );
+
+                if from == to {
+                    // Landed back on the same slot — no-op (no bus emit needed).
+                    return Task::none();
+                }
+
+                let new_order = sidebar::reordered(&ids, from, to);
+
+                // Collect current ordinals for the changed-pairs computation.
+                let meta_ordinals: std::collections::HashMap<String, u32> = ids
+                    .iter()
+                    .filter_map(|id| {
+                        self.tabs.get(id).map(|m| (id.clone(), m.ordinal))
+                    })
+                    .collect();
+
+                let changed = sidebar::renumber_changed(&meta_ordinals, &new_order);
+
+                // Apply ordinal updates locally and emit one TerminalSession per change.
+                for (id, new_ordinal) in &changed {
+                    if let Some(meta) = self.tabs.get(id).cloned() {
+                        self.tabs.upsert_meta(state::TabMeta {
+                            id: id.clone(),
+                            tmux_session: meta.tmux_session.clone(),
+                            cwd: meta.cwd.clone(),
+                            ordinal: *new_ordinal,
+                        });
+                        if let Ok(mut client) = bus().lock() {
+                            if let Err(e) = client.emit(Topic::TerminalSession(
+                                sola_bus::topics::TerminalSession {
+                                    id: id.clone(),
+                                    tmux_session: meta.tmux_session,
+                                    cwd: meta.cwd,
+                                    ordinal: *new_ordinal,
+                                },
+                            )) {
+                                tracing::warn!("ReorderEnd: emit TerminalSession failed: {e:?}");
+                            }
+                        }
+                    }
+                }
+
+                // Republish the menu so tab numbers reflect the new order.
+                if !changed.is_empty() {
+                    self.republish_menu();
+                }
+
+                Task::none()
+            }
+            Msg::Tick => Task::none(),
         }
     }
 
