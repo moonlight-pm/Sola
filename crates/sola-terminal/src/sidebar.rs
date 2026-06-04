@@ -53,7 +53,6 @@ pub fn view<'a>(
     tabs: &'a Tabs,
     active: Option<&str>,
     config: &TerminalConfig,
-    footer: Element<'a, Msg>,
 ) -> Element<'a, Msg> {
     let ordered = tabs.ordered_meta();
 
@@ -61,10 +60,10 @@ pub fn view<'a>(
         .iter()
         .enumerate()
         .map(|(i, meta)| {
-            let label = format!("{}  {}", i + 1, tab_label(&meta.cwd));
             let is_active = active == Some(meta.id.as_str());
-            let item = SidebarItem::new(label, Msg::Noop).active(is_active);
-            // Shortcut hint only for the first nine tabs (Cmd/Ctrl+1..9).
+            // Label is just the cwd basename; the tab's ordinal shows as the
+            // right-aligned dimmed shortcut hint (Cmd/Ctrl+1..9), not in the label.
+            let item = SidebarItem::new(tab_label(&meta.cwd), Msg::Noop).active(is_active);
             if i < 9 {
                 item.shortcut((i + 1) as u8)
             } else {
@@ -76,7 +75,6 @@ pub fn view<'a>(
     let sections = vec![SidebarSection::unlabeled(items)];
 
     SidebarPanel::new(sections)
-        .collapsible(config.sidebar_collapsed, Msg::ToggleCollapse)
         .resizable(
             config.sidebar_width as f32,
             state.dragging_divider,
@@ -87,7 +85,6 @@ pub fn view<'a>(
             active: state.reorder,
             cursor_y: state.reorder_cursor_y,
         })
-        .footer(footer)
         .build()
 }
 

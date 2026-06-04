@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use std::sync::Arc;
 
-use iced::widget::{button, canvas, container, row, text};
+use iced::widget::{canvas, container, row, text};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard, mouse};
 
@@ -235,13 +235,11 @@ enum Msg {
     Bus(Arc<Message>),
     PtyOutput(String),
     PtyExit(String),
-    NewTab,
     /// No-op message. Used as the per-item `SidebarItem` message: in reorder
     /// mode the kit's mouse_area captures the row press (emitting
     /// `ReorderStart`), so this is never actually delivered — selection runs
     /// through `ReorderEnd`'s click threshold instead.
     Noop,
-    ToggleCollapse,
     SidebarDragStart,
     SidebarDragMove(f32),
     SidebarDragEnd,
@@ -383,7 +381,6 @@ impl App {
         match msg {
             Msg::Bus(m) => self.on_bus(&m),
             Msg::Noop => Task::none(),
-            Msg::NewTab => self.new_tab(),
             // Shell exited (reader hit EOF) — tear the tab down like a close.
             Msg::PtyExit(id) => self.close_tab(&id),
             // New grid content: invalidate the cached geometry so the next
@@ -403,19 +400,6 @@ impl App {
                 Task::none()
             }
             Msg::Pasted(text) => self.on_pasted(text),
-            Msg::ToggleCollapse => {
-                self.config.sidebar_collapsed = !self.config.sidebar_collapsed;
-                // Persist the updated config on the bus (sticky — survives
-                // restarts). Emit before reflow so any observer sees the new
-                // state together with the grid change.
-                if let Ok(mut client) = bus().lock() {
-                    if let Err(e) = client.emit(Topic::TerminalConfig(self.config.clone())) {
-                        tracing::warn!("ToggleCollapse: emit TerminalConfig failed: {e:?}");
-                    }
-                }
-                self.reflow_grid();
-                Task::none()
-            }
             Msg::SidebarDragStart => {
                 self.sidebar.dragging_divider = true;
                 // Anchor will be captured on the first SidebarDragMove, using
@@ -643,22 +627,15 @@ impl App {
                 .into(),
         };
 
-        // "+ New Tab" footer, pinned below the tab list. The kit's
-        // SidebarPanel owns hiding it when collapsed; we just hand it the
-        // Element. The draggable divider, the drag overlay, and the
-        // drop-target highlight all now live inside `SidebarPanel::build`.
-        let new_tab_footer: Element<'_, Msg> = button(text("+ New Tab"))
-            .on_press(Msg::NewTab)
-            .width(Length::Fill)
-            .into();
-
+        // New tabs are created via the menu (New Tab) or Cmd/Ctrl+T — no
+        // in-sidebar button. The draggable divider, drag overlay, and
+        // drop-target highlight all live inside `SidebarPanel::build`.
         let body: Element<'_, Msg> = row![
             sidebar::view(
                 &self.sidebar,
                 &self.tabs,
                 self.active.as_deref(),
                 &self.config,
-                new_tab_footer,
             ),
             pane,
         ]
@@ -705,6 +682,13 @@ impl App {
                 match s.chars().next().map(|c| c.to_ascii_lowercase()) {
                     Some('c') => return self.copy_selection(),
                     Some('v') => return self.paste(),
+                    Some('t') => return self.new_tab(),
+                    Some('w') => {
+                        if let Some(id) = self.active.clone() {
+                            return self.close_tab(&id);
+                        }
+                        return Task::none();
+                    }
                     _ => {}
                 }
             }
@@ -858,11 +842,7 @@ impl App {
     /// Returns immediately without touching tabs when the grid dimensions have
     /// not changed (avoids spurious TIOCSWINSZ churn).
     fn reflow_grid(&mut self) {
-        let sidebar_w = if self.config.sidebar_collapsed {
-            36.0_f32
-        } else {
-            self.config.sidebar_width as f32
-        };
+        let sidebar_w = self.config.sidebar_width as f32;
         let pane = pane_size(self.window_size, sidebar_w);
         let (cols, rows) = term_view::cols_rows_for(pane, self.metrics);
 
