@@ -373,9 +373,22 @@ impl App {
                     self.republish_menu();
                     return Task::none();
                 }
-                // Startup reconciliation: retract if tmux session gone.
-                match session::reconcile_admit(&self.live_tmux_at_startup, &s.tmux_session) {
+
+                // Was this tab already in our table before this delivery?
+                // - true  → our own echo from new_tab / a re-emit (e.g. cwd update):
+                //           skip boot-reconcile, just update meta, no double-attach.
+                // - false → first time we see this id (boot replay of persisted tabs):
+                //           run reconciliation against the boot tmux snapshot.
+                let was_present = self.tabs.get(&s.id).is_some();
+
+                match session::admit_session(
+                    was_present,
+                    &self.live_tmux_at_startup,
+                    &s.tmux_session,
+                ) {
                     session::Admit::Retract => {
+                        // Only reachable when !was_present and tmux session is
+                        // gone — a persisted tab whose tmux died while offline.
                         tracing::info!(
                             id = %s.id,
                             tmux_session = %s.tmux_session,
@@ -398,9 +411,14 @@ impl App {
                             self.active = Some(s.id.clone());
                         }
                         self.republish_menu();
-                        if was_empty {
-                            return self.attach_tab(&s.id);
+                        if !was_present && was_empty {
+                            // Boot replay: attach the first (and initially only)
+                            // persisted tab, seeding its tmux scrollback history.
+                            return self.attach_tab(&s.id, true);
                         }
+                        // was_present → already attached (our own echo or re-emit).
+                        // !was_present && !was_empty → additional boot-replay tab;
+                        //   lazy-attach handled by Task 3.1 (not yet implemented).
                     }
                 }
             }
@@ -420,8 +438,12 @@ impl App {
         }
     }
 
-    /// Open (or reattach) the PTY for `id`, seed tmux scrollback into the grid,
-    /// and start the reader thread.
+    /// Open (or reattach) the PTY for `id`, optionally seed tmux scrollback into
+    /// the grid, and start the reader thread.
+    ///
+    /// `seed_scrollback` should be `true` when reattaching an existing tmux
+    /// session (boot replay — show history) and `false` when creating a fresh
+    /// tab (nothing to seed; the capture would fail with a WARN).
     ///
     /// Grid size is taken from `self.grid` (updated by Task 2.6 resize
     /// plumbing). Scrollback authority (OPEN QUESTION #2): the
@@ -430,7 +452,7 @@ impl App {
     /// the reader thread starts, so reattach shows history without racing live
     /// output. It is not re-synced afterward — the grid is authoritative once
     /// live.
-    fn attach_tab(&mut self, id: &str) -> Task<Msg> {
+    fn attach_tab(&mut self, id: &str, seed_scrollback: bool) -> Task<Msg> {
         let Some(meta) = self.tabs.get(id).cloned() else {
             tracing::warn!(id = %id, "attach_tab: no TabMeta");
             return Task::none();
@@ -452,19 +474,23 @@ impl App {
         // Seed tmux scrollback into the grid BEFORE the reader thread starts,
         // so history shows on reattach without racing live output. Drive a
         // one-shot Processor over the shared term handle.
-        match tmux::capture_scrollback(&meta.tmux_session) {
-            Ok(text) if !text.trim().is_empty() => {
-                // tmux capture-pane emits LF-only lines; normalise to CRLF so
-                // the parser starts each line at column 0.
-                let seed = text.replace('\n', "\r\n");
-                let mut processor: alacritty_terminal::vte::ansi::Processor<
-                    alacritty_terminal::vte::ansi::StdSyncHandler,
-                > = alacritty_terminal::vte::ansi::Processor::new();
-                let mut t = term.lock();
-                processor.advance(&mut *t, seed.as_bytes());
+        // Skip for fresh tabs — they have no scrollback yet and capture-pane
+        // would fail with a warning.
+        if seed_scrollback {
+            match tmux::capture_scrollback(&meta.tmux_session) {
+                Ok(text) if !text.trim().is_empty() => {
+                    // tmux capture-pane emits LF-only lines; normalise to CRLF so
+                    // the parser starts each line at column 0.
+                    let seed = text.replace('\n', "\r\n");
+                    let mut processor: alacritty_terminal::vte::ansi::Processor<
+                        alacritty_terminal::vte::ansi::StdSyncHandler,
+                    > = alacritty_terminal::vte::ansi::Processor::new();
+                    let mut t = term.lock();
+                    processor.advance(&mut *t, seed.as_bytes());
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(id = %id, "scrollback capture failed: {e}"),
             }
-            Ok(_) => {}
-            Err(e) => tracing::warn!(id = %id, "scrollback capture failed: {e}"),
         }
 
         let backend = match pty::PtyBackend::spawn_or_attach(
@@ -527,7 +553,7 @@ impl App {
         }
 
         self.republish_menu();
-        self.attach_tab(&id)
+        self.attach_tab(&id, false)
     }
 
     /// Close a tab: tear down its PTY backend (kills the tmux session),
