@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use iced::widget::{container, row, text};
+use iced::widget::{canvas, container, row, text};
 use iced::{Element, Length, Subscription, Task, Theme};
+use iced::keyboard;
 
 use sola_bus::topics::{TerminalConfig, Topic, TopicKind};
 use sola_bus::Message;
@@ -78,6 +79,12 @@ struct App {
     live_tmux_at_startup: Option<HashSet<String>>,
     theme: Theme,
     sidebar: sidebar::SidebarState,
+    /// Cached canvas geometry for the active tab's grid. Cleared on PtyOutput
+    /// so the next `view` re-renders from the live Term (Task 2.5).
+    term_cache: canvas::Cache,
+    /// Colour table for the renderer. Hardcoded dark theme for now; Task 4.4
+    /// will drive it from `self.theme` (the bus theme).
+    palette: term_view::Palette,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +117,8 @@ impl App {
             live_tmux_at_startup,
             theme: default_theme(),
             sidebar: sidebar::SidebarState::default(),
+            term_cache: canvas::Cache::default(),
+            palette: term_view::Palette::default(),
         };
         (app, Task::none())
     }
@@ -138,23 +147,103 @@ impl App {
             Msg::CloseTab(id) => self.close_tab(&id),
             // Shell exited (reader hit EOF) — tear the tab down like a close.
             Msg::PtyExit(id) => self.close_tab(&id),
-            // Task 2.5: the renderer reads `renderable_content` here. For now a
-            // redraw is implicit in iced, so just acknowledge.
-            Msg::PtyOutput(_id) => Task::none(),
+            // New grid content: invalidate the cached geometry so the next
+            // `view` re-renders from the live Term. (Clearing on any tab's
+            // output is the simplest correct choice — only the active tab's
+            // grid is on screen, so a stray clear just costs one redraw.)
+            Msg::PtyOutput(_id) => {
+                self.term_cache.clear();
+                Task::none()
+            }
+            Msg::Input(event) => self.on_input(event),
             // All remaining arms are Phase 2+ stubs.
             _ => Task::none(),
         }
     }
 
     fn view(&self) -> Element<'_, Msg> {
-        row![
-            sidebar::view(&self.sidebar, &self.tabs, self.active.as_deref(), &self.config),
-            container(text("terminal pane (placeholder)"))
+        // The pane: the live terminal canvas for the active tab, or a
+        // placeholder when no tab is attached yet.
+        let pane: Element<'_, Msg> = match self
+            .active
+            .as_deref()
+            .and_then(|id| self.tabs.runtime(id))
+        {
+            Some(rt) => {
+                let view = term_view::TermView {
+                    term: rt.emulator.term(),
+                    cache: &self.term_cache,
+                    palette: &self.palette,
+                    metrics: term_view::CellMetrics::default(),
+                };
+                canvas(view)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            }
+            None => container(text("terminal pane (placeholder)"))
                 .padding(8)
                 .width(Length::Fill)
-                .height(Length::Fill),
+                .height(Length::Fill)
+                .into(),
+        };
+
+        row![
+            sidebar::view(&self.sidebar, &self.tabs, self.active.as_deref(), &self.config),
+            pane,
         ]
         .into()
+    }
+
+    /// Route a raw iced event. Only keyboard presses are handled here: they
+    /// encode to PTY bytes and write to the active tab's backend. Mouse and
+    /// window events fall through (mouse → selection is Task 4.1).
+    fn on_input(&mut self, event: iced::Event) -> Task<Msg> {
+        let iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            modifiers,
+            text,
+            ..
+        }) = event
+        else {
+            return Task::none();
+        };
+
+        let Some(active) = self.active.clone() else {
+            return Task::none();
+        };
+        let Some(rt) = self.tabs.runtime(&active) else {
+            return Task::none();
+        };
+
+        // Read the term mode once (drops the lock immediately) — encode_key is
+        // mode-aware (DECCKM picks ESC O vs ESC [ for arrows).
+        let mode = { *rt.emulator.term().lock().mode() };
+
+        let mods = input::Mods::from(modifiers);
+
+        // Exactly one source of bytes, in priority order:
+        //   1. encode_key — named keys + Ctrl-letter on Character keys.
+        //   2. encode_char — Character keys (incl. Ctrl+symbol that encode_key
+        //      deliberately returns None for).
+        //   3. the platform `text` field — IME / printable that neither caught.
+        let bytes = input::encode_key(&key, mods, mode).or_else(|| {
+            if let keyboard::Key::Character(s) = &key {
+                s.chars().next().and_then(|c| input::encode_char(c, mods))
+            } else {
+                None
+            }
+        });
+        let bytes = bytes.or_else(|| {
+            text.as_ref()
+                .filter(|t| !t.is_empty())
+                .map(|t| t.as_bytes().to_vec())
+        });
+
+        if let Some(bytes) = bytes {
+            rt.backend.write(&bytes);
+        }
+        Task::none()
     }
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
