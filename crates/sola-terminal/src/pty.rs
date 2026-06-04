@@ -22,6 +22,7 @@
 //!   gone (closed) is dropped silently -- the drain thread never panics.
 
 use std::collections::HashMap;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
@@ -59,7 +60,9 @@ fn ensure_pty_write_drain() {
             // Blocking recv -- exits when every sender is dropped (process end).
             while let Ok((tab_id, bytes)) = rx.recv() {
                 let fd = {
-                    let map = fd_registry().lock().unwrap();
+                    // Poison-tolerant: a panic elsewhere must not kill the one
+                    // process-wide drain thread (that would hang every TUI).
+                    let map = fd_registry().lock().unwrap_or_else(|e| e.into_inner());
                     map.get(&tab_id).copied()
                 };
                 match fd {
@@ -94,11 +97,19 @@ pub fn pty_write_sender() -> mpsc::Sender<(String, Vec<u8>)> {
 }
 
 fn register_fd(tab_id: &str, fd: RawFd) {
-    fd_registry().lock().unwrap().insert(tab_id.to_string(), fd);
+    // Poison-tolerant: see the drain thread's lock above.
+    fd_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(tab_id.to_string(), fd);
 }
 
 fn unregister_fd(tab_id: &str) {
-    fd_registry().lock().unwrap().remove(tab_id);
+    // Poison-tolerant: see the drain thread's lock above.
+    fd_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(tab_id);
 }
 
 // -- PtyBackend -- per-tab handle ----------------------------------------------
@@ -106,12 +117,15 @@ fn unregister_fd(tab_id: &str) {
 /// Per-tab PTY handle: master fd + child pid + tmux session name.
 ///
 /// Drop semantics intentionally match the legacy `PtyManager`: a plain drop
-/// (shutdown / crash) closes the master fd and SIGHUPs the tmux *client* but
-/// LEAVES THE TMUX SESSION ALIVE so it can be restored. Only an explicit
+/// (shutdown / crash) closes the master fd (once, via `OwnedFd`), unregisters
+/// it from the drain registry, and SIGHUPs the tmux *client* but LEAVES THE
+/// TMUX SESSION ALIVE so it can be restored. Only an explicit
 /// [`close`](Self::close) tears down the tmux session.
 pub struct PtyBackend {
     tab_id: String,
-    master_fd: RawFd,
+    /// The pty master. Owned exactly once here: dropping the `OwnedFd` is the
+    /// single close of this fd (see `Drop`). `close()` must NOT close it.
+    master_fd: OwnedFd,
     child_pid: i32,
     tmux_session: String,
 }
@@ -185,30 +199,47 @@ impl PtyBackend {
 
         // Parent: close slave, keep master.
         unsafe { libc::close(slave_fd) };
-        let master_fd = pty.master.into_raw_fd();
+        let master_raw = pty.master.into_raw_fd();
+        // SAFETY: `master_raw` comes straight from openpty (via nix's
+        // OwnedFd -> into_raw_fd) and is not owned anywhere else. This is the
+        // ONE place ownership of the master fd is taken; the OwnedFd closes it
+        // exactly once when this `PtyBackend` drops.
+        let master_fd = unsafe { OwnedFd::from_raw_fd(master_raw) };
         let child_pid = child.id() as i32;
 
         debug!(
             tab_id = %tab_id,
             tmux_session = %tmux_session,
             child_pid,
-            master_fd,
+            master_fd = master_fd.as_raw_fd(),
             "spawned PTY"
         );
 
-        // Register the fd so terminal replies can be written back.
-        register_fd(tab_id, master_fd);
+        // Register the raw fd so terminal replies can be written back. The
+        // registry stores a bare int; the entry is removed (in close()/Drop)
+        // before this OwnedFd drops, so the drain thread never sees a stale fd.
+        register_fd(tab_id, master_fd.as_raw_fd());
 
         // Reader thread: own a dup'd fd + the term Arc + a FRESH Processor.
-        let read_fd = unsafe { libc::dup(master_fd) };
+        // SAFETY: `libc::dup` returns a fresh, owned fd distinct from the
+        // master; the reader thread is its sole owner and the OwnedFd closes it
+        // exactly once when the loop exits.
+        let read_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(master_fd.as_raw_fd())) };
         let reader_tab_id = tab_id.to_string();
         std::thread::spawn(move || {
             let mut processor: Processor<StdSyncHandler> = Processor::new();
             let mut buf = [0u8; 4096];
             loop {
                 let n = unsafe {
-                    libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                    libc::read(
+                        read_fd.as_raw_fd(),
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        buf.len(),
+                    )
                 };
+                // n == 0 is EOF (pty hung up by kill_session); n < 0 is error.
+                // Either way the loop ends and `read_fd` (OwnedFd) drops here,
+                // closing the dup'd fd exactly once.
                 if n <= 0 {
                     break;
                 }
@@ -219,7 +250,7 @@ impl PtyBackend {
                 }
                 let _ = notify.send(reader_tab_id.clone());
             }
-            unsafe { libc::close(read_fd) };
+            drop(read_fd);
             debug!(tab_id = %reader_tab_id, "PTY reader thread exited (EOF)");
             // Shell exited -- signal so `App` can close the tab.
             let _ = exit.send(reader_tab_id.clone());
@@ -237,7 +268,7 @@ impl PtyBackend {
     pub fn write(&self, bytes: &[u8]) {
         let n = unsafe {
             libc::write(
-                self.master_fd,
+                self.master_fd.as_raw_fd(),
                 bytes.as_ptr() as *const libc::c_void,
                 bytes.len(),
             )
@@ -261,7 +292,7 @@ impl PtyBackend {
         };
         let ret = unsafe {
             libc::ioctl(
-                self.master_fd,
+                self.master_fd.as_raw_fd(),
                 libc::TIOCSWINSZ,
                 &winsize as *const libc::winsize,
             )
@@ -288,14 +319,19 @@ impl PtyBackend {
         }
     }
 
-    /// Explicitly tear down: unregister the fd, kill the tmux session, close
-    /// the master fd, and SIGHUP->SIGKILL the child process group. This is the
-    /// ONLY path that kills the tmux session (plain drop preserves it).
+    /// Explicitly tear down: unregister the fd, kill the tmux session, and
+    /// SIGHUP->SIGKILL the child process group. This is the ONLY path that
+    /// kills the tmux session (plain drop preserves it).
+    ///
+    /// Note: `close()` does NOT close the master fd. The fd is owned by
+    /// `master_fd: OwnedFd` and closed exactly once when the backend drops;
+    /// closing it here would risk a double-close (the kernel can recycle the
+    /// freed fd number into another thread's resource). `kill_session` -- not
+    /// closing the master -- is what hangs up the pty and unblocks the reader.
     pub fn close(&self) {
         debug!(tab_id = %self.tab_id, child_pid = self.child_pid, "closing PTY");
         unregister_fd(&self.tab_id);
         crate::tmux::kill_session(&self.tmux_session);
-        unsafe { libc::close(self.master_fd) };
 
         let pid = self.child_pid;
         unsafe {
@@ -318,12 +354,16 @@ impl PtyBackend {
 
 impl Drop for PtyBackend {
     fn drop(&mut self) {
-        // Preserve the tmux session (shutdown / crash path). Only close the
-        // master fd and SIGHUP the tmux *client* pid so the session survives
-        // for restore. An explicit `close()` already tore the session down and
-        // closed this fd; closing it twice is harmless (EBADF, ignored).
+        // Preserve the tmux session (shutdown / crash path). SIGHUP the tmux
+        // *client* pid so the session survives for restore.
+        //
+        // Unregister the fd FIRST so the drain thread can never write to it
+        // after this point (a stale registry entry would be a recycle hazard:
+        // the fd number is about to be freed when `master_fd` drops). The
+        // master fd itself is closed exactly once -- automatically -- when the
+        // `master_fd: OwnedFd` field drops at the end of this method. No manual
+        // `libc::close` here; that was the old double-close bug.
         unregister_fd(&self.tab_id);
-        unsafe { libc::close(self.master_fd) };
         let pid = self.child_pid;
         unsafe {
             libc::kill(pid, libc::SIGHUP);
