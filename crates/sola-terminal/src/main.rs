@@ -93,15 +93,15 @@ mod tests {
 
     #[test]
     fn pane_to_grid_end_to_end() {
-        // 800×480 window, 200px sidebar, CellMetrics default (9×18 cells, PAD=6).
+        // 800×480 window, 200px sidebar, CellMetrics default (9×20 cells, PAD=6).
         // pane width  = 600 px
         // usable_w    = 600 - 12 = 588 → floor(588/9)  = 65 cols
-        // usable_h    = 480 - 12 = 468 → floor(468/18) = 26 rows
+        // usable_h    = 480 - 12 = 468 → floor(468/20) = 23 rows
         let window = iced::Size::new(800.0, 480.0);
         let pane = pane_size(window, 200.0);
         let (cols, rows) = term_view::cols_rows_for(pane, CellMetrics::default());
         assert_eq!(cols, 65);
-        assert_eq!(rows, 26);
+        assert_eq!(rows, 23);
     }
 
     // --- parse_select_tab_action ---
@@ -217,8 +217,8 @@ struct App {
     /// Last known window size (logical pixels). Initialised to a sane default;
     /// updated on every `Msg::Resized`. Used by Task 2.6 resize plumbing.
     window_size: iced::Size,
-    /// Cell metrics for the active font. Default 9×18 until font negotiation
-    /// lands (Task 4.x).
+    /// Cell metrics for the active font. Default 9×20 (JetBrains Mono at 15px)
+    /// until font negotiation lands (Task 4.x).
     metrics: term_view::CellMetrics,
     /// Current terminal grid dimensions (cols × rows). Derived from
     /// `window_size`, sidebar width and `metrics`. Initialised to
@@ -618,7 +618,7 @@ impl App {
                     term: rt.emulator.term(),
                     cache: &self.term_cache,
                     palette: &self.palette,
-                    metrics: term_view::CellMetrics::default(),
+                    metrics: self.metrics,
                     on_select: Msg::SelectionChanged,
                 };
                 canvas(view)
@@ -662,7 +662,7 @@ impl App {
         // ahead of the lagging divider widget. Without this overlay, iced's
         // per-frame hit-test crosses into the pane and snaps back to the
         // default cursor, causing flicker.
-        if self.sidebar.dragging_divider {
+        let body: Element<'_, Msg> = if self.sidebar.dragging_divider {
             stack![
                 body,
                 mouse_area(Space::new())
@@ -671,7 +671,23 @@ impl App {
             .into()
         } else {
             body
-        }
+        };
+
+        // Wrap the whole window in a themed surface so every region outside the
+        // exact grid — the PAD border, the sidebar gutter, the divider — reads
+        // as one cohesive themed background rather than iced's default grey.
+        // Uses the same `palette.bg` the grid backdrop is painted with, so the
+        // window and the grid share one colour and it updates live with the
+        // bus theme (`palette` is rebuilt on `Topic::Theme`).
+        let bg = self.palette.bg;
+        container(body)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_theme| container::Style {
+                background: Some(bg.into()),
+                ..container::Style::default()
+            })
+            .into()
     }
 
     /// Route a raw iced event. Only keyboard presses are handled here: they

@@ -36,9 +36,9 @@ const PAD: f32 = 6.0;
 /// Per-cell geometry for the monospace grid.
 ///
 /// `cell_w`/`cell_h` are the advance box of one cell; `font_size` is the glyph
-/// point size fed to `fill_text`. For Task 2.5 these are fixed (cribbed from
-/// the spike); Task 2.6 will derive them from the real font metrics and use
-/// [`cols_rows_for`] to choose the grid size on resize.
+/// point size fed to `fill_text`. The dimensions are derived from the font's
+/// real metrics via [`CellMetrics::for_font_size`] so the grid box always
+/// matches the glyphs that fill it — a mismatch here reads as uneven kerning.
 #[derive(Debug, Clone, Copy)]
 pub struct CellMetrics {
     pub cell_w: f32,
@@ -46,14 +46,35 @@ pub struct CellMetrics {
     pub font_size: f32,
 }
 
+impl CellMetrics {
+    /// Advance width per em for JetBrains Mono (fixed pitch). Measured from
+    /// `JetBrainsMono-Regular.ttf`: advance 600 / unitsPerEm 1000 = 0.6.
+    /// NOTE: this ratio is specific to JetBrains Mono — a different mono
+    /// family (e.g. Iosevka, narrower) would need its own constant.
+    const ADVANCE_PER_EM: f32 = 0.6;
+    /// Line height per em for JetBrains Mono: (ascent − descent + lineGap)
+    /// / unitsPerEm = 1.32. Also family-specific.
+    const LINE_PER_EM: f32 = 1.32;
+
+    /// Derive cell geometry from a glyph point size using JetBrains Mono's
+    /// real ratios, snapping to integer pixels so glyphs land on the grid
+    /// crisply (fractional cell origins rasterize unevenly).
+    pub fn for_font_size(px: f32) -> Self {
+        Self {
+            cell_w: (Self::ADVANCE_PER_EM * px).round(),
+            // ceil for height so descenders never clip when the ratio lands
+            // just over an integer.
+            cell_h: (Self::LINE_PER_EM * px).ceil(),
+            font_size: px,
+        }
+    }
+}
+
 impl Default for CellMetrics {
     fn default() -> Self {
-        // Cribbed from spike_render.rs: a 14px monospace glyph fits a 9×18 box.
-        Self {
-            cell_w: 9.0,
-            cell_h: 18.0,
-            font_size: 14.0,
-        }
+        // 15px gives an exact integer advance: 0.6·15 = 9.0, and
+        // 1.32·15 = 19.8 → 20. cell_w=9 is what the layout already assumes.
+        Self::for_font_size(15.0)
     }
 }
 
@@ -619,21 +640,28 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 // a dedicated bold/italic mono face is a follow-up.)
                 // `glyph_font()` reads `fonts::mono()`, which the bus theme
                 // hot-swaps via `apply_theme_update` — so the font FAMILY
-                // already updates live on `Topic::Theme`. The cell SIZE does
-                // not: `metrics` is fixed (cell_w:9, cell_h:18, font_size:14).
-                // Task: derive CellMetrics from the themed font size (and the
-                // real font metrics) so a font-size change reflows the grid.
+                // updates live on `Topic::Theme`. The cell geometry comes from
+                // `CellMetrics::for_font_size`, derived from the real JetBrains
+                // Mono metrics (cell_w:9, cell_h:20, font_size:15).
                 let font = glyph_font(flags);
 
                 let (x, y) = self.cell_xy(point.line.0, point.column.0);
                 frame.fill_text(Text {
                     content: cell.c.to_string(),
-                    position: Point::new(x, y),
+                    // Snap to integer pixels: fractional glyph origins make the
+                    // rasterizer hint each cell slightly differently, which
+                    // reads as uneven kerning across the monospace grid.
+                    position: Point::new(x.round(), y.round()),
                     color: fg,
                     size: metrics.font_size.into(),
                     font,
                     line_height: LineHeight::Absolute(metrics.cell_h.into()),
-                    shaping: Shaping::Advanced,
+                    // Basic shaping is correct for a single-glyph monospace
+                    // cell — no ligatures/BiDi/fallback runs, so we avoid
+                    // Advanced's per-run positioning variance. (A non-BMP or
+                    // complex char that Basic can't render is an accepted edge
+                    // case for now.)
+                    shaping: Shaping::Basic,
                     ..Text::default()
                 });
 
@@ -758,13 +786,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn for_font_size_matches_jetbrains_mono_ratios() {
+        let m = CellMetrics::for_font_size(15.0);
+        assert_eq!(m.font_size, 15.0);
+        assert_eq!(m.cell_w, 9.0, "0.6·15 = 9.0 exactly");
+        assert_eq!(m.cell_h, 20.0, "1.32·15 = 19.8 → ceil 20");
+        // cell_w is always the advance ratio rounded to an integer pixel.
+        assert_eq!(m.cell_w, (0.6 * m.font_size).round());
+        // default() is the 15px derivation.
+        let d = CellMetrics::default();
+        assert_eq!((d.cell_w, d.cell_h, d.font_size), (9.0, 20.0, 15.0));
+    }
+
+    #[test]
     fn cols_rows_for_known_size() {
-        // Default metrics: 9×18 cells, 6px padding each side.
+        // Default metrics: 9×20 cells, 6px padding each side.
         let m = CellMetrics::default();
-        // usable: (800 - 12) / 9 = 87.55 → 87 cols; (480 - 12) / 18 = 26 rows.
+        // usable: (800 - 12) / 9 = 87.55 → 87 cols; (480 - 12) / 20 = 23.4 → 23 rows.
         let (cols, rows) = cols_rows_for(iced::Size::new(800.0, 480.0), m);
         assert_eq!(cols, 87);
-        assert_eq!(rows, 26);
+        assert_eq!(rows, 23);
     }
 
     #[test]
@@ -778,21 +819,18 @@ mod tests {
 
     #[test]
     fn cols_rows_for_exact_fit() {
-        // 10 cols × 5 rows exactly: 6+90+6 = 102 wide, 6+90+6 = 102 tall.
-        let m = CellMetrics {
-            cell_w: 9.0,
-            cell_h: 18.0,
-            font_size: 14.0,
-        };
+        // 10 cols exactly: 6 + 10·9 + 6 = 102 wide. cell_w = 9 at the default
+        // 15px size, so derive the metrics rather than hardcoding them.
+        let m = CellMetrics::for_font_size(15.0);
         let (cols, _rows) = cols_rows_for(iced::Size::new(6.0 + 90.0 + 6.0, 200.0), m);
         assert_eq!(cols, 10);
     }
 
     #[test]
     fn cols_rows_for_clamps_rows_independently() {
-        // Default metrics: cell_w=9, cell_h=18, PAD=6.
+        // Default metrics: cell_w=9, cell_h=20, PAD=6.
         // Width is wide enough for many columns: usable_w = 200 - 12 = 188 → 20 cols.
-        // Height is smaller than one cell + padding (< 12 + 18 = 30): rows clamps to 1.
+        // Height is smaller than one cell + padding (< 12 + 20 = 32): rows clamps to 1.
         // This catches a regression where only the cols axis was clamped.
         let m = CellMetrics::default();
         let (cols, rows) = cols_rows_for(iced::Size::new(200.0, 1.0), m);
@@ -802,11 +840,11 @@ mod tests {
 
     #[test]
     fn pixel_to_cell_maps_interior_point() {
-        // Default metrics: cell_w=9, cell_h=18, PAD=6.
+        // Default metrics: cell_w=9, cell_h=20, PAD=6.
         let m = CellMetrics::default();
         // A pixel one past the top-left of cell (col 3, row 2):
-        // x = PAD + 3*9 + 1 = 34, y = PAD + 2*18 + 1 = 43.
-        let (col, row) = pixel_to_cell(34.0, 43.0, m, 80, 24);
+        // x = PAD + 3*9 + 1 = 34, y = PAD + 2*20 + 1 = 47.
+        let (col, row) = pixel_to_cell(34.0, 47.0, m, 80, 24);
         assert_eq!((col, row), (3, 2));
     }
 
