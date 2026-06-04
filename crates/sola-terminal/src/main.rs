@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use std::sync::Arc;
 
-use iced::widget::{Space, canvas, container, mouse_area, row, stack, text};
+use iced::widget::{button, canvas, container, row, text};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard, mouse};
 
@@ -236,6 +236,11 @@ enum Msg {
     PtyOutput(String),
     PtyExit(String),
     NewTab,
+    /// No-op message. Used as the per-item `SidebarItem` message: in reorder
+    /// mode the kit's mouse_area captures the row press (emitting
+    /// `ReorderStart`), so this is never actually delivered — selection runs
+    /// through `ReorderEnd`'s click threshold instead.
+    Noop,
     ToggleCollapse,
     SidebarDragStart,
     SidebarDragMove(f32),
@@ -377,6 +382,7 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(m) => self.on_bus(&m),
+            Msg::Noop => Task::none(),
             Msg::NewTab => self.new_tab(),
             // Shell exited (reader hit EOF) — tear the tab down like a close.
             Msg::PtyExit(id) => self.close_tab(&id),
@@ -423,7 +429,9 @@ impl App {
             Msg::SidebarDragMove(cursor_x) => {
                 if self.sidebar.dragging_divider {
                     if let Some((anchor_x, anchor_w)) = self.sidebar.drag_anchor {
-                        let new_w = sidebar::dragged_width(anchor_x, anchor_w, cursor_x);
+                        let new_w = sola_kit::components::panel_dragged_width(
+                            anchor_x, anchor_w, cursor_x,
+                        );
                         self.config.sidebar_width = new_w as u32;
                         self.reflow_grid();
                     } else {
@@ -482,7 +490,8 @@ impl App {
                 let total_movement = (final_cursor_y - start_y).abs();
                 // If start_y is still 0.0 (anchor never captured — no move
                 // events fired between press and release), treat as a click.
-                let is_click = start_y == 0.0 || total_movement < sidebar::REORDER_THRESHOLD;
+                let is_click = start_y == 0.0
+                    || total_movement < sola_kit::components::PANEL_REORDER_THRESHOLD;
 
                 if is_click {
                     // Small/no movement → treat as SelectTab.
@@ -500,10 +509,10 @@ impl App {
                     return Task::none();
                 }
 
-                let to = sidebar::drop_index(
+                let to = sola_kit::components::panel_drop_index(
                     final_cursor_y,
-                    sidebar::SIDEBAR_HEADER_H,
-                    sidebar::TAB_ROW_H,
+                    sola_kit::components::PANEL_HEADER_H,
+                    sola_kit::components::PANEL_ROW_H,
                     n,
                 );
 
@@ -512,7 +521,7 @@ impl App {
                     return Task::none();
                 }
 
-                let new_order = sidebar::reordered(&ids, from, to);
+                let new_order = sola_kit::components::panel_reordered(&ids, from, to);
 
                 // Collect current ordinals for the changed-pairs computation.
                 let meta_ordinals: std::collections::HashMap<String, u32> = ids
@@ -522,7 +531,8 @@ impl App {
                     })
                     .collect();
 
-                let changed = sidebar::renumber_changed(&meta_ordinals, &new_order);
+                let changed =
+                    sola_kit::components::panel_renumber_changed(&meta_ordinals, &new_order);
 
                 // Apply ordinal updates locally and emit one TerminalSession per change.
                 for (id, new_ordinal) in &changed {
@@ -633,45 +643,26 @@ impl App {
                 .into(),
         };
 
-        // 6px-wide draggable divider between sidebar and pane.
-        // Emits SidebarDragStart on press; cursor-move and release are caught
-        // by the always-on event::listen_with subscription (same pattern as
-        // sola-monitor's divider drag). Hidden when sidebar is collapsed.
-        let divider: Element<'_, Msg> = if self.config.sidebar_collapsed {
-            Space::new().into()
-        } else {
-            mouse_area(
-                container(Space::new())
-                    .width(Length::Fixed(6.0))
-                    .height(Length::Fill),
-            )
-            .interaction(mouse::Interaction::ResizingColumn)
-            .on_press(Msg::SidebarDragStart)
-            .into()
-        };
+        // "+ New Tab" footer, pinned below the tab list. The kit's
+        // SidebarPanel owns hiding it when collapsed; we just hand it the
+        // Element. The draggable divider, the drag overlay, and the
+        // drop-target highlight all now live inside `SidebarPanel::build`.
+        let new_tab_footer: Element<'_, Msg> = button(text("+ New Tab"))
+            .on_press(Msg::NewTab)
+            .width(Length::Fill)
+            .into();
 
         let body: Element<'_, Msg> = row![
-            sidebar::view(&self.sidebar, &self.tabs, self.active.as_deref(), &self.config),
-            divider,
+            sidebar::view(
+                &self.sidebar,
+                &self.tabs,
+                self.active.as_deref(),
+                &self.config,
+                new_tab_footer,
+            ),
             pane,
         ]
         .into();
-
-        // Transparent full-window overlay during drag, identical to monitor's
-        // technique: keeps the ResizingColumn cursor while the pointer races
-        // ahead of the lagging divider widget. Without this overlay, iced's
-        // per-frame hit-test crosses into the pane and snaps back to the
-        // default cursor, causing flicker.
-        let body: Element<'_, Msg> = if self.sidebar.dragging_divider {
-            stack![
-                body,
-                mouse_area(Space::new())
-                    .interaction(mouse::Interaction::ResizingColumn),
-            ]
-            .into()
-        } else {
-            body
-        };
 
         // Wrap the whole window in a themed surface so every region outside the
         // exact grid — the PAD border, the sidebar gutter, the divider — reads
@@ -715,6 +706,32 @@ impl App {
                     Some('c') => return self.copy_selection(),
                     Some('v') => return self.paste(),
                     _ => {}
+                }
+            }
+        }
+
+        // Cmd/Ctrl+1..9 → jump to tab N (1-based). Requires Ctrl OR Logo, and
+        // NOT Shift/Alt (so Ctrl+Shift+digit and Alt+digit still reach the
+        // PTY). We only intercept when the target tab actually EXISTS;
+        // otherwise we fall through to the normal encode path so Ctrl+<digit>
+        // still reaches the PTY when there's no such tab. Ctrl+<digit> is not a
+        // standard VT control code, so swallowing it on a hit is safe; the
+        // worst case (a TUI that bound Ctrl+digit itself) loses that chord only
+        // while a matching tab exists — an accepted trade for tab switching.
+        if (modifiers.control() || modifiers.logo())
+            && !modifiers.shift()
+            && !modifiers.alt()
+        {
+            if let keyboard::Key::Character(s) = &key {
+                if let Some(d) = s.chars().next().and_then(|c| c.to_digit(10)) {
+                    if (1..=9).contains(&d) {
+                        let idx = (d - 1) as usize;
+                        let ids = self.tabs.ids_in_order();
+                        if let Some(id) = ids.get(idx) {
+                            return self.select_tab(&id.clone());
+                        }
+                        // No such tab → fall through to the PTY encode path.
+                    }
                 }
             }
         }
