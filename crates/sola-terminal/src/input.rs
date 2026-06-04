@@ -79,6 +79,10 @@ pub enum MouseButton {
 /// `mode` is the current [`TermMode`]; the encoder uses it to select between
 /// normal-cursor sequences (`ESC [ …`) and application-cursor sequences
 /// (`ESC O …`) when `TermMode::APP_CURSOR` is set (DECCKM).
+///
+/// For `Key::Character` with `Mods::CTRL` (incl. Ctrl+symbol like Ctrl-[),
+/// this returns `None` for symbol keys; the caller MUST fall through to
+/// [`encode_char`] so those are encoded correctly.
 pub fn encode_key(key: &keyboard::Key, mods: Mods, mode: TermMode) -> Option<Vec<u8>> {
     // Ctrl-letter on a Character key → control byte (0x01..=0x1a).
     // We check this before the Named arm so Ctrl+Enter etc. still fall
@@ -86,7 +90,14 @@ pub fn encode_key(key: &keyboard::Key, mods: Mods, mode: TermMode) -> Option<Vec
     if mods.ctrl() {
         if let keyboard::Key::Character(s) = key {
             if let Some(encoded) = ctrl_char(s) {
-                return Some(encoded);
+                // Alt+Ctrl: prepend ESC (xterm Meta+Ctrl convention).
+                return if mods.alt() {
+                    let mut out = vec![0x1b];
+                    out.extend_from_slice(&encoded);
+                    Some(out)
+                } else {
+                    Some(encoded)
+                };
             }
         }
     }
@@ -208,6 +219,7 @@ pub fn encode_key(key: &keyboard::Key, mods: Mods, mode: TermMode) -> Option<Vec
 /// Encode a printable character (with modifiers) into PTY bytes.
 ///
 /// - **Ctrl-letter** → control byte (0x01..=0x1a for a-z; extended symbols).
+/// - **Alt+Ctrl-char** → `ESC` prefix + the Ctrl control byte (xterm Meta+Ctrl).
 /// - **Alt-char** → `ESC` prefix + the UTF-8 bytes of the char.
 /// - **Plain char** → its UTF-8 bytes.
 ///
@@ -219,21 +231,32 @@ pub fn encode_char(c: char, mods: Mods) -> Option<Vec<u8>> {
         let lc = c.to_ascii_lowercase();
         if lc.is_ascii_alphabetic() {
             let code = (lc as u8) - b'a' + 1; // a=0x01 … z=0x1a
-            return Some(vec![code]);
+            // Alt+Ctrl: prepend ESC (xterm Meta+Ctrl convention).
+            return if mods.alt() {
+                Some(vec![0x1b, code])
+            } else {
+                Some(vec![code])
+            };
         }
         // Ctrl-symbol cases (common subset xterm honours).
         let code = match c {
-            ' ' => Some(0x00u8),            // Ctrl-Space = NUL
-            '[' | '{' => Some(0x1b),        // Ctrl-[ = ESC
-            '\\' | '|' => Some(0x1c),       // Ctrl-\ = FS
-            ']' | '}' => Some(0x1d),        // Ctrl-] = GS
-            '^' | '~' | '`' => Some(0x1e),  // Ctrl-^ = RS
-            '_' => Some(0x1f),              // Ctrl-_ = US
-            '/' => Some(0x7f),              // Ctrl-/ = DEL
+            ' ' => Some(0x00u8),        // Ctrl-Space = NUL
+            '[' | '{' => Some(0x1b),    // Ctrl-[ = ESC
+            '\\' | '|' => Some(0x1c),   // Ctrl-\ = FS
+            ']' | '}' => Some(0x1d),    // Ctrl-] = GS
+            '^' | '~' => Some(0x1e),    // Ctrl-^ = RS  (0x5e & 0x1f = 0x1e)
+            '`' => Some(0x00),          // Ctrl-` = NUL (0x60 & 0x1f = 0x00)
+            '_' => Some(0x1f),          // Ctrl-_ = US
+            '?' => Some(0x7f),          // Ctrl-? = DEL (readline backward-delete-char)
             _ => None,
         };
         if let Some(b) = code {
-            return Some(vec![b]);
+            // Alt+Ctrl: prepend ESC (xterm Meta+Ctrl convention).
+            return if mods.alt() {
+                Some(vec![0x1b, b])
+            } else {
+                Some(vec![b])
+            };
         }
         // Fall through for unrecognised Ctrl combos.
     }
@@ -272,11 +295,13 @@ pub fn bracketed_paste(text: &str) -> Vec<u8> {
 }
 
 /// Send paste text, wrapping with bracketed-paste markers when the mode bit
-/// is set.  Normalises `\n` → `\r` as PTYs expect carriage-return.
+/// is set.  Normalises line endings to `\r` as PTYs expect carriage-return.
+/// CRLF (`\r\n`) is collapsed to a single `\r` before any stray `\n` → `\r`
+/// substitution, preventing double-CR on Windows-style clipboard text.
 pub fn paste(text: &str, mode: TermMode) -> Vec<u8> {
-    // Normalise newlines first.
+    // Normalise newlines: collapse CRLF first, then convert remaining bare LF.
     let normalised: std::borrow::Cow<str> = if text.contains('\n') {
-        text.replace('\n', "\r").into()
+        text.replace("\r\n", "\r").replace('\n', "\r").into()
     } else {
         text.into()
     };
@@ -705,5 +730,159 @@ mod tests {
         // Alt adds +8 to button code.
         let result = encode_mouse_sgr(MouseButton::Middle, 2, 3, true, Mods::ALT);
         assert_eq!(result, b"\x1b[<9;2;3M".to_vec());
+    }
+
+    // ── Fix 1: Ctrl-? = DEL (0x7f), Ctrl-/ has no special mapping ────
+
+    #[test]
+    fn ctrl_question_is_del() {
+        // Ctrl-? maps to DEL (0x7f) — readline backward-delete-char.
+        assert_eq!(encode_char('?', Mods::CTRL), Some(vec![0x7f]));
+    }
+
+    #[test]
+    fn ctrl_slash_has_no_special_mapping() {
+        // '/' (0x2f) has no Ctrl-symbol mapping, so the Ctrl path falls
+        // through.  '/' is not a control character, so the plain-char path
+        // emits its UTF-8 byte unchanged (0x2f).  This confirms the old
+        // '/' => 0x7f (DEL) arm is gone.
+        assert_eq!(encode_char('/', Mods::CTRL), Some(vec![0x2f]));
+    }
+
+    // ── Fix 2: Alt+Ctrl combos get ESC prefix ─────────────────────────
+
+    fn ctrl_alt() -> Mods {
+        Mods(iced::keyboard::Modifiers::CTRL | iced::keyboard::Modifiers::ALT)
+    }
+
+    #[test]
+    fn alt_ctrl_a_is_esc_soh() {
+        // Alt+Ctrl+A → ESC 0x01 (Meta+Ctrl-A, xterm convention).
+        assert_eq!(encode_char('a', ctrl_alt()), Some(vec![0x1b, 0x01]));
+    }
+
+    #[test]
+    fn alt_ctrl_bracket_is_esc_esc() {
+        // Alt+Ctrl+[ → ESC ESC (Meta+Ctrl-[).
+        assert_eq!(encode_char('[', ctrl_alt()), Some(vec![0x1b, 0x1b]));
+    }
+
+    #[test]
+    fn alt_ctrl_letter_via_encode_key() {
+        // Alt+Ctrl+C through encode_key → ESC ETX.
+        assert_eq!(
+            encode_key(
+                &Key::Character("c".into()),
+                ctrl_alt(),
+                normal()
+            ),
+            Some(vec![0x1b, 0x03])
+        );
+    }
+
+    // ── Fix 3: paste() CRLF normalisation — no double-CR ─────────────
+
+    #[test]
+    fn paste_crlf_no_double_cr() {
+        // "foo\r\nbar" must produce "foo\rbar", not "foo\r\rbar".
+        let result = paste("foo\r\nbar", TermMode::empty());
+        assert_eq!(result, b"foo\rbar".to_vec());
+    }
+
+    #[test]
+    fn paste_bracketed_crlf_no_double_cr() {
+        // Same check with bracketed-paste mode active.
+        let result = paste("foo\r\nbar", TermMode::BRACKETED_PASTE);
+        assert_eq!(result, b"\x1b[200~foo\rbar\x1b[201~".to_vec());
+    }
+
+    // ── Fix 4: Ctrl-backtick = NUL (0x00), not RS (0x1e) ─────────────
+
+    #[test]
+    fn ctrl_backtick_is_nul() {
+        // '`' (0x60) & 0x1f = 0x00 (NUL).
+        assert_eq!(encode_char('`', Mods::CTRL), Some(vec![0x00]));
+    }
+
+    #[test]
+    fn ctrl_caret_is_rs_still() {
+        // '^' (0x5e) & 0x1f = 0x1e (RS) — unchanged.
+        assert_eq!(encode_char('^', Mods::CTRL), Some(vec![0x1e]));
+    }
+
+    #[test]
+    fn ctrl_tilde_is_rs_still() {
+        // '~' (0x7e) & 0x1f = 0x1e (RS) — unchanged.
+        assert_eq!(encode_char('~', Mods::CTRL), Some(vec![0x1e]));
+    }
+
+    // ── Fix 5: F-key encoding coverage ───────────────────────────────
+    // F1–F4 use SS3 form (ESC O x); F5–F12 use CSI tilde form.
+    // F6 skips 16→17~, F11 skips 22→23~.
+
+    #[test]
+    fn f1_is_esc_op() {
+        assert_eq!(
+            encode_key(&Key::Named(Named::F1), Mods::NONE, normal()),
+            Some(b"\x1bOP".to_vec())
+        );
+    }
+
+    #[test]
+    fn f2_is_esc_oq() {
+        assert_eq!(
+            encode_key(&Key::Named(Named::F2), Mods::NONE, normal()),
+            Some(b"\x1bOQ".to_vec())
+        );
+    }
+
+    #[test]
+    fn f3_is_esc_or() {
+        assert_eq!(
+            encode_key(&Key::Named(Named::F3), Mods::NONE, normal()),
+            Some(b"\x1bOR".to_vec())
+        );
+    }
+
+    #[test]
+    fn f4_is_esc_os() {
+        assert_eq!(
+            encode_key(&Key::Named(Named::F4), Mods::NONE, normal()),
+            Some(b"\x1bOS".to_vec())
+        );
+    }
+
+    #[test]
+    fn f5_is_csi_15_tilde() {
+        assert_eq!(
+            encode_key(&Key::Named(Named::F5), Mods::NONE, normal()),
+            Some(b"\x1b[15~".to_vec())
+        );
+    }
+
+    #[test]
+    fn f6_is_csi_17_tilde() {
+        // Skips 16~ (not assigned in xterm ctlseqs).
+        assert_eq!(
+            encode_key(&Key::Named(Named::F6), Mods::NONE, normal()),
+            Some(b"\x1b[17~".to_vec())
+        );
+    }
+
+    #[test]
+    fn f11_is_csi_23_tilde() {
+        // Skips 22~ (not assigned in xterm ctlseqs).
+        assert_eq!(
+            encode_key(&Key::Named(Named::F11), Mods::NONE, normal()),
+            Some(b"\x1b[23~".to_vec())
+        );
+    }
+
+    #[test]
+    fn f12_is_csi_24_tilde() {
+        assert_eq!(
+            encode_key(&Key::Named(Named::F12), Mods::NONE, normal()),
+            Some(b"\x1b[24~".to_vec())
+        );
     }
 }
