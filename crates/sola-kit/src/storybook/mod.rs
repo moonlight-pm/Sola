@@ -120,6 +120,7 @@ pub enum Msg {
     Field(pages::field::Msg),
     NumberInput(pages::number_input::Msg),
     ColorPicker(pages::color_picker::Msg),
+    Sidebar(pages::sidebar::Msg),
     /// Bus message arriving via [`sola_kit::app::bus_subscription`].
     Bus(Arc<sola_bus::Message>),
     /// Open the inline color picker for one palette atom. No-op when
@@ -241,6 +242,7 @@ pub struct Storybook {
     field: pages::field::State,
     number_input: pages::number_input::State,
     color_picker: pages::color_picker::State,
+    sidebar: pages::sidebar::State,
     /// All known themes. `themes[0]` is always Default and can't be
     /// edited or deleted. Subsequent entries are user copies.
     themes: Vec<ThemePreset>,
@@ -297,6 +299,7 @@ impl Storybook {
             field: pages::field::State::default(),
             number_input: pages::number_input::State::default(),
             color_picker: pages::color_picker::State::default(),
+            sidebar: pages::sidebar::State::default(),
             themes: vec![default_preset],
             active_theme: 0,
             naming: None,
@@ -321,18 +324,51 @@ impl Storybook {
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
+        use iced::event::{self, Event};
+        use iced::mouse;
+
         let bus = sola_kit::app::bus_subscription().map(Msg::Bus);
+        let mut subs = vec![bus];
+
         // While the delete confirm is armed, run a one-shot-ish timer
         // that disarms it ~2s after arming (the subscription only exists
         // while `delete_armed`, so it starts on arm and is torn down on
         // confirm/disarm). `every` first fires ~2s after it starts.
         if self.delete_armed {
-            let timeout = iced::time::every(std::time::Duration::from_secs(2))
-                .map(|_| Msg::DisarmDelete);
-            Subscription::batch([bus, timeout])
-        } else {
-            bus
+            subs.push(
+                iced::time::every(std::time::Duration::from_secs(2))
+                    .map(|_| Msg::DisarmDelete),
+            );
         }
+
+        // Sidebar dogfood: while a resize or reorder gesture is in
+        // progress, listen for global cursor moves + release. Two
+        // listeners mirror the terminal's pattern — one feeds the x
+        // (divider width), one feeds the y (reorder drop). The update
+        // arms are independent (each guards on its own gesture state), so
+        // the cross-fired release messages are harmless.
+        if self.sidebar.needs_cursor_subscription() {
+            subs.push(event::listen_with(|ev, _, _| match ev {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Msg::Sidebar(pages::sidebar::Msg::DividerMove(position.x)))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::Sidebar(pages::sidebar::Msg::DividerRelease))
+                }
+                _ => None,
+            }));
+            subs.push(event::listen_with(|ev, _, _| match ev {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Msg::Sidebar(pages::sidebar::Msg::ReorderMove(position.y)))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::Sidebar(pages::sidebar::Msg::ReorderEnd))
+                }
+                _ => None,
+            }));
+        }
+
+        Subscription::batch(subs)
     }
 
     pub fn update(&mut self, msg: Msg) {
@@ -342,6 +378,7 @@ impl Storybook {
             Msg::Field(m) => self.field.update(m),
             Msg::NumberInput(m) => self.number_input.update(m),
             Msg::ColorPicker(m) => self.color_picker.update(m),
+            Msg::Sidebar(m) => self.sidebar.update(m),
             Msg::Bus(message) => {
                 let Some(topic) = Topic::parse(&message) else { return };
                 match topic {
@@ -882,7 +919,7 @@ impl Storybook {
             }
             Page::Divider => pages::divider::view(),
             Page::Popover => pages::popover::view(),
-            Page::Sidebar => pages::sidebar::view(),
+            Page::Sidebar => pages::sidebar::view(&self.sidebar).map(Msg::Sidebar),
             Page::Split => pages::split::view(),
             Page::Toolbar => pages::toolbar::view(&self.toolbar).map(Msg::Toolbar),
         }

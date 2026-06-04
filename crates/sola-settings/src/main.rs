@@ -168,21 +168,15 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Msg> {
-        let nav = sidebar(vec![SidebarSection {
-            label: Some("Settings".into()),
-            items: vec![
-                SidebarItem {
-                    label: "Applications".into(),
-                    active: self.panel == Panel::Applications,
-                    message: Msg::SelectPanel(Panel::Applications),
-                },
-                SidebarItem {
-                    label: "Mail".into(),
-                    active: self.panel == Panel::Mail,
-                    message: Msg::SelectPanel(Panel::Mail),
-                },
+        let nav = sidebar(vec![SidebarSection::new(
+            "Settings",
+            vec![
+                SidebarItem::new("Applications", Msg::SelectPanel(Panel::Applications))
+                    .active(self.panel == Panel::Applications),
+                SidebarItem::new("Mail", Msg::SelectPanel(Panel::Mail))
+                    .active(self.panel == Panel::Mail),
             ],
-        }]);
+        )]);
 
         let title_text = match self.panel {
             Panel::Applications => "Applications",
