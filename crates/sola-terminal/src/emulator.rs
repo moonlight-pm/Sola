@@ -356,6 +356,8 @@ impl Dimensions for TermDims {
 /// `parser` field is exercised only by the headless `advance` unit test.
 pub struct Emulator {
     term: Arc<FairMutex<Term<Listener>>>,
+    // Used by Emulator::advance (called from unit tests and future PTY path).
+    #[allow(dead_code)]
     parser: Processor,
 }
 
@@ -380,6 +382,9 @@ impl Emulator {
     ///
     /// `FairMutex::lock()` (parking_lot) returns the guard directly with
     /// no `Result` — do not call `.unwrap()`.
+    // Called by unit tests; the live PTY path uses the Arc<Term> handle
+    // directly via Processor::advance. Reserved for future integration.
+    #[allow(dead_code)]
     pub fn advance(&mut self, bytes: &[u8]) {
         let mut term = self.term.lock();
         self.parser.advance(&mut *term, bytes);

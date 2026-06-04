@@ -235,8 +235,6 @@ enum Msg {
     Bus(Arc<Message>),
     PtyOutput(String),
     PtyExit(String),
-    SelectTab(String),
-    CloseTab(String),
     NewTab,
     ToggleCollapse,
     SidebarDragStart,
@@ -247,7 +245,6 @@ enum Msg {
     ReorderEnd,
     Input(iced::Event),
     Resized(iced::Size),
-    Tick,
     /// The canvas mutated `term.selection` (drag start/extend/clear). The
     /// handler just clears the geometry cache so the highlight re-renders.
     SelectionChanged,
@@ -381,8 +378,6 @@ impl App {
         match msg {
             Msg::Bus(m) => self.on_bus(&m),
             Msg::NewTab => self.new_tab(),
-            Msg::CloseTab(id) => self.close_tab(&id),
-            Msg::SelectTab(id) => self.select_tab(&id),
             // Shell exited (reader hit EOF) — tear the tab down like a close.
             Msg::PtyExit(id) => self.close_tab(&id),
             // New grid content: invalidate the cached geometry so the next
@@ -560,7 +555,6 @@ impl App {
 
                 Task::none()
             }
-            Msg::Tick => Task::none(),
             Msg::Title(tab_id, title) => {
                 // Store for the active-tab window-title lookup in `title()`.
                 // Stale entries for closed tabs are cleaned up in `close_tab`.

@@ -49,10 +49,6 @@ impl Tabs {
         self.runtime.get(id)
     }
 
-    pub fn runtime_mut(&mut self, id: &str) -> Option<&mut TabRuntime> {
-        self.runtime.get_mut(id)
-    }
-
     /// Remove the tab's metadata AND its runtime. The runtime's `PtyBackend`
     /// drops here (preserving tmux); callers that want the tmux session GONE
     /// must call `backend.close()` before `remove`.

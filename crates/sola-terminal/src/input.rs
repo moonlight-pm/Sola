@@ -35,9 +35,14 @@ use iced::keyboard::{self, key::Named};
 pub struct Mods(keyboard::Modifiers);
 
 impl Mods {
+    // Reserved for mouse-mode SGR encoding (Task 2.5 / future mouse reporting).
+    #[allow(dead_code)]
     pub const NONE: Mods = Mods(keyboard::Modifiers::empty());
+    #[allow(dead_code)]
     pub const CTRL: Mods = Mods(keyboard::Modifiers::CTRL);
+    #[allow(dead_code)]
     pub const ALT: Mods = Mods(keyboard::Modifiers::ALT);
+    #[allow(dead_code)]
     pub const SHIFT: Mods = Mods(keyboard::Modifiers::SHIFT);
 
     pub fn ctrl(self) -> bool {
@@ -60,6 +65,8 @@ impl From<keyboard::Modifiers> for Mods {
 // ── MouseButton ───────────────────────────────────────────────────────────
 
 /// Terminal mouse button identity for [`encode_mouse_sgr`].
+// Reserved for mouse-mode SGR reporting (Task 2.5).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseButton {
     Left,
@@ -324,6 +331,8 @@ pub fn paste(text: &str, mode: TermMode) -> Vec<u8> {
 /// The renderer (Task 2.5) decides whether mouse reporting is active by
 /// checking `TermMode::MOUSE_REPORT_CLICK` / `TermMode::SGR_MOUSE` etc.;
 /// this function is the pure encoder and does not inspect mode bits.
+// Reserved for mouse-mode SGR reporting (Task 2.5).
+#[allow(dead_code)]
 pub fn encode_mouse_sgr(
     button: MouseButton,
     col: u16,
