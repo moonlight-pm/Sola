@@ -169,7 +169,9 @@ impl Default for Palette {
         Self {
             bg: rgb(0x0a, 0x0c, 0x10),
             fg: rgb(0xc8, 0xcd, 0xd6),
-            cursor: rgb(0xc8, 0xcd, 0xd6),
+            // Deep gold block cursor — fixed, not theme-derived, so it stays a
+            // warm gold (never brown) on any palette. See `from_kit_theme`.
+            cursor: rgb(0xff, 0xb8, 0x00),
             selection: Color::from_rgba8(0x33, 0x66, 0xcc, 0.35),
             ansi: [
                 rgb(0x00, 0x00, 0x00), // 0  black
@@ -248,7 +250,9 @@ impl Palette {
         Self {
             bg: atoms.bg,
             fg: atoms.fg,
-            cursor: atoms.accent,
+            // Fixed deep gold, independent of the theme accent — a warm gold
+            // cursor reads clearly on every palette and never muddies to brown.
+            cursor: rgb(0xff, 0xb8, 0x00),
             // A muted accent wash, legible over any bg (alpha-blended), instead
             // of a flat fill that could clash with a light theme.
             selection: with_alpha(atoms.accent, 0.35),
@@ -401,6 +405,10 @@ pub struct TermView<'a, Message> {
     pub cache: &'a canvas::Cache,
     pub palette: &'a Palette,
     pub metrics: CellMetrics,
+    /// Blink phase for the block cursor: `true` draws it, `false` hides it.
+    /// `App` toggles this on a timer and clears the cache so the cursor
+    /// appears/disappears between frames.
+    pub cursor_on: bool,
     /// Message emitted whenever a mouse interaction mutates `term.selection`
     /// (start / extend / clear). `App` handles it by clearing the geometry
     /// cache so the highlight re-renders. Cloned, so cheap variants only.
@@ -679,15 +687,20 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             //
             // We draw a filled block in the cursor colour. Non-block shapes
             // (Beam / Underline / Hollow) are a follow-up — block is the
-            // standard fallback and is always legible.
+            // standard fallback and is always legible. Skipped on the "off"
+            // blink phase so the cursor blinks (App toggles `cursor_on`).
             // NOTE: cursor.shape (Beam/Underline/HollowBlock) not yet honoured.
-            let (cx, cy) = self.cell_xy(cursor.point.line.0, cursor.point.column.0);
-            let block = Path::rectangle(
-                Point::new(cx, cy),
-                Size::new(metrics.cell_w, metrics.cell_h),
-            );
-            // Semi-transparent so the glyph under the cursor stays visible.
-            frame.fill(&block, Color { a: 0.5, ..palette.cursor });
+            if self.cursor_on {
+                let (cx, cy) = self.cell_xy(cursor.point.line.0, cursor.point.column.0);
+                let block = Path::rectangle(
+                    Point::new(cx, cy),
+                    Size::new(metrics.cell_w, metrics.cell_h),
+                );
+                // Fairly opaque: a low alpha over a dark background muddies the
+                // warm gold into brown. 0.85 keeps it reading as gold while the
+                // glyph beneath stays faintly visible.
+                frame.fill(&block, Color { a: 0.85, ..palette.cursor });
+            }
         });
 
         vec![geometry]
@@ -915,7 +928,8 @@ mod tests {
         // Defaults.
         assert_eq!(p.bg, a.bg, "default bg ← bg-primary");
         assert_eq!(p.fg, a.fg, "default fg ← text-primary");
-        assert_eq!(p.cursor, a.accent, "cursor ← accent");
+        // Cursor is a fixed deep gold, not theme-derived.
+        assert_eq!(p.cursor, Color::from_rgb8(0xff, 0xb8, 0x00), "cursor ← fixed gold");
         // Selection is the accent wash at 35% alpha.
         assert_eq!(p.selection.r, a.accent.r);
         assert_eq!(p.selection.g, a.accent.g);

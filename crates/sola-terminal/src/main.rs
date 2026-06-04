@@ -225,6 +225,9 @@ struct App {
     /// Cleared on tab close. Not persisted — titles come from the running
     /// shell and need no bus round-trip.
     titles: HashMap<String, String>,
+    /// Block-cursor blink phase. Toggled by `Msg::BlinkTick` on a timer;
+    /// `term_view` draws the cursor only while `true`.
+    cursor_on: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -257,6 +260,8 @@ enum Msg {
     /// Result of an async tmux cwd query for `tab_id`. `None` means the pane
     /// was gone or the query failed; `Some(path)` is the new working directory.
     CwdResult(String, Option<String>),
+    /// Cursor blink timer tick: flip the blink phase and repaint.
+    BlinkTick,
 }
 
 impl App {
@@ -284,6 +289,7 @@ impl App {
             metrics: term_view::CellMetrics::for_font(15.0, fonts::mono_metrics()),
             grid: (DEFAULT_COLS, DEFAULT_ROWS),
             titles: HashMap::new(),
+            cursor_on: true,
         };
         (app, Task::none())
     }
@@ -311,6 +317,10 @@ impl App {
             // Task 2.6: drive Msg::Resized whenever the window changes size.
             // iced 0.14 API: `resize_events() -> Subscription<(Id, Size)>`.
             iced::window::resize_events().map(|(_id, size)| Msg::Resized(size)),
+            // Cursor blink: flip the phase ~twice a second. A steady blink
+            // (no idle-reset) is the simplest behaviour and matches a plain
+            // block cursor.
+            iced::time::every(Duration::from_millis(530)).map(|_| Msg::BlinkTick),
             // Single always-on global cursor + release listener shared by both
             // the divider-drag and tab-reorder gestures.  A no-op match fires on
             // every cursor sample when neither gesture is active — same pattern as
@@ -390,6 +400,14 @@ impl App {
             // output is the simplest correct choice — only the active tab's
             // grid is on screen, so a stray clear just costs one redraw.)
             Msg::PtyOutput(_id) => {
+                self.term_cache.clear();
+                Task::none()
+            }
+            // Blink timer: flip the cursor phase and repaint. Clearing the
+            // cache is cheap (geometry rebuild is sub-millisecond) and is the
+            // simplest way to make the cached canvas show/hide the cursor.
+            Msg::BlinkTick => {
+                self.cursor_on = !self.cursor_on;
                 self.term_cache.clear();
                 Task::none()
             }
@@ -615,6 +633,7 @@ impl App {
                     cache: &self.term_cache,
                     palette: &self.palette,
                     metrics: self.metrics,
+                    cursor_on: self.cursor_on,
                     on_select: Msg::SelectionChanged,
                 };
                 canvas(view)
@@ -1049,6 +1068,17 @@ impl App {
             }
         };
 
+        // Pin the tmux window to our current grid. `spawn_or_attach` opened the
+        // pty at (cols, rows), but a *reattached* tmux session can still hold an
+        // old window size from a previous run: tmux's `resize-window` switches a
+        // session to manual window-sizing, so it no longer auto-follows the
+        // client's TIOCSWINSZ. Left alone, tmux renders its window smaller than
+        // our client and pads the remainder with `·`, so the terminal looks
+        // undersized. Asserting the size here (resize-window + TIOCSWINSZ +
+        // SIGWINCH) puts client and tmux window back in lockstep.
+        backend.resize(cols, rows);
+        backend.sigwinch();
+
         self.tabs.insert_runtime(
             id.to_string(),
             state::TabRuntime { emulator: em, backend },
@@ -1200,12 +1230,26 @@ impl App {
         self.term_cache.clear();
 
         // Lazy-attach: if this tab has no runtime yet (boot-replayed from the
-        // bus but never opened in this session) attach it now.
+        // bus but never opened in this session) attach it now. attach_tab pins
+        // the new runtime to the current grid.
         // seed_scrollback=true because it's an existing tmux session with history.
         if self.tabs.runtime(id).is_none() {
-            self.attach_tab(id, true)
-        } else {
-            Task::none()
+            return self.attach_tab(id, true);
         }
+
+        // Already attached: re-assert the current grid size on the now-active
+        // tab. Its tmux window can drift out of sync while inactive (a full-screen
+        // TUI resizing, or tmux's manual window-sizing pinning an old size), and
+        // when that window is smaller than our client tmux pads the surplus with
+        // `·` so the terminal looks undersized. Re-pinning to `self.grid` on every
+        // switch (resize-window + TIOCSWINSZ + SIGWINCH) keeps the visible tab
+        // sized to the pane.
+        let (cols, rows) = self.grid;
+        if let Some(rt) = self.tabs.runtime(id) {
+            rt.emulator.resize(cols, rows);
+            rt.backend.resize(cols, rows);
+            rt.backend.sigwinch();
+        }
+        Task::none()
     }
 }
