@@ -234,6 +234,12 @@ enum Msg {
     Input(iced::Event),
     Resized(iced::Size),
     Tick,
+    /// The canvas mutated `term.selection` (drag start/extend/clear). The
+    /// handler just clears the geometry cache so the highlight re-renders.
+    SelectionChanged,
+    /// Clipboard read completed (Ctrl+Shift+V or menu "paste"). `Some` carries
+    /// the text to paste into the active PTY; `None` is an empty clipboard.
+    Pasted(Option<String>),
 }
 
 impl App {
@@ -362,6 +368,13 @@ impl App {
             }
             Msg::Input(event) => self.on_input(event),
             Msg::Resized(size) => self.on_resized(size),
+            // The canvas just changed `term.selection`; drop the cached
+            // geometry so the next `view` repaints the highlight.
+            Msg::SelectionChanged => {
+                self.term_cache.clear();
+                Task::none()
+            }
+            Msg::Pasted(text) => self.on_pasted(text),
             Msg::ToggleCollapse => {
                 self.config.sidebar_collapsed = !self.config.sidebar_collapsed;
                 // Persist the updated config on the bus (sticky — survives
@@ -538,6 +551,7 @@ impl App {
                     cache: &self.term_cache,
                     palette: &self.palette,
                     metrics: term_view::CellMetrics::default(),
+                    on_select: Msg::SelectionChanged,
                 };
                 canvas(view)
                     .width(Length::Fill)
@@ -606,6 +620,21 @@ impl App {
             return Task::none();
         };
 
+        // Copy/paste shortcuts come FIRST, before any PTY encoding. Only the
+        // +Shift variants are intercepted: plain Ctrl+C must still reach the
+        // PTY as 0x03 (SIGINT) and plain Ctrl+V as 0x16, so we require BOTH
+        // control and shift here. Match on the logical character so layout and
+        // case ('c'/'C') don't matter.
+        if modifiers.control() && modifiers.shift() {
+            if let keyboard::Key::Character(s) = &key {
+                match s.chars().next().map(|c| c.to_ascii_lowercase()) {
+                    Some('c') => return self.copy_selection(),
+                    Some('v') => return self.paste(),
+                    _ => {}
+                }
+            }
+        }
+
         let Some(active) = self.active.clone() else {
             return Task::none();
         };
@@ -640,6 +669,54 @@ impl App {
         if let Some(bytes) = bytes {
             rt.backend.write(&bytes);
         }
+        Task::none()
+    }
+
+    /// Copy the active tab's terminal selection to the clipboard.
+    ///
+    /// Locks the term briefly, asks alacritty for the selection text
+    /// (`selection_to_string`), and writes non-empty text to the system
+    /// clipboard via iced. No selection (or empty) → no-op.
+    fn copy_selection(&self) -> Task<Msg> {
+        let Some(active) = self.active.as_deref() else {
+            return Task::none();
+        };
+        let Some(rt) = self.tabs.runtime(active) else {
+            return Task::none();
+        };
+        let text = { rt.emulator.term().lock().selection_to_string() };
+        match text {
+            Some(s) if !s.is_empty() => iced::clipboard::write::<Msg>(s),
+            _ => Task::none(),
+        }
+    }
+
+    /// Read the system clipboard, routing the result to `Msg::Pasted`.
+    ///
+    /// The actual write to the PTY happens in `on_pasted` once the async read
+    /// resolves, so paste honours the term's bracketed-paste mode at that time.
+    fn paste(&self) -> Task<Msg> {
+        iced::clipboard::read().map(Msg::Pasted)
+    }
+
+    /// Write pasted clipboard text to the active PTY.
+    ///
+    /// Reads the term mode (briefly locked) so `input::paste` can wrap the text
+    /// in bracketed-paste markers when the application requested it and
+    /// normalise newlines. `None` (empty clipboard) is a no-op.
+    fn on_pasted(&mut self, text: Option<String>) -> Task<Msg> {
+        let Some(text) = text else {
+            return Task::none();
+        };
+        let Some(active) = self.active.clone() else {
+            return Task::none();
+        };
+        let Some(rt) = self.tabs.runtime(&active) else {
+            return Task::none();
+        };
+        let mode = { *rt.emulator.term().lock().mode() };
+        let bytes = input::paste(&text, mode);
+        rt.backend.write(&bytes);
         Task::none()
     }
 
@@ -957,7 +1034,8 @@ impl App {
                     Task::none()
                 }
             }
-            "copy" | "paste" => Task::none(), // Task 4.1
+            "copy" => self.copy_selection(),
+            "paste" => self.paste(),
             other => {
                 if let Some(index) = parse_select_tab_action(other) {
                     let ids = self.tabs.ids_in_order();

@@ -14,13 +14,14 @@
 
 use std::sync::Arc;
 
-use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, Text};
+use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::{LineHeight, Shaping};
 use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, mouse};
+use iced::event::Status;
 
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Line, Point as GridPoint};
-use alacritty_terminal::selection::SelectionRange;
+use alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
+use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{RenderableContent, Term};
 use alacritty_terminal::term::cell::Flags;
@@ -68,6 +69,55 @@ pub fn cols_rows_for(size: iced::Size, metrics: CellMetrics) -> (u16, u16) {
     let cols = (usable_w / metrics.cell_w).floor().max(1.0) as u16;
     let rows = (usable_h / metrics.cell_h).floor().max(1.0) as u16;
     (cols, rows)
+}
+
+/// Map a pixel position inside the canvas to a visible grid cell `(col, row)`.
+///
+/// Inverse of [`TermView::cell_xy`]: subtract the padding, divide by the cell
+/// advance, floor, and clamp into `0..cols` / `0..rows`. Both axes clamp so a
+/// drag that leaves the pane still resolves to an edge cell (matches how
+/// terminals extend a selection past the grid border). Returns visible-grid
+/// coordinates — [`viewport_cell_to_point`] maps those onto buffer space.
+pub fn pixel_to_cell(
+    x: f32,
+    y: f32,
+    metrics: CellMetrics,
+    cols: u16,
+    rows: u16,
+) -> (usize, usize) {
+    let col = ((x - PAD) / metrics.cell_w).floor();
+    let row = ((y - PAD) / metrics.cell_h).floor();
+    let col = col.max(0.0) as usize;
+    let row = row.max(0.0) as usize;
+    let col = col.min(cols.saturating_sub(1) as usize);
+    let row = row.min(rows.saturating_sub(1) as usize);
+    (col, row)
+}
+
+/// Which half of a cell the pixel `x` falls in — the selection `Side`.
+///
+/// Left half → `Side::Left` (caret before the glyph), right half → `Side::Right`
+/// (caret after it). alacritty uses this to decide whether the cell under the
+/// cursor is included in a `Simple` selection.
+pub fn cell_side(x: f32, col: usize, metrics: CellMetrics) -> Side {
+    let cell_start = PAD + col as f32 * metrics.cell_w;
+    if x - cell_start < metrics.cell_w * 0.5 {
+        Side::Left
+    } else {
+        Side::Right
+    }
+}
+
+/// Map a visible-grid cell `(col, row)` to a buffer [`GridPoint`].
+///
+/// The visible grid is the window into the scrollback at the current
+/// `display_offset`: visible row 0 is buffer line `-display_offset`. This is the
+/// inverse of the renderer's `vis = buf_line + display_offset`, and mirrors
+/// alacritty's own `viewport_to_point`. Selections are stored in BUFFER
+/// coordinates, so this MUST be applied or the selection drifts by
+/// `display_offset` rows whenever the grid is scrolled.
+pub fn viewport_cell_to_point(col: usize, row: usize, display_offset: usize) -> GridPoint {
+    GridPoint::new(Line(row as i32 - display_offset as i32), Column(col))
 }
 
 /// The 16/256-colour table + the named defaults the embedder supplies.
@@ -329,14 +379,18 @@ fn dim(c: Color) -> Color {
 /// cheap to copy, but the [`canvas::Cache`] and [`Palette`] are borrowed from
 /// `App` so cached geometry persists across frames and the palette has one
 /// owner (Task 4.4's edit point).
-pub struct TermView<'a> {
+pub struct TermView<'a, Message> {
     pub term: Arc<FairMutex<Term<Listener>>>,
     pub cache: &'a canvas::Cache,
     pub palette: &'a Palette,
     pub metrics: CellMetrics,
+    /// Message emitted whenever a mouse interaction mutates `term.selection`
+    /// (start / extend / clear). `App` handles it by clearing the geometry
+    /// cache so the highlight re-renders. Cloned, so cheap variants only.
+    pub on_select: Message,
 }
 
-impl<'a> TermView<'a> {
+impl<'a, Message> TermView<'a, Message> {
     /// Top-left px of the cell at visible grid `point` (line ≥ 0).
     fn cell_xy(&self, line: i32, col: usize) -> (f32, f32) {
         (
@@ -346,12 +400,109 @@ impl<'a> TermView<'a> {
     }
 }
 
-impl<Message> canvas::Program<Message> for TermView<'_> {
-    type State = ();
+/// In-progress drag state for the selection canvas. Lives in the
+/// [`canvas::Program::State`] so it survives between events without `App`
+/// owning it.
+#[derive(Default)]
+pub struct SelState {
+    dragging: bool,
+    /// Whether the current drag has actually extended past its origin cell.
+    /// A press+release with no movement is a plain click → clear selection.
+    moved: bool,
+}
+
+impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
+    type State = SelState;
+
+    /// Mouse-driven selection.
+    ///
+    /// - Left press inside bounds: start a new `Simple` selection anchored at
+    ///   the cell under the cursor (in BUFFER coords) and arm the drag.
+    /// - Cursor move while dragging: extend the selection to the cell under the
+    ///   cursor; mark the drag as "moved" so release knows it wasn't a click.
+    /// - Left release: disarm. If the drag never moved, treat it as a plain
+    ///   click and clear any selection (so a stray click deselects).
+    ///
+    /// All term mutation happens under a brief lock that is released before
+    /// returning — `draw` only locks inside its own `cache.draw` closure and
+    /// iced never runs `draw` and `update` concurrently, so there's no
+    /// re-entrancy with the render lock.
+    fn update(
+        &self,
+        state: &mut SelState,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<canvas::Action<Message>> {
+        let Event::Mouse(mouse_event) = event else {
+            return None;
+        };
+
+        // Resolve a canvas-local pixel position to a BUFFER point under the
+        // current scroll offset, plus the cell side the x falls in.
+        let point_at = |pos: Point| -> (GridPoint, Side) {
+            let term = self.term.lock();
+            let cols = term.columns() as u16;
+            let rows = term.screen_lines() as u16;
+            let display_offset = term.grid().display_offset();
+            drop(term);
+            let (col, row) = pixel_to_cell(pos.x, pos.y, self.metrics, cols, rows);
+            let side = cell_side(pos.x, col, self.metrics);
+            (viewport_cell_to_point(col, row, display_offset), side)
+        };
+
+        match mouse_event {
+            mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                let Some(pos) = cursor.position_in(bounds) else {
+                    return None;
+                };
+                let (point, side) = point_at(pos);
+                let mut term = self.term.lock();
+                term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+                drop(term);
+                state.dragging = true;
+                state.moved = false;
+                Some(canvas::Action::publish(self.on_select.clone()).and_capture())
+            }
+            mouse::Event::CursorMoved { .. } if state.dragging => {
+                // Use the clamped in-bounds position so a drag past the edge
+                // still extends to an edge cell.
+                let pos = cursor.position_in(bounds).or_else(|| {
+                    cursor
+                        .position()
+                        .map(|p| Point::new(p.x - bounds.x, p.y - bounds.y))
+                })?;
+                let (point, side) = point_at(pos);
+                let mut term = self.term.lock();
+                if let Some(sel) = term.selection.as_mut() {
+                    sel.update(point, side);
+                }
+                drop(term);
+                state.moved = true;
+                Some(canvas::Action::publish(self.on_select.clone()).and_capture())
+            }
+            mouse::Event::ButtonReleased(mouse::Button::Left) if state.dragging => {
+                state.dragging = false;
+                let was_drag = state.moved;
+                state.moved = false;
+                if was_drag {
+                    // Real drag → keep the installed selection for copy.
+                    Some(canvas::Action::capture())
+                } else {
+                    // Plain click, no movement → clear any selection.
+                    let mut term = self.term.lock();
+                    term.selection = None;
+                    drop(term);
+                    Some(canvas::Action::publish(self.on_select.clone()).and_capture())
+                }
+            }
+            _ => None,
+        }
+    }
 
     fn draw(
         &self,
-        _state: &(),
+        _state: &SelState,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -648,6 +799,51 @@ mod tests {
         let (cols, rows) = cols_rows_for(iced::Size::new(200.0, 1.0), m);
         assert!(cols >= 2, "expected multiple cols, got {cols}");
         assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn pixel_to_cell_maps_interior_point() {
+        // Default metrics: cell_w=9, cell_h=18, PAD=6.
+        let m = CellMetrics::default();
+        // A pixel one past the top-left of cell (col 3, row 2):
+        // x = PAD + 3*9 + 1 = 34, y = PAD + 2*18 + 1 = 43.
+        let (col, row) = pixel_to_cell(34.0, 43.0, m, 80, 24);
+        assert_eq!((col, row), (3, 2));
+    }
+
+    #[test]
+    fn pixel_to_cell_clamps_below_and_above_grid() {
+        let m = CellMetrics::default();
+        // Above/left of the grid clamps to (0, 0).
+        assert_eq!(pixel_to_cell(-50.0, -50.0, m, 80, 24), (0, 0));
+        // Far past the bottom-right clamps to the last cell (cols-1, rows-1).
+        assert_eq!(pixel_to_cell(100_000.0, 100_000.0, m, 80, 24), (79, 23));
+    }
+
+    #[test]
+    fn cell_side_splits_on_the_half_cell() {
+        let m = CellMetrics::default(); // cell_w = 9.
+        // Col 3 starts at PAD + 3*9 = 33; half is at +4.5.
+        assert_eq!(cell_side(34.0, 3, m), Side::Left); // 1px in → left half.
+        assert_eq!(cell_side(40.0, 3, m), Side::Right); // 7px in → right half.
+    }
+
+    #[test]
+    fn viewport_cell_to_point_no_scroll_is_identity_in_line() {
+        // With display_offset 0, visible row N == buffer line N.
+        let p = viewport_cell_to_point(5, 2, 0);
+        assert_eq!(p.line, Line(2));
+        assert_eq!(p.column, Column(5));
+    }
+
+    #[test]
+    fn viewport_cell_to_point_offset_shifts_into_scrollback() {
+        // Scrolled up by 10: the top visible row (row 0) is buffer line -10,
+        // and row 3 is buffer line -7. This is the offset that, if dropped,
+        // makes a scrolled selection drift.
+        assert_eq!(viewport_cell_to_point(0, 0, 10).line, Line(-10));
+        assert_eq!(viewport_cell_to_point(4, 3, 10).line, Line(-7));
+        assert_eq!(viewport_cell_to_point(4, 3, 10).column, Column(4));
     }
 
     // Task 4.4 — the kit-theme mapping. Build the palette from a hand-built
