@@ -151,11 +151,12 @@ pub const SIDEBAR_W_MAX: f32 = 250.0;
 
 /// Compute the new sidebar width from a drag gesture.
 ///
-/// The sidebar grows as the cursor moves left (toward the sidebar) and shrinks
-/// as it moves right. Uses an anchor-relative formula so there is no drift when
-/// the cursor re-enters the clamped range after having exceeded it:
+/// The sidebar is on the LEFT, so it grows as the cursor moves right (away from
+/// the sidebar) and shrinks as it moves left. Uses an anchor-relative formula so
+/// there is no drift when the cursor re-enters the clamped range after exceeding
+/// it:
 ///
-///   `new_width = anchor_width + (anchor_x - cursor_x)`
+///   `new_width = anchor_width + (cursor_x - anchor_x)`
 ///
 /// Result is clamped to `[SIDEBAR_W_MIN, SIDEBAR_W_MAX]`.
 ///
