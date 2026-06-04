@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 use std::sync::Arc;
 
 use iced::widget::{Space, canvas, container, mouse_area, row, stack, text};
@@ -26,6 +27,15 @@ const APP_ID: &str = "sola-terminal";
 /// Default grid until the renderer reports a real pane size (Task 2.6).
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
+
+/// Milliseconds to wait after an Enter keypress before querying tmux for the
+/// pane's current working directory. Gives the shell time to process the
+/// command and update its cwd before we read it.
+const CWD_REFRESH_MS: u64 = 150;
+
+/// Slightly longer initial delay used when attaching a tab for the first time,
+/// so the tmux pane is ready before we query its cwd.
+const CWD_INITIAL_DELAY_MS: u64 = 300;
 
 /// Compute the pane area (the canvas the terminal grid occupies) from the
 /// window size and the sidebar width.
@@ -214,6 +224,10 @@ struct App {
     /// `window_size`, sidebar width and `metrics`. Initialised to
     /// DEFAULT_COLS×DEFAULT_ROWS; updated on every resize event.
     grid: (u16, u16),
+    /// Runtime-only window title cache: tab_id → most-recent OSC 0/2 title.
+    /// Cleared on tab close. Not persisted — titles come from the running
+    /// shell and need no bus round-trip.
+    titles: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -240,6 +254,12 @@ enum Msg {
     /// Clipboard read completed (Ctrl+Shift+V or menu "paste"). `Some` carries
     /// the text to paste into the active PTY; `None` is an empty clipboard.
     Pasted(Option<String>),
+    /// OSC 0/2 title set by the shell/TUI in tab `tab_id`. Empty string means
+    /// ResetTitle — fall back to "Terminal".
+    Title(String, String),
+    /// Result of an async tmux cwd query for `tab_id`. `None` means the pane
+    /// was gone or the query failed; `Some(path)` is the new working directory.
+    CwdResult(String, Option<String>),
 }
 
 impl App {
@@ -261,12 +281,18 @@ impl App {
             window_size: iced::Size::new(800.0, 480.0),
             metrics: term_view::CellMetrics::default(),
             grid: (DEFAULT_COLS, DEFAULT_ROWS),
+            titles: HashMap::new(),
         };
         (app, Task::none())
     }
 
     fn title(&self) -> String {
-        "Terminal".into()
+        self.active
+            .as_ref()
+            .and_then(|id| self.titles.get(id))
+            .filter(|t| !t.is_empty())
+            .cloned()
+            .unwrap_or_else(|| "Terminal".into())
     }
 
     fn theme(&self) -> Theme {
@@ -278,6 +304,7 @@ impl App {
             bus_subscription().map(Msg::Bus),
             emulator::output_subscription().map(Msg::PtyOutput),
             emulator::exit_subscription().map(Msg::PtyExit),
+            emulator::title_subscription().map(|(id, t)| Msg::Title(id, t)),
             iced::event::listen().map(Msg::Input),
             // Task 2.6: drive Msg::Resized whenever the window changes size.
             // iced 0.14 API: `resize_events() -> Subscription<(Id, Size)>`.
@@ -534,6 +561,53 @@ impl App {
                 Task::none()
             }
             Msg::Tick => Task::none(),
+            Msg::Title(tab_id, title) => {
+                // Store for the active-tab window-title lookup in `title()`.
+                // Stale entries for closed tabs are cleaned up in `close_tab`.
+                self.titles.insert(tab_id, title);
+                Task::none()
+            }
+            Msg::CwdResult(tab_id, path_opt) => {
+                let Some(path) = path_opt else {
+                    return Task::none();
+                };
+                // Only update if the path changed to avoid spurious bus emits.
+                let current_cwd = self.tabs.get(&tab_id).and_then(|m| m.cwd.clone());
+                if current_cwd.as_deref() == Some(path.as_str()) {
+                    return Task::none();
+                }
+                // Tab may have been closed between the Task spawn and its completion.
+                let Some(meta) = self.tabs.get(&tab_id).cloned() else {
+                    return Task::none();
+                };
+                let updated = state::TabMeta {
+                    id: meta.id.clone(),
+                    tmux_session: meta.tmux_session.clone(),
+                    cwd: Some(path.clone()),
+                    ordinal: meta.ordinal,
+                };
+                self.tabs.upsert_meta(updated);
+                // Re-emit the TerminalSession so the sidebar label updates and
+                // the new cwd survives a restart. A re-emit of an already-tracked
+                // tab is admitted (was_present=true in on_bus → Admit::Yes), so
+                // this never triggers retraction.
+                if let Ok(mut client) = bus().lock() {
+                    if let Err(e) = client.emit(Topic::TerminalSession(
+                        sola_bus::topics::TerminalSession {
+                            id: meta.id.clone(),
+                            tmux_session: meta.tmux_session,
+                            cwd: Some(path),
+                            ordinal: meta.ordinal,
+                        },
+                    )) {
+                        tracing::warn!(
+                            id = %meta.id,
+                            "CwdResult: emit TerminalSession failed: {e:?}"
+                        );
+                    }
+                }
+                Task::none()
+            }
         }
     }
 
@@ -667,7 +741,26 @@ impl App {
         });
 
         if let Some(bytes) = bytes {
+            // Detect Enter (carriage return) to schedule a cwd refresh.
+            // The shell may `cd` on this keypress; we query tmux ~150ms later
+            // so the shell has time to execute the command before we read cwd.
+            let is_enter = bytes == [b'\r'];
             rt.backend.write(&bytes);
+            if is_enter {
+                if let Some(session) = self.tabs.get(&active).map(|m| m.tmux_session.clone()) {
+                    let tab_id = active.clone();
+                    return Task::perform(
+                        async move {
+                            tokio::time::sleep(Duration::from_millis(CWD_REFRESH_MS)).await;
+                            tokio::task::spawn_blocking(move || tmux::pane_current_path(&session))
+                                .await
+                                .ok()
+                                .flatten()
+                        },
+                        move |path| Msg::CwdResult(tab_id, path),
+                    );
+                }
+            }
         }
         Task::none()
     }
@@ -892,6 +985,7 @@ impl App {
             id.to_string(),
             pty::pty_write_sender(),
             emulator::notify_sender(),
+            emulator::title_sender(),
         );
         let em = emulator::Emulator::new(cols, rows, listener);
         let term = em.term();
@@ -939,7 +1033,23 @@ impl App {
             id.to_string(),
             state::TabRuntime { emulator: em, backend },
         );
-        Task::none()
+
+        // Initial cwd fetch: query tmux shortly after attach so the tab label
+        // shows the working directory without needing the user to press Enter.
+        // A slightly longer delay than CWD_REFRESH_MS gives the pty time to
+        // finish attaching before we query.
+        let tab_id = id.to_string();
+        let session = meta.tmux_session.clone();
+        Task::perform(
+            async move {
+                tokio::time::sleep(Duration::from_millis(CWD_INITIAL_DELAY_MS)).await;
+                tokio::task::spawn_blocking(move || tmux::pane_current_path(&session))
+                    .await
+                    .ok()
+                    .flatten()
+            },
+            move |path| Msg::CwdResult(tab_id, path),
+        )
     }
 
     /// Mint a new tab: fresh uuid, tmux session named after it, cwd inherited
@@ -1011,6 +1121,7 @@ impl App {
         }
 
         self.tabs.remove(id);
+        self.titles.remove(id);
         self.republish_menu();
         Task::none()
     }

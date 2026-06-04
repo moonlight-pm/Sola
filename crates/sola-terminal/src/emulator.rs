@@ -181,11 +181,78 @@ fn exit_stream() -> impl Stream<Item = String> {
     iced_rx
 }
 
+// ── Process-wide title channel ────────────────────────────────────────────────
+//
+// Mirrors the output/exit channels above. When the terminal emulator processes
+// an OSC 0 or OSC 2 sequence (window-title), alacritty_terminal fires
+// `Event::Title(s)`. The `Listener` catches this and forwards `(tab_id, title)`
+// here. `title_subscription()` delivers those pairs to iced as
+// `Msg::Title(tab_id, title)` so `App` can update the window title bar.
+
+static TITLE_TX: OnceLock<mpsc::Sender<(String, String)>> = OnceLock::new();
+static TITLE_RX: Mutex<Option<mpsc::Receiver<(String, String)>>> = Mutex::new(None);
+
+fn ensure_title_channel() {
+    TITLE_TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<(String, String)>();
+        *TITLE_RX.lock().unwrap() = Some(rx);
+        tx
+    });
+}
+
+/// Returns a clone of the process-wide title sender.
+///
+/// `Listener::send_event` calls this (via the stored clone) when it receives
+/// `Event::Title` from the ANSI parser.
+pub fn title_sender() -> mpsc::Sender<(String, String)> {
+    ensure_title_channel();
+    TITLE_TX.get().unwrap().clone()
+}
+
+/// iced `Subscription` delivering `(tab_id, title)` pairs whenever a tab's
+/// OSC 0/2 title changes.
+pub fn title_subscription() -> Subscription<(String, String)> {
+    Subscription::run(title_stream)
+}
+
+fn title_stream() -> impl Stream<Item = (String, String)> {
+    ensure_title_channel();
+    let rx_opt = TITLE_RX.lock().unwrap().take();
+    let (iced_tx, iced_rx) = iced::futures::channel::mpsc::unbounded::<(String, String)>();
+    match rx_opt {
+        Some(std_rx) => {
+            std::thread::spawn(move || {
+                loop {
+                    if iced_tx.is_closed() {
+                        break;
+                    }
+                    match std_rx.recv() {
+                        Ok(pair) => {
+                            if iced_tx.unbounded_send(pair).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+        None => {
+            tracing::warn!(
+                "title_subscription called while receiver is already taken; \
+                 returning empty stream (one receiver per process)"
+            );
+            drop(iced_tx);
+        }
+    }
+    iced_rx
+}
+
 // ── Listener — EventListener impl ─────────────────────────────────────────────
 
 /// Per-tab `EventListener` wired into `Term<Listener>`.
 ///
-/// Holds two channels:
+/// Holds three channels:
 /// - `pty_write`: terminal replies (DSR / cursor-position / DA) that MUST
 ///   be written back to the PTY master fd. Task 2.4 drains this and writes
 ///   to the fd. Dropping these breaks TUIs that depend on device-attribute
@@ -193,10 +260,13 @@ fn exit_stream() -> impl Stream<Item = String> {
 /// - `notify`: wakes iced on `Event::Wakeup`. The reader thread ALSO calls
 ///   `notify_sender()` directly after each `advance`, so this is a
 ///   harmless secondary path that coalesces naturally.
+/// - `title`: forwards OSC 0/2 title strings to iced as `(tab_id, title)`
+///   pairs so the window title bar tracks the active tab's shell title.
 pub struct Listener {
     tab_id: String,
     pty_write: mpsc::Sender<(String, Vec<u8>)>,
     notify: mpsc::Sender<String>,
+    title: mpsc::Sender<(String, String)>,
 }
 
 impl Listener {
@@ -204,8 +274,9 @@ impl Listener {
         tab_id: String,
         pty_write: mpsc::Sender<(String, Vec<u8>)>,
         notify: mpsc::Sender<String>,
+        title: mpsc::Sender<(String, String)>,
     ) -> Self {
-        Self { tab_id, pty_write, notify }
+        Self { tab_id, pty_write, notify, title }
     }
 }
 
@@ -218,13 +289,20 @@ impl EventListener for Listener {
             Event::Wakeup => {
                 let _ = self.notify.send(self.tab_id.clone());
             }
-            // Phase 4: propagate title to the tab bar / bus.
-            Event::Title(_title) => { /* Phase 4 */ }
+            // Forward OSC 0/2 title to App via the title channel.
+            Event::Title(title) => {
+                let _ = self.title.send((self.tab_id.clone(), title));
+            }
+            // ResetTitle: send an empty string so the window title falls back
+            // to "Terminal".
+            Event::ResetTitle => {
+                let _ = self.title.send((self.tab_id.clone(), String::new()));
+            }
             // Phase 4: bell → bus event / visual flash.
             Event::Bell => { /* Phase 4 */ }
             // Phase 4: propagate child exit so App can close the tab.
             Event::ChildExit(_status) => { /* Phase 4 */ }
-            // All other variants (MouseCursorDirty, ResetTitle,
+            // All other variants (MouseCursorDirty,
             // ClipboardStore, ClipboardLoad, ColorRequest,
             // TextAreaSizeRequest, CursorBlinkingChange, Exit, …) are
             // intentionally ignored until their phases land.
@@ -350,7 +428,8 @@ mod tests {
 
         let (ptx, _prx) = mpsc::channel::<(String, Vec<u8>)>();
         let (ntx, _nrx) = mpsc::channel::<String>();
-        let mut e = Emulator::new(80, 24, Listener::new("t".into(), ptx, ntx));
+        let (ttx, _trx) = mpsc::channel::<(String, String)>();
+        let mut e = Emulator::new(80, 24, Listener::new("t".into(), ptx, ntx, ttx));
 
         e.advance(b"hi");
 
