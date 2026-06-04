@@ -170,7 +170,14 @@ seq 1 1000000                   # numeric scroll, tests glyph throughput
 Read the worst sustained `ema` (and the peak single-frame `frame build`)
 during full-screen scroll.
 
-**Measured FPS/frame-time: ____**
+**Measured FPS/frame-time: ema ~0.11–0.13ms geometry-build, ~8,000–9,800 fps
+(peak single redraw frame ~0.26–0.28ms) on the RTX 3090 Ti. ~60× under the
+16ms budget. — measured 2026-06-04.**
+
+**DECISION: PASS → ship the per-cell canvas renderer (Tasks 2.5/2.6 as written).
+No glyphon/instanced-quad task needed.** Caveat acknowledged: this metric is
+geometry-build CPU time, not GPU present; the margin is large enough that the
+distinction does not change the decision for a terminal grid.
 
 ### DECISION GATE criteria (verbatim)
 
