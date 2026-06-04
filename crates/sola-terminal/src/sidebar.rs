@@ -125,7 +125,11 @@ pub const SIDEBAR_W_MAX: f32 = 250.0;
 ///
 /// This is a pure function so it can be unit-tested without an iced runtime.
 pub fn dragged_width(anchor_x: f32, anchor_w: f32, cursor_x: f32) -> f32 {
-    let desired = anchor_w + (anchor_x - cursor_x);
+    // The sidebar is on the LEFT, so the divider is its right edge: dragging
+    // the cursor RIGHT (cursor_x > anchor_x) widens it, dragging LEFT narrows.
+    // (sola-monitor's sidebar is on the right, so its formula uses the opposite
+    // sign — don't copy it verbatim.)
+    let desired = anchor_w + (cursor_x - anchor_x);
     desired.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX)
 }
 
@@ -143,30 +147,30 @@ mod tests {
     // --- dragged_width ---
 
     #[test]
-    fn dragged_width_widens_on_left_drag() {
-        // Anchor at x=200, width=120. Cursor moves left to x=150 → delta=-50 → new=170.
-        let w = dragged_width(200.0, 120.0, 150.0);
+    fn dragged_width_widens_on_right_drag() {
+        // Anchor at x=200, width=120. Cursor moves RIGHT to x=250 → delta=+50 → new=170.
+        let w = dragged_width(200.0, 120.0, 250.0);
         assert_eq!(w, 170.0);
     }
 
     #[test]
-    fn dragged_width_narrows_on_right_drag() {
-        // Anchor at x=200, width=160. Cursor moves right to x=240 → delta=+40 → new=120.
-        let w = dragged_width(200.0, 160.0, 240.0);
+    fn dragged_width_narrows_on_left_drag() {
+        // Anchor at x=200, width=160. Cursor moves LEFT to x=160 → delta=-40 → new=120.
+        let w = dragged_width(200.0, 160.0, 160.0);
         assert_eq!(w, 120.0);
     }
 
     #[test]
     fn dragged_width_clamps_min() {
-        // A very far right drag would give negative width — clamp to MIN.
-        let w = dragged_width(200.0, 100.0, 600.0);
+        // A very far LEFT drag would give negative width — clamp to MIN.
+        let w = dragged_width(200.0, 100.0, 0.0);
         assert_eq!(w, SIDEBAR_W_MIN);
     }
 
     #[test]
     fn dragged_width_clamps_max() {
-        // A very far left drag would exceed 250 — clamp to MAX.
-        let w = dragged_width(200.0, 200.0, 0.0);
+        // A very far RIGHT drag would exceed 250 — clamp to MAX.
+        let w = dragged_width(200.0, 200.0, 600.0);
         assert_eq!(w, SIDEBAR_W_MAX);
     }
 
