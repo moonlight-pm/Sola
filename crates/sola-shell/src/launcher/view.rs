@@ -9,13 +9,14 @@
 //! is handled in `on_chord` — Task 10.  The messages are defined here and
 //! in `Msg` so Task 10 can route to them.
 
-use iced::widget::{
-    column, container, mouse_area, row, rule, scrollable, stack, text, text_input,
-    Id as WidgetId,
-};
+use iced::widget::{column, container, mouse_area, row, scrollable, stack, text, text_input,
+    Id as WidgetId};
 use iced::{Alignment, Element, Length, Padding};
 
-use sola_kit::components::{icon, text_input::style as input_style};
+use sola_kit::components::{
+    button as kit_btn, divider::horizontal_divider, icon, modal,
+    text_input::style as input_style,
+};
 
 use crate::app::{Msg, Shell};
 
@@ -40,18 +41,6 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     }
 
     let launcher = &shell.launcher;
-
-    // The per-window theme on the launcher surface paints a TRANSPARENT
-    // background (see app.rs::theme), so we cannot pull the card's
-    // background from the in-style palette.  Close over the shell's REAL
-    // theme to derive opaque card colours.
-    let real = shell.theme.extended_palette();
-    let card_bg = real.background.base.color;
-    let card_border = real.background.strong.color;
-    let primary_base = real.primary.base.color;
-    let primary_base_text = real.primary.base.text;
-    let bg_text = real.background.base.text;
-    let bg_weak = real.background.weak.color;
 
     // --- query text input ---
     // Chunky: 18px text, 14px padding, no border so it reads as part of
@@ -91,6 +80,10 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                     .align_y(Alignment::Center)
                     .into();
 
+                // kit list_item: selected → primary pill (RADIUS_MD=6);
+                // unselected → transparent + background.strong hover/press lift.
+                // Deliberate deltas vs. old hand-rolled closure:
+                //   radius 8 → RADIUS_MD=6; hover fill background.weak → background.strong.
                 let row_btn = iced::widget::button(row_content)
                     .on_press(Msg::Launch)
                     .padding(Padding {
@@ -100,42 +93,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                         right: 16.0,
                     })
                     .width(Length::Fill)
-                    .style(move |_theme: &iced::Theme, status| {
-                        if is_selected {
-                            iced::widget::button::Style {
-                                background: Some(iced::Background::Color(primary_base)),
-                                text_color: primary_base_text,
-                                border: iced::Border {
-                                    radius: 8.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            }
-                        } else {
-                            match status {
-                                iced::widget::button::Status::Hovered => {
-                                    iced::widget::button::Style {
-                                        background: Some(iced::Background::Color(bg_weak)),
-                                        text_color: bg_text,
-                                        border: iced::Border {
-                                            radius: 8.0.into(),
-                                            ..Default::default()
-                                        },
-                                        ..Default::default()
-                                    }
-                                }
-                                _ => iced::widget::button::Style {
-                                    background: None,
-                                    text_color: bg_text,
-                                    border: iced::Border {
-                                        radius: 8.0.into(),
-                                        ..Default::default()
-                                    },
-                                    ..Default::default()
-                                },
-                            }
-                        }
-                    });
+                    .style(kit_btn::list_item(is_selected));
 
                 row_btn.into()
             })
@@ -149,11 +107,17 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
             .into();
 
     // --- card ---
-    // Chunky appliance card: 640px wide, 16px internal padding around the
-    // body so the rule and rows breathe.
+    // Chunky appliance card: 640px wide. No padding on the card itself —
+    // the input and list carry their own internal spacing.
+    //
+    // `modal(...)` supplies card chrome (bg background.weaker, hairline border
+    // at RADIUS_XL=14, deep shadow 0.55/16/48) from the ambient theme, which
+    // now has opaque background tiers. No need to close over shell.theme here.
+    // Deliberate delta: old card used background.base (transparent in overlays);
+    // kit modal uses background.weaker (one tier raised) — correct for overlays.
     let card_body: Element<'_, Msg> = column![
         query_input,
-        rule::horizontal(1),
+        horizontal_divider(),
         container(list).padding(Padding {
             top: 8.0,
             bottom: 8.0,
@@ -165,24 +129,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     .width(Length::Fill)
     .into();
 
-    let card: Element<'_, Msg> = container(card_body)
-        .width(Length::Fixed(640.0))
-        .padding(Padding::new(0.0))
-        .style(move |_theme: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(card_bg)),
-            border: iced::Border {
-                color: card_border,
-                width: 1.0,
-                radius: 14.0.into(),
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.55),
-                offset: iced::Vector::new(0.0, 16.0),
-                blur_radius: 48.0,
-            },
-            ..Default::default()
-        })
-        .into();
+    let card: Element<'_, Msg> = modal(card_body).width(Length::Fixed(640.0)).into();
 
     // Vertically + horizontally centered card.
     let positioned: Element<'_, Msg> = container(card)
