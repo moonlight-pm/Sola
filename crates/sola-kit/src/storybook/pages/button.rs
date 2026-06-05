@@ -27,12 +27,20 @@ pub fn view() -> Element<'static, Msg> {
     ]
     .spacing(8);
 
+    let list_items = row![
+        button(text("Selected row")).style(kit_btn::list_item(true)).on_press(Msg::Noop).width(200),
+        button(text("Unselected row")).style(kit_btn::list_item(false)).on_press(Msg::Noop).width(200),
+    ]
+    .spacing(8);
+
     let demo = container(
         column![
             caption("Interactive").style(muted),
             buttons,
             caption("Disabled (no on_press)").style(muted),
             disabled,
+            caption("List item — selected / unselected").style(muted),
+            list_items,
         ]
         .spacing(12),
     )
