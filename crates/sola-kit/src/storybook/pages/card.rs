@@ -4,6 +4,7 @@ use iced::widget::column;
 use iced::{Element, Length};
 
 use sola_kit::components::{accent_backplate, card, modal};
+use sola_kit::components::card::list_tile_style;
 use sola_kit::components::text::{body, code, heading, muted};
 
 use crate::storybook::Msg;
@@ -37,6 +38,13 @@ pub fn view() -> Element<'static, Msg> {
     .padding(24)
     .width(Length::Fill);
 
+    let tile_selected = iced::widget::container(body("Selected tile"))
+        .padding([16, 20])
+        .style(list_tile_style(true));
+    let tile_unselected = iced::widget::container(body("Unselected tile"))
+        .padding([16, 20])
+        .style(list_tile_style(false));
+
     column![
         heading("Card"),
         body("Container with BG_RAISED, 1px BORDER, 8px corner radius.").style(muted),
@@ -48,6 +56,9 @@ pub fn view() -> Element<'static, Msg> {
         body("Accent backplate — primary-tinted switcher frame.").style(muted),
         backplate_demo,
         code("accent_backplate(content)").style(muted),
+        body("Selectable tile — container analog of button::list_item for mouse_area tiles.").style(muted),
+        iced::widget::row![tile_selected, tile_unselected].spacing(8),
+        code("container(content).style(card::list_tile_style(selected))").style(muted),
     ]
     .spacing(16)
     .into()

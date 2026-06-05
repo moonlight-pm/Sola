@@ -9,7 +9,7 @@
 use iced::widget::{Container, container};
 use iced::{Background, Color, Element, Shadow, Theme, Vector};
 
-use crate::components::style::{hairline, RADIUS_LG, RADIUS_XL, SPACE_XL};
+use crate::components::style::{hairline, RADIUS_LG, RADIUS_MD, RADIUS_XL, SPACE_XL};
 
 /// Wrap `content` in a card-styled container. Default padding is 16px;
 /// override with `.padding(...)` on the returned container if needed.
@@ -95,4 +95,31 @@ pub fn accent_backplate<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
 ) -> Container<'a, Message, Theme> {
     container(content).style(accent_backplate_style)
+}
+
+/// Container style for a selectable tile (e.g. an app card in a switcher
+/// grid). The container analog of `button::list_item` for tiles that need a
+/// `mouse_area` wrapper (hover-driven selection) instead of a pressable
+/// button: selected → filled accent pill with `primary.base.text` label
+/// colour for legibility on the tinted fill; unselected → transparent with
+/// no text-colour override (inherits the window default).
+pub fn list_tile_style(selected: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = theme.extended_palette();
+        let background = if selected {
+            Some(Background::Color(p.primary.base.color))
+        } else {
+            None
+        };
+        container::Style {
+            background,
+            text_color: selected.then_some(p.primary.base.text),
+            border: iced::Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_MD.into(),
+            },
+            ..container::Style::default()
+        }
+    }
 }
