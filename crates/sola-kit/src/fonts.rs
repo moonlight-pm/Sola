@@ -422,33 +422,40 @@ mod tests {
         }
     }
 
-    // On the real dev box (system fonts present) the picker must NOT list
-    // families that aren't actually installed, and MUST list the two defaults.
+    // When system fonts are present the picker returns only families that
+    // actually pass family_available(), plus dedup guarantees no duplicates.
+    // This test checks structural invariants rather than exact membership so
+    // it stays valid regardless of which families are installed on the host.
     #[test]
     fn pickable_families_only_installed() {
         let sys = system_families();
-        // Only run the negative assertions when there are real system fonts;
-        // headless CI would use the fallback path (INSTALLED_FAMILIES only)
-        // which is already covered above.
+        // Only run structural assertions when there are real system fonts;
+        // headless CI uses the INSTALLED_FAMILIES fallback path which is
+        // covered by pickable_families_always_contains_shipped above.
         if sys.is_empty() {
             return;
         }
         let all = pickable_families();
+        // No duplicates.
+        let mut sorted = all.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(all.len(), sorted.len(), "pickable_families contains duplicates");
+        // Every returned family either passes family_available() or is one of
+        // the INSTALLED_FAMILIES fallback entries (which are valid system names
+        // on this machine since sys was non-empty above).
+        let fallbacks: Vec<String> = INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect();
+        for fam in &all {
+            assert!(
+                family_available(fam) || fallbacks.contains(fam),
+                "pickable_families contains '{}' which is not available and not a known fallback",
+                fam
+            );
+        }
+        // The guaranteed-absent sentinel must never appear.
         assert!(
-            !all.contains(&"SF Pro".to_string()),
-            "SF Pro should not appear — it is not installed"
-        );
-        assert!(
-            !all.contains(&"Iosevka Fixed".to_string()),
-            "Iosevka Fixed should not appear — it is not installed"
-        );
-        assert!(
-            all.contains(&"Inter".to_string()),
-            "Inter missing from pickable_families"
-        );
-        assert!(
-            all.contains(&"JetBrains Mono".to_string()),
-            "JetBrains Mono missing from pickable_families"
+            !all.contains(&"Definitely Not A Real Font Family 9c4e".to_string()),
+            "bogus family must not appear in pickable_families"
         );
     }
 
@@ -477,12 +484,15 @@ mod tests {
         if sys.is_empty() {
             return;
         }
+        // Use a family name that can never exist on any real system so this
+        // test is environment-independent — we're testing the fallback logic,
+        // not whether a specific font is installed.
         let f = fonts_from_families(
             "Inter",
             "Inter",
             "Inter",
             "Inter",
-            "Iosevka Fixed", // not installed → should fall back to JetBrains Mono
+            "Definitely Not A Real Font Family 9c4e", // guaranteed absent → must fall back
         );
         match f.mono.family {
             iced::font::Family::Name(name) => {

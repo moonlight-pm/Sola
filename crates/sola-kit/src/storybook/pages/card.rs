@@ -4,7 +4,6 @@ use iced::widget::column;
 use iced::{Element, Length};
 
 use sola_kit::components::{accent_backplate, card, modal};
-use sola_kit::components::card::list_tile_style;
 use sola_kit::components::text::{body, code, heading, muted};
 
 use crate::storybook::Msg;
@@ -40,10 +39,10 @@ pub fn view() -> Element<'static, Msg> {
 
     let tile_selected = iced::widget::container(body("Selected tile"))
         .padding([16, 20])
-        .style(list_tile_style(true));
+        .style(card::list_tile_style(true));
     let tile_unselected = iced::widget::container(body("Unselected tile"))
         .padding([16, 20])
-        .style(list_tile_style(false));
+        .style(card::list_tile_style(false));
 
     column![
         heading("Card"),

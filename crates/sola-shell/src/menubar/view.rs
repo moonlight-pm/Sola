@@ -23,6 +23,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // White flower glyph; clickable region is whole padded area.
     let system_fg = iced::Color::WHITE;
     let system_active = shell.menu_open && shell.current_open_is_system;
+    // button: press + hover-fill; mouse_area: hover-to-switch signal
+    // (outer mouse_area still receives on_enter — only presses are captured by the button).
     let system_btn: Element<'_, Msg> = mouse_area(
         iced::widget::button(
             container(icon_colored("sola/flower", 16, system_fg))
@@ -85,9 +87,6 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .height(Length::Fill)
     .into()
 }
-
-
-
 
 // ---------------------------------------------------------------------------
 // Helpers
