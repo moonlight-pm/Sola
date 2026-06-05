@@ -56,7 +56,9 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 .align_x(Alignment::Center)
                 .into();
 
-            // Card container with highlighted background when selected.
+            // Card container: kit list_tile_style handles selected highlight
+            // (primary fill, RADIUS_MD=6) and unselected (transparent).
+            // Selected tiles also get primary.base.text for label legibility.
             let card_container: Element<'_, Msg> = container(card_content)
                 .padding(Padding {
                     top: 16.0,
@@ -64,28 +66,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                     left: 20.0,
                     right: 20.0,
                 })
-                .style(move |theme: &iced::Theme| {
-                    let p = theme.extended_palette();
-                    if is_selected {
-                        iced::widget::container::Style {
-                            background: Some(iced::Background::Color(p.primary.base.color)),
-                            border: iced::Border {
-                                radius: 8.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    } else {
-                        iced::widget::container::Style {
-                            background: None,
-                            border: iced::Border {
-                                radius: 8.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    }
-                })
+                .style(sola_kit::components::card::list_tile_style(is_selected))
                 .into();
 
             mouse_area(card_container)
@@ -94,35 +75,16 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         })
         .collect();
 
-    // Backplate close-over: derive a slight primary-tinted background and
-    // matching border from the shell's REAL theme (the per-window overlay
-    // palette is TRANSPARENT — see app.rs::theme).
-    let real = shell.theme.extended_palette();
-    let primary = real.primary.base.color;
-    let backplate_bg = iced::Color::from_rgba(primary.r, primary.g, primary.b, 0.18);
-    let backplate_border = iced::Color::from_rgba(primary.r, primary.g, primary.b, 0.35);
-
     // --- backplate: shrink-wraps the cards with 36px padding ---
-    let backplate: Element<'_, Msg> = container(
+    // accent_backplate provides the primary-tinted translucent fill (0.18
+    // alpha), matching border (0.35 alpha, width 1), 16px radius, and the
+    // deep drop shadow — no manual palette close-over needed.
+    let backplate: Element<'_, Msg> = sola_kit::components::accent_backplate(
         row(cards)
             .spacing(12)
             .align_y(Alignment::Center),
     )
     .padding(Padding::new(36.0))
-    .style(move |_theme: &iced::Theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(backplate_bg)),
-        border: iced::Border {
-            color: backplate_border,
-            width: 1.0,
-            radius: 16.0.into(),
-        },
-        shadow: iced::Shadow {
-            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.45),
-            offset: iced::Vector::new(0.0, 12.0),
-            blur_radius: 32.0,
-        },
-        ..Default::default()
-    })
     .into();
 
     // Center the backplate on screen.
