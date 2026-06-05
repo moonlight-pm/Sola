@@ -252,7 +252,9 @@ Two new chrome variants. The menu reuses the existing `popover::style` (card + s
 pub fn modal_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
-        background: Some(Background::Color(p.background.base.color)),
+        // `weaker`, not `base`: overlay windows zero base's alpha for the
+        // see-through window fill; the modal card must stay opaque.
+        background: Some(Background::Color(p.background.weaker.color)),
         border: Border { color: p.background.strong.color, width: 1.0, radius: RADIUS_XL.into() },
         shadow: Shadow {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.55),
