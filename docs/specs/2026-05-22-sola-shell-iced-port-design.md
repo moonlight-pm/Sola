@@ -1,6 +1,6 @@
 # sola-shell → iced kit (sola-kit) Port
 
-**Status:** draft, awaiting review
+**Status:** shipped. Follow-up kit-ification of the four surfaces: see 2026-06-04-sola-shell-kit-ification-plan.md (complete).
 **Date:** 2026-05-22
 **Owner:** Joshua
 

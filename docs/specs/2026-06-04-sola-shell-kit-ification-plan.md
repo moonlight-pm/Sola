@@ -8,6 +8,8 @@
 
 **Tech Stack:** Rust, iced 0.14 (`wgpu`/`wayland`), `sola-kit`, `sola-bus`.
 
+**Status:** complete (2026-06-04)
+
 ---
 
 ## Background: the overlay-theming crux (verified facts)
