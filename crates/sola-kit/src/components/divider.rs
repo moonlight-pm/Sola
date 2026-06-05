@@ -45,3 +45,18 @@ where
     .on_press(on_press)
     .into()
 }
+
+/// A non-interactive 1px horizontal divider line, the same hairline colour
+/// as the kit's 1px borders. The horizontal counterpart of
+/// [`vertical_divider`] without the drag affordance — no resize semantics
+/// for rows yet; add `on_press` / `mouse_area` if that becomes needed.
+///
+/// The style is identical in effect to [`style`], so this reuses it rather
+/// than introducing a separate `horizontal_style` fn.
+pub fn horizontal_divider<'a, Message: 'a>() -> Element<'a, Message, Theme> {
+    container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+        .width(Length::Fill)
+        .height(Length::Fixed(1.0))
+        .style(style)
+        .into()
+}

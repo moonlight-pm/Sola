@@ -12,7 +12,7 @@ use iced::{Element, Length};
 
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::text::{body, code, heading, muted};
-use sola_kit::components::vertical_divider;
+use sola_kit::components::{horizontal_divider, vertical_divider};
 
 use crate::storybook::Msg;
 
@@ -20,7 +20,7 @@ pub fn view() -> Element<'static, Msg> {
     let left = panel("Left panel");
     let right = panel("Right panel");
 
-    let demo = container(
+    let vertical_demo = container(
         row![
             container(left).width(Length::Fixed(220.0)).height(Length::Fill),
             vertical_divider::<Msg>(Msg::Noop),
@@ -32,6 +32,19 @@ pub fn view() -> Element<'static, Msg> {
     .height(Length::Fixed(240.0))
     .width(Length::Fill);
 
+    let top = panel("Top section");
+    let bottom = panel("Bottom section");
+
+    let horizontal_demo = container(
+        column![
+            container(top).height(Length::Fixed(60.0)).width(Length::Fill),
+            horizontal_divider::<Msg>(),
+            container(bottom).height(Length::Fixed(60.0)).width(Length::Fill),
+        ],
+    )
+    .style(card_style)
+    .width(Length::Fill);
+
     column![
         heading("Divider"),
         body(
@@ -40,8 +53,12 @@ pub fn view() -> Element<'static, Msg> {
              application level."
         )
         .style(muted),
-        demo,
+        vertical_demo,
         code("vertical_divider(on_press)").style(muted),
+        body("1px horizontal hairline. Non-interactive — no resize semantics yet.")
+            .style(muted),
+        horizontal_demo,
+        code("horizontal_divider()").style(muted),
     ]
     .spacing(16)
     .into()
