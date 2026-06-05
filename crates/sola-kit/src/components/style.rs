@@ -15,10 +15,13 @@ use iced::widget::button;
 use iced::{Background, Border, Color};
 
 /// Corner radii. `SM` = inputs / ghost chrome, `MD` = buttons /
-/// swatches, `LG` = cards / popovers, `PILL` = fully-rounded badges.
+/// swatches, `LG` = cards / popovers, `XL` = large floating panels,
+/// `PILL` = fully-rounded badges.
 pub const RADIUS_SM: f32 = 4.0;
 pub const RADIUS_MD: f32 = 6.0;
 pub const RADIUS_LG: f32 = 8.0;
+/// `XL` = large floating panels (modal launcher, accent switcher frame).
+pub const RADIUS_XL: f32 = 14.0;
 pub const RADIUS_PILL: f32 = 999.0;
 
 /// Spacing / padding steps. Kit layouts step through these rather than
