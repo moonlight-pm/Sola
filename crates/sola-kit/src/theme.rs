@@ -78,6 +78,40 @@ pub fn default_theme() -> Theme {
     build_theme(&Atoms::default())
 }
 
+/// Theme for an OS-transparent overlay window (menu / launcher / switcher).
+///
+/// The window fill is painted from `extended_palette().background.base.color`
+/// (iced 0.14), so we generate the `Extended` palette from the real palette —
+/// keeping every tier opaque so kit chrome (`card`, `popover`, `button`) reads
+/// correct colours — then force only `background.base.color` transparent so the
+/// area around the card stays see-through.
+pub fn overlay(base: &Theme) -> Theme {
+    let palette = base.palette();
+    Theme::custom_with_fn(
+        "sola-overlay".to_string(),
+        palette,
+        |p| {
+            let mut ext = Extended::generate(p);
+            ext.background.base.color = Color::TRANSPARENT;
+            ext
+        },
+    )
+}
+
+/// Theme for the permanently-black menubar.
+///
+/// Background tiers are generated from a black base so hover/active fills
+/// derive from black; foreground text and icons still follow the real palette.
+pub fn menubar(base: &Theme) -> Theme {
+    let mut palette = base.palette();
+    palette.background = Color::BLACK;
+    Theme::custom_with_fn(
+        "sola-menubar".to_string(),
+        palette,
+        Extended::generate,
+    )
+}
+
 /// The binding layer — maps the kit's 10 colour atoms into iced's
 /// `Extended` palette slots. This is the **single** place the
 /// atom→slot layout lives; every theme the kit builds
@@ -499,5 +533,33 @@ mod tests {
                 binding.token
             );
         }
+    }
+
+    // overlay(): window fill (background.base.color) must be transparent so
+    // the OS window is see-through; non-base tiers stay opaque so kit
+    // chrome (card, popover, button) renders correctly; base text is readable.
+    #[test]
+    fn overlay_chrome_theme() {
+        let t = overlay(&default_theme());
+        let ext = t.extended_palette();
+        assert_eq!(ext.background.base.color.a, 0.0, "base must be transparent");
+        assert!(ext.background.weak.color.a > 0.0, "weak must be opaque");
+        assert!(ext.background.strong.color.a > 0.0, "strong must be opaque");
+        assert!(ext.background.base.text.a > 0.0, "base text must be readable");
+    }
+
+    // menubar(): background must be opaque black; accent (primary) unchanged.
+    #[test]
+    fn menubar_chrome_theme() {
+        let t = menubar(&default_theme());
+        let ext = t.extended_palette();
+        let bg = ext.background.base.color;
+        assert!(bg.a > 0.0, "menubar base must be opaque");
+        assert!(bg.r < 0.1 && bg.g < 0.1 && bg.b < 0.1, "menubar base must be black-ish");
+        assert_eq!(
+            ext.primary.base.color,
+            default_theme().extended_palette().primary.base.color,
+            "accent must be unchanged"
+        );
     }
 }
