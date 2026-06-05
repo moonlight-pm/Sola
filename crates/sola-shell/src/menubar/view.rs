@@ -6,6 +6,7 @@
 
 use iced::widget::{container, mouse_area, row, text};
 use iced::{Element, Length};
+use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon_colored;
 use sola_kit::fonts::{INTER, INTER_MEDIUM};
 
@@ -23,13 +24,13 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let system_fg = iced::Color::WHITE;
     let system_active = shell.menu_open && shell.current_open_is_system;
     let system_btn: Element<'_, Msg> = mouse_area(
-        highlight_container(
+        iced::widget::button(
             container(icon_colored("sola/flower", 16, system_fg))
-                .padding([2, 8]),
-            system_active,
-        ),
+        )
+        .style(kit_btn::menubar(system_active))
+        .padding([2, 8])
+        .on_press(Msg::OpenMenu { index: 0, is_system: true }),
     )
-    .on_press(Msg::OpenMenu { index: 0, is_system: true })
     .on_enter(Msg::HoverMenu { index: 0, is_system: true })
     .into();
 
@@ -43,17 +44,15 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         && shell.current_open_index == Some(0);
     let app_title: Element<'_, Msg> = if clickable {
         mouse_area(
-            highlight_container(
-                container(
-                    text(app_title_str)
-                        .font(INTER_MEDIUM)
-                        .size(15),
-                )
-                .padding([2, 8]),
-                title_active,
-            ),
+            iced::widget::button(
+                text(app_title_str)
+                    .font(INTER_MEDIUM)
+                    .size(15),
+            )
+            .style(kit_btn::menubar(title_active))
+            .padding([2, 8])
+            .on_press(Msg::OpenMenu { index: 0, is_system: false }),
         )
-        .on_press(Msg::OpenMenu { index: 0, is_system: false })
         .on_enter(Msg::HoverMenu { index: 0, is_system: false })
         .into()
     } else {
@@ -88,29 +87,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 }
 
 
-/// Wrap a menubar label container so it paints a highlight background
-/// when `active` is true. macOS-style: subtle translucent white over the
-/// black menubar so the open-menu trigger is visually anchored.
-fn highlight_container<'a>(
-    inner: iced::widget::Container<'a, Msg>,
-    active: bool,
-) -> iced::widget::Container<'a, Msg> {
-    container(inner).style(move |_theme: &iced::Theme| {
-        if !active {
-            return iced::widget::container::Style::default();
-        }
-        iced::widget::container::Style {
-            background: Some(iced::Background::Color(
-                iced::Color::from_rgba(1.0, 1.0, 1.0, 0.15),
-            )),
-            border: iced::Border {
-                radius: 4.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    })
-}
+
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -148,7 +125,7 @@ fn has_menu(shell: &crate::app::Shell) -> bool {
 }
 
 /// Build the app-menu label buttons (menus[1..] of the focused app).
-/// Each label becomes a `mouse_area` wrapping styled text.
+/// Each label becomes a `mouse_area` wrapping a kit menubar button.
 /// `on_press` → `Msg::OpenMenu { index }`
 /// `on_enter` → `Msg::HoverMenu { index }` (only acts if another menu is open)
 fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
@@ -178,17 +155,15 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
                 && !shell.current_open_is_system
                 && shell.current_open_index == Some(index);
             mouse_area(
-                highlight_container(
-                    container(
-                        text(menu.label.clone())
-                            .font(INTER)
-                            .size(15),
-                    )
-                    .padding([2, 8]),
-                    active,
-                ),
+                iced::widget::button(
+                    text(menu.label.clone())
+                        .font(INTER)
+                        .size(15),
+                )
+                .style(kit_btn::menubar(active))
+                .padding([2, 8])
+                .on_press(Msg::OpenMenu { index, is_system: false }),
             )
-            .on_press(Msg::OpenMenu { index, is_system: false })
             .on_enter(Msg::HoverMenu { index, is_system: false })
             .into()
         })
