@@ -10,12 +10,13 @@
 //! The backdrop mouse_area still catches clicks so we can emit CloseMenu
 //! if something slips through.
 
-use iced::widget::{column, container, mouse_area, rule, row, stack, text};
-use iced::{Color, Element, Length, Padding};
+use iced::widget::{column, container, mouse_area, row, stack, text};
+use iced::{Element, Length, Padding};
 
 use crate::app::Msg;
 use crate::menu::state::synthesized_menu;
 use sola_bus::topics::MenuItem;
+use sola_kit::components::{button as kit_btn, divider::horizontal_divider, popover, text as kit_text};
 
 /// Render the menu overlay for `shell`.
 pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
@@ -81,34 +82,13 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 
     // Dropdown card — opaque rounded panel positioned at anchor_x from left.
     //
-    // The per-window theme on the menu surface paints a TRANSPARENT
-    // background (so the surface itself is see-through), so we cannot
-    // pull the card's background from `theme.palette()` — it would be
-    // transparent too. Instead, close over the shell's REAL theme and
-    // derive the card colours from its extended palette.
+    // `popover(...)` supplies the card chrome (bg background.weaker, hairline
+    // border, RADIUS_LG shadow) from the ambient theme, which now has opaque
+    // background tiers. No need to close over shell.theme here.
     let anchor_x = shell.menu_anchor_x;
-    let card_palette = shell.theme.extended_palette();
-    let card_bg = card_palette.background.weak.color;
-    let card_border = card_palette.background.strong.color;
-    let card: Element<'_, Msg> = container(items_el)
+    let card: Element<'_, Msg> = popover(items_el)
         .padding(Padding::new(4.0))
         .width(Length::Fixed(220.0))
-        .style(move |_theme: &iced::Theme| {
-            iced::widget::container::Style {
-                background: Some(iced::Background::Color(card_bg)),
-                border: iced::Border {
-                    color: card_border,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                shadow: iced::Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-                    offset: iced::Vector::new(0.0, 4.0),
-                    blur_radius: 12.0,
-                },
-                ..Default::default()
-            }
-        })
         .into();
 
     // Outer container positions the card at anchor_x by using left padding.
@@ -147,7 +127,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 /// Build a menu item element from owned data (no borrows from caller's locals).
 fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg> {
     match item {
-        MenuItem::Divider => rule::horizontal(1).into(),
+        MenuItem::Divider => horizontal_divider().into(),
         MenuItem::Action {
             id,
             label,
@@ -155,29 +135,15 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
             disabled,
             ..
         } => {
-            let label_color = if disabled {
-                Some(Color::from_rgba(0.5, 0.5, 0.5, 1.0))
+            let label_txt: Element<'static, Msg> = if disabled {
+                text(label).size(13.0).style(kit_text::muted).into()
             } else {
-                None
-            };
-
-            let label_txt: Element<'static, Msg> = {
-                let t = text(label).size(13.0);
-                if let Some(c) = label_color {
-                    t.color(c).into()
-                } else {
-                    t.into()
-                }
+                text(label).size(13.0).into()
             };
 
             let shortcut_txt: Element<'static, Msg> = if let Some(chord) = shortcut {
-                let t = text(chord.display()).size(12.0);
-                if let Some(c) = label_color {
-                    t.color(c).into()
-                } else {
-                    // Slightly muted for shortcuts even when enabled.
-                    t.color(Color::from_rgba(0.55, 0.55, 0.55, 1.0)).into()
-                }
+                // Shortcuts are muted whether the item is enabled or disabled.
+                text(chord.display()).size(12.0).style(kit_text::muted).into()
             } else {
                 text("").size(13.0).into()
             };
@@ -195,8 +161,9 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
                 container(item_row).width(Length::Fill).into()
             } else {
                 // Use iced::button so we get free Hovered status styling.
-                // Active = transparent (the card paints the background);
-                // Hovered = primary fill with rounded corners (macOS feel).
+                // Active = transparent; Hovered = background.strong (kit
+                // list_item style — subtler than primary fill, consistent
+                // across all kit surfaces).
                 iced::widget::button(item_row)
                     .padding(Padding::new(0.0))
                     .width(Length::Fill)
@@ -204,34 +171,7 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
                         app_id,
                         action_id: id,
                     })
-                    .style(|theme: &iced::Theme, status| {
-                        let p = theme.extended_palette();
-                        match status {
-                            iced::widget::button::Status::Hovered
-                            | iced::widget::button::Status::Pressed => {
-                                iced::widget::button::Style {
-                                    background: Some(iced::Background::Color(
-                                        p.primary.base.color,
-                                    )),
-                                    text_color: p.primary.base.text,
-                                    border: iced::Border {
-                                        radius: 4.0.into(),
-                                        ..Default::default()
-                                    },
-                                    ..Default::default()
-                                }
-                            }
-                            _ => iced::widget::button::Style {
-                                background: None,
-                                text_color: p.background.base.text,
-                                border: iced::Border {
-                                    radius: 4.0.into(),
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            },
-                        }
-                    })
+                    .style(kit_btn::list_item(false))
                     .into()
             }
         }
