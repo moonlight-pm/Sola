@@ -83,8 +83,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // Dropdown card — opaque rounded panel positioned at anchor_x from left.
     //
     // `popover(...)` supplies the card chrome (bg background.weaker, hairline
-    // border, RADIUS_LG shadow) from the ambient theme, which now has opaque
-    // background tiers. No need to close over shell.theme here.
+    // border at RADIUS_LG corners, fixed drop shadow) from the ambient theme,
+    // which now has opaque background tiers. No need to close over shell.theme.
     let anchor_x = shell.menu_anchor_x;
     let card: Element<'_, Msg> = popover(items_el)
         .padding(Padding::new(4.0))

@@ -2,7 +2,7 @@
 //!
 //! Renders a full-overlay transparent backdrop with a centered search card.
 //! Outside-click on the backdrop fires `Msg::CloseLauncher`.  The search
-//! card contains a text input (query), a rule, and a scrollable list of
+//! card contains a text input (query), a divider, and a scrollable list of
 //! filtered applications.
 //!
 //! Chord wiring (Meta+Space toggle, Escape close, arrows nav, Enter launch)
