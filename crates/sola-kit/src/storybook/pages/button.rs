@@ -33,6 +33,22 @@ pub fn view() -> Element<'static, Msg> {
     ]
     .spacing(8);
 
+    // Menubar demo: dark bar container with rest / active buttons.
+    let menubar_bar = container(
+        row![
+            button(text("Apple")).style(kit_btn::menubar(false)).on_press(Msg::Noop),
+            button(text("File")).style(kit_btn::menubar(false)).on_press(Msg::Noop),
+            button(text("Edit")).style(kit_btn::menubar(true)).on_press(Msg::Noop),
+        ]
+        .spacing(2),
+    )
+    .style(|_theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(iced::Color::BLACK)),
+        ..Default::default()
+    })
+    .padding(4)
+    .width(Length::Fill);
+
     let demo = container(
         column![
             caption("Interactive").style(muted),
@@ -41,6 +57,8 @@ pub fn view() -> Element<'static, Msg> {
             disabled,
             caption("List item — selected / unselected").style(muted),
             list_items,
+            caption("Menubar — rest / active (\"Edit\" is open)").style(muted),
+            menubar_bar,
         ]
         .spacing(12),
     )

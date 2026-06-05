@@ -183,4 +183,32 @@ pub fn list_item(selected: bool) -> impl Fn(&Theme, button::Status) -> button::S
     }
 }
 
+/// Style for a menubar label button. `active` = its menu is open.
+///
+/// Transparent at rest; a translucent fg-tinted highlight on hover or while
+/// active. Deriving the highlight from `background.base.text` keeps it legible
+/// on the permanently-black menubar (light fg → light highlight) and adapts if
+/// the bar colour ever changes.
+pub fn menubar(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = theme.extended_palette();
+        let fg = p.background.base.text;
+        let bg = if active {
+            Color { a: 0.18, ..fg }
+        } else {
+            match status {
+                button::Status::Hovered | button::Status::Pressed => Color { a: 0.12, ..fg },
+                _ => Color::TRANSPARENT,
+            }
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            text_color: fg,
+            border: Border { color: Color::TRANSPARENT, width: 0.0, radius: RADIUS_SM.into() },
+            shadow: Default::default(),
+            snap: false,
+        }
+    }
+}
+
 
