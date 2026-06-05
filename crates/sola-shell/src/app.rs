@@ -415,38 +415,18 @@ impl Shell {
         Self::APP_ID.to_string()
     }
 
+    /// Per-window chrome theme.
+    ///
+    /// - Menubar: permanently black background; foreground text/icons follow
+    ///   the real palette.
+    /// - Overlays (menu, launcher, switcher): transparent window fill so the
+    ///   OS background shows through, but all non-base palette tiers remain
+    ///   opaque so kit components (card, popover, button) render correctly.
     pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
-        // Menubar: solid black background regardless of the underlying
-        // sola theme palette. The shell chrome is permanently black; only
-        // the foreground text and icons follow the theme.
         if Some(window) == self.menubar_window_id {
-            let p = self.theme.palette();
-            return iced::Theme::custom_with_fn(
-                "sola-menubar".to_string(),
-                iced::theme::Palette {
-                    background: iced::Color::BLACK,
-                    ..p
-                },
-                iced::theme::palette::Extended::generate,
-            );
+            return theme::menubar(&self.theme);
         }
-
-        // All overlay windows (menu, launcher, switcher) are OS-level
-        // transparent (`settings.transparent = true`), but iced still paints
-        // the window background colour from the palette.  To make the
-        // overlay windows truly see-through we return a theme whose palette
-        // background is TRANSPARENT; the card chrome inside each overlay
-        // paints its own opaque region via container styles that close over
-        // the real theme colours (see menu/view.rs, launcher/view.rs, etc.).
-        let p = self.theme.palette();
-        iced::Theme::custom_with_fn(
-            "sola-overlay".to_string(),
-            iced::theme::Palette {
-                background: iced::Color::TRANSPARENT,
-                ..p
-            },
-            iced::theme::palette::Extended::generate,
-        )
+        theme::overlay(&self.theme)
     }
 
     /// Estimate the left-edge X of the menubar element identified by
