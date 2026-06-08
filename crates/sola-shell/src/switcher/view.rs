@@ -14,10 +14,8 @@ use crate::app::{Msg, Shell};
 ///
 /// Layout:
 ///   Full-screen invisible mouse_area (click-outside-to-cancel)
-///   └─ Centered backplate card sized to fit the apps with ~36px padding.
-///      Background: slight primary-tinted translucent fill (no real blur
-///      available in iced; the alpha gives a similar feel against dark
-///      backgrounds).
+///   └─ Centered backplate card sized to fit the apps with shell-switcher-pad padding.
+///      Background: shell-switcher-bg (translucent accent fill by default).
 ///      Inside: row of switcher_card per app in `switcher.apps`.
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     if !shell.switcher.active {
@@ -59,13 +57,11 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
             // Card container: kit list_tile_style handles selected highlight
             // (primary fill, RADIUS_MD=6) and unselected (transparent).
             // Selected tiles also get primary.base.text for label legibility.
+            // Tile padding knob: vertical = shell-switcher-tile-pad,
+            // horizontal = vertical + 4 (preserves the original 16/20).
+            let tp = shell.style.switcher_tile_pad;
             let card_container: Element<'_, Msg> = container(card_content)
-                .padding(Padding {
-                    top: 16.0,
-                    bottom: 16.0,
-                    left: 20.0,
-                    right: 20.0,
-                })
+                .padding(Padding { top: tp, bottom: tp, left: tp + 4.0, right: tp + 4.0 })
                 .style(sola_kit::components::card::list_tile_style(is_selected))
                 .into();
 
@@ -75,16 +71,17 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         })
         .collect();
 
-    // --- backplate: shrink-wraps the cards with 36px padding ---
-    // accent_backplate provides the primary-tinted translucent fill (0.18
-    // alpha), matching border (0.35 alpha, width 1), 16px radius, and the
-    // deep drop shadow — no manual palette close-over needed.
-    let backplate: Element<'_, Msg> = sola_kit::components::accent_backplate(
+    // Backplate fill/border come from the shell-* tokens (alpha-capable);
+    // padding from shell-switcher-pad. Seed values match the old
+    // accent-derived look exactly.
+    let backplate: Element<'_, Msg> = sola_kit::components::backplate(
         row(cards)
             .spacing(12)
             .align_y(Alignment::Center),
+        shell.style.switcher_bg,
+        shell.style.switcher_border,
     )
-    .padding(Padding::new(36.0))
+    .padding(Padding::new(shell.style.switcher_pad))
     .into();
 
     // Center the backplate on screen.

@@ -79,6 +79,10 @@ pub enum Msg {
 
 pub struct Shell {
     pub theme: iced::Theme,
+    /// Shell-specific chrome (shell-* tokens) — colors with alpha +
+    /// switcher/launcher spacing. Refreshed alongside `theme` on every
+    /// Topic::Theme delivery.
+    pub style: theme::ShellStyle,
 
     // iced window ids — None until the daemon opens each window.
     pub menubar_window_id: Option<iced::window::Id>,
@@ -163,6 +167,7 @@ impl Shell {
 
         let state = Self {
             theme,
+            style: theme::ShellStyle::default(),
             menubar_window_id: Some(menubar_id),
             menu_window_id: Some(menu_id),
             launcher_window_id: Some(launcher_id),
@@ -424,7 +429,7 @@ impl Shell {
     ///   opaque so kit components (card, popover, button) render correctly.
     pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
         if Some(window) == self.menubar_window_id {
-            return theme::menubar(&self.theme);
+            return theme::menubar(&self.theme, self.style.menubar_bg);
         }
         theme::overlay(&self.theme)
     }

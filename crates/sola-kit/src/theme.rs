@@ -98,13 +98,14 @@ pub fn overlay(base: &Theme) -> Theme {
     )
 }
 
-/// Theme for the permanently-black menubar.
+/// Theme for the menubar. `bg` is the menubar background
+/// (`shell-menubar-bg` — black by default).
 ///
-/// Background tiers are generated from a black base so hover/active fills
-/// derive from black; foreground text and icons still follow the real palette.
-pub fn menubar(base: &Theme) -> Theme {
+/// Background tiers are generated from the bg base so hover/active fills
+/// derive from it; foreground text and icons still follow the real palette.
+pub fn menubar(base: &Theme, bg: Color) -> Theme {
     let mut palette = base.palette();
-    palette.background = Color::BLACK;
+    palette.background = bg;
     Theme::custom_with_fn(
         "sola-menubar".to_string(),
         palette,
@@ -673,7 +674,7 @@ mod tests {
     // menubar(): background must be opaque black; accent (primary) unchanged.
     #[test]
     fn menubar_chrome_theme() {
-        let t = menubar(&default_theme());
+        let t = menubar(&default_theme(), Color::BLACK);
         let ext = t.extended_palette();
         let bg = ext.background.base.color;
         assert!(bg.a > 0.0, "menubar base must be opaque");

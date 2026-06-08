@@ -52,6 +52,7 @@ impl Shell {
     /// Apply an updated bus theme to the iced renderer.
     fn on_theme(&mut self, t: BusTheme) {
         self.theme = sola_kit::theme::theme_from_bus(&t);
+        self.style = sola_kit::theme::shell_style_from_bus_theme(&t);
         sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(&t));
     }
 

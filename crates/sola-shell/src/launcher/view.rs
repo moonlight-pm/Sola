@@ -84,14 +84,12 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 // unselected → transparent + background.strong hover/press lift.
                 // Deliberate deltas vs. old hand-rolled closure:
                 //   radius 8 → RADIUS_MD=6; hover fill background.weak → background.strong.
+                // Row padding knob: vertical = shell-launcher-pad,
+                // horizontal = vertical + 4 (preserves the original 12/16).
+                let lp = shell.style.launcher_pad;
                 let row_btn = iced::widget::button(row_content)
                     .on_press(Msg::Launch)
-                    .padding(Padding {
-                        top: 12.0,
-                        bottom: 12.0,
-                        left: 16.0,
-                        right: 16.0,
-                    })
+                    .padding(Padding { top: lp, bottom: lp, left: lp + 4.0, right: lp + 4.0 })
                     .width(Length::Fill)
                     .style(kit_btn::list_item(is_selected));
 
@@ -107,8 +105,9 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
             .into();
 
     // --- card ---
-    // Chunky appliance card: 640px wide. No padding on the card itself —
-    // the input and list carry their own internal spacing.
+    // Chunky appliance card: width from shell-launcher-width token. No
+    // padding on the card itself — the input and list carry their own
+    // internal spacing.
     //
     // `modal(...)` supplies card chrome (bg background.weaker, hairline border
     // at RADIUS_XL=14, deep shadow 0.55/16/48) from the ambient theme, which
@@ -129,7 +128,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     .width(Length::Fill)
     .into();
 
-    let card: Element<'_, Msg> = modal(card_body).width(Length::Fixed(640.0)).into();
+    let card: Element<'_, Msg> = modal(card_body).width(Length::Fixed(shell.style.launcher_width)).into();
 
     // Vertically + horizontally centered card.
     let positioned: Element<'_, Msg> = container(card)
@@ -139,16 +138,14 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .center_y(Length::Fill)
         .into();
 
-    // Backdrop: very light dim so the launcher feels overlaid on the
-    // workspace, not a modal sheet.
+    // Backdrop dim comes from shell-backdrop-dim (alpha-capable).
+    let dim = shell.style.backdrop_dim;
     let backdrop: Element<'_, Msg> = mouse_area(
         container(text(""))
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|_theme: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(
-                    iced::Color::from_rgba(0.0, 0.0, 0.0, 0.40),
-                )),
+            .style(move |_theme: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(dim)),
                 ..Default::default()
             }),
     )
