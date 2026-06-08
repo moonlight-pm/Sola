@@ -138,6 +138,39 @@ impl Palette {
         palette
             .tokens
             .insert("radius-lg".into(), Token::new(TokenKind::Radius, "6px", &["radius"]));
+        // Shell — sola-shell's customizable chrome. Colors carry alpha
+        // (#rrggbbaa). Seed values reproduce the shell's original
+        // hardcoded look exactly; see
+        // docs/specs/2026-06-06-shell-customization-design.md.
+        palette
+            .tokens
+            .insert("shell-menubar-bg".into(), Token::new(TokenKind::Color, "#000000", &["shell"]));
+        palette.tokens.insert(
+            "shell-backdrop-dim".into(),
+            Token::new(TokenKind::Color, "#00000066", &["shell"]),
+        );
+        palette.tokens.insert(
+            "shell-switcher-bg".into(),
+            Token::new(TokenKind::Color, "#00d4ff2e", &["shell"]),
+        );
+        palette.tokens.insert(
+            "shell-switcher-border".into(),
+            Token::new(TokenKind::Color, "#00d4ff59", &["shell"]),
+        );
+        palette
+            .tokens
+            .insert("shell-switcher-pad".into(), Token::new(TokenKind::Space, "36px", &["shell"]));
+        palette.tokens.insert(
+            "shell-switcher-tile-pad".into(),
+            Token::new(TokenKind::Space, "16px", &["shell"]),
+        );
+        palette.tokens.insert(
+            "shell-launcher-width".into(),
+            Token::new(TokenKind::Space, "640px", &["shell"]),
+        );
+        palette
+            .tokens
+            .insert("shell-launcher-pad".into(), Token::new(TokenKind::Space, "12px", &["shell"]));
         palette
     }
 }

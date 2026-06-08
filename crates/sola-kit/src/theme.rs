@@ -173,31 +173,31 @@ pub fn build_theme(atoms: &Atoms) -> Theme {
     )
 }
 
-/// Parse `#rrggbb` into an iced `Color`. Panics on malformed input —
-/// the inputs are compile-time constants in this crate, so the panic
-/// is a self-check rather than a runtime concern.
+/// Parse `#rrggbb` / `#rrggbbaa` into an iced `Color`. Panics on
+/// malformed input — the inputs are compile-time constants in this
+/// crate, so the panic is a self-check rather than a runtime concern.
 pub fn parse(s: &str) -> Color {
-    let s = s.trim_start_matches('#');
-    assert_eq!(s.len(), 6, "expected #rrggbb, got {s:?}");
-    let r = u8::from_str_radix(&s[0..2], 16).expect("rr") as f32 / 255.0;
-    let g = u8::from_str_radix(&s[2..4], 16).expect("gg") as f32 / 255.0;
-    let b = u8::from_str_radix(&s[4..6], 16).expect("bb") as f32 / 255.0;
-    Color::from_rgb(r, g, b)
+    try_parse(s).unwrap_or_else(|| panic!("expected #rrggbb or #rrggbbaa, got {s:?}"))
 }
 
-/// Try to parse `#rrggbb`, returning `None` on malformed input. Used
-/// when ingesting bus theme atoms whose values arrive as untrusted
-/// strings — a malformed swatch becomes a fallback rather than a
-/// panic — and by the color picker's free-text hex field.
+/// Try to parse `#rrggbb` or `#rrggbbaa`, returning `None` on malformed
+/// input. Used when ingesting bus theme atoms whose values arrive as
+/// untrusted strings — a malformed swatch becomes a fallback rather than
+/// a panic — and by the color picker's free-text hex field.
 pub fn try_parse(s: &str) -> Option<Color> {
     let s = s.trim_start_matches('#');
-    if s.len() != 6 {
+    if s.len() != 6 && s.len() != 8 {
         return None;
     }
     let r = u8::from_str_radix(&s[0..2], 16).ok()? as f32 / 255.0;
     let g = u8::from_str_radix(&s[2..4], 16).ok()? as f32 / 255.0;
     let b = u8::from_str_radix(&s[4..6], 16).ok()? as f32 / 255.0;
-    Some(Color::from_rgb(r, g, b))
+    let a = if s.len() == 8 {
+        u8::from_str_radix(&s[6..8], 16).ok()? as f32 / 255.0
+    } else {
+        1.0
+    };
+    Some(Color { r, g, b, a })
 }
 
 /// Translate a bus theme (`sola_core::theme::Theme`) into the kit's
@@ -448,14 +448,20 @@ pub fn font_selection_from_bus_theme(bus: &BusTheme) -> FontSelection {
     }
 }
 
-/// Format an iced `Color` as a `#rrggbb` string (alpha dropped). The
-/// inverse of [`parse`]; shared with the storybook's atom grid so it
-/// doesn't reimplement the conversion.
+/// Format an iced `Color` as `#rrggbb`, or `#rrggbbaa` when alpha < 1 —
+/// so existing opaque values don't churn on round-trip. The inverse of
+/// [`parse`]; shared with the storybook's atom grid so it doesn't
+/// reimplement the conversion.
 pub fn color_to_hex(c: Color) -> String {
     let r = (c.r * 255.0).round().clamp(0.0, 255.0) as u8;
     let g = (c.g * 255.0).round().clamp(0.0, 255.0) as u8;
     let b = (c.b * 255.0).round().clamp(0.0, 255.0) as u8;
-    format!("#{r:02x}{g:02x}{b:02x}")
+    if c.a < 1.0 {
+        let a = (c.a * 255.0).round().clamp(0.0, 255.0) as u8;
+        format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
+    } else {
+        format!("#{r:02x}{g:02x}{b:02x}")
+    }
 }
 
 #[cfg(test)]
@@ -561,5 +567,19 @@ mod tests {
             default_theme().extended_palette().primary.base.color,
             "accent must be unchanged"
         );
+    }
+
+    #[test]
+    fn try_parse_eight_hex_roundtrip() {
+        let c = try_parse("#00d4ff2e").expect("8-hex parses");
+        assert!((c.a - 0.18).abs() < 0.005, "alpha ≈ 0.18, got {}", c.a);
+        assert_eq!(color_to_hex(c), "#00d4ff2e");
+    }
+
+    #[test]
+    fn color_to_hex_opaque_stays_six_digits() {
+        let c = try_parse("#0d1117").expect("6-hex parses");
+        assert_eq!(c.a, 1.0);
+        assert_eq!(color_to_hex(c), "#0d1117");
     }
 }
