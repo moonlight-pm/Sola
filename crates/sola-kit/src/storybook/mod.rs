@@ -35,6 +35,7 @@ pub mod pages;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
     Theme,
+    Shell,
     Text,
     Button,
     Badge,
@@ -56,6 +57,7 @@ impl Page {
     /// Theme → Layout → Components.
     pub const ALL: &'static [Page] = &[
         Page::Theme,
+        Page::Shell,
         Page::Divider,
         Page::Split,
         Page::Toolbar,
@@ -75,6 +77,7 @@ impl Page {
     pub fn label(self) -> &'static str {
         match self {
             Page::Theme => "Theme",
+            Page::Shell => "Shell",
             Page::Text => "Text",
             Page::Button => "Button",
             Page::Badge => "Badge",
@@ -96,7 +99,7 @@ impl Page {
     /// Theme / Layout / Components grouping.
     pub fn section(self) -> Option<&'static str> {
         match self {
-            Page::Theme => Some("Theme"),
+            Page::Theme | Page::Shell => Some("Theme"),
             Page::Divider | Page::Split | Page::Toolbar => Some("Layout"),
             Page::Text
             | Page::Button
@@ -126,6 +129,12 @@ pub enum Msg {
     /// Open the inline color picker for one palette atom. No-op when
     /// Default is active (its atoms are read-only).
     EditAtom(AtomField),
+    /// Open the inline color picker for one shell color knob. No-op when
+    /// Default is active (read-only).
+    EditShellColor(ShellColorField),
+    /// Set one shell spacing knob from the Shell page's number inputs.
+    /// No-op when Default is active.
+    SetShellSpace(ShellSpaceField, f32),
     /// A message from the open atom color picker.
     Picker(sola_kit::components::color_picker::Message),
     /// Close the open atom picker (a click outside its popover).
@@ -225,15 +234,75 @@ impl AtomField {
     }
 }
 
-/// A named bundle of atoms + font selection. The storybook keeps a
-/// `Vec<ThemePreset>` with index 0 always being the immutable
-/// "Default" preset whose values match the Rust constants in
+/// Identifies which shell color knob an `EditShellColor` targets.
+/// UI-shaped (the Shell page's swatches and color picker carry it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellColorField {
+    MenubarBg,
+    BackdropDim,
+    SwitcherBg,
+    SwitcherBorder,
+}
+
+impl ShellColorField {
+    pub fn get(self, s: &theme::ShellStyle) -> iced::Color {
+        match self {
+            Self::MenubarBg => s.menubar_bg,
+            Self::BackdropDim => s.backdrop_dim,
+            Self::SwitcherBg => s.switcher_bg,
+            Self::SwitcherBorder => s.switcher_border,
+        }
+    }
+    pub fn set(self, s: &mut theme::ShellStyle, c: iced::Color) {
+        match self {
+            Self::MenubarBg => s.menubar_bg = c,
+            Self::BackdropDim => s.backdrop_dim = c,
+            Self::SwitcherBg => s.switcher_bg = c,
+            Self::SwitcherBorder => s.switcher_border = c,
+        }
+    }
+}
+
+/// Identifies which shell spacing knob a `SetShellSpace` targets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellSpaceField {
+    SwitcherPad,
+    SwitcherTilePad,
+    LauncherWidth,
+    LauncherPad,
+}
+
+impl ShellSpaceField {
+    pub fn set(self, s: &mut theme::ShellStyle, v: f32) {
+        match self {
+            Self::SwitcherPad => s.switcher_pad = v,
+            Self::SwitcherTilePad => s.switcher_tile_pad = v,
+            Self::LauncherWidth => s.launcher_width = v,
+            Self::LauncherPad => s.launcher_pad = v,
+        }
+    }
+}
+
+/// A named bundle of atoms + font selection + shell style. The
+/// storybook keeps a `Vec<ThemePreset>` with index 0 always being the
+/// immutable "Default" preset whose values match the Rust constants in
 /// `sola_kit::theme` and `sola_kit::fonts`.
 #[derive(Clone, Debug)]
 pub struct ThemePreset {
     pub name: String,
     pub atoms: theme::Atoms,
     pub fonts: theme::FontSelection,
+    pub shell: theme::ShellStyle,
+}
+
+impl ThemePreset {
+    /// The preset's complete bus form — atoms + fonts + shell tokens.
+    /// The single source for broadcast, persist, retract, and resync
+    /// matching, so the value-equality invariant can't drift between
+    /// call sites.
+    fn bus_theme(&self) -> sola_core::theme::Theme {
+        theme::bus_theme_with_shell(theme::bus_theme_from(&self.atoms, &self.fonts), &self.shell)
+    }
 }
 
 pub struct Storybook {
@@ -260,6 +329,10 @@ pub struct Storybook {
     /// page, if any. Only meaningful while an editable (non-Default)
     /// preset is active.
     editing_atom: Option<AtomField>,
+    /// Which shell color knob's inline picker is open on the Shell page,
+    /// if any. Mutually exclusive with `editing_atom` — both pair with
+    /// the single `picker`.
+    editing_shell: Option<ShellColorField>,
     /// The open atom's HSV/hex picker, paired with `editing_atom`. Holds
     /// its own HSV state so hue survives value→0; `None` when no atom is
     /// being edited.
@@ -291,6 +364,7 @@ impl Storybook {
             name: Self::DEFAULT_THEME_NAME.to_string(),
             atoms: theme::Atoms::default(),
             fonts: theme::FontSelection::default(),
+            shell: theme::ShellStyle::default(),
         };
         let theme = theme::build_theme(&default_preset.atoms);
         Self {
@@ -305,6 +379,7 @@ impl Storybook {
             naming: None,
             delete_armed: false,
             editing_atom: None,
+            editing_shell: None,
             picker: None,
             // Shipped families + everything fontdb finds installed, so
             // the per-role picker can offer any system font, not just
@@ -416,6 +491,7 @@ impl Storybook {
                     tracing::debug!("ignoring EditAtom — Default theme is read-only");
                     return;
                 }
+                self.editing_shell = None;
                 // Toggle: clicking the open atom's swatch again closes it.
                 if self.editing_atom == Some(field) {
                     self.editing_atom = None;
@@ -426,8 +502,33 @@ impl Storybook {
                     self.picker = Some(ColorPicker::new(color));
                 }
             }
+            Msg::EditShellColor(field) => {
+                if self.is_default_active() {
+                    tracing::debug!("ignoring EditShellColor — Default theme is read-only");
+                    return;
+                }
+                self.editing_atom = None;
+                if self.editing_shell == Some(field) {
+                    self.editing_shell = None;
+                    self.picker = None;
+                } else {
+                    let color = field.get(&self.active().shell);
+                    self.editing_shell = Some(field);
+                    self.picker = Some(ColorPicker::new(color));
+                }
+            }
+            Msg::SetShellSpace(field, value) => {
+                if self.is_default_active() {
+                    tracing::debug!("ignoring SetShellSpace — Default theme is read-only");
+                    return;
+                }
+                field.set(&mut self.active_mut().shell, value);
+                self.broadcast_theme();
+                self.persist_active_theme();
+            }
             Msg::ClosePicker => {
                 self.editing_atom = None;
+                self.editing_shell = None;
                 self.picker = None;
             }
             Msg::Picker(m) => {
@@ -436,6 +537,8 @@ impl Storybook {
                 let color = picker.color();
                 if let Some(field) = self.editing_atom {
                     self.apply_atom(field, color);
+                } else if let Some(field) = self.editing_shell {
+                    self.apply_shell_color(field, color);
                 }
             }
             Msg::SetFont(role, family) => {
@@ -463,6 +566,7 @@ impl Storybook {
                 self.naming = None;
                 self.delete_armed = false;
                 self.editing_atom = None;
+                self.editing_shell = None;
                 self.picker = None;
                 self.refresh_active_theme();
                 self.install_active_fonts();
@@ -515,6 +619,7 @@ impl Storybook {
             Msg::DeleteActiveTheme => {
                 self.delete_armed = false;
                 self.editing_atom = None;
+                self.editing_shell = None;
                 self.picker = None;
                 if self.is_default_active() {
                     return;
@@ -550,6 +655,20 @@ impl Storybook {
         self.persist_active_theme();
     }
 
+    /// Write one shell color onto the active preset and propagate it.
+    /// Unlike `apply_atom` there's no `refresh_active_theme` — shell
+    /// tokens don't feed the storybook's own iced theme, only the
+    /// broadcast bus value.
+    fn apply_shell_color(&mut self, field: ShellColorField, color: iced::Color) {
+        if self.is_default_active() {
+            tracing::debug!("ignoring shell color edit — Default theme is read-only");
+            return;
+        }
+        field.set(&mut self.active_mut().shell, color);
+        self.broadcast_theme();
+        self.persist_active_theme();
+    }
+
     /// Push the active preset's font selection into the process-wide
     /// fonts table so the storybook's own widgets see the swap before
     /// the bus delivery loops back.
@@ -564,7 +683,7 @@ impl Storybook {
     /// edit paths stay symmetric.
     fn broadcast_theme(&self) {
         let active = self.active();
-        let bus_theme = theme::bus_theme_from(&active.atoms, &active.fonts);
+        let bus_theme = active.bus_theme();
         match sola_kit::app::bus().lock() {
             Ok(mut bus) => {
                 if let Err(err) = bus.emit(Topic::Theme(bus_theme)) {
@@ -588,7 +707,7 @@ impl Storybook {
         let active = self.active();
         let named = sola_bus::topics::NamedTheme {
             name: active.name.clone(),
-            theme: theme::bus_theme_from(&active.atoms, &active.fonts),
+            theme: active.bus_theme(),
         };
         match sola_kit::app::bus().lock() {
             Ok(mut bus) => {
@@ -608,7 +727,7 @@ impl Storybook {
     fn retract_custom_theme(&self, removed: &ThemePreset) {
         let named = sola_bus::topics::NamedTheme {
             name: removed.name.clone(),
-            theme: theme::bus_theme_from(&removed.atoms, &removed.fonts),
+            theme: removed.bus_theme(),
         };
         match sola_kit::app::bus().lock() {
             Ok(mut bus) => {
@@ -637,6 +756,7 @@ impl Storybook {
             name: named.name.clone(),
             atoms: theme::atoms_from_bus_theme(&named.theme),
             fonts: theme::font_selection_from_bus_theme(&named.theme),
+            shell: theme::shell_style_from_bus_theme(&named.theme),
         };
         match self.themes.iter().position(|t| t.name == named.name) {
             Some(idx) => self.themes[idx] = preset,
@@ -686,13 +806,13 @@ impl Storybook {
         // edited, so that search would snap a just-selected fork back to
         // whichever identical preset sorts first (Default at slot 0).
         // Guarding on the active preset keeps an explicit selection put.
-        if &theme::bus_theme_from(&self.active().atoms, &self.active().fonts) == live {
+        if &self.active().bus_theme() == live {
             return;
         }
         let Some(idx) = self
             .themes
             .iter()
-            .position(|p| &theme::bus_theme_from(&p.atoms, &p.fonts) == live)
+            .position(|p| &p.bus_theme() == live)
         else {
             return;
         };
@@ -904,6 +1024,12 @@ impl Storybook {
                 self.editing_atom,
                 self.picker.as_ref().map(|p| p.view().map(Msg::Picker)),
             ),
+            Page::Shell => pages::shell::view(
+                &self.active().shell,
+                editable,
+                self.editing_shell,
+                self.picker.as_ref().map(|p| p.view().map(Msg::Picker)),
+            ),
             Page::Text => pages::text::view(),
             Page::Button => pages::button::view(),
             Page::Badge => pages::badge::view(),
@@ -939,6 +1065,7 @@ mod tests {
     fn every_page_variant_is_listed_in_all() {
         const VARIANTS: &[Page] = &[
             Page::Theme,
+            Page::Shell,
             Page::Text,
             Page::Button,
             Page::Badge,
@@ -960,6 +1087,7 @@ mod tests {
         fn _exhaustive(p: Page) {
             match p {
                 Page::Theme
+                | Page::Shell
                 | Page::Text
                 | Page::Button
                 | Page::Badge
@@ -1003,8 +1131,7 @@ mod tests {
         sb.active_theme = 1;
         // Echo of our own broadcast: the live theme equals the fork's
         // (== Default's) bus form.
-        sb.last_live_theme =
-            Some(theme::bus_theme_from(&sb.themes[1].atoms, &sb.themes[1].fonts));
+        sb.last_live_theme = Some(sb.themes[1].bus_theme());
 
         sb.resync_active_theme();
 
@@ -1012,6 +1139,20 @@ mod tests {
             sb.active_theme, 1,
             "a fresh fork of Default must stay selected, not snap back to Default"
         );
+    }
+
+    #[test]
+    fn preset_bus_theme_roundtrips_shell_style() {
+        let mut preset = ThemePreset {
+            name: "test".into(),
+            atoms: theme::Atoms::default(),
+            fonts: theme::FontSelection::default(),
+            shell: theme::ShellStyle::default(),
+        };
+        preset.shell.switcher_bg = theme::parse("#ffb80080");
+        preset.shell.launcher_width = 720.0;
+        let bus = preset.bus_theme();
+        assert_eq!(theme::shell_style_from_bus_theme(&bus), preset.shell);
     }
 
     // An external `Topic::Theme` whose value no longer matches the
@@ -1026,8 +1167,7 @@ mod tests {
         sb.themes.push(other);
         // Active is Default, but the live theme matches `other`.
         sb.active_theme = 0;
-        sb.last_live_theme =
-            Some(theme::bus_theme_from(&sb.themes[1].atoms, &sb.themes[1].fonts));
+        sb.last_live_theme = Some(sb.themes[1].bus_theme());
 
         sb.resync_active_theme();
 

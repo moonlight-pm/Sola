@@ -25,6 +25,7 @@ pub mod field;
 pub mod icon;
 pub mod number_input;
 pub mod popover;
+pub mod shell;
 pub mod readable;
 pub mod sidebar;
 pub mod split;
