@@ -62,20 +62,20 @@ pub fn modal<'a, Message: 'a>(
     container(content).style(modal_style)
 }
 
-/// Style for [`accent_backplate`]: primary-tinted translucent fill and
-/// border at 16px radius, with a deep drop shadow.
+/// Parameterized backplate style: caller supplies fill and border
+/// colors (alpha included — e.g. the shell's `shell-switcher-bg` /
+/// `shell-switcher-border` tokens). Radius, border width, and shadow
+/// are fixed to the backplate's values.
 ///
 /// Radius choice: `RADIUS_XL` (14px) is used for the modal; the
 /// switcher backplate is a slightly softer 16px to visually distinguish
 /// it as a secondary frame. Using a plain literal keeps the two values
 /// intentionally independent — don't abstract them into the same const.
-pub fn accent_backplate_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    let accent = p.primary.base.color;
-    container::Style {
-        background: Some(Background::Color(Color { a: 0.18, ..accent })),
+pub fn backplate_style(fill: Color, border: Color) -> impl Fn(&Theme) -> container::Style {
+    move |_theme: &Theme| container::Style {
+        background: Some(Background::Color(fill)),
         border: iced::Border {
-            color: Color { a: 0.35, ..accent },
+            color: border,
             width: 1.0,
             radius: 16.0.into(), // switcher backplate: 2px softer than modal
         },
@@ -86,6 +86,25 @@ pub fn accent_backplate_style(theme: &Theme) -> container::Style {
         },
         ..container::Style::default()
     }
+}
+
+/// Backplate chrome with caller-supplied fill/border; `accent_backplate`
+/// is the palette-derived specialization. Returns a `Container` so the
+/// caller can chain sizing/padding.
+pub fn backplate<'a, Message: 'a>(
+    content: impl Into<Element<'a, Message, Theme>>,
+    fill: Color,
+    border: Color,
+) -> Container<'a, Message, Theme> {
+    container(content).style(backplate_style(fill, border))
+}
+
+/// Style for [`accent_backplate`]: primary-tinted translucent fill and
+/// border at 16px radius, with a deep drop shadow. Thin wrapper over
+/// [`backplate_style`] passing the palette-derived defaults.
+pub fn accent_backplate_style(theme: &Theme) -> container::Style {
+    let accent = theme.extended_palette().primary.base.color;
+    backplate_style(Color { a: 0.18, ..accent }, Color { a: 0.35, ..accent })(theme)
 }
 
 /// Accent-tinted translucent backplate (e.g. the app switcher's frame):
