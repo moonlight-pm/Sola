@@ -1,5 +1,7 @@
 # Shell Customization Implementation Plan
 
+> **Status:** complete (2026-06-06). All 6 tasks implemented on master (commits `8a6099f`, `37a3b7a`, `f844e33`, `e82dfbd`, `c699014`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the shell's chrome user-adjustable from sola-kit — alpha-capable `shell-*` color tokens plus switcher/launcher spacing knobs, edited on a new storybook Shell page, propagated live over `Topic::Theme`, captured by presets.

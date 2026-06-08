@@ -1,7 +1,7 @@
 # Shell Customization — Design
 
 **Date:** 2026-06-06
-**Status:** approved design, pending implementation plan
+**Status:** implemented (2026-06-06)
 **Prereq reading:** `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md` (theme protocol),
 `docs/specs/2026-06-04-sola-shell-kit-ification-plan.md` (shell surfaces on kit components)
 
