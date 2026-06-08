@@ -464,6 +464,122 @@ pub fn color_to_hex(c: Color) -> String {
     }
 }
 
+// ── Shell customization (shell-* tokens) ────────────────────────────
+
+/// Seed string values for the `shell-*` tokens. Must match
+/// `Palette::seed` in sola-core byte-for-byte — `resync_active_theme`
+/// matches presets to live themes by value equality, so a drift here
+/// would unmatch every untouched preset.
+const SHELL_MENUBAR_BG: &str = "#000000";
+const SHELL_BACKDROP_DIM: &str = "#00000066";
+const SHELL_SWITCHER_BG: &str = "#00d4ff2e";
+const SHELL_SWITCHER_BORDER: &str = "#00d4ff59";
+const SHELL_SWITCHER_PAD: f32 = 36.0;
+const SHELL_SWITCHER_TILE_PAD: f32 = 16.0;
+const SHELL_LAUNCHER_WIDTH: f32 = 640.0;
+const SHELL_LAUNCHER_PAD: f32 = 12.0;
+
+/// sola-shell's customizable chrome, extracted from the bus theme's
+/// `shell-*` tokens. Colors carry alpha (the switcher backplate fill is
+/// translucent by design); spacing values are plain pixels.
+///
+/// Where the shell's original layout used a vertical/horizontal padding
+/// pair, the knob is the vertical value and **horizontal = vertical +
+/// 4px** — this reproduces both original layouts exactly (switcher tile
+/// 16/20, launcher row 12/16) from one knob each.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShellStyle {
+    pub menubar_bg: Color,
+    pub backdrop_dim: Color,
+    pub switcher_bg: Color,
+    pub switcher_border: Color,
+    pub switcher_pad: f32,
+    pub switcher_tile_pad: f32,
+    pub launcher_width: f32,
+    pub launcher_pad: f32,
+}
+
+impl Default for ShellStyle {
+    fn default() -> Self {
+        Self {
+            menubar_bg: parse(SHELL_MENUBAR_BG),
+            backdrop_dim: parse(SHELL_BACKDROP_DIM),
+            switcher_bg: parse(SHELL_SWITCHER_BG),
+            switcher_border: parse(SHELL_SWITCHER_BORDER),
+            switcher_pad: SHELL_SWITCHER_PAD,
+            switcher_tile_pad: SHELL_SWITCHER_TILE_PAD,
+            launcher_width: SHELL_LAUNCHER_WIDTH,
+            launcher_pad: SHELL_LAUNCHER_PAD,
+        }
+    }
+}
+
+/// One color token, falling back on missing/malformed.
+fn shell_color(bus: &BusTheme, token: &str, fallback: Color) -> Color {
+    bus.palette
+        .tokens
+        .get(token)
+        .and_then(|t| try_parse(&t.value))
+        .unwrap_or(fallback)
+}
+
+/// One `"<n>px"` space token, falling back on missing/malformed.
+fn shell_space(bus: &BusTheme, token: &str, fallback: f32) -> f32 {
+    bus.palette
+        .tokens
+        .get(token)
+        .and_then(|t| t.value.trim().strip_suffix("px")?.trim().parse::<f32>().ok())
+        .unwrap_or(fallback)
+}
+
+/// Read the shell style out of a `BusTheme` (the inverse of
+/// [`bus_theme_with_shell`]). Missing or malformed tokens fall back
+/// per-field to the compile-time defaults, so a stale preset (saved
+/// before the shell tokens existed) renders exactly as before.
+pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
+    let d = ShellStyle::default();
+    ShellStyle {
+        menubar_bg: shell_color(bus, "shell-menubar-bg", d.menubar_bg),
+        backdrop_dim: shell_color(bus, "shell-backdrop-dim", d.backdrop_dim),
+        switcher_bg: shell_color(bus, "shell-switcher-bg", d.switcher_bg),
+        switcher_border: shell_color(bus, "shell-switcher-border", d.switcher_border),
+        switcher_pad: shell_space(bus, "shell-switcher-pad", d.switcher_pad),
+        switcher_tile_pad: shell_space(bus, "shell-switcher-tile-pad", d.switcher_tile_pad),
+        launcher_width: shell_space(bus, "shell-launcher-width", d.launcher_width),
+        launcher_pad: shell_space(bus, "shell-launcher-pad", d.launcher_pad),
+    }
+}
+
+/// Write `shell`'s eight values into `t`'s palette as `shell-*` tokens
+/// (the inverse of [`shell_style_from_bus_theme`]). Mirrors
+/// `bus_theme_from_atoms`'s upsert behavior — overwrite when present,
+/// insert when the seed somehow lacks the token — preserving the
+/// write-list ⊇ read-list invariant.
+pub fn bus_theme_with_shell(mut t: BusTheme, shell: &ShellStyle) -> BusTheme {
+    use sola_core::theme::{Token, TokenKind};
+    let entries: [(&str, TokenKind, String); 8] = [
+        ("shell-menubar-bg", TokenKind::Color, color_to_hex(shell.menubar_bg)),
+        ("shell-backdrop-dim", TokenKind::Color, color_to_hex(shell.backdrop_dim)),
+        ("shell-switcher-bg", TokenKind::Color, color_to_hex(shell.switcher_bg)),
+        ("shell-switcher-border", TokenKind::Color, color_to_hex(shell.switcher_border)),
+        ("shell-switcher-pad", TokenKind::Space, format!("{}px", shell.switcher_pad)),
+        ("shell-switcher-tile-pad", TokenKind::Space, format!("{}px", shell.switcher_tile_pad)),
+        ("shell-launcher-width", TokenKind::Space, format!("{}px", shell.launcher_width)),
+        ("shell-launcher-pad", TokenKind::Space, format!("{}px", shell.launcher_pad)),
+    ];
+    for (name, kind, value) in entries {
+        match t.palette.tokens.get_mut(name) {
+            Some(tok) => tok.value = value,
+            None => {
+                t.palette
+                    .tokens
+                    .insert(name.to_string(), Token::new(kind, &value, &["shell"]));
+            }
+        }
+    }
+    t
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,5 +697,39 @@ mod tests {
         let c = try_parse("#0d1117").expect("6-hex parses");
         assert_eq!(c.a, 1.0);
         assert_eq!(color_to_hex(c), "#0d1117");
+    }
+
+    #[test]
+    fn shell_style_from_seed_matches_defaults() {
+        // BusTheme::default() seeds the shell-* tokens (Task 1), and
+        // ShellStyle::default() parses the same constant strings — the
+        // two must agree byte-for-byte for preset resync matching.
+        assert_eq!(shell_style_from_bus_theme(&BusTheme::default()), ShellStyle::default());
+    }
+
+    #[test]
+    fn shell_style_defaults_from_empty_palette() {
+        let empty = BusTheme { palette: Default::default(), components: Default::default() };
+        assert_eq!(shell_style_from_bus_theme(&empty), ShellStyle::default());
+    }
+
+    #[test]
+    fn shell_style_bus_roundtrip() {
+        let mut style = ShellStyle::default();
+        // parse() quantizes to u8 channels, so equality after the string
+        // round-trip is exact. Don't use raw f32 alphas here (0.5 → 0x80
+        // → 128/255 ≠ 0.5).
+        style.switcher_bg = parse("#ffb80080");
+        style.switcher_pad = 48.0;
+        let bus = bus_theme_with_shell(BusTheme::default(), &style);
+        assert_eq!(shell_style_from_bus_theme(&bus), style);
+    }
+
+    #[test]
+    fn shell_style_malformed_token_falls_back() {
+        let mut bus = BusTheme::default();
+        bus.palette.tokens.get_mut("shell-switcher-pad").unwrap().value = "garbage".into();
+        let style = shell_style_from_bus_theme(&bus);
+        assert_eq!(style.switcher_pad, ShellStyle::default().switcher_pad);
     }
 }
