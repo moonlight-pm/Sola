@@ -685,6 +685,7 @@ impl App {
     fn on_input(&mut self, event: iced::Event) -> Task<Msg> {
         let iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
+            modified_key,
             modifiers,
             text,
             ..
@@ -754,23 +755,10 @@ impl App {
 
         let mods = input::Mods::from(modifiers);
 
-        // Exactly one source of bytes, in priority order:
-        //   1. encode_key — named keys + Ctrl-letter on Character keys.
-        //   2. encode_char — Character keys (incl. Ctrl+symbol that encode_key
-        //      deliberately returns None for).
-        //   3. the platform `text` field — IME / printable that neither caught.
-        let bytes = input::encode_key(&key, mods, mode).or_else(|| {
-            if let keyboard::Key::Character(s) = &key {
-                s.chars().next().and_then(|c| input::encode_char(c, mods))
-            } else {
-                None
-            }
-        });
-        let bytes = bytes.or_else(|| {
-            text.as_ref()
-                .filter(|t| !t.is_empty())
-                .map(|t| t.as_bytes().to_vec())
-        });
+        // Resolve to PTY bytes from `modified_key` (case-correct for
+        // Shift+letter) with the platform `text` field as last resort.
+        // See `input::resolve_bytes` for the priority chain.
+        let bytes = input::resolve_bytes(&modified_key, mods, mode, text.as_deref());
 
         if let Some(bytes) = bytes {
             // Detect Enter (carriage return) to schedule a cwd refresh.

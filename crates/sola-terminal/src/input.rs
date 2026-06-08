@@ -286,6 +286,37 @@ pub fn encode_char(c: char, mods: Mods) -> Option<Vec<u8>> {
     None
 }
 
+// ── resolve_bytes ─────────────────────────────────────────────────────────
+
+/// Resolve a key press to the PTY byte sequence, in priority order:
+///   1. [`encode_key`] — named keys + Ctrl-letter on Character keys.
+///   2. [`encode_char`] — printable Character keys (incl. Ctrl+symbol that
+///      `encode_key` deliberately returns `None` for).
+///   3. the platform `text` field — IME / printable that neither caught.
+///
+/// `modified_key` is iced's "key with all modifiers applied except Ctrl",
+/// so it carries the correct **case** for Shift+letter (and the right glyph
+/// for Alt+Shift+letter). The printable path (steps 1 and 2) is sourced from
+/// it, NOT from the base `key` — otherwise Shift+a encodes as lowercase `a`
+/// because the base key is layout-unshifted. Ctrl is excluded from
+/// `modified_key`, so Ctrl-letter still computes the control byte correctly.
+pub fn resolve_bytes(
+    modified_key: &keyboard::Key,
+    mods: Mods,
+    mode: TermMode,
+    text: Option<&str>,
+) -> Option<Vec<u8>> {
+    encode_key(modified_key, mods, mode)
+        .or_else(|| {
+            if let keyboard::Key::Character(s) = modified_key {
+                s.chars().next().and_then(|c| encode_char(c, mods))
+            } else {
+                None
+            }
+        })
+        .or_else(|| text.filter(|t| !t.is_empty()).map(|t| t.as_bytes().to_vec()))
+}
+
 // ── bracketed paste ───────────────────────────────────────────────────────
 
 /// Wrap `text` with the bracketed-paste markers `ESC[200~` … `ESC[201~`.
@@ -401,6 +432,58 @@ mod tests {
     // Helper: application-cursor mode (DECCKM).
     fn app_cursor() -> TermMode {
         TermMode::APP_CURSOR
+    }
+
+    // ── resolve_bytes: case + priority chain ──────────────────────────
+
+    // Shift+a: iced delivers base key=Character("a"), modified_key=
+    // Character("A"). resolve_bytes is sourced from modified_key, so it
+    // must emit the uppercase byte — the bug this guards against emitted
+    // lowercase because the base key is layout-unshifted.
+    #[test]
+    fn shift_letter_is_uppercase() {
+        assert_eq!(
+            resolve_bytes(&Key::Character("A".into()), Mods::SHIFT, normal(), Some("A")),
+            Some(b"A".to_vec())
+        );
+    }
+
+    // Plain lowercase letter still encodes lowercase.
+    #[test]
+    fn plain_letter_is_lowercase() {
+        assert_eq!(
+            resolve_bytes(&Key::Character("a".into()), Mods::NONE, normal(), Some("a")),
+            Some(b"a".to_vec())
+        );
+    }
+
+    // Ctrl is excluded from modified_key, so Ctrl+a (modified_key="a")
+    // still resolves to the control byte 0x01 rather than a printable.
+    #[test]
+    fn ctrl_letter_is_control_byte() {
+        assert_eq!(
+            resolve_bytes(&Key::Character("a".into()), Mods::CTRL, normal(), None),
+            Some(vec![0x01])
+        );
+    }
+
+    // Named keys are unaffected by the modified_key wiring.
+    #[test]
+    fn resolve_named_enter() {
+        assert_eq!(
+            resolve_bytes(&Key::Named(Named::Enter), Mods::NONE, normal(), None),
+            Some(b"\r".to_vec())
+        );
+    }
+
+    // Last-resort fallback: a key the encoders don't model, but the
+    // platform produced text for it.
+    #[test]
+    fn resolve_falls_back_to_text() {
+        assert_eq!(
+            resolve_bytes(&Key::Unidentified, Mods::NONE, normal(), Some("é")),
+            Some("é".as_bytes().to_vec())
+        );
     }
 
     // ── encode_key: basic named keys ──────────────────────────────────
