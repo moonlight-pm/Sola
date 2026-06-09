@@ -110,6 +110,9 @@ fn unregister_fd(tab_id: &str) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(tab_id);
+    // Tab teardown: drop any tracked modifyOtherKeys state so a reused tab id
+    // can't inherit it.
+    crate::extkeys::clear(tab_id);
 }
 
 // -- PtyBackend -- per-tab handle ----------------------------------------------
@@ -228,6 +231,11 @@ impl PtyBackend {
         let reader_tab_id = tab_id.to_string();
         std::thread::spawn(move || {
             let mut processor: Processor<StdSyncHandler> = Processor::new();
+            // Observe the same byte stream for tmux's modifyOtherKeys
+            // enable/disable (XTMODKEYS), which alacritty_terminal parses but
+            // discards — `input` reads the tracked level to encode Shift+Enter
+            // and friends as CSI-u. See `crate::extkeys`.
+            let mut extkeys_scanner = crate::extkeys::Scanner::new();
             let mut buf = [0u8; 4096];
             loop {
                 let n = unsafe {
@@ -244,6 +252,9 @@ impl PtyBackend {
                     break;
                 }
                 let chunk = &buf[..n as usize];
+                if let Some(level) = extkeys_scanner.feed(chunk) {
+                    crate::extkeys::set_level(&reader_tab_id, level);
+                }
                 {
                     let mut term = term.lock();
                     processor.advance(&mut *term, chunk);

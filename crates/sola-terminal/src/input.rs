@@ -54,6 +54,9 @@ impl Mods {
     pub fn shift(self) -> bool {
         self.0.shift()
     }
+    pub fn logo(self) -> bool {
+        self.0.logo()
+    }
 }
 
 impl From<keyboard::Modifiers> for Mods {
@@ -288,33 +291,390 @@ pub fn encode_char(c: char, mods: Mods) -> Option<Vec<u8>> {
 
 // ── resolve_bytes ─────────────────────────────────────────────────────────
 
-/// Resolve a key press to the PTY byte sequence, in priority order:
+/// Everything a single key press carries, bundled so the resolver and the
+/// kitty-protocol builder share one borrow instead of threading many args.
+///
+/// `key` is iced's base/layout key (Shift NOT applied); `modified_key` is
+/// "all modifiers applied except Ctrl" (correct **case**/glyph for
+/// Shift/Alt+Shift). `location` distinguishes the numpad (kitty disambiguates
+/// numpad keys); `repeat` drives kitty event-type reporting.
+pub struct KeyInput<'a> {
+    pub key: &'a keyboard::Key,
+    pub modified_key: &'a keyboard::Key,
+    pub mods: Mods,
+    pub mode: TermMode,
+    pub location: keyboard::Location,
+    pub text: Option<&'a str>,
+    pub repeat: bool,
+}
+
+/// Resolve a key press to the PTY byte sequence.
+///
+/// When the application has negotiated the **kitty keyboard protocol** (the
+/// engine set one of the kitty [`TermMode`] bits — see [`kitty_active`]) and
+/// this key is one the protocol wants escaped (see [`should_build_sequence`]),
+/// the kitty encoder owns it ([`build_sequence`]); e.g. Shift+Enter →
+/// `CSI 13;2u`, distinct from plain Enter's `CR`. This is the mechanism Claude
+/// Code (and other TUIs) use to tell Shift+Enter from Enter.
+///
+/// Otherwise the legacy path runs, in priority order:
 ///   1. [`encode_key`] — named keys + Ctrl-letter on Character keys.
 ///   2. [`encode_char`] — printable Character keys (incl. Ctrl+symbol that
 ///      `encode_key` deliberately returns `None` for).
 ///   3. the platform `text` field — IME / printable that neither caught.
 ///
-/// `modified_key` is iced's "key with all modifiers applied except Ctrl",
-/// so it carries the correct **case** for Shift+letter (and the right glyph
-/// for Alt+Shift+letter). The printable path (steps 1 and 2) is sourced from
-/// it, NOT from the base `key` — otherwise Shift+a encodes as lowercase `a`
-/// because the base key is layout-unshifted. Ctrl is excluded from
-/// `modified_key`, so Ctrl-letter still computes the control byte correctly.
-pub fn resolve_bytes(
-    modified_key: &keyboard::Key,
-    mods: Mods,
-    mode: TermMode,
-    text: Option<&str>,
-) -> Option<Vec<u8>> {
-    encode_key(modified_key, mods, mode)
+/// The printable legacy path is sourced from `modified_key`, NOT the base
+/// `key` — otherwise Shift+a encodes as lowercase `a` (the base key is
+/// layout-unshifted). Ctrl is excluded from `modified_key`, so Ctrl-letter
+/// still computes the control byte correctly.
+pub fn resolve_bytes(input: &KeyInput) -> Option<Vec<u8>> {
+    if kitty_active(input.mode) && should_build_sequence(input) {
+        // The kitty encoder owns this key. A `None` here (a key it doesn't
+        // model, e.g. a bare modifier) means "emit nothing" — falling through
+        // to the legacy path would send bytes the app doesn't expect while in
+        // kitty mode.
+        return build_sequence(input);
+    }
+
+    let mk = input.modified_key;
+    encode_key(mk, input.mods, input.mode)
         .or_else(|| {
-            if let keyboard::Key::Character(s) = modified_key {
-                s.chars().next().and_then(|c| encode_char(c, mods))
+            if let keyboard::Key::Character(s) = mk {
+                s.chars().next().and_then(|c| encode_char(c, input.mods))
             } else {
                 None
             }
         })
-        .or_else(|| text.filter(|t| !t.is_empty()).map(|t| t.as_bytes().to_vec()))
+        .or_else(|| {
+            input
+                .text
+                .filter(|t| !t.is_empty())
+                .map(|t| t.as_bytes().to_vec())
+        })
+}
+
+// ── Kitty keyboard protocol ─────────────────────────────────────────────────
+//
+// Faithful port of alacritty's `build_sequence` / `should_build_sequence`
+// (alacritty/src/input/keyboard.rs) adapted from winit to iced key types. The
+// engine (alacritty_terminal `Term`, with `Config::kitty_keyboard = true`)
+// negotiates the protocol and tracks the mode bits; this is the encoder half.
+//
+// Scope vs. alacritty: key **release** events are not reported (iced's
+// `on_input` only sees presses, so REPORT_EVENT_TYPES carries press/repeat
+// only), and the kitty-specific functional codes for F13–F35, media keys, and
+// bare modifier keys (CSI 57xxx u) are not emitted. Everything Claude Code and
+// common TUIs rely on — Enter/Tab/Esc/Space/Backspace, arrows, nav, F1–F20,
+// and modified character keys — is covered.
+
+/// Terminator of a key escape sequence: a legacy final byte (`A`, `~`, …) or
+/// the kitty `u`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Terminator {
+    Legacy(char),
+    Kitty,
+}
+
+impl Terminator {
+    fn ch(self) -> char {
+        match self {
+            Terminator::Legacy(c) => c,
+            Terminator::Kitty => 'u',
+        }
+    }
+}
+
+/// True when the application has negotiated any level of the kitty keyboard
+/// protocol; only then does the kitty encoder run.
+pub fn kitty_active(mode: TermMode) -> bool {
+    mode.intersects(
+        TermMode::REPORT_ALL_KEYS_AS_ESC
+            | TermMode::DISAMBIGUATE_ESC_CODES
+            | TermMode::REPORT_EVENT_TYPES,
+    )
+}
+
+/// Kitty modifier bitmask (shift=1, alt=2, ctrl=4, super=8); the value sent in
+/// an escape sequence is this `+ 1`.
+fn kitty_mod_bits(mods: Mods) -> u8 {
+    let mut b = 0u8;
+    if mods.shift() {
+        b |= 0b0001;
+    }
+    if mods.alt() {
+        b |= 0b0010;
+    }
+    if mods.ctrl() {
+        b |= 0b0100;
+    }
+    if mods.logo() {
+        b |= 0b1000;
+    }
+    b
+}
+
+/// Whether `mods` is *exactly* Shift (no other modifier).
+fn shift_only(mods: Mods) -> bool {
+    mods.shift() && !mods.ctrl() && !mods.alt() && !mods.logo()
+}
+
+/// iced has no `NamedKey::to_text`; this mirrors winit's (Enter→CR,
+/// Backspace→BS, Tab→HT, Space→SP, Escape→ESC, else None). Used by
+/// [`should_build_sequence`] to decide whether an *unmodified* named key keeps
+/// its legacy text form or becomes a kitty sequence.
+fn named_to_text(named: &Named) -> Option<&'static str> {
+    match named {
+        Named::Enter => Some("\r"),
+        Named::Backspace => Some("\x08"),
+        Named::Tab => Some("\t"),
+        Named::Space => Some(" "),
+        Named::Escape => Some("\x1b"),
+        _ => None,
+    }
+}
+
+/// Decide whether a key should be encoded as a kitty/disambiguated escape
+/// sequence rather than its legacy bytes. Port of alacritty's
+/// `should_build_sequence`. Assumes [`kitty_active`] already returned true.
+fn should_build_sequence(input: &KeyInput) -> bool {
+    let mode = input.mode;
+    if mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) {
+        return true;
+    }
+
+    let key = input.modified_key;
+    let mods = input.mods;
+    let any_mods = mods.shift() || mods.ctrl() || mods.alt() || mods.logo();
+    let is_tab_enter_bs = matches!(
+        key,
+        keyboard::Key::Named(Named::Tab | Named::Enter | Named::Backspace)
+    );
+
+    let disambiguate = mode.contains(TermMode::DISAMBIGUATE_ESC_CODES)
+        && (matches!(key, keyboard::Key::Named(Named::Escape))
+            || input.location == keyboard::Location::Numpad
+            || (any_mods && (!shift_only(mods) || is_tab_enter_bs)));
+
+    if disambiguate {
+        return true;
+    }
+
+    match key {
+        keyboard::Key::Named(named) => named_to_text(named).is_none(),
+        _ => input.text.map_or(true, |t| t.is_empty()),
+    }
+}
+
+/// Build the kitty escape sequence for a key. Port of alacritty's
+/// `build_sequence` (numpad → named functional → control char → textual),
+/// then modifier/event-type/associated-text suffixes and the terminator.
+/// Returns `None` for keys the encoder doesn't model.
+fn build_sequence(input: &KeyInput) -> Option<Vec<u8>> {
+    let mode = input.mode;
+    let event_type = mode.contains(TermMode::REPORT_EVENT_TYPES) && input.repeat;
+    let assoc_text = input.text.filter(|t| {
+        mode.contains(TermMode::REPORT_ASSOCIATED_TEXT) && !t.is_empty() && !is_control_text(t)
+    });
+    let has_assoc = assoc_text.is_some();
+
+    let (payload, terminator) = build_numpad(input)
+        .or_else(|| build_named(input, has_assoc, event_type))
+        .or_else(|| build_control_char(input))
+        .or_else(|| build_textual(input))?;
+
+    let mut out = format!("\x1b[{payload}");
+
+    let mbits = kitty_mod_bits(input.mods);
+    if event_type || mbits != 0 || has_assoc {
+        out.push_str(&format!(";{}", mbits + 1));
+    }
+
+    // Event type: 1=press (the default, omitted), 2=repeat. Release (3) is
+    // never reported — iced delivers only presses to the encode path.
+    if event_type {
+        out.push_str(":2");
+    }
+
+    if let Some(text) = assoc_text {
+        let mut cps = text.chars().map(u32::from);
+        if let Some(first) = cps.next() {
+            out.push_str(&format!(";{first}"));
+        }
+        for cp in cps {
+            out.push_str(&format!(":{cp}"));
+        }
+    }
+
+    out.push(terminator.ch());
+    Some(out.into_bytes())
+}
+
+/// Numpad keys get dedicated kitty codes so apps can tell them from the main
+/// cluster. Keyed off iced's `Location::Numpad`.
+fn build_numpad(input: &KeyInput) -> Option<(String, Terminator)> {
+    if input.location != keyboard::Location::Numpad {
+        return None;
+    }
+    let base = match input.modified_key {
+        keyboard::Key::Character(s) => match s.as_str() {
+            "0" => "57399",
+            "1" => "57400",
+            "2" => "57401",
+            "3" => "57402",
+            "4" => "57403",
+            "5" => "57404",
+            "6" => "57405",
+            "7" => "57406",
+            "8" => "57407",
+            "9" => "57408",
+            "." => "57409",
+            "/" => "57410",
+            "*" => "57411",
+            "-" => "57412",
+            "+" => "57413",
+            "=" => "57415",
+            _ => return None,
+        },
+        keyboard::Key::Named(named) => match named {
+            Named::Enter => "57414",
+            Named::ArrowLeft => "57417",
+            Named::ArrowRight => "57418",
+            Named::ArrowUp => "57419",
+            Named::ArrowDown => "57420",
+            Named::PageUp => "57421",
+            Named::PageDown => "57422",
+            Named::Home => "57423",
+            Named::End => "57424",
+            Named::Insert => "57425",
+            Named::Delete => "57426",
+            _ => return None,
+        },
+        _ => return None,
+    };
+    Some((base.to_string(), Terminator::Kitty))
+}
+
+/// Named functional keys (arrows, nav, F1–F20) in CSI form. With no modifiers
+/// (and no event-type/associated-text) the leading parameter is omitted, so
+/// these reproduce the exact legacy sequences; with modifiers they gain the
+/// `1;<mods>` parameter (e.g. Shift+Up → `CSI 1;2A`).
+fn build_named(input: &KeyInput, has_assoc: bool, event_type: bool) -> Option<(String, Terminator)> {
+    let named = match input.modified_key {
+        keyboard::Key::Named(n) => n,
+        _ => return None,
+    };
+    let one_based = if kitty_mod_bits(input.mods) == 0 && !event_type && !has_assoc {
+        ""
+    } else {
+        "1"
+    };
+    let (base, term): (&str, Terminator) = match named {
+        Named::PageUp => ("5", Terminator::Legacy('~')),
+        Named::PageDown => ("6", Terminator::Legacy('~')),
+        Named::Insert => ("2", Terminator::Legacy('~')),
+        Named::Delete => ("3", Terminator::Legacy('~')),
+        Named::Home => (one_based, Terminator::Legacy('H')),
+        Named::End => (one_based, Terminator::Legacy('F')),
+        Named::ArrowLeft => (one_based, Terminator::Legacy('D')),
+        Named::ArrowRight => (one_based, Terminator::Legacy('C')),
+        Named::ArrowUp => (one_based, Terminator::Legacy('A')),
+        Named::ArrowDown => (one_based, Terminator::Legacy('B')),
+        Named::F1 => (one_based, Terminator::Legacy('P')),
+        Named::F2 => (one_based, Terminator::Legacy('Q')),
+        Named::F3 => (one_based, Terminator::Legacy('R')),
+        Named::F4 => (one_based, Terminator::Legacy('S')),
+        Named::F5 => ("15", Terminator::Legacy('~')),
+        Named::F6 => ("17", Terminator::Legacy('~')),
+        Named::F7 => ("18", Terminator::Legacy('~')),
+        Named::F8 => ("19", Terminator::Legacy('~')),
+        Named::F9 => ("20", Terminator::Legacy('~')),
+        Named::F10 => ("21", Terminator::Legacy('~')),
+        Named::F11 => ("23", Terminator::Legacy('~')),
+        Named::F12 => ("24", Terminator::Legacy('~')),
+        Named::F13 => ("25", Terminator::Legacy('~')),
+        Named::F14 => ("26", Terminator::Legacy('~')),
+        Named::F15 => ("28", Terminator::Legacy('~')),
+        Named::F16 => ("29", Terminator::Legacy('~')),
+        Named::F17 => ("31", Terminator::Legacy('~')),
+        Named::F18 => ("32", Terminator::Legacy('~')),
+        Named::F19 => ("33", Terminator::Legacy('~')),
+        Named::F20 => ("34", Terminator::Legacy('~')),
+        _ => return None,
+    };
+    Some((base.to_string(), term))
+}
+
+/// Control-character named keys → their kitty unicode codepoint (Tab=9,
+/// Enter=13, Escape=27, Space=32, Backspace=127). This is where Shift+Enter
+/// becomes `CSI 13;2u`. Bare modifier keys (kitty 57xxx) are intentionally not
+/// modelled.
+fn build_control_char(input: &KeyInput) -> Option<(String, Terminator)> {
+    let named = match input.modified_key {
+        keyboard::Key::Named(n) => n,
+        _ => return None,
+    };
+    let base = match named {
+        Named::Tab => "9",
+        Named::Enter => "13",
+        Named::Escape => "27",
+        Named::Space => "32",
+        Named::Backspace => "127",
+        _ => return None,
+    };
+    Some((base.to_string(), Terminator::Kitty))
+}
+
+/// Printable character keys → kitty unicode codepoint of the *unshifted* key,
+/// so the receiver sees the layout key plus a modifier flag (e.g. Shift+1 →
+/// `49` (`1`) with Shift, not `33` (`!`)). With REPORT_ALTERNATE_KEYS the
+/// shifted codepoint is appended as `base:alternate`.
+fn build_textual(input: &KeyInput) -> Option<(String, Terminator)> {
+    let s = match input.modified_key {
+        keyboard::Key::Character(s) => s,
+        _ => return None,
+    };
+    if s.chars().count() != 1 {
+        return None;
+    }
+    let shift = input.mods.shift();
+    let ch = s.chars().next().unwrap();
+    let unshifted = if shift {
+        ch.to_lowercase().next().unwrap_or(ch)
+    } else {
+        ch
+    };
+
+    let alternate_code = u32::from(ch);
+    let mut unicode_code = u32::from(unshifted);
+
+    // For keys whose glyph only changes with Shift (e.g. `1`→`!`), recover the
+    // base codepoint from the layout key so the report carries the base key.
+    if shift && alternate_code == unicode_code {
+        if let keyboard::Key::Character(base) = input.key {
+            if let Some(c) = base.chars().next() {
+                unicode_code = u32::from(c);
+            }
+        }
+    }
+
+    let payload = if input.mode.contains(TermMode::REPORT_ALTERNATE_KEYS)
+        && alternate_code != unicode_code
+    {
+        format!("{unicode_code}:{alternate_code}")
+    } else {
+        unicode_code.to_string()
+    };
+    Some((payload, Terminator::Kitty))
+}
+
+/// True for a single C0/DEL/C1 control byte — such text is reported via the
+/// key code, not as associated text.
+fn is_control_text(text: &str) -> bool {
+    let b = match text.bytes().next() {
+        Some(b) => b,
+        None => return false,
+    };
+    text.len() == 1 && (b < 0x20 || (0x7f..=0x9f).contains(&b))
 }
 
 // ── bracketed paste ───────────────────────────────────────────────────────
@@ -436,6 +796,25 @@ mod tests {
 
     // ── resolve_bytes: case + priority chain ──────────────────────────
 
+    // Build a legacy-path KeyInput: standard location, no repeat, base key ==
+    // modified key (these tests run in non-kitty modes, where `key` is unused).
+    fn ki<'a>(
+        modified_key: &'a Key,
+        mods: Mods,
+        mode: TermMode,
+        text: Option<&'a str>,
+    ) -> KeyInput<'a> {
+        KeyInput {
+            key: modified_key,
+            modified_key,
+            mods,
+            mode,
+            location: keyboard::Location::Standard,
+            text,
+            repeat: false,
+        }
+    }
+
     // Shift+a: iced delivers base key=Character("a"), modified_key=
     // Character("A"). resolve_bytes is sourced from modified_key, so it
     // must emit the uppercase byte — the bug this guards against emitted
@@ -443,7 +822,7 @@ mod tests {
     #[test]
     fn shift_letter_is_uppercase() {
         assert_eq!(
-            resolve_bytes(&Key::Character("A".into()), Mods::SHIFT, normal(), Some("A")),
+            resolve_bytes(&ki(&Key::Character("A".into()), Mods::SHIFT, normal(), Some("A"))),
             Some(b"A".to_vec())
         );
     }
@@ -452,7 +831,7 @@ mod tests {
     #[test]
     fn plain_letter_is_lowercase() {
         assert_eq!(
-            resolve_bytes(&Key::Character("a".into()), Mods::NONE, normal(), Some("a")),
+            resolve_bytes(&ki(&Key::Character("a".into()), Mods::NONE, normal(), Some("a"))),
             Some(b"a".to_vec())
         );
     }
@@ -462,7 +841,7 @@ mod tests {
     #[test]
     fn ctrl_letter_is_control_byte() {
         assert_eq!(
-            resolve_bytes(&Key::Character("a".into()), Mods::CTRL, normal(), None),
+            resolve_bytes(&ki(&Key::Character("a".into()), Mods::CTRL, normal(), None)),
             Some(vec![0x01])
         );
     }
@@ -471,7 +850,7 @@ mod tests {
     #[test]
     fn resolve_named_enter() {
         assert_eq!(
-            resolve_bytes(&Key::Named(Named::Enter), Mods::NONE, normal(), None),
+            resolve_bytes(&ki(&Key::Named(Named::Enter), Mods::NONE, normal(), None)),
             Some(b"\r".to_vec())
         );
     }
@@ -481,9 +860,169 @@ mod tests {
     #[test]
     fn resolve_falls_back_to_text() {
         assert_eq!(
-            resolve_bytes(&Key::Unidentified, Mods::NONE, normal(), Some("é")),
+            resolve_bytes(&ki(&Key::Unidentified, Mods::NONE, normal(), Some("é"))),
             Some("é".as_bytes().to_vec())
         );
+    }
+
+    // ── kitty keyboard protocol ───────────────────────────────────────
+
+    // Disambiguate level — the mode Claude Code negotiates for Shift+Enter.
+    fn kitty() -> TermMode {
+        TermMode::DISAMBIGUATE_ESC_CODES
+    }
+
+    // KeyInput for kitty tests: standard location, no repeat, base key ==
+    // modified key (overridable via the returned struct's pub fields).
+    fn kk<'a>(modified_key: &'a Key, mods: Mods, mode: TermMode) -> KeyInput<'a> {
+        KeyInput {
+            key: modified_key,
+            modified_key,
+            mods,
+            mode,
+            location: keyboard::Location::Standard,
+            text: None,
+            repeat: false,
+        }
+    }
+
+    // THE BUG: under the kitty protocol, Shift+Enter must be a distinct
+    // sequence (CSI 13;2u) so Claude Code inserts a newline instead of
+    // submitting. shift bits=1 → encoded modifier 2.
+    #[test]
+    fn shift_enter_is_kitty_csi_u() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::SHIFT, kitty())),
+            Some(b"\x1b[13;2u".to_vec())
+        );
+    }
+
+    // Plain Enter under kitty keeps CR (no modifiers → legacy text form), so
+    // pressing Enter still submits.
+    #[test]
+    fn plain_enter_under_kitty_is_cr() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::NONE, kitty())),
+            Some(b"\r".to_vec())
+        );
+    }
+
+    // With no kitty flag negotiated, Shift+Enter falls to the legacy encoder
+    // and stays CR — unchanged from before this feature.
+    #[test]
+    fn shift_enter_without_kitty_is_cr() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::SHIFT, normal())),
+            Some(b"\r".to_vec())
+        );
+    }
+
+    // Ctrl+Enter under kitty → CSI 13;5u (ctrl bits=4 → modifier 5).
+    #[test]
+    fn ctrl_enter_is_kitty_csi_u() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::CTRL, kitty())),
+            Some(b"\x1b[13;5u".to_vec())
+        );
+    }
+
+    // A plain printable key under disambiguate level is NOT escaped — it sends
+    // its text, exactly like legacy. (should_build_sequence returns false.)
+    #[test]
+    fn plain_letter_under_kitty_is_text() {
+        let key = Key::Character("a".into());
+        let mut k = kk(&key, Mods::NONE, kitty());
+        k.text = Some("a");
+        assert_eq!(resolve_bytes(&k), Some(b"a".to_vec()));
+    }
+
+    // Ctrl+letter under kitty → CSI <codepoint>;5u (here 'a' = 97).
+    #[test]
+    fn ctrl_letter_under_kitty_is_csi_u() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Character("a".into()), Mods::CTRL, kitty())),
+            Some(b"\x1b[97;5u".to_vec())
+        );
+    }
+
+    // Shift+Tab under kitty → CSI 9;2u (Tab is one of the always-disambiguated
+    // keys even with shift-only).
+    #[test]
+    fn shift_tab_is_kitty_csi_u() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::Tab), Mods::SHIFT, kitty())),
+            Some(b"\x1b[9;2u".to_vec())
+        );
+    }
+
+    // Plain arrow under kitty reproduces the exact legacy CSI form (no leading
+    // parameter), so unmodified cursor movement is unaffected.
+    #[test]
+    fn plain_arrow_under_kitty_is_legacy_form() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::ArrowUp), Mods::NONE, kitty())),
+            Some(b"\x1b[A".to_vec())
+        );
+    }
+
+    // Modified arrow gains the 1;<mods> parameter: Shift+Up → CSI 1;2A.
+    #[test]
+    fn shift_arrow_under_kitty_has_modifier() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::ArrowUp), Mods::SHIFT, kitty())),
+            Some(b"\x1b[1;2A".to_vec())
+        );
+    }
+
+    // Under REPORT_ALL_KEYS_AS_ESC, Shift+'1' reports the *base* key ('1' =
+    // 49), not the shifted glyph ('!' = 33): CSI 49;2u. (At plain disambiguate
+    // level a printable like this is left as text and not escaped.)
+    #[test]
+    fn shift_digit_reports_base_key() {
+        let one = Key::Character("1".into());
+        let bang = Key::Character("!".into());
+        let k = KeyInput {
+            key: &one,
+            modified_key: &bang,
+            mods: Mods::SHIFT,
+            mode: TermMode::REPORT_ALL_KEYS_AS_ESC,
+            location: keyboard::Location::Standard,
+            text: Some("!"),
+            repeat: false,
+        };
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b[49;2u".to_vec()));
+    }
+
+    // REPORT_ALL_KEYS_AS_ESC escapes even an unmodified printable: 'a' → CSI 97u.
+    #[test]
+    fn report_all_keys_escapes_plain_letter() {
+        let key = Key::Character("a".into());
+        let mut k = kk(&key, Mods::NONE, TermMode::REPORT_ALL_KEYS_AS_ESC);
+        k.text = Some("a");
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b[97u".to_vec()));
+    }
+
+    // Event-type reporting: a key *repeat* appends ":2" after the modifier
+    // field. Up-arrow repeat with no mods → CSI 1;1:2A.
+    #[test]
+    fn repeat_appends_event_type() {
+        let key = Key::Named(Named::ArrowUp);
+        let mut k = kk(
+            &key,
+            Mods::NONE,
+            TermMode::DISAMBIGUATE_ESC_CODES | TermMode::REPORT_EVENT_TYPES,
+        );
+        k.repeat = true;
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b[1;1:2A".to_vec()));
+    }
+
+    // Numpad keys are disambiguated under kitty: numpad Enter → CSI 57414u.
+    #[test]
+    fn numpad_enter_is_kitty_code() {
+        let key = Key::Named(Named::Enter);
+        let mut k = kk(&key, Mods::NONE, kitty());
+        k.location = keyboard::Location::Numpad;
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b[57414u".to_vec()));
     }
 
     // ── encode_key: basic named keys ──────────────────────────────────

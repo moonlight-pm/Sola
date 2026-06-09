@@ -44,6 +44,7 @@ set -g default-terminal xterm-256color
 set -g escape-time 0
 set -g extended-keys on
 set -g extended-keys-format csi-u
+set -as terminal-features 'xterm*:extkeys'
 set -g set-titles off
 set -g allow-passthrough on
 ";

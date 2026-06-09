@@ -13,6 +13,7 @@ use sola_kit::fonts;
 use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 
 mod emulator;
+mod extkeys;
 mod input;
 mod menu;
 mod pty;
@@ -687,7 +688,9 @@ impl App {
             key,
             modified_key,
             modifiers,
+            location,
             text,
+            repeat,
             ..
         }) = event
         else {
@@ -751,14 +754,31 @@ impl App {
 
         // Read the term mode once (drops the lock immediately) — encode_key is
         // mode-aware (DECCKM picks ESC O vs ESC [ for arrows).
-        let mode = { *rt.emulator.term().lock().mode() };
+        let mut mode = { *rt.emulator.term().lock().mode() };
+
+        // tmux negotiates modifyOtherKeys (not kitty) with us on behalf of its
+        // inner app; when active, encode modified keys as CSI-u so Shift+Enter
+        // (CSI 13;2u) is distinct from Enter. We fold it into the kitty
+        // disambiguate path the encoder already implements. See `crate::extkeys`.
+        if extkeys::level(&active) >= 1 {
+            mode |= alacritty_terminal::term::TermMode::DISAMBIGUATE_ESC_CODES;
+        }
 
         let mods = input::Mods::from(modifiers);
 
-        // Resolve to PTY bytes from `modified_key` (case-correct for
-        // Shift+letter) with the platform `text` field as last resort.
-        // See `input::resolve_bytes` for the priority chain.
-        let bytes = input::resolve_bytes(&modified_key, mods, mode, text.as_deref());
+        // Resolve to PTY bytes. Sourced from `modified_key` (case-correct for
+        // Shift+letter) with the platform `text` field as last resort; honours
+        // the kitty keyboard protocol when the app has negotiated it (so
+        // Shift+Enter is distinct from Enter). See `input::resolve_bytes`.
+        let bytes = input::resolve_bytes(&input::KeyInput {
+            key: &key,
+            modified_key: &modified_key,
+            mods,
+            mode,
+            location,
+            text: text.as_deref(),
+            repeat,
+        });
 
         if let Some(bytes) = bytes {
             // Detect Enter (carriage return) to schedule a cwd refresh.

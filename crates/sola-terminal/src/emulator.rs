@@ -371,7 +371,15 @@ impl Emulator {
             cols: cols as usize,
             rows: rows as usize,
         };
-        let term = Term::new(Config::default(), &dims, listener);
+        // Enable the kitty keyboard protocol so apps can negotiate it
+        // (CSI > flags u). The engine then tracks the kitty TermMode bits and
+        // replies to the report query (CSI ? u) via the `pty_write` channel;
+        // `input::resolve_bytes` honours those bits to disambiguate keys such
+        // as Shift+Enter (CSI 13;2u) from plain Enter (CR). Without this flag
+        // the engine ignores the negotiation entirely.
+        let mut config = Config::default();
+        config.kitty_keyboard = true;
+        let term = Term::new(config, &dims, listener);
         Self {
             term: Arc::new(FairMutex::new(term)),
             parser: Processor::new(),
