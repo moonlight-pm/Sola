@@ -18,7 +18,7 @@ use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::{LineHeight, Shaping};
 use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, mouse};
 
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::sync::FairMutex;
@@ -125,6 +125,27 @@ pub fn cell_side(x: f32, col: usize, metrics: CellMetrics) -> Side {
     }
 }
 
+/// Lines of scrollback travel per wheel notch (matches alacritty's default).
+const WHEEL_LINES_PER_NOTCH: f32 = 3.0;
+
+/// Convert an iced wheel delta into a signed scrollback line count, where a
+/// POSITIVE result scrolls UP into history (matching [`Scroll::Delta`]).
+///
+/// iced forwards the platform's raw wheel sign: a positive `y` means the wheel
+/// was pushed up (toward older content). Line deltas (mice) are scaled by
+/// [`WHEEL_LINES_PER_NOTCH`]; pixel deltas (touchpads) are divided by the cell
+/// height so one cell of travel scrolls one row. Sub-row pixel deltas round to
+/// zero and are ignored by the caller.
+fn wheel_lines(delta: mouse::ScrollDelta, cell_h: f32) -> i32 {
+    let raw = match delta {
+        mouse::ScrollDelta::Lines { y, .. } => y * WHEEL_LINES_PER_NOTCH,
+        mouse::ScrollDelta::Pixels { y, .. } => {
+            if cell_h > 0.0 { y / cell_h } else { 0.0 }
+        }
+    };
+    raw.round() as i32
+}
+
 /// Map a visible-grid cell `(col, row)` to a buffer [`GridPoint`].
 ///
 /// The visible grid is the window into the scrollback at the current
@@ -135,6 +156,18 @@ pub fn cell_side(x: f32, col: usize, metrics: CellMetrics) -> Side {
 /// `display_offset` rows whenever the grid is scrolled.
 pub fn viewport_cell_to_point(col: usize, row: usize, display_offset: usize) -> GridPoint {
     GridPoint::new(Line(row as i32 - display_offset as i32), Column(col))
+}
+
+/// Map an absolute buffer line (as yielded by `display_iter`, negative for
+/// lines scrolled up into history) to its 0-based VISIBLE row, given the
+/// current `display_offset`. This is the line term's inverse of
+/// [`viewport_cell_to_point`]: the renderer positions every cell and the cursor
+/// at `buffer_line + display_offset`, so a scrolled-up viewport shifts history
+/// down into view and pushes the live bottom rows off-screen. Without this the
+/// engine's `display_iter` (which already yields the scrolled window) draws at
+/// negative y and the bottom rows blank out.
+fn visible_row(buffer_line: i32, display_offset: usize) -> i32 {
+    buffer_line + display_offset as i32
 }
 
 /// The 16/256-colour table + the named defaults the embedder supplies.
@@ -413,6 +446,10 @@ pub struct TermView<'a, Message> {
     /// (start / extend / clear). `App` handles it by clearing the geometry
     /// cache so the highlight re-renders. Cloned, so cheap variants only.
     pub on_select: Message,
+    /// Message emitted whenever the mouse wheel changes the grid's display
+    /// offset (scrollback). `App` handles it the same way as `on_select` —
+    /// clearing the geometry cache so the new viewport repaints.
+    pub on_scroll: Message,
 }
 
 impl<'a, Message> TermView<'a, Message> {
@@ -521,7 +558,42 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                     Some(canvas::Action::publish(self.on_select.clone()).and_capture())
                 }
             }
+            mouse::Event::WheelScrolled { delta } => {
+                // Scroll the engine's own scrollback (display offset). Require
+                // the pointer to be over the grid so the event still falls
+                // through to other widgets (e.g. the sidebar) when it isn't.
+                if cursor.position_in(bounds).is_none() {
+                    return None;
+                }
+                let lines = wheel_lines(*delta, self.metrics.cell_h);
+                if lines == 0 {
+                    return None;
+                }
+                // Positive `lines` scrolls up into history. `scroll_display`
+                // clamps to [0, history_size], so over-scrolling either end is
+                // a harmless no-op.
+                let mut term = self.term.lock();
+                term.scroll_display(Scroll::Delta(lines));
+                drop(term);
+                Some(canvas::Action::publish(self.on_scroll.clone()).and_capture())
+            }
             _ => None,
+        }
+    }
+
+    /// Show the text I-beam whenever the pointer is over the grid, matching a
+    /// conventional terminal. The selection drag uses the same cursor, so this
+    /// holds across hover and drag alike.
+    fn mouse_interaction(
+        &self,
+        _state: &SelState,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        if cursor.is_over(bounds) {
+            mouse::Interaction::Text
+        } else {
+            mouse::Interaction::None
         }
     }
 
@@ -591,7 +663,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 if cell.flags.contains(Flags::INVERSE) {
                     std::mem::swap(&mut fg, &mut bg);
                 }
-                let line = point.line.0;
+                let line = visible_row(point.line.0, display_offset);
                 let col = point.column.0;
 
                 match run.as_mut() {
@@ -652,7 +724,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 // cell box to match.
                 let font = glyph_font(flags);
 
-                let (x, y) = self.cell_xy(point.line.0, point.column.0);
+                let (x, y) = self.cell_xy(visible_row(point.line.0, display_offset), point.column.0);
                 frame.fill_text(Text {
                     content: cell.c.to_string(),
                     // Snap to integer pixels: fractional glyph origins make the
@@ -691,7 +763,10 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             // blink phase so the cursor blinks (App toggles `cursor_on`).
             // NOTE: cursor.shape (Beam/Underline/HollowBlock) not yet honoured.
             if self.cursor_on {
-                let (cx, cy) = self.cell_xy(cursor.point.line.0, cursor.point.column.0);
+                let (cx, cy) = self.cell_xy(
+                    visible_row(cursor.point.line.0, display_offset),
+                    cursor.point.column.0,
+                );
                 let block = Path::rectangle(
                     Point::new(cx, cy),
                     Size::new(metrics.cell_w, metrics.cell_h),
@@ -884,6 +959,41 @@ mod tests {
     }
 
     #[test]
+    fn wheel_up_scrolls_into_history() {
+        // Positive iced y (wheel up) → positive delta (up into scrollback),
+        // scaled by 3 lines per notch.
+        assert_eq!(
+            wheel_lines(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }, 20.0),
+            3
+        );
+    }
+
+    #[test]
+    fn wheel_down_scrolls_toward_bottom() {
+        assert_eq!(
+            wheel_lines(mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 }, 20.0),
+            -3
+        );
+    }
+
+    #[test]
+    fn wheel_pixels_convert_by_cell_height() {
+        // 40px up with 20px cells → 2 rows up.
+        assert_eq!(
+            wheel_lines(mouse::ScrollDelta::Pixels { x: 0.0, y: 40.0 }, 20.0),
+            2
+        );
+    }
+
+    #[test]
+    fn wheel_sub_row_pixels_round_to_zero() {
+        assert_eq!(
+            wheel_lines(mouse::ScrollDelta::Pixels { x: 0.0, y: 5.0 }, 20.0),
+            0
+        );
+    }
+
+    #[test]
     fn viewport_cell_to_point_no_scroll_is_identity_in_line() {
         // With display_offset 0, visible row N == buffer line N.
         let p = viewport_cell_to_point(5, 2, 0);
@@ -899,6 +1009,27 @@ mod tests {
         assert_eq!(viewport_cell_to_point(0, 0, 10).line, Line(-10));
         assert_eq!(viewport_cell_to_point(4, 3, 10).line, Line(-7));
         assert_eq!(viewport_cell_to_point(4, 3, 10).column, Column(4));
+    }
+
+    #[test]
+    fn visible_row_is_inverse_of_viewport_cell_to_point() {
+        // The renderer's line mapping must invert the selection mapping, or a
+        // scrolled viewport draws cells at the wrong rows.
+        let offset = 7;
+        for row in 0..24usize {
+            let p = viewport_cell_to_point(0, row, offset);
+            assert_eq!(visible_row(p.line.0, offset), row as i32);
+        }
+    }
+
+    #[test]
+    fn visible_row_shifts_history_down_by_offset() {
+        // Scrolled up 5: buffer line -5 (5 into history) is the top row...
+        assert_eq!(visible_row(-5, 5), 0);
+        // ...and the live top line 0 is pushed down to row 5.
+        assert_eq!(visible_row(0, 5), 5);
+        // At rest (offset 0), buffer line == visible row.
+        assert_eq!(visible_row(3, 0), 3);
     }
 
     // Task 4.4 — the kit-theme mapping. Build the palette from a hand-built
@@ -917,6 +1048,7 @@ mod tests {
             success: parse("#3fb950"),
             warning: parse("#d29922"),
             danger: parse("#f85149"),
+            selection: parse("#1f6feb"),
         }
     }
 

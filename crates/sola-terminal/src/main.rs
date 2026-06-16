@@ -252,6 +252,9 @@ enum Msg {
     /// The canvas mutated `term.selection` (drag start/extend/clear). The
     /// handler just clears the geometry cache so the highlight re-renders.
     SelectionChanged,
+    /// The canvas scrolled the grid's display offset (mouse wheel). The handler
+    /// clears the geometry cache so the new viewport repaints.
+    Scrolled,
     /// Clipboard read completed (Ctrl+Shift+V or menu "paste"). `Some` carries
     /// the text to paste into the active PTY; `None` is an empty clipboard.
     Pasted(Option<String>),
@@ -417,6 +420,12 @@ impl App {
             // The canvas just changed `term.selection`; drop the cached
             // geometry so the next `view` repaints the highlight.
             Msg::SelectionChanged => {
+                self.term_cache.clear();
+                Task::none()
+            }
+            // The canvas just changed the display offset (wheel scroll); drop
+            // the cached geometry so the next `view` repaints the new viewport.
+            Msg::Scrolled => {
                 self.term_cache.clear();
                 Task::none()
             }
@@ -636,6 +645,7 @@ impl App {
                     metrics: self.metrics,
                     cursor_on: self.cursor_on,
                     on_select: Msg::SelectionChanged,
+                    on_scroll: Msg::Scrolled,
                 };
                 canvas(view)
                     .width(Length::Fill)
@@ -760,7 +770,10 @@ impl App {
         // inner app; when active, encode modified keys as CSI-u so Shift+Enter
         // (CSI 13;2u) is distinct from Enter. We fold it into the kitty
         // disambiguate path the encoder already implements. See `crate::extkeys`.
-        if extkeys::level(&active) >= 1 {
+        // Synthetic: flag it so the encoder keeps unmodified Escape/numpad
+        // legacy (a real kitty app gets full disambiguation; tmux does not).
+        let modify_other_keys = extkeys::level(&active) >= 1;
+        if modify_other_keys {
             mode |= alacritty_terminal::term::TermMode::DISAMBIGUATE_ESC_CODES;
         }
 
@@ -778,9 +791,20 @@ impl App {
             location,
             text: text.as_deref(),
             repeat,
+            modify_other_keys,
         });
 
         if let Some(bytes) = bytes {
+            // The user is typing: snap the viewport back to the live bottom
+            // (iTerm-style) so input and its echo are visible even if they had
+            // scrolled up into the scrollback. The ensuing PTY echo repaints.
+            {
+                let term = rt.emulator.term();
+                let mut guard = term.lock();
+                if guard.grid().display_offset() != 0 {
+                    guard.scroll_display(alacritty_terminal::grid::Scroll::Bottom);
+                }
+            }
             // Detect Enter (carriage return) to schedule a cwd refresh.
             // The shell may `cd` on this keypress; we query tmux ~150ms later
             // so the shell has time to execute the command before we read cwd.

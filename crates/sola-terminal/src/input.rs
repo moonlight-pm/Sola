@@ -306,6 +306,12 @@ pub struct KeyInput<'a> {
     pub location: keyboard::Location,
     pub text: Option<&'a str>,
     pub repeat: bool,
+    /// True when the `DISAMBIGUATE_ESC_CODES` bit was SYNTHESISED from tmux's
+    /// modifyOtherKeys (see [`crate::extkeys`]) rather than negotiated by a real
+    /// kitty-aware app. Under modifyOtherKeys, unmodified Escape / numpad keys
+    /// must stay legacy (bare `ESC`, plain digits) — encoding them as CSI-u
+    /// leaks a stray `27u` to the app. Modified keys are encoded either way.
+    pub modify_other_keys: bool,
 }
 
 /// Resolve a key press to the PTY byte sequence.
@@ -433,9 +439,6 @@ fn named_to_text(named: &Named) -> Option<&'static str> {
     }
 }
 
-/// Decide whether a key should be encoded as a kitty/disambiguated escape
-/// sequence rather than its legacy bytes. Port of alacritty's
-/// `should_build_sequence`. Assumes [`kitty_active`] already returned true.
 fn should_build_sequence(input: &KeyInput) -> bool {
     let mode = input.mode;
     if mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC) {
@@ -450,9 +453,18 @@ fn should_build_sequence(input: &KeyInput) -> bool {
         keyboard::Key::Named(Named::Tab | Named::Enter | Named::Backspace)
     );
 
-    let disambiguate = mode.contains(TermMode::DISAMBIGUATE_ESC_CODES)
+    // Unmodified Escape and numpad keys are disambiguated only under a REAL
+    // kitty negotiation. tmux's modifyOtherKeys synthesises the disambiguate
+    // bit but expects unmodified Escape to remain a bare `ESC` (and plain
+    // numpad keys to remain their legacy bytes); encoding those as CSI-u is
+    // what leaked a stray `27u` to the app. Modified keys are unaffected and
+    // still encode as CSI-u under both protocols (so Shift+Enter etc. work).
+    let unmodified_disambiguate = !input.modify_other_keys
         && (matches!(key, keyboard::Key::Named(Named::Escape))
-            || input.location == keyboard::Location::Numpad
+            || input.location == keyboard::Location::Numpad);
+
+    let disambiguate = mode.contains(TermMode::DISAMBIGUATE_ESC_CODES)
+        && (unmodified_disambiguate
             || (any_mods && (!shift_only(mods) || is_tab_enter_bs)));
 
     if disambiguate {
@@ -812,6 +824,7 @@ mod tests {
             location: keyboard::Location::Standard,
             text,
             repeat: false,
+            modify_other_keys: false,
         }
     }
 
@@ -883,6 +896,7 @@ mod tests {
             location: keyboard::Location::Standard,
             text: None,
             repeat: false,
+            modify_other_keys: false,
         }
     }
 
@@ -989,6 +1003,7 @@ mod tests {
             location: keyboard::Location::Standard,
             text: Some("!"),
             repeat: false,
+            modify_other_keys: false,
         };
         assert_eq!(resolve_bytes(&k), Some(b"\x1b[49;2u".to_vec()));
     }
@@ -1023,6 +1038,48 @@ mod tests {
         let mut k = kk(&key, Mods::NONE, kitty());
         k.location = keyboard::Location::Numpad;
         assert_eq!(resolve_bytes(&k), Some(b"\x1b[57414u".to_vec()));
+    }
+
+    // Under tmux modifyOtherKeys (synthetic disambiguate), an UNMODIFIED Escape
+    // must be a bare ESC — not `CSI 27 u`. Encoding it as CSI-u leaked a literal
+    // `27u` into the app. Regression for the modifyOtherKeys/CSI-u work.
+    #[test]
+    fn escape_unmodified_under_modify_other_keys_is_bare_esc() {
+        let key = Key::Named(Named::Escape);
+        let mut k = kk(&key, Mods::NONE, kitty());
+        k.modify_other_keys = true;
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b".to_vec()));
+    }
+
+    // A REAL kitty app that negotiated disambiguate DOES want Escape as CSI-u,
+    // so that path is preserved (modify_other_keys defaults false in `kk`).
+    #[test]
+    fn escape_unmodified_under_real_kitty_is_csi_u() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::Escape), Mods::NONE, kitty())),
+            Some(b"\x1b[27u".to_vec())
+        );
+    }
+
+    // Modified keys still encode as CSI-u under modifyOtherKeys — the whole
+    // point of the tmux path. Shift+Enter stays CSI 13;2u.
+    #[test]
+    fn shift_enter_under_modify_other_keys_is_csi_u() {
+        let key = Key::Named(Named::Enter);
+        let mut k = kk(&key, Mods::SHIFT, kitty());
+        k.modify_other_keys = true;
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b[13;2u".to_vec()));
+    }
+
+    // Unmodified numpad under modifyOtherKeys stays legacy (numpad Enter → CR),
+    // not the kitty numpad CSI-u code.
+    #[test]
+    fn numpad_unmodified_under_modify_other_keys_is_legacy() {
+        let key = Key::Named(Named::Enter);
+        let mut k = kk(&key, Mods::NONE, kitty());
+        k.location = keyboard::Location::Numpad;
+        k.modify_other_keys = true;
+        assert_eq!(resolve_bytes(&k), Some(b"\r".to_vec()));
     }
 
     // ── encode_key: basic named keys ──────────────────────────────────
