@@ -55,6 +55,21 @@ pub fn view<'a>(
         color_row = color_row.push(swatch_tile(shell, name, *field, token, editable, editing, picker));
     }
 
+    // Switcher icon colors live under the Switcher group (they're chrome for
+    // the switcher tiles, not the global palette). Separate row keeps the
+    // top color row at four swatches so it doesn't overflow narrow windows.
+    let icon_colors: &[(&str, ShellColorField, &str)] = &[
+        ("ICON_BG", ShellColorField::SwitcherIconBg, "shell-switcher-icon-bg"),
+        ("ICON_FG", ShellColorField::SwitcherIconFg, "shell-switcher-icon-fg"),
+        ("ICON_FG_SEL", ShellColorField::SwitcherIconFgSel, "shell-switcher-icon-fg-sel"),
+    ];
+    let mut icon_color_row = row![].spacing(GRID_GAP);
+    for (name, field, token) in icon_colors {
+        let picker = if editing == Some(*field) { picker_view.take() } else { None };
+        icon_color_row =
+            icon_color_row.push(swatch_tile(shell, name, *field, token, editable, editing, picker));
+    }
+
     column![
         heading("Shell"),
         intro,
@@ -69,6 +84,13 @@ pub fn view<'a>(
         color_row,
 
         subheading("Switcher"),
+        body(
+            "Icon tile colors — ICON_BG fills the selected tile. ICON_FG tints \
+             the glyph + label on unselected tiles; ICON_FG_SEL tints them on \
+             the selected (highlighted) tile.",
+        )
+        .style(muted),
+        icon_color_row,
         space_row("Backplate padding", ShellSpaceField::SwitcherPad, shell.switcher_pad, 0.0..=64.0, 2.0, editable),
         space_row("Tile padding", ShellSpaceField::SwitcherTilePad, shell.switcher_tile_pad, 0.0..=48.0, 2.0, editable),
 
@@ -97,15 +119,19 @@ fn swatch_tile<'a>(
     let tile = swatch_sized::<Msg>(color, SWATCH_SIZE);
     let tile: Element<'a, Msg> = if editable {
         let selected = editing == Some(field);
-        let ring = if selected { 2.0 } else { 0.0 };
+        // Always reserve the ring's footprint (constant padding + border
+        // width); selecting toggles only the ring COLOR, never the tile's
+        // layout size — otherwise the selected swatch grows and shoves the
+        // grid below it down.
+        const RING: f32 = 2.0;
         let framed = container(tile)
-            .padding(Padding::from(ring))
+            .padding(Padding::from(RING))
             .style(move |theme: &iced::Theme| {
                 let p = theme.extended_palette();
                 iced::widget::container::Style {
                     border: iced::Border {
                         color: if selected { p.primary.base.color } else { Color::TRANSPARENT },
-                        width: ring,
+                        width: RING,
                         radius: 8.0.into(),
                     },
                     ..iced::widget::container::Style::default()

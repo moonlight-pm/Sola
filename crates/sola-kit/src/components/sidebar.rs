@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use iced::widget::{
     Container, Space, button, column, container, mouse_area, row, stack, text,
 };
-use iced::{Background, Border, Color, Element, Length, Padding, Theme};
+use iced::{Background, Border, Color, Element, Length, Padding, Theme, mouse};
 
 use crate::components::style::{RADIUS_SM, SPACE_XS};
 use crate::fonts;
@@ -212,6 +212,30 @@ pub fn panel_drop_index(cursor_y: f32, list_top: f32, row_h: f32, n: usize) -> u
     slot.min(n - 1)
 }
 
+/// Anchor-relative drop slot: the row that was grabbed (`from`) shifted by
+/// the number of whole row-heights the cursor has travelled since the
+/// press (`cursor_y - start_y`), clamped to `0..=n-1` (returns 0 for
+/// `n == 0`).
+///
+/// Unlike [`panel_drop_index`], this needs no knowledge of the list's
+/// absolute top-y, so it stays correct when the panel is nested far down
+/// the window (e.g. the storybook demo sitting inside a card). Pure, so it
+/// is unit-tested without an iced runtime.
+pub fn panel_drop_index_relative(
+    from: usize,
+    start_y: f32,
+    cursor_y: f32,
+    row_h: f32,
+    n: usize,
+) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    let delta = ((cursor_y - start_y) / row_h).round() as i64;
+    let to = from as i64 + delta;
+    to.clamp(0, n as i64 - 1) as usize
+}
+
 /// Move the item at `from` to `to` in `order`, returning the new order.
 /// Both indices are clamped into range; `from == to` returns the order
 /// unchanged. Pure "remove then insert", consistent with
@@ -261,8 +285,10 @@ pub struct ReorderCfg<'a, Message> {
     /// Maps a pressed row's index → the message that begins the gesture
     /// (the consumer's `ReorderStart(usize)`).
     pub on_press: Box<dyn Fn(usize) -> Message + 'a>,
-    /// `Some((from_index, start_y))` while a drag is active; drives the
-    /// drop-target highlight. `None` when idle.
+    /// `Some((from_index, start_y))` once the gesture passes the movement
+    /// threshold (a real drag); `None` during a not-yet-moved press or when
+    /// idle. Drives the drop-slot highlight and the dragged-row "lifted"
+    /// look, so a plain click never flashes drag chrome.
     pub active: Option<(usize, f32)>,
     /// Current cursor-y during the gesture (used with [`panel_drop_index`]
     /// to compute the highlighted drop slot).
@@ -313,15 +339,24 @@ where
     };
 
     // ── Reorder-enabled path. ──
-    // Highlight this row when it is the live drop target (the slot the
-    // cursor currently hovers over) and not the row being dragged from.
-    let is_drop_target = match reorder.active {
-        Some((from, _)) => {
-            let slot =
-                panel_drop_index(reorder.cursor_y, PANEL_HEADER_H, PANEL_ROW_H, n);
-            slot == index && from != index
+    // Drag chrome shows only while `reorder.active` is `Some` — the consumer
+    // populates that only after the gesture passes the movement threshold,
+    // so a plain press (no movement) leaves the row looking normal. The drop
+    // slot is anchor-relative (the grabbed row shifted by how many
+    // row-heights the cursor has travelled), so it's correct regardless of
+    // where the panel sits in the window.
+    let (is_dragged, is_drop_target) = match reorder.active {
+        Some((from, start_y)) => {
+            let to = panel_drop_index_relative(
+                from,
+                start_y,
+                reorder.cursor_y,
+                PANEL_ROW_H,
+                n,
+            );
+            (from == index, to == index && from != index)
         }
-        None => false,
+        None => (false, false),
     };
 
     let content = item_content(&label, secondary.as_deref(), shortcut);
@@ -330,9 +365,13 @@ where
             .width(Length::Fill)
             .padding(Padding::from([6, 10]))
             .style(move |theme: &Theme| {
-                row_container_style(theme, active, is_drop_target)
+                row_container_style(theme, active, is_drop_target, is_dragged)
             }),
     )
+    // Match the plain-path `button`, which sets a pointer cursor on hover.
+    // A bare `mouse_area` leaves the cursor unchanged, so reorderable rows
+    // (the terminal's tabs) otherwise wouldn't show the pointer.
+    .interaction(mouse::Interaction::Pointer)
     .on_press((reorder.on_press)(index));
 
     if let Some(close_msg) = on_close {
@@ -577,7 +616,7 @@ where
             container(collapsed_content::<Message>(number))
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
-                .style(move |theme: &Theme| row_container_style(theme, active, false)),
+                .style(move |theme: &Theme| row_container_style(theme, active, false, false)),
         )
         .on_press((cfg.on_press)(index))
         .into(),
@@ -613,26 +652,55 @@ fn divider_style(theme: &Theme) -> container::Style {
 }
 
 /// Background style for a row rendered as a non-pressable `container`
-/// (the reorder path). Drop-target highlight wins over active; otherwise
-/// hover-less transparent (the `mouse_area` doesn't expose a hover
-/// status, so resting rows stay flat).
-fn row_container_style(theme: &Theme, active: bool, drop_target: bool) -> container::Style {
+/// (the reorder path). Priority: the row being dragged reads as "lifted"
+/// (faint, dimmed), then the live drop slot (accent fill + ring), then a
+/// resting selected row (the dedicated [`crate::theme::selection`]
+/// highlight, matching [`item_style`]); everything else is flat (the
+/// `mouse_area` exposes no hover status, so resting rows don't lift).
+fn row_container_style(
+    theme: &Theme,
+    active: bool,
+    drop_target: bool,
+    dragged: bool,
+) -> container::Style {
     let p = theme.extended_palette();
-    let bg = if drop_target {
-        Some(Background::Color(p.primary.weak.color))
-    } else if active {
-        Some(Background::Color(p.background.strong.color))
-    } else {
-        None
+    let flat_border = Border {
+        color: Color::TRANSPARENT,
+        width: 0.0,
+        radius: RADIUS_SM.into(),
     };
+    // The row in flight: faint fill + dimmed label so it clearly reads as
+    // the item being moved.
+    if dragged {
+        return container::Style {
+            background: Some(Background::Color(Color {
+                a: 0.35,
+                ..p.background.weak.color
+            })),
+            text_color: Some(Color { a: 0.5, ..p.background.base.text }),
+            border: flat_border,
+            ..container::Style::default()
+        };
+    }
+    // The live destination slot: accent fill + accent ring = "lands here".
+    if drop_target {
+        return container::Style {
+            background: Some(Background::Color(p.primary.weak.color)),
+            text_color: Some(p.background.base.text),
+            border: Border {
+                color: p.primary.base.color,
+                width: 2.0,
+                radius: RADIUS_SM.into(),
+            },
+            ..container::Style::default()
+        };
+    }
+    // Resting: dedicated selection highlight when active, else flat.
+    let bg = active.then(|| Background::Color(crate::theme::selection()));
     container::Style {
         background: bg,
         text_color: Some(p.background.base.text),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: RADIUS_SM.into(),
-        },
+        border: flat_border,
         ..container::Style::default()
     }
 }
@@ -643,18 +711,20 @@ fn row_container_style(theme: &Theme, active: bool, drop_target: bool) -> contai
 pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     let p = theme.extended_palette();
     let bg = if active {
-        p.background.strong.color
+        // Dedicated, independently-tunable selection highlight. It has no
+        // iced palette slot, so it's delivered process-wide — see
+        // `sola_kit::theme::selection`. Distinct from (and stronger than)
+        // the hover fill so a selection reads louder than a hover.
+        crate::theme::selection()
     } else {
         match status {
             button::Status::Hovered => p.background.strong.color,
             _ => Color::TRANSPARENT,
         }
     };
-    let text_color = if active {
-        p.primary.base.color
-    } else {
-        p.background.base.text
-    };
+    // White-ish foreground reads cleaner on the saturated selection fill
+    // than the accent text the active row used before.
+    let text_color = p.background.base.text;
     button::Style {
         background: Some(Background::Color(bg)),
         text_color,
@@ -772,6 +842,54 @@ mod tests {
     fn drop_index_above_list_clamps_to_zero() {
         let idx = panel_drop_index(0.0, PANEL_HEADER_H, PANEL_ROW_H, 3);
         assert_eq!(idx, 0);
+    }
+
+    // --- panel_drop_index_relative ---
+
+    #[test]
+    fn drop_index_relative_no_movement_stays_put() {
+        let to = panel_drop_index_relative(2, 100.0, 100.0, PANEL_ROW_H, 5);
+        assert_eq!(to, 2);
+    }
+
+    #[test]
+    fn drop_index_relative_down_one_row() {
+        let to = panel_drop_index_relative(1, 100.0, 100.0 + PANEL_ROW_H, PANEL_ROW_H, 5);
+        assert_eq!(to, 2);
+    }
+
+    #[test]
+    fn drop_index_relative_up_two_rows() {
+        let to = panel_drop_index_relative(3, 100.0, 100.0 - 2.0 * PANEL_ROW_H, PANEL_ROW_H, 5);
+        assert_eq!(to, 1);
+    }
+
+    #[test]
+    fn drop_index_relative_rounds_to_nearest_row() {
+        // 0.6 of a row down rounds to a full row…
+        let to = panel_drop_index_relative(0, 0.0, PANEL_ROW_H * 0.6, PANEL_ROW_H, 5);
+        assert_eq!(to, 1);
+        // …0.4 of a row down rounds back to the same row.
+        let to = panel_drop_index_relative(0, 0.0, PANEL_ROW_H * 0.4, PANEL_ROW_H, 5);
+        assert_eq!(to, 0);
+    }
+
+    #[test]
+    fn drop_index_relative_clamps_below_zero() {
+        let to = panel_drop_index_relative(0, 100.0, -500.0, PANEL_ROW_H, 5);
+        assert_eq!(to, 0);
+    }
+
+    #[test]
+    fn drop_index_relative_clamps_past_end() {
+        let to = panel_drop_index_relative(4, 0.0, 10_000.0, PANEL_ROW_H, 5);
+        assert_eq!(to, 4);
+    }
+
+    #[test]
+    fn drop_index_relative_empty_is_zero() {
+        let to = panel_drop_index_relative(0, 0.0, 100.0, PANEL_ROW_H, 0);
+        assert_eq!(to, 0);
     }
 
     // --- panel_renumber_changed ---

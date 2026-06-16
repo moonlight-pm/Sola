@@ -49,10 +49,6 @@ use sola_core::theme::Theme as BusTheme;
 /// theme switchers and in the iced debug overlay.
 pub const THEME_NAME: &str = "sola";
 
-/// Canonical sola palette. Component style fns reach these through
-/// `theme.extended_palette()`; direct `hex::*` references inside
-/// component code are an escape hatch reserved for atoms iced's
-/// vocabulary genuinely can't carry.
 pub mod hex {
     pub const BG: &str = "#0d1117";
     pub const FG: &str = "#e6edf3";
@@ -69,6 +65,13 @@ pub mod hex {
     pub const BG_HOVER: &str = "#1a2030";
     /// 1px hairline color.
     pub const BORDER: &str = "#2d333b";
+    /// Selected-row highlight — a saturated, accent-tinted fill drawn
+    /// behind the active item in lists/sidebars. Deliberately distinct
+    /// from (and stronger than) `BG_HOVER` so a selection reads louder
+    /// than a hover. iced's `Extended` palette has no selection slot, so
+    /// this rides a process-wide cell (see [`super::install_selection`] /
+    /// [`super::selection`]) rather than `extended_from_atoms`.
+    pub const SELECTION: &str = "#1f6feb";
 }
 
 /// Build the kit's iced theme from its compile-time default atoms.
@@ -121,8 +124,11 @@ pub fn menubar(base: &Theme, bg: Color) -> Theme {
 /// via `theme.extended_palette()`; no component references `hex::*`
 /// directly unless escape-hatching.
 fn extended_from_atoms(a: &Atoms) -> Extended {
+    // `selection` is intentionally not bound — it has no iced palette
+    // slot and is delivered via the process-wide cell, not this binding.
     let Atoms {
         bg, bg_raised, bg_hover, border, fg, fg_muted, accent, success, warning, danger,
+        selection: _,
     } = *a;
     Extended {
         background: Background {
@@ -172,6 +178,34 @@ pub fn build_theme(atoms: &Atoms) -> Theme {
         },
         move |_| extended_from_atoms(&a),
     )
+}
+
+/// Process-wide selected-row highlight colour. iced's `Extended`
+/// palette has no selection slot, so — exactly like the font role table
+/// (`crate::fonts`) — this rides a process-wide cell reinstalled on
+/// every live theme build and every bus `Topic::Theme` delivery.
+/// Component style fns read it via [`selection`]; the storybook and the
+/// bus consumer path both refresh it via [`install_selection`].
+static SELECTION: std::sync::LazyLock<std::sync::RwLock<Color>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(parse(hex::SELECTION)));
+
+/// Swap the process-wide selection colour. Re-callable — the storybook
+/// calls it as the user edits the `selection` atom, and the bus theme
+/// consumer path calls it on every `Topic::Theme` so a selection edit
+/// propagates everywhere on the next render.
+pub fn install_selection(color: Color) {
+    if let Ok(mut guard) = SELECTION.write() {
+        *guard = color;
+    }
+}
+
+/// The current selected-row highlight colour. Falls back to the
+/// compile-time default ([`hex::SELECTION`]) if the lock is poisoned.
+pub fn selection() -> Color {
+    SELECTION
+        .read()
+        .map(|c| *c)
+        .unwrap_or_else(|_| parse(hex::SELECTION))
 }
 
 /// Parse `#rrggbb` / `#rrggbbaa` into an iced `Color`. Panics on
@@ -258,6 +292,12 @@ pub struct Atoms {
     pub success: Color,
     pub warning: Color,
     pub danger: Color,
+    /// Selected-row highlight. Unlike the others this has no iced palette
+    /// slot — it's delivered process-wide via [`install_selection`] and
+    /// read by component style fns through [`selection`]. Still part of
+    /// `Atoms` so it edits, defaults, and round-trips on the bus like any
+    /// other atom.
+    pub selection: Color,
 }
 
 impl Default for Atoms {
@@ -273,6 +313,7 @@ impl Default for Atoms {
             success: parse(hex::SUCCESS),
             warning: parse(hex::WARNING),
             danger: parse(hex::DANGER),
+            selection: parse(hex::SELECTION),
         }
     }
 }
@@ -309,6 +350,8 @@ const ATOM_BINDINGS: &[AtomBinding] = &[
     AtomBinding { token: "success",       fallback: hex::SUCCESS,   get: |a| a.success,   set: |a, c| a.success = c },
     AtomBinding { token: "warning",       fallback: hex::WARNING,   get: |a| a.warning,   set: |a, c| a.warning = c },
     AtomBinding { token: "danger",        fallback: hex::DANGER,    get: |a| a.danger,    set: |a, c| a.danger = c },
+    // No iced palette slot; round-trips on the bus, delivered process-wide.
+    AtomBinding { token: "selection",     fallback: hex::SELECTION, get: |a| a.selection, set: |a, c| a.selection = c },
 ];
 
 /// Build a `BusTheme` from an editable atom set, writing every token in
@@ -475,6 +518,9 @@ const SHELL_MENUBAR_BG: &str = "#000000";
 const SHELL_BACKDROP_DIM: &str = "#00000066";
 const SHELL_SWITCHER_BG: &str = "#00d4ff2e";
 const SHELL_SWITCHER_BORDER: &str = "#00d4ff59";
+const SHELL_SWITCHER_ICON_BG: &str = "#00d4ff"; // selected tile fill (accent by default)
+const SHELL_SWITCHER_ICON_FG: &str = "#e6edf3"; // glyph + label on an unselected tile
+const SHELL_SWITCHER_ICON_FG_SEL: &str = "#e6edf3"; // glyph + label on the selected (highlighted) tile
 const SHELL_SWITCHER_PAD: f32 = 36.0;
 const SHELL_SWITCHER_TILE_PAD: f32 = 16.0;
 const SHELL_LAUNCHER_WIDTH: f32 = 640.0;
@@ -494,6 +540,9 @@ pub struct ShellStyle {
     pub backdrop_dim: Color,
     pub switcher_bg: Color,
     pub switcher_border: Color,
+    pub switcher_icon_bg: Color,
+    pub switcher_icon_fg: Color,
+    pub switcher_icon_fg_sel: Color,
     pub switcher_pad: f32,
     pub switcher_tile_pad: f32,
     pub launcher_width: f32,
@@ -507,6 +556,9 @@ impl Default for ShellStyle {
             backdrop_dim: parse(SHELL_BACKDROP_DIM),
             switcher_bg: parse(SHELL_SWITCHER_BG),
             switcher_border: parse(SHELL_SWITCHER_BORDER),
+            switcher_icon_bg: parse(SHELL_SWITCHER_ICON_BG),
+            switcher_icon_fg: parse(SHELL_SWITCHER_ICON_FG),
+            switcher_icon_fg_sel: parse(SHELL_SWITCHER_ICON_FG_SEL),
             switcher_pad: SHELL_SWITCHER_PAD,
             switcher_tile_pad: SHELL_SWITCHER_TILE_PAD,
             launcher_width: SHELL_LAUNCHER_WIDTH,
@@ -544,6 +596,9 @@ pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
         backdrop_dim: shell_color(bus, "shell-backdrop-dim", d.backdrop_dim),
         switcher_bg: shell_color(bus, "shell-switcher-bg", d.switcher_bg),
         switcher_border: shell_color(bus, "shell-switcher-border", d.switcher_border),
+        switcher_icon_bg: shell_color(bus, "shell-switcher-icon-bg", d.switcher_icon_bg),
+        switcher_icon_fg: shell_color(bus, "shell-switcher-icon-fg", d.switcher_icon_fg),
+        switcher_icon_fg_sel: shell_color(bus, "shell-switcher-icon-fg-sel", d.switcher_icon_fg_sel),
         switcher_pad: shell_space(bus, "shell-switcher-pad", d.switcher_pad),
         switcher_tile_pad: shell_space(bus, "shell-switcher-tile-pad", d.switcher_tile_pad),
         launcher_width: shell_space(bus, "shell-launcher-width", d.launcher_width),
@@ -551,18 +606,21 @@ pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
     }
 }
 
-/// Write `shell`'s eight values into `t`'s palette as `shell-*` tokens
+/// Write `shell`'s values into `t`'s palette as `shell-*` tokens
 /// (the inverse of [`shell_style_from_bus_theme`]). Mirrors
 /// `bus_theme_from_atoms`'s upsert behavior — overwrite when present,
 /// insert when the seed somehow lacks the token — preserving the
 /// write-list ⊇ read-list invariant.
 pub fn bus_theme_with_shell(mut t: BusTheme, shell: &ShellStyle) -> BusTheme {
     use sola_core::theme::{Token, TokenKind};
-    let entries: [(&str, TokenKind, String); 8] = [
+    let entries: [(&str, TokenKind, String); 11] = [
         ("shell-menubar-bg", TokenKind::Color, color_to_hex(shell.menubar_bg)),
         ("shell-backdrop-dim", TokenKind::Color, color_to_hex(shell.backdrop_dim)),
         ("shell-switcher-bg", TokenKind::Color, color_to_hex(shell.switcher_bg)),
         ("shell-switcher-border", TokenKind::Color, color_to_hex(shell.switcher_border)),
+        ("shell-switcher-icon-bg", TokenKind::Color, color_to_hex(shell.switcher_icon_bg)),
+        ("shell-switcher-icon-fg", TokenKind::Color, color_to_hex(shell.switcher_icon_fg)),
+        ("shell-switcher-icon-fg-sel", TokenKind::Color, color_to_hex(shell.switcher_icon_fg_sel)),
         ("shell-switcher-pad", TokenKind::Space, format!("{}px", shell.switcher_pad)),
         ("shell-switcher-tile-pad", TokenKind::Space, format!("{}px", shell.switcher_tile_pad)),
         ("shell-launcher-width", TokenKind::Space, format!("{}px", shell.launcher_width)),
@@ -601,8 +659,37 @@ mod tests {
             success: parse("#161718"),
             warning: parse("#191a1b"),
             danger: parse("#1c1d1e"),
+            selection: parse("#1f2021"),
         };
         assert_eq!(atoms_from_bus_theme(&bus_theme_from_atoms(&atoms)), atoms);
+    }
+
+    #[test]
+    fn default_selection_matches_constant() {
+        assert_eq!(Atoms::default().selection, parse(hex::SELECTION));
+    }
+
+    #[test]
+    fn missing_selection_token_falls_back_to_default() {
+        // A bus theme lacking the `selection` token must still resolve to
+        // the compile-time default, not transparent/black.
+        let mut bus = bus_theme_from_atoms(&Atoms::default());
+        bus.palette.tokens.remove("selection");
+        assert_eq!(
+            atoms_from_bus_theme(&bus).selection,
+            parse(hex::SELECTION),
+            "absent selection token should fall back to hex::SELECTION"
+        );
+    }
+
+    #[test]
+    fn install_selection_updates_accessor() {
+        let c = parse("#abcdef");
+        install_selection(c);
+        assert_eq!(selection(), c);
+        // Restore the default so the process-wide cell doesn't leak into
+        // other tests.
+        install_selection(parse(hex::SELECTION));
     }
 
     // A1: the bus theme the kit broadcasts as its default must read back

@@ -121,38 +121,101 @@ fn font_row<'a>(
     .into()
 }
 
-fn atom_grid<'a>(
+/// Every atom, in the order the Theme page's full grid renders them.
+const ALL_ATOM_FIELDS: &[AtomField] = &[
+    AtomField::Bg,
+    AtomField::BgRaised,
+    AtomField::BgHover,
+    AtomField::Border,
+    AtomField::Fg,
+    AtomField::FgMuted,
+    AtomField::Accent,
+    AtomField::Success,
+    AtomField::Warning,
+    AtomField::Danger,
+    AtomField::Selection,
+];
+
+/// Display metadata for one atom: its `(LABEL, palette-slot)` caption.
+/// `selection` has no iced slot — it's delivered process-wide — so its
+/// "slot" names the thing it actually drives.
+fn atom_meta(field: AtomField) -> (&'static str, &'static str) {
+    match field {
+        AtomField::Bg => ("BG", "background.base / weakest"),
+        AtomField::BgRaised => ("BG_RAISED", "background.weaker / weak"),
+        AtomField::BgHover => ("BG_HOVER", "background.neutral / strong"),
+        AtomField::Border => ("BORDER", "background.stronger / strongest"),
+        AtomField::Fg => ("FG", "palette.text"),
+        AtomField::FgMuted => ("FG_MUTED", "secondary.base.text"),
+        AtomField::Accent => ("ACCENT", "primary.base"),
+        AtomField::Success => ("SUCCESS", "success.base"),
+        AtomField::Warning => ("WARNING", "warning.base"),
+        AtomField::Danger => ("DANGER", "danger.base"),
+        AtomField::Selection => ("SELECTION", "selected-row highlight"),
+    }
+}
+
+/// Lay out the swatches for an arbitrary set of atoms, five per row,
+/// handing the single open picker to whichever tile is being edited.
+/// Shared by the Theme page's full grid and the per-component panels.
+fn swatch_flow<'a>(
     atoms: &'a Atoms,
+    fields: &[AtomField],
     editable: bool,
     editing: Option<AtomField>,
     mut picker_view: Option<Element<'a, Msg>>,
 ) -> Element<'a, Msg> {
-    let rows: &[(&str, AtomField, &str)] = &[
-        ("BG",        AtomField::Bg,       "background.base / weakest"),
-        ("BG_RAISED", AtomField::BgRaised, "background.weaker / weak"),
-        ("BG_HOVER",  AtomField::BgHover,  "background.neutral / strong"),
-        ("BORDER",    AtomField::Border,   "background.stronger / strongest"),
-        ("FG",        AtomField::Fg,       "palette.text"),
-        ("FG_MUTED",  AtomField::FgMuted,  "secondary.base.text"),
-        ("ACCENT",    AtomField::Accent,   "primary.base"),
-        ("SUCCESS",   AtomField::Success,  "success.base"),
-        ("WARNING",   AtomField::Warning,  "warning.base"),
-        ("DANGER",    AtomField::Danger,   "danger.base"),
-    ];
-
-    // The picker for the open atom is anchored to its own swatch via
-    // `popover_anchored`; we hand the single picker element to whichever
-    // tile is being edited and the rest get `None`.
     let mut col = column![].spacing(GRID_GAP);
-    for chunk in rows.chunks(5) {
+    for chunk in fields.chunks(5) {
         let mut r = row![].spacing(GRID_GAP);
-        for (name, field, slot) in chunk {
+        for field in chunk {
+            let (name, slot) = atom_meta(*field);
             let picker = if editing == Some(*field) { picker_view.take() } else { None };
             r = r.push(swatch_tile(atoms, name, *field, slot, editable, editing, picker));
         }
         col = col.push(r);
     }
     col.into()
+}
+
+/// Contextual atom editor for a component page — the swatches for just
+/// the atoms that component uses ([`crate::storybook::Page::atoms`]),
+/// rendered below its demo. Same swatch/picker mechanics as the Theme
+/// page's full grid; the global Save/Revert in the header commit or
+/// discard the shared working set. Renders nothing for an empty set.
+pub fn atom_panel<'a>(
+    atoms: &'a Atoms,
+    fields: &'a [AtomField],
+    editable: bool,
+    editing: Option<AtomField>,
+    picker_view: Option<Element<'a, Msg>>,
+) -> Element<'a, Msg> {
+    if fields.is_empty() {
+        return column![].into();
+    }
+    let note = if editable {
+        "Atoms this component uses — click a swatch to edit. They're shared \
+         across the theme; Save / Revert live in the header above."
+    } else {
+        "Atoms this component uses. Read-only on the Default theme — fork it \
+         (\"New Theme\") to edit."
+    };
+    column![
+        subheading("Atoms"),
+        body(note).style(muted),
+        swatch_flow(atoms, fields, editable, editing, picker_view),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn atom_grid<'a>(
+    atoms: &'a Atoms,
+    editable: bool,
+    editing: Option<AtomField>,
+    picker_view: Option<Element<'a, Msg>>,
+) -> Element<'a, Msg> {
+    swatch_flow(atoms, ALL_ATOM_FIELDS, editable, editing, picker_view)
 }
 
 fn swatch_tile<'a>(
@@ -170,15 +233,19 @@ fn swatch_tile<'a>(
     // the open atom gets an accent ring so the picker's subject is clear.
     let tile: Element<'a, Msg> = if editable {
         let selected = editing == Some(field);
-        let ring = if selected { 2.0 } else { 0.0 };
+        // Always reserve the ring's footprint (constant padding + border
+        // width); selecting toggles only the ring COLOR, never the tile's
+        // layout size — otherwise the selected swatch grows and shoves the
+        // grid below it down.
+        const RING: f32 = 2.0;
         let framed = container(tile)
-            .padding(Padding::from(ring))
+            .padding(Padding::from(RING))
             .style(move |theme: &iced::Theme| {
                 let p = theme.extended_palette();
                 iced::widget::container::Style {
                     border: iced::Border {
                         color: if selected { p.primary.base.color } else { Color::TRANSPARENT },
-                        width: ring,
+                        width: RING,
                         radius: 8.0.into(),
                     },
                     ..iced::widget::container::Style::default()
@@ -195,14 +262,30 @@ fn swatch_tile<'a>(
         tile
     };
 
-    column![
-        tile,
-        body(name),
-        code(theme::color_to_hex(color)).style(muted),
-        caption(slot).style(muted),
-    ]
-    .spacing(6)
-    .width(Length::Fixed(SWATCH_SIZE + 16.0))
-    .into()
+    // The hex line carries a "reset" link when this atom has drifted from
+    // its compile-time default — a surgical, single-atom revert. Hidden
+    // on the read-only Default and whenever the value already is default.
+    let hex = code(theme::color_to_hex(color)).style(muted);
+    let hex_line: Element<'a, Msg> = if editable && color != field.default_color() {
+        row![
+            hex,
+            mouse_area(
+                caption("reset").style(|t: &iced::Theme| iced::widget::text::Style {
+                    color: Some(t.extended_palette().primary.base.color),
+                })
+            )
+            .on_press(Msg::ResetAtom(field)),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center)
+        .into()
+    } else {
+        hex.into()
+    };
+
+    column![tile, body(name), hex_line, caption(slot).style(muted)]
+        .spacing(6)
+        .width(Length::Fixed(SWATCH_SIZE + 16.0))
+        .into()
 }
 

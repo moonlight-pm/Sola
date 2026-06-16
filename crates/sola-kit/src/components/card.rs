@@ -64,13 +64,18 @@ pub fn modal<'a, Message: 'a>(
 
 /// Parameterized backplate style: caller supplies fill and border
 /// colors (alpha included — e.g. the shell's `shell-switcher-bg` /
-/// `shell-switcher-border` tokens). Radius, border width, and shadow
-/// are fixed to the backplate's values.
+/// `shell-switcher-border` tokens). Radius and border width are fixed
+/// to the backplate's values.
 ///
 /// Radius choice: `RADIUS_XL` (14px) is used for the modal; the
 /// switcher backplate is a slightly softer 16px to visually distinguish
 /// it as a secondary frame. Using a plain literal keeps the two values
 /// intentionally independent — don't abstract them into the same const.
+///
+/// No drop shadow: the shell's renderer doesn't blur shadow quads, so a
+/// shadow renders as a hard offset rectangle that pokes out past the
+/// rounded border (most visibly below it). The 1px border + translucent
+/// fill already separate the backplate from what's behind it.
 pub fn backplate_style(fill: Color, border: Color) -> impl Fn(&Theme) -> container::Style {
     move |_theme: &Theme| container::Style {
         background: Some(Background::Color(fill)),
@@ -79,11 +84,7 @@ pub fn backplate_style(fill: Color, border: Color) -> impl Fn(&Theme) -> contain
             width: 1.0,
             radius: 16.0.into(), // switcher backplate: 2px softer than modal
         },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.45),
-            offset: Vector::new(0.0, 12.0),
-            blur_radius: 32.0,
-        },
+        shadow: Shadow::default(),
         ..container::Style::default()
     }
 }
@@ -140,5 +141,28 @@ pub fn list_tile_style(selected: bool) -> impl Fn(&Theme) -> container::Style {
             },
             ..container::Style::default()
         }
+    }
+}
+
+/// Like [`list_tile_style`] but with caller-supplied colors: `fill` is the
+/// selected-tile background and `fg` the tile's text/foreground (applied
+/// in both states so SVG glyphs and labels tint consistently). Lets shell
+/// chrome drive switcher tiles from its own `shell-switcher-icon-*` tokens
+/// instead of the palette's accent / fg. Same radius (`RADIUS_MD`) and
+/// transparent-when-unselected behaviour as [`list_tile_style`].
+pub fn list_tile_style_colored(
+    selected: bool,
+    fill: Color,
+    fg: Color,
+) -> impl Fn(&Theme) -> container::Style {
+    move |_theme: &Theme| container::Style {
+        background: selected.then_some(Background::Color(fill)),
+        text_color: Some(fg),
+        border: iced::Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_MD.into(),
+        },
+        ..container::Style::default()
     }
 }

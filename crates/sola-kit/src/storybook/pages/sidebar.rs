@@ -52,6 +52,9 @@ pub struct State {
     pub reorder: Option<(usize, f32)>,
     /// Last cursor-y seen during a reorder gesture.
     pub reorder_cursor_y: f32,
+    /// True once a reorder gesture passes the movement threshold. Gates the
+    /// drag chrome so a plain click never flashes a drop highlight.
+    pub reorder_dragging: bool,
     /// Current item order (indices into [`ITEMS`]).
     pub order: Vec<usize>,
     /// Selected row (by item index), for the active highlight.
@@ -67,6 +70,7 @@ impl Default for State {
             drag_anchor: None,
             reorder: None,
             reorder_cursor_y: 0.0,
+            reorder_dragging: false,
             order: (0..ITEMS.len()).collect(),
             selected: 0,
         }
@@ -101,9 +105,11 @@ impl State {
                 self.drag_anchor = None;
             }
             Msg::ReorderStart(index) => {
-                // start_y = 0.0 sentinel; captured on first ReorderMove.
+                // start_y = 0.0 sentinel; captured on first ReorderMove. The
+                // drag isn't "live" until it passes the movement threshold.
                 self.reorder = Some((index, 0.0));
                 self.reorder_cursor_y = 0.0;
+                self.reorder_dragging = false;
             }
             Msg::ReorderMove(cursor_y) => {
                 if let Some((_, ref mut start_y)) = self.reorder {
@@ -111,19 +117,26 @@ impl State {
                         *start_y = cursor_y;
                     }
                     self.reorder_cursor_y = cursor_y;
+                    // Promote to a live drag once the cursor moves past the
+                    // threshold — until then it stays a candidate click.
+                    if (cursor_y - *start_y).abs()
+                        >= sola_kit::components::PANEL_REORDER_THRESHOLD
+                    {
+                        self.reorder_dragging = true;
+                    }
                 }
             }
             Msg::ReorderEnd => {
                 let gesture = self.reorder.take();
                 let final_y = self.reorder_cursor_y;
+                let was_dragging = self.reorder_dragging;
                 self.reorder_cursor_y = 0.0;
+                self.reorder_dragging = false;
                 let Some((from, start_y)) = gesture else { return };
 
-                let moved = (final_y - start_y).abs();
-                let is_click = start_y == 0.0
-                    || moved < sola_kit::components::PANEL_REORDER_THRESHOLD;
-                if is_click {
-                    // Treat as a select on the underlying item.
+                // Never crossed the threshold → it was a click, not a drag:
+                // select the row instead of reordering.
+                if !was_dragging {
                     if let Some(&item) = self.order.get(from) {
                         self.selected = item;
                     }
@@ -131,9 +144,12 @@ impl State {
                 }
 
                 let n = self.order.len();
-                let to = sola_kit::components::panel_drop_index(
+                // Anchor-relative: the grabbed row shifted by how many
+                // row-heights the cursor travelled (no absolute geometry).
+                let to = sola_kit::components::panel_drop_index_relative(
+                    from,
+                    start_y,
                     final_y,
-                    sola_kit::components::PANEL_HEADER_H,
                     sola_kit::components::PANEL_ROW_H,
                     n,
                 );
@@ -186,7 +202,9 @@ pub fn view(state: &State) -> Element<'_, Msg> {
 
     let cfg = ReorderCfg {
         on_press: Box::new(Msg::ReorderStart),
-        active: state.reorder,
+        // Expose the gesture as "active" only once it's a real drag, so the
+        // panel shows no drag chrome on a plain (un-moved) press.
+        active: if state.reorder_dragging { state.reorder } else { None },
         cursor_y: state.reorder_cursor_y,
     };
 

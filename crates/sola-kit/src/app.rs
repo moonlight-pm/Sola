@@ -190,7 +190,7 @@ pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
 ///    `SOLA_NO_SELF_WATCH=1` is set in the environment (sola the
 ///    process manager sets this when launching apps it already
 ///    supervises directly, to avoid a double restart). Mirrors the
-///    legacy `sola-app` / `sola-kit-legacy` behavior.
+///    legacy `sola-app` behavior.
 ///
 /// Returns the resolved Wayland socket name so the caller can log it.
 /// Apps that need different log init or a different Wayland timeout
@@ -262,6 +262,7 @@ fn apply_theme_topic(topic: &Option<Topic>, theme: &mut iced::Theme) -> bool {
     if let Some(Topic::Theme(bus)) = topic {
         *theme = crate::theme::theme_from_bus(bus);
         crate::fonts::install(crate::theme::fonts_from_bus_theme(bus));
+        crate::theme::install_selection(crate::theme::atoms_from_bus_theme(bus).selection);
         true
     } else {
         false

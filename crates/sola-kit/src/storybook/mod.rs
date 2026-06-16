@@ -95,7 +95,7 @@ impl Page {
         }
     }
 
-    /// Section bucket for the sidebar. Mirrors sola-kit-legacy's
+    /// Section bucket for the sidebar. Mirrors the original kit's
     /// Theme / Layout / Components grouping.
     pub fn section(self) -> Option<&'static str> {
         match self {
@@ -112,6 +112,35 @@ impl Page {
             | Page::ColorPicker
             | Page::Popover
             | Page::Sidebar => Some("Components"),
+        }
+    }
+
+    /// The palette atoms this page's component visibly uses, surfaced as
+    /// an inline editor panel below its demo (see `page_view`). Curated,
+    /// best-effort — tune freely. Empty for pages that carry their own
+    /// editors (Theme's full grid, Shell's token editor). Authored from
+    /// each component's actual `extended_palette()` slot usage.
+    pub fn atoms(self) -> &'static [AtomField] {
+        use AtomField::{
+            Accent, Bg, BgHover, BgRaised, Border, Danger, Fg, FgMuted, Selection, Success,
+            Warning,
+        };
+        match self {
+            Page::Theme | Page::Shell => &[],
+            Page::Divider => &[Border, Bg],
+            Page::Split => &[Bg, BgRaised, Border],
+            Page::Toolbar => &[Bg, BgRaised, BgHover, Border, Fg, FgMuted],
+            Page::Text => &[Fg, FgMuted, Accent, Success, Warning, Danger],
+            Page::Button => &[Accent, Danger, Bg, BgHover, Border, Fg],
+            Page::Badge => &[Accent, Success, Warning, Danger, Border, FgMuted],
+            Page::Card => &[Bg, BgRaised, Border, Fg, Accent],
+            Page::Field => &[BgRaised, Border, Fg, FgMuted],
+            Page::Icon => &[Fg, FgMuted, Accent],
+            Page::NumberInput => &[Bg, Border, Fg, FgMuted, Accent],
+            Page::Readable => &[Bg, BgRaised, Fg, FgMuted],
+            Page::ColorPicker => &[Bg, BgRaised, Border, Fg, Accent],
+            Page::Popover => &[BgRaised, Border, Fg, FgMuted],
+            Page::Sidebar => &[Bg, BgHover, Selection, Fg, FgMuted, Accent],
         }
     }
 }
@@ -164,6 +193,16 @@ pub enum Msg {
     /// Remove the active preset (only allowed when it's not Default)
     /// and switch back to Default. Second click of the two-stage delete.
     DeleteActiveTheme,
+    /// Reset one palette atom to its compile-time default. A live edit
+    /// like any other (broadcast, marks dirty); no persist. No-op when
+    /// Default is active.
+    ResetAtom(AtomField),
+    /// Checkpoint the active preset: persist it and re-baseline the
+    /// `Revert` target. Clears the dirty flag.
+    SaveTheme,
+    /// Discard the working set — restore the active preset from its last
+    /// checkpoint, rebroadcast, and clear dirty.
+    RevertTheme,
     /// Demo placeholder for showcases whose components require an
     /// `on_press` (or similar callback) message but don't model
     /// interaction in the storybook.
@@ -198,6 +237,7 @@ pub enum AtomField {
     Success,
     Warning,
     Danger,
+    Selection,
 }
 
 impl AtomField {
@@ -214,6 +254,7 @@ impl AtomField {
             AtomField::Success => a.success,
             AtomField::Warning => a.warning,
             AtomField::Danger => a.danger,
+            AtomField::Selection => a.selection,
         }
     }
 
@@ -230,7 +271,16 @@ impl AtomField {
             AtomField::Success => a.success = c,
             AtomField::Warning => a.warning = c,
             AtomField::Danger => a.danger = c,
+            AtomField::Selection => a.selection = c,
         }
+    }
+
+    /// This atom's compile-time default colour (its `hex::*` constant),
+    /// read off `Atoms::default()`. Drives the per-atom "reset to
+    /// default" affordance and its visibility (shown only when the live
+    /// value differs from this).
+    pub fn default_color(self) -> iced::Color {
+        self.get(&theme::Atoms::default())
     }
 }
 
@@ -242,6 +292,9 @@ pub enum ShellColorField {
     BackdropDim,
     SwitcherBg,
     SwitcherBorder,
+    SwitcherIconBg,
+    SwitcherIconFg,
+    SwitcherIconFgSel,
 }
 
 impl ShellColorField {
@@ -251,6 +304,9 @@ impl ShellColorField {
             Self::BackdropDim => s.backdrop_dim,
             Self::SwitcherBg => s.switcher_bg,
             Self::SwitcherBorder => s.switcher_border,
+            Self::SwitcherIconBg => s.switcher_icon_bg,
+            Self::SwitcherIconFg => s.switcher_icon_fg,
+            Self::SwitcherIconFgSel => s.switcher_icon_fg_sel,
         }
     }
     pub fn set(self, s: &mut theme::ShellStyle, c: iced::Color) {
@@ -259,6 +315,9 @@ impl ShellColorField {
             Self::BackdropDim => s.backdrop_dim = c,
             Self::SwitcherBg => s.switcher_bg = c,
             Self::SwitcherBorder => s.switcher_border = c,
+            Self::SwitcherIconBg => s.switcher_icon_bg = c,
+            Self::SwitcherIconFg => s.switcher_icon_fg = c,
+            Self::SwitcherIconFgSel => s.switcher_icon_fg_sel = c,
         }
     }
 }
@@ -353,6 +412,17 @@ pub struct Storybook {
     /// replay order between `Topic::Theme` and `Topic::CustomTheme` is
     /// undefined, so we re-run the match every time either side moves.
     last_live_theme: Option<sola_bus::topics::Theme>,
+    /// Last *saved* snapshot of the active preset — the baseline `Revert`
+    /// restores to. Edits mutate `themes[active_theme]` live (broadcast,
+    /// no persist); `Save` re-snapshots here and persists, `Revert`
+    /// copies this back over the active slot. Re-baselined whenever a
+    /// non-dirty bus delivery resolves the active preset (startup replay).
+    checkpoint: ThemePreset,
+    /// `true` once the active preset has been edited since the last Save
+    /// or Revert. Drives the header's `Edited •` indicator and gates the
+    /// Save/Revert buttons. A bool (not value-equality) so reverting an
+    /// edit by hand still reads as dirty — "touched", not "differs".
+    dirty: bool,
 }
 
 impl Storybook {
@@ -367,6 +437,9 @@ impl Storybook {
             shell: theme::ShellStyle::default(),
         };
         let theme = theme::build_theme(&default_preset.atoms);
+        // The checkpoint starts as the active preset's snapshot; startup
+        // bus replay re-baselines it once a saved preset resolves.
+        let checkpoint = default_preset.clone();
         Self {
             page: Page::Theme,
             toolbar: pages::toolbar::State::default(),
@@ -387,6 +460,8 @@ impl Storybook {
             family_options: sola_kit::fonts::pickable_families(),
             theme,
             last_live_theme: None,
+            checkpoint,
+            dirty: false,
         }
     }
 
@@ -448,7 +523,13 @@ impl Storybook {
 
     pub fn update(&mut self, msg: Msg) {
         match msg {
-            Msg::Select(page) => self.page = page,
+            Msg::Select(page) => {
+                self.page = page;
+                // Don't carry a half-open atom/shell picker across pages.
+                self.editing_atom = None;
+                self.editing_shell = None;
+                self.picker = None;
+            }
             Msg::Toolbar(m) => self.toolbar.update(m),
             Msg::Field(m) => self.field.update(m),
             Msg::NumberInput(m) => self.number_input.update(m),
@@ -465,8 +546,17 @@ impl Storybook {
                         // no longer does it as a side effect.
                         self.theme = theme::theme_from_bus(&bus_theme);
                         crate::fonts::install(theme::fonts_from_bus_theme(&bus_theme));
+                        theme::install_selection(
+                            theme::atoms_from_bus_theme(&bus_theme).selection,
+                        );
                         self.last_live_theme = Some(bus_theme);
                         self.resync_active_theme();
+                        // A clean storybook re-baselines its Revert target to
+                        // whatever the bus resolved (startup replay); a dirty
+                        // one keeps its in-progress checkpoint.
+                        if !self.dirty {
+                            self.checkpoint = self.active().clone();
+                        }
                     }
                     Topic::CustomTheme(named) => {
                         // Persistent-topic add/update vs retract is signalled
@@ -477,6 +567,9 @@ impl Storybook {
                             self.remove_custom_theme(&named.name);
                         }
                         self.resync_active_theme();
+                        if !self.dirty {
+                            self.checkpoint = self.active().clone();
+                        }
                     }
                     Topic::MenuAction(MenuActionPayload { app_id, action_id })
                         if app_id == "sola-kit" && action_id == "quit" =>
@@ -524,7 +617,7 @@ impl Storybook {
                 }
                 field.set(&mut self.active_mut().shell, value);
                 self.broadcast_theme();
-                self.persist_active_theme();
+                self.dirty = true;
             }
             Msg::ClosePicker => {
                 self.editing_atom = None;
@@ -556,13 +649,22 @@ impl Storybook {
                 }
                 self.install_active_fonts();
                 self.broadcast_theme();
-                self.persist_active_theme();
+                self.dirty = true;
             }
             Msg::SelectTheme(name) => {
                 let Some(idx) = self.themes.iter().position(|t| t.name == name) else {
                     return;
                 };
+                // Manual-only commit: switching themes abandons the unsaved
+                // working set. Restore the current preset from its
+                // checkpoint before leaving so discarded edits don't linger
+                // in `themes`.
+                if self.dirty {
+                    self.themes[self.active_theme] = self.checkpoint.clone();
+                }
                 self.active_theme = idx;
+                self.checkpoint = self.active().clone();
+                self.dirty = false;
                 self.naming = None;
                 self.delete_armed = false;
                 self.editing_atom = None;
@@ -599,9 +701,19 @@ impl Storybook {
                 }
                 let mut copy = self.active().clone();
                 copy.name = name;
+                // "Save as": the fork keeps the current working set and is
+                // persisted; the source preset reverts to its checkpoint so
+                // the edits move to the new theme rather than being left
+                // unsaved on the original.
+                if self.dirty {
+                    self.themes[self.active_theme] = self.checkpoint.clone();
+                }
                 self.themes.push(copy);
                 self.active_theme = self.themes.len() - 1;
+                self.checkpoint = self.active().clone();
+                self.dirty = false;
                 self.refresh_active_theme();
+                self.install_active_fonts();
                 self.broadcast_theme();
                 self.persist_active_theme();
             }
@@ -627,23 +739,60 @@ impl Storybook {
                 let removed = self.themes.remove(self.active_theme);
                 self.retract_custom_theme(&removed);
                 self.active_theme = 0;
+                self.checkpoint = self.active().clone();
+                self.dirty = false;
                 self.refresh_active_theme();
                 self.install_active_fonts();
                 self.broadcast_theme();
+            }
+            Msg::ResetAtom(field) => {
+                if self.is_default_active() {
+                    tracing::debug!("ignoring ResetAtom — Default theme is read-only");
+                    return;
+                }
+                // Surgical: reset just this one atom to its compile-time
+                // default. A live edit like any other (apply_atom marks
+                // dirty + broadcasts, no persist).
+                self.apply_atom(field, field.default_color());
+            }
+            Msg::SaveTheme => {
+                if self.is_default_active() {
+                    return;
+                }
+                self.persist_active_theme();
+                self.checkpoint = self.active().clone();
+                self.dirty = false;
+            }
+            Msg::RevertTheme => {
+                if !self.dirty {
+                    return;
+                }
+                self.themes[self.active_theme] = self.checkpoint.clone();
+                self.editing_atom = None;
+                self.editing_shell = None;
+                self.picker = None;
+                self.refresh_active_theme();
+                self.install_active_fonts();
+                self.broadcast_theme();
+                self.dirty = false;
             }
             Msg::Noop => {}
         }
     }
 
-    /// Recompute the live iced theme from the active preset's atoms.
+    /// Recompute the live iced theme from the active preset's atoms, and
+    /// refresh the process-wide selection colour so the storybook's own
+    /// sidebar preview reflects a `selection` edit on the next render.
     fn refresh_active_theme(&mut self) {
         self.theme = theme::build_theme(&self.active().atoms);
+        theme::install_selection(self.active().atoms.selection);
     }
 
-    /// Write one atom onto the active preset and propagate it: rebuild
-    /// the live theme, broadcast `Topic::Theme`, persist the preset.
-    /// No-op on the read-only Default. Driven by `Picker` (the color
-    /// picker) as the user drags or types.
+    /// Write one atom onto the active preset and propagate it live:
+    /// rebuild the iced theme + broadcast `Topic::Theme`, then mark the
+    /// working set dirty. **No persist** — that's deferred to `Save`
+    /// (see `Msg::SaveTheme`). No-op on the read-only Default. Driven by
+    /// `Picker` (the color picker) as the user drags or types.
     fn apply_atom(&mut self, field: AtomField, color: iced::Color) {
         if self.is_default_active() {
             tracing::debug!("ignoring atom edit — Default theme is read-only");
@@ -652,13 +801,13 @@ impl Storybook {
         field.set(&mut self.active_mut().atoms, color);
         self.refresh_active_theme();
         self.broadcast_theme();
-        self.persist_active_theme();
+        self.dirty = true;
     }
 
-    /// Write one shell color onto the active preset and propagate it.
+    /// Write one shell color onto the active preset and propagate it live.
     /// Unlike `apply_atom` there's no `refresh_active_theme` — shell
     /// tokens don't feed the storybook's own iced theme, only the
-    /// broadcast bus value.
+    /// broadcast bus value. **No persist** — deferred to `Save`.
     fn apply_shell_color(&mut self, field: ShellColorField, color: iced::Color) {
         if self.is_default_active() {
             tracing::debug!("ignoring shell color edit — Default theme is read-only");
@@ -666,7 +815,7 @@ impl Storybook {
         }
         field.set(&mut self.active_mut().shell, color);
         self.broadcast_theme();
-        self.persist_active_theme();
+        self.dirty = true;
     }
 
     /// Push the active preset's font selection into the process-wide
@@ -782,38 +931,49 @@ impl Storybook {
 
 
     /// If a live `Topic::Theme` has landed, point `active_theme` at the
-    /// preset whose bus form equals it. Called after every
-    /// `Topic::Theme` or `Topic::CustomTheme` delivery so the picker
-    /// and the swatch grid stay in sync regardless of replay order at
-    /// startup. No-op if no live theme has been seen yet, or if none
-    /// of the loaded presets matches (rare — would mean someone
-    /// emitted a `Topic::Theme` that didn't come from a saved preset).
+    /// preset whose value matches it. Called after every `Topic::Theme`
+    /// or `Topic::CustomTheme` delivery so the picker and swatch grid
+    /// stay in sync regardless of replay order at startup. No-op if no
+    /// live theme has been seen yet, or if none of the loaded presets
+    /// matches.
     ///
     /// Matching is by value, not name, because a live `Topic::Theme`
-    /// arrives anonymous (no preset name on the wire). W1 made the
-    /// atoms+fonts ⇄ bus round-trip lossless, so the equality is exact
-    /// — the earlier "lossy match" brittleness (E5) is gone. The only
-    /// residual ambiguity is two presets with byte-identical values, in
-    /// which case the first wins (harmless: they render the same).
+    /// arrives anonymous (no preset name on the wire). To keep that match
+    /// robust across kit upgrades, both sides are compared in the kit's
+    /// *canonical* form — see the in-body note.
     fn resync_active_theme(&mut self) {
-        let Some(ref live) = self.last_live_theme else {
+        let Some(live) = self.last_live_theme.as_ref() else {
             return;
         };
-        // Trust the current selection if it already matches the live
-        // theme. A live `Topic::Theme` is anonymous, so the search
-        // below re-derives the active preset purely by value — and a
-        // fresh fork of Default is byte-identical to Default until it's
-        // edited, so that search would snap a just-selected fork back to
-        // whichever identical preset sorts first (Default at slot 0).
-        // Guarding on the active preset keeps an explicit selection put.
-        if &self.active().bus_theme() == live {
+        // Canonicalise the live theme through the kit's model before
+        // matching. A live `Topic::Theme` arrives as a raw token map, and
+        // the on-disk `theme/current.yaml` that seeds it at startup may
+        // predate tokens the kit has since added (every `shell-*` addition
+        // grows the set). Comparing raw wire forms would then spuriously
+        // fail — the saved preset reconstructs the newer token at its
+        // default while the older live map omits it, so the two byte
+        // forms differ and the selection silently resets to Default on
+        // reopen. Round-tripping the live theme through deconstruct →
+        // reconstruct applies the same per-token fallbacks the presets
+        // use, so a token missing from the live map resolves to the
+        // identical default on both sides and the match holds.
+        let canonical = ThemePreset {
+            name: String::new(),
+            atoms: theme::atoms_from_bus_theme(live),
+            fonts: theme::font_selection_from_bus_theme(live),
+            shell: theme::shell_style_from_bus_theme(live),
+        }
+        .bus_theme();
+        // Trust the current selection if it already resolves to the live
+        // theme. A fresh fork of Default is byte-identical to Default
+        // until it's edited, so an unguarded search would snap a
+        // just-selected fork back to whichever identical preset sorts
+        // first (Default at slot 0). Guarding keeps an explicit selection
+        // put.
+        if self.active().bus_theme() == canonical {
             return;
         }
-        let Some(idx) = self
-            .themes
-            .iter()
-            .position(|p| &p.bus_theme() == live)
-        else {
+        let Some(idx) = self.themes.iter().position(|p| p.bus_theme() == canonical) else {
             return;
         };
         if idx != self.active_theme {
@@ -988,10 +1148,30 @@ impl Storybook {
                     .padding(Padding::from([6, 14]))
                     .into()
                 };
-                row![picker, new_btn, del_btn]
+                let mut controls = row![picker, new_btn, del_btn]
                     .spacing(8)
-                    .align_y(iced::Alignment::Center)
-                    .into()
+                    .align_y(iced::Alignment::Center);
+                // Save/Revert surface only with an unsaved working set; on
+                // the read-only Default editing is a no-op so this never
+                // shows there.
+                if self.dirty {
+                    let indicator =
+                        text("Edited •").size(11).style(|theme: &iced::Theme| {
+                            iced::widget::text::Style {
+                                color: Some(theme.extended_palette().warning.base.color),
+                            }
+                        });
+                    let save = button(text("Save"))
+                        .style(kit_button::primary)
+                        .padding(Padding::from([6, 14]))
+                        .on_press(Msg::SaveTheme);
+                    let revert = button(text("Revert"))
+                        .style(kit_button::ghost)
+                        .padding(Padding::from([6, 14]))
+                        .on_press(Msg::RevertTheme);
+                    controls = controls.push(indicator).push(save).push(revert);
+                }
+                controls.into()
             }
         };
 
@@ -1015,7 +1195,7 @@ impl Storybook {
 
     fn page_view(&self) -> Element<'_, Msg> {
         let editable = !self.is_default_active();
-        match self.page {
+        let content: Element<'_, Msg> = match self.page {
             Page::Theme => pages::theme::view(
                 &self.active().atoms,
                 &self.active().fonts,
@@ -1048,6 +1228,29 @@ impl Storybook {
             Page::Sidebar => pages::sidebar::view(&self.sidebar).map(Msg::Sidebar),
             Page::Split => pages::split::view(),
             Page::Toolbar => pages::toolbar::view(&self.toolbar).map(Msg::Toolbar),
+        };
+
+        // Theme/Shell carry their own atom/token editors; every other page
+        // gets a contextual atom panel below its demo. The open picker (if
+        // any) is created here and routed into the panel — only this branch
+        // runs per render, so the Theme/Shell arms above never see it.
+        let fields = self.page.atoms();
+        if fields.is_empty() {
+            content
+        } else {
+            let picker = self.picker.as_ref().map(|p| p.view().map(Msg::Picker));
+            column![
+                content,
+                pages::theme::atom_panel(
+                    &self.active().atoms,
+                    fields,
+                    editable,
+                    self.editing_atom,
+                    picker,
+                ),
+            ]
+            .spacing(28)
+            .into()
         }
     }
 }
@@ -1175,5 +1378,81 @@ mod tests {
             sb.active_theme, 1,
             "resync must follow the live theme to the matching preset"
         );
+    }
+
+    // An older `theme/current.yaml` predates a kit token addition, so the
+    // live theme it seeds at startup is missing that token. resync must
+    // still resolve it to the saved preset — comparing raw wire forms
+    // used to choke here (the preset reconstructs the newer token while
+    // the stale live map lacks it), silently resetting the selection to
+    // Default on every reopen until the user re-saved.
+    #[test]
+    fn resync_tolerates_token_drift() {
+        let mut sb = Storybook::default();
+        let mut other = sb.themes[0].clone();
+        other.name = "drifted".to_string();
+        // Edit an atom so the preset is distinguishable from Default; the
+        // drifted token itself stays at its default on both sides (it
+        // can't carry a custom value — it didn't exist when this preset
+        // was saved).
+        other.atoms.accent = iced::Color::from_rgb(0.2, 0.7, 0.4);
+        sb.themes.push(other);
+        sb.active_theme = 0;
+
+        // Simulate the stale on-disk live theme: the preset's bus form
+        // with one shell token stripped, as if persisted before that
+        // token existed.
+        let mut stale = sb.themes[1].bus_theme();
+        let removed = stale.palette.tokens.remove("shell-switcher-icon-fg-sel");
+        assert!(removed.is_some(), "token must exist to model its later addition");
+        // Sanity: the raw forms differ, so the old value-match would miss.
+        assert_ne!(stale, sb.themes[1].bus_theme());
+        sb.last_live_theme = Some(stale);
+
+        sb.resync_active_theme();
+
+        assert_eq!(
+            sb.active_theme, 1,
+            "resync must tolerate a live theme missing a newer token"
+        );
+    }
+
+    #[test]
+    fn theme_and_shell_pages_have_no_atom_panel() {
+        // Those two carry their own editors (full grid / token editor),
+        // so they opt out of the per-component panel.
+        assert!(Page::Theme.atoms().is_empty());
+        assert!(Page::Shell.atoms().is_empty());
+    }
+
+    #[test]
+    fn sidebar_page_exposes_the_selection_atom() {
+        // The whole reason `selection` exists: a tunable knob for the
+        // sidebar's selected-row highlight, surfaced on its own page.
+        assert!(
+            Page::Sidebar.atoms().contains(&AtomField::Selection),
+            "the Sidebar page must expose the selection atom"
+        );
+    }
+
+    #[test]
+    fn fresh_storybook_is_clean_with_matching_checkpoint() {
+        let sb = Storybook::default();
+        assert!(!sb.dirty, "a freshly booted storybook has no unsaved work");
+        assert_eq!(sb.checkpoint.name, sb.active().name);
+        assert_eq!(
+            sb.checkpoint.atoms,
+            sb.active().atoms,
+            "the Revert checkpoint must start equal to the active preset"
+        );
+    }
+
+    #[test]
+    fn atom_field_default_color_is_the_compile_time_default() {
+        // Drives the per-atom reset: resetting must land exactly on the
+        // default-theme value for that atom.
+        let defaults = theme::Atoms::default();
+        assert_eq!(AtomField::Selection.default_color(), defaults.selection);
+        assert_eq!(AtomField::Accent.default_color(), defaults.accent);
     }
 }
