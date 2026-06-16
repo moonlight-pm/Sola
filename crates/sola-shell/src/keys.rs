@@ -65,6 +65,37 @@ pub fn to_registered_alt(chord: &KeyChord) -> Option<RegisteredChord> {
     })
 }
 
+/// Global media keysyms (xkbcommon `XF86Audio*`, the `0x1008FFxx` range)
+/// paired with their `solactl media` action. Registered as bare,
+/// no-modifier global chords (see `emit_registered_chords`) so the
+/// keyboard's media keys control playback/volume regardless of focus —
+/// River does not deliver bound keys to any window. Two keysyms map to
+/// `play-pause` because some keyboards emit `XF86AudioPause` for the
+/// combined play/pause key.
+///
+/// Apple Magic Keyboards can emit slightly different keysyms; confirm with
+/// `nix-shell -p libinput --run 'libinput debug-events'` (press each media
+/// key, note the resulting `XF86Audio*` keysym) and adjust this table.
+pub const MEDIA_KEYS: &[(u32, &str)] = &[
+    (0x1008FF14, "play-pause"), // XF86AudioPlay
+    (0x1008FF31, "play-pause"), // XF86AudioPause
+    (0x1008FF17, "next"),       // XF86AudioNext
+    (0x1008FF16, "prev"),       // XF86AudioPrev
+    (0x1008FF12, "mute"),       // XF86AudioMute
+    (0x1008FF13, "vol-up"),     // XF86AudioRaiseVolume
+    (0x1008FF11, "vol-down"),   // XF86AudioLowerVolume
+];
+
+/// The `solactl media` action for a media keysym, if it is one. The shell
+/// dispatches these out-of-process rather than through `from_chord_event`
+/// (they map to no shell `KeyChord`).
+pub fn media_action(keysym: u32) -> Option<&'static str> {
+    MEDIA_KEYS
+        .iter()
+        .find(|(sym, _)| *sym == keysym)
+        .map(|(_, action)| *action)
+}
+
 fn river_modifiers(c: &KeyChord) -> u32 {
     let mut m = 0u32;
     if c.shift {
@@ -304,5 +335,28 @@ mod tests {
         assert!(mods & MOD_CTRL != 0);
         assert!(mods & MOD_SHIFT != 0);
         assert!(mods & MOD_ALT == 0);
+    }
+
+    // Every MEDIA_KEYS action string must be a value the `solactl media`
+    // subcommand accepts — the two agree by convention only, so a typo here
+    // would silently no-op at runtime. Keep this list in sync with
+    // solactl's `MediaAction` ValueEnum (kebab-case).
+    #[test]
+    fn media_action_strings_are_valid_solactl_values() {
+        const VALID: &[&str] = &["play-pause", "next", "prev", "mute", "vol-up", "vol-down"];
+        for (keysym, action) in MEDIA_KEYS {
+            assert!(
+                VALID.contains(action),
+                "media keysym {keysym:#x} maps to unknown solactl action {action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn media_action_lookup() {
+        assert_eq!(media_action(0x1008FF12), Some("mute")); // XF86AudioMute
+        assert_eq!(media_action(0x1008FF14), Some("play-pause")); // XF86AudioPlay
+        // A normal shell chord keysym is not a media key.
+        assert_eq!(media_action(0x20), None); // space
     }
 }

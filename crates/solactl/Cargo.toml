@@ -12,3 +12,6 @@ sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
+# Session-bus MPRIS control for `solactl media` (play/pause, next, prev).
+# Blocking API only — solactl is a short-lived one-shot CLI, no async runtime.
+zbus = "5"

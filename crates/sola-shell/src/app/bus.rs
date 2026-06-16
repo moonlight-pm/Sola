@@ -340,6 +340,15 @@ impl Shell {
 
     /// Dispatch a chord event through the shell's action table.
     fn on_chord(&mut self, evt: ChordEvent) -> Task<Msg> {
+        // Global media keys never map to a shell KeyChord — they're handled
+        // out-of-process (MPRIS / wpctl via `solactl media`). Recognise them
+        // first, before the KeyChord decode below rejects them as
+        // "unrecognized", and run them regardless of overlay/focus state.
+        if let Some(action) = keys::media_action(evt.keysym) {
+            crate::media::trigger(action);
+            return Task::none();
+        }
+
         let Some(chord) = keys::from_chord_event(&evt) else {
             tracing::debug!(
                 keysym = evt.keysym,

@@ -11,6 +11,7 @@ mod builtins;
 pub mod components;
 pub mod keys;
 pub mod launcher;
+pub mod media;
 pub mod menu;
 pub mod menubar;
 pub mod switcher;

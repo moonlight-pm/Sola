@@ -23,6 +23,7 @@ mod emit;
 mod eval;
 mod input;
 mod logs;
+mod media;
 mod open;
 mod screenshot;
 
@@ -110,6 +111,16 @@ enum Command {
         dy: f64,
     },
 
+    /// Global media-key action: control the active MPRIS player
+    /// (play-pause/next/prev) or the default audio sink (mute/vol-up/
+    /// vol-down). Invoked per keypress by sola-shell when an XF86Audio*
+    /// chord fires; focus-independent.
+    Media {
+        /// Action to perform.
+        #[arg(value_enum)]
+        action: media::MediaAction,
+    },
+
     /// Synthesize a single keystroke. Chord syntax: `Meta+Tab`, `Ctrl+A`,
     /// `Shift+Esc`, `Escape`, `Tab`, single letters/digits, etc.
     Key {
@@ -151,6 +162,7 @@ fn main() {
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
         Command::Open { url } => open::run(&url),
+        Command::Media { action } => media::run(action),
         Command::Click { x, y, button } => input::click(x, y, &button),
         Command::Move { x, y } => input::move_to(x, y),
         Command::Scroll { dx, dy } => input::scroll(dx, dy),

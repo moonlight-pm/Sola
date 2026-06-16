@@ -302,6 +302,15 @@ impl Shell {
             keysym: keys::KEYSYM_SUPER_L,
             modifiers: 0,
         });
+        // Global media keys (play/pause, mute, next/prev, volume). Bare
+        // keysyms, registered unconditionally so they work regardless of
+        // focus or overlay state; `on_chord` runs them via `solactl media`.
+        for (keysym, _) in keys::MEDIA_KEYS {
+            chords.push(RegisteredChord {
+                keysym: *keysym,
+                modifiers: 0,
+            });
+        }
         // While any overlay is active, grab Escape so the user can dismiss it
         // regardless of which surface owns input focus. Deregistered as soon as
         // the overlay closes so terminal apps keep their Escape.
