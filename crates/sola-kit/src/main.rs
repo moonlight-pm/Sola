@@ -2,13 +2,10 @@
 //!
 //! Iced app that catalogs every component the kit ships, renders each
 //! one in a showcase panel, and (eventually) exposes the live theme
-//! the kit publishes over `Topic::Theme`. Successor to the CEF/Remix-v3
-//! storybook that `sola-kit-legacy` carries; rebuilt against iced so the
-//! kit binary runs without CEF and dogfoods the iced surface the rest
-//! of Sola is migrating onto.
-//!
-//! See `crates/sola-kit-legacy/src/app/app.rs` for the legacy storybook
-//! for comparison.
+//! the kit publishes over `Topic::Theme`. Successor to the now-removed
+//! CEF/Remix-v3 storybook; rebuilt against iced so the kit binary runs
+//! without CEF and dogfoods the iced surface the rest of Sola is
+//! migrating onto.
 
 use sola_bus::topics::TopicKind;
 use sola_core::KeyCode;

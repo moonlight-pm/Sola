@@ -3,8 +3,8 @@ name = "sola-kit"
 version = "0.1.0"
 edition = "2024"
 
-# Iced-based Sola app kit. Successor to the CEF/Remix-v3 kit
-# (now `sola-kit-legacy`). Provides:
+# Iced-based Sola app kit. Successor to the now-removed CEF/Remix-v3
+# kit. Provides:
 #   - app scaffolding (`sola_kit::run::<A>()` — bus, fonts, window,
 #     theme wired up so apps don't repeat boilerplate)
 #   - the canonical sola palette as an `iced::Theme`

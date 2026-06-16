@@ -1,8 +1,8 @@
 # sola-kit (iced)
 
 The kit that Sola apps build on. v0 — small surface, grows with
-demand. Successor to [[sola-kit-legacy]] (CEF + Remix v3); the two
-coexist while shell-side apps migrate.
+demand. Successor to the now-removed CEF + Remix v3 kit, which it has
+fully replaced.
 
 **Status (2026-05-22):** v0 ships a lib + the `sola-kit` storybook
 binary. First external consumer is `sola-monitor`; the storybook is
@@ -12,7 +12,7 @@ visible vocabulary — see "What lives in the kit" below.
 
 ## Why a new kit
 
-`sola-kit-legacy` was a JavaScript runtime (CEF browser process per app,
+The legacy CEF kit was a JavaScript runtime (CEF browser process per app,
 Remix v3 components, swc transform pipeline, design-token CSS lowering,
 storybook). The CEF stack proved correct but expensive on NVIDIA
 proprietary (CPU OSR memcpy per paint, ~720 MiB/s memory traffic —
@@ -246,19 +246,12 @@ for the shared type story.
 
 ## Migration story (sola-shell, sola-settings)
 
-`sola-shell` and `sola-settings` still depend on `sola-kit-legacy`
-via the package-rename trick — `Cargo.toml` says
-`sola-kit = { path = "../sola-kit-legacy", package = "sola-kit-legacy" }`
-so their internal `use sola_kit::…` imports keep working unchanged.
-
-When each crate ports to the new kit, that one line gets replaced
-with `sola-kit = { path = "../sola-kit" }` and the call sites get
-the obvious diff (no `cef::short_circuit_if_subprocess`, no
-`asset_bundle!`, no `AppCtx` — iced apps own their state directly).
-
-Order is up to demand. Shell + settings work today; the new
-direction proves itself app-by-app rather than as a big-bang
-migration.
+Both `sola-shell` and `sola-settings` are now ported to the new kit
+(`sola-kit = { path = "../sola-kit" }`). With no consumers left, the
+old CEF/Remix kit crate has been removed from the workspace. The port
+dropped the CEF-era scaffolding at the call sites (no
+`cef::short_circuit_if_subprocess`, no `asset_bundle!`, no `AppCtx` —
+iced apps own their state directly).
 
 ## Where to look in code
 
@@ -283,7 +276,6 @@ migration.
 | `crates/sola-kit/src/main.rs`                       | `sola-kit` storybook binary entry               |
 | `crates/sola-kit/src/storybook/`                    | binary-only showcase pages                      |
 | `crates/sola-monitor/src/main.rs`                   | canonical first consumer — read for the pattern |
-| `crates/sola-kit-legacy/`                           | mothballed CEF/Remix kit — see [[sola-kit-legacy]] |
 
 ## Roadmap (when work resumes)
 

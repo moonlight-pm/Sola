@@ -41,11 +41,5 @@ pub fn builtin_apps() -> Vec<Application> {
             command: "/opt/sola/bin/sola-kit".into(),
             icon: "lucide/palette".into(),
         },
-        Application {
-            app_id: "sola-kit-legacy".into(),
-            label: "Kit (Legacy)".into(),
-            command: "/opt/sola/bin/sola-kit-legacy".into(),
-            icon: "lucide/palette".into(),
-        },
     ]
 }

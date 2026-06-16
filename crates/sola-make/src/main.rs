@@ -21,7 +21,7 @@ use clap::Parser;
 /// of the default `cargo make build` / `cargo make install` flows.
 /// They stay buildable via explicit `cargo make build <name>` so the
 /// source is kept warm without paying for them on every full build.
-const EXCLUDED_TARGETS: &[&str] = &["sola-browser", "sola-kit-legacy", "sola-terminal"];
+const EXCLUDED_TARGETS: &[&str] = &["sola-browser", "sola-terminal"];
 
 #[derive(Parser, Debug)]
 #[command(name = "sola-make", about = "Sola build system")]
@@ -297,8 +297,6 @@ mod tests {
                 "--exclude",
                 "sola-browser",
                 "--exclude",
-                "sola-kit-legacy",
-                "--exclude",
                 "sola-terminal",
             ]
         );
@@ -321,8 +319,6 @@ mod tests {
                 "--workspace",
                 "--exclude",
                 "sola-browser",
-                "--exclude",
-                "sola-kit-legacy",
                 "--exclude",
                 "sola-terminal",
                 "--release",
@@ -402,8 +398,9 @@ mod tests {
     }
 
     /// A crate with [[bin]] in Cargo.toml but no src/main.rs must still be
-    /// discovered. This verifies the fix that allows sola-kit-legacy (whose binary is
-    /// at src/app/main.rs) to be found by the all-apps install path.
+    /// discovered. This verifies the fix that allows a crate whose binary
+    /// lives at a non-default path (e.g. src/app/main.rs) to be found by
+    /// the all-apps install path.
     #[test]
     fn discover_binaries_finds_bin_section_without_main_rs() {
         let tmp = std::env::temp_dir().join("sola-make-test-discover");

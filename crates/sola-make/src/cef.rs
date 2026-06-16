@@ -7,11 +7,11 @@
 use std::path::PathBuf;
 
 /// Pinned CEF release. Read from the workspace-root `cef-version` file
-/// so `crates/sola-kit-legacy/build.rs` can read the same version without
-/// taking a `[build-dependencies]` on `sola-make` (which would pull
-/// in the whole `ureq`/`bzip2`/`tar` tree into sola-kit-legacy's build graph
-/// and trigger spurious rebuild cascades when alternating between
-/// `cargo build -p sola-kit-legacy` and `cargo make build sola-kit-legacy`).
+/// so a CEF consumer's `build.rs` (e.g. `crates/sola-browser-cef/build.rs`)
+/// can read the same version without taking a `[build-dependencies]` on
+/// `sola-make` (which would pull in the whole `ureq`/`bzip2`/`tar` tree into
+/// that crate's build graph and trigger spurious rebuild cascades when
+/// alternating between `cargo build -p <crate>` and `cargo make build <crate>`).
 ///
 /// `trim_ascii_end()` is `const fn` since Rust 1.80, so this stays a
 /// compile-time constant — bumping the version is a one-line file
@@ -37,9 +37,9 @@ pub fn release_dir() -> PathBuf {
 }
 
 /// Path to the `Resources/` subdirectory containing icudtl.dat + .pak files.
-/// Currently unused inside this build crate — `crates/sola-kit-legacy/src/cef/distribution.rs`
-/// reads the same path from the `SOLA_KIT_CEF_DIR` env var at runtime — but it
-/// rounds out the cache-path API alongside `release_dir` and is cheap to keep.
+/// Currently unused inside this build crate — the CEF consumer crate reads the
+/// same path at runtime — but it rounds out the cache-path API alongside
+/// `release_dir` and is cheap to keep.
 #[allow(dead_code)]
 pub fn resources_dir() -> PathBuf {
     cef_path().join("Resources")
@@ -98,7 +98,7 @@ pub fn ensure_cef() -> io::Result<PathBuf> {
 /// transitive system deps (glib, nss, atk, dbus, cups, X11/X*, gbm, expat,
 /// xkbcommon, cairo, pango, udev, alsa, atspi, …) without LD_LIBRARY_PATH
 /// or any wrapper script. See `docs/vault/Distribution.md` →
-/// "CEF runtime libraries (sola-kit-legacy)".
+/// "CEF runtime libraries".
 const NIX_LD_LIB_DIR: &str = "/run/current-system/sw/share/nix-ld/lib";
 
 /// NixOS GPU-driver indirection. `hardware.graphics.enable = true`
@@ -198,8 +198,8 @@ fn patch_cef_libs_for_nix_ld(release: &Path) -> io::Result<()> {
 /// `rustls` + `bzip2` + `tar` as deps. Those crates were also pulled
 /// in (at different feature unifications) by `cef-dll-sys`'s
 /// `download-cef` build-dependency, causing cargo to rebuild them on
-/// every alternation between `cargo build -p sola-kit-legacy` and
-/// `cargo make build sola-kit-legacy`. Shelling out drops the deps entirely.
+/// every alternation between `cargo build -p sola-browser-cef` and
+/// `cargo make build sola-browser-cef`. Shelling out drops the deps entirely.
 ///
 /// Both `curl` and `tar` are universally available on Linux hosts;
 /// we already require `patchelf` and other tools, so this isn't a new
