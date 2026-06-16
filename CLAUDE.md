@@ -24,7 +24,6 @@ crates/
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
   sola-app/            # WebView app framework (GTK4 + WebKit6, legacy)
   sola-kit/            # Iced-based app kit (new) — workspace-excluded; lib + `sola-kit` storybook binary
-  sola-kit-legacy/     # Old CEF + Remix v3 kit — kept alive for sola-shell + sola-settings until ported
   sola-assets/         # Vendored icon/asset bundles
   sola-browser/        # WebKit browser
   sola-make/           # Build/install orchestration (xtask)
@@ -129,178 +128,126 @@ tail -100 /opt/sola/log/sola.log
 - Logs go to `/opt/sola/log/`
 - User launches sola manually from a physical TTY — no display manager, no auto-login
 
-## Web Frontends — Two Stacks Coexisting
+## UI Stack — Iced (current) + legacy WebView
 
-Two app frameworks live side-by-side in the workspace:
+Sola's app UI is built with **[Iced](https://iced.rs) 0.14** — pure Rust, no
+web engine. Apps are `iced` programs (wgpu renderer, wayland feature, svg) that
+run as wayland clients of `sola-river` and talk to the rest of the system over
+the bus. There is no HTML/JS/CSS, no bundler, no WebView in the active stack.
 
-- **`sola-kit` (the future).** GTK-free CEF stack with off-screen rendering composited as Wayland surfaces via dma-buf. Apps use Remix v3 (`@remix-run/ui`) for component composition. This is where new app work happens. Documented below.
-- **`sola-app` (legacy).** GTK4 + WebKit6 stack still hosting `sola-shell`, `sola-settings`, `sola-terminal`, and `sola-browser`. Retained until each is ported to the kit; do not write new apps against it.
+One earlier stack survives only as a legacy crate, frozen until its last
+consumer is ported off it:
 
-The rest of this section is the kit; the legacy stack is self-contained and follows its own crate-local conventions.
+- **`sola-app`** — the original GTK4 + WebKit6 host. No new work here.
 
-## Web Frontends: Remix v3 (sola-kit)
+`sola-shell` and `sola-settings` are already ported to Iced; `sola-monitor` is
+the canonical first Iced consumer. Do **not** write new apps against the legacy
+stack. The CEF binding notes at the end of this file apply to `sola-browser-cef`,
+not to the Iced kit.
 
-Sola-kit apps render their UI with **Remix v3** (`@remix-run/ui`, vendored at `crates/sola-kit/web/vendor/remix-ui/`). JSX is **transformed server-side** by swc — there is no bundler, no Node, and no `tsc` in the loop at runtime.
+## sola-kit (the Iced app kit)
 
-### Build pipeline
+`sola-kit` is the shared Iced app kit + a `sola-kit` **storybook** binary that
+dogfoods every component (each widget has a showcase page, so regressions show
+up there first). Library surface in `src/lib.rs`: `App`, `BusSetup`, `run`,
+`default_theme`, plus re-exported `iced` and `sola_bus` (so consumers don't take
+their own direct deps just to spell trait bounds or reference bus types).
 
-Files end in `.tsx` (JSX) or `.ts` (no JSX). The asset server (`crates/sola-kit/src/strip.rs::transform`) handles the request:
+### App scaffolding (`src/app.rs`)
 
-- **`.tsx`** → swc parses TSX → resolver → JSX transform (automatic runtime, `import_source: "@remix-run/ui"`) → TS strip → JS.
-- **`.ts`** → swc parses TS → resolver → TS strip → JS. JSX transform is skipped.
-- **`.jsx`** → resolver → JSX transform only, no type strip.
+- **`App` trait** — currently just `const APP_ID: &'static str`. One source of
+  truth for the wayland `xdg_toplevel.app_id` and the bus app id.
+- **`startup(app_id)`** — the standard boot flow every kit app runs *before*
+  handing the thread to iced: log init → `activate_wayland_session` →
+  `wait_for_wayland_socket` (cold-boot race guard) → `activate_gpu_env` (points
+  NixOS GPU dispatch env at `/run/opengl-driver/` so wgpu/EGL/Vulkan init from a
+  bare TTY) → `watch_own_binary` (re-exec in place when `/opt/sola/bin/<name>`
+  changes, so `cargo make install` picks up new code live; skipped when
+  `SOLA_NO_SELF_WATCH=1`).
+- **`BusSetup`** — builder for the connect + subscribe + publish-app-menu dance.
+  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).install()`
+  hands the connected client to the kit's global slot.
+- **`bus_subscription()`** → `Subscription<Arc<Message>>` — apps `.map(...)` it
+  into their own message enum. Internally a 8ms polling thread forwards the bus
+  client's sync `recv` into an unbounded channel feeding `stream::channel`. Use
+  this **or** a manual `bus().lock().try_recv()` loop, never both (one receiver
+  per process).
+- **`run::<A>()`** — still just a placeholder over `startup`. There is no generic
+  iced wrapper yet: each app builds its own `iced::application`/`iced::daemon`
+  because update/view/subscription types differ. Promote shared logic here only
+  once a second app justifies it.
 
-The **automatic runtime** auto-injects `import { jsx, jsxs, Fragment } from "@remix-run/ui/jsx-runtime"` for any file containing JSX, so app code never imports a JSX factory by hand. The editor mirror is `tsconfig.json` with `"jsx": "react-jsx"` and `"jsxImportSource": "@remix-run/ui"` — both must agree.
+### Theme protocol (`src/theme.rs`)
 
-### What the kit provides for free
+The kit bridges three representations of the palette:
 
-Apps don't ship `index.html`, an importmap, theme bootstrap, or component CSS `<link>`s. The kit auto-injects all of that:
+1. **Compile-time defaults** — the `hex::*` constants.
+2. **`Atoms`** — 10 editable `iced::Color`s: `bg`, `bg_raised`, `bg_hover`,
+   `border`, `fg`, `fg_muted`, `accent`, `success`, `warning`, `danger`. The
+   editable bridge the storybook mutates.
+3. **Bus theme** — `sola_core::theme::Theme`, broadcast as the persistent
+   `Topic::Theme` and shared with every other sola process.
 
-- **`index.html` + `index.tsx`** live in `crates/sola-kit/web/lib/` and are served via `platform_assets()`. `ctx::add_window` falls back to platform assets when an app has no own `index.html`.
-- **Importmap** built per-app by `lib.rs::build_importmap` and injected into `<head>` before any module script. Publishes `@sola/ipc`, `@sola/kit`, `@sola/sidebar`, `@sola/app-root`, `@remix-run/ui`, `@remix-run/ui/jsx-runtime`. `@sola/app-root` is mapped per-app from `SolaApp::ROOT_COMPONENT` (default `/main.tsx`).
-- **Component stylesheets** auto-discovered: `inject_kit_head` walks `platform_assets()` for every `Css` asset and emits a `<link rel="stylesheet">` for each. Adding a new kit component with a sibling `.css` file makes it appear in every kit app automatically.
-- **`__solaRecv` queueing bootstrap** installed before any module script runs so Rust→JS pushes during early init don't drop on the floor.
-
-The minimum an app needs is a `Cargo.toml`, a `SolaApp` impl, and a `web/main.tsx` that exports a Remix v3 component named `Main`. Override `ROOT_COMPONENT` only if the root file lives elsewhere.
-
-### Component model (Remix v3)
-
-Components are functions that take a `Handle<Props>` and return a `RenderFn`:
-
-```tsx
-import { type Handle, type RemixNode } from "@remix-run/ui";
-import { on } from "@sola/kit";
-
-interface CounterProps {
-  label: string;
-  children?: RemixNode;
-}
-
-export function Counter(handle: Handle<CounterProps>) {
-  let count = 0;
-
-  const onClick = () => {
-    count++;
-    handle.update();
-  };
-
-  return () => (
-    <button class="kit-btn" mix={[on("click", onClick)]}>
-      {handle.props.label}: {count} {handle.props.children}
-    </button>
-  );
-}
-```
-
-Key points:
-
-- **State is closure-captured.** Mutate locals; call `handle.update()` to schedule a re-render. The function body runs once per mount; the returned `RenderFn` runs every render.
-- **`handle.props` is stable identity, fresh values.** Object reference doesn't change; field values are updated in place before each render.
-- **Events attach via `mix={[on("click", handler)]}`.** Lowercase JSX attrs like `onclick=` are *not* typed on Remix v3's host elements — see "Pitfalls" below.
-- **Children compose naturally** — `props.children` is `RemixNode` (renderable + arrays of renderable). Named slots use named props (`leading`, `trailing`, etc.), not HTML `<slot>`.
-- **Conditionals and lists are plain JS** — `cond ? html`...` : null` and `items.map(item => <Item key={item.id} ... />)`.
-
-### `@sola/kit` umbrella
-
-`web/lib/kit.ts`, served at `/lib/kit.ts`, importmap entry `@sola/kit`. Two exports:
-
-- **`setupKit()`** — call once from the kit's built-in `index.tsx` (apps almost never need to call it). Installs the constructable themeSheet that the bus-pump pushes CSS into.
-- **`on()`** — typed wrapper around Remix v3's `on()` that pre-fixes `target = HTMLElement` and gives full event-type inference for handler params (`on("keydown", e => e.key)` infers `e: KeyboardEvent`). Always import from `@sola/kit`, not `@remix-run/ui`. The raw Remix `on` defaults its target to `Element`, whose `ElementEventMap` is missing keyboard events; inside Remix's own components that's not a problem because they're inside `createMixin<HTMLElement>` wrappers, but our direct-JSX `mix={[…]}` usage doesn't get that context.
-
-### Theme protocol
-
-Two layers, both in `sola-core::theme::Theme`, both broadcast as the persistent `Topic::Theme`:
-
-1. **Palette** — flat `BTreeMap<TokenName, Token>`. Each token has a `kind` (Color / FontFamily / TextSize / Space / Radius), a value, and the *selection groups* it's eligible for (e.g. `["surface"]`, `["accent", "border"]`).
-2. **Component bindings** — `BTreeMap<String, ComponentBindings>` keyed by component name. Each component declares slots; each slot points at a token and constrains itself to a selection group.
-
-`Theme::to_css(&self)` lowers to a single `:root { … }` block in two sections — every palette token first (`--bg-secondary: #161b22;`), then every binding as a scoped var pointing at an atom (`--sola-sidebar-bg: var(--bg-secondary);`). **Component CSS only ever references the scoped vars** (`var(--sola-<component>-<slot>)`), never atoms directly. A binding swap is a one-line `:root` edit with no component-CSS change.
-
-`Theme::validate()` enforces the four invariants (binding's token exists, token's groups contain binding's group, group→kind consistent, all referenced components present in bindings).
-
-The kit's `BusPumpTask::execute` intercepts `Topic::Theme` deliveries: lowers via `to_css()` once, pushes to every kit-managed window via `__solaRecv` `{ event: "theme", css: … }`. The renderer-side `setupKit()` listener does `themeSheet.replaceSync(msg.css)` — single allocation, hot-reloadable on every theme update including the sticky replay at first connect.
+Conversions: `Atoms` → `iced::Theme` via `iced_theme_from_atoms`; `Atoms` →
+bus via `bus_theme_from_atoms`. **`from_bus_theme(&BusTheme) -> iced::Theme`**
+is the consumer path — it maps named palette tokens (`bg-primary`,
+`bg-secondary`, `bg-tertiary`, `border`, `text-primary`, `text-tertiary`,
+`accent`, `success`, `warning`, `danger`) onto an iced `Extended` palette,
+falling back to compile-time defaults for any missing/malformed atom, **and as
+a side effect installs the font role table** so font tokens land alongside
+colours. Wire it into `update` on `Topic::Theme`, then return `self.theme.clone()`
+from `App::theme`. `to_bus_theme()` is canned-default-only — the iced→bus
+direction is lossy by design (iced derives many colours from a few atoms), so a
+real theme editor should emit the bus value directly, not reverse it out of an
+iced `Theme`.
 
 Spec: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`.
 
-### Multi-window apps
+**Shell chrome** rides the same palette as `shell-*` tokens (4 alpha-capable
+colors + 4 spacing values, group `"shell"`). `ShellStyle` is the typed view:
+`shell_style_from_bus_theme` extracts (per-token fallback to compile-time
+defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every
+`Topic::Theme`; the storybook's Shell page is the editor. Colors round-trip as
+`#rrggbbaa` when translucent. Spec:
+`docs/specs/2026-06-06-shell-customization-design.md`.
 
-A single `SolaApp` can host multiple windows with different root
-components and per-window seed state. On each `ctx.add_window(cfg)`:
+### Fonts (`src/fonts.rs`)
 
-- `cfg.root_component: Option<&'static str>` overrides
-  `SolaApp::ROOT_COMPONENT` for that window's importmap entry of
-  `@sola/app-root`. Lets one app mount different `Main` components
-  per window (e.g. sola-shell's menubar/launcher/menu/switcher).
-- `cfg.initial_state: Option<serde_json::Value>` is serialized into
-  `<script>window.__solaInitial = <json>;</script>` and injected into
-  the head of that window's `index.html`. The kit's `index.tsx` reads
-  it synchronously and passes it to `Main` via the `initial` prop.
-  `None` becomes `null`.
+- **Font files** ship under `/opt/sola/share/fonts/` (synced by
+  `cargo make assets sync`). `load_all()` reads `FONT_FILES` off disk; missing
+  files warn but don't fail. Pass the bytes to the iced builder's `.font(...)`.
+  SF Pro and Iosevka are placed manually by the user (license), not synced.
+- **Semantic roles, not families.** Components never name a family directly —
+  they call role accessors: `fonts::ui()`, `ui_medium()`, `display()`,
+  `chrome()`, `mono()`. The `Fonts` table (those 5 roles) lives in a process-wide
+  `RwLock`; `fonts::install(Fonts)` hot-swaps it, and the bus theme path calls
+  `install` on every `Topic::Theme` so a font edit propagates on the next render.
+  Default is SF Pro for everything UI-shaped + JetBrains Mono for code.
+- **`INSTALLED_FAMILIES`** is the font-picker vocabulary (the strings a settings
+  UI offers and that `FontFamily` tokens carry on the bus). `fonts_from_families`
+  builds a `Fonts` table from per-role family-name selections; `FontSelection`
+  (in `theme.rs`) is the per-role wire form.
 
-`Main`'s signature must accept the prop:
-`function Main(handle: Handle<{ initial: T | null }>)`.
+### Components (`src/components/`)
 
-### Self-scheduled callbacks
+`badge`, `button`, `card`, `divider`, `field`, `icon`, `popover`, `sidebar`,
+`split`, `swatch`, `text`, `text_input`, `toolbar`. Each is a reusable iced
+widget/style with a matching storybook page under `src/storybook/pages/`. Grow
+this surface only as real apps need shared pieces — no speculative widgets.
 
-Apps that need to re-enter their own runtime state from outside the bus
-/ JS / lifecycle callbacks the trait already provides — e.g. a delayed
-focus-shift timer that fires after the cursor parks on a window for
-some interval — use the kit's `AppRuntimeHandle` primitive.
+## sola-shell (the Iced desktop shell)
 
-Opt in by implementing `SolaApp::after_runtime_ready`:
+A single **`iced::daemon`** multi-window application. The daemon opens no
+default window; a boot task opens the menubar, and the other three windows
+(`WindowKind`: `Menubar`, `Menu`, `Launcher`, `Switcher`) open on demand. The
+`Shell` struct holds the per-window `iced::window::Id`s, focused app/window,
+MRU apps + per-app MRU windows, known windows, the application list, parsed app
+menus, output size, menu open-state, switcher/launcher sub-state, and zoning
+state. `Msg` covers bus events, window lifecycle, menu open/hover/close/action,
+launcher (query/nav/launch), switcher (nav/hover/confirm/cancel + a focus-hover
+timer), zoning, clock tick, and toasts. It path-depends on `sola-kit`.
 
-```rust
-fn after_runtime_ready(&mut self, handle: AppRuntimeHandle<Self>, _ctx: &mut AppCtx) {
-    self.runtime = Some(handle);
-}
-```
-
-The handle has two methods:
-
-- `with(|app, ctx| …) -> bool` — re-enter the runtime synchronously
-  if it's still alive. Returns `false` if the runtime has been dropped
-  (shutdown path).
-- `schedule_after(delay_ms, |app, ctx| …)` — post a one-shot UI-thread
-  callback via `cef::post_delayed_task`. The closure runs inside
-  `with()` so a dropped runtime is a silent no-op. `cef::post_delayed_task`
-  has no cancel API; if you need to cancel, use a monotonic generation
-  counter and check it inside the closure (see sola-shell's
-  `pending_focus_generation` for the pattern).
-
-Apps that don't override `after_runtime_ready` ignore the handle —
-the default no-op preserves single-window app behavior.
-
-### CSS authoring
-
-Kit components ship a `web/lib/components/<name>.css` next to their `.tsx`. Class-based selectors (not tag-based — Remix components render plain DOM). Reference only `var(--sola-<component>-<slot>)` slots; inherited typography (color, font-family, font-size) cascades from the surrounding `<Root>` via normal CSS inheritance — don't re-reference `--sola-root-*` from inside other components.
-
-`import './foo.css'` in a `.ts(x)` file fails (`'text/css' is not a valid JavaScript MIME type`). The kit's auto-injection handles it — just add the CSS file to `platform_assets()` and a `<link>` appears in every app's `<head>`.
-
-### Module imports
-
-Both `import './foo'` and `import './foo.js'` work. The asset server (`AssetBundle::find` in `crates/sola-kit/src/assets.rs`) tries the literal path first, then `.js → .ts/.tsx/.jsx`, then — for extensionless paths — `.ts/.tsx/.jsx/.js/.mjs` in that order.
-
-Bare specifiers (`import x from 'foo'`) need importmap entries. The kit's importmap (auto-injected) covers `@sola/*` and `@remix-run/ui*`. Apps with their own bare specifiers need their own kit-side extension (not yet built; pull when a real consumer needs it).
-
-`tsconfig.json` carries:
-- `"jsx": "react-jsx"` and `"jsxImportSource": "@remix-run/ui"` — must mirror swc's runtime config.
-- `"allowImportingTsExtensions": true` — required because the vendored `@remix-run/ui` source uses explicit `.ts`/`.tsx` extensions in its own imports.
-- `"paths"` mirroring the runtime importmap so the LSP resolves the same specifiers.
-
-### Sidebar (the first kit component)
-
-`web/lib/components/sidebar.tsx` exports three component factories — `Sidebar`, `SidebarSection`, `SidebarItem`. Slot-based composition, parent-controlled active state, `onSelect` callback prop, `leading` / `trailing` named-prop slots. CSS lives in the sibling `sidebar.css` and references only `--sola-sidebar-*` scoped vars. See the spec for the slot inventory and selection groups.
-
-### Common pitfalls
-
-- ❌ `import { on } from "@remix-run/ui"` — use `import { on } from "@sola/kit"` so HTMLElement event-map inference works without explicit type parameters.
-- ❌ `<div onclick={fn}>` or `<div onClick={fn}>` — host elements have no event attribute typings in Remix v3. Use `mix={[on("click", fn)]}`.
-- ❌ Mounting your own importmap or `<link>` for kit components in a kit app's `index.html` — the kit auto-injects both. Only one importmap is allowed per page.
-- ❌ Re-importing or shipping `@remix-run/ui` in a kit app — the kit serves the vendored source via `platform_assets()`.
-- ❌ Returning JSX directly from the component function (`function C() { return <div/> }`) — Remix factories return a `RenderFn` (`function C(handle) { return () => <div/> }`).
-- ❌ Mutating closure state without `handle.update()` — the renderer doesn't auto-track. Call `handle.update()` to schedule the next render.
-- ❌ Object literals at expression position (`async () => {a: 1}`) — they parse as block statements. Use `async () => ({a: 1})`. Only relevant inside `solactl eval` and similar wrappers.
-- ❌ `import './foo.css'` — use a `<link>` (or, for kit-shipped CSS, just register in `platform_assets()` and the kit auto-injects).
+Spec: `docs/specs/2026-05-22-sola-shell-iced-port-design.md`.
 
 ## CEF binding choice
 
