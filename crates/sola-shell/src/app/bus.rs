@@ -511,10 +511,14 @@ impl Shell {
         // Shell system shortcuts (e.g. Exit Sola from the shell's own menu).
         if let Some(action) = self.menus.lookup_shortcut(&chord, Self::APP_ID) {
             tracing::info!(action_id = %action.action_id, "shell shortcut");
-            return Task::done(Msg::MenuAction {
-                app_id: action.app_id,
-                action_id: action.action_id,
-            });
+            let flash = self.flash_menu_action(&action.app_id, &action.action_id);
+            return Task::batch([
+                flash,
+                Task::done(Msg::MenuAction {
+                    app_id: action.app_id,
+                    action_id: action.action_id,
+                }),
+            ]);
         }
 
         // Focused app menu shortcut lookup.
@@ -525,10 +529,14 @@ impl Shell {
                     action_id = %action.action_id,
                     "menu shortcut matched"
                 );
-                return Task::done(Msg::MenuAction {
-                    app_id: action.app_id,
-                    action_id: action.action_id,
-                });
+                let flash = self.flash_menu_action(&action.app_id, &action.action_id);
+                return Task::batch([
+                    flash,
+                    Task::done(Msg::MenuAction {
+                        app_id: action.app_id,
+                        action_id: action.action_id,
+                    }),
+                ]);
             }
         }
 

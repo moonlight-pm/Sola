@@ -14,6 +14,7 @@ use crate::app::Msg;
 use crate::components::clock::clock_widget;
 use crate::components::toast::toast_widget;
 use crate::menu::state::synthesized_menu;
+use crate::menubar::FlashTarget;
 
 /// Render the menubar for `shell`.
 pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
@@ -22,7 +23,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // ── System-menu icon ──────────────────────────────────────────────
     // White flower glyph; clickable region is whole padded area.
     let system_fg = iced::Color::WHITE;
-    let system_active = shell.menu_open && shell.current_open_is_system;
+    let system_active =
+        (shell.menu_open && shell.current_open_is_system) || flashing(shell, true, 0);
     // button: press + hover-fill; mouse_area: hover-to-switch signal
     // (outer mouse_area still receives on_enter — only presses are captured by the button).
     let system_btn: Element<'_, Msg> = mouse_area(
@@ -41,9 +43,10 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // the app label from the applications catalog, or the raw app_id).
     let app_title_str = focused_app_title(shell);
     let clickable = has_menu(shell);
-    let title_active = shell.menu_open
+    let title_active = (shell.menu_open
         && !shell.current_open_is_system
-        && shell.current_open_index == Some(0);
+        && shell.current_open_index == Some(0))
+        || flashing(shell, false, 0);
     let app_title: Element<'_, Msg> = if clickable {
         mouse_area(
             iced::widget::button(
@@ -123,6 +126,14 @@ fn has_menu(shell: &crate::app::Shell) -> bool {
     shell.focused_app_id.is_some()
 }
 
+/// True when the menubar label addressed by `(is_system, index)` is the one
+/// currently flashing as keyboard-shortcut feedback (the macOS "command ran
+/// through the menu" pulse). Reuses the open-menu highlight, so a flash looks
+/// identical to a momentary selection.
+fn flashing(shell: &crate::app::Shell, is_system: bool, index: usize) -> bool {
+    shell.menubar.flash == Some(FlashTarget { is_system, index })
+}
+
 /// Build the app-menu label buttons (menus[1..] of the focused app).
 /// Each label becomes a `mouse_area` wrapping a kit menubar button.
 /// `on_press` → `Msg::OpenMenu { index }`
@@ -150,9 +161,10 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
         .enumerate()
         .skip(1)
         .map(|(index, menu)| {
-            let active = shell.menu_open
+            let active = (shell.menu_open
                 && !shell.current_open_is_system
-                && shell.current_open_index == Some(index);
+                && shell.current_open_index == Some(index))
+                || flashing(shell, false, index);
             mouse_area(
                 iced::widget::button(
                     text(menu.label.clone())

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sola_bus::topics::{
-    ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate, MenuActionPayload,
+    ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate, MenuActionPayload, MenuItem,
     RegisteredChord, Topic, Window,
 };
 use sola_core::{KeyChord, KeyCode};
@@ -16,7 +16,7 @@ use crate::keys;
 use crate::launcher::state::LauncherState;
 use crate::menu::state::MenuCache;
 use crate::menubar;
-use crate::menubar::MenubarState;
+use crate::menubar::{FlashTarget, MenubarState};
 use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
@@ -50,6 +50,8 @@ pub enum Msg {
     ClockTick,
     /// Expire the toast for `generation` if it matches the current generation.
     ToastExpire(u64),
+    /// End a menubar shortcut-flash for `generation` if it's still current.
+    MenuFlashExpire(u64),
     // --- Launcher messages ---
     /// Open the launcher: snapshot focus, reset query, focus text input.
     OpenLauncher,
@@ -277,6 +279,38 @@ impl Shell {
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.emit(Topic::Composition(entries));
         }
+    }
+
+    /// Which top-level menu of `app_id` contains `action_id`, as a position
+    /// in its menu list (0 = the app-name slot shown as the title). `None`
+    /// if the app has no cached menu or the action isn't found.
+    fn menu_index_for_action(&self, app_id: &str, action_id: &str) -> Option<usize> {
+        let payload = self.menus.get_menu(app_id)?;
+        payload.menus.iter().position(|menu| {
+            menu.items.iter().any(|item| {
+                matches!(item, MenuItem::Action { id, .. } if id == action_id)
+            })
+        })
+    }
+
+    /// Briefly flash the menubar label that owns `(app_id, action_id)` — the
+    /// macOS "command went through the menu" feedback. The shell's own actions
+    /// live under the system flower; a focused app's actions map to its title
+    /// (index 0) or one of its menu labels. Returns the timer task that ends
+    /// the pulse, or `Task::none()` if there's no label to flash.
+    fn flash_menu_action(&mut self, app_id: &str, action_id: &str) -> iced::Task<Msg> {
+        let target = if app_id == Self::APP_ID {
+            FlashTarget { is_system: true, index: 0 }
+        } else if let Some(index) = self.menu_index_for_action(app_id, action_id) {
+            FlashTarget { is_system: false, index }
+        } else {
+            return iced::Task::none();
+        };
+        let generation = self.menubar.begin_flash(target);
+        iced::Task::perform(
+            tokio::time::sleep(Duration::from_millis(150)),
+            move |_| Msg::MenuFlashExpire(generation),
+        )
     }
 
     /// Emit Topic::RegisteredChords based on current overlay state and focused app.
@@ -545,6 +579,10 @@ impl Shell {
             }
             Msg::ToastExpire(toast_gen) => {
                 self.menubar.expire_toast(toast_gen);
+                iced::Task::none()
+            }
+            Msg::MenuFlashExpire(flash_gen) => {
+                self.menubar.expire_flash(flash_gen);
                 iced::Task::none()
             }
             Msg::OpenMenu { index, is_system } => {

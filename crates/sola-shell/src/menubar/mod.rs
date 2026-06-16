@@ -15,6 +15,16 @@ use sola_kit::app::window_settings;
 /// Height of the menubar window in logical pixels.
 pub const WINDOW_HEIGHT: u32 = 28;
 
+/// Identifies one menubar label for the keyboard-shortcut "flash" feedback,
+/// using the same `(is_system, index)` addressing as the open-menu state:
+/// `{ is_system: true, index: 0 }` is the system flower, `{ false, 0 }` the
+/// focused app's title, and `{ false, n }` its nth menu (`File`, `Edit`, …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlashTarget {
+    pub is_system: bool,
+    pub index: usize,
+}
+
 /// Runtime state for the menubar window.
 pub struct MenubarState {
     /// Active toast message, if any.
@@ -28,6 +38,11 @@ pub struct MenubarState {
     /// Populated by Task 7 (menu anchor work); declared now so view can
     /// reference the field without a later structural change.
     pub label_positions: Vec<f32>,
+    /// Menubar label currently flashing as keyboard-shortcut feedback, if any.
+    pub flash: Option<FlashTarget>,
+    /// Generation counter to cancel stale flash-expiry callbacks (see
+    /// `Msg::MenuFlashExpire`), mirroring `toast_generation`.
+    pub flash_generation: u64,
 }
 
 impl MenubarState {
@@ -37,6 +52,8 @@ impl MenubarState {
             toast_generation: 0,
             clock_now: Local::now(),
             label_positions: Vec::new(),
+            flash: None,
+            flash_generation: 0,
         }
     }
 
@@ -55,6 +72,23 @@ impl MenubarState {
             self.toast = None;
         }
     }
+
+    /// Begin flashing `target` and bump the generation counter. The caller
+    /// should schedule a `Msg::MenuFlashExpire(self.flash_generation)` task
+    /// after calling this (the brief on→off pulse).
+    pub fn begin_flash(&mut self, target: FlashTarget) -> u64 {
+        self.flash_generation = self.flash_generation.wrapping_add(1);
+        self.flash = Some(target);
+        self.flash_generation
+    }
+
+    /// Clear the flash if `generation` matches the current generation.
+    /// Stale expiry callbacks (from a superseded flash) are silently ignored.
+    pub fn expire_flash(&mut self, generation: u64) {
+        if generation == self.flash_generation {
+            self.flash = None;
+        }
+    }
 }
 
 /// Open the menubar window and return `(id, Task<Id>)`.
@@ -68,4 +102,28 @@ pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     settings.decorations = false;
     settings.transparent = true;
     window::open(settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flash_generation_cancels_stale_expiry() {
+        let mut mb = MenubarState::new();
+        let first = mb.begin_flash(FlashTarget { is_system: false, index: 1 });
+        assert_eq!(mb.flash, Some(FlashTarget { is_system: false, index: 1 }));
+
+        // A second flash supersedes the first; the first's expiry is now stale.
+        let second = mb.begin_flash(FlashTarget { is_system: true, index: 0 });
+        assert_ne!(first, second);
+
+        // Stale expiry (from the superseded flash) must NOT clear the live one.
+        mb.expire_flash(first);
+        assert_eq!(mb.flash, Some(FlashTarget { is_system: true, index: 0 }));
+
+        // The current generation's expiry clears it.
+        mb.expire_flash(second);
+        assert_eq!(mb.flash, None);
+    }
 }
