@@ -147,12 +147,21 @@ impl Shell {
     pub fn boot() -> (Self, iced::Task<Msg>) {
         let theme = theme::default_theme();
 
-        // Seed Topic::Theme at startup so other kit apps have a sticky value
-        // to replay against on connect. main() installs BusSetup before iced
-        // starts, so the bus lock is safe here.
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            let bus_theme = theme::to_bus_theme();
-            let _ = bus.emit(sola_bus::topics::Topic::Theme(bus_theme));
+        // Seed Topic::Theme only on a cold first boot (nothing persisted
+        // yet), so other kit apps have a sticky value to replay against on
+        // connect. On every later boot the bus has already restored the
+        // user's selected theme from `theme/current.yaml` and replays it to
+        // us — adopted via `on_theme`. Emitting our compile-time default here
+        // unconditionally would clobber that selection: `Topic::Theme` is
+        // persistent, so the emit overwrites the file, and the
+        // most-recently-selected theme would be lost on startup. main()
+        // installs BusSetup before iced starts, so the bus lock is safe here.
+        let bus_theme = theme::to_bus_theme();
+        let persisted = sola_bus::topics::Topic::Theme(bus_theme.clone()).path_for();
+        if !persisted.exists() {
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                let _ = bus.emit(sola_bus::topics::Topic::Theme(bus_theme));
+            }
         }
 
         // Pre-allocate window ids and produce open tasks for all four windows.
