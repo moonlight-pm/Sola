@@ -430,7 +430,10 @@ impl Shell {
             if let Some(f) = self.zoning.default_app_frame(wid) { frames.push(f); }
         }
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
-            if let Some(f) = self.zoning.switcher_frame(wid) { frames.push(f); }
+            // Full-screen transparent overlay (same as launcher/menu); the
+            // switcher view centers a grid that grows to fit the open apps.
+            // (Previously a fixed 800x400 frame, which clipped the grid.)
+            if let Some(f) = self.zoning.default_app_frame(wid) { frames.push(f); }
         }
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID { continue; }
