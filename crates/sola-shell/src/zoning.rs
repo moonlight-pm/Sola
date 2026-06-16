@@ -92,7 +92,8 @@ impl ZoningState {
 
     /// Apply the config zone to a window if its app has a saved zone
     /// and this specific window hasn't been auto-zoned yet this session.
-    /// Only sola-* apps persist zones — external apps are zoned manually.
+    /// Applies to every app, sola or external, so a restored window
+    /// (e.g. a relaunched Helium) lands back in its last zone.
     ///
     /// Keyed per window_id (not per app_id) so every window of a
     /// multi-window app (e.g. Steam main + popups) receives its config
@@ -100,7 +101,7 @@ impl ZoningState {
     ///
     /// Caller emits `Topic::Frame` for the returned value in Task 10.
     pub fn apply_config_zone(&mut self, app_id: &str, window_id: u32) -> Option<FrameUpdate> {
-        if !app_id.starts_with("sola-") || self.config_applied.contains(&window_id) {
+        if self.config_applied.contains(&window_id) {
             return None;
         }
         let zone = self.app_zone_config.get(app_id).copied()?;
@@ -158,13 +159,11 @@ impl ZoningState {
 
         self.window_zones.insert(window_id, zone);
 
-        // Only persist zone config for sola-* apps. External apps
-        // are zoned manually each session.
-        if app_id.starts_with("sola-") {
-            self.app_zone_config.insert(app_id, zone);
-            self.config_applied.insert(window_id);
-            self.zones_dirty = true;
-        }
+        // Persist the zone for every app — sola or external — so layouts
+        // survive a restart and re-apply when the app's window reappears.
+        self.app_zone_config.insert(app_id, zone);
+        self.config_applied.insert(window_id);
+        self.zones_dirty = true;
 
         Some(frame)
     }
@@ -413,12 +412,18 @@ mod tests {
     }
 
     #[test]
-    fn handle_key_does_not_mark_external_app_dirty() {
+    fn handle_key_persists_external_app_zone() {
         let mut s = state_with_output(1920, 1080);
-        s.set_focused("firefox".to_string());
+        s.set_focused("helium".to_string());
         let frame = s.handle_key(KeyCode::KP_6.raw(), Some(7));
         assert!(frame.is_some());
-        assert!(s.take_zones_update().is_none(), "external app must not dirty zones");
+        // External apps now persist their zone (Topic::Zones), same as sola-*.
+        assert!(s.take_zones_update().is_some(), "external app must dirty zones");
+
+        // …and the saved zone re-applies to a fresh window of that app, so a
+        // relaunched external app lands back where it was.
+        let reapplied = s.apply_config_zone("helium", 8);
+        assert!(reapplied.is_some(), "saved external zone must re-apply on new window");
     }
 
     #[test]

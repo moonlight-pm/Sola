@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -6,8 +6,13 @@ use tracing::{info, warn};
 
 use sola_bus::BusClient;
 use sola_bus::topics::{
-    LaunchAppPayload, LaunchResultPayload, Topic, TopicKind, UserAppExitedPayload,
+    LaunchAppPayload, LaunchResultPayload, SessionApp, Topic, TopicKind, UserAppExitedPayload,
 };
+
+/// How long `restore_session` drains startup replays (the persisted
+/// `SessionApps` set and the sticky `Windows` list) before deciding what to
+/// relaunch. Also gives the compositor a moment to come up at cold boot.
+const RESTORE_SETTLE: Duration = Duration::from_millis(750);
 
 use sola_core::env;
 
@@ -67,6 +72,89 @@ impl Session {
             signal: status.signal(),
         };
         let _ = self.bus.emit(Topic::UserAppExited(payload));
+    }
+
+    /// Publish the current open-app set as the persistent `SessionApps`
+    /// topic so it can be restored on the next start. One entry per
+    /// `app_id` (a multi-instance app collapses to one), skipping apps
+    /// that are already closing. Called on every child-set change — never
+    /// standalone at startup, so a stale-empty `children` (after a bare
+    /// restart) can't clobber the persisted set.
+    fn emit_session_apps(&mut self) {
+        let pairs = self.children.iter().filter_map(|(app_id, recs)| {
+            recs.iter()
+                .find(|r| !r.closing)
+                .map(|r| (app_id.clone(), r.command.clone()))
+        });
+        let apps = session_apps_from_pairs(pairs);
+        let _ = self.bus.emit(Topic::SessionApps(apps));
+    }
+
+    /// One-shot session restore, run once at startup after subscribing.
+    ///
+    /// Drains the initial replays for `RESTORE_SETTLE` — the persisted
+    /// `SessionApps` (last session's open set) and the sticky `Windows`
+    /// (whatever is currently running) — then relaunches every persisted
+    /// app that isn't already running. The "minus what's running" filter
+    /// makes this self-correcting: a cold boot relaunches everything; a
+    /// bare `sola-session` restart relaunches nothing (apps still up).
+    pub fn restore_session(&mut self) {
+        let deadline = Instant::now() + RESTORE_SETTLE;
+        let mut persisted: Vec<SessionApp> = Vec::new();
+        let mut running: HashSet<String> = HashSet::new();
+
+        while Instant::now() < deadline {
+            while let Some(msg) = self.bus.try_recv() {
+                if let Some(topic) = Topic::parse(&msg) {
+                    self.absorb_restore(topic, &mut persisted, &mut running);
+                }
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            if let Some(msg) = self.bus.recv_timeout(remaining) {
+                if let Some(topic) = Topic::parse(&msg) {
+                    self.absorb_restore(topic, &mut persisted, &mut running);
+                }
+            }
+        }
+
+        let children_keys: HashSet<String> = self.children.keys().cloned().collect();
+        let plan = restore_plan(&persisted, &running, &children_keys);
+        if plan.is_empty() {
+            info!(
+                persisted = persisted.len(),
+                running = running.len(),
+                "session restore: nothing to relaunch"
+            );
+            return;
+        }
+        info!(count = plan.len(), "session restore: relaunching apps");
+        for app in plan {
+            self.launch(LaunchAppPayload {
+                app_id: app.app_id,
+                command: app.command,
+            });
+        }
+    }
+
+    /// Fold one message into the restore accumulators. `SessionApps` and
+    /// `Windows` update the snapshots; anything else (a launch/close that
+    /// arrives during settle) is handled normally so it isn't dropped.
+    fn absorb_restore(
+        &mut self,
+        topic: Topic,
+        persisted: &mut Vec<SessionApp>,
+        running: &mut HashSet<String>,
+    ) {
+        match topic {
+            Topic::SessionApps(apps) => *persisted = apps,
+            Topic::Windows(ws) => {
+                *running = ws.into_iter().map(|w| w.app_id).collect();
+            }
+            other => self.handle(other),
+        }
     }
 
     pub fn launch(&mut self, payload: LaunchAppPayload) {
@@ -147,6 +235,7 @@ impl Session {
                         closing: false,
                     });
                 self.emit_launch_result(&app_id, &command, true, None);
+                self.emit_session_apps();
             }
             Err(e) => {
                 warn!(%app_id, %e, "spawn failed");
@@ -180,6 +269,9 @@ impl Session {
             info!(%app_id, unit = %r.unit, "CloseApp: stopping scope");
             stop_scope(&r.unit);
         }
+        // Drop the now-closing app from the persisted set so a restart
+        // doesn't relaunch something the user just closed.
+        self.emit_session_apps();
     }
 
     /// Stop every scope, then poll for exit up to [`SHUTDOWN_POLL_BUDGET`].
@@ -251,9 +343,13 @@ impl Session {
             });
         }
         self.children.retain(|_, v| !v.is_empty());
+        let reaped_any = !to_emit.is_empty();
         for (app_id, command, status) in to_emit {
             info!(%app_id, ?status, "user app exited");
             self.emit_exited(&app_id, &command, status);
+        }
+        if reaped_any {
+            self.emit_session_apps();
         }
     }
 }
@@ -292,6 +388,35 @@ fn sanitize_unit_segment(s: &str) -> String {
         .collect()
 }
 
+/// Collapse `(app_id, command)` pairs into one `SessionApp` per `app_id`,
+/// sorted by `app_id` for a stable (churn-free) persisted value.
+fn session_apps_from_pairs(
+    pairs: impl IntoIterator<Item = (String, String)>,
+) -> Vec<SessionApp> {
+    let mut apps: Vec<SessionApp> = pairs
+        .into_iter()
+        .map(|(app_id, command)| SessionApp { app_id, command })
+        .collect();
+    apps.sort_by(|a, b| a.app_id.cmp(&b.app_id));
+    apps.dedup_by(|a, b| a.app_id == b.app_id);
+    apps
+}
+
+/// The subset of `persisted` to relaunch on restore: apps that aren't
+/// already running (per the sticky `Windows` list) and aren't already a
+/// tracked child. Keeps restore from duplicating live apps.
+fn restore_plan(
+    persisted: &[SessionApp],
+    running: &HashSet<String>,
+    children_keys: &HashSet<String>,
+) -> Vec<SessionApp> {
+    persisted
+        .iter()
+        .filter(|a| !running.contains(&a.app_id) && !children_keys.contains(&a.app_id))
+        .cloned()
+        .collect()
+}
+
 pub fn run() {
     let mut session = Session::new();
 
@@ -302,9 +427,16 @@ pub fn run() {
         TopicKind::LaunchApp,
         TopicKind::CloseApp,
         TopicKind::Shutdown,
+        // For session restore: the persisted open-app set plus the sticky
+        // current-window list (to skip apps already running).
+        TopicKind::SessionApps,
+        TopicKind::Windows,
     ]);
 
     info!("sola-session connected to bus");
+
+    // Relaunch last session's apps (once, before the steady-state loop).
+    session.restore_session();
 
     let poll = Duration::from_millis(500);
     loop {
@@ -319,5 +451,58 @@ pub fn run() {
             }
         }
         session.tick();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(id: &str, cmd: &str) -> SessionApp {
+        SessionApp { app_id: id.into(), command: cmd.into() }
+    }
+
+    fn set(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn session_apps_from_pairs_one_per_app_sorted() {
+        let apps = session_apps_from_pairs([
+            ("sola-terminal".to_string(), "/opt/sola/bin/sola-terminal".to_string()),
+            ("helium".to_string(), "helium".to_string()),
+            // Duplicate app_id (a second instance) collapses to one entry.
+            ("sola-terminal".to_string(), "/opt/sola/bin/sola-terminal".to_string()),
+        ]);
+        assert_eq!(apps, vec![
+            app("helium", "helium"),
+            app("sola-terminal", "/opt/sola/bin/sola-terminal"),
+        ]);
+    }
+
+    #[test]
+    fn restore_plan_excludes_running_and_children() {
+        let persisted = vec![app("a", "a"), app("b", "b"), app("c", "c")];
+        let running = set(&["b"]);
+        let children = set(&["c"]);
+        let plan = restore_plan(&persisted, &running, &children);
+        assert_eq!(plan, vec![app("a", "a")]);
+    }
+
+    #[test]
+    fn restore_plan_empty_when_all_running() {
+        // The bare-restart case: every persisted app is already up, so the
+        // restore relaunches nothing (no duplicates).
+        let persisted = vec![app("a", "a"), app("b", "b")];
+        let running = set(&["a", "b"]);
+        let plan = restore_plan(&persisted, &running, &HashSet::new());
+        assert!(plan.is_empty());
+    }
+
+    #[test]
+    fn restore_plan_relaunches_all_on_cold_boot() {
+        let persisted = vec![app("a", "a"), app("b", "b")];
+        let plan = restore_plan(&persisted, &HashSet::new(), &HashSet::new());
+        assert_eq!(plan, persisted);
     }
 }

@@ -33,6 +33,16 @@ pub struct LaunchAppPayload {
     pub command: String,
 }
 
+/// One open app to relaunch on next start. Owned by `sola-session` and
+/// carried (as a list) by the persistent `Topic::SessionApps`. `command`
+/// is the same launch string `sola-session` originally spawned, so restore
+/// reuses the normal launch path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionApp {
+    pub app_id: String,
+    pub command: String,
+}
+
 /// Outcome of a `LaunchApp` spawn attempt, emitted by `sola`.
 /// `ok=true` means the process was spawned; it does not guarantee the
 /// process stayed alive. `error` is populated when `ok=false`.
@@ -462,6 +472,12 @@ define_topics! {
     #[persistent]
     Zones(HashMap<String, Zone>),
 
+    // Open user apps to restore on next start. sola-session owns the list
+    // and emits a fresh copy whenever its child set changes. Persistent so
+    // the open set survives a full restart and replays on subscribe.
+    #[persistent]
+    SessionApps(Vec<SessionApp>),
+
     // Mail account + filter rules. Edited by sola-settings, consumed by
     // sola-mail. Persistent — settings emits whenever the user saves.
     #[persistent]
@@ -697,6 +713,41 @@ mod tests {
         match Topic::from_yaml_section(TopicKind::Zones, value) {
             Some(Topic::Zones(back)) => assert_eq!(back, zones),
             other => panic!("expected Zones, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn session_apps_is_persistent() {
+        use crate::topic::Behavior;
+        assert_eq!(TopicKind::SessionApps.behavior(), Behavior::Persistent);
+    }
+
+    #[test]
+    fn session_apps_roundtrip_via_message() {
+        let apps = vec![
+            SessionApp { app_id: "helium".into(), command: "helium".into() },
+            SessionApp { app_id: "sola-terminal".into(), command: "/opt/sola/bin/sola-terminal".into() },
+        ];
+        let msg = Topic::SessionApps(apps.clone()).to_message();
+        assert_eq!(msg.topic, "SessionApps");
+        match Topic::parse(&msg) {
+            Some(Topic::SessionApps(back)) => assert_eq!(back, apps),
+            other => panic!("expected SessionApps, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn session_apps_roundtrip_via_yaml() {
+        let apps = vec![SessionApp {
+            app_id: "helium".into(),
+            command: "helium --restore".into(),
+        }];
+        let value = Topic::SessionApps(apps.clone())
+            .to_yaml_value()
+            .expect("SessionApps is persistent; must serialize to YAML");
+        match Topic::from_yaml_section(TopicKind::SessionApps, value) {
+            Some(Topic::SessionApps(back)) => assert_eq!(back, apps),
+            other => panic!("expected SessionApps, got {other:?}"),
         }
     }
 
