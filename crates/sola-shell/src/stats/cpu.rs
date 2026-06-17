@@ -66,9 +66,68 @@ pub struct CpuDetail {
     pub top: Vec<Proc>,
 }
 
-/// Phase-1 stub — replaced by the real parser in Phase 3 (Task 9).
-pub fn detail(_stat: &str, _prev: &[CpuTimes]) -> CpuDetail {
-    CpuDetail::default()
+pub fn parse_loadavg(s: &str) -> [f32; 3] {
+    let mut it = s.split_whitespace().filter_map(|v| v.parse::<f32>().ok());
+    [it.next().unwrap_or(0.0), it.next().unwrap_or(0.0), it.next().unwrap_or(0.0)]
+}
+
+/// Sort processes by value descending and keep the top `n`.
+pub fn cap_top(rows: &mut Vec<Proc>, n: usize) {
+    rows.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(std::cmp::Ordering::Equal));
+    rows.truncate(n);
+}
+
+/// Build tier-2 CPU detail. `per_core_pct` is computed by the sampler from
+/// successive /proc/stat snapshots (see mod.rs); load/uptime/top read here.
+pub fn detail(per_core_pct: Vec<f32>, top: Vec<Proc>) -> CpuDetail {
+    let load = parse_loadavg(&std::fs::read_to_string("/proc/loadavg").unwrap_or_default());
+    let uptime_secs = std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse::<f32>().ok()))
+        .map(|f| f as u64)
+        .unwrap_or(0);
+    CpuDetail { per_core: per_core_pct, load, uptime_secs, top }
+}
+
+/// Top processes by CPU between two scans of /proc/<pid>/stat (utime+stime).
+/// `total_delta` is the aggregate cpu total-jiffies delta over the interval.
+pub fn top_processes(
+    prev: &std::collections::HashMap<i32, u64>,
+    total_delta: u64,
+    ncpu: usize,
+) -> (std::collections::HashMap<i32, u64>, Vec<Proc>) {
+    use std::collections::HashMap;
+    let mut cur: HashMap<i32, u64> = HashMap::new();
+    let mut rows: Vec<Proc> = Vec::new();
+    let Ok(dir) = std::fs::read_dir("/proc") else { return (cur, rows) };
+    for ent in dir.flatten() {
+        let Ok(pid) = ent.file_name().to_string_lossy().parse::<i32>() else { continue };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+        // comm is in parens (field 2); split after the closing paren to avoid spaces in names.
+        let Some(rparen) = stat.rfind(')') else { continue };
+        let rest: Vec<&str> = stat[rparen + 2..].split_whitespace().collect();
+        // After comm, field indices: state=0, ... utime=11, stime=12 (0-based in `rest`).
+        let (Some(utime), Some(stime)) = (
+            rest.get(11).and_then(|v| v.parse::<u64>().ok()),
+            rest.get(12).and_then(|v| v.parse::<u64>().ok()),
+        ) else { continue };
+        let jiffies = utime + stime;
+        cur.insert(pid, jiffies);
+        if total_delta > 0 {
+            if let Some(p) = prev.get(&pid) {
+                let d = jiffies.saturating_sub(*p) as f32;
+                // % of one core summed across the machine: scale by ncpu.
+                let pct = (d / total_delta as f32) * 100.0 * ncpu as f32;
+                if pct >= 0.5 {
+                    let name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                        .unwrap_or_default().trim().to_string();
+                    rows.push(Proc { name, value: pct });
+                }
+            }
+        }
+    }
+    cap_top(&mut rows, 4);
+    (cur, rows)
 }
 
 #[cfg(test)]
@@ -105,5 +164,23 @@ mod tests {
         let cores = parse_per_core(STAT);
         assert_eq!(cores.len(), 2);
         assert_eq!(cores[0].total, 590); // 50+25+500+10+5
+    }
+
+    #[test]
+    fn loadavg_parsed() {
+        assert_eq!(parse_loadavg("4.20 3.80 3.10 2/1234 5678"), [4.20, 3.80, 3.10]);
+    }
+
+    #[test]
+    fn top_sorted_desc_and_capped() {
+        let mut rows = vec![
+            Proc { name: "a".into(), value: 5.0 },
+            Proc { name: "b".into(), value: 22.0 },
+            Proc { name: "c".into(), value: 7.0 },
+        ];
+        cap_top(&mut rows, 2);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "b");
+        assert_eq!(rows[1].name, "c");
     }
 }

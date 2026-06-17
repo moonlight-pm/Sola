@@ -128,6 +128,10 @@ fn stats_stream() -> impl Stream<Item = Arc<Snapshot>> {
         // Per-thread previous samples for delta-based rates.
         let mut prev_cpu = cpu::parse_aggregate(&read("/proc/stat").unwrap_or_default());
         let mut prev_net = net::read_counters();
+        let mut prev_cores: Vec<cpu::CpuTimes> =
+            cpu::parse_per_core(&read("/proc/stat").unwrap_or_default());
+        let mut prev_pids: std::collections::HashMap<i32, u64> = std::collections::HashMap::new();
+        let ncpu = prev_cores.len().max(1);
         loop {
             if tx.is_closed() {
                 break;
@@ -140,6 +144,10 @@ fn stats_stream() -> impl Stream<Item = Arc<Snapshot>> {
                 (Some(p), Some(c)) => cpu::cpu_pct(&p, &c),
                 _ => 0.0,
             };
+            let total_delta = match (prev_cpu, cur_cpu) {
+                (Some(p), Some(c)) => c.total.saturating_sub(p.total),
+                _ => 0,
+            };
             prev_cpu = cur_cpu;
 
             let mem_pct = mem::pressure_pct();
@@ -150,7 +158,18 @@ fn stats_stream() -> impl Stream<Item = Arc<Snapshot>> {
             let gpu = gpu::lite();
 
             let detail = match active_metric() {
-                Some(Metric::Cpu) => Some(Detail::Cpu(cpu::detail(&stat, &[]))),
+                Some(Metric::Cpu) => {
+                    let cur_cores = cpu::parse_per_core(&stat);
+                    let per_core: Vec<f32> = prev_cores
+                        .iter()
+                        .zip(&cur_cores)
+                        .map(|(p, c)| cpu::cpu_pct(p, c))
+                        .collect();
+                    prev_cores = cur_cores;
+                    let (cur_pids, top) = cpu::top_processes(&prev_pids, total_delta, ncpu);
+                    prev_pids = cur_pids;
+                    Some(Detail::Cpu(cpu::detail(per_core, top)))
+                }
                 Some(Metric::Mem) => Some(Detail::Mem(mem::detail())),
                 Some(Metric::Net) => Some(Detail::Net(net::detail(&cur_net))),
                 Some(Metric::Gpu) => gpu::detail().map(Detail::Gpu),
