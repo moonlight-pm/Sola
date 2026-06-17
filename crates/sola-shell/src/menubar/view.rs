@@ -260,8 +260,11 @@ fn display_label(shell: &crate::app::Shell, app_id: &str) -> String {
 fn stat_indicator<'a>(label: &'a str, value: String, color: iced::Color) -> Element<'a, Msg> {
     use iced::widget::{row, text};
     row![
+        // Label stays a fixed muted gray; only the value tints on threshold.
         text(label).font(sola_kit::fonts::INTER).size(10)
-            .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(iced::Color { a: 0.6, ..color }) }),
+            .style(|_: &iced::Theme| iced::widget::text::Style {
+                color: Some(iced::Color { r: 0.902, g: 0.929, b: 0.953, a: 0.6 }),
+            }),
         text(value).font(sola_kit::fonts::MONO).size(13)
             .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(color) }),
     ]

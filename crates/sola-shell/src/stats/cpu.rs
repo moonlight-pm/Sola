@@ -105,7 +105,10 @@ pub fn top_processes(
         let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
         // comm is in parens (field 2); split after the closing paren to avoid spaces in names.
         let Some(rparen) = stat.rfind(')') else { continue };
-        let rest: Vec<&str> = stat[rparen + 2..].split_whitespace().collect();
+        // A truncated read (PID vanished mid-scan) can leave nothing after the
+        // closing paren; skip rather than panic on an out-of-bounds slice.
+        let Some(rest_str) = stat.get(rparen + 2..) else { continue };
+        let rest: Vec<&str> = rest_str.split_whitespace().collect();
         // After comm, field indices: state=0, ... utime=11, stime=12 (0-based in `rest`).
         let (Some(utime), Some(stime)) = (
             rest.get(11).and_then(|v| v.parse::<u64>().ok()),
