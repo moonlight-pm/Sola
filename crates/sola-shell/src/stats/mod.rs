@@ -32,6 +32,35 @@ pub fn level_color(pct: f32, neutral: Color) -> Color {
     }
 }
 
+use std::collections::VecDeque;
+
+/// Fixed-capacity sample window for a metric's history graph.
+#[derive(Clone, Debug)]
+pub struct History {
+    cap: usize,
+    buf: VecDeque<f32>,
+}
+
+impl History {
+    pub fn new(cap: usize) -> Self {
+        Self { cap, buf: VecDeque::with_capacity(cap) }
+    }
+    pub fn push(&mut self, v: f32) {
+        if self.buf.len() == self.cap {
+            self.buf.pop_front();
+        }
+        self.buf.push_back(v);
+    }
+    /// Samples oldest→newest as a contiguous slice (compacts the deque).
+    pub fn samples(&mut self) -> &[f32] {
+        self.buf.make_contiguous();
+        self.buf.as_slices().0
+    }
+    pub fn peak(&self) -> f32 {
+        self.buf.iter().copied().fold(0.0, f32::max)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -47,5 +76,23 @@ mod tests {
         // boundaries
         assert_eq!(level_color(WARN_PCT, neutral), AMBER);
         assert_eq!(level_color(CRIT_PCT, neutral), RED);
+    }
+
+    #[test]
+    fn history_keeps_last_n() {
+        let mut h = History::new(3);
+        for v in [1.0, 2.0, 3.0, 4.0] {
+            h.push(v);
+        }
+        assert_eq!(h.samples(), &[2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn history_peak() {
+        let mut h = History::new(4);
+        for v in [5.0, 9.0, 3.0] {
+            h.push(v);
+        }
+        assert_eq!(h.peak(), 9.0);
     }
 }
