@@ -50,6 +50,27 @@ pub fn parse_aggregate(stat: &str) -> Option<CpuTimes> {
     stat.lines().find(|l| l.starts_with("cpu ")).and_then(parse_cpu_line)
 }
 
+/// A process row for a "top processes" list.
+#[derive(Clone, Debug)]
+pub struct Proc {
+    pub name: String,
+    pub value: f32, // percent (cpu) or MB (mem) depending on the list
+}
+
+/// Tier-2 CPU detail.
+#[derive(Clone, Debug, Default)]
+pub struct CpuDetail {
+    pub per_core: Vec<f32>,
+    pub load: [f32; 3],
+    pub uptime_secs: u64,
+    pub top: Vec<Proc>,
+}
+
+/// Phase-1 stub — replaced by the real parser in Phase 3 (Task 9).
+pub fn detail(_stat: &str, _prev: &[CpuTimes]) -> CpuDetail {
+    CpuDetail::default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
