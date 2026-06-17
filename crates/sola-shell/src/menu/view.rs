@@ -142,8 +142,22 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
             };
 
             let shortcut_txt: Element<'static, Msg> = if let Some(chord) = shortcut {
-                // Shortcuts are muted whether the item is enabled or disabled.
-                text(chord.display()).size(12.0).style(kit_text::muted).into()
+                // Muted-but-visible: a dimmed version of the base text colour.
+                // We do NOT use `kit_text::muted` (secondary.base.text) here —
+                // on the dropdown card it resolves to a colour that renders
+                // invisible, so the accelerators silently disappeared. Deriving
+                // from `palette().text` (the same colour the labels use, known
+                // to contrast with the card) and dropping the alpha keeps the
+                // shortcut clearly readable while still reading as secondary.
+                text(chord.display())
+                    .size(12.0)
+                    .style(|theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(iced::Color {
+                            a: 0.55,
+                            ..theme.palette().text
+                        }),
+                    })
+                    .into()
             } else {
                 text("").size(13.0).into()
             };
@@ -153,6 +167,8 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
                 iced::widget::Space::new().width(Length::Fill),
                 shortcut_txt,
             ]
+            .width(Length::Fill)
+            .align_y(iced::alignment::Vertical::Center)
             .padding([4.0, 8.0])
             .spacing(16.0)
             .into();

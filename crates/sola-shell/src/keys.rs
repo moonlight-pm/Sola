@@ -121,7 +121,9 @@ fn keycode_to_keysym(k: KeyCode) -> u32 {
         KeyCode::GRAVE => 0x60,
         KeyCode::BACKSPACE => 0xFF08,
         KeyCode::LEFT => 0xFF51,
+        KeyCode::UP => 0xFF52,
         KeyCode::RIGHT => 0xFF53,
+        KeyCode::DOWN => 0xFF54,
         KeyCode::ENTER => 0xFF0D,
         KeyCode::ESCAPE => 0xFF1B,
         // Top-row digit keys — ASCII '0'..'9'.
@@ -217,7 +219,9 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
         0x60 => Some(KeyCode::GRAVE),
         0xFF08 => Some(KeyCode::BACKSPACE),
         0xFF51 => Some(KeyCode::LEFT),
+        0xFF52 => Some(KeyCode::UP),
         0xFF53 => Some(KeyCode::RIGHT),
+        0xFF54 => Some(KeyCode::DOWN),
         0xFF0D => Some(KeyCode::ENTER),
         0xFF1B => Some(KeyCode::ESCAPE),
         // Top-row digits.
@@ -299,6 +303,37 @@ mod tests {
         .expect("round-trip must succeed for Q");
         assert_eq!(back.keycode, KeyCode::Q);
         assert!(back.meta);
+    }
+
+    #[test]
+    fn round_trip_arrow_keys() {
+        // Regression: DOWN/UP were missing from keycode_to_keysym, so
+        // ⌘⇧↓ (Split Horizontal) registered as keysym 116 (= 't') and
+        // never fired. All four arrows must map to their xkb keysym and
+        // round-trip back to the same KeyCode.
+        for (kc, sym) in [
+            (KeyCode::LEFT, 0xFF51u32),
+            (KeyCode::UP, 0xFF52),
+            (KeyCode::RIGHT, 0xFF53),
+            (KeyCode::DOWN, 0xFF54),
+        ] {
+            let chord = KeyChord {
+                keycode: kc,
+                meta: true,
+                alt: false,
+                ctrl: false,
+                shift: true,
+            };
+            let reg = to_registered(&chord);
+            assert_eq!(reg.keysym, sym, "{kc:?} must map to {sym:#x}");
+            let back = from_chord_event(&ChordEvent {
+                keysym: reg.keysym,
+                modifiers: reg.modifiers,
+            })
+            .expect("arrow keysym must round-trip");
+            assert_eq!(back.keycode, kc);
+            assert!(back.meta && back.shift);
+        }
     }
 
     #[test]
