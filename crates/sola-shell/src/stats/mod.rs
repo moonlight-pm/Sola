@@ -63,6 +63,11 @@ impl History {
         self.buf.make_contiguous();
         self.buf.as_slices().0
     }
+    /// Clone of samples oldest→newest (no compaction; for read-only views).
+    pub fn to_vec(&self) -> Vec<f32> {
+        let (a, b) = self.buf.as_slices();
+        a.iter().chain(b).copied().collect()
+    }
     pub fn peak(&self) -> f32 {
         self.buf.iter().copied().fold(0.0, f32::max)
     }

@@ -1,7 +1,7 @@
 //! Stat detail dropdown panels, rendered in the Menu window.
 
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
-use iced::widget::{column, container, mouse_area, stack, text};
+use iced::widget::{column, container, mouse_area, row, stack, text};
 use iced::{mouse, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme};
 
 use crate::app::{Msg, Shell};
@@ -68,22 +68,234 @@ fn placeholder(label: &str) -> Element<'static, Msg> {
         .into()
 }
 
-/// Minimal CPU card (header only) — fleshed out in Phase 3.
-fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
-    let pct = shell.stats.cpu_pct;
-    popover(
+// ---------------------------------------------------------------------------
+// Card shell helpers
+// ---------------------------------------------------------------------------
+
+/// Compose a stat card: header (label/value/identity) + body sections.
+fn stat_card<'a>(
+    label: &'a str,
+    value: String,
+    value_color: Color,
+    identity: Vec<Element<'a, Msg>>,
+    body: Vec<Element<'a, Msg>>,
+) -> Element<'a, Msg> {
+    let header = row![
         column![
-            text("CPU").size(11).style(dim),
-            text(format!("{:.0}%", pct))
-                .font(sola_kit::fonts::MONO)
-                .size(28),
+            text(label).size(11).style(dim),
+            row![
+                text(value)
+                    .font(sola_kit::fonts::MONO)
+                    .size(30)
+                    .style(move |_: &Theme| iced::widget::text::Style { color: Some(value_color) }),
+            ],
         ]
-        .spacing(4)
-        .padding(4),
-    )
-    .padding(Padding::new(8.0))
-    .width(Length::Fixed(CARD_WIDTH))
+        .spacing(3),
+        iced::widget::Space::new().width(Length::Fill),
+        column(identity).spacing(3).align_x(iced::alignment::Horizontal::Right),
+    ]
+    .align_y(iced::alignment::Vertical::Top);
+
+    let mut col = column![header].spacing(14);
+    for el in body {
+        col = col.push(el);
+    }
+    popover(col.padding(4))
+        .padding(Padding::new(8.0))
+        .width(Length::Fixed(CARD_WIDTH))
+        .into()
+}
+
+/// A thin labeled caption row used above sub-sections.
+fn caption<'a>(left: &'a str, right: String) -> Element<'a, Msg> {
+    row![
+        text(left).size(11).style(dim),
+        iced::widget::Space::new().width(Length::Fill),
+        text(right)
+            .font(sola_kit::fonts::MONO)
+            .size(11)
+            .style(|_: &Theme| iced::widget::text::Style {
+                color: Some(Color { a: 0.5, ..Color::from_rgb(0.902, 0.929, 0.953) }),
+            }),
+    ]
     .into()
+}
+
+fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
+    let s = &shell.stats;
+    let neutral = Color::from_rgb(0.902, 0.929, 0.953);
+    let detail = match &s.detail {
+        Some(crate::stats::Detail::Cpu(d)) => Some(d),
+        _ => None,
+    };
+
+    let identity = vec![
+        text("Ryzen 9 5950X")
+            .size(12)
+            .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.788, 0.820, 0.851)) })
+            .into(),
+        text("16C / 32T")
+            .font(sola_kit::fonts::MONO)
+            .size(11)
+            .style(dim)
+            .into(),
+    ];
+
+    let samples = shell.cpu_hist.to_vec();
+    let graph = column![
+        caption("Last 60 seconds", format!("peak {:.0}%", peak(&samples))),
+        graph_box(history_graph(samples, 100.0, Color::from_rgb(0.0, 0.831, 1.0))),
+    ]
+    .spacing(6)
+    .into();
+
+    let mut body: Vec<Element<'_, Msg>> = vec![graph];
+
+    if let Some(d) = detail {
+        let bars: Vec<Element<'_, Msg>> = d.per_core.iter().map(|p| core_bar(*p)).collect();
+        body.push(
+            column![
+                caption("Per-thread load", format!("{} threads", d.per_core.len())),
+                row(bars).spacing(1.5).align_y(iced::alignment::Vertical::Bottom),
+            ]
+            .spacing(6)
+            .into(),
+        );
+        body.push(divider());
+        body.push(caption("Top processes", "by CPU".into()));
+        let max = d.top.first().map(|t| t.value).unwrap_or(1.0);
+        for p in &d.top {
+            body.push(proc_row(&p.name, format!("{:.0}%", p.value), p.value, max));
+        }
+        body.push(divider());
+        body.push(footer_pair(
+            "LOAD AVG",
+            format!("{:.1}  {:.1}  {:.1}", d.load[0], d.load[1], d.load[2]),
+            "UPTIME",
+            fmt_uptime(d.uptime_secs),
+        ));
+    }
+
+    stat_card(
+        "CPU",
+        format!("{:.0}%", s.cpu_pct),
+        crate::stats::level_color(s.cpu_pct, neutral),
+        identity,
+        body,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// CPU card helpers
+// ---------------------------------------------------------------------------
+
+fn peak(samples: &[f32]) -> f32 {
+    samples.iter().copied().fold(0.0, f32::max)
+}
+
+fn graph_box<'a>(inner: Element<'a, Msg>) -> Element<'a, Msg> {
+    container(inner)
+        .height(Length::Fixed(58.0))
+        .style(|_: &Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb(0.051, 0.067, 0.090))),
+            border: iced::Border { radius: 6.0.into(), width: 1.0, color: Color::from_rgb(0.129, 0.149, 0.176) },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn core_bar<'a>(pct: f32) -> Element<'a, Msg> {
+    let h = (pct / 100.0 * 22.0).clamp(2.0, 22.0);
+    container(text(""))
+        .width(Length::Fixed(5.0))
+        .height(Length::Fixed(h))
+        .style(|_: &Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb(0.122, 0.435, 0.922))),
+            border: iced::Border { radius: 1.0.into(), ..Default::default() },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn divider<'a>() -> Element<'a, Msg> {
+    container(text(""))
+        .width(Length::Fixed(288.0))
+        .height(Length::Fixed(1.0))
+        .style(|_: &Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb(0.129, 0.149, 0.176))),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// One "top process" row: name + value, with a proportion bar underneath.
+/// The bar is a two-child row (filled portion + remainder spacer) so the
+/// proportion actually shows — a lone FillPortion child would fill 100%.
+fn proc_row<'a>(name: &'a str, val: String, value: f32, max: f32) -> Element<'a, Msg> {
+    let frac = if max > 0.0 { (value / max).clamp(0.0, 1.0) } else { 0.0 };
+    let fill = (frac * 1000.0) as u16;
+    let rest = 1000u16.saturating_sub(fill);
+
+    let bar = container(
+        row![
+            container(text(""))
+                .width(Length::FillPortion(fill))
+                .height(Length::Fixed(3.0))
+                .style(|_: &Theme| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb(0.122, 0.435, 0.922))),
+                    border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                    ..Default::default()
+                }),
+            iced::widget::Space::new().width(Length::FillPortion(rest)),
+        ],
+    )
+    .width(Length::Fixed(288.0))
+    .height(Length::Fixed(3.0))
+    .style(|_: &Theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(Color::from_rgb(0.102, 0.122, 0.153))),
+        border: iced::Border { radius: 2.0.into(), ..Default::default() },
+        ..Default::default()
+    });
+
+    column![
+        row![
+            text(name.to_string())
+                .size(13)
+                .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.788, 0.820, 0.851)) }),
+            iced::widget::Space::new().width(Length::Fill),
+            text(val).font(sola_kit::fonts::MONO).size(12),
+        ],
+        bar,
+    ]
+    .spacing(3)
+    .into()
+}
+
+fn footer_pair<'a>(l1: &'a str, v1: String, l2: &'a str, v2: String) -> Element<'a, Msg> {
+    let cell = |label: &'a str, val: String, right: bool| {
+        let c = column![
+            text(label).size(10).style(dim),
+            text(val)
+                .font(sola_kit::fonts::MONO)
+                .size(12)
+                .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.788, 0.820, 0.851)) }),
+        ]
+        .spacing(3);
+        if right { c.align_x(iced::alignment::Horizontal::Right) } else { c }
+    };
+    row![
+        cell(l1, v1, false),
+        iced::widget::Space::new().width(Length::Fill),
+        cell(l2, v2, true),
+    ]
+    .into()
+}
+
+fn fmt_uptime(secs: u64) -> String {
+    let d = secs / 86400;
+    let h = (secs % 86400) / 3600;
+    let m = (secs % 3600) / 60;
+    if d > 0 { format!("{d}d {h}h {m}m") } else { format!("{h}h {m}m") }
 }
 
 // ---------------------------------------------------------------------------
