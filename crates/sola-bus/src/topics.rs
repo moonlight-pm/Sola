@@ -263,18 +263,56 @@ impl Default for TerminalConfig {
     }
 }
 
+/// Orientation of a pane split. `Vertical` places the two panes
+/// side-by-side with a vertical divider (the new pane lands to the
+/// RIGHT, `⌘⇧→`); `Horizontal` stacks them with a horizontal divider
+/// (the new pane lands BELOW, `⌘⇧↓`). Defined here rather than in
+/// sola-terminal because the persisted [`PaneLayout`] wire type needs
+/// it and sola-bus cannot depend on sola-terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SplitDir {
+    Vertical,
+    Horizontal,
+}
+
+/// Serializable mirror of sola-terminal's in-memory pane tree, persisted
+/// inside [`TerminalSession::layout`]. Each `Leaf` names the tmux
+/// session backing that pane (the authoritative PTY id); `Split` carries
+/// the divider orientation and pane `a`'s fraction of the split's main
+/// axis (`ratio`, in `(0, 1)`). Runtime pane/split ids are NOT persisted
+/// — only structure, tmux session names, cwd hints, and ratios; ids are
+/// regenerated on load.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PaneLayout {
+    Leaf {
+        tmux_session: String,
+        #[serde(default)]
+        cwd: Option<String>,
+    },
+    Split {
+        dir: SplitDir,
+        ratio: f32,
+        a: Box<PaneLayout>,
+        b: Box<PaneLayout>,
+    },
+}
+
 /// One terminal tab as persisted on the bus. The `tmux_session` is the
-/// authoritative identifier for the live PTY; `id` is the sticky key —
-/// each tab has its own `(TerminalSession, [id])` slot. `cwd` is a
-/// hint, refreshed via OSC 7. `ordinal` determines display order in
-/// the tab strip — gaps are fine, JS sorts by ordinal.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// authoritative identifier for the root/first pane's live PTY; `id` is
+/// the sticky key — each tab has its own `(TerminalSession, [id])` slot.
+/// `cwd` is a hint, refreshed via OSC 7. `ordinal` determines display
+/// order in the tab strip — gaps are fine, JS sorts by ordinal. `layout`
+/// carries the pane split tree once the tab has been split; `None`
+/// (old records) restores as a single pane using `tmux_session`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TerminalSession {
     pub id: String,
     pub tmux_session: String,
     #[serde(default)]
     pub cwd: Option<String>,
     pub ordinal: u32,
+    #[serde(default)]
+    pub layout: Option<PaneLayout>,
 }
 
 /// One persisted browser tab. Keyed by `id` (UUIDv4 generated at tab
@@ -881,6 +919,7 @@ mod tests {
             tmux_session: "sola-tab-1".into(),
             cwd: Some("/home/joshua".into()),
             ordinal: 0,
+            layout: None,
         };
         let topic = Topic::TerminalSession(session.clone());
         let msg = topic.to_message();
@@ -898,6 +937,7 @@ mod tests {
             tmux_session: "sola-x".into(),
             cwd: None,
             ordinal: 7,
+            layout: None,
         };
         let topic = Topic::TerminalSession(session);
         assert_eq!(topic.keys_for(), vec!["abc-123".to_string()]);
@@ -910,6 +950,7 @@ mod tests {
             tmux_session: "sola-x".into(),
             cwd: Some("/tmp".into()),
             ordinal: 3,
+            layout: None,
         };
         let topic = Topic::TerminalSession(session.clone());
         let value = topic
@@ -921,6 +962,50 @@ mod tests {
             Topic::TerminalSession(back) => assert_eq!(back, session),
             other => panic!("expected TerminalSession, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn terminal_session_with_layout_roundtrips_via_yaml() {
+        let session = TerminalSession {
+            id: "split-tab".into(),
+            tmux_session: "sola-a".into(),
+            cwd: Some("/tmp".into()),
+            ordinal: 1,
+            layout: Some(PaneLayout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 0.5,
+                a: Box::new(PaneLayout::Leaf {
+                    tmux_session: "sola-a".into(),
+                    cwd: Some("/tmp".into()),
+                }),
+                b: Box::new(PaneLayout::Leaf {
+                    tmux_session: "sola-b".into(),
+                    cwd: None,
+                }),
+            }),
+        };
+        let topic = Topic::TerminalSession(session.clone());
+        let value = topic
+            .to_yaml_value()
+            .expect("persistent payload should serialize to YAML");
+        let restored = Topic::from_yaml_section(TopicKind::TerminalSession, value)
+            .expect("section should deserialize");
+        match restored {
+            Topic::TerminalSession(back) => assert_eq!(back, session),
+            other => panic!("expected TerminalSession, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_session_without_layout_field_defaults_to_none() {
+        // An old persisted record predates the `layout` field; serde(default)
+        // must restore it as a single-pane tab (layout == None).
+        let yaml = "id: old-tab\ntmux_session: sola-old\ncwd: /home/joshua\nordinal: 2\n";
+        let session: TerminalSession = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(session.id, "old-tab");
+        assert_eq!(session.tmux_session, "sola-old");
+        assert_eq!(session.ordinal, 2);
+        assert_eq!(session.layout, None);
     }
 
     #[test]

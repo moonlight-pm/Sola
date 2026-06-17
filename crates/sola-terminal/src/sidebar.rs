@@ -54,7 +54,7 @@ pub fn view<'a>(
     active: Option<&str>,
     config: &TerminalConfig,
 ) -> Element<'a, Msg> {
-    let ordered = tabs.ordered_meta();
+    let ordered = tabs.tab_strip();
 
     let items: Vec<SidebarItem<Msg>> = ordered
         .iter()

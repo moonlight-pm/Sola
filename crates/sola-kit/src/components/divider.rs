@@ -46,6 +46,30 @@ where
     .into()
 }
 
+/// 8px-tall horizontal draggable divider — the row counterpart of
+/// [`vertical_divider`], for stacked (column) splits. Same
+/// consumer-managed drag contract: the caller wires `on_press` and
+/// tracks cursor motion / release at the application level (iced has
+/// no pointer-capture API).
+///
+/// Interaction is `ResizingRow` so winit→sctk requests the
+/// `row-resize` XDG cursor, mirroring `vertical_divider`'s choice of
+/// `ResizingColumn` for `col-resize`.
+pub fn horizontal_divider_drag<'a, Message>(on_press: Message) -> Element<'a, Message, Theme>
+where
+    Message: Clone + 'a,
+{
+    mouse_area(
+        container(Space::new().width(Length::Fill).height(Length::Fill))
+            .style(style)
+            .width(Length::Fill)
+            .height(Length::Fixed(8.0)),
+    )
+    .interaction(mouse::Interaction::ResizingRow)
+    .on_press(on_press)
+    .into()
+}
+
 /// A non-interactive 1px horizontal divider line, the same hairline colour
 /// as the kit's 1px borders. The horizontal counterpart of
 /// [`vertical_divider`] without the drag affordance — no resize semantics

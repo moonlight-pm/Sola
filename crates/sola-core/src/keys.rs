@@ -46,6 +46,13 @@ impl KeyCode {
         self.chord().shift()
     }
 
+    /// Start a chord with Meta+Shift enabled — the standard modifier
+    /// for Sola's split/close-pane shortcuts (`⌘⇧→`, `⌘⇧W`, …).
+    #[inline]
+    pub const fn meta_shift(self) -> KeyChord {
+        self.chord().meta().shift()
+    }
+
     // --- Modifiers ---
     pub const LEFT_CTRL: Self = Self(37);
     pub const RIGHT_CTRL: Self = Self(105);
@@ -67,6 +74,8 @@ impl KeyCode {
 
     pub const LEFT: Self = Self(113);
     pub const RIGHT: Self = Self(114);
+    pub const UP: Self = Self(111);
+    pub const DOWN: Self = Self(116);
     pub const SPACE: Self = Self(65);
     pub const GRAVE: Self = Self(49);
 
@@ -142,6 +151,8 @@ impl KeyCode {
             36 => "\u{21A9}",  // ↩
             113 => "\u{2190}", // ←
             114 => "\u{2192}", // →
+            111 => "\u{2191}", // ↑
+            116 => "\u{2193}", // ↓
             49 => "`",
             // Numbers
             10 => "1",
@@ -283,5 +294,34 @@ impl KeyChord {
         }
         s.push_str(self.keycode.display());
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn meta_shift_sets_both_modifiers() {
+        let chord = KeyCode::W.meta_shift();
+        assert!(chord.meta && chord.shift);
+        assert!(!chord.ctrl && !chord.alt);
+        assert_eq!(chord.keycode, KeyCode::W);
+    }
+
+    #[test]
+    fn arrow_keycodes_display_glyphs() {
+        assert_eq!(KeyCode::UP.display(), "\u{2191}");
+        assert_eq!(KeyCode::DOWN.display(), "\u{2193}");
+        assert_eq!(KeyCode::LEFT.display(), "\u{2190}");
+        assert_eq!(KeyCode::RIGHT.display(), "\u{2192}");
+    }
+
+    #[test]
+    fn chord_display_renders_mac_modifiers() {
+        // Mac order is ⌃⌥⇧⌘ followed by the key label.
+        assert_eq!(KeyCode::RIGHT.meta_shift().display(), "\u{21E7}\u{2318}\u{2192}");
+        assert_eq!(KeyCode::C.meta().display(), "\u{2318}C");
+        assert_eq!(KeyCode::W.meta_shift().display(), "\u{21E7}\u{2318}W");
     }
 }

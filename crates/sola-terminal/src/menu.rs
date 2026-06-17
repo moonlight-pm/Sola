@@ -29,18 +29,40 @@ pub fn terminal_menu(tab_count: usize) -> AppMenuPayload {
             },
             MenuDefinition {
                 label: "Shell".into(),
+                items: vec![MenuItem::Action {
+                    id: "new_tab".into(),
+                    label: "New Tab".into(),
+                    shortcut: Some(KeyCode::T.meta()),
+                    disabled: false,
+                    checked: false,
+                }],
+            },
+            MenuDefinition {
+                label: "Pane".into(),
                 items: vec![
+                    // ⌘⇧→ : new pane to the RIGHT (side-by-side).
                     MenuItem::Action {
-                        id: "new_tab".into(),
-                        label: "New Tab".into(),
-                        shortcut: Some(KeyCode::T.meta()),
+                        id: "split_vertical".into(),
+                        label: "Split Vertical".into(),
+                        shortcut: Some(KeyCode::RIGHT.meta_shift()),
                         disabled: false,
                         checked: false,
                     },
+                    // ⌘⇧↓ : new pane BELOW (stacked).
                     MenuItem::Action {
-                        id: "close_tab".into(),
-                        label: "Close Tab".into(),
-                        shortcut: Some(KeyCode::W.meta()),
+                        id: "split_horizontal".into(),
+                        label: "Split Horizontal".into(),
+                        shortcut: Some(KeyCode::DOWN.meta_shift()),
+                        disabled: false,
+                        checked: false,
+                    },
+                    MenuItem::Divider,
+                    // ⌘⇧W : kill the active pane (⌘W is intentionally
+                    // unbound — it means "Copy" in muscle memory).
+                    MenuItem::Action {
+                        id: "close_pane".into(),
+                        label: "Close Pane".into(),
+                        shortcut: Some(KeyCode::W.meta_shift()),
                         disabled: false,
                         checked: false,
                     },
@@ -151,5 +173,40 @@ mod tests {
                 assert!(shortcut.is_none(), "tab {} should have no shortcut", i + 1);
             }
         }
+    }
+
+    #[test]
+    fn pane_menu_has_split_and_close_with_meta_shift() {
+        let menu = terminal_menu(0);
+        let pane = menu
+            .menus
+            .iter()
+            .find(|m| m.label == "Pane")
+            .expect("Pane menu");
+        let ids: Vec<&str> = pane
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                MenuItem::Action { id, .. } => Some(id.as_str()),
+                MenuItem::Divider => None,
+            })
+            .collect();
+        assert_eq!(ids, vec!["split_vertical", "split_horizontal", "close_pane"]);
+        for item in &pane.items {
+            if let MenuItem::Action { shortcut: Some(sc), .. } = item {
+                assert!(sc.meta && sc.shift, "pane shortcuts are meta+shift");
+            }
+        }
+    }
+
+    #[test]
+    fn no_close_tab_action_remains() {
+        let menu = terminal_menu(3);
+        let has_close_tab = menu.menus.iter().any(|m| {
+            m.items
+                .iter()
+                .any(|i| matches!(i, MenuItem::Action { id, .. } if id == "close_tab"))
+        });
+        assert!(!has_close_tab, "close_tab should be gone; ⌘W is unbound");
     }
 }
