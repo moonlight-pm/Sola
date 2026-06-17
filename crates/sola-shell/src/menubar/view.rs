@@ -114,7 +114,10 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             .size(10)
             .into(),
     ])
-    .spacing(1);
+    .spacing(1)
+    // Fixed width: the ↓/↑ rate strings vary in length (e.g. "0 B/s" vs
+    // "2.4 MB/s"), so without this the cluster bumps every tick.
+    .width(Length::Fixed(84.0));
     let net_btn: Element<'_, Msg> = iced::widget::button(net_inner)
         .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Net))))
         .padding([2, 8])
@@ -265,7 +268,10 @@ fn stat_indicator<'a>(label: &'a str, value: String, color: iced::Color) -> Elem
             .style(|_: &iced::Theme| iced::widget::text::Style {
                 color: Some(iced::Color { r: 0.902, g: 0.929, b: 0.953, a: 0.6 }),
             }),
-        text(value).font(sola_kit::fonts::MONO).size(13)
+        // Value padded to a fixed 4-char field (mono → tabular) so "9%",
+        // "100%", and "—" all render the same width; the indicator never
+        // reflows as the value changes.
+        text(format!("{value:>4}")).font(sola_kit::fonts::MONO).size(13)
             .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(color) }),
     ]
     .spacing(5)
