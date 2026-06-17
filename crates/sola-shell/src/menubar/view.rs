@@ -76,7 +76,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // ── Right cluster: toast + clock ─────────────────────────────────
     let toast = toast_widget(mb.toast.as_deref());
     // Clock is a button that toggles the calendar dropdown.
-    let clock_active = shell.menu_open && shell.current_open_is_calendar;
+    let clock_active = shell.menu_open && shell.open_panel == Some(crate::app::Panel::Calendar);
     let clock: Element<'_, Msg> = iced::widget::button(clock_widget(&mb.clock_now))
         .style(kit_btn::menubar(clock_active))
         .padding([2, 8])

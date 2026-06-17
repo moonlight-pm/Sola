@@ -89,6 +89,13 @@ pub enum Msg {
     Noop,
 }
 
+/// Which non-menu panel the Menu window is hosting.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Panel {
+    Calendar,
+    Stat(crate::stats::Metric),
+}
+
 pub struct Shell {
     pub theme: iced::Theme,
     /// Shell-specific chrome (shell-* tokens) — colors with alpha +
@@ -134,10 +141,10 @@ pub struct Shell {
     /// True when the currently open menu is the system menu (shell's own menu),
     /// false when it's a focused-app menu.
     pub current_open_is_system: bool,
-    /// True when the open panel is the clock calendar (rendered in the Menu
-    /// window instead of an app-menu dropdown). Mutually exclusive with the
-    /// app/system menu; both share `menu_open` for window visibility.
-    pub current_open_is_calendar: bool,
+    /// Which panel (calendar or stat graph) the Menu window is hosting, when
+    /// `menu_open` is true and no app/system menu dropdown is active.
+    /// `None` means the window is showing a regular menu dropdown.
+    pub open_panel: Option<Panel>,
     /// The month shown in the calendar — always the 1st of that month.
     pub calendar_month: chrono::NaiveDate,
     pub switcher: SwitcherState,
@@ -221,7 +228,7 @@ impl Shell {
             menu_anchor_x: 0.0,
             current_open_index: None,
             current_open_is_system: false,
-            current_open_is_calendar: false,
+            open_panel: None,
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
@@ -635,15 +642,15 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::ToggleCalendar => {
-                if self.menu_open && self.current_open_is_calendar {
+                if self.menu_open && self.open_panel == Some(Panel::Calendar) {
                     // Already showing the calendar — dismiss it.
                     self.menu_open = false;
-                    self.current_open_is_calendar = false;
+                    self.open_panel = None;
                 } else {
                     // Open (or switch an app menu over to) the calendar,
                     // always starting on the current month.
                     self.menu_open = true;
-                    self.current_open_is_calendar = true;
+                    self.open_panel = Some(Panel::Calendar);
                     self.current_open_index = None;
                     self.current_open_is_system = false;
                     self.calendar_month =
@@ -699,7 +706,7 @@ impl Shell {
                 self.menu_open = true;
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
-                self.current_open_is_calendar = false;
+                self.open_panel = None;
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -720,7 +727,7 @@ impl Shell {
                         .unwrap_or_else(|| self.estimate_label_x(index, is_system));
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
-                    self.current_open_is_calendar = false;
+                    self.open_panel = None;
                 }
                 iced::Task::none()
             }
@@ -728,7 +735,8 @@ impl Shell {
                 self.menu_open = false;
                 self.current_open_index = None;
                 self.current_open_is_system = false;
-                self.current_open_is_calendar = false;
+                self.open_panel = None;
+                crate::stats::set_active_metric(None);
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()

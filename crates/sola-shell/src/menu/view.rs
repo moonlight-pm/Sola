@@ -33,8 +33,10 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     }
 
     // Clock calendar panel takes over the same window when open.
-    if shell.current_open_is_calendar {
-        return calendar_panel(shell);
+    match shell.open_panel {
+        Some(crate::app::Panel::Calendar) => return calendar_panel(shell),
+        Some(crate::app::Panel::Stat(_)) => {}
+        None => {}
     }
 
     // When the system-menu button was pressed, show the shell's own menu
