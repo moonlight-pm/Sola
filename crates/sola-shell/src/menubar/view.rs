@@ -83,6 +83,17 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         .on_press(Msg::ToggleCalendar)
         .into();
 
+    // ── System-stat indicators (left of clock) ───────────────────────
+    let neutral = iced::Color::from_rgb(0.902, 0.929, 0.953); // #e6edf3
+    let cpu_pct = shell.stats.cpu_pct;
+    let cpu_btn: Element<'_, Msg> = iced::widget::button(
+        stat_indicator("CPU", format!("{:.0}%", cpu_pct), crate::stats::level_color(cpu_pct, neutral)),
+    )
+    .style(kit_btn::menubar(false))
+    .padding([2, 8])
+    .on_press(Msg::Noop) // becomes ToggleStatPanel in Phase 2 (Task 7)
+    .into();
+
     // ── Assemble ──────────────────────────────────────────────────────
     let mut left = vec![system_btn, app_title];
     left.extend(menu_labels);
@@ -91,6 +102,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         row(left),
         iced::widget::Space::new().width(iced::Length::Fill),
         toast,
+        cpu_btn,
         clock,
     ]
     .height(Length::Fill)
@@ -198,4 +210,18 @@ fn display_label(shell: &crate::app::Shell, app_id: &str) -> String {
         Some(c) => c.to_uppercase().chain(chars).collect(),
         None => String::new(),
     }
+}
+
+/// One numbers-only menubar indicator: muted label + mono value.
+fn stat_indicator<'a>(label: &'a str, value: String, color: iced::Color) -> Element<'a, Msg> {
+    use iced::widget::{row, text};
+    row![
+        text(label).font(sola_kit::fonts::INTER).size(10)
+            .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(iced::Color { a: 0.6, ..color }) }),
+        text(value).font(sola_kit::fonts::MONO).size(13)
+            .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(color) }),
+    ]
+    .spacing(5)
+    .align_y(iced::alignment::Vertical::Center)
+    .into()
 }

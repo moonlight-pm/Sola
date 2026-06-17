@@ -48,6 +48,8 @@ pub enum Msg {
     MenuLabelPosition { index: usize, x: f32 },
     /// Clock subscription tick.
     ClockTick,
+    /// New system-stats sample from the background sampler.
+    StatsTick(std::sync::Arc<crate::stats::Snapshot>),
     /// Toggle the calendar dropdown (clicking the menubar clock).
     ToggleCalendar,
     /// Step the calendar to the previous month.
@@ -145,6 +147,15 @@ pub struct Shell {
     // Menubar state (clock, toast, label positions)
     pub menubar: MenubarState,
 
+    /// Latest system-stats sample for the menubar indicators + panels.
+    pub stats: std::sync::Arc<crate::stats::Snapshot>,
+    /// Per-metric history for the dropdown graphs (cpu, mem, net-down, net-up).
+    pub cpu_hist: crate::stats::History,
+    pub mem_hist: crate::stats::History,
+    pub net_down_hist: crate::stats::History,
+    pub net_up_hist: crate::stats::History,
+    pub gpu_hist: crate::stats::History,
+
     // Focus-hover generation counter (replaces legacy AppRuntimeHandle pattern).
     // Incremented on every schedule_focus_from_pointer call so stale timer
     // callbacks can detect they've been superseded.
@@ -216,6 +227,12 @@ impl Shell {
             launcher: LauncherState::default(),
             zoning: ZoningState::new(),
             menubar: MenubarState::new(),
+            stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
+            cpu_hist: crate::stats::History::new(60),
+            mem_hist: crate::stats::History::new(60),
+            net_down_hist: crate::stats::History::new(60),
+            net_up_hist: crate::stats::History::new(60),
+            gpu_hist: crate::stats::History::new(60),
             pending_focus_generation: 0,
         };
 
@@ -561,6 +578,7 @@ impl Shell {
         let mut subs = vec![
             sola_kit::app::bus_subscription().map(Msg::Bus),
             time::every(Duration::from_secs(10)).map(|_| Msg::ClockTick),
+            crate::stats::subscription().map(Msg::StatsTick),
         ];
 
         // While the launcher is active, subscribe to keyboard events so
@@ -603,6 +621,17 @@ impl Shell {
             }
             Msg::ClockTick => {
                 self.menubar.clock_now = chrono::Local::now();
+                iced::Task::none()
+            }
+            Msg::StatsTick(snap) => {
+                self.cpu_hist.push(snap.cpu_pct);
+                self.mem_hist.push(snap.mem_pct);
+                self.net_down_hist.push(snap.net_down);
+                self.net_up_hist.push(snap.net_up);
+                if let Some(g) = snap.gpu {
+                    self.gpu_hist.push(g.util);
+                }
+                self.stats = snap;
                 iced::Task::none()
             }
             Msg::ToggleCalendar => {
