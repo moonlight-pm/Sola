@@ -30,7 +30,7 @@ pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
     let card = match metric {
         Metric::Cpu => cpu_card(shell),
         Metric::Gpu => placeholder("GPU"),
-        Metric::Mem => placeholder("Memory"),
+        Metric::Mem => mem_card(shell),
         Metric::Net => placeholder("Network"),
     };
 
@@ -183,6 +183,90 @@ fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
         identity,
         body,
     )
+}
+
+// ---------------------------------------------------------------------------
+// MEM card
+// ---------------------------------------------------------------------------
+
+fn mem_card(shell: &Shell) -> Element<'_, Msg> {
+    let s = &shell.stats;
+    let neutral = Color::from_rgb(0.902, 0.929, 0.953);
+    let detail = match &s.detail {
+        Some(crate::stats::Detail::Mem(d)) => Some(d),
+        _ => None,
+    };
+
+    let total_gb = detail.map(|d| d.info.total_kb as f32 / 1024.0 / 1024.0).unwrap_or(0.0);
+    let identity = vec![
+        text(format!("{total_gb:.0} GB"))
+            .size(12)
+            .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.788, 0.820, 0.851)) })
+            .into(),
+        text("RAM").font(sola_kit::fonts::MONO).size(11).style(dim).into(),
+    ];
+
+    let graph = column![
+        caption("Last 60 seconds", format!("peak {:.0}%", peak(&shell.mem_hist.to_vec()))),
+        graph_box(history_graph(shell.mem_hist.to_vec(), 100.0, Color::from_rgb(0.0, 0.831, 1.0))),
+    ]
+    .spacing(6)
+    .into();
+    let mut body: Vec<Element<'_, Msg>> = vec![graph];
+
+    if let Some(d) = detail {
+        let (used, cache, free) = d.info.segments_kb();
+        body.push(column![caption("Memory", String::new()), seg_bar(used, cache, free)].spacing(6).into());
+        body.push(divider());
+        body.push(caption("Top processes", "by RAM".into()));
+        let max = d.top.first().map(|t| t.value).unwrap_or(1.0);
+        for p in &d.top {
+            body.push(proc_row(&p.name, format!("{:.0} MB", p.value), p.value, max));
+        }
+        body.push(divider());
+        let swap_used = (d.info.swap_total_kb.saturating_sub(d.info.swap_free_kb)) as f32 / 1024.0 / 1024.0;
+        let swap_tot = d.info.swap_total_kb as f32 / 1024.0 / 1024.0;
+        body.push(footer_pair(
+            "SWAP",
+            format!("{swap_used:.1} / {swap_tot:.0} GB"),
+            "PRESSURE",
+            format!("{:.0}%", s.mem_pct),
+        ));
+    }
+
+    stat_card(
+        "MEM",
+        format!("{:.0}%", s.mem_pct),
+        crate::stats::level_color(s.mem_pct, neutral),
+        identity,
+        body,
+    )
+}
+
+/// Three-segment used/cache/free bar (three siblings → real proportions).
+fn seg_bar<'a>(used: u64, cache: u64, free: u64) -> Element<'a, Msg> {
+    let total = (used + cache + free).max(1);
+    let seg = |kb: u64, color: Color| {
+        container(text(""))
+            .width(Length::FillPortion(((kb as f32 / total as f32) * 1000.0) as u16))
+            .height(Length::Fixed(8.0))
+            .style(move |_: &Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(color)),
+                ..Default::default()
+            })
+    };
+    container(row![
+        seg(used, Color::from_rgb(0.0, 0.831, 1.0)),
+        seg(cache, Color::from_rgb(0.122, 0.435, 0.922)),
+        seg(free, Color::from_rgb(0.188, 0.211, 0.243)),
+    ])
+    .width(Length::Fixed(288.0))
+    .height(Length::Fixed(8.0))
+    .style(|_: &Theme| iced::widget::container::Style {
+        border: iced::Border { radius: 4.0.into(), ..Default::default() },
+        ..Default::default()
+    })
+    .into()
 }
 
 // ---------------------------------------------------------------------------

@@ -94,6 +94,15 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Cpu))
     .into();
 
+    let mem_pct = shell.stats.mem_pct;
+    let mem_btn: Element<'_, Msg> = iced::widget::button(
+        stat_indicator("MEM", format!("{:.0}%", mem_pct), crate::stats::level_color(mem_pct, neutral)),
+    )
+    .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Mem))))
+    .padding([2, 8])
+    .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Mem))
+    .into();
+
     // ── Assemble ──────────────────────────────────────────────────────
     let mut left = vec![system_btn, app_title];
     left.extend(menu_labels);
@@ -103,6 +112,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         iced::widget::Space::new().width(iced::Length::Fill),
         toast,
         cpu_btn,
+        mem_btn,
         clock,
     ]
     .height(Length::Fill)
