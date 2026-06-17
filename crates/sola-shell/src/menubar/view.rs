@@ -89,9 +89,9 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let cpu_btn: Element<'_, Msg> = iced::widget::button(
         stat_indicator("CPU", format!("{:.0}%", cpu_pct), crate::stats::level_color(cpu_pct, neutral)),
     )
-    .style(kit_btn::menubar(false))
+    .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Cpu))))
     .padding([2, 8])
-    .on_press(Msg::Noop) // becomes ToggleStatPanel in Phase 2 (Task 7)
+    .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Cpu))
     .into();
 
     // ── Assemble ──────────────────────────────────────────────────────

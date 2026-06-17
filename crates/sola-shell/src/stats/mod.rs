@@ -5,6 +5,7 @@ pub mod cpu;
 pub mod gpu;
 pub mod mem;
 pub mod net;
+pub mod view;
 
 use iced::futures::Stream;
 use iced::Color;

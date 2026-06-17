@@ -35,7 +35,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // Clock calendar panel takes over the same window when open.
     match shell.open_panel {
         Some(crate::app::Panel::Calendar) => return calendar_panel(shell),
-        Some(crate::app::Panel::Stat(_)) => {}
+        Some(crate::app::Panel::Stat(m)) => return crate::stats::view::panel(shell, m),
         None => {}
     }
 

@@ -52,6 +52,8 @@ pub enum Msg {
     StatsTick(std::sync::Arc<crate::stats::Snapshot>),
     /// Toggle the calendar dropdown (clicking the menubar clock).
     ToggleCalendar,
+    /// Toggle a stat detail panel (clicking a menubar indicator).
+    ToggleStatPanel(crate::stats::Metric),
     /// Step the calendar to the previous month.
     CalendarPrevMonth,
     /// Step the calendar to the next month.
@@ -655,6 +657,22 @@ impl Shell {
                     self.current_open_is_system = false;
                     self.calendar_month =
                         crate::calendar::first_of_month(self.menubar.clock_now.date_naive());
+                }
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::ToggleStatPanel(m) => {
+                if self.menu_open && self.open_panel == Some(crate::app::Panel::Stat(m)) {
+                    self.menu_open = false;
+                    self.open_panel = None;
+                    crate::stats::set_active_metric(None);
+                } else {
+                    self.menu_open = true;
+                    self.open_panel = Some(crate::app::Panel::Stat(m));
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                    crate::stats::set_active_metric(Some(m));
                 }
                 self.emit_composition();
                 self.emit_registered_chords();
