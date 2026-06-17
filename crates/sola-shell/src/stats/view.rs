@@ -122,12 +122,13 @@ fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
         _ => None,
     };
 
+    let id = crate::stats::cpu::identity();
     let identity = vec![
-        text("Ryzen 9 5950X")
+        text(id.model.clone())
             .size(12)
             .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.788, 0.820, 0.851)) })
             .into(),
-        text("16C / 32T")
+        text(format!("{}C / {}T", id.cores, id.threads))
             .font(sola_kit::fonts::MONO)
             .size(11)
             .style(dim)

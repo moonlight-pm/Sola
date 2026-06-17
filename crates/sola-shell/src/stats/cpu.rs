@@ -133,9 +133,116 @@ pub fn top_processes(
     (cur, rows)
 }
 
+/// Static CPU hardware identity for the dropdown header.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CpuIdentity {
+    pub model: String,
+    pub cores: usize,   // distinct physical cores
+    pub threads: usize, // logical processors
+}
+
+/// Cached identity, read once from /proc/cpuinfo (hardware doesn't change).
+pub fn identity() -> &'static CpuIdentity {
+    static ID: std::sync::OnceLock<CpuIdentity> = std::sync::OnceLock::new();
+    ID.get_or_init(|| parse_cpuinfo(&std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default()))
+}
+
+/// Parse /proc/cpuinfo into a compact identity: cleaned model name, distinct
+/// physical cores (by (physical id, core id) pairs across processor blocks),
+/// and the logical thread count. Falls back to threads when topology fields
+/// are absent.
+pub fn parse_cpuinfo(s: &str) -> CpuIdentity {
+    use std::collections::HashSet;
+    let mut model = String::new();
+    let mut threads = 0usize;
+    let mut pairs: HashSet<(String, String)> = HashSet::new();
+    for block in s.split("\n\n") {
+        if block.trim().is_empty() {
+            continue;
+        }
+        let mut is_proc = false;
+        let (mut phys, mut core) = (String::new(), String::new());
+        for line in block.lines() {
+            let Some((k, v)) = line.split_once(':') else { continue };
+            match (k.trim(), v.trim()) {
+                ("processor", _) => is_proc = true,
+                ("model name", v) if model.is_empty() => model = clean_model(v),
+                ("physical id", v) => phys = v.to_string(),
+                ("core id", v) => core = v.to_string(),
+                _ => {}
+            }
+        }
+        if is_proc {
+            threads += 1;
+            if !phys.is_empty() || !core.is_empty() {
+                pairs.insert((phys, core));
+            }
+        }
+    }
+    let cores = if pairs.is_empty() { threads } else { pairs.len() };
+    if model.is_empty() {
+        model = "CPU".to_string();
+    }
+    CpuIdentity { model, cores, threads }
+}
+
+/// Trim a raw `model name` to a compact label, e.g.
+/// "AMD Ryzen 9 5950X 16-Core Processor" -> "Ryzen 9 5950X",
+/// "Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz" -> "Core i7-9700K".
+fn clean_model(raw: &str) -> String {
+    let mut s = raw.to_string();
+    for noise in ["(R)", "(TM)", "(tm)", "\u{00ae}", "\u{2122}"] {
+        s = s.replace(noise, "");
+    }
+    if let Some(i) = s.find(" @") {
+        s.truncate(i); // drop Intel "CPU @ 3.60GHz" clock suffix
+    }
+    let kept: Vec<&str> = s
+        .split_whitespace()
+        .filter(|w| {
+            let lw = w.to_ascii_lowercase();
+            lw != "cpu" && lw != "processor" && !lw.ends_with("-core")
+        })
+        .collect();
+    let mut out = kept.join(" ");
+    for vendor in ["AMD ", "Intel "] {
+        if let Some(rest) = out.strip_prefix(vendor) {
+            out = rest.to_string();
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cpuinfo_identity_amd_dedups_smt_cores() {
+        // 3 processor blocks; core ids 0,0,1 → 2 physical cores, 3 threads.
+        let info = "processor\t: 0\nvendor_id\t: AuthenticAMD\nmodel name\t: AMD Ryzen 9 5950X 16-Core Processor\nphysical id\t: 0\ncore id\t: 0\n\nprocessor\t: 1\nmodel name\t: AMD Ryzen 9 5950X 16-Core Processor\nphysical id\t: 0\ncore id\t: 0\n\nprocessor\t: 2\nmodel name\t: AMD Ryzen 9 5950X 16-Core Processor\nphysical id\t: 0\ncore id\t: 1\n";
+        let id = parse_cpuinfo(info);
+        assert_eq!(id.model, "Ryzen 9 5950X");
+        assert_eq!(id.threads, 3);
+        assert_eq!(id.cores, 2);
+    }
+
+    #[test]
+    fn cpuinfo_identity_intel_strips_clock_and_vendor() {
+        let info = "processor\t: 0\nmodel name\t: Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz\nphysical id\t: 0\ncore id\t: 0\n";
+        let id = parse_cpuinfo(info);
+        assert_eq!(id.model, "Core i7-9700K");
+        assert_eq!(id.threads, 1);
+        assert_eq!(id.cores, 1);
+    }
+
+    #[test]
+    fn cpuinfo_identity_falls_back_without_topology() {
+        let info = "processor\t: 0\nmodel name\t: Some CPU\n\nprocessor\t: 1\nmodel name\t: Some CPU\n";
+        let id = parse_cpuinfo(info);
+        assert_eq!(id.threads, 2);
+        assert_eq!(id.cores, 2); // no physical/core id → cores fall back to threads
+    }
 
     const STAT: &str = "cpu  100 0 50 1000 20 0 10 0 0 0\ncpu0 50 0 25 500 10 0 5 0 0 0\ncpu1 50 0 25 500 10 0 5 0 0 0\n";
 
