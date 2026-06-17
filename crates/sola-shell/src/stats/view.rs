@@ -23,9 +23,8 @@ fn dim(theme: &iced::Theme) -> iced::widget::text::Style {
         }),
     }
 }
-
-/// Build the right-anchored panel for `metric`, over a dismiss backdrop.
-/// Mirrors `crate::menu::view::calendar_panel`.
+/// Build the panel for `metric`, dropped under its menubar indicator, over a
+/// dismiss backdrop. Mirrors `crate::menu::view`'s anchored dropdown.
 pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
     let card = match metric {
         Metric::Cpu => cpu_card(shell),
@@ -34,8 +33,13 @@ pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
         Metric::Net => net_card(shell),
     };
 
+    // Anchor the card's left edge under the indicator, clamped so it never
+    // runs off the right screen edge (leaving an 8px gutter like the calendar).
     let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
-    let left = (output_w - CARD_WIDTH - 8.0).max(0.0);
+    let left = shell
+        .estimate_stat_x(metric)
+        .min((output_w - CARD_WIDTH - 8.0).max(0.0))
+        .max(0.0);
 
     let positioned: Element<'_, Msg> = container(card)
         .padding(Padding {
@@ -57,8 +61,7 @@ pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
 
     stack![backdrop, positioned]
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .height(Length::Fill)       .into()
 }
 
 // ---------------------------------------------------------------------------

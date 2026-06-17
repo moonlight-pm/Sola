@@ -581,6 +581,43 @@ impl Shell {
         x
     }
 
+    /// Estimate the left-edge X of the system-stat indicator for `metric`.
+    ///
+    /// The stat cluster ([CPU] [GPU?] [MEM] [NET] [clock]) is right-aligned, so
+    /// we walk it right-to-left from the screen edge. Font-metric math, not a
+    /// post-layout measurement — good enough to drop a panel under its
+    /// indicator (the caller clamps so the card never runs off-screen).
+    pub fn estimate_stat_x(&self, metric: crate::stats::Metric) -> f32 {
+        use crate::stats::Metric;
+
+        // Indicator button widths (content + the [2,8] button padding = 16px).
+        const STAT_W: f32 = 70.0; // CPU/GPU/MEM: "LBL" + 4-char mono value
+        const NET_W: f32 = 100.0; // NET: 84px fixed inner column + 16px pad
+        const CLOCK_W: f32 = 166.0; // clock: 20-char "%H:%M %a %Y-%m-%d" + 16px pad
+        const GAP: f32 = 16.0; // row(cluster).spacing(16)
+
+        let output_w = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
+        let has_gpu = self.stats.gpu.is_some();
+
+        // Cluster right edge sits at the screen edge; subtract leftward.
+        let clock_left = output_w - CLOCK_W;
+        let net_left = clock_left - GAP - NET_W;
+        let mem_left = net_left - GAP - STAT_W;
+        let (gpu_left, cpu_left) = if has_gpu {
+            let g = mem_left - GAP - STAT_W;
+            (g, g - GAP - STAT_W)
+        } else {
+            (mem_left, mem_left - GAP - STAT_W)
+        };
+
+        match metric {
+            Metric::Cpu => cpu_left,
+            Metric::Gpu => gpu_left,
+            Metric::Mem => mem_left,
+            Metric::Net => net_left,
+        }
+    }
+
     pub fn subscription(&self) -> iced::Subscription<Msg> {
         use iced::time;
 
