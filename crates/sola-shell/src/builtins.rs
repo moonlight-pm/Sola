@@ -30,9 +30,13 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/terminal".into(),
         },
         Application {
-            app_id: "sola-browser".into(),
+            // Primary browser is the WPE build (sola-browser-wpe); the old
+            // GTK/WebKit `sola-browser` crate was retired. app_id matches the
+            // Wayland app_id the binary sets, so the shell associates its
+            // window for MRU/focus/menu.
+            app_id: "sola-browser-wpe".into(),
             label: "Browser".into(),
-            command: "/opt/sola/bin/sola-browser".into(),
+            command: "/opt/sola/bin/sola-browser-wpe".into(),
             icon: "lucide/globe".into(),
         },
         Application {

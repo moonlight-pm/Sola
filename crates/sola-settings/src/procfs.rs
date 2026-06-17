@@ -17,7 +17,8 @@ const SYSTEM_APP_IDS: &[&str] = &[
     "sola-settings",
     "sola-monitor",
     "sola-terminal",
-    "sola-browser",
+    "sola-browser-wpe",
+    "sola-browser-cef",
     "sola-kit",
 ];
 

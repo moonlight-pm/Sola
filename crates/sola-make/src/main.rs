@@ -21,7 +21,11 @@ use clap::Parser;
 /// of the default `cargo make build` / `cargo make install` flows.
 /// They stay buildable via explicit `cargo make build <name>` so the
 /// source is kept warm without paying for them on every full build.
-const EXCLUDED_TARGETS: &[&str] = &["sola-browser"];
+///
+/// Currently empty — the retired GTK/WebKit `sola-browser` was removed
+/// (superseded by the isolated `sola-browser-wpe`/`-cef` crates). The
+/// mechanism is kept for the next app that needs the same treatment.
+const EXCLUDED_TARGETS: &[&str] = &[];
 
 #[derive(Parser, Debug)]
 #[command(name = "sola-make", about = "Sola build system")]
@@ -286,12 +290,13 @@ mod tests {
 
     #[test]
     fn build_args_default() {
-        // No target ⇒ workspace build with the excluded targets
-        // filtered out. Concrete contents pinned so accidental
-        // additions to EXCLUDED_TARGETS get noticed in review.
+        // No target ⇒ plain `--workspace` build. EXCLUDED_TARGETS is
+        // currently empty, so no `--exclude` flags are appended.
+        // Concrete contents pinned so accidental additions to
+        // EXCLUDED_TARGETS get noticed in review.
         assert_eq!(
             build_args(None, false),
-            vec!["build", "--workspace", "--exclude", "sola-browser",]
+            vec!["build", "--workspace"]
         );
     }
 
@@ -307,13 +312,7 @@ mod tests {
     fn build_args_release() {
         assert_eq!(
             build_args(None, true),
-            vec![
-                "build",
-                "--workspace",
-                "--exclude",
-                "sola-browser",
-                "--release",
-            ]
+            vec!["build", "--workspace", "--release"]
         );
     }
 
