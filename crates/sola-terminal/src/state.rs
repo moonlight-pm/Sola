@@ -111,10 +111,6 @@ impl Tabs {
         self.tabs.remove(id);
     }
 
-    pub fn len(&self) -> usize {
-        self.tabs.len()
-    }
-
     pub fn is_empty(&self) -> bool {
         self.tabs.is_empty()
     }

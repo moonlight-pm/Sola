@@ -1,9 +1,12 @@
 use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem};
 use sola_core::KeyCode;
 
-/// Build the terminal app menu reflecting the actual tab count.
+use crate::state::TabView;
+
+/// Build the terminal app menu reflecting the open tabs. Each tab is
+/// labelled by its cwd (the same label the sidebar shows), not "Tab N".
 /// Tabs 1-9 get Cmd+N shortcuts; tabs 10+ have no shortcut.
-pub fn terminal_menu(tab_count: usize) -> AppMenuPayload {
+pub fn terminal_menu(tabs: &[TabView]) -> AppMenuPayload {
     AppMenuPayload {
         app_id: crate::APP_ID.into(),
         menus: vec![
@@ -89,16 +92,23 @@ pub fn terminal_menu(tab_count: usize) -> AppMenuPayload {
             },
             MenuDefinition {
                 label: "Tabs".into(),
-                items: (0..tab_count).map(tab_item).collect(),
+                items: tabs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tab)| tab_item(i, tab))
+                    .collect(),
             },
         ],
     }
 }
 
-fn tab_item(index: usize) -> MenuItem {
+fn tab_item(index: usize, tab: &TabView) -> MenuItem {
     MenuItem::Action {
         id: format!("select_tab_{index}"),
-        label: format!("Tab {}", index + 1),
+        // Label by what the tab actually shows (cwd basename, "shell" when
+        // unknown) — the same label the sidebar uses — instead of "Tab N".
+        // The 1-based position still shows on the right as the ⌘N shortcut.
+        label: crate::sidebar::tab_label(&tab.cwd),
         shortcut: tab_shortcut(index),
         disabled: false,
         checked: false,
@@ -125,6 +135,17 @@ fn tab_shortcut(index: usize) -> Option<sola_core::KeyChord> {
 mod tests {
     use super::*;
 
+    /// N tab views with no cwd (label → "shell") for count/shortcut tests.
+    fn tabs(n: usize) -> Vec<TabView> {
+        (0..n)
+            .map(|i| TabView {
+                id: format!("t{i}"),
+                cwd: None,
+                ordinal: i as u32,
+            })
+            .collect()
+    }
+
     fn count_tab_items(payload: &AppMenuPayload) -> usize {
         payload
             .menus
@@ -136,18 +157,18 @@ mod tests {
 
     #[test]
     fn empty_menu_has_no_tab_items() {
-        assert_eq!(count_tab_items(&terminal_menu(0)), 0);
+        assert_eq!(count_tab_items(&terminal_menu(&tabs(0))), 0);
     }
 
     #[test]
     fn single_tab_menu_has_one_item() {
-        let menu = terminal_menu(1);
+        let menu = terminal_menu(&tabs(1));
         assert_eq!(count_tab_items(&menu), 1);
     }
 
     #[test]
     fn nine_tabs_get_shortcuts() {
-        let menu = terminal_menu(9);
+        let menu = terminal_menu(&tabs(9));
         let tabs = menu.menus.iter().find(|m| m.label == "Tabs").unwrap();
         for item in &tabs.items {
             if let MenuItem::Action { shortcut, .. } = item {
@@ -160,7 +181,7 @@ mod tests {
 
     #[test]
     fn tenth_tab_has_no_shortcut() {
-        let menu = terminal_menu(12);
+        let menu = terminal_menu(&tabs(12));
         let tabs = menu.menus.iter().find(|m| m.label == "Tabs").unwrap();
         // First 9 should have shortcuts; 10-12 should not.
         for (i, item) in tabs.items.iter().enumerate() {
@@ -177,7 +198,7 @@ mod tests {
 
     #[test]
     fn pane_menu_has_split_and_close_with_meta_shift() {
-        let menu = terminal_menu(0);
+        let menu = terminal_menu(&tabs(0));
         let pane = menu
             .menus
             .iter()
@@ -201,7 +222,7 @@ mod tests {
 
     #[test]
     fn no_close_tab_action_remains() {
-        let menu = terminal_menu(3);
+        let menu = terminal_menu(&tabs(3));
         let has_close_tab = menu.menus.iter().any(|m| {
             m.items
                 .iter()

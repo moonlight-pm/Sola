@@ -138,7 +138,7 @@ fn main() -> iced::Result {
     // Publish the full multi-menu payload directly (BusSetup::app_menu only
     // handles a single-menu definition; terminal needs several menus).
     if let Ok(mut client) = bus().lock() {
-        if let Err(e) = client.emit(Topic::SetAppMenu(menu::terminal_menu(0))) {
+        if let Err(e) = client.emit(Topic::SetAppMenu(menu::terminal_menu(&[]))) {
             tracing::warn!("initial app-menu publish failed: {e:?}");
         }
     }
@@ -734,7 +734,9 @@ impl App {
 
     fn republish_menu(&self) {
         if let Ok(mut client) = bus().lock() {
-            if let Err(e) = client.emit(Topic::SetAppMenu(menu::terminal_menu(self.tabs.len()))) {
+            if let Err(e) =
+                client.emit(Topic::SetAppMenu(menu::terminal_menu(&self.tabs.tab_strip())))
+            {
                 tracing::warn!("republish_menu failed: {e:?}");
             }
         }
