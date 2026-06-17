@@ -75,7 +75,13 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 
     // ── Right cluster: toast + clock ─────────────────────────────────
     let toast = toast_widget(mb.toast.as_deref());
-    let clock = clock_widget(&mb.clock_now);
+    // Clock is a button that toggles the calendar dropdown.
+    let clock_active = shell.menu_open && shell.current_open_is_calendar;
+    let clock: Element<'_, Msg> = iced::widget::button(clock_widget(&mb.clock_now))
+        .style(kit_btn::menubar(clock_active))
+        .padding([2, 8])
+        .on_press(Msg::ToggleCalendar)
+        .into();
 
     // ── Assemble ──────────────────────────────────────────────────────
     let mut left = vec![system_btn, app_title];
@@ -85,7 +91,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         row(left),
         iced::widget::Space::new().width(iced::Length::Fill),
         toast,
-        container(clock).padding([2, 8]),
+        clock,
     ]
     .height(Length::Fill)
     .into()

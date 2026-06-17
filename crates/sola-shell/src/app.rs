@@ -48,6 +48,14 @@ pub enum Msg {
     MenuLabelPosition { index: usize, x: f32 },
     /// Clock subscription tick.
     ClockTick,
+    /// Toggle the calendar dropdown (clicking the menubar clock).
+    ToggleCalendar,
+    /// Step the calendar to the previous month.
+    CalendarPrevMonth,
+    /// Step the calendar to the next month.
+    CalendarNextMonth,
+    /// Reset the calendar to the current month.
+    CalendarToday,
     /// Expire the toast for `generation` if it matches the current generation.
     ToastExpire(u64),
     /// End a menubar shortcut-flash for `generation` if it's still current.
@@ -124,6 +132,12 @@ pub struct Shell {
     /// True when the currently open menu is the system menu (shell's own menu),
     /// false when it's a focused-app menu.
     pub current_open_is_system: bool,
+    /// True when the open panel is the clock calendar (rendered in the Menu
+    /// window instead of an app-menu dropdown). Mutually exclusive with the
+    /// app/system menu; both share `menu_open` for window visibility.
+    pub current_open_is_calendar: bool,
+    /// The month shown in the calendar — always the 1st of that month.
+    pub calendar_month: chrono::NaiveDate,
     pub switcher: SwitcherState,
     pub launcher: LauncherState,
     pub zoning: ZoningState,
@@ -196,6 +210,8 @@ impl Shell {
             menu_anchor_x: 0.0,
             current_open_index: None,
             current_open_is_system: false,
+            current_open_is_calendar: false,
+            calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             zoning: ZoningState::new(),
@@ -589,6 +605,38 @@ impl Shell {
                 self.menubar.clock_now = chrono::Local::now();
                 iced::Task::none()
             }
+            Msg::ToggleCalendar => {
+                if self.menu_open && self.current_open_is_calendar {
+                    // Already showing the calendar — dismiss it.
+                    self.menu_open = false;
+                    self.current_open_is_calendar = false;
+                } else {
+                    // Open (or switch an app menu over to) the calendar,
+                    // always starting on the current month.
+                    self.menu_open = true;
+                    self.current_open_is_calendar = true;
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                    self.calendar_month =
+                        crate::calendar::first_of_month(self.menubar.clock_now.date_naive());
+                }
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::CalendarPrevMonth => {
+                self.calendar_month = crate::calendar::prev_month(self.calendar_month);
+                iced::Task::none()
+            }
+            Msg::CalendarNextMonth => {
+                self.calendar_month = crate::calendar::next_month(self.calendar_month);
+                iced::Task::none()
+            }
+            Msg::CalendarToday => {
+                self.calendar_month =
+                    crate::calendar::first_of_month(self.menubar.clock_now.date_naive());
+                iced::Task::none()
+            }
             Msg::ToastExpire(toast_gen) => {
                 self.menubar.expire_toast(toast_gen);
                 iced::Task::none()
@@ -622,6 +670,7 @@ impl Shell {
                 self.menu_open = true;
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
+                self.current_open_is_calendar = false;
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -642,6 +691,7 @@ impl Shell {
                         .unwrap_or_else(|| self.estimate_label_x(index, is_system));
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
+                    self.current_open_is_calendar = false;
                 }
                 iced::Task::none()
             }
@@ -649,6 +699,7 @@ impl Shell {
                 self.menu_open = false;
                 self.current_open_index = None;
                 self.current_open_is_system = false;
+                self.current_open_is_calendar = false;
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()

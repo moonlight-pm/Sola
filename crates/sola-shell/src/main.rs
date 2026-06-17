@@ -8,6 +8,7 @@ use sola_kit::fonts::INTER;
 
 mod app;
 mod builtins;
+pub mod calendar;
 pub mod components;
 pub mod keys;
 pub mod launcher;

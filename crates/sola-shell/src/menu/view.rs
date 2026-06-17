@@ -32,6 +32,11 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         .into();
     }
 
+    // Clock calendar panel takes over the same window when open.
+    if shell.current_open_is_calendar {
+        return calendar_panel(shell);
+    }
+
     // When the system-menu button was pressed, show the shell's own menu
     // (registered by BusSetup as "sola-shell").  Otherwise show the
     // focused app's menu at the selected index.
@@ -123,6 +128,42 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 // ---------------------------------------------------------------------------
 // Per-item view
 // ---------------------------------------------------------------------------
+
+/// Render the calendar dropdown, right-anchored under the menubar clock,
+/// over a full-screen dismiss backdrop (same window as the menu dropdown).
+fn calendar_panel(shell: &crate::app::Shell) -> Element<'_, Msg> {
+    let today = shell.menubar.clock_now.date_naive();
+    let card = crate::calendar::view(shell.calendar_month, today);
+
+    // Right-align the card near the screen's right edge (under the clock).
+    let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
+    let left = (output_w - crate::calendar::CARD_WIDTH - 8.0).max(0.0);
+
+    let positioned: Element<'_, Msg> = container(card)
+        .padding(Padding {
+            top: 0.0,
+            left,
+            right: 0.0,
+            bottom: 0.0,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(iced::alignment::Vertical::Top)
+        .into();
+
+    let backdrop: Element<'_, Msg> = mouse_area(
+        container(text(""))
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_press(Msg::CloseMenu)
+    .into();
+
+    stack![backdrop, positioned]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
 
 /// Build a menu item element from owned data (no borrows from caller's locals).
 fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg> {
