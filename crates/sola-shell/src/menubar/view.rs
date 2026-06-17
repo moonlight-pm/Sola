@@ -85,9 +85,10 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 
     // ── System-stat indicators (left of clock) ───────────────────────
     let neutral = iced::Color::from_rgb(0.902, 0.929, 0.953); // #e6edf3
+    let first_tick = shell.cpu_hist.is_empty();
     let cpu_pct = shell.stats.cpu_pct;
     let cpu_btn: Element<'_, Msg> = iced::widget::button(
-        stat_indicator("CPU", format!("{:.0}%", cpu_pct), crate::stats::level_color(cpu_pct, neutral)),
+        stat_indicator("CPU", if first_tick { "\u{2014}".to_string() } else { format!("{:.0}%", cpu_pct) }, crate::stats::level_color(cpu_pct, neutral)),
     )
     .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Cpu))))
     .padding([2, 8])
@@ -96,7 +97,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 
     let mem_pct = shell.stats.mem_pct;
     let mem_btn: Element<'_, Msg> = iced::widget::button(
-        stat_indicator("MEM", format!("{:.0}%", mem_pct), crate::stats::level_color(mem_pct, neutral)),
+        stat_indicator("MEM", if first_tick { "\u{2014}".to_string() } else { format!("{:.0}%", mem_pct) }, crate::stats::level_color(mem_pct, neutral)),
     )
     .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Mem))))
     .padding([2, 8])

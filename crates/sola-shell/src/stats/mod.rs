@@ -63,6 +63,9 @@ impl History {
         self.buf.make_contiguous();
         self.buf.as_slices().0
     }
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
     /// Clone of samples oldest→newest (no compaction; for read-only views).
     pub fn to_vec(&self) -> Vec<f32> {
         let (a, b) = self.buf.as_slices();

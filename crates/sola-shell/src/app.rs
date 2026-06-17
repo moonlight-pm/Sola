@@ -655,6 +655,7 @@ impl Shell {
                     self.open_panel = Some(Panel::Calendar);
                     self.current_open_index = None;
                     self.current_open_is_system = false;
+                    crate::stats::set_active_metric(None);
                     self.calendar_month =
                         crate::calendar::first_of_month(self.menubar.clock_now.date_naive());
                 }
@@ -725,6 +726,7 @@ impl Shell {
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
                 self.open_panel = None;
+                crate::stats::set_active_metric(None);
                 self.emit_composition();
                 self.emit_registered_chords();
                 iced::Task::none()
@@ -746,6 +748,7 @@ impl Shell {
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
                     self.open_panel = None;
+                    crate::stats::set_active_metric(None);
                 }
                 iced::Task::none()
             }
