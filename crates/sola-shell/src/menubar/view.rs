@@ -103,6 +103,23 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Mem))
     .into();
 
+    let net_inner = iced::widget::column(vec![
+        text(format!("\u{2193} {}", crate::stats::view::fmt_rate(shell.stats.net_down)))
+            .font(sola_kit::fonts::MONO)
+            .size(10)
+            .into(),
+        text(format!("\u{2191} {}", crate::stats::view::fmt_rate(shell.stats.net_up)))
+            .font(sola_kit::fonts::MONO)
+            .size(10)
+            .into(),
+    ])
+    .spacing(1);
+    let net_btn: Element<'_, Msg> = iced::widget::button(net_inner)
+        .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Net))))
+        .padding([2, 8])
+        .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Net))
+        .into();
+
     // ── Assemble ──────────────────────────────────────────────────────
     let mut left = vec![system_btn, app_title];
     left.extend(menu_labels);
@@ -113,6 +130,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         toast,
         cpu_btn,
         mem_btn,
+        net_btn,
         clock,
     ]
     .height(Length::Fill)

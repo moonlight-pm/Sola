@@ -31,7 +31,7 @@ pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
         Metric::Cpu => cpu_card(shell),
         Metric::Gpu => placeholder("GPU"),
         Metric::Mem => mem_card(shell),
-        Metric::Net => placeholder("Network"),
+        Metric::Net => net_card(shell),
     };
 
     let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
@@ -375,11 +375,88 @@ fn footer_pair<'a>(l1: &'a str, v1: String, l2: &'a str, v2: String) -> Element<
     .into()
 }
 
+/// Human bytes/sec: B/s, KB/s, MB/s.
+pub fn fmt_rate(bps: f32) -> String {
+    if bps >= 1_000_000.0 {
+        format!("{:.1} MB/s", bps / 1_000_000.0)
+    } else if bps >= 1000.0 {
+        format!("{:.0} KB/s", bps / 1000.0)
+    } else {
+        format!("{:.0} B/s", bps)
+    }
+}
+
 fn fmt_uptime(secs: u64) -> String {
     let d = secs / 86400;
     let h = (secs % 86400) / 3600;
     let m = (secs % 3600) / 60;
     if d > 0 { format!("{d}d {h}h {m}m") } else { format!("{h}h {m}m") }
+}
+
+// ---------------------------------------------------------------------------
+// Net card
+// ---------------------------------------------------------------------------
+
+fn net_card(shell: &Shell) -> Element<'_, Msg> {
+    let s = &shell.stats;
+    let detail = match &s.detail {
+        Some(crate::stats::Detail::Net(d)) => Some(d),
+        _ => None,
+    };
+
+    let identity = vec![
+        text(format!("\u{2193} {}", fmt_rate(s.net_down)))
+            .font(sola_kit::fonts::MONO)
+            .size(12)
+            .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.0, 0.831, 1.0)) })
+            .into(),
+        text(format!("\u{2191} {}", fmt_rate(s.net_up)))
+            .font(sola_kit::fonts::MONO)
+            .size(12)
+            .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.247, 0.725, 0.314)) })
+            .into(),
+    ];
+
+    let down = shell.net_down_hist.to_vec();
+    let up = shell.net_up_hist.to_vec();
+    let max = peak(&down).max(peak(&up)).max(1.0);
+    let graph = column![
+        caption("Last 60 seconds", format!("peak {}", fmt_rate(max))),
+        graph_box(history_graph(down, max, Color::from_rgb(0.0, 0.831, 1.0))),
+        graph_box(history_graph(up, max, Color::from_rgb(0.247, 0.725, 0.314))),
+    ]
+    .spacing(6)
+    .into();
+
+    let mut body: Vec<Element<'_, Msg>> = vec![graph];
+    if let Some(d) = detail {
+        body.push(divider());
+        body.push(footer_pair(
+            "INTERFACE",
+            format!("{}  {}", d.iface, d.ip),
+            "SESSION",
+            format!("\u{2193}{} \u{2191}{}", fmt_bytes(d.total_down), fmt_bytes(d.total_up)),
+        ));
+    }
+    // NET headline value uses the down rate; no threshold (rate, not level).
+    stat_card(
+        "NET",
+        fmt_rate(s.net_down),
+        Color::from_rgb(0.902, 0.929, 0.953),
+        identity,
+        body,
+    )
+}
+
+fn fmt_bytes(b: u64) -> String {
+    let f = b as f32;
+    if f >= 1e9 {
+        format!("{:.1} GB", f / 1e9)
+    } else if f >= 1e6 {
+        format!("{:.0} MB", f / 1e6)
+    } else {
+        format!("{:.0} KB", f / 1e3)
+    }
 }
 
 // ---------------------------------------------------------------------------
