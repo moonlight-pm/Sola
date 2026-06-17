@@ -21,7 +21,7 @@ use clap::Parser;
 /// of the default `cargo make build` / `cargo make install` flows.
 /// They stay buildable via explicit `cargo make build <name>` so the
 /// source is kept warm without paying for them on every full build.
-const EXCLUDED_TARGETS: &[&str] = &["sola-browser", "sola-terminal"];
+const EXCLUDED_TARGETS: &[&str] = &["sola-browser"];
 
 #[derive(Parser, Debug)]
 #[command(name = "sola-make", about = "Sola build system")]
@@ -291,14 +291,7 @@ mod tests {
         // additions to EXCLUDED_TARGETS get noticed in review.
         assert_eq!(
             build_args(None, false),
-            vec![
-                "build",
-                "--workspace",
-                "--exclude",
-                "sola-browser",
-                "--exclude",
-                "sola-terminal",
-            ]
+            vec!["build", "--workspace", "--exclude", "sola-browser",]
         );
     }
 
@@ -319,8 +312,6 @@ mod tests {
                 "--workspace",
                 "--exclude",
                 "sola-browser",
-                "--exclude",
-                "sola-terminal",
                 "--release",
             ]
         );
