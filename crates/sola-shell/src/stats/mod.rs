@@ -1,6 +1,8 @@
 //! Menubar system monitors: background sampling + the snapshot model.
 //! See docs/specs/2026-06-16-menubar-system-monitors-design.md.
 
+pub mod cpu;
+
 use iced::Color;
 
 /// Which metric an indicator / panel represents.
