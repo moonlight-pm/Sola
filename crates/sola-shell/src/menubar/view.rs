@@ -124,14 +124,29 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mut left = vec![system_btn, app_title];
     left.extend(menu_labels);
 
+    // ── Indicator cluster (GPU hidden when no NVIDIA GPU) ─────────────
+    let mut cluster: Vec<Element<'_, Msg>> = vec![cpu_btn];
+    if let Some(g) = shell.stats.gpu {
+        let gpu_btn: Element<'_, Msg> = iced::widget::button(
+            stat_indicator("GPU", format!("{:.0}%", g.util), crate::stats::level_color(g.util, neutral)),
+        )
+        .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Gpu))))
+        .padding([2, 8])
+        .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Gpu))
+        .into();
+        cluster.push(gpu_btn);
+    }
+    cluster.push(mem_btn);
+    cluster.push(net_btn);
+    cluster.push(clock);
+
     row![
         row(left),
         iced::widget::Space::new().width(iced::Length::Fill),
         toast,
-        cpu_btn,
-        mem_btn,
-        net_btn,
-        clock,
+        iced::widget::row(cluster)
+            .spacing(16)
+            .align_y(iced::alignment::Vertical::Center),
     ]
     .height(Length::Fill)
     .into()

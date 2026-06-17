@@ -29,7 +29,7 @@ fn dim(theme: &iced::Theme) -> iced::widget::text::Style {
 pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
     let card = match metric {
         Metric::Cpu => cpu_card(shell),
-        Metric::Gpu => placeholder("GPU"),
+        Metric::Gpu => gpu_card(shell),
         Metric::Mem => mem_card(shell),
         Metric::Net => net_card(shell),
     };
@@ -58,13 +58,6 @@ pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
     stack![backdrop, positioned]
         .width(Length::Fill)
         .height(Length::Fill)
-        .into()
-}
-
-fn placeholder(label: &str) -> Element<'static, Msg> {
-    popover(column![text(label.to_string()).size(14)].padding(4))
-        .padding(Padding::new(8.0))
-        .width(Length::Fixed(CARD_WIDTH))
         .into()
 }
 
@@ -457,6 +450,97 @@ fn fmt_bytes(b: u64) -> String {
     } else {
         format!("{:.0} KB", f / 1e3)
     }
+}
+
+// ---------------------------------------------------------------------------
+// GPU card
+// ---------------------------------------------------------------------------
+
+fn gpu_card(shell: &Shell) -> Element<'_, Msg> {
+    let s = &shell.stats;
+    let neutral = Color::from_rgb(0.902, 0.929, 0.953);
+    let util = s.gpu.map(|g| g.util).unwrap_or(0.0);
+    let detail = match &s.detail {
+        Some(crate::stats::Detail::Gpu(d)) => Some(d),
+        _ => None,
+    };
+
+    let identity = vec![
+        text(detail.map(|d| short_gpu(&d.name)).unwrap_or_else(|| "GPU".into()))
+            .size(12)
+            .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.788, 0.820, 0.851)) })
+            .into(),
+        text(detail.map(|d| format!("{:.0} GB", d.mem_total_mb / 1024.0)).unwrap_or_default())
+            .font(sola_kit::fonts::MONO)
+            .size(11)
+            .style(dim)
+            .into(),
+    ];
+
+    let graph = column![
+        caption("Last 60 seconds", format!("peak {:.0}%", peak(&shell.gpu_hist.to_vec()))),
+        graph_box(history_graph(shell.gpu_hist.to_vec(), 100.0, Color::from_rgb(0.0, 0.831, 1.0))),
+    ]
+    .spacing(6)
+    .into();
+    let mut body: Vec<Element<'_, Msg>> = vec![graph];
+
+    if let Some(d) = detail {
+        let frac = if d.mem_total_mb > 0.0 { d.mem_used_mb / d.mem_total_mb } else { 0.0 };
+        body.push(
+            column![
+                caption("VRAM", format!("{:.1} / {:.0} GB", d.mem_used_mb / 1024.0, d.mem_total_mb / 1024.0)),
+                level_bar(frac, Color::from_rgb(0.0, 0.831, 1.0)),
+            ]
+            .spacing(6)
+            .into(),
+        );
+        body.push(divider());
+        body.push(footer_pair("TEMP", format!("{:.0}\u{00b0}C", d.temp_c), "POWER", format!("{:.0} W", d.power_w)));
+        body.push(footer_pair("FAN", format!("{:.0}%", d.fan_pct), "CLOCK", format!("{} MHz", d.clock_mhz)));
+        if !d.top.is_empty() {
+            body.push(divider());
+            body.push(caption("Top processes", "by VRAM".into()));
+            let max = d.top.first().map(|t| t.value).unwrap_or(1.0);
+            for p in &d.top {
+                body.push(proc_row(&p.name, format!("{:.0} MB", p.value), p.value, max));
+            }
+        }
+    }
+
+    stat_card("GPU", format!("{:.0}%", util), crate::stats::level_color(util, neutral), identity, body)
+}
+
+/// "NVIDIA GeForce RTX 3090 Ti" → "RTX 3090 Ti".
+fn short_gpu(name: &str) -> String {
+    name.rsplit("GeForce ").next().unwrap_or(name).to_string()
+}
+
+/// Single horizontal fill bar (0..1). Two children (fill + spacer) so the
+/// proportion actually shows — a lone FillPortion child would fill 100%.
+fn level_bar<'a>(frac: f32, color: Color) -> Element<'a, Msg> {
+    let f = frac.clamp(0.0, 1.0);
+    let fill = (f * 1000.0) as u16;
+    let rest = 1000u16.saturating_sub(fill);
+    container(row![
+        container(text(""))
+            .width(Length::FillPortion(fill))
+            .height(Length::Fixed(8.0))
+            .style(move |_: &Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(color)),
+                border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                ..Default::default()
+            }),
+        iced::widget::Space::new().width(Length::FillPortion(rest)),
+    ])
+    .width(Length::Fixed(288.0))
+    .height(Length::Fixed(8.0))
+    .style(|_: &Theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(Color::from_rgb(0.188, 0.211, 0.243))),
+        border: iced::Border { radius: 4.0.into(), ..Default::default() },
+        ..Default::default()
+    })
+    .into()
 }
 
 // ---------------------------------------------------------------------------
