@@ -23,3 +23,4 @@ tracing = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tokio = { version = "1", features = ["time"] }
 nix = { version = "0.31", features = ["net"] }
+nvml-wrapper = "0.10"
