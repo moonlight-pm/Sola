@@ -1,7 +1,8 @@
 //! Stat detail dropdown panels, rendered in the Menu window.
 
+use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::widget::{column, container, mouse_area, stack, text};
-use iced::{Element, Length, Padding};
+use iced::{mouse, Color, Element, Length, Padding, Point, Rectangle, Renderer, Theme};
 
 use crate::app::{Msg, Shell};
 use crate::stats::Metric;
@@ -83,4 +84,72 @@ fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
     .padding(Padding::new(8.0))
     .width(Length::Fixed(CARD_WIDTH))
     .into()
+}
+
+// ---------------------------------------------------------------------------
+// History graph widget
+// ---------------------------------------------------------------------------
+
+/// A 60-sample area+line history chart. `max` is the value mapped to the top
+/// (e.g. 100.0 for percentages, or the buffer peak for rates).
+pub struct Graph {
+    pub samples: Vec<f32>,
+    pub max: f32,
+    pub color: Color,
+}
+
+impl<Message> canvas::Program<Message> for Graph {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let n = self.samples.len();
+        if n < 2 || self.max <= 0.0 {
+            return vec![frame.into_geometry()];
+        }
+        let w = bounds.width;
+        let h = bounds.height;
+        let x = |i: usize| (i as f32 / (n - 1) as f32) * w;
+        let y = |v: f32| h - (v / self.max).clamp(0.0, 1.0) * h;
+
+        let line = Path::new(|p: &mut canvas::path::Builder| {
+            p.move_to(Point::new(x(0), y(self.samples[0])));
+            for i in 1..n {
+                p.line_to(Point::new(x(i), y(self.samples[i])));
+            }
+        });
+        let area = Path::new(|p: &mut canvas::path::Builder| {
+            p.move_to(Point::new(x(0), h));
+            for i in 0..n {
+                p.line_to(Point::new(x(i), y(self.samples[i])));
+            }
+            p.line_to(Point::new(x(n - 1), h));
+            p.close();
+        });
+        frame.fill(&area, Color { a: 0.25, ..self.color });
+        frame.stroke(
+            &line,
+            Stroke::default().with_color(self.color).with_width(1.5),
+        );
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Convenience: a fixed-height graph element from samples.
+pub fn history_graph<'a, Message: 'a>(
+    samples: Vec<f32>,
+    max: f32,
+    color: Color,
+) -> Element<'a, Message> {
+    Canvas::new(Graph { samples, max, color })
+        .width(Length::Fill)
+        .height(Length::Fixed(58.0))
+        .into()
 }
