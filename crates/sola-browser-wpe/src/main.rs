@@ -16,6 +16,8 @@ use iced::{Element, Length, Subscription, Task};
 use sola_browser_wpe::shader::{FrameSlot, WpeProgram};
 use sola_browser_wpe::wpe::{Cmd, NavCmd, TabId, TabInfo, WpeEngine};
 
+mod integration;
+
 const APP_ID: &str = "sola-browser-wpe";
 const DEFAULT_URL: &str = "https://slate.auto";
 const VIEW_W: u32 = 1280;
@@ -75,6 +77,15 @@ fn main() -> iced::Result {
         .map_err(|_| ())
         .expect("ACTIVE_TAB_FOR_STREAM set twice");
 
+    // Join the Sola bus: subscribe to the topics we act on and publish the
+    // "Browser" app-menu (which is also how the shell binds our shortcuts).
+    // Connecting is best-effort — without a bus the browser still runs
+    // standalone (no theme/menu/OpenUrl).
+    sola_kit::app::BusSetup::new(APP_ID)
+        .subscribe(integration::SUBSCRIBE)
+        .app_menu("Browser", integration::MENU_ITEMS)
+        .install();
+
     iced::application(
         move || App {
             slot: slot.clone(),
@@ -85,6 +96,7 @@ fn main() -> iced::Result {
             cached_active: TabId(active_handle.load(Ordering::Relaxed)),
             url_field: url.clone(),
             last_seen_url: url.clone(),
+            theme: sola_kit::theme::default_theme(),
         },
         App::update,
         App::view,
@@ -95,6 +107,8 @@ fn main() -> iced::Result {
         _ => APP_ID.into(),
     })
     .subscription(App::subscription)
+    .theme(App::theme)
+    .default_font(sola_kit::fonts::ui())
     .window(iced::window::Settings {
         decorations: false,
         platform_specific: iced::window::settings::PlatformSpecific {
@@ -125,6 +139,9 @@ struct App {
     /// The URL we last copied from the engine into `url_field`,
     /// so we only overwrite on actual change.
     last_seen_url: String,
+    /// Active iced theme, refreshed live from `Topic::Theme` so the
+    /// chrome (tab strip, URL bar, buttons) tracks the system theme.
+    theme: iced::Theme,
 }
 
 #[derive(Debug, Clone)]
@@ -141,6 +158,9 @@ enum Msg {
     /// Timer tick — refresh `cached_tabs`/`cached_active` and
     /// sync `url_field` if the active tab's URL changed.
     Tick,
+    /// A message delivered over the Sola bus (theme, open-url, menu
+    /// action, close-app). Handled by `integration::handle_bus`.
+    Bus(Arc<sola_bus::Message>),
 }
 
 impl App {
@@ -167,16 +187,7 @@ impl App {
                 self.last_seen_url = url.clone();
                 let _ = self.releaser.send(Cmd::Nav(NavCmd::LoadUrl(url)));
             }
-            Msg::OpenTab => {
-                let id = ENGINE.get().expect("ENGINE").alloc_tab_id();
-                let _ = self.releaser.send(Cmd::OpenTab {
-                    id,
-                    url: DEFAULT_URL.to_string(),
-                });
-                let _ = self.releaser.send(Cmd::SetActiveTab(id));
-                self.cached_active = id;
-                self.active_handle.store(id.0, Ordering::Relaxed);
-            }
+            Msg::OpenTab => self.open_tab(DEFAULT_URL.to_string(), true),
             Msg::CloseTab(id) => {
                 // If closing the active tab, pick a new active tab
                 // first so the engine never sees `active` pointing
@@ -212,8 +223,27 @@ impl App {
                     }
                 }
             }
+            Msg::Bus(message) => return integration::handle_bus(self, message),
         }
         Task::none()
+    }
+
+    /// Open a new tab loading `url`, focusing it when `activate`. Shared by
+    /// the chrome "+" button (`Msg::OpenTab`) and bus-driven OpenUrl.
+    fn open_tab(&mut self, url: String, activate: bool) {
+        let url = normalize_url(&url);
+        let id = ENGINE.get().expect("ENGINE").alloc_tab_id();
+        let _ = self.releaser.send(Cmd::OpenTab { id, url });
+        if activate {
+            let _ = self.releaser.send(Cmd::SetActiveTab(id));
+            self.cached_active = id;
+            self.active_handle.store(id.0, Ordering::Relaxed);
+        }
+    }
+
+    /// Current iced theme (chrome styling), refreshed from `Topic::Theme`.
+    fn theme(&self) -> iced::Theme {
+        self.theme.clone()
     }
 
     fn pick_new_active_after_close(&self, closing: TabId) -> Option<TabId> {
@@ -283,6 +313,7 @@ impl App {
             button(text("→")).on_press(Msg::NavForward),
             button(text("↻")).on_press(Msg::NavReload),
             text_input("Search or enter URL", &self.url_field)
+                .id(integration::url_input_id())
                 .on_input(Msg::UrlInput)
                 .on_submit(Msg::UrlSubmit)
                 .padding(6)
@@ -298,6 +329,7 @@ impl App {
         Subscription::batch(vec![
             Subscription::run(frame_stream),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
+            sola_kit::app::bus_subscription().map(Msg::Bus),
         ])
     }
 }

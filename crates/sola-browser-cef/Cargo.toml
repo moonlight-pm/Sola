@@ -29,6 +29,7 @@ path = "src/main.rs"
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
+sola-kit = { path = "../sola-kit" }
 tracing = "0.1"
 
 # wgpu pinned to the exact version iced 0.14 carries so handle types

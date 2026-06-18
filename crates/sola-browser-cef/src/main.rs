@@ -17,6 +17,8 @@ use iced::{Element, Length, Subscription, Task};
 use sola_browser_cef::cef::{CefEngine, Cmd, NavCmd, TabId, TabInfo};
 use sola_browser_cef::shader::{CefProgram, FrameSlot};
 
+mod integration;
+
 const APP_ID: &str = "sola-browser-cef";
 const DEFAULT_URL: &str = "https://slate.auto";
 const VIEW_W: u32 = 1280;
@@ -64,6 +66,15 @@ fn main() -> ExitCode {
         .map_err(|_| ())
         .expect("ACTIVE_TAB_FOR_STREAM set twice");
 
+    // Join the Sola bus: subscribe to the topics we act on and publish the
+    // "Browser" app-menu (which is also how the shell binds our shortcuts).
+    // Connecting is best-effort — without a bus the browser still runs
+    // standalone (no theme/menu/OpenUrl).
+    sola_kit::app::BusSetup::new(APP_ID)
+        .subscribe(integration::SUBSCRIBE)
+        .app_menu("Browser", integration::MENU_ITEMS)
+        .install();
+
     let result = iced::application(
         move || App {
             slot: slot.clone(),
@@ -74,6 +85,7 @@ fn main() -> ExitCode {
             cached_active: TabId(active_handle.load(Ordering::Relaxed)),
             url_field: url.clone(),
             last_seen_url: url.clone(),
+            theme: sola_kit::theme::default_theme(),
         },
         App::update,
         App::view,
@@ -84,6 +96,8 @@ fn main() -> ExitCode {
         _ => APP_ID.into(),
     })
     .subscription(App::subscription)
+    .theme(App::theme)
+    .default_font(sola_kit::fonts::ui())
     .window(iced::window::Settings {
         decorations: false,
         platform_specific: iced::window::settings::PlatformSpecific {
@@ -110,6 +124,9 @@ struct App {
     cached_active: TabId,
     url_field: String,
     last_seen_url: String,
+    /// Active iced theme, refreshed live from `Topic::Theme` so the
+    /// chrome (tab strip, URL bar, buttons) tracks the system theme.
+    theme: iced::Theme,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +141,9 @@ enum Msg {
     CloseTab(TabId),
     ActivateTab(TabId),
     Tick,
+    /// A message delivered over the Sola bus (theme, open-url, menu
+    /// action, close-app). Handled by `integration::handle_bus`.
+    Bus(Arc<sola_bus::Message>),
 }
 
 impl App {
@@ -150,16 +170,7 @@ impl App {
                 self.last_seen_url = url.clone();
                 let _ = self.releaser.send(Cmd::Nav(NavCmd::LoadUrl(url)));
             }
-            Msg::OpenTab => {
-                let id = ENGINE.get().expect("ENGINE").alloc_tab_id();
-                let _ = self.releaser.send(Cmd::OpenTab {
-                    id,
-                    url: DEFAULT_URL.to_string(),
-                });
-                let _ = self.releaser.send(Cmd::SetActiveTab(id));
-                self.cached_active = id;
-                self.active_handle.store(id.0, Ordering::Relaxed);
-            }
+            Msg::OpenTab => self.open_tab(DEFAULT_URL.to_string(), true),
             Msg::CloseTab(id) => {
                 let was_active = self.cached_active == id;
                 if was_active {
@@ -189,8 +200,27 @@ impl App {
                     }
                 }
             }
+            Msg::Bus(message) => return integration::handle_bus(self, message),
         }
         Task::none()
+    }
+
+    /// Open a new tab loading `url`, focusing it when `activate`. Shared by
+    /// the chrome "+" button (`Msg::OpenTab`) and bus-driven OpenUrl.
+    fn open_tab(&mut self, url: String, activate: bool) {
+        let url = normalize_url(&url);
+        let id = ENGINE.get().expect("ENGINE").alloc_tab_id();
+        let _ = self.releaser.send(Cmd::OpenTab { id, url });
+        if activate {
+            let _ = self.releaser.send(Cmd::SetActiveTab(id));
+            self.cached_active = id;
+            self.active_handle.store(id.0, Ordering::Relaxed);
+        }
+    }
+
+    /// Current iced theme (chrome styling), refreshed from `Topic::Theme`.
+    fn theme(&self) -> iced::Theme {
+        self.theme.clone()
     }
 
     fn pick_new_active_after_close(&self, closing: TabId) -> Option<TabId> {
@@ -255,6 +285,7 @@ impl App {
             button(text("→")).on_press(Msg::NavForward),
             button(text("↻")).on_press(Msg::NavReload),
             text_input("Search or enter URL", &self.url_field)
+                .id(integration::url_input_id())
                 .on_input(Msg::UrlInput)
                 .on_submit(Msg::UrlSubmit)
                 .padding(6)
@@ -270,6 +301,7 @@ impl App {
         Subscription::batch(vec![
             Subscription::run(frame_stream),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
+            sola_kit::app::bus_subscription().map(Msg::Bus),
         ])
     }
 }
