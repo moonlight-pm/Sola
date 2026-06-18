@@ -464,6 +464,7 @@ impl App {
                     palette: &self.palette,
                     metrics: self.metrics,
                     cursor_on: self.cursor_on,
+                    active: pane_id == active_pane,
                     on_select: Msg::SelectionChanged,
                     on_scroll: Msg::Scrolled,
                 };

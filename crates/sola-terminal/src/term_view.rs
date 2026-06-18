@@ -440,8 +440,12 @@ pub struct TermView<'a, Message> {
     pub metrics: CellMetrics,
     /// Blink phase for the block cursor: `true` draws it, `false` hides it.
     /// `App` toggles this on a timer and clears the cache so the cursor
-    /// appears/disappears between frames.
+    /// appears/disappears between frames. Only honoured for the active pane.
     pub cursor_on: bool,
+    /// Whether this pane is the focused one. The active pane gets the
+    /// blinking filled block; inactive panes (other split panes) get a
+    /// static hollow block — outline only, no fill, no blink.
+    pub active: bool,
     /// Message emitted whenever a mouse interaction mutates `term.selection`
     /// (start / extend / clear). `App` handles it by clearing the geometry
     /// cache so the highlight re-renders. Cloned, so cheap variants only.
@@ -757,24 +761,39 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
 
             // ── Cursor: block at the cursor cell ──
             //
-            // We draw a filled block in the cursor colour. Non-block shapes
-            // (Beam / Underline / Hollow) are a follow-up — block is the
-            // standard fallback and is always legible. Skipped on the "off"
-            // blink phase so the cursor blinks (App toggles `cursor_on`).
+            // Active pane: filled block in the cursor colour, blinking (App
+            // toggles `cursor_on`). Inactive split panes: a static hollow block
+            // (outline only, no fill, no blink) so only the focused pane draws
+            // attention. Non-block shapes (Beam / Underline) are a follow-up.
             // NOTE: cursor.shape (Beam/Underline/HollowBlock) not yet honoured.
-            if self.cursor_on {
-                let (cx, cy) = self.cell_xy(
-                    visible_row(cursor.point.line.0, display_offset),
-                    cursor.point.column.0,
+            let (cx, cy) = self.cell_xy(
+                visible_row(cursor.point.line.0, display_offset),
+                cursor.point.column.0,
+            );
+            if self.active {
+                if self.cursor_on {
+                    let block = Path::rectangle(
+                        Point::new(cx, cy),
+                        Size::new(metrics.cell_w, metrics.cell_h),
+                    );
+                    // Fairly opaque: a low alpha over a dark background muddies
+                    // the warm gold into brown. 0.85 keeps it reading as gold
+                    // while the glyph beneath stays faintly visible.
+                    frame.fill(&block, Color { a: 0.85, ..palette.cursor });
+                }
+            } else {
+                // Hollow block, inset 0.5px so the 1px stroke stays inside the
+                // cell. Always drawn (independent of the blink phase).
+                let outline = Path::rectangle(
+                    Point::new(cx + 0.5, cy + 0.5),
+                    Size::new(metrics.cell_w - 1.0, metrics.cell_h - 1.0),
                 );
-                let block = Path::rectangle(
-                    Point::new(cx, cy),
-                    Size::new(metrics.cell_w, metrics.cell_h),
+                frame.stroke(
+                    &outline,
+                    Stroke::default()
+                        .with_color(Color { a: 0.6, ..palette.cursor })
+                        .with_width(1.0),
                 );
-                // Fairly opaque: a low alpha over a dark background muddies the
-                // warm gold into brown. 0.85 keeps it reading as gold while the
-                // glyph beneath stays faintly visible.
-                frame.fill(&block, Color { a: 0.85, ..palette.cursor });
             }
         });
 
