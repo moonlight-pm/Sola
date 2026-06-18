@@ -275,6 +275,17 @@ impl App {
             Msg::PtyExit(pane_id) => self.close_pane_by_id(&pane_id),
             Msg::PtyOutput(pane_id) => {
                 self.tabs.clear_pane_cache(&pane_id);
+                // Parked scrollback diagnostics — debug-gated, so quiet by default.
+                // Enable with `RUST_LOG=sola_terminal=debug`; grep `SCROLLBACK`.
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    if let Some(rt) = self.tabs.pane_runtime(&pane_id) {
+                        let (h, o) = rt.emulator.scrollback_stats();
+                        tracing::debug!(
+                            "SCROLLBACK ptyout pane={} hist={} off={}",
+                            &pane_id[..8.min(pane_id.len())], h, o
+                        );
+                    }
+                }
                 Task::none()
             }
             Msg::BlinkTick => {
@@ -664,7 +675,19 @@ impl App {
                 continue;
             }
             if let Some(rt) = self.tabs.pane_runtime(&pane_id) {
+                // Scrollback diagnostics for the parked divider-resize issue
+                // (could not reproduce 2026-06-18). Debug-gated: zero cost unless
+                // enabled via `RUST_LOG=sola_terminal=debug`. Grep `SCROLLBACK`.
+                let dbg = tracing::enabled!(tracing::Level::DEBUG);
+                let hb = if dbg { rt.emulator.scrollback_stats().0 } else { 0 };
                 rt.emulator.resize(c, r);
+                if dbg {
+                    tracing::debug!(
+                        "SCROLLBACK resize pane={} -> {}x{} hist {}->{}",
+                        &pane_id[..8.min(pane_id.len())], c, r, hb,
+                        rt.emulator.scrollback_stats().0
+                    );
+                }
                 rt.backend.resize(c, r);
                 rt.backend.sigwinch();
                 rt.cache.clear();

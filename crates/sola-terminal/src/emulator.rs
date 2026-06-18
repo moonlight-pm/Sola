@@ -420,6 +420,16 @@ impl Emulator {
     pub fn term(&self) -> Arc<FairMutex<Term<Listener>>> {
         self.term.clone()
     }
+
+    /// `(history_size, display_offset)` — scrollback diagnostics for the parked
+    /// divider-resize issue. Read by the debug-gated `SCROLLBACK` logs in
+    /// `main.rs::{resize_all_panes, update}`.
+    pub fn scrollback_stats(&self) -> (usize, usize) {
+        use alacritty_terminal::grid::Dimensions;
+        let t = self.term.lock();
+        let g = t.grid();
+        (g.total_lines() - g.screen_lines(), g.display_offset())
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
