@@ -27,6 +27,7 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+sola-browser-core = { path = "../sola-browser-core" }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 sola-kit = { path = "../sola-kit" }

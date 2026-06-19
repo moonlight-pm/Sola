@@ -1,24 +1,7 @@
-//! CEF engine wrapper used by the main browser binary.
-//!
-//! Public surface mirrors `sola-browser-wpe::wpe::WpeEngine` so the
-//! shader / app code on the iced side stays nearly identical.
-//!
-//! Modeled on `sola-kit/src/cef/{init,handlers,browser}.rs`, which
-//! already runs CEF + Wayland in this repo. Differences here:
-//!
-//! - **CPU OSR transport** instead of dma-buf. CEF's
-//!   `on_accelerated_paint` does not work on NVIDIA proprietary
-//!   (see sola-kit's `cef::browser::Browser::new` doc-comment for
-//!   the long story). We use `shared_texture_enabled = 0` and copy
-//!   the BGRA buffer out of `on_paint` into a `Vec<u8>` per frame.
-//! - **No Wayland surface dependency.** The kit binds its CEF
-//!   browser to a Wayland Surface and presents through
-//!   `present_paint` / `present_dmabuf`. Here we hand frames to
-//!   iced via `mpsc::channel`, and iced does the GPU upload via
-//!   `wgpu::Queue::write_texture` (see `cpu_import.rs`).
-//! - **Worker thread runs the CEF message loop.** The main thread
-//!   is owned by iced; CEF's `run_message_loop` blocks, so it
-//!   lives on a dedicated thread.
+//! CEF engine — implements `sola_browser_core::Engine` for the CEF backend.
+
+#![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use std::cell::RefCell;
 use std::process::ExitCode;
@@ -28,6 +11,11 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::{self, JoinHandle};
+
+use sola_browser_core::{
+    ActiveHandle, Cmd, CursorHandle, Engine, FrameReceiver, FrameSlot, NavCmd, TabId,
+    TabInfo, TabsHandle, TaggedFrame,
+};
 
 // `wrap_app!`, `wrap_render_handler!`, `wrap_client!`, `wrap_task!`
 // expand to code referencing bare names from `cef::*` (App, Client,
@@ -48,62 +36,9 @@ pub struct CefFrame {
     pub height: u32,
 }
 
-pub enum Cmd {
-    /// Request a new viewport size for the active tab.
-    Resize { width: u32, height: u32 },
-    /// Forward a user input event to the active tab.
-    Input(InputEvent),
-    /// Toggle CEF focus on the active tab.
-    Focus(bool),
-    /// Navigation (back/forward/reload/etc) on the active tab.
-    Nav(NavCmd),
-    /// Open a new tab with `id` and load `url`. The chrome picks
-    /// the id (via `CefEngine::alloc_tab_id`) so it can name the
-    /// tab before the worker has acked.
-    OpenTab { id: TabId, url: String },
-    /// Close a tab by id. Caller must switch active first if
-    /// closing the active tab.
-    CloseTab(TabId),
-    /// Switch which tab the engine considers active. Subsequent
-    /// `Resize` / `Input` / `Nav` / `Focus` cmds target this tab,
-    /// and the iced subscription only forwards its frames.
-    SetActiveTab(TabId),
-    Quit,
-}
-
-/// Navigation actions the chrome triggers. 1:1 with CEF browser
-/// API calls; same enum shape as sola-browser-wpe's NavCmd so the
-/// chrome can be engine-agnostic.
-#[derive(Debug, Clone)]
-pub enum NavCmd {
-    Back,
-    Forward,
-    Reload,
-    Stop,
-    LoadUrl(String),
-}
-
-
-/// Per-tab identifier. Same shape as `sola-browser-wpe::wpe::TabId`
-/// so the iced chrome can be (eventually) engine-agnostic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TabId(pub u64);
-
-#[derive(Debug, Clone)]
-pub struct TabInfo {
-    pub id: TabId,
-    pub url: String,
-    pub title: String,
-}
-
-pub struct TaggedFrame {
-    pub tab_id: TabId,
-    pub frame: CefFrame,
-}
-
-/// Thread-safe input event shape. Mirrors the layout in
-/// sola-browser-wpe but uses CEF's coordinate + modifier
-/// conventions (integer pixels, `EVENTFLAG_*` bits).
+/// CEF-specific input event. Uses CEF's integer-pixel coordinates and
+/// Windows virtual-key codes — distinct from core's WPE-shaped `InputEvent`.
+/// Lives here (engine-specific) rather than in core.
 #[derive(Debug, Clone)]
 pub enum InputEvent {
     PointerMove { x: i32, y: i32, modifiers: u32 },
@@ -135,15 +70,17 @@ pub enum InputEvent {
     },
 }
 
+
+
 /// Engine handle held by the main thread. Owns the worker thread
 /// that runs CEF's message loop, the command channel into that
 /// thread, and the receive end of the frame channel.
 pub struct CefEngine {
     worker: Option<JoinHandle<()>>,
-    cmd_tx: Sender<Cmd>,
+    cmd_tx: Sender<Cmd<()>>,
     /// Receiver of (tab_id, frame) tuples. iced filters by active
     /// tab before importing.
-    frames: Arc<Mutex<Receiver<TaggedFrame>>>,
+    frames: Arc<Mutex<Receiver<TaggedFrame<CefFrame>>>>,
     /// Latest CSS cursor pushed by CEF's `OnCursorChange`. Encoded
     /// as a `CursorKind` discriminant; shader's `mouse_interaction`
     /// reads this every render.
@@ -159,13 +96,17 @@ pub struct CefEngine {
     next_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
-impl CefEngine {
-    /// Called *before* logger init at the top of `main`. If we were
-    /// re-exec'd by CEF as a worker process (renderer / GPU /
-    /// utility / zygote), `cef::execute_process` handles the worker
-    /// loop and returns its exit code; we propagate it. The browser
-    /// process gets `None` and continues normally.
-    pub fn dispatch_subprocess(app_id: &'static str) -> Option<ExitCode> {
+impl Engine for CefEngine {
+    type Frame = CefFrame;
+    type Token = ();
+    type Program = crate::frame::CefProgram;
+
+    /// CEF subprocess gate. Must run first in `main`, before logging
+    /// or Wayland init. If re-exec'd by CEF as a renderer / GPU /
+    /// utility / zygote worker, `cef::execute_process` handles the
+    /// worker loop and returns its exit code; we propagate it. The
+    /// browser process gets `None` and continues normally.
+    fn dispatch_subprocess(app_id: &'static str) -> Option<ExitCode> {
         unsafe {
             cef::sys::cef_api_hash(cef::sys::CEF_API_VERSION, 0);
         }
@@ -182,11 +123,20 @@ impl CefEngine {
     }
 
     /// Spawn the CEF engine. Initializes CEF, opens the initial
-    /// tab with `url`, runs the message loop on a dedicated
-    /// thread.
-    pub fn spawn(app_id: &'static str, url: &str, width: u32, height: u32) -> Self {
-        let (cmd_tx, cmd_rx) = channel::<Cmd>();
-        let (frame_tx, frame_rx) = channel::<TaggedFrame>();
+    /// tab with `url`, runs the message loop on a dedicated thread.
+    /// `browser_subprocess_path = current_exe()` so that after the
+    /// dispatcher `exec`s this binary, `--type=` workers re-exec
+    /// correctly.
+    fn spawn(app_id: &'static str, url: &str, width: u32, height: u32) -> Self {
+        let (cmd_tx, cmd_rx) = channel::<Cmd<()>>();
+        let (frame_tx, frame_rx) = channel::<TaggedFrame<CefFrame>>();
+        // Separate side-channel for CEF-specific input events.
+        // Core's Cmd::Input carries sola_browser_core::InputEvent (WPE-shaped);
+        // CEF input uses integer pixels and Windows VK codes, so it cannot
+        // travel through that variant. The Program sends on INPUT_TX;
+        // the worker pump drains input_rx.
+        let (input_tx, input_rx) = channel::<InputEvent>();
+        INPUT_TX.set(input_tx).ok().expect("INPUT_TX set twice — spawn called twice?");
         let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let tabs_snapshot = Arc::new(Mutex::new(Vec::<TabInfo>::new()));
         let active_atomic = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -212,7 +162,7 @@ impl CefEngine {
             .name("cef-engine".into())
             .spawn(move || {
                 worker_main(
-                    app_id, width, height, frame_tx, cmd_rx, cursor_w, snap_w, active_w,
+                    app_id, width, height, frame_tx, cmd_rx, input_rx, cursor_w, snap_w, active_w,
                 )
             })
             .expect("spawn cef-engine thread");
@@ -228,35 +178,35 @@ impl CefEngine {
         }
     }
 
-    /// Mint a fresh tab id. Send back via `Cmd::OpenTab` to
-    /// actually create the browser.
-    pub fn alloc_tab_id(&self) -> TabId {
+    fn alloc_tab_id(&self) -> TabId {
         TabId(self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 
-    /// Shared snapshot of all open tabs.
-    pub fn tabs_handle(&self) -> Arc<Mutex<Vec<TabInfo>>> {
-        self.tabs.clone()
-    }
-
-    /// Atomic id of the currently-active tab.
-    pub fn active_tab_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
-        self.active_tab.clone()
-    }
-
-    pub fn cursor_handle(&self) -> Arc<std::sync::atomic::AtomicU32> {
-        self.cursor.clone()
-    }
-
-    pub fn cmd_sender(&self) -> Sender<Cmd> {
+    fn cmd_sender(&self) -> Sender<Cmd<()>> {
         self.cmd_tx.clone()
     }
 
-    pub fn frames(&self) -> Arc<Mutex<Receiver<TaggedFrame>>> {
+    fn tabs_handle(&self) -> TabsHandle {
+        self.tabs.clone()
+    }
+
+    fn active_tab_handle(&self) -> ActiveHandle {
+        self.active_tab.clone()
+    }
+
+    fn cursor_handle(&self) -> CursorHandle {
+        self.cursor.clone()
+    }
+
+    fn frames(&self) -> FrameReceiver<CefFrame> {
         self.frames.clone()
     }
 
-    pub fn shutdown(mut self) {
+    fn make_program(slot: std::sync::Arc<FrameSlot<Self>>) -> Self::Program {
+        crate::frame::CefProgram { slot }
+    }
+
+    fn shutdown(mut self) {
         let _ = self.cmd_tx.send(Cmd::Quit);
         if let Some(h) = self.worker.take() {
             let _ = h.join();
@@ -278,8 +228,13 @@ struct CefThreadState {
     /// tabs share the iced widget's bounds). Updated by
     /// `Cmd::Resize` and consulted on tab switch.
     size: Mutex<(u32, u32)>,
-    frame_tx: Sender<TaggedFrame>,
-    cmd_rx: RefCell<Option<Receiver<Cmd>>>,
+    frame_tx: Sender<TaggedFrame<CefFrame>>,
+    cmd_rx: RefCell<Option<Receiver<Cmd<()>>>>,
+    /// Receive end of the per-process input channel. CEF's `InputEvent`
+    /// is engine-specific (integer pixels, Windows VK codes) and cannot
+    /// travel through `sola_browser_core::Cmd::Input` (WPE-shaped).
+    /// The iced Program sends on `INPUT_TX`; the cmd pump drains this.
+    input_rx: RefCell<Option<Receiver<InputEvent>>>,
     /// Live tabs. Ordering is presentation order in the tab strip
     /// (iced chrome controls insert/remove positions).
     tabs: RefCell<Vec<CefTabState>>,
@@ -308,6 +263,21 @@ struct CefTabState {
     title: Arc<Mutex<String>>,
 }
 
+/// Process-level sender for CEF-specific input events. Set once by
+/// `Engine::spawn` before the iced program starts. The iced Program
+/// (`frame.rs`) sends on this; the worker's cmd pump drains `input_rx`.
+/// CEF's `InputEvent` is engine-specific (integer pixels, Windows VK
+/// codes) and cannot travel through `sola_browser_core::Cmd::Input`
+/// which carries WPE-shaped input. This side-channel is the solution
+/// that requires no core changes.
+static INPUT_TX: OnceLock<Sender<InputEvent>> = OnceLock::new();
+
+/// Access the input sender from the iced Program's update method.
+/// Panics if called before `Engine::spawn`.
+pub fn input_tx() -> &'static Sender<InputEvent> {
+    INPUT_TX.get().expect("INPUT_TX not initialised — call Engine::spawn first")
+}
+
 thread_local! {
     static CEF_STATE: OnceLock<Rc<CefThreadState>> = const { OnceLock::new() };
 }
@@ -322,8 +292,9 @@ fn worker_main(
     app_id: &'static str,
     width: u32,
     height: u32,
-    frame_tx: Sender<TaggedFrame>,
-    cmd_rx: Receiver<Cmd>,
+    frame_tx: Sender<TaggedFrame<CefFrame>>,
+    cmd_rx: Receiver<Cmd<()>>,
+    input_rx: Receiver<InputEvent>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
@@ -332,6 +303,7 @@ fn worker_main(
         size: Mutex::new((width, height)),
         frame_tx,
         cmd_rx: RefCell::new(Some(cmd_rx)),
+        input_rx: RefCell::new(Some(input_rx)),
         tabs: RefCell::new(Vec::new()),
         active: std::cell::Cell::new(TabId(u64::MAX)),
         cursor,
@@ -660,6 +632,8 @@ cef::wrap_task! {
     impl Task {
         fn execute(&self) {
             let state = cef_state();
+
+            // Drain the main Cmd channel (resize, nav, tab ops, quit).
             let cmd_rx_guard = state.cmd_rx.borrow();
             let Some(rx) = cmd_rx_guard.as_ref() else {
                 return;
@@ -684,6 +658,26 @@ cef::wrap_task! {
             }
             drop(cmd_rx_guard);
 
+            // Drain the CEF-specific input channel.
+            // Core's Cmd::Input carries WPE-shaped InputEvent; CEF input events
+            // travel on a separate channel to keep engine-specific types local.
+            if should_continue {
+                let input_guard = state.input_rx.borrow();
+                if let Some(irx) = input_guard.as_ref() {
+                    if let Some(tab) = active_tab(&state) {
+                        if let Some(host) = tab.browser.host() {
+                            loop {
+                                match irx.try_recv() {
+                                    Ok(ev) => dispatch_input(&host, ev),
+                                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if state.snapshot_dirty.replace(false) {
                 rebuild_snapshot(&state);
             }
@@ -700,9 +694,11 @@ cef::wrap_task! {
     }
 }
 
-/// Process one Cmd. Returns `false` for Quit (caller stops the
-/// pump); `true` otherwise.
-fn process_cmd(state: &CefThreadState, cmd: Cmd) -> bool {
+/// Process one Cmd from the main channel. Returns `false` for Quit
+/// (caller stops the pump); `true` otherwise.
+/// Note: `Cmd::Input` is NOT handled here — CEF input events travel
+/// on the dedicated `input_rx` side-channel (see `INPUT_TX` / `input_tx()`).
+fn process_cmd(state: &CefThreadState, cmd: Cmd<()>) -> bool {
     match cmd {
         Cmd::Resize { width, height } => {
             *state.size.lock().unwrap() = (width, height);
@@ -712,12 +708,10 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd) -> bool {
                 }
             }
         }
-        Cmd::Input(ev) => {
-            if let Some(tab) = active_tab(state) {
-                if let Some(host) = tab.browser.host() {
-                    dispatch_input(&host, ev);
-                }
-            }
+        Cmd::Input(_ev) => {
+            // Input is routed through the dedicated `input_rx` channel
+            // (engine::InputEvent, CEF-specific fields). If core ever
+            // sends Cmd::Input via the main channel it is a no-op here.
         }
         Cmd::Focus(focused) => {
             if let Some(tab) = active_tab(state) {
@@ -760,6 +754,8 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd) -> bool {
             cef::quit_message_loop();
             return false;
         }
+        // CEF uses CPU OSR (memcpy in on_paint) — no buffer recycle token.
+        Cmd::Release { .. } => {}
     }
     true
 }

@@ -15,48 +15,38 @@
 //! No DMA-BUF, no FD lifetime, no resource Release back to CEF —
 //! the buffer CEF handed us was already memcpy'd out in `on_paint`.
 
-use std::sync::atomic::AtomicU32;
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 
 use iced::widget::shader;
 use iced::{Rectangle, keyboard, mouse};
 
-use crate::cef::{CefFrame, Cmd, InputEvent};
+use sola_browser_core::{Cmd, FrameSlot};
+
 use crate::cpu_import::{self, UploadedFrame};
+use crate::engine::{CefEngine, InputEvent, input_tx};
 use crate::input;
 
-/// Shared between the App (which fills `pending`) and the shader
-/// Pipeline (which drains it on next prepare). `releaser` lets the
-/// shader Program send `Cmd::Resize` back to the CEF worker when
-/// the iced widget bounds change.
-pub struct FrameSlot {
-    pub pending: Mutex<Option<CefFrame>>,
-    pub releaser: Sender<Cmd>,
-    /// Last size we asked CEF to render at (physical pixels). Used
-    /// to debounce resize commands so we only fire on actual change.
-    pub last_size: Mutex<(u32, u32)>,
-    /// Latest CSS-cursor state from CEF, written by the worker
-    /// thread on `DisplayHandler::on_cursor_change`. Value is a
-    /// `CursorKind` discriminant. Read by `mouse_interaction`.
-    pub cursor: Arc<AtomicU32>,
+
+
+pub struct CefProgram {
+    pub slot: Arc<FrameSlot<CefEngine>>,
 }
 
-impl std::fmt::Debug for FrameSlot {
+impl std::fmt::Debug for CefProgram {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FrameSlot").finish_non_exhaustive()
+        f.debug_struct("CefProgram").finish_non_exhaustive()
     }
 }
 
-#[derive(Debug)]
-pub struct CefProgram {
-    pub slot: Arc<FrameSlot>,
+pub struct CefPrimitive {
+    pub slot: Arc<FrameSlot<CefEngine>>,
 }
 
-#[derive(Debug)]
-pub struct CefPrimitive {
-    pub slot: Arc<FrameSlot>,
+impl std::fmt::Debug for CefPrimitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CefPrimitive").finish_non_exhaustive()
+    }
 }
 
 /// Mirror of sola-browser-wpe's ProgramState. Tracks modifiers,
@@ -72,7 +62,7 @@ pub struct ProgramState {
     _started: Option<Instant>,
 }
 
-impl<Msg> shader::Program<Msg> for CefProgram {
+impl shader::Program<sola_browser_core::app::Msg> for CefProgram {
     type State = ProgramState;
     type Primitive = CefPrimitive;
 
@@ -93,7 +83,7 @@ impl<Msg> shader::Program<Msg> for CefProgram {
         event: &iced::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<iced::widget::shader::Action<Msg>> {
+    ) -> Option<iced::widget::shader::Action<sola_browser_core::app::Msg>> {
         let (req_w, _req_h) = *self.slot.last_size.lock().unwrap();
         let scale = if bounds.width > 0.0 {
             (req_w as f32 / bounds.width).max(0.5)
@@ -162,7 +152,7 @@ impl<Msg> shader::Program<Msg> for CefProgram {
                     _ => None,
                 };
                 if let Some(e) = ev {
-                    let _ = self.slot.releaser.send(Cmd::Input(e));
+                    let _ = input_tx().send(e);
                     return Some(iced::widget::shader::Action::capture());
                 }
             }
@@ -193,7 +183,7 @@ impl<Msg> shader::Program<Msg> for CefProgram {
                     keyboard::Event::ModifiersChanged(_) => None,
                 };
                 if let Some(e) = translated {
-                    let _ = self.slot.releaser.send(Cmd::Input(e));
+                    let _ = input_tx().send(e);
                     return Some(iced::widget::shader::Action::capture());
                 }
             }

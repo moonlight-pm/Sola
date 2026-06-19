@@ -14,7 +14,7 @@ use iced::{
     mouse,
 };
 
-use crate::cef::InputEvent;
+use crate::engine::InputEvent;
 
 // ── modifiers ───────────────────────────────────────────────────
 

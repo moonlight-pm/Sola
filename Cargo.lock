@@ -5077,6 +5077,7 @@ dependencies = [
  "cef",
  "iced",
  "libc",
+ "sola-browser-core",
  "sola-bus",
  "sola-core",
  "sola-kit",

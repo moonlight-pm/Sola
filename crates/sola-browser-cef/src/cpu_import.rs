@@ -8,7 +8,7 @@
 //! when the frame dimensions change. Steady-state path is a single
 //! write_texture per frame.
 
-use crate::cef::CefFrame;
+use crate::engine::CefFrame;
 
 /// Public handle returned by `upload`. The texture lives at the
 /// caller-managed size; we never recreate inside `upload` — the
