@@ -1,0 +1,12 @@
+[package]
+name = "sola-browser"
+version = "0.1.0"
+edition = "2024"
+
+# Featherweight engine dispatcher. Depends on NO web engine — it only
+# selects sola-browser-{wpe,cef} and execs it. This is what keeps the
+# 1.34 GB libcef out of the WPE launch path.
+
+[[bin]]
+name = "sola-browser"
+path = "src/main.rs"
