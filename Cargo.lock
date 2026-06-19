@@ -5068,12 +5068,6 @@ dependencies = [
 [[package]]
 name = "sola-assets"
 version = "0.1.0"
-dependencies = [
- "gio",
- "glib",
- "tracing",
- "webkit6",
-]
 
 [[package]]
 name = "sola-browser-cef"
@@ -5083,6 +5077,22 @@ dependencies = [
  "cef",
  "iced",
  "libc",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "tokio",
+ "tracing",
+ "wgpu",
+ "wgpu-hal",
+]
+
+[[package]]
+name = "sola-browser-core"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "iced",
+ "iced_futures",
  "sola-bus",
  "sola-core",
  "sola-kit",
