@@ -42,6 +42,42 @@ mod tests {
     fn passthrough_strips_eq_form() {
         assert_eq!(passthrough(&s(&["--engine=cef", "--app", "https://x.test"])), s(&["--app", "https://x.test"]));
     }
+
+    #[test]
+    fn resolve_target_finds_and_falls_back() {
+        use std::fs;
+        use std::process;
+
+        let test_id = process::id();
+        let base_temp = std::env::temp_dir().join(format!("sola-browser-test-{}", test_id));
+        let _ = fs::remove_dir_all(&base_temp);
+
+        // Case A: resolve_target finds the requested engine
+        let case_a_dir = base_temp.join("case_a");
+        fs::create_dir_all(&case_a_dir).expect("create case_a");
+        fs::write(case_a_dir.join("sola-browser-wpe"), "").expect("write wpe");
+
+        let result = resolve_target(&case_a_dir, "wpe");
+        assert_eq!(result, Some(case_a_dir.join("sola-browser-wpe")));
+
+        // Case B: fallback to the other engine
+        let case_b_dir = base_temp.join("case_b");
+        fs::create_dir_all(&case_b_dir).expect("create case_b");
+        fs::write(case_b_dir.join("sola-browser-wpe"), "").expect("write wpe");
+
+        let result = resolve_target(&case_b_dir, "cef");
+        assert_eq!(result, Some(case_b_dir.join("sola-browser-wpe")));
+
+        // Case C: neither engine exists
+        let case_c_dir = base_temp.join("case_c");
+        fs::create_dir_all(&case_c_dir).expect("create case_c");
+
+        let result = resolve_target(&case_c_dir, "wpe");
+        assert_eq!(result, None);
+
+        // Clean up
+        let _ = fs::remove_dir_all(&base_temp);
+    }
 }
 
 const ENGINES: [&str; 2] = ["wpe", "cef"];
@@ -85,6 +121,9 @@ fn passthrough(args: &[OsString]) -> Vec<OsString> {
 
 /// Path to `sola-browser-<engine>` next to this dispatcher; falls back to
 /// the other engine if the requested one is missing.
+///
+/// Fallback assumes exactly two engines (wpe/cef): if the requested engine's binary
+/// is absent, tries the other; returns None if neither exists.
 fn resolve_target(dir: &Path, engine: &str) -> Option<PathBuf> {
     let primary = dir.join(format!("sola-browser-{engine}"));
     if primary.exists() {
