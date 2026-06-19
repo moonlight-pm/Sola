@@ -30,19 +30,19 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/terminal".into(),
         },
         Application {
-            // Primary browser is the WPE build (sola-browser-wpe). The CEF
-            // build below runs at parity for hardware that the WPE backend
-            // doesn't suit. app_id matches each binary's Wayland app_id so
-            // the shell associates the right window for MRU/focus/menu.
-            app_id: "sola-browser-wpe".into(),
-            label: "Browser (WPE)".into(),
-            command: "/opt/sola/bin/sola-browser-wpe".into(),
+            // The dispatcher (`sola-browser`) selects the engine via
+            // --engine / $SOLA_BROWSER_ENGINE / default-wpe and exec()s
+            // the sibling binary. Both engines report app_id "sola-browser"
+            // so the shell associates either window with these entries.
+            app_id: "sola-browser".into(),
+            label: "Browser".into(),
+            command: "/opt/sola/bin/sola-browser".into(),
             icon: "lucide/globe".into(),
         },
         Application {
-            app_id: "sola-browser-cef".into(),
+            app_id: "sola-browser".into(),
             label: "Browser (CEF)".into(),
-            command: "/opt/sola/bin/sola-browser-cef".into(),
+            command: "/opt/sola/bin/sola-browser --engine cef".into(),
             icon: "lucide/earth".into(),
         },
         Application {

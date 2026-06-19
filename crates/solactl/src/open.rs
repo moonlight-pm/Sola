@@ -1,8 +1,9 @@
 //! `solactl open <URL>` — emit `Topic::OpenUrl` so `sola-browser`
 //! creates a new tab.
 //!
-//! Wired into the desktop as the default http/https handler via
-//! `crates/sola-browser/dist/applications/sola-browser.desktop`. Stays
+//! Wired into the desktop as the default http/https handler via the
+//! installed `sola-browser.desktop` (sourced from
+//! `crates/sola-browser/dist/applications/sola-browser.desktop`). Stays
 //! silent on success so it can be invoked from `xdg-open` without
 //! polluting the caller's stdout.
 

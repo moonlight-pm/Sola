@@ -40,8 +40,8 @@ pub fn install_binary(src: &str) -> Result<bool, String> {
 /// Mirror per-crate `dist/` trees into `$XDG_DATA_HOME` (defaulting to
 /// `~/.local/share`). Each crate may ship a `dist/` directory whose
 /// layout maps 1:1 onto that prefix — e.g.
-/// `crates/sola-browser/dist/applications/foo.desktop` is copied to
-/// `~/.local/share/applications/foo.desktop`. This is how `.desktop`
+/// `crates/sola-browser/dist/applications/sola-browser.desktop` is copied to
+/// `~/.local/share/applications/sola-browser.desktop`. This is how `.desktop`
 /// files, MIME XML, icon themes, etc. ship without touching install
 /// logic per file type.
 ///
