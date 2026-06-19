@@ -1,0 +1,23 @@
+[package]
+name = "sola-browser-core"
+version = "0.1.0"
+edition = "2024"
+
+# Shared iced chrome for the Sola browsers. Generic over the `Engine`
+# trait so sola-browser-wpe / sola-browser-cef supply only their engine
+# body. Depends on NO web-engine library — neither libWPEWebKit nor
+# libcef — so neither leaks into the other's process image.
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+sola-kit = { path = "../sola-kit" }
+tracing = "0.1"
+wgpu = { version = "27", features = ["vulkan-portability"] }
+wgpu-hal = { version = "27", features = ["vulkan"] }
+ash = "0.38"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
