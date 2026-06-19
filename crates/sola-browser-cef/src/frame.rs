@@ -24,7 +24,7 @@ use iced::{Rectangle, keyboard, mouse};
 use sola_browser_core::{Cmd, FrameSlot};
 
 use crate::cpu_import::{self, UploadedFrame};
-use crate::engine::{CefEngine, InputEvent, input_tx};
+use crate::engine::{CefEngine, InputEvent};
 use crate::input;
 
 
@@ -152,7 +152,7 @@ impl shader::Program<sola_browser_core::app::Msg> for CefProgram {
                     _ => None,
                 };
                 if let Some(e) = ev {
-                    let _ = input_tx().send(e);
+                    let _ = self.slot.releaser.send(Cmd::Input(e));
                     return Some(iced::widget::shader::Action::capture());
                 }
             }
@@ -183,7 +183,7 @@ impl shader::Program<sola_browser_core::app::Msg> for CefProgram {
                     keyboard::Event::ModifiersChanged(_) => None,
                 };
                 if let Some(e) = translated {
-                    let _ = input_tx().send(e);
+                    let _ = self.slot.releaser.send(Cmd::Input(e));
                     return Some(iced::widget::shader::Action::capture());
                 }
             }

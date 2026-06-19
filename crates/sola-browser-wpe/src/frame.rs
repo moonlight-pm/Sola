@@ -18,9 +18,9 @@ use std::time::Instant;
 use iced::widget::shader;
 use iced::{Rectangle, keyboard, mouse};
 
-use sola_browser_core::{Cmd, FrameSlot, InputEvent};
+use sola_browser_core::{Cmd, FrameSlot};
 
-use crate::engine::{ResourceToken, WpeEngine};
+use crate::engine::{InputEvent, ResourceToken, WpeEngine};
 use crate::input;
 use crate::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 

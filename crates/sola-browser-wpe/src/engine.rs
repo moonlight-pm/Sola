@@ -28,11 +28,23 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::{self, JoinHandle};
 
 use sola_browser_core::{
-    ActiveHandle, Cmd, CursorHandle, Engine, FrameReceiver, FrameSlot, InputEvent, NavCmd, TabId,
+    ActiveHandle, Cmd, CursorHandle, Engine, FrameReceiver, FrameSlot, NavCmd, TabId,
     TabInfo, TabsHandle, TaggedFrame,
 };
 
 use crate::wpe_sys as sys;
+
+/// WPE-native input event. Uses GDK `keyval`/`keycode`, f64 coordinates
+/// and millisecond timestamps — the shape libWPEWebKit expects. Carried
+/// by `Cmd::Input` as `WpeEngine::Input`; produced by `input.rs` and
+/// dispatched by `dispatch_input` below.
+#[derive(Debug, Clone)]
+pub enum InputEvent {
+    PointerMove { x: f64, y: f64, delta_x: f64, delta_y: f64, modifiers: u32, time_ms: u32 },
+    PointerButton { down: bool, x: f64, y: f64, button: u32, modifiers: u32, time_ms: u32 },
+    Scroll { x: f64, y: f64, delta_x: f64, delta_y: f64, precise: bool, modifiers: u32, time_ms: u32 },
+    Key { down: bool, keyval: u32, keycode: u32, modifiers: u32, time_ms: u32 },
+}
 
 /// One frame as it crosses thread boundaries. The FD is dup'd by
 /// the worker before sending so iced can own the lifetime
@@ -68,7 +80,7 @@ unsafe impl Sync for ResourceToken {}
 
 pub struct WpeEngine {
     worker: Option<JoinHandle<()>>,
-    cmd_tx: Sender<Cmd<ResourceToken>>,
+    cmd_tx: Sender<Cmd<WpeEngine>>,
     /// Receiver of (tab_id, frame) tuples. iced filters by active
     /// tab before importing.
     frames: Arc<Mutex<Receiver<TaggedFrame<WpeFrame>>>>,
@@ -92,6 +104,7 @@ pub struct WpeEngine {
 impl Engine for WpeEngine {
     type Frame = WpeFrame;
     type Token = ResourceToken;
+    type Input = InputEvent;
     type Program = crate::frame::WpeProgram;
 
     fn spawn(_app_id: &'static str, url: &str, w: u32, h: u32) -> Self {
@@ -119,7 +132,7 @@ impl Engine for WpeEngine {
         TabId(self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
     }
 
-    fn cmd_sender(&self) -> Sender<Cmd<ResourceToken>> {
+    fn cmd_sender(&self) -> Sender<Cmd<WpeEngine>> {
         self.cmd_tx.clone()
     }
 
@@ -155,7 +168,7 @@ impl WpeEngine {
     /// Inner spawn — the actual WPE worker bring-up. Called from
     /// `Engine::spawn` after the env dance is done.
     fn spawn_inner(url: &str, width: u32, height: u32) -> Self {
-        let (cmd_tx, cmd_rx) = channel::<Cmd<ResourceToken>>();
+        let (cmd_tx, cmd_rx) = channel::<Cmd<WpeEngine>>();
         let (frame_tx, frame_rx) = channel::<TaggedFrame<WpeFrame>>();
         let (ready_tx, ready_rx) = channel::<()>();
         let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -207,7 +220,7 @@ impl WpeEngine {
 struct WorkerCtx {
     main_loop: *mut sys::GMainLoop,
     frame_tx: Sender<TaggedFrame<WpeFrame>>,
-    cmd_rx: Receiver<Cmd<ResourceToken>>,
+    cmd_rx: Receiver<Cmd<WpeEngine>>,
     tabs: Vec<TabState>,
     active: TabId,
     last_size: (u32, u32),
@@ -243,7 +256,7 @@ unsafe fn worker_main(
     width: u32,
     height: u32,
     frame_tx: Sender<TaggedFrame<WpeFrame>>,
-    cmd_rx: Receiver<Cmd<ResourceToken>>,
+    cmd_rx: Receiver<Cmd<WpeEngine>>,
     ready_tx: Sender<()>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
@@ -424,7 +437,7 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
 /// Process one Cmd. Returns `false` to signal "stop pumping"
 /// (Quit); `true` to continue. Centralises the cmd handling so
 /// both the initial drain and the GLib timer pump share logic.
-unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<ResourceToken>) -> bool {
+unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
     match cmd {
         Cmd::Resize { width, height } => {
             ctx.last_size = (width, height);

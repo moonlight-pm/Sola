@@ -61,7 +61,7 @@ pub struct App<E: Engine> {
     /// `Arc` is needed to keep the worker alive.
     pub engine: E,
     pub slot: Arc<FrameSlot<E>>,
-    pub releaser: Sender<Cmd<E::Token>>,
+    pub releaser: Sender<Cmd<E>>,
     /// Live tab snapshot, owned by the engine. We re-read on
     /// every Tick; `cached_tabs` is the value at last read.
     pub tabs_handle: TabsHandle,
@@ -108,7 +108,7 @@ impl<E: Engine> App<E> {
     pub fn new(
         engine: E,
         slot: Arc<FrameSlot<E>>,
-        releaser: Sender<Cmd<E::Token>>,
+        releaser: Sender<Cmd<E>>,
         tabs_handle: TabsHandle,
         active_handle: Arc<AtomicU64>,
         url: String,

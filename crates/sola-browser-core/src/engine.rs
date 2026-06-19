@@ -24,20 +24,16 @@ pub enum NavCmd {
     LoadUrl(String),
 }
 
-#[derive(Debug, Clone)]
-pub enum InputEvent {
-    PointerMove { x: f64, y: f64, delta_x: f64, delta_y: f64, modifiers: u32, time_ms: u32 },
-    PointerButton { down: bool, x: f64, y: f64, button: u32, modifiers: u32, time_ms: u32 },
-    Scroll { x: f64, y: f64, delta_x: f64, delta_y: f64, precise: bool, modifiers: u32, time_ms: u32 },
-    Key { down: bool, keyval: u32, keycode: u32, modifiers: u32, time_ms: u32 },
-}
-
-/// Commands the chrome sends to the engine worker. `Release` carries an
-/// engine-specific token, so it is generic over the engine's token type.
-pub enum Cmd<Tok> {
+/// Commands the chrome sends to the engine worker. Generic over the
+/// engine `E`: `Release` carries `E::Token` (the buffer-recycle token)
+/// and `Input` carries `E::Input` (the engine's native input shape —
+/// WPE uses GDK keyvals + f64 coords, CEF uses Windows VK codes +
+/// integer pixels), so input rides the normal command channel with no
+/// process-wide side-channel.
+pub enum Cmd<E: Engine> {
     Resize { width: u32, height: u32 },
-    Release { token: Tok },
-    Input(InputEvent),
+    Release { token: E::Token },
+    Input(E::Input),
     Focus(bool),
     Nav(NavCmd),
     OpenTab { id: TabId, url: String },
@@ -56,7 +52,7 @@ pub struct TaggedFrame<F> {
 /// (drains it on next prepare). `releaser` goes back to the engine worker.
 pub struct FrameSlot<E: Engine> {
     pub pending: Mutex<Option<E::Frame>>,
-    pub releaser: Sender<Cmd<E::Token>>,
+    pub releaser: Sender<Cmd<E>>,
     pub last_size: Mutex<(u32, u32)>,
     pub cursor: Arc<AtomicU32>,
 }
@@ -73,6 +69,9 @@ pub trait Engine: Sized + Send + Sync + 'static {
     type Frame: Send + 'static;
     /// Opaque buffer-recycle token returned via `Cmd::Release`.
     type Token: Send + 'static;
+    /// Engine-specific native input event carried by `Cmd::Input` (WPE:
+    /// GDK keyvals + f64 coords; CEF: Windows VK codes + integer pixels).
+    type Input: Send + 'static;
     /// The iced shader Program that imports `Self::Frame` and samples it.
     type Program: iced::widget::shader::Program<crate::app::Msg> + 'static;
 
@@ -88,7 +87,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn spawn(app_id: &'static str, url: &str, w: u32, h: u32) -> Self;
 
     fn alloc_tab_id(&self) -> TabId;
-    fn cmd_sender(&self) -> Sender<Cmd<Self::Token>>;
+    fn cmd_sender(&self) -> Sender<Cmd<Self>>;
     fn tabs_handle(&self) -> TabsHandle;
     fn active_tab_handle(&self) -> ActiveHandle;
     fn cursor_handle(&self) -> CursorHandle;
