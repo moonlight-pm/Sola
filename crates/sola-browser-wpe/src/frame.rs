@@ -13,50 +13,35 @@
 //!    buffer.
 //! 4. `Primitive::render` issues the fullscreen-triangle draw call.
 
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc::Sender;
 use std::time::Instant;
 
 use iced::widget::shader;
 use iced::{Rectangle, keyboard, mouse};
 
+use sola_browser_core::{Cmd, FrameSlot, InputEvent};
+
+use crate::engine::{ResourceToken, WpeEngine};
 use crate::input;
 use crate::wgpu_import::{self, DmabufMetadata, ImportedFrame};
-use crate::wpe::{Cmd, InputEvent, ResourceToken, WpeFrame};
 
-/// Shared between the App (which fills `pending`) and the shader
-/// Pipeline (which drains it on next prepare). The `releaser`
-/// channel goes back to the WPE worker thread so we can hand
-/// recycled buffer-resource tokens back when a new frame replaces
-/// an old one — and so the shader Program can request resizes when
-/// the iced widget bounds change.
-pub struct FrameSlot {
-    pub pending: Mutex<Option<WpeFrame>>,
-    pub releaser: Sender<Cmd>,
-    /// Last size we asked WPE to render at (physical pixels). Used
-    /// to debounce resize commands so we only fire on actual change.
-    pub last_size: Mutex<(u32, u32)>,
-    /// Latest CSS-cursor state from WPE, written by the worker
-    /// thread on `wpe_view_set_cursor_from_name`. Read by
-    /// `Program::mouse_interaction`. Value is a `CursorKind`
-    /// discriminant.
-    pub cursor: Arc<std::sync::atomic::AtomicU32>,
-}
-
-#[derive(Debug)]
 pub struct WpeProgram {
-    pub slot: Arc<FrameSlot>,
+    pub slot: std::sync::Arc<FrameSlot<WpeEngine>>,
 }
 
-impl std::fmt::Debug for FrameSlot {
+impl std::fmt::Debug for WpeProgram {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FrameSlot").finish_non_exhaustive()
+        f.debug_struct("WpeProgram").finish_non_exhaustive()
     }
 }
 
-#[derive(Debug)]
 pub struct WpePrimitive {
-    pub slot: Arc<FrameSlot>,
+    pub slot: std::sync::Arc<FrameSlot<WpeEngine>>,
+}
+
+impl std::fmt::Debug for WpePrimitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WpePrimitive").finish_non_exhaustive()
+    }
 }
 
 /// Per-program state iced manages for us. Holds the running
@@ -108,7 +93,7 @@ impl ProgramState {
     }
 }
 
-impl<Msg> shader::Program<Msg> for WpeProgram {
+impl shader::Program<sola_browser_core::app::Msg> for WpeProgram {
     type State = ProgramState;
     type Primitive = WpePrimitive;
 
@@ -129,7 +114,7 @@ impl<Msg> shader::Program<Msg> for WpeProgram {
         event: &iced::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<iced::widget::shader::Action<Msg>> {
+    ) -> Option<iced::widget::shader::Action<sola_browser_core::app::Msg>> {
         state.last_bounds = bounds;
         // `update()` doesn't get the viewport. Derive scale from the
         // size `prepare()` last asked WPE for vs the widget's logical

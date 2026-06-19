@@ -17,7 +17,7 @@ use iced::{
     mouse,
 };
 
-use crate::wpe::InputEvent;
+use sola_browser_core::InputEvent;
 use crate::wpe_sys as sys;
 
 /// Translate iced's modifier bitset to WPE's. Pointer-button modifier

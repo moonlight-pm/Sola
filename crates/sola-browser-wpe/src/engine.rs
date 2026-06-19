@@ -1,4 +1,4 @@
-//! WPE engine wrapper used by the main browser binary.
+//! WPE engine — implements `sola_browser_core::Engine` for the WPE backend.
 //!
 //! Migrated from the libwpe + libwpe-fdo path to the WPE Platform
 //! API (wpe-platform-2.0 + wpe-platform-headless-2.0). The Platform
@@ -26,6 +26,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::{self, JoinHandle};
+
+use sola_browser_core::{
+    ActiveHandle, Cmd, CursorHandle, Engine, FrameReceiver, FrameSlot, InputEvent, NavCmd, TabId,
+    TabInfo, TabsHandle, TaggedFrame,
+};
 
 use crate::wpe_sys as sys;
 
@@ -59,129 +64,14 @@ pub struct ResourceToken {
 unsafe impl Send for ResourceToken {}
 unsafe impl Sync for ResourceToken {}
 
-pub enum Cmd {
-    /// Request a new viewport size for the active tab. The shader
-    /// Program sends this when its widget bounds change.
-    Resize { width: u32, height: u32 },
-    /// Hand a DMA-BUF back to WPE (any tab — `Release` carries
-    /// the WPE view + buffer pointer in the token).
-    Release { token: ResourceToken },
-    /// Forward a user input event to the active tab.
-    Input(InputEvent),
-    /// Toggle CEF focus on the active tab.
-    Focus(bool),
-    /// Navigation (back/forward/reload/etc) on the active tab.
-    Nav(NavCmd),
-    /// Open a new tab with `id` and load `url`. The chrome picks
-    /// the id (monotonic counter on the iced side) so it knows
-    /// what to call the tab before the worker has acked.
-    OpenTab { id: TabId, url: String },
-    /// Close a tab by id. The chrome must keep the engine's
-    /// `active_tab` in sync — call `SetActiveTab` first if you're
-    /// closing the active tab.
-    CloseTab(TabId),
-    /// Switch which tab the engine considers active. Subsequent
-    /// `Resize` / `Input` / `Nav` / `Focus` cmds target this tab,
-    /// and the iced subscription only forwards its frames.
-    SetActiveTab(TabId),
-    Quit,
-}
 
-/// Navigation actions the chrome triggers. Each maps 1:1 to a
-/// `webkit_web_view_*` call.
-#[derive(Debug, Clone)]
-pub enum NavCmd {
-    Back,
-    Forward,
-    Reload,
-    Stop,
-    LoadUrl(String),
-}
-
-
-/// Per-tab identifier. Allocated by the engine (monotonic
-/// counter) when a tab is opened. Stable for the tab's lifetime;
-/// the iced chrome uses it to drive cmds and to key the tab strip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TabId(pub u64);
-
-/// Per-tab metadata visible to iced. Snapshot only — engine owns
-/// the live state and pushes a fresh `Vec<TabInfo>` into the
-/// shared `Arc<Mutex<Vec<TabInfo>>>` whenever anything changes.
-#[derive(Debug, Clone)]
-pub struct TabInfo {
-    pub id: TabId,
-    pub url: String,
-    pub title: String,
-}
-
-/// Frame plus the tab that produced it. The iced subscription
-/// drops frames whose `tab_id` isn't the active tab so we don't
-/// burn import work on hidden tabs.
-pub struct TaggedFrame {
-    pub tab_id: TabId,
-    pub frame: WpeFrame,
-}
-
-/// A user input event in a thread-safe shape. Sent over the cmd
-/// channel from iced (main thread) to the WPE worker, which turns
-/// it into a `WPEEvent` and dispatches via `wpe_view_event`.
-#[derive(Debug, Clone)]
-pub enum InputEvent {
-    /// Pointer motion. `x`/`y` are in WPE view-local pixels;
-    /// `delta_x`/`delta_y` are the change since the previous
-    /// PointerMove (0.0 for the first move). `modifiers` MUST
-    /// include `WPE_MODIFIER_POINTER_BUTTON*` bits for any
-    /// currently-held buttons — that's how WebKit distinguishes
-    /// a drag from a plain hover.
-    PointerMove {
-        x: f64,
-        y: f64,
-        delta_x: f64,
-        delta_y: f64,
-        modifiers: u32,
-        time_ms: u32,
-    },
-    /// Pointer button down/up. `button` is the X11/WPE convention:
-    /// 1 = left, 2 = middle, 3 = right. `press_count` is filled in
-    /// by the worker via `wpe_view_compute_press_count`.
-    PointerButton {
-        down: bool,
-        x: f64,
-        y: f64,
-        button: u32,
-        modifiers: u32,
-        time_ms: u32,
-    },
-    /// Scroll. `delta_x` / `delta_y` are in CSS pixels (or wheel
-    /// "ticks" if `precise` is false).
-    Scroll {
-        x: f64,
-        y: f64,
-        delta_x: f64,
-        delta_y: f64,
-        precise: bool,
-        modifiers: u32,
-        time_ms: u32,
-    },
-    /// Keyboard key down/up. `keyval` is the X11 keysym
-    /// (`XK_*`); `keycode` is the hardware scancode (0 if we
-    /// can't determine it — WebKit primarily uses `keyval`).
-    Key {
-        down: bool,
-        keyval: u32,
-        keycode: u32,
-        modifiers: u32,
-        time_ms: u32,
-    },
-}
 
 pub struct WpeEngine {
     worker: Option<JoinHandle<()>>,
-    cmd_tx: Sender<Cmd>,
+    cmd_tx: Sender<Cmd<ResourceToken>>,
     /// Receiver of (tab_id, frame) tuples. iced filters by active
     /// tab before importing.
-    frames: Arc<Mutex<Receiver<TaggedFrame>>>,
+    frames: Arc<Mutex<Receiver<TaggedFrame<WpeFrame>>>>,
     /// Latest CSS cursor name (encoded as `CursorKind`) WebKit
     /// asked us to display for the active tab.
     cursor: Arc<std::sync::atomic::AtomicU32>,
@@ -199,17 +89,74 @@ pub struct WpeEngine {
     next_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
+impl Engine for WpeEngine {
+    type Frame = WpeFrame;
+    type Token = ResourceToken;
+    type Program = crate::frame::WpeProgram;
+
+    fn spawn(_app_id: &'static str, url: &str, w: u32, h: u32) -> Self {
+        // SAFETY: single-threaded program startup, before any thread spawn.
+        // Set the WPE helper binary path baked in at build time.
+        unsafe { std::env::set_var("WEBKIT_EXEC_PATH", env!("WEBKIT_EXEC_PATH")) };
+
+        // Hide WAYLAND_DISPLAY from libWPEWebKit's init so its bundled
+        // wpe-platform-wayland module doesn't open a phantom toplevel.
+        // Restored after `spawn_inner` returns; iced sees it on the main thread.
+        //
+        // SAFETY: single-threaded between log init and spawn_inner call.
+        let saved = std::env::var("WAYLAND_DISPLAY").ok();
+        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+
+        let engine = WpeEngine::spawn_inner(url, w, h);
+
+        if let Some(d) = saved {
+            unsafe { std::env::set_var("WAYLAND_DISPLAY", d) };
+        }
+        engine
+    }
+
+    fn alloc_tab_id(&self) -> TabId {
+        TabId(self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+
+    fn cmd_sender(&self) -> Sender<Cmd<ResourceToken>> {
+        self.cmd_tx.clone()
+    }
+
+    fn tabs_handle(&self) -> TabsHandle {
+        self.tabs.clone()
+    }
+
+    fn active_tab_handle(&self) -> ActiveHandle {
+        self.active_tab.clone()
+    }
+
+    fn cursor_handle(&self) -> CursorHandle {
+        self.cursor.clone()
+    }
+
+    fn frames(&self) -> FrameReceiver<WpeFrame> {
+        self.frames.clone()
+    }
+
+    fn make_program(slot: std::sync::Arc<FrameSlot<Self>>) -> Self::Program {
+        crate::frame::WpeProgram { slot }
+    }
+
+    fn shutdown(mut self) {
+        let _ = self.cmd_tx.send(Cmd::Quit);
+        if let Some(h) = self.worker.take() {
+            let _ = h.join();
+        }
+    }
+}
+
 impl WpeEngine {
-    /// Spawn the WPE worker. **Blocks** until the worker has
-    /// finished the parts of WPE init that consult
-    /// `WAYLAND_DISPLAY` (display creation + initial-tab
-    /// creation + URL load kick-off). After this returns, the
-    /// worker thread is running the GMainLoop and the caller can
-    /// safely restore `WAYLAND_DISPLAY` if it manipulated it
-    /// (see main.rs).
-    pub fn spawn(url: &str, width: u32, height: u32) -> Self {
-        let (cmd_tx, cmd_rx) = channel::<Cmd>();
-        let (frame_tx, frame_rx) = channel::<TaggedFrame>();
+    /// Inner spawn — the actual WPE worker bring-up. Called from
+    /// `Engine::spawn` after the env dance is done.
+    fn spawn_inner(url: &str, width: u32, height: u32) -> Self {
+        let (cmd_tx, cmd_rx) = channel::<Cmd<ResourceToken>>();
+        let (frame_tx, frame_rx) = channel::<TaggedFrame<WpeFrame>>();
         let (ready_tx, ready_rx) = channel::<()>();
         let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let tabs_snapshot = Arc::new(Mutex::new(Vec::<TabInfo>::new()));
@@ -253,52 +200,14 @@ impl WpeEngine {
         }
     }
 
-    /// Mint a fresh tab id. Send it back via `Cmd::OpenTab` to
-    /// have the worker actually create the WebKitWebView.
-    pub fn alloc_tab_id(&self) -> TabId {
-        TabId(self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
-    }
-
-    /// Shared snapshot of all open tabs. The worker rewrites this
-    /// whenever a tab opens/closes/url-changes/title-changes.
-    pub fn tabs_handle(&self) -> Arc<Mutex<Vec<TabInfo>>> {
-        self.tabs.clone()
-    }
-
-    /// Atomic id of the currently-active tab. iced reads to filter
-    /// frames in its subscription.
-    pub fn active_tab_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {
-        self.active_tab.clone()
-    }
-
-    /// Shared handle to the current cursor shape. Reads are
-    /// non-blocking; safe to call from iced's render thread.
-    pub fn cursor_handle(&self) -> Arc<std::sync::atomic::AtomicU32> {
-        self.cursor.clone()
-    }
-
-    pub fn cmd_sender(&self) -> Sender<Cmd> {
-        self.cmd_tx.clone()
-    }
-
-    pub fn frames(&self) -> Arc<Mutex<Receiver<TaggedFrame>>> {
-        self.frames.clone()
-    }
-
-    pub fn shutdown(mut self) {
-        let _ = self.cmd_tx.send(Cmd::Quit);
-        if let Some(h) = self.worker.take() {
-            let _ = h.join();
-        }
-    }
 }
 
 // ---- worker thread ------------------------------------------------
 
 struct WorkerCtx {
     main_loop: *mut sys::GMainLoop,
-    frame_tx: Sender<TaggedFrame>,
-    cmd_rx: Receiver<Cmd>,
+    frame_tx: Sender<TaggedFrame<WpeFrame>>,
+    cmd_rx: Receiver<Cmd<ResourceToken>>,
     tabs: Vec<TabState>,
     active: TabId,
     last_size: (u32, u32),
@@ -333,8 +242,8 @@ struct TabState {
 unsafe fn worker_main(
     width: u32,
     height: u32,
-    frame_tx: Sender<TaggedFrame>,
-    cmd_rx: Receiver<Cmd>,
+    frame_tx: Sender<TaggedFrame<WpeFrame>>,
+    cmd_rx: Receiver<Cmd<ResourceToken>>,
     ready_tx: Sender<()>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
@@ -515,7 +424,7 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
 /// Process one Cmd. Returns `false` to signal "stop pumping"
 /// (Quit); `true` to continue. Centralises the cmd handling so
 /// both the initial drain and the GLib timer pump share logic.
-unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd) -> bool {
+unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<ResourceToken>) -> bool {
     match cmd {
         Cmd::Resize { width, height } => {
             ctx.last_size = (width, height);

@@ -5113,6 +5113,7 @@ dependencies = [
  "libc",
  "pkg-config",
  "png 0.18.1",
+ "sola-browser-core",
  "sola-bus",
  "sola-core",
  "sola-kit",
