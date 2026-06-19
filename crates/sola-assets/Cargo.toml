@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-webkit6 = "0.4"
-glib = "0.20"
-gio = "0.20"
-tracing = "0.1"
+# Intentionally dependency-free at the GUI layer: this crate is pure
+# on-disk asset resolution (icons, fonts). The `sola-assets://` WebKit
+# URI-scheme glue lives in its only consumer, `sola-app`, so pulling
+# `webkit6`/`gtk4` here never leaks `libwebkitgtk-6.0` into iced/WPE
+# consumers (it would shadow the WPE browser's `webkit_web_view_new`).

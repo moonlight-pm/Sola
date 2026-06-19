@@ -1,7 +1,6 @@
 //! Shared iced chrome for the Sola browsers, generic over `Engine`.
 pub mod app;
 pub mod engine;
-pub mod input;
 pub mod integration;
 pub mod run;
 pub mod util;

@@ -11,11 +11,14 @@ use std::time::Duration;
 use iced::futures::SinkExt;
 use iced::futures::Stream;
 use iced::stream;
-use iced::widget::{Shader, button, column, container, row, scrollable, text, text_input};
-use iced::{Element, Length, Subscription, Task};
+use iced::widget::{Shader, Space, column, container, mouse_area, row, stack, text_input};
+use iced::{Element, Event, Length, Subscription, Task, event, mouse};
 
 use sola_browser_cef::cef::{CefEngine, Cmd, NavCmd, TabId, TabInfo};
 use sola_browser_cef::shader::{CefProgram, FrameSlot};
+use sola_kit::components::{
+    TabDescriptor, horizontal_divider, toolbar_button, vertical_divider, vertical_tabs,
+};
 
 mod integration;
 
@@ -23,8 +26,13 @@ const APP_ID: &str = "sola-browser-cef";
 const DEFAULT_URL: &str = "https://slate.auto";
 const VIEW_W: u32 = 1280;
 const VIEW_H: u32 = 800;
-const TAB_STRIP_HEIGHT: f32 = 28.0;
-const CHROME_HEIGHT: f32 = 36.0;
+/// Height of the top navigation bar (back/forward/reload + URL).
+const CHROME_HEIGHT: f32 = 38.0;
+/// Tab sidebar width (logical px) — the value the draggable divider
+/// edits, clamped to `[MIN, MAX]`.
+const SIDEBAR_W_DEFAULT: f32 = 200.0;
+const SIDEBAR_W_MIN: f32 = 120.0;
+const SIDEBAR_W_MAX: f32 = 420.0;
 
 static ENGINE: OnceLock<CefEngine> = OnceLock::new();
 static SLOT_FOR_STREAM: OnceLock<Arc<FrameSlot>> = OnceLock::new();
@@ -86,6 +94,11 @@ fn main() -> ExitCode {
             url_field: url.clone(),
             last_seen_url: url.clone(),
             theme: sola_kit::theme::default_theme(),
+            sidebar_w: SIDEBAR_W_DEFAULT,
+            dragging_divider: false,
+            last_cursor_x: None,
+            drag_anchor: None,
+            hovered_tab: None,
         },
         App::update,
         App::view,
@@ -127,6 +140,19 @@ struct App {
     /// Active iced theme, refreshed live from `Topic::Theme` so the
     /// chrome (tab strip, URL bar, buttons) tracks the system theme.
     theme: iced::Theme,
+    /// Tab sidebar width; edited by the draggable divider.
+    sidebar_w: f32,
+    /// True while the divider is being dragged.
+    dragging_divider: bool,
+    /// Most-recent global cursor x, tracked continuously so the drag
+    /// anchor is current at `DividerPress` time.
+    last_cursor_x: Option<f32>,
+    /// `(cursor_x_at_press, sidebar_w_at_press)` — anchor-relative drag
+    /// (recompute from displacement, never accumulate deltas).
+    drag_anchor: Option<(f32, f32)>,
+    /// Index of the hovered tab row, if any — drives the float-in close
+    /// button. Recomputed from `mouse_area` enter/exit each frame.
+    hovered_tab: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -137,13 +163,20 @@ enum Msg {
     NavReload,
     UrlInput(String),
     UrlSubmit,
-    OpenTab,
     CloseTab(TabId),
     ActivateTab(TabId),
     Tick,
     /// A message delivered over the Sola bus (theme, open-url, menu
     /// action, close-app). Handled by `integration::handle_bus`.
     Bus(Arc<sola_bus::Message>),
+    /// User pressed the mouse on the sidebar divider.
+    DividerPress,
+    /// Global cursor moved — only acted on while dragging the divider.
+    CursorMoved(f32),
+    /// Global left-button released — ends a divider drag.
+    CursorReleased,
+    /// Hovered tab row changed (index into `cached_tabs`), or `None`.
+    TabHover(Option<usize>),
 }
 
 impl App {
@@ -170,7 +203,6 @@ impl App {
                 self.last_seen_url = url.clone();
                 let _ = self.releaser.send(Cmd::Nav(NavCmd::LoadUrl(url)));
             }
-            Msg::OpenTab => self.open_tab(DEFAULT_URL.to_string(), true),
             Msg::CloseTab(id) => {
                 let was_active = self.cached_active == id;
                 if was_active {
@@ -201,6 +233,30 @@ impl App {
                 }
             }
             Msg::Bus(message) => return integration::handle_bus(self, message),
+            Msg::DividerPress => {
+                self.dragging_divider = true;
+                if let Some(x) = self.last_cursor_x {
+                    self.drag_anchor = Some((x, self.sidebar_w));
+                }
+            }
+            Msg::CursorMoved(x) => {
+                self.last_cursor_x = Some(x);
+                if self.dragging_divider {
+                    if let Some((anchor_x, anchor_w)) = self.drag_anchor {
+                        // Sidebar is on the LEFT: it grows as the cursor
+                        // moves right of the anchor, shrinks moving left.
+                        let desired = anchor_w + (x - anchor_x);
+                        self.sidebar_w = desired.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
+                    }
+                }
+            }
+            Msg::CursorReleased => {
+                if self.dragging_divider {
+                    self.dragging_divider = false;
+                    self.drag_anchor = None;
+                }
+            }
+            Msg::TabHover(i) => self.hovered_tab = i,
         }
         Task::none()
     }
@@ -238,61 +294,88 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Msg> {
-        let tab_strip = self.view_tab_strip();
-        let chrome = self.view_chrome();
         let webview = Shader::new(CefProgram {
             slot: self.slot.clone(),
         })
         .width(Length::Fill)
         .height(Length::Fill);
 
-        column![tab_strip, chrome, webview].into()
-    }
+        // Right side: nav bar on top of the web content.
+        let content = column![self.view_nav_bar(), horizontal_divider(), webview];
 
-    fn view_tab_strip(&self) -> Element<'_, Msg> {
-        let mut tabs_row = row![].spacing(2);
-        for t in &self.cached_tabs {
-            let label = if !t.title.is_empty() {
-                truncate(&t.title, 28)
-            } else if !t.url.is_empty() {
-                truncate(&t.url, 28)
-            } else {
-                String::from("Loading…")
-            };
-            let activate_btn: Element<'_, Msg> = button(text(label))
-                .on_press(Msg::ActivateTab(t.id))
-                .into();
-            let close_btn: Element<'_, Msg> = button(text("×"))
-                .on_press(Msg::CloseTab(t.id))
-                .into();
-            tabs_row = tabs_row.push(row![activate_btn, close_btn].spacing(2));
-        }
-        let plus = button(text("+")).on_press(Msg::OpenTab);
-        let scrolling = scrollable(tabs_row)
-            .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::default(),
-            ))
-            .width(Length::Fill);
-        container(row![scrolling, plus].spacing(4).padding(4))
-            .height(Length::Fixed(TAB_STRIP_HEIGHT + 8.0))
-            .width(Length::Fill)
+        // Left tab column (resizable) | divider | content.
+        let main = row![
+            container(self.view_tab_sidebar())
+                .width(Length::Fixed(self.sidebar_w))
+                .height(Length::Fill),
+            vertical_divider(Msg::DividerPress),
+            container(content).width(Length::Fill).height(Length::Fill),
+        ]
+        .height(Length::Fill);
+
+        let body: Element<'_, Msg> = main.into();
+
+        // While dragging, a transparent top layer holds the resize
+        // cursor steady even when the pointer races ahead of the divider.
+        if self.dragging_divider {
+            stack![
+                body,
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                    .interaction(mouse::Interaction::ResizingColumn),
+            ]
             .into()
+        } else {
+            body
+        }
     }
 
-    fn view_chrome(&self) -> Element<'_, Msg> {
+    /// Left vertical tab column, built from the kit `vertical_tabs`
+    /// component so it tracks the shared theme. Single-line labels (no
+    /// wrap), active-row highlight, and a close `×` that floats in on
+    /// hover. New tabs come from `⌘T` (the app-menu shortcut), so there's
+    /// no in-column "+" button.
+    fn view_tab_sidebar(&self) -> Element<'_, Msg> {
+        let tabs: Vec<TabDescriptor<Msg>> = self
+            .cached_tabs
+            .iter()
+            .map(|t| {
+                let label = if !t.title.is_empty() {
+                    truncate(&t.title, 20)
+                } else if !t.url.is_empty() {
+                    truncate(&t.url, 20)
+                } else {
+                    String::from("Loading…")
+                };
+                TabDescriptor::new(
+                    label,
+                    t.id == self.cached_active,
+                    Msg::ActivateTab(t.id),
+                    Msg::CloseTab(t.id),
+                )
+            })
+            .collect();
+
+        vertical_tabs(tabs, self.hovered_tab, Msg::TabHover).into()
+    }
+
+    /// Top navigation bar: back / forward / reload + the URL field. All
+    /// widgets are kit-styled, so they track the bus theme.
+    fn view_nav_bar(&self) -> Element<'_, Msg> {
         row![
-            button(text("←")).on_press(Msg::NavBack),
-            button(text("→")).on_press(Msg::NavForward),
-            button(text("↻")).on_press(Msg::NavReload),
+            toolbar_button("←").on_press(Msg::NavBack),
+            toolbar_button("→").on_press(Msg::NavForward),
+            toolbar_button("↻").on_press(Msg::NavReload),
             text_input("Search or enter URL", &self.url_field)
                 .id(integration::url_input_id())
                 .on_input(Msg::UrlInput)
                 .on_submit(Msg::UrlSubmit)
                 .padding(6)
-                .width(Length::Fill),
+                .width(Length::Fill)
+                .style(sola_kit::components::text_input::style),
         ]
-        .spacing(4)
-        .padding(4)
+        .spacing(6)
+        .padding(6)
+        .align_y(iced::Alignment::Center)
         .height(Length::Fixed(CHROME_HEIGHT))
         .into()
     }
@@ -302,6 +385,18 @@ impl App {
             Subscription::run(frame_stream),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
             sola_kit::app::bus_subscription().map(Msg::Bus),
+            // Global pointer stream so a divider drag can follow the
+            // cursor past the divider's hit-rect (iced has no pointer
+            // capture). `CursorMoved` is a no-op unless dragging.
+            event::listen_with(|event, _, _| match event {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Msg::CursorMoved(position.x))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::CursorReleased)
+                }
+                _ => None,
+            }),
         ])
     }
 }

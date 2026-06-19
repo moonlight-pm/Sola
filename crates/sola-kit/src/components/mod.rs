@@ -66,8 +66,8 @@ pub use readable::readable;
 pub use sidebar::{
     PANEL_HEADER_H, PANEL_REORDER_THRESHOLD, PANEL_ROW_H, PANEL_W_DEFAULT, PANEL_W_MAX,
     PANEL_W_MIN, ReorderCfg, SIDEBAR_WIDTH, SidebarItem, SidebarPanel, SidebarSection,
-    panel_dragged_width, panel_drop_index, panel_drop_index_relative, panel_renumber_changed,
-    panel_reordered, sidebar,
+    TabDescriptor, panel_dragged_width, panel_drop_index, panel_drop_index_relative,
+    panel_renumber_changed, panel_reordered, sidebar, vertical_tabs,
 };
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::split;

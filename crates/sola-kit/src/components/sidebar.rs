@@ -20,6 +20,7 @@
 
 use std::collections::HashMap;
 
+use iced::widget::text::Wrapping;
 use iced::widget::{
     Container, Space, button, column, container, mouse_area, row, stack, text,
 };
@@ -141,6 +142,93 @@ where
         .style(style)
         .width(Length::Fixed(SIDEBAR_WIDTH))
         .height(Length::Fill)
+}
+
+
+/// One tab in [`vertical_tabs`].
+pub struct TabDescriptor<Message> {
+    pub label: String,
+    pub active: bool,
+    pub on_activate: Message,
+    pub on_close: Message,
+}
+
+impl<Message> TabDescriptor<Message> {
+    pub fn new(
+        label: impl Into<String>,
+        active: bool,
+        on_activate: Message,
+        on_close: Message,
+    ) -> Self {
+        Self { label: label.into(), active, on_activate, on_close }
+    }
+}
+
+/// Vertical browser-style tab column. Each row is a single-line label
+/// (`Wrapping::None` — the caller truncates to control where the ellipsis
+/// falls) with the active row highlighted. The close `×` *floats* over
+/// the row's right edge (drawn on top via a `stack`) and only appears
+/// while that row is hovered — the caller tracks hover by row index via
+/// `hovered` + the `on_hover` callback, which the kit wires to a
+/// `mouse_area` enter/exit.
+///
+/// Returns a full-size `Container` (kit sidebar styling) so the caller
+/// sizes the column — typically behind a draggable divider — by chaining
+/// `.width(..)`.
+pub fn vertical_tabs<'a, Message, FHover>(
+    tabs: Vec<TabDescriptor<Message>>,
+    hovered: Option<usize>,
+    on_hover: FHover,
+) -> Container<'a, Message, Theme>
+where
+    Message: Clone + 'a,
+    FHover: Fn(Option<usize>) -> Message + 'a,
+{
+    let mut col = column![].spacing(SPACE_XS).padding(Padding::from([8, 6]));
+    for (i, tab) in tabs.into_iter().enumerate() {
+        let TabDescriptor { label, active, on_activate, on_close } = tab;
+
+        let activate = button(
+            text(label)
+                .font(fonts::ui())
+                .size(13)
+                .wrapping(Wrapping::None),
+        )
+        .style(move |t, status| item_style(t, status, active))
+        .padding(Padding::from([6, 10]))
+        .width(Length::Fill)
+        .on_press(on_activate);
+
+        // The close button floats over the row's right edge (a `stack`
+        // layer on top of the label), revealed only while this row is
+        // hovered — never a second cell that steals label width.
+        let row_el: Element<'a, Message> = if hovered == Some(i) {
+            let close = button(text("×").font(fonts::ui()).size(15))
+                .style(|t, status| item_style(t, status, false))
+                .padding(Padding::from([0, 7]))
+                .on_press(on_close);
+            stack![
+                activate,
+                container(close)
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .align_y(iced::alignment::Vertical::Center)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(Padding::from([0, 4])),
+            ]
+            .into()
+        } else {
+            activate.into()
+        };
+
+        col = col.push(
+            mouse_area(row_el)
+                .on_enter(on_hover(Some(i)))
+                .on_exit(on_hover(None)),
+        );
+    }
+
+    container(col).style(style).height(Length::Fill).width(Length::Fill)
 }
 
 fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
