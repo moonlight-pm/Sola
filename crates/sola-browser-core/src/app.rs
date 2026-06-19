@@ -22,7 +22,7 @@ pub const VIEW_H: u32 = 800;
 pub const CHROME_HEIGHT: f32 = 38.0;
 /// Tab sidebar width (logical px) — the value the draggable divider
 /// edits, clamped to `[MIN, MAX]`.
-pub const SIDEBAR_W_DEFAULT: f32 =200.0;
+pub const SIDEBAR_W_DEFAULT: f32 = 200.0;
 pub const SIDEBAR_W_MIN: f32 = 120.0;
 pub const SIDEBAR_W_MAX: f32 = 420.0;
 
@@ -224,8 +224,9 @@ impl<E: Engine> App<E> {
         Task::none()
     }
 
-    /// Open a new tab loading `url`, focusing it when `activate`. Shared by
-    /// the chrome "+" button (`Msg::OpenTab`) and bus-driven OpenUrl.
+    /// Open a new tab loading `url`, focusing it when `activate`. Called from
+    /// app-menu intents (e.g., ⌘T for new tab) and bus-driven OpenUrl via
+    /// `integration::run_intent`.
     pub fn open_tab(&mut self, url: String, activate: bool) {
         let url = crate::util::normalize_url(&url);
         let id = self.engine.alloc_tab_id();
