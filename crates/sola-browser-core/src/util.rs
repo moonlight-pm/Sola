@@ -36,11 +36,12 @@ mod tests {
     #[test]
     fn truncate_shortens_long_strings_within_budget() {
         let out = truncate("a very long tab title indeed", 10);
+        assert_eq!(out, "a very lo…");
         assert!(out.chars().count() <= 10, "got {out:?}");
     }
 
     #[test]
     fn normalize_url_adds_scheme_to_bare_host() {
-        assert!(normalize_url("example.com").starts_with("http"));
+        assert_eq!(normalize_url("example.com"), "https://example.com");
     }
 }
