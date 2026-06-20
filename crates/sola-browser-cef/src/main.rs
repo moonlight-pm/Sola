@@ -2,5 +2,5 @@
 use sola_browser_cef::engine::CefEngine;
 
 fn main() -> std::process::ExitCode {
-    sola_browser_core::run::<CefEngine>("sola-browser")
+    sola_browser_core::run::<CefEngine>("sola-browser-cef")
 }

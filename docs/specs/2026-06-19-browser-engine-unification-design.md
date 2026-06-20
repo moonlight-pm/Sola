@@ -40,11 +40,13 @@ Keeping the engines in separate process images avoids that entirely.
 2. **Dispatcher uses `execv`, not fork+supervise.** The engine process *becomes*
    `sola-browser`; no lingering parent. `sola` (the process manager) already
    supervises components, so a second supervisor is redundant.
-3. **Unify the window identity to `app_id = "sola-browser"`** for both engines.
-   The shell then treats them as one app (MRU/focus/zone/menu); the launcher
-   collapses to one "Browser" entry (plus an optional explicit CEF entry). This
-   is the one decision flagged for review — it is cheaply reversible (it is a
-   single constant passed into `run()`).
+3. ~~**Unify the window identity to `app_id = "sola-browser"`** for both engines.~~
+   **Reversed 2026-06-20:** each engine reports an engine-specific app_id
+   (`"sola-browser-wpe"` / `"sola-browser-cef"`) instead. The shell then tracks
+   them as distinct apps (MRU/focus/zone/menu), the launcher shows two labelled
+   entries — **"Browser (WPE)"** and **"Browser (CEF)"** — and both engines can
+   run at the same time. The unify-vs-split toggle is exactly the constant passed
+   into `run()` plus the `builtins.rs` shape, as flagged below; we took the split.
 
 ## Architecture
 
@@ -191,19 +193,26 @@ fn main() -> ExitCode {
   and registers `sola-browser %u` as the http/https handler, fixing the stale
   references in `solactl/open.rs` and `sola-make/install.rs`.
 
-## app_id unification + launcher
+## app_id (per-engine) + launcher
 
-With both engines reporting `app_id = "sola-browser"`:
+**Updated 2026-06-20** — superseded the unify-to-`"sola-browser"` plan. Each
+engine reports its own app_id: `sola-browser-wpe/main.rs` passes
+`"sola-browser-wpe"` into `run()`, `sola-browser-cef/main.rs` passes
+`"sola-browser-cef"`.
 
-- `crates/sola-shell/src/builtins.rs`: collapse the two entries I added back to a
-  single **"Browser"** → `/opt/sola/bin/sola-browser` (default engine). Keep an
-  optional **"Browser (CEF)"** → `/opt/sola/bin/sola-browser --engine cef` for
-  convenience. (Revisits the change from the prior task.)
-- The shell associates both engines' windows under one identity for
-  MRU/focus/zone; the existing `"sola-browser"` zoning default and synthesized
-  menu (currently only exercised in tests) become live and correct.
-- Trade-off: the shell can no longer distinguish a WPE window from a CEF window
-  (only the title differs). Acceptable — you rarely run both at once.
+- `crates/sola-shell/src/builtins.rs`: two labelled entries — **"Browser (WPE)"**
+  → `/opt/sola/bin/sola-browser --engine wpe` (app_id `sola-browser-wpe`,
+  `lucide/globe`) and **"Browser (CEF)"** → `/opt/sola/bin/sola-browser --engine
+  cef` (app_id `sola-browser-cef`, `lucide/earth`). Both go through the
+  dispatcher; the `--engine` flag is explicit on each so the entries are
+  self-documenting.
+- The shell tracks each engine's windows under its own identity for
+  MRU/focus/zone/menu, so a WPE browser and a CEF browser coexist as distinct
+  apps. (The `"sola-browser"` strings in `sola-bus`/`sola-shell` tests are
+  arbitrary sample app_ids, unrelated to these live ids.)
+- Trade-off: no single shared zoning default / synthesized-menu identity across
+  engines — each engine carries its own. Worth it to run both at once and tell
+  them apart in the shell.
 
 ## Build system (`sola-make`)
 
@@ -251,10 +260,10 @@ are bisectable to one engine.
 - **Non-goal:** the resize-feedback loop investigated earlier. Left as-is unless
   it resurfaces.
 
-## Open question for review
+## Open question for review — RESOLVED 2026-06-20
 
-- **app_id unification** (Decision 3): unify to `"sola-browser"` (recommended,
-  coherent with the dispatcher) vs keep per-engine `sola-browser-wpe`/`-cef`
-  (preserves shell-level engine distinction, keeps two launcher entries). Confirm
-  before implementation — it sets the `run()` constant and the `builtins.rs`
-  shape.
+- **app_id unification** (Decision 3): ~~unify to `"sola-browser"`~~ → **resolved
+  to keep per-engine `sola-browser-wpe`/`-cef`**, preserving shell-level engine
+  distinction and two launcher entries. The implementation initially shipped the
+  unified form; this was reversed so both engines can run side by side. See the
+  "app_id (per-engine) + launcher" section above.
