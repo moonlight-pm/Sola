@@ -17,6 +17,9 @@ use sola_kit::components::{
 use crate::engine::{Cmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
 
 pub const DEFAULT_URL: &str = "https://slate.auto";
+/// A fresh blank tab (⌘T). Loaded as an empty page; the chrome shows an empty,
+/// focused URL bar rather than the literal "about:blank".
+pub const BLANK_URL: &str = "about:blank";
 pub const VIEW_W: u32 = 1280;
 pub const VIEW_H: u32 = 800;
 pub const CHROME_HEIGHT: f32 = 38.0;
@@ -153,7 +156,11 @@ impl<E: Engine> App<E> {
             }
             Msg::UrlInput(s) => self.url_field = s,
             Msg::UrlSubmit => {
-                let url = crate::util::normalize_url(&self.url_field);
+                // A URL navigates directly; anything else is searched on Kagi.
+                let url = crate::util::resolve_query(&self.url_field);
+                if url.is_empty() {
+                    return Task::none();
+                }
                 self.url_field = url.clone();
                 self.last_seen_url = url.clone();
                 let _ = self.releaser.send(Cmd::Nav(NavCmd::LoadUrl(url)));
@@ -189,7 +196,8 @@ impl<E: Engine> App<E> {
                 if let Some(url) = active_url {
                     if url != self.last_seen_url {
                         self.last_seen_url = url.clone();
-                        self.url_field = url;
+                        // A blank tab shows an empty URL bar, not "about:blank".
+                        self.url_field = if url == BLANK_URL { String::new() } else { url };
                     }
                 }
             }

@@ -22,7 +22,7 @@ use sola_bus::topics::{OpenUrlRequest, Topic, TopicKind};
 use sola_bus::Message;
 use sola_core::{KeyChord, KeyCode};
 
-use crate::app::{App, Msg, DEFAULT_URL};
+use crate::app::{App, BLANK_URL, Msg};
 use crate::engine::Engine;
 
 // Menu action ids — shared between the published menu and the handler so the
@@ -67,7 +67,11 @@ pub fn url_input_id() -> iced::advanced::widget::Id {
 /// the mapping pure and unit-testable without a bus.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserIntent {
+    /// Open a tab loading `url`, focused per `activate` (bus-driven OpenUrl).
     NewTab { url: String, activate: bool },
+    /// Open a fresh blank tab, focus it, and move keyboard focus to the empty
+    /// URL bar ready for typing (⌘T).
+    NewBlankTab,
     CloseActiveTab,
     Reload,
     Back,
@@ -86,7 +90,7 @@ pub fn intent_for_open_url(req: &OpenUrlRequest) -> BrowserIntent {
 /// Map a menu `action_id` to an intent. Unknown ids are ignored.
 pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
     match action_id {
-        ACTION_NEW_TAB => BrowserIntent::NewTab { url: DEFAULT_URL.to_string(), activate: true },
+        ACTION_NEW_TAB => BrowserIntent::NewBlankTab,
         ACTION_CLOSE_TAB => BrowserIntent::CloseActiveTab,
         ACTION_RELOAD => BrowserIntent::Reload,
         ACTION_FOCUS_URL => BrowserIntent::FocusUrl,
@@ -123,6 +127,16 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             app.open_tab(url, activate);
             Task::none()
         }
+        BrowserIntent::NewBlankTab => {
+            app.open_tab(BLANK_URL.to_string(), true);
+            // Empty the URL bar and move keyboard focus to it so the user can
+            // type a URL or search immediately. The blank tab's "about:blank"
+            // is suppressed from the field (see `Msg::Tick`); seeding
+            // `last_seen_url` here avoids a one-frame flash of it.
+            app.url_field.clear();
+            app.last_seen_url = BLANK_URL.to_string();
+            focus_url_bar()
+        }
         BrowserIntent::CloseActiveTab => {
             let id = app.cached_active;
             app.update(Msg::CloseTab(id))
@@ -130,12 +144,17 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
         BrowserIntent::Reload => app.update(Msg::NavReload),
         BrowserIntent::Back => app.update(Msg::NavBack),
         BrowserIntent::Forward => app.update(Msg::NavForward),
-        BrowserIntent::FocusUrl => iced::advanced::widget::operate(
-            iced::advanced::widget::operation::focusable::focus::<Msg>(url_input_id()),
-        ),
+        BrowserIntent::FocusUrl => focus_url_bar(),
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),
     }
+}
+
+/// Move keyboard focus to the chrome URL field.
+fn focus_url_bar() -> Task<Msg> {
+    iced::advanced::widget::operate(
+        iced::advanced::widget::operation::focusable::focus::<Msg>(url_input_id()),
+    )
 }
 
 #[cfg(test)]
@@ -153,11 +172,8 @@ mod tests {
     }
 
     #[test]
-    fn new_tab_action_opens_default_url_active() {
-        assert_eq!(
-            intent_for_menu_action(ACTION_NEW_TAB),
-            BrowserIntent::NewTab { url: DEFAULT_URL.to_string(), activate: true }
-        );
+    fn new_tab_action_opens_blank_tab() {
+        assert_eq!(intent_for_menu_action(ACTION_NEW_TAB), BrowserIntent::NewBlankTab);
     }
 
     #[test]
