@@ -146,6 +146,7 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     sola_kit::app::BusSetup::new(app_id)
         .subscribe(crate::integration::SUBSCRIBE)
         .app_menu("Browser", crate::integration::MENU_ITEMS)
+        .app_menu_more("Edit", crate::integration::EDIT_MENU_ITEMS)
         .install();
 
     // `engine` is moved into the App on first call. The iced application

@@ -57,7 +57,7 @@ pub fn bus() -> &'static Mutex<BusClient> {
 pub struct BusSetup {
     app_id: &'static str,
     subscribe: Option<&'static [TopicKind]>,
-    app_menu: Option<MenuDefinition>,
+    app_menus: Vec<MenuDefinition>,
     connect_timeout: Duration,
 }
 
@@ -66,7 +66,7 @@ impl BusSetup {
         Self {
             app_id,
             subscribe: None,
-            app_menu: None,
+            app_menus: Vec::new(),
             connect_timeout: Duration::from_millis(250),
         }
     }
@@ -113,8 +113,19 @@ impl BusSetup {
     /// (id, label, shortcut) shorthand is insufficient (submenus,
     /// separators, dynamic items, …).
     pub fn app_menu_definition(mut self, def: MenuDefinition) -> Self {
-        self.app_menu = Some(def);
+        self.app_menus.push(def);
         self
+    }
+
+    /// Declare an additional top-level menu (same (id, label, shortcut)
+    /// shorthand as [`Self::app_menu`]). Call once per extra menu; menus
+    /// publish in call order. Delegates to [`Self::app_menu`], which now
+    /// appends rather than replaces.
+    pub fn app_menu_more<I>(self, menu_label: impl Into<String>, items: I) -> Self
+    where
+        I: IntoIterator<Item = (&'static str, &'static str, KeyChord)>,
+    {
+        self.app_menu(menu_label, items)
     }
 
     /// Connect, subscribe, publish the menu, and stash the client
@@ -128,10 +139,10 @@ impl BusSetup {
                 tracing::warn!("bus subscribe failed: {e}");
             }
         }
-        if let Some(menu) = self.app_menu {
+        if !self.app_menus.is_empty() {
             if let Err(e) = client.emit(Topic::SetAppMenu(AppMenuPayload {
                 app_id: self.app_id.into(),
-                menus: vec![menu],
+                menus: self.app_menus,
             })) {
                 tracing::warn!(app_id = self.app_id, "publish app menu failed: {e}");
             }
