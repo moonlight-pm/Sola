@@ -192,11 +192,13 @@ impl WpeEngine {
         let cursor_w = cursor.clone();
         let snapshot_w = tabs_snapshot.clone();
         let active_w = active_atomic.clone();
+        let next_id_w = next_id.clone();
         let worker = thread::Builder::new()
             .name("wpe-engine".into())
             .spawn(move || unsafe {
                 worker_main(
                     width, height, frame_tx, cmd_rx, ready_tx, cursor_w, snapshot_w, active_w,
+                    next_id_w,
                 )
             })
             .expect("spawn wpe-engine thread");
@@ -227,6 +229,10 @@ struct WorkerCtx {
     cursor: Arc<std::sync::atomic::AtomicU32>,
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
+    /// Shared monotonic tab-id counter (also held chrome-side). The
+    /// decide-policy callback mints a background-tab id from this without
+    /// involving the chrome.
+    next_id: Arc<std::sync::atomic::AtomicU64>,
     /// Per-tab signal callbacks (`notify::uri`, `notify::title`)
     /// set this flag whenever they update a tab's URL or title.
     /// The cmd pump checks it each tick and rebuilds the
@@ -261,6 +267,7 @@ unsafe fn worker_main(
     cursor: Arc<std::sync::atomic::AtomicU32>,
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
+    next_id: Arc<std::sync::atomic::AtomicU64>,
 ) {
     let display = sys::sola_wpe_display_new();
     if display.is_null() {
@@ -290,6 +297,7 @@ unsafe fn worker_main(
         cursor,
         tabs_snapshot,
         active_atomic,
+        next_id,
         snapshot_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
@@ -348,6 +356,53 @@ unsafe extern "C" fn on_cursor_changed(
         kind as u32,
         std::sync::atomic::Ordering::Relaxed,
     );
+}
+
+/// `decide-policy` handler: middle / ⌘ / Ctrl-click on a link opens a
+/// background tab instead of navigating in place. Returns TRUE only when it
+/// has handled (ignored) the navigation; FALSE lets WebKit apply default
+/// policy. User-data is the worker `WorkerCtx` pointer (stable for the
+/// GMainLoop's lifetime).
+unsafe extern "C" fn on_decide_policy(
+    _web_view: *mut sys::WebKitWebView,
+    decision: *mut sys::WebKitPolicyDecision,
+    decision_type: sys::WebKitPolicyDecisionType,
+    user_data: *mut c_void,
+) -> sys::gboolean {
+    // Only ordinary navigations (link clicks) are interesting; let WebKit
+    // apply default policy to everything else (new-window, response, …).
+    if decision_type
+        != sys::WebKitPolicyDecisionType_WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION
+    {
+        return 0; // FALSE
+    }
+    let nav = decision as *mut sys::WebKitNavigationPolicyDecision;
+    let action = sys::webkit_navigation_policy_decision_get_navigation_action(nav);
+    if action.is_null() {
+        return 0;
+    }
+    let button = sys::webkit_navigation_action_get_mouse_button(action);
+    let mods = sys::webkit_navigation_action_get_modifiers(action);
+    let ctrl = (mods & sys::WPEModifiers_WPE_MODIFIER_KEYBOARD_CONTROL) != 0;
+    let super_key = (mods & sys::WPEModifiers_WPE_MODIFIER_KEYBOARD_META) != 0;
+    if !sola_browser_core::util::is_new_tab_click(button, ctrl, super_key) {
+        return 0; // ordinary click — navigate in place.
+    }
+    let request = sys::webkit_navigation_action_get_request(action);
+    if request.is_null() {
+        return 0;
+    }
+    let uri_ptr = sys::webkit_uri_request_get_uri(request);
+    if uri_ptr.is_null() {
+        return 0;
+    }
+    let uri = std::ffi::CStr::from_ptr(uri_ptr).to_string_lossy().into_owned();
+    // Suppress the in-place navigation; open a background tab instead.
+    sys::webkit_policy_decision_ignore(decision);
+    let ctx = &mut *(user_data as *mut WorkerCtx);
+    let id = TabId(ctx.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    open_tab(ctx, id, uri); // no SetActiveTab → background tab
+    1 // TRUE — handled.
 }
 
 unsafe extern "C" fn on_buffer_rendered(
@@ -613,6 +668,28 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String) {
         >(on_notify_title_tab)),
         make_sig_ctx(),
         Some(free_tab_signal_ctx),
+        0,
+    );
+
+    // Intercept link clicks so middle / ⌘ / Ctrl-click opens a background
+    // tab instead of navigating in place. The worker ctx (stable for the
+    // GMainLoop's lifetime) is the user-data, so the callback can mint a tab
+    // id and open the tab on this same thread.
+    let policy_signal = CString::new("decide-policy").unwrap();
+    sys::g_signal_connect_data(
+        webview as *mut c_void,
+        policy_signal.as_ptr(),
+        Some(std::mem::transmute::<
+            unsafe extern "C" fn(
+                *mut sys::WebKitWebView,
+                *mut sys::WebKitPolicyDecision,
+                sys::WebKitPolicyDecisionType,
+                *mut c_void,
+            ) -> sys::gboolean,
+            unsafe extern "C" fn(),
+        >(on_decide_policy)),
+        ctx as *mut WorkerCtx as *mut c_void,
+        None,
         0,
     );
 

@@ -2,6 +2,12 @@
 
 use crate::engine::EditCmd;
 
+/// Whether a link click should open a background tab instead of navigating
+/// in place: middle button (2), or left button (1) with Ctrl or Super held.
+pub fn is_new_tab_click(mouse_button: u32, ctrl: bool, super_key: bool) -> bool {
+    mouse_button == 2 || (mouse_button == 1 && (ctrl || super_key))
+}
+
 /// The WebKit editing-command string for an [`EditCmd`]. WebKit command
 /// names are case-sensitive.
 pub fn editing_command_name(cmd: EditCmd) -> &'static str {
@@ -115,6 +121,19 @@ fn encode_query(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_tab_click_rules() {
+        // Middle-click always opens a background tab, regardless of modifiers.
+        assert!(is_new_tab_click(2, false, false));
+        // Left-click with ctrl or super opens a background tab.
+        assert!(is_new_tab_click(1, true, false));
+        assert!(is_new_tab_click(1, false, true));
+        // Plain left-click navigates in place.
+        assert!(!is_new_tab_click(1, false, false));
+        // Right-click is the context menu, not a new tab.
+        assert!(!is_new_tab_click(3, true, true));
+    }
 
     #[test]
     fn editing_command_names_match_webkit() {
