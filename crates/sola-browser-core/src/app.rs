@@ -11,7 +11,8 @@ use std::time::Duration;
 use iced::widget::{Shader, Space, column, container, mouse_area, row, stack, text_input};
 use iced::{Element, Event, Length, Subscription, Task, event, mouse};
 use sola_kit::components::{
-    TabDescriptor, horizontal_divider, toolbar_button, vertical_divider, vertical_tabs,
+    TabDescriptor, TabSize, horizontal_divider, toolbar_button, vertical_divider,
+    vertical_tabs_sized,
 };
 
 use crate::engine::{Cmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
@@ -22,7 +23,7 @@ pub const DEFAULT_URL: &str = "https://slate.auto";
 pub const BLANK_URL: &str = "about:blank";
 pub const VIEW_W: u32 = 1280;
 pub const VIEW_H: u32 = 800;
-pub const CHROME_HEIGHT: f32 = 38.0;
+pub const CHROME_HEIGHT: f32 = 46.0;
 /// Tab sidebar width (logical px) — the value the draggable divider
 /// edits, clamped to `[MIN, MAX]`.
 pub const SIDEBAR_W_DEFAULT: f32 = 200.0;
@@ -327,7 +328,7 @@ impl<E: Engine> App<E> {
             })
             .collect();
 
-        vertical_tabs(tabs, self.hovered_tab, Msg::TabHover).into()
+        vertical_tabs_sized(tabs, self.hovered_tab, Msg::TabHover, TabSize::Large).into()
     }
 
     /// Top navigation bar: back / forward / reload + the URL field. All
@@ -341,12 +342,12 @@ impl<E: Engine> App<E> {
                 .id(crate::integration::url_input_id())
                 .on_input(Msg::UrlInput)
                 .on_submit(Msg::UrlSubmit)
-                .padding(6)
+                .padding(9)
                 .width(Length::Fill)
                 .style(sola_kit::components::text_input::style),
         ]
-        .spacing(6)
-        .padding(6)
+        .spacing(8)
+        .padding(10)
         .align_y(iced::Alignment::Center)
         .height(Length::Fixed(CHROME_HEIGHT))
         .into()
