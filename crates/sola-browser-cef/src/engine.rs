@@ -152,11 +152,13 @@ impl Engine for CefEngine {
         let cursor_w = cursor.clone();
         let snap_w = tabs_snapshot.clone();
         let active_w = active_atomic.clone();
+        let next_id_w = next_id.clone();
         let worker = thread::Builder::new()
             .name("cef-engine".into())
             .spawn(move || {
                 worker_main(
                     app_id, width, height, frame_tx, cmd_rx, cursor_w, snap_w, active_w,
+                    next_id_w,
                 )
             })
             .expect("spawn cef-engine thread");
@@ -236,6 +238,9 @@ struct CefThreadState {
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
     /// Shared mirror of `active` for the iced side.
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
+    /// Shared monotonic tab-id counter (also held chrome-side). `on_before_popup`
+    /// mints a background-tab id from this on the CEF UI thread.
+    next_id: Arc<std::sync::atomic::AtomicU64>,
     /// Set by on_address_change / on_title_change; checked at
     /// the next cmd-pump tick to rebuild the shared snapshot.
     snapshot_dirty: std::cell::Cell<bool>,
@@ -271,6 +276,7 @@ fn worker_main(
     cursor: Arc<std::sync::atomic::AtomicU32>,
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
+    next_id: Arc<std::sync::atomic::AtomicU64>,
 ) {
     let state = Rc::new(CefThreadState {
         size: Mutex::new((width, height)),
@@ -281,6 +287,7 @@ fn worker_main(
         cursor,
         tabs_snapshot,
         active_atomic,
+        next_id,
         snapshot_dirty: std::cell::Cell::new(false),
     });
     CEF_STATE.with(|s| {
@@ -502,6 +509,36 @@ cef::wrap_life_span_handler! {
             if state.tabs.borrow().is_empty() {
                 cef::quit_message_loop();
             }
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn on_before_popup(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _frame: Option<&mut cef::Frame>,
+            _popup_id: ::std::os::raw::c_int,
+            target_url: Option<&cef::CefString>,
+            _target_frame_name: Option<&cef::CefString>,
+            _target_disposition: cef::WindowOpenDisposition,
+            _user_gesture: ::std::os::raw::c_int,
+            _popup_features: Option<&cef::PopupFeatures>,
+            _window_info: Option<&mut cef::WindowInfo>,
+            _client: Option<&mut Option<cef::Client>>,
+            _settings: Option<&mut cef::BrowserSettings>,
+            _extra_info: Option<&mut Option<cef::DictionaryValue>>,
+            _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            // ctrl/cmd/middle-click and target=_blank all arrive here. Cancel
+            // the native popup (return 1) and open the target as a background
+            // tab on this same (CEF UI) thread.
+            let url = target_url.map(|u| u.to_string()).unwrap_or_default();
+            if url.is_empty() {
+                return 1;
+            }
+            let state = cef_state();
+            let id = TabId(state.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+            open_tab(&state, id, url); // no SetActiveTab → background tab
+            1 // cancel the native popup — handled as a tab.
         }
     }
 }
