@@ -13,7 +13,8 @@ use iced::{Element, Length};
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::text::{body, code, heading, muted};
 use sola_kit::components::{
-    ReorderCfg, SidebarItem, SidebarPanel, SidebarSection, panel_dragged_width,
+    ReorderCfg, SidebarItem, SidebarPanel, SidebarSection, TabDescriptor, TabSize,
+    panel_dragged_width, vertical_tabs_sized,
 };
 
 /// The demo item labels, in their current (reorderable) order.
@@ -231,8 +232,40 @@ pub fn view(state: &State) -> Element<'_, Msg> {
         demo,
         code("SidebarPanel::new(sections).collapsible(..).resizable(..).reorderable(..).build()")
             .style(muted),
+        body("vertical_tabs density: Normal vs Large").style(muted),
+        density_demo(),
     ]
     .spacing(16)
+    .into()
+}
+
+/// Dogfood the `vertical_tabs` size variants side by side so the Large
+/// browser-chrome density is visible (and regressions show up here first).
+fn density_demo<'a>() -> Element<'a, Msg> {
+    let mk = |active_i: usize| -> Vec<TabDescriptor<Msg>> {
+        ["Inbox", "A long tab title that truncates", "Sent"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, l)| TabDescriptor::new(l, i == active_i, Msg::ItemPress(i), Msg::Noop))
+            .collect()
+    };
+    row![
+        column![
+            body("Normal").style(muted),
+            container(vertical_tabs_sized(mk(0), None, |_| Msg::Noop, TabSize::Normal))
+                .width(Length::Fixed(200.0))
+                .height(Length::Fixed(160.0)),
+        ]
+        .spacing(8),
+        column![
+            body("Large").style(muted),
+            container(vertical_tabs_sized(mk(0), None, |_| Msg::Noop, TabSize::Large))
+                .width(Length::Fixed(200.0))
+                .height(Length::Fixed(160.0)),
+        ]
+        .spacing(8),
+    ]
+    .spacing(24)
     .into()
 }
 
