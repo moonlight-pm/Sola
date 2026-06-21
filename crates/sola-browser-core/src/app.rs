@@ -54,6 +54,11 @@ pub enum Msg {
     CursorReleased,
     /// Hovered tab row changed (index into `cached_tabs`), or `None`.
     TabHover(Option<usize>),
+    /// A left button press landed inside the web view — the page took
+    /// keyboard focus, so edit commands route to the engine (not the URL bar).
+    WebViewFocused,
+    /// Result of an `iced::clipboard::read` kicked off by a URL-bar paste.
+    UrlPasted(Option<String>),
 }
 
 /// Browser chrome application state, generic over the web engine.
@@ -101,6 +106,11 @@ pub struct App<E: Engine> {
     /// The app_id string passed to `run::<E>`, stored so `Msg::Bus` can
     /// forward it to `integration::handle_bus` without a static.
     pub app_id: &'static str,
+    /// True when the chrome URL bar holds keyboard focus, so `Edit`
+    /// commands target it instead of the web content. Set by ⌘L / ⌘T /
+    /// typing in the bar; cleared when a press lands in the web view.
+    /// Best-effort heuristic — see the design spec's documented edge case.
+    pub url_bar_focused: bool,
 }
 
 impl<E: Engine> App<E> {
@@ -136,6 +146,7 @@ impl<E: Engine> App<E> {
             drag_anchor: None,
             hovered_tab: None,
             app_id,
+            url_bar_focused: false,
         }
     }
 
@@ -155,7 +166,10 @@ impl<E: Engine> App<E> {
             Msg::NavReload => {
                 let _ = self.releaser.send(Cmd::Nav(NavCmd::Reload));
             }
-            Msg::UrlInput(s) => self.url_field = s,
+            Msg::UrlInput(s) => {
+                self.url_field = s;
+                self.url_bar_focused = true;
+            }
             Msg::UrlSubmit => {
                 // A URL navigates directly; anything else is searched on Kagi.
                 let url = crate::util::resolve_query(&self.url_field);
@@ -229,6 +243,14 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::TabHover(i) => self.hovered_tab = i,
+            Msg::WebViewFocused => self.url_bar_focused = false,
+            Msg::UrlPasted(text) => {
+                if let Some(s) = text {
+                    // Best-effort: iced exposes no caret/selection, so append
+                    // at the end (cursor-at-end assumption).
+                    self.url_field.push_str(&s);
+                }
+            }
         }
         Task::none()
     }

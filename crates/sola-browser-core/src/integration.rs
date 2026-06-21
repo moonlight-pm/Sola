@@ -23,7 +23,7 @@ use sola_bus::Message;
 use sola_core::{KeyChord, KeyCode};
 
 use crate::app::{App, BLANK_URL, Msg};
-use crate::engine::{EditCmd, Engine};
+use crate::engine::{Cmd, EditCmd, Engine};
 
 // Menu action ids — shared between the published menu and the handler so the
 // two never drift.
@@ -179,6 +179,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             // `last_seen_url` here avoids a one-frame flash of it.
             app.url_field.clear();
             app.last_seen_url = BLANK_URL.to_string();
+            app.url_bar_focused = true;
             focus_url_bar()
         }
         BrowserIntent::CloseActiveTab => {
@@ -188,8 +189,32 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
         BrowserIntent::Reload => app.update(Msg::NavReload),
         BrowserIntent::Back => app.update(Msg::NavBack),
         BrowserIntent::Forward => app.update(Msg::NavForward),
-        BrowserIntent::FocusUrl => focus_url_bar(),
-        BrowserIntent::Edit(_) => Task::none(),
+        BrowserIntent::FocusUrl => {
+            app.url_bar_focused = true;
+            focus_url_bar()
+        }
+        BrowserIntent::Edit(cmd) => match edit_target(app.url_bar_focused) {
+            EditTarget::Engine => {
+                let _ = app.releaser.send(Cmd::Edit(cmd));
+                Task::none()
+            }
+            EditTarget::UrlBar => match cmd {
+                EditCmd::Copy => iced::clipboard::write(app.url_field.clone()),
+                EditCmd::Cut => {
+                    let task = iced::clipboard::write(app.url_field.clone());
+                    app.url_field.clear();
+                    task
+                }
+                EditCmd::Paste => iced::clipboard::read().map(Msg::UrlPasted),
+                EditCmd::SelectAll => iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
+                        url_input_id(),
+                    ),
+                ),
+                // The URL bar has no app-level undo/redo stack.
+                EditCmd::Undo | EditCmd::Redo => Task::none(),
+            },
+        },
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),
     }
