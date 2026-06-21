@@ -23,7 +23,7 @@ use sola_bus::Message;
 use sola_core::{KeyChord, KeyCode};
 
 use crate::app::{App, BLANK_URL, Msg};
-use crate::engine::Engine;
+use crate::engine::{EditCmd, Engine};
 
 // Menu action ids — shared between the published menu and the handler so the
 // two never drift.
@@ -34,6 +34,12 @@ pub const ACTION_FOCUS_URL: &str = "focus-url";
 pub const ACTION_BACK: &str = "back";
 pub const ACTION_FORWARD: &str = "forward";
 pub const ACTION_QUIT: &str = "quit";
+pub const ACTION_EDIT_UNDO: &str = "edit-undo";
+pub const ACTION_EDIT_REDO: &str = "edit-redo";
+pub const ACTION_EDIT_CUT: &str = "edit-cut";
+pub const ACTION_EDIT_COPY: &str = "edit-copy";
+pub const ACTION_EDIT_PASTE: &str = "edit-paste";
+pub const ACTION_EDIT_SELECT_ALL: &str = "edit-select-all";
 
 /// Topics the browser subscribes to. Theme/OpenUrl/MenuAction are the live
 /// inputs; CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
@@ -57,6 +63,18 @@ pub const MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
     (ACTION_QUIT, "Quit Browser", KeyCode::Q.meta()),
 ];
 
+/// The "Edit" app-menu published alongside "Browser". Meta-bound so the
+/// shell grabs them globally and routes `Topic::MenuAction` back; the
+/// browser then routes each to the focused surface (web content or URL bar).
+pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 6] = [
+    (ACTION_EDIT_UNDO, "Undo", KeyCode::Z.meta()),
+    (ACTION_EDIT_REDO, "Redo", KeyCode::Z.meta_shift()),
+    (ACTION_EDIT_CUT, "Cut", KeyCode::X.meta()),
+    (ACTION_EDIT_COPY, "Copy", KeyCode::C.meta()),
+    (ACTION_EDIT_PASTE, "Paste", KeyCode::V.meta()),
+    (ACTION_EDIT_SELECT_ALL, "Select All", KeyCode::A.meta()),
+];
+
 /// Stable widget id for the chrome URL field, so the `Focus URL` action can
 /// move keyboard focus to it.
 pub fn url_input_id() -> iced::advanced::widget::Id {
@@ -77,8 +95,28 @@ pub enum BrowserIntent {
     Back,
     Forward,
     FocusUrl,
+    /// Run an editing command, routed to the focused surface.
+    Edit(EditCmd),
     Quit,
     None,
+}
+
+/// Which surface an `Edit` intent acts on, chosen by `url_bar_focused`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditTarget {
+    /// The web content (full fidelity — honors the page's text selection).
+    Engine,
+    /// The chrome URL bar (best-effort: whole-field, no partial selection).
+    UrlBar,
+}
+
+/// Route an `Edit` intent: the URL bar when it holds focus, else the page.
+pub fn edit_target(url_bar_focused: bool) -> EditTarget {
+    if url_bar_focused {
+        EditTarget::UrlBar
+    } else {
+        EditTarget::Engine
+    }
 }
 
 /// Map an `OpenUrlRequest` to an intent: always a fresh tab, focused per
@@ -97,6 +135,12 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_BACK => BrowserIntent::Back,
         ACTION_FORWARD => BrowserIntent::Forward,
         ACTION_QUIT => BrowserIntent::Quit,
+        ACTION_EDIT_UNDO => BrowserIntent::Edit(EditCmd::Undo),
+        ACTION_EDIT_REDO => BrowserIntent::Edit(EditCmd::Redo),
+        ACTION_EDIT_CUT => BrowserIntent::Edit(EditCmd::Cut),
+        ACTION_EDIT_COPY => BrowserIntent::Edit(EditCmd::Copy),
+        ACTION_EDIT_PASTE => BrowserIntent::Edit(EditCmd::Paste),
+        ACTION_EDIT_SELECT_ALL => BrowserIntent::Edit(EditCmd::SelectAll),
         _ => BrowserIntent::None,
     }
 }
@@ -145,6 +189,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
         BrowserIntent::Back => app.update(Msg::NavBack),
         BrowserIntent::Forward => app.update(Msg::NavForward),
         BrowserIntent::FocusUrl => focus_url_bar(),
+        BrowserIntent::Edit(_) => Task::none(),
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),
     }
@@ -174,6 +219,35 @@ mod tests {
     #[test]
     fn new_tab_action_opens_blank_tab() {
         assert_eq!(intent_for_menu_action(ACTION_NEW_TAB), BrowserIntent::NewBlankTab);
+    }
+
+    #[test]
+    fn edit_actions_map_to_edit_intents() {
+        use crate::engine::EditCmd;
+        assert_eq!(intent_for_menu_action(ACTION_EDIT_COPY), BrowserIntent::Edit(EditCmd::Copy));
+        assert_eq!(intent_for_menu_action(ACTION_EDIT_CUT), BrowserIntent::Edit(EditCmd::Cut));
+        assert_eq!(intent_for_menu_action(ACTION_EDIT_PASTE), BrowserIntent::Edit(EditCmd::Paste));
+        assert_eq!(intent_for_menu_action(ACTION_EDIT_SELECT_ALL), BrowserIntent::Edit(EditCmd::SelectAll));
+        assert_eq!(intent_for_menu_action(ACTION_EDIT_UNDO), BrowserIntent::Edit(EditCmd::Undo));
+        assert_eq!(intent_for_menu_action(ACTION_EDIT_REDO), BrowserIntent::Edit(EditCmd::Redo));
+    }
+
+    #[test]
+    fn edit_target_routes_by_focus() {
+        assert_eq!(edit_target(true), EditTarget::UrlBar);
+        assert_eq!(edit_target(false), EditTarget::Engine);
+    }
+
+    #[test]
+    fn edit_menu_items_cover_all_actions() {
+        let ids: Vec<&str> = EDIT_MENU_ITEMS.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(
+            ids,
+            vec![
+                ACTION_EDIT_UNDO, ACTION_EDIT_REDO, ACTION_EDIT_CUT,
+                ACTION_EDIT_COPY, ACTION_EDIT_PASTE, ACTION_EDIT_SELECT_ALL,
+            ]
+        );
     }
 
     #[test]
