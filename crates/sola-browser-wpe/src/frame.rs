@@ -208,8 +208,18 @@ impl shader::Program<sola_browser_core::app::Msg> for WpeProgram {
                     }
                     _ => None,
                 };
+                let is_left_press =
+                    matches!(m, mouse::Event::ButtonPressed(mouse::Button::Left));
                 if let Some(e) = ev {
                     let _ = self.slot.releaser.send(Cmd::Input(e));
+                    if is_left_press {
+                        return Some(
+                            iced::widget::shader::Action::publish(
+                                sola_browser_core::app::Msg::WebViewFocused,
+                            )
+                            .and_capture(),
+                        );
+                    }
                     return Some(iced::widget::shader::Action::capture());
                 }
             }
