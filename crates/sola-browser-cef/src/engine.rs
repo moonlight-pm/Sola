@@ -682,6 +682,21 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 dispatch_nav(&tab.browser, nav);
             }
         }
+        Cmd::Edit(edit) => {
+            if let Some(tab) = active_tab(state) {
+                if let Some(frame) = tab.browser.main_frame() {
+                    use sola_browser_core::engine::EditCmd;
+                    match edit {
+                        EditCmd::Copy => frame.copy(),
+                        EditCmd::Cut => frame.cut(),
+                        EditCmd::Paste => frame.paste(),
+                        EditCmd::SelectAll => frame.select_all(),
+                        EditCmd::Undo => frame.undo(),
+                        EditCmd::Redo => frame.redo(),
+                    }
+                }
+            }
+        }
         Cmd::OpenTab { id, url } => {
             open_tab(state, id, url);
         }

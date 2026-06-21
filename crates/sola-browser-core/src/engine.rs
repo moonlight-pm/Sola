@@ -24,6 +24,20 @@ pub enum NavCmd {
     LoadUrl(String),
 }
 
+/// Editing commands routed to the focused web content (or, in the chrome,
+/// to the URL bar). Names map to WebKit editing-command strings via
+/// [`crate::util::editing_command_name`]; CEF maps them to `cef::Frame`
+/// methods directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditCmd {
+    Copy,
+    Cut,
+    Paste,
+    SelectAll,
+    Undo,
+    Redo,
+}
+
 /// Commands the chrome sends to the engine worker. Generic over the
 /// engine `E`: `Release` carries `E::Token` (the buffer-recycle token)
 /// and `Input` carries `E::Input` (the engine's native input shape —
@@ -39,6 +53,8 @@ pub enum Cmd<E: Engine> {
     OpenTab { id: TabId, url: String },
     CloseTab(TabId),
     SetActiveTab(TabId),
+    /// Run an editing command against the active tab's web content.
+    Edit(EditCmd),
     Quit,
 }
 

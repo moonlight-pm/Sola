@@ -478,6 +478,18 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 }
             }
         }
+        Cmd::Edit(edit) => {
+            if let Some(tab) = active_tab(ctx) {
+                if !tab.webview.is_null() {
+                    let name = sola_browser_core::util::editing_command_name(edit);
+                    let name_c = std::ffi::CString::new(name).unwrap();
+                    sys::webkit_web_view_execute_editing_command(
+                        tab.webview as *mut _,
+                        name_c.as_ptr(),
+                    );
+                }
+            }
+        }
         Cmd::OpenTab { id, url } => {
             open_tab(ctx, id, url);
         }

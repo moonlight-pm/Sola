@@ -1,5 +1,20 @@
 //! Pure string helpers for the browser chrome.
 
+use crate::engine::EditCmd;
+
+/// The WebKit editing-command string for an [`EditCmd`]. WebKit command
+/// names are case-sensitive.
+pub fn editing_command_name(cmd: EditCmd) -> &'static str {
+    match cmd {
+        EditCmd::Copy => "Copy",
+        EditCmd::Cut => "Cut",
+        EditCmd::Paste => "Paste",
+        EditCmd::SelectAll => "SelectAll",
+        EditCmd::Undo => "Undo",
+        EditCmd::Redo => "Redo",
+    }
+}
+
 pub fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -100,6 +115,17 @@ fn encode_query(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editing_command_names_match_webkit() {
+        use crate::engine::EditCmd;
+        assert_eq!(editing_command_name(EditCmd::Copy), "Copy");
+        assert_eq!(editing_command_name(EditCmd::Cut), "Cut");
+        assert_eq!(editing_command_name(EditCmd::Paste), "Paste");
+        assert_eq!(editing_command_name(EditCmd::SelectAll), "SelectAll");
+        assert_eq!(editing_command_name(EditCmd::Undo), "Undo");
+        assert_eq!(editing_command_name(EditCmd::Redo), "Redo");
+    }
 
     #[test]
     fn truncate_leaves_short_strings_untouched() {
