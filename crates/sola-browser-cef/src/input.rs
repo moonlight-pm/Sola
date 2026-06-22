@@ -36,6 +36,20 @@ pub fn modifiers_to_cef(m: Modifiers) -> u32 {
     out
 }
 
+/// Like [`modifiers_to_cef`] but for mouse events: a held Super/⌘ (`logo`)
+/// is also reported to CEF as CONTROL. On Linux, Chromium's "open link in a
+/// new tab" disposition keys off CONTROL (COMMAND is the macOS modifier and
+/// is ignored), so without this a ⌘-click never produces a popup and
+/// `on_before_popup` never fires. Keyboard events keep the literal mapping
+/// ([`modifiers_to_cef`]) so ⌘-shortcuts don't masquerade as Ctrl-shortcuts.
+pub fn modifiers_to_cef_mouse(m: Modifiers) -> u32 {
+    let mut out = modifiers_to_cef(m);
+    if m.logo() {
+        out |= F::EVENTFLAG_CONTROL_DOWN.0;
+    }
+    out
+}
+
 /// CEF's `EVENTFLAG_*_MOUSE_BUTTON` bit for a given button number.
 /// We use the same 1-2-3 = L-M-R convention internally as on the
 /// WPE side; the mapping to CEF's bits is fixed.
@@ -55,7 +69,9 @@ pub fn button_to_modifier(button: u32) -> u32 {
 pub fn button_to_wpe_like(b: mouse::Button) -> Option<u32> {
     Some(match b {
         mouse::Button::Left => 1,
-        mouse::Button::Middle => 2,
+        // Middle button is intentionally inert in Sola — drop it so it never
+        // reaches CEF (no middle-click new-tab popup, no autoscroll).
+        mouse::Button::Middle => return None,
         mouse::Button::Right => 3,
         // CEF doesn't have explicit Back/Forward button events at
         // the OSR seams; drop them silently for now.
@@ -71,12 +87,16 @@ pub fn project_cursor(point: Point, bounds: Rectangle, scale: f32) -> (i32, i32)
 
 pub fn scroll_delta_to_cef(d: mouse::ScrollDelta) -> (i32, i32, bool) {
     match d {
-        // CEF expects integer wheel deltas; one "line" is usually
-        // 40 px in Chromium-land, but we'll mimic our WPE side
-        // (20 px per line) so behaviour is consistent.
+        // Non-precise (line) wheel events: CEF's `send_mouse_wheel_event`
+        // expects WHEEL_DELTA units — ±120 per notch (the Windows
+        // convention Chromium follows internally), NOT raw pixels. Sending
+        // ~20 made one notch scroll only ~1/6 of a step, hence the sluggish
+        // feel; one line → one notch.
         mouse::ScrollDelta::Lines { x, y } => {
-            ((x * 20.0) as i32, (y * 20.0) as i32, false)
+            ((x * 120.0) as i32, (y * 120.0) as i32, false)
         }
+        // Precise (high-resolution / touchpad) deltas are already pixel
+        // amounts; CEF consumes them directly when the precision flag is set.
         mouse::ScrollDelta::Pixels { x, y } => (x as i32, y as i32, true),
     }
 }
@@ -296,5 +316,55 @@ pub fn scroll(
         delta_y,
         precise,
         modifiers: kbd_mods | held,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mouse_super_maps_to_control_for_new_tab() {
+        // ⌘/Super held during a click must reach CEF as CONTROL so Chromium's
+        // Linux "open in new tab" disposition fires (COMMAND alone does not).
+        let m = modifiers_to_cef_mouse(Modifiers::LOGO);
+        assert_ne!(m & F::EVENTFLAG_CONTROL_DOWN.0, 0, "super must set CONTROL");
+        // The literal COMMAND bit is still present; it's just harmless on Linux.
+        assert_ne!(m & F::EVENTFLAG_COMMAND_DOWN.0, 0);
+    }
+
+    #[test]
+    fn mouse_plain_has_no_synthetic_control() {
+        // No modifiers → no CONTROL (a plain click must not look like ctrl-click).
+        assert_eq!(modifiers_to_cef_mouse(Modifiers::empty()), 0);
+        // Real Ctrl still maps through.
+        assert_ne!(
+            modifiers_to_cef_mouse(Modifiers::CTRL) & F::EVENTFLAG_CONTROL_DOWN.0,
+            0
+        );
+    }
+
+    #[test]
+    fn keyboard_super_stays_command_only() {
+        // The keyboard path must NOT synthesize CONTROL, or ⌘-shortcuts would
+        // masquerade as Ctrl-shortcuts in the page.
+        let m = modifiers_to_cef(Modifiers::LOGO);
+        assert_eq!(m & F::EVENTFLAG_CONTROL_DOWN.0, 0);
+        assert_ne!(m & F::EVENTFLAG_COMMAND_DOWN.0, 0);
+    }
+
+    #[test]
+    fn line_scroll_uses_wheel_delta_units() {
+        // One wheel notch (one "line") → one WHEEL_DELTA step (120), not pixels.
+        let (dx, dy, precise) = scroll_delta_to_cef(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 });
+        assert_eq!((dx, dy), (0, 120));
+        assert!(!precise);
+    }
+
+    #[test]
+    fn middle_button_is_inert() {
+        assert_eq!(button_to_wpe_like(mouse::Button::Middle), None);
+        assert_eq!(button_to_wpe_like(mouse::Button::Left), Some(1));
+        assert_eq!(button_to_wpe_like(mouse::Button::Right), Some(3));
     }
 }

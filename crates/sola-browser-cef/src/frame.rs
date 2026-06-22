@@ -103,7 +103,10 @@ impl shader::Program<sola_browser_core::app::Msg> for CefProgram {
                     bounds,
                     scale,
                 );
-                let kbd_mods = input::modifiers_to_cef(mods_now);
+                // Mouse-side mapping: a held ⌘/Super is reported to CEF as
+                // CONTROL so ⌘-click opens a background tab (Linux new-tab
+                // disposition). See `modifiers_to_cef_mouse`.
+                let kbd_mods = input::modifiers_to_cef_mouse(mods_now);
                 let ev = match m {
                     mouse::Event::CursorMoved { .. } => Some(input::pointer_move(
                         x,

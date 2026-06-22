@@ -528,10 +528,18 @@ cef::wrap_life_span_handler! {
             _extra_info: Option<&mut Option<cef::DictionaryValue>>,
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
-            // ctrl/cmd/middle-click and target=_blank all arrive here. Cancel
-            // the native popup (return 1) and open the target as a background
-            // tab on this same (CEF UI) thread.
+            // ctrl/⌘-click and target=_blank arrive here (Chromium's Linux
+            // new-tab disposition keys off CONTROL; ⌘ is mapped to CONTROL for
+            // mouse events in `input::modifiers_to_cef_mouse`). Cancel the
+            // native popup (return 1) and open the target as a background tab
+            // on this same (CEF UI) thread.
             let url = target_url.map(|u| u.to_string()).unwrap_or_default();
+            tracing::info!(
+                url = %url,
+                disposition = ?_target_disposition,
+                user_gesture = _user_gesture,
+                "on_before_popup fired"
+            );
             if url.is_empty() {
                 return 1;
             }
@@ -889,6 +897,12 @@ fn dispatch_input(host: &cef::BrowserHost, ev: InputEvent) {
             host.send_mouse_move_event(Some(&me), 0);
         }
         InputEvent::PointerButton { down, x, y, button, modifiers } => {
+            if down && modifiers != 0 {
+                // Diagnostic for ⌘/Ctrl-click → new tab: confirms which
+                // modifier bits CEF actually receives (CONTROL = 0x4 must be
+                // set for Chromium to raise the new-tab popup on Linux).
+                tracing::debug!(button, modifiers = format_args!("{modifiers:#x}"), "pointer button down");
+            }
             let me = MouseEvent { x, y, modifiers };
             let bt = match button {
                 1 => MouseButtonType::LEFT,

@@ -15,9 +15,9 @@ use sola_kit::components::{
     vertical_tabs_sized,
 };
 
-use crate::engine::{Cmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
+use crate::engine::{Cmd, EditCmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
 
-pub const DEFAULT_URL: &str = "https://slate.auto";
+pub const DEFAULT_URL: &str = "https://www.wikipedia.org";
 /// A fresh blank tab (⌘T). Loaded as an empty page; the chrome shows an empty,
 /// focused URL bar rather than the literal "about:blank".
 pub const BLANK_URL: &str = "about:blank";
@@ -57,6 +57,15 @@ pub enum Msg {
     /// A left button press landed inside the web view — the page took
     /// keyboard focus, so edit commands route to the engine (not the URL bar).
     WebViewFocused,
+    /// A global left press — triggers a URL-bar focus query so we can
+    /// select-all when the field has just gained focus (browser behavior).
+    LeftPressed,
+    /// Result of the focus query started by [`Msg::LeftPressed`]: whether the
+    /// URL bar currently holds focus. Selects-all on the false→true edge.
+    UrlBarFocusSync(bool),
+    /// Result of the live focus query for an Edit action (⌘C/⌘X/⌘V/⌘A):
+    /// route `cmd` to the URL bar when `url_bar_focused`, else the engine.
+    EditRouted { cmd: EditCmd, url_bar_focused: bool },
     /// Result of an `iced::clipboard::read` kicked off by a URL-bar paste.
     UrlPasted(Option<String>),
 }
@@ -244,6 +253,40 @@ impl<E: Engine> App<E> {
             }
             Msg::TabHover(i) => self.hovered_tab = i,
             Msg::WebViewFocused => self.url_bar_focused = false,
+            Msg::LeftPressed => {
+                // A press landed somewhere. Resolve, against the real widget
+                // tree, whether it focused the URL bar — `text_input` captures
+                // the click so no wrapper can tell us directly.
+                return crate::integration::url_bar_is_focused(Msg::UrlBarFocusSync);
+            }
+            Msg::UrlBarFocusSync(now) => {
+                // Select-all only on the false→true edge, so a second click in
+                // an already-focused field can place the caret normally.
+                let gained = now && !self.url_bar_focused;
+                self.url_bar_focused = now;
+                if gained {
+                    return crate::integration::select_url_bar();
+                }
+            }
+            Msg::EditRouted { cmd, url_bar_focused } => {
+                if url_bar_focused {
+                    tracing::debug!(?cmd, "edit → URL bar (iced clipboard)");
+                    return match cmd {
+                        EditCmd::Copy => iced::clipboard::write(self.url_field.clone()),
+                        EditCmd::Cut => {
+                            let task = iced::clipboard::write(self.url_field.clone());
+                            self.url_field.clear();
+                            task
+                        }
+                        EditCmd::Paste => iced::clipboard::read().map(Msg::UrlPasted),
+                        EditCmd::SelectAll => crate::integration::select_url_bar(),
+                        // The URL bar has no app-level undo/redo stack.
+                        EditCmd::Undo | EditCmd::Redo => Task::none(),
+                    };
+                }
+                tracing::debug!(?cmd, "edit → engine (web content)");
+                let _ = self.releaser.send(Cmd::Edit(cmd));
+            }
             Msg::UrlPasted(text) => {
                 if let Some(s) = text {
                     // Best-effort: iced exposes no caret/selection, so append
@@ -355,6 +398,12 @@ impl<E: Engine> App<E> {
 
     /// Top navigation bar: back / forward / reload + the URL field. All
     /// widgets are kit-styled, so they track the bus theme.
+    ///
+    /// The URL field isn't wrapped in a `mouse_area`: `text_input` captures
+    /// the click to place its caret, and `mouse_area` skips `on_press` for
+    /// captured events. Click-into-focus + select-all is handled instead via
+    /// the global press subscription (`Msg::LeftPressed`) plus a live focus
+    /// query, which sees the press regardless of widget capture.
     pub fn view_nav_bar(&self) -> Element<'_, Msg> {
         row![
             toolbar_button("←").on_press(Msg::NavBack),
@@ -364,12 +413,13 @@ impl<E: Engine> App<E> {
                 .id(crate::integration::url_input_id())
                 .on_input(Msg::UrlInput)
                 .on_submit(Msg::UrlSubmit)
-                .padding(9)
+                .size(15)
+                .padding([8, 12])
                 .width(Length::Fill)
                 .style(sola_kit::components::text_input::style),
         ]
         .spacing(8)
-        .padding(10)
+        .padding([4, 10])
         .align_y(iced::Alignment::Center)
         .height(Length::Fixed(CHROME_HEIGHT))
         .into()
@@ -386,6 +436,12 @@ impl<E: Engine> App<E> {
             event::listen_with(|event, _, _| match event {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     Some(Msg::CursorMoved(position.x))
+                }
+                // A left press anywhere: resolve whether it focused the URL bar
+                // (for click-to-select-all). Received regardless of which widget
+                // captures it, unlike a wrapping `mouse_area`.
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                    Some(Msg::LeftPressed)
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                     Some(Msg::CursorReleased)

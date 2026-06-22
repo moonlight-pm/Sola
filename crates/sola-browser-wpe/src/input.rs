@@ -41,11 +41,13 @@ pub fn modifiers_to_wpe(m: Modifiers) -> u32 {
 }
 
 /// Iced's `mouse::Button` → WPE's button number convention.
-/// X11 numbering: 1 = left, 2 = middle, 3 = right.
+/// X11 numbering: 1 = left, 2 = middle, 3 = right. The middle button is
+/// intentionally dropped (`None`) so it never reaches WebKit — Sola doesn't
+/// use middle-click for anything.
 pub fn button_to_wpe(b: mouse::Button) -> Option<u32> {
     Some(match b {
         mouse::Button::Left => 1,
-        mouse::Button::Middle => 2,
+        mouse::Button::Middle => return None,
         mouse::Button::Right => 3,
         mouse::Button::Back => 8,
         mouse::Button::Forward => 9,

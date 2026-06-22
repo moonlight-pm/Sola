@@ -3,9 +3,11 @@
 use crate::engine::EditCmd;
 
 /// Whether a link click should open a background tab instead of navigating
-/// in place: middle button (2), or left button (1) with Ctrl or Super held.
+/// in place: a left click (button 1) with Ctrl or Super held. Middle-click is
+/// intentionally inert in Sola — it is filtered before it ever reaches the
+/// engine, so it never opens a tab.
 pub fn is_new_tab_click(mouse_button: u32, ctrl: bool, super_key: bool) -> bool {
-    mouse_button == 2 || (mouse_button == 1 && (ctrl || super_key))
+    mouse_button == 1 && (ctrl || super_key)
 }
 
 /// The WebKit editing-command string for an [`EditCmd`]. WebKit command
@@ -124,13 +126,14 @@ mod tests {
 
     #[test]
     fn new_tab_click_rules() {
-        // Middle-click always opens a background tab, regardless of modifiers.
-        assert!(is_new_tab_click(2, false, false));
         // Left-click with ctrl or super opens a background tab.
         assert!(is_new_tab_click(1, true, false));
         assert!(is_new_tab_click(1, false, true));
         // Plain left-click navigates in place.
         assert!(!is_new_tab_click(1, false, false));
+        // Middle-click is inert — never a new tab, with or without modifiers.
+        assert!(!is_new_tab_click(2, false, false));
+        assert!(!is_new_tab_click(2, true, true));
         // Right-click is the context menu, not a new tab.
         assert!(!is_new_tab_click(3, true, true));
     }

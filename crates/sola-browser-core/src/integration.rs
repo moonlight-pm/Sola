@@ -23,7 +23,7 @@ use sola_bus::Message;
 use sola_core::{KeyChord, KeyCode};
 
 use crate::app::{App, BLANK_URL, Msg};
-use crate::engine::{Cmd, EditCmd, Engine};
+use crate::engine::{EditCmd, Engine};
 
 // Menu action ids — shared between the published menu and the handler so the
 // two never drift.
@@ -34,8 +34,6 @@ pub const ACTION_FOCUS_URL: &str = "focus-url";
 pub const ACTION_BACK: &str = "back";
 pub const ACTION_FORWARD: &str = "forward";
 pub const ACTION_QUIT: &str = "quit";
-pub const ACTION_EDIT_UNDO: &str = "edit-undo";
-pub const ACTION_EDIT_REDO: &str = "edit-redo";
 pub const ACTION_EDIT_CUT: &str = "edit-cut";
 pub const ACTION_EDIT_COPY: &str = "edit-copy";
 pub const ACTION_EDIT_PASTE: &str = "edit-paste";
@@ -66,9 +64,10 @@ pub const MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
 /// The "Edit" app-menu published alongside "Browser". Meta-bound so the
 /// shell grabs them globally and routes `Topic::MenuAction` back; the
 /// browser then routes each to the focused surface (web content or URL bar).
-pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 6] = [
-    (ACTION_EDIT_UNDO, "Undo", KeyCode::Z.meta()),
-    (ACTION_EDIT_REDO, "Redo", KeyCode::Z.meta_shift()),
+/// Undo/Redo are intentionally omitted — in a browser they only act on the
+/// editable text field that currently has focus, which is too narrow to earn
+/// a top-level menu slot here.
+pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 4] = [
     (ACTION_EDIT_CUT, "Cut", KeyCode::X.meta()),
     (ACTION_EDIT_COPY, "Copy", KeyCode::C.meta()),
     (ACTION_EDIT_PASTE, "Paste", KeyCode::V.meta()),
@@ -101,24 +100,6 @@ pub enum BrowserIntent {
     None,
 }
 
-/// Which surface an `Edit` intent acts on, chosen by `url_bar_focused`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EditTarget {
-    /// The web content (full fidelity — honors the page's text selection).
-    Engine,
-    /// The chrome URL bar (best-effort: whole-field, no partial selection).
-    UrlBar,
-}
-
-/// Route an `Edit` intent: the URL bar when it holds focus, else the page.
-pub fn edit_target(url_bar_focused: bool) -> EditTarget {
-    if url_bar_focused {
-        EditTarget::UrlBar
-    } else {
-        EditTarget::Engine
-    }
-}
-
 /// Map an `OpenUrlRequest` to an intent: always a fresh tab, focused per
 /// `activate` (matches the retired GTK browser's behaviour).
 pub fn intent_for_open_url(req: &OpenUrlRequest) -> BrowserIntent {
@@ -135,8 +116,6 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_BACK => BrowserIntent::Back,
         ACTION_FORWARD => BrowserIntent::Forward,
         ACTION_QUIT => BrowserIntent::Quit,
-        ACTION_EDIT_UNDO => BrowserIntent::Edit(EditCmd::Undo),
-        ACTION_EDIT_REDO => BrowserIntent::Edit(EditCmd::Redo),
         ACTION_EDIT_CUT => BrowserIntent::Edit(EditCmd::Cut),
         ACTION_EDIT_COPY => BrowserIntent::Edit(EditCmd::Copy),
         ACTION_EDIT_PASTE => BrowserIntent::Edit(EditCmd::Paste),
@@ -159,6 +138,7 @@ pub fn handle_bus<E: Engine>(app: &mut App<E>, message: Arc<Message>, app_id: &'
     match Topic::parse(&message) {
         Some(Topic::OpenUrl(req)) => run_intent(app, intent_for_open_url(&req)),
         Some(Topic::MenuAction(m)) if m.app_id == app_id => {
+            tracing::debug!(action_id = %m.action_id, "menu action received");
             run_intent(app, intent_for_menu_action(&m.action_id))
         }
         _ => Task::none(),
@@ -190,31 +170,20 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
         BrowserIntent::Back => app.update(Msg::NavBack),
         BrowserIntent::Forward => app.update(Msg::NavForward),
         BrowserIntent::FocusUrl => {
+            // ⌘L: focus the URL bar and select its contents (browser-standard)
+            // so the next keystroke replaces the whole URL.
             app.url_bar_focused = true;
-            focus_url_bar()
+            Task::batch([focus_url_bar(), select_url_bar()])
         }
-        BrowserIntent::Edit(cmd) => match edit_target(app.url_bar_focused) {
-            EditTarget::Engine => {
-                let _ = app.releaser.send(Cmd::Edit(cmd));
-                Task::none()
-            }
-            EditTarget::UrlBar => match cmd {
-                EditCmd::Copy => iced::clipboard::write(app.url_field.clone()),
-                EditCmd::Cut => {
-                    let task = iced::clipboard::write(app.url_field.clone());
-                    app.url_field.clear();
-                    task
-                }
-                EditCmd::Paste => iced::clipboard::read().map(Msg::UrlPasted),
-                EditCmd::SelectAll => iced::advanced::widget::operate(
-                    iced::advanced::widget::operation::text_input::select_all::<Msg>(
-                        url_input_id(),
-                    ),
-                ),
-                // The URL bar has no app-level undo/redo stack.
-                EditCmd::Undo | EditCmd::Redo => Task::none(),
-            },
-        },
+        BrowserIntent::Edit(cmd) => {
+            // Route by the URL bar's *live* focus. iced doesn't surface focus
+            // as state, and a click into the field is captured by `text_input`
+            // before any wrapper widget can observe it — so a tracked bool
+            // can't be kept honest. Query the real focus via an operation and
+            // finish the routing in `Msg::EditRouted`.
+            tracing::debug!(?cmd, "edit intent — querying live URL-bar focus");
+            url_bar_is_focused(move |url_bar_focused| Msg::EditRouted { cmd, url_bar_focused })
+        }
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),
     }
@@ -225,6 +194,27 @@ fn focus_url_bar() -> Task<Msg> {
     iced::advanced::widget::operate(
         iced::advanced::widget::operation::focusable::focus::<Msg>(url_input_id()),
     )
+}
+
+/// Select all text in the chrome URL field.
+pub(crate) fn select_url_bar() -> Task<Msg> {
+    iced::advanced::widget::operate(
+        iced::advanced::widget::operation::text_input::select_all::<Msg>(url_input_id()),
+    )
+}
+
+/// Query the chrome URL field's live focus state. Used to route Edit
+/// actions (⌘C/⌘X/⌘V/⌘A) to the field vs. the page, and to decide whether a
+/// click just *gained* focus (→ select-all). The result arrives as a message
+/// the caller chooses.
+pub(crate) fn url_bar_is_focused<F>(to_msg: F) -> Task<Msg>
+where
+    F: Fn(bool) -> Msg + Send + 'static,
+{
+    iced::advanced::widget::operate(
+        iced::advanced::widget::operation::focusable::is_focused(url_input_id()),
+    )
+    .map(to_msg)
 }
 
 #[cfg(test)]
@@ -253,24 +243,17 @@ mod tests {
         assert_eq!(intent_for_menu_action(ACTION_EDIT_CUT), BrowserIntent::Edit(EditCmd::Cut));
         assert_eq!(intent_for_menu_action(ACTION_EDIT_PASTE), BrowserIntent::Edit(EditCmd::Paste));
         assert_eq!(intent_for_menu_action(ACTION_EDIT_SELECT_ALL), BrowserIntent::Edit(EditCmd::SelectAll));
-        assert_eq!(intent_for_menu_action(ACTION_EDIT_UNDO), BrowserIntent::Edit(EditCmd::Undo));
-        assert_eq!(intent_for_menu_action(ACTION_EDIT_REDO), BrowserIntent::Edit(EditCmd::Redo));
-    }
-
-    #[test]
-    fn edit_target_routes_by_focus() {
-        assert_eq!(edit_target(true), EditTarget::UrlBar);
-        assert_eq!(edit_target(false), EditTarget::Engine);
     }
 
     #[test]
     fn edit_menu_items_cover_all_actions() {
+        // Undo/Redo are intentionally absent (see EDIT_MENU_ITEMS).
         let ids: Vec<&str> = EDIT_MENU_ITEMS.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(
             ids,
             vec![
-                ACTION_EDIT_UNDO, ACTION_EDIT_REDO, ACTION_EDIT_CUT,
-                ACTION_EDIT_COPY, ACTION_EDIT_PASTE, ACTION_EDIT_SELECT_ALL,
+                ACTION_EDIT_CUT, ACTION_EDIT_COPY,
+                ACTION_EDIT_PASTE, ACTION_EDIT_SELECT_ALL,
             ]
         );
     }
