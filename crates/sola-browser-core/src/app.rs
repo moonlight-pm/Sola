@@ -224,6 +224,13 @@ impl<E: Engine> App<E> {
                         self.url_field = if url == BLANK_URL { String::new() } else { url };
                     }
                 }
+                // Drain any page-selection text the engine extracted for a copy
+                // and put it on the system clipboard via iced. The engine's own
+                // clipboard can't reach Wayland (headless display); iced's can.
+                if let Some(text) = self.engine.clipboard_handle().lock().unwrap().take() {
+                    tracing::debug!(len = text.len(), "draining page selection → system clipboard");
+                    return iced::clipboard::write(text);
+                }
             }
             Msg::Bus(message) => {
                 return crate::integration::handle_bus(self, message, self.app_id);

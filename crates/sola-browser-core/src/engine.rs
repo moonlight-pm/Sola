@@ -77,6 +77,11 @@ pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;
 pub type ActiveHandle = Arc<AtomicU64>;
 pub type CursorHandle = Arc<AtomicU32>;
 pub type FrameReceiver<F> = Arc<Mutex<Receiver<TaggedFrame<F>>>>;
+/// Engine→chrome handoff for text the engine extracted for a copy (e.g. the
+/// page's selection). The engine worker sets it; the chrome drains it on the
+/// next `Tick` and writes it to the system clipboard via iced. `None` when
+/// there's nothing pending.
+pub type ClipboardHandle = Arc<Mutex<Option<String>>>;
 
 /// A browser engine. Both `WpeEngine` and `CefEngine` already expose this
 /// exact surface (7 methods + the CEF subprocess gate); the trait names it.
@@ -107,6 +112,9 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn tabs_handle(&self) -> TabsHandle;
     fn active_tab_handle(&self) -> ActiveHandle;
     fn cursor_handle(&self) -> CursorHandle;
+    /// Shared slot the engine fills with copy text (page selection) for the
+    /// chrome to drain onto the system clipboard. See [`ClipboardHandle`].
+    fn clipboard_handle(&self) -> ClipboardHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
     fn shutdown(self);

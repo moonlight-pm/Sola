@@ -28,8 +28,8 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::{self, JoinHandle};
 
 use sola_browser_core::{
-    ActiveHandle, Cmd, CursorHandle, Engine, FrameReceiver, FrameSlot, NavCmd, TabId,
-    TabInfo, TabsHandle, TaggedFrame,
+    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, EditCmd, Engine, FrameReceiver,
+    FrameSlot, NavCmd, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 
 use crate::wpe_sys as sys;
@@ -99,6 +99,10 @@ pub struct WpeEngine {
     /// chrome side so it can mint ids before sending
     /// `Cmd::OpenTab` without waiting for an ack.
     next_id: Arc<std::sync::atomic::AtomicU64>,
+    /// Page-copy handoff: the worker fills this with the page's selected
+    /// text (from the JS bridge), the chrome drains it onto the system
+    /// clipboard. See [`ClipboardHandle`].
+    clipboard_out: ClipboardHandle,
 }
 
 impl Engine for WpeEngine {
@@ -148,6 +152,10 @@ impl Engine for WpeEngine {
         self.cursor.clone()
     }
 
+    fn clipboard_handle(&self) -> ClipboardHandle {
+        self.clipboard_out.clone()
+    }
+
     fn frames(&self) -> FrameReceiver<WpeFrame> {
         self.frames.clone()
     }
@@ -175,6 +183,7 @@ impl WpeEngine {
         let tabs_snapshot = Arc::new(Mutex::new(Vec::<TabInfo>::new()));
         let active_atomic = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let next_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let clipboard_out: ClipboardHandle = Arc::new(Mutex::new(None));
 
         let initial_id = TabId(next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         active_atomic.store(initial_id.0, std::sync::atomic::Ordering::Relaxed);
@@ -193,12 +202,13 @@ impl WpeEngine {
         let snapshot_w = tabs_snapshot.clone();
         let active_w = active_atomic.clone();
         let next_id_w = next_id.clone();
+        let clipboard_w = clipboard_out.clone();
         let worker = thread::Builder::new()
             .name("wpe-engine".into())
             .spawn(move || unsafe {
                 worker_main(
                     width, height, frame_tx, cmd_rx, ready_tx, cursor_w, snapshot_w, active_w,
-                    next_id_w,
+                    next_id_w, clipboard_w,
                 )
             })
             .expect("spawn wpe-engine thread");
@@ -212,6 +222,7 @@ impl WpeEngine {
             tabs: tabs_snapshot,
             active_tab: active_atomic,
             next_id,
+            clipboard_out,
         }
     }
 
@@ -233,6 +244,9 @@ struct WorkerCtx {
     /// decide-policy callback mints a background-tab id from this without
     /// involving the chrome.
     next_id: Arc<std::sync::atomic::AtomicU64>,
+    /// Page-copy handoff: `on_selection` fills this with the page's selected
+    /// text; the chrome drains it onto the system clipboard on the next tick.
+    clipboard_out: ClipboardHandle,
     /// Per-tab signal callbacks (`notify::uri`, `notify::title`)
     /// set this flag whenever they update a tab's URL or title.
     /// The cmd pump checks it each tick and rebuilds the
@@ -268,6 +282,7 @@ unsafe fn worker_main(
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
     next_id: Arc<std::sync::atomic::AtomicU64>,
+    clipboard_out: ClipboardHandle,
 ) {
     let display = sys::sola_wpe_display_new();
     if display.is_null() {
@@ -298,10 +313,12 @@ unsafe fn worker_main(
         tabs_snapshot,
         active_atomic,
         next_id,
+        clipboard_out,
         snapshot_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
     sys::sola_wpe_set_cursor_callback(Some(on_cursor_changed), ctx as *mut c_void);
+    sys::sola_wpe_set_selection_callback(Some(on_selection), ctx as *mut c_void);
 
     // Drain the queued cmds that `spawn` enqueued (Resize +
     // OpenTab + SetActiveTab) before entering the main loop, so
@@ -322,6 +339,7 @@ unsafe fn worker_main(
 
     sys::sola_wpe_set_buffer_callback(None, ptr::null_mut());
     sys::sola_wpe_set_cursor_callback(None, ptr::null_mut());
+    sys::sola_wpe_set_selection_callback(None, ptr::null_mut());
     let _ = Box::from_raw(ctx);
 }
 
@@ -356,6 +374,29 @@ unsafe extern "C" fn on_cursor_changed(
         kind as u32,
         std::sync::atomic::Ordering::Relaxed,
     );
+}
+
+
+/// Called from C with the page's current text selection (extracted via
+/// `window.getSelection().toString()`), triggered by `sola_wpe_copy_selection`
+/// on a Copy. Stashes it in the shared slot for the chrome to drain onto the
+/// system clipboard — the headless WPE display has no Wayland clipboard, so
+/// WebKit's own "Copy" never leaves the browser.
+unsafe extern "C" fn on_selection(
+    user_data: *mut c_void,
+    text: *const std::os::raw::c_char,
+) {
+    if user_data.is_null() || text.is_null() {
+        return;
+    }
+    let s = std::ffi::CStr::from_ptr(text).to_string_lossy().into_owned();
+    if s.is_empty() {
+        return;
+    }
+    let ctx = &*(user_data as *mut WorkerCtx);
+    if let Ok(mut slot) = ctx.clipboard_out.lock() {
+        *slot = Some(s);
+    }
 }
 
 /// `decide-policy` handler: middle / ⌘ / Ctrl-click on a link opens a
@@ -536,12 +577,25 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
         Cmd::Edit(edit) => {
             if let Some(tab) = active_tab(ctx) {
                 if !tab.webview.is_null() {
-                    let name = sola_browser_core::util::editing_command_name(edit);
-                    let name_c = std::ffi::CString::new(name).unwrap();
-                    sys::webkit_web_view_execute_editing_command(
-                        tab.webview as *mut _,
-                        name_c.as_ptr(),
-                    );
+                    match edit {
+                        // Copy is bridged to the system clipboard: WebKit's own
+                        // "Copy" only reaches its internal clipboard (the
+                        // headless display has no Wayland clipboard), so instead
+                        // extract the selection and let the chrome write it via
+                        // iced's Wayland-backed clipboard. Async — the result
+                        // lands in `clipboard_out` via `on_selection`.
+                        EditCmd::Copy => {
+                            sys::sola_wpe_copy_selection(tab.webview as *mut _);
+                        }
+                        _ => {
+                            let name = sola_browser_core::util::editing_command_name(edit);
+                            let name_c = std::ffi::CString::new(name).unwrap();
+                            sys::webkit_web_view_execute_editing_command(
+                                tab.webview as *mut _,
+                                name_c.as_ptr(),
+                            );
+                        }
+                    }
                 }
             }
         }

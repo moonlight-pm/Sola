@@ -51,6 +51,55 @@ void sola_wpe_set_cursor_callback(sola_wpe_cursor_cb cb, void *user_data) {
     s_cursor_ud = user_data;
 }
 
+static sola_wpe_selection_cb s_selection_cb = NULL;
+static void                 *s_selection_ud = NULL;
+
+void sola_wpe_set_selection_callback(sola_wpe_selection_cb cb, void *user_data) {
+    s_selection_cb = cb;
+    s_selection_ud = user_data;
+}
+
+/* ---- copy bridge: page selection -> Rust -> iced clipboard ------ */
+
+/* WebKit's own "Copy" editing command writes to WebKit's internal
+ * clipboard only — the custom headless WPEDisplay has no Wayland
+ * clipboard backend, so the copy never reaches other apps. Instead we
+ * pull the selected text out via JS and hand it to the Rust side, which
+ * writes it to the system clipboard through iced (Wayland-backed). */
+static void sola_on_js_selection(GObject *source, GAsyncResult *res,
+                                 gpointer user_data) {
+    (void)user_data;
+    WebKitWebView *view = WEBKIT_WEB_VIEW(source);
+    GError *error = NULL;
+    JSCValue *value =
+        webkit_web_view_evaluate_javascript_finish(view, res, &error);
+    if (!value) {
+        if (error) g_error_free(error);
+        return;
+    }
+    if (jsc_value_is_string(value)) {
+        char *text = jsc_value_to_string(value);
+        if (s_selection_cb && text) {
+            s_selection_cb(s_selection_ud, text);
+        }
+        if (text) g_free(text);
+    }
+    g_object_unref(value);
+}
+
+void sola_wpe_copy_selection(WebKitWebView *view) {
+    if (!view) return;
+    webkit_web_view_evaluate_javascript(
+        view,
+        "window.getSelection().toString()",
+        -1,    /* length: -1 = NUL-terminated */
+        NULL,  /* world_name */
+        NULL,  /* source_uri */
+        NULL,  /* cancellable */
+        sola_on_js_selection,
+        NULL); /* user_data — the result callback uses the global slot */
+}
+
 /* ---- vmethod hijack for set_cursor_from_name ------------------- */
 
 /* WebKit calls wpe_view_set_cursor_from_name(view, name) whenever

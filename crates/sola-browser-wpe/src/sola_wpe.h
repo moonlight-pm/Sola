@@ -21,6 +21,11 @@
  * "Only <wpe/wpe-platform.h> can be included directly" guards. */
 #include <wpe/wpe-platform.h>
 
+/* The WebKit API (WebKitWebView, webkit_web_view_evaluate_javascript,
+ * JSCValue) — needed for the copy bridge below. Include guards make the
+ * duplicate include from wpe_wrapper.h harmless. */
+#include <wpe/webkit.h>
+
 /* Callback the SolaView::render_buffer vmethod invokes for every
  * inbound frame. The user_data is the cookie passed to
  * sola_wpe_set_buffer_callback. `buffer` is borrowed; the C side
@@ -42,6 +47,20 @@ typedef void (*sola_wpe_cursor_cb)(void *user_data, const char *name);
 
 /* Install the CSS-cursor callback. NULL clears. */
 void sola_wpe_set_cursor_callback(sola_wpe_cursor_cb cb, void *user_data);
+
+/* Callback delivering the page's current text selection (extracted via
+ * window.getSelection().toString()). `text` is borrowed for the call
+ * only — copy it if you need to keep it. Fired asynchronously after
+ * sola_wpe_copy_selection() resolves; never fired for an empty result. */
+typedef void (*sola_wpe_selection_cb)(void *user_data, const char *text);
+
+/* Install the selection callback (single global slot). NULL clears. */
+void sola_wpe_set_selection_callback(sola_wpe_selection_cb cb, void *user_data);
+
+/* Asynchronously extract `view`'s active text selection and deliver it
+ * to the selection callback. Used to bridge page copy to the system
+ * clipboard, since the headless display has no Wayland clipboard. */
+void sola_wpe_copy_selection(WebKitWebView *view);
 
 /* Construct a new WPEDisplay (subclass of WPEDisplayHeadless) that
  * advertises LINEAR-only buffer formats. Caller owns the reference

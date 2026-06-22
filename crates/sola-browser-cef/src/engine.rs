@@ -13,8 +13,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::{self, JoinHandle};
 
 use sola_browser_core::{
-    ActiveHandle, Cmd, CursorHandle, Engine, FrameReceiver, FrameSlot, NavCmd, TabId,
-    TabInfo, TabsHandle, TaggedFrame,
+    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, Engine, FrameReceiver, FrameSlot,
+    NavCmd, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 
 // `wrap_app!`, `wrap_render_handler!`, `wrap_client!`, `wrap_task!`
@@ -94,6 +94,11 @@ pub struct CefEngine {
     /// Monotonic counter for assigning tab ids — chrome-side, so
     /// it can mint ids before sending `Cmd::OpenTab`.
     next_id: Arc<std::sync::atomic::AtomicU64>,
+    /// Page-copy handoff (see [`ClipboardHandle`]). Unused for now — CEF
+    /// page copy still goes through Chromium's own clipboard via
+    /// `frame.copy()`; kept so the chrome's drain-on-Tick is engine-agnostic
+    /// and a future selection bridge can fill it.
+    clipboard_out: ClipboardHandle,
 }
 
 impl Engine for CefEngine {
@@ -135,6 +140,7 @@ impl Engine for CefEngine {
         let tabs_snapshot = Arc::new(Mutex::new(Vec::<TabInfo>::new()));
         let active_atomic = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let next_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let clipboard_out: ClipboardHandle = Arc::new(Mutex::new(None));
 
         let initial_id = TabId(next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         active_atomic.store(initial_id.0, std::sync::atomic::Ordering::Relaxed);
@@ -171,6 +177,7 @@ impl Engine for CefEngine {
             tabs: tabs_snapshot,
             active_tab: active_atomic,
             next_id,
+            clipboard_out,
         }
     }
 
@@ -192,6 +199,10 @@ impl Engine for CefEngine {
 
     fn cursor_handle(&self) -> CursorHandle {
         self.cursor.clone()
+    }
+
+    fn clipboard_handle(&self) -> ClipboardHandle {
+        self.clipboard_out.clone()
     }
 
     fn frames(&self) -> FrameReceiver<CefFrame> {

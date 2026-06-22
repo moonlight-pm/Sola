@@ -6,8 +6,8 @@ pub mod run;
 pub mod util;
 
 pub use engine::{
-    ActiveHandle, Cmd, CursorHandle, Engine, FrameReceiver, FrameSlot, NavCmd, TabId,
-    TabInfo, TabsHandle, TaggedFrame,
+    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, EditCmd, Engine, FrameReceiver,
+    FrameSlot, NavCmd, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 pub use app::Msg;
 pub use run::run;
