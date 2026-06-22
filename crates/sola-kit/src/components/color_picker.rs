@@ -18,7 +18,7 @@
 //! self.picker.as_ref().map(|p| p.view().map(Msg::Picker)); // view
 //! ```
 
-use iced::widget::{column, row, text_input};
+use iced::widget::{column, row};
 use iced::{Color, Element, Length, Theme};
 
 use crate::components::spectrum::{alpha_strip, hue_strip, sv_square};
@@ -301,7 +301,7 @@ impl ColorPicker {
 fn hex_row(hex: &str) -> Element<'_, Message, Theme> {
     row![
         caption("HEX").style(muted).width(Length::Fixed(34.0)),
-        text_input("#rrggbb", hex)
+        kit_text_input::text_input("#rrggbb", hex)
             .on_input(Message::Hex)
             .on_submit(Message::HexSubmit)
             .style(kit_text_input::style)
@@ -319,7 +319,7 @@ fn triple_row<'a>(
     on_change: impl Fn(Channel, String) -> Message + Copy + 'a,
 ) -> Element<'a, Message, Theme> {
     let cell = move |ch: Channel, value: &'a str| {
-        text_input("", value)
+        kit_text_input::text_input("", value)
             .on_input(move |s| on_change(ch, s))
             .style(kit_text_input::style)
             .width(Length::Fixed(52.0))

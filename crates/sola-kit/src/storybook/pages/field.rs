@@ -1,7 +1,7 @@
 //! Field showcase — labelled form rows with the kit's text_input.
 //! Stateful so the input actually reacts.
 
-use iced::widget::{column, text_input};
+use iced::widget::column;
 use iced::Element;
 
 use sola_kit::components::card;
@@ -35,14 +35,14 @@ pub fn view(state: &State) -> Element<'_, Msg> {
         column![
             field(
                 "Username",
-                text_input("alice", &state.username)
+                kit_input::text_input("alice", &state.username)
                     .on_input(Msg::Username)
                     .style(kit_input::style),
                 Some("3–20 characters"),
             ),
             field(
                 "Email",
-                text_input("alice@example.com", &state.email)
+                kit_input::text_input("alice@example.com", &state.email)
                     .on_input(Msg::Email)
                     .style(kit_input::style),
                 None,

@@ -5070,6 +5070,10 @@ name = "sola-assets"
 version = "0.1.0"
 
 [[package]]
+name = "sola-browser"
+version = "0.1.0"
+
+[[package]]
 name = "sola-browser-cef"
 version = "0.1.0"
 dependencies = [
@@ -5163,6 +5167,7 @@ version = "0.1.0"
 dependencies = [
  "fontdb",
  "iced",
+ "iced_core",
  "iced_graphics",
  "serde_json",
  "sola-assets",
@@ -5170,6 +5175,7 @@ dependencies = [
  "sola-core",
  "tracing",
  "ttf-parser",
+ "unicode-segmentation",
 ]
 
 [[package]]

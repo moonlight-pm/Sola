@@ -17,7 +17,8 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use iced::widget::{button, column, row, text, text_input};
+use iced::widget::{button, column, row, text};
+use sola_kit::components::text_input::text_input;
 use iced::{Element, Length, Padding, Task, Theme};
 
 use sola_bus::topics::{Application, ApplicationsConfig, Topic, Window as BusWindow};

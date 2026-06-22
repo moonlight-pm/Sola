@@ -9,13 +9,13 @@
 //! is handled in `on_chord` — Task 10.  The messages are defined here and
 //! in `Msg` so Task 10 can route to them.
 
-use iced::widget::{column, container, mouse_area, row, scrollable, stack, text, text_input,
+use iced::widget::{column, container, mouse_area, row, scrollable, stack, text,
     Id as WidgetId};
 use iced::{Alignment, Element, Length, Padding};
 
 use sola_kit::components::{
     button as kit_btn, divider::horizontal_divider, icon, modal,
-    text_input::style as input_style,
+    text_input::{style as input_style, text_input},
 };
 
 use crate::app::{Msg, Shell};

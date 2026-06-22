@@ -8,7 +8,8 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::widget::{Shader, Space, column, container, mouse_area, row, stack, text_input};
+use iced::widget::{Shader, Space, column, container, mouse_area, row, stack};
+use sola_kit::components::text_input::text_input;
 use iced::{Element, Event, Length, Subscription, Task, event, mouse};
 use sola_kit::components::{
     TabDescriptor, TabSize, horizontal_divider, toolbar_button, vertical_divider,

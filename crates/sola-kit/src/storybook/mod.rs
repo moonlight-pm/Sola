@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, pick_list, row, scrollable, text};
 use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
@@ -1083,7 +1083,7 @@ impl Storybook {
                 let trimmed = buffer.trim();
                 let name_ok = sola_core::theme::is_valid_theme_name(trimmed)
                     && !self.themes.iter().any(|t| t.name == trimmed);
-                let input = text_input("theme-name", buffer)
+                let input = kit_text_input::text_input("theme-name", buffer)
                     .on_input(Msg::NewThemeInput)
                     .on_submit(Msg::NewThemeCommit)
                     .style(kit_text_input::style)

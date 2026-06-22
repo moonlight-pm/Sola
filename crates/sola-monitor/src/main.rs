@@ -12,8 +12,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::widget::{
     Space, column, container, mouse_area, pick_list, rich_text, row, scrollable, span, stack,
-    text, text_input,
+    text,
 };
+use sola_kit::components::text_input::text_input;
 use iced::widget::Id as ScrollId;
 use iced::widget::operation;
 use iced::widget::scrollable::RelativeOffset;

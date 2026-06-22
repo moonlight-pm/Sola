@@ -27,6 +27,15 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "advanced"] }
+# Direct dep so the kit's forked text-input widget (components/kit_input/) can
+# use iced's core widget machinery exactly as iced_widget does internally — the
+# vendored source was written against `iced_core` (iced_widget aliases it as
+# `crate::core`). Same 0.14 release iced pulls in, so types are identical and
+# Cargo dedups.
+iced_core = "0.14"
+# Grapheme-cluster iteration for the forked text-input widget (cursor.rs /
+# value.rs), the same crate iced_widget uses for it.
+unicode-segmentation = "1"
 # Reaches iced's global font system to register system fonts (iced's
 # own `FontSystem` is built via cosmic-text's `new_with_fonts`, which
 # does NOT load system fonts — so `Font::with_name` can't resolve any
