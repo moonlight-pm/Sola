@@ -133,6 +133,8 @@ impl KeyCode {
     /// Numpad Enter — used by zoning for the Cinema zone (true
     /// fullscreen including the menubar).
     pub const KP_ENTER: Self = Self(104);
+    /// Numpad `*` (KP_Multiply) — floats the focused window.
+    pub const KP_MULTIPLY: Self = Self(63);
 
     /// Returns true if this key code is either left or right Meta.
     #[inline]
@@ -203,6 +205,7 @@ impl KeyCode {
             80 => "KP8",
             91 => "KP.",
             125 => "KP=",
+            63 => "KP*",
             _ => "?",
         }
     }
@@ -300,6 +303,12 @@ impl KeyChord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kp_multiply_has_xkb_code_and_label() {
+        assert_eq!(KeyCode::KP_MULTIPLY.raw(), 63);
+        assert_eq!(KeyCode::KP_MULTIPLY.display(), "KP*");
+    }
 
     #[test]
     fn meta_shift_sets_both_modifiers() {
