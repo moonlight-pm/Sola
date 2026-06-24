@@ -178,6 +178,12 @@ pub enum Zone {
     /// view. The shell skips its menubar offset for this zone so the
     /// window covers the whole output.
     Cinema,
+    /// App-sized / floating: positioned by the shell (centered, or a
+    /// remembered location in later phases) but never force-resized. The
+    /// window keeps the size it chooses for itself; the shell emits no
+    /// sizing frame for it. Reuses the whole zone pipeline for
+    /// designation + persistence.
+    Float,
 }
 
 impl Zone {
@@ -193,6 +199,9 @@ impl Zone {
             Zone::FullMiddle => (0.28, 0.0, 0.44, 1.0),
             Zone::Fullscreen => (0.0, 0.0, 1.0, 1.0),
             Zone::Cinema => (0.0, 0.0, 1.0, 1.0),
+            // Float never goes through the sizing path; the value is unused
+            // but the match must stay exhaustive.
+            Zone::Float => (0.0, 0.0, 0.0, 0.0),
         }
     }
 }
@@ -745,6 +754,28 @@ mod tests {
 
         let topic = Topic::Zones(zones.clone());
         let value = topic
+            .to_yaml_value()
+            .expect("Zones is persistent; must serialize to YAML");
+
+        match Topic::from_yaml_section(TopicKind::Zones, value) {
+            Some(Topic::Zones(back)) => assert_eq!(back, zones),
+            other => panic!("expected Zones, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zone_float_rect_is_zero() {
+        // Float never goes through the sizing path; rect() must stay
+        // exhaustive but its value is unused.
+        assert_eq!(Zone::Float.rect(), (0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn zone_float_roundtrips_via_yaml() {
+        let mut zones: HashMap<String, Zone> = HashMap::new();
+        zones.insert("UnrealEditor".into(), Zone::Float);
+
+        let value = Topic::Zones(zones.clone())
             .to_yaml_value()
             .expect("Zones is persistent; must serialize to YAML");
 
