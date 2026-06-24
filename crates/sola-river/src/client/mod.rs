@@ -65,6 +65,17 @@ pub struct AppData {
     /// explicit shell Frame or our own centered default. Prevents the
     /// default from re-firing across subsequent render passes.
     pub placed: std::collections::HashSet<u32>,
+    /// Windows that have received their first `river_window_v1.dimensions`
+    /// event. Until a window is in this set, we never send it a sizing
+    /// configure — only `propose_dimensions(0, 0)` (self-size) — so a
+    /// GPU/Vulkan client can build its swapchain against its own size
+    /// before any resize arrives. See `manage::size_decision`.
+    pub first_dimensions: std::collections::HashSet<u32>,
+    /// Sizes (zone or restore) requested for a window before it was
+    /// initialized, held back until its first `dimensions` event. Applied
+    /// as a normal runtime resize on the next manage cycle. See
+    /// `manage::note_dimensions`.
+    pub deferred_size: HashMap<u32, (i32, i32)>,
     /// Windows currently in compositor-fullscreen state because we
     /// called `proxy.fullscreen`. Used by the focus-change handler to
     /// auto-exit fullscreen when the user Alt-Tabs away — many games
@@ -114,6 +125,8 @@ impl AppData {
             outputs: Vec::new(),
             output_size: None,
             placed: std::collections::HashSet::new(),
+            first_dimensions: std::collections::HashSet::new(),
+            deferred_size: HashMap::new(),
             currently_fullscreen: std::collections::HashSet::new(),
             output_config: output_config::OutputConfigState::default(),
             virtual_keyboard: virtual_keyboard::VirtualKeyboardState::default(),

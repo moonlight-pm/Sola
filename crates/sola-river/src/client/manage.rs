@@ -4,6 +4,8 @@
 //! `PendingUpdate` into `propose_dimensions` (and ensure borders are off).
 //! When it sends `render_start`, we apply composition (`place_top`),
 //! positions (`set_position`), and focus (`focus_window` / `clear_focus`).
+use std::collections::{HashMap, HashSet};
+
 use tracing::debug;
 
 use crate::client::AppData;
@@ -15,6 +17,45 @@ use crate::pending::FocusAction;
 //   Render:  node.set_position, node.place_top, window.set_borders
 // Modifying state outside the right sequence triggers
 // "invalid modification of window management state".
+
+/// Outcome of the first-`dimensions` gate for one window in a manage cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SizeDecision {
+    /// Propose this size now.
+    Propose(i32, i32),
+    /// Self-size now (propose `(0, 0)`) and hold this size until the
+    /// window's first `dimensions` event proves the surface is initialized.
+    Defer(i32, i32),
+}
+
+/// Decide what to propose for a window this manage cycle.
+///
+/// `river-window-management-v1` guarantees a window is not displayed until
+/// its first `dimensions` event. Sending a *sizing* configure before that
+/// event can invalidate a client's swapchain mid-init — UnrealEditor
+/// (Vulkan/SDL3) dies exactly this way. So any real size requested before
+/// initialization is deferred; the window self-sizes first and takes the
+/// real size as a normal runtime resize one cycle later. A `(0, 0)` request
+/// is "client decides its own size" and is always safe.
+pub(crate) fn size_decision(requested: (i32, i32), initialized: bool) -> SizeDecision {
+    if !initialized && requested != (0, 0) {
+        SizeDecision::Defer(requested.0, requested.1)
+    } else {
+        SizeDecision::Propose(requested.0, requested.1)
+    }
+}
+
+/// Record that `window_id` received its first `dimensions` event and return
+/// any size that was deferred waiting for it, so the caller can re-queue it
+/// for the next manage cycle. Returns `None` if nothing was deferred.
+pub(crate) fn note_dimensions(
+    first_dimensions: &mut HashSet<u32>,
+    deferred_size: &mut HashMap<u32, (i32, i32)>,
+    window_id: u32,
+) -> Option<(i32, i32)> {
+    first_dimensions.insert(window_id);
+    deferred_size.remove(&window_id)
+}
 
 pub fn handle_manage_start(state: &mut AppData) {
     let Some(wm) = state.wm.clone() else { return };
@@ -209,4 +250,43 @@ fn default_size_for(state: &AppData, window_id: u32, out_w: i32, out_h: i32) -> 
     let w = if hint.0 > 0 { hint.0 } else { fallback_w };
     let h = if hint.1 > 0 { hint.1 } else { fallback_h };
     (w.min(out_w), h.min(out_h))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn uninitialized_real_size_is_deferred() {
+        assert_eq!(size_decision((800, 600), false), SizeDecision::Defer(800, 600));
+    }
+
+    #[test]
+    fn initialized_real_size_is_proposed() {
+        assert_eq!(size_decision((800, 600), true), SizeDecision::Propose(800, 600));
+    }
+
+    #[test]
+    fn self_size_is_always_proposed() {
+        // (0,0) means "client decides" — safe pre-init and post-init.
+        assert_eq!(size_decision((0, 0), false), SizeDecision::Propose(0, 0));
+        assert_eq!(size_decision((0, 0), true), SizeDecision::Propose(0, 0));
+    }
+
+    #[test]
+    fn note_dimensions_hands_back_deferred_size_once() {
+        let mut first = HashSet::new();
+        let mut deferred = HashMap::new();
+        deferred.insert(7u32, (1280, 720));
+
+        // First dimensions event: marks initialized, returns the held size.
+        assert_eq!(note_dimensions(&mut first, &mut deferred, 7), Some((1280, 720)));
+        assert!(first.contains(&7));
+        assert!(deferred.is_empty());
+
+        // Second event: already initialized, nothing left to apply.
+        assert_eq!(note_dimensions(&mut first, &mut deferred, 7), None);
+        assert!(first.contains(&7));
+    }
 }
