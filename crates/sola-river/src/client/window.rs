@@ -137,6 +137,8 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 state.nodes_by_window.remove(&window_id);
                 state.placed.remove(&window_id);
                 state.currently_fullscreen.remove(&window_id);
+                state.first_dimensions.remove(&window_id);
+                state.deferred_size.remove(&window_id);
                 window.destroy();
                 apps_dirty = true;
             }
@@ -172,6 +174,21 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
                 info!(window_id, app_id, "exit fullscreen requested (client-initiated)");
                 state.pending.queue_exit_fullscreen(window_id);
+            }
+            Event::Dimensions { width, height } => {
+                let newly_initialized = !state.first_dimensions.contains(&window_id);
+                if let Some((w, h)) = crate::client::manage::note_dimensions(
+                    &mut state.first_dimensions,
+                    &mut state.deferred_size,
+                    window_id,
+                ) {
+                    // Surface is initialized now — apply the size we held back
+                    // as a normal runtime resize. The next bus_tick (≤20ms)
+                    // turns manage_dirty into a manage cycle that proposes it.
+                    state.pending.manage.insert(window_id, (w, h));
+                    state.pending.manage_dirty = true;
+                }
+                tracing::debug!(window_id, width, height, newly_initialized, "window dimensions");
             }
             _ => {}
         }

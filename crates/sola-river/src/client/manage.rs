@@ -60,16 +60,40 @@ pub(crate) fn note_dimensions(
 pub fn handle_manage_start(state: &mut AppData) {
     let Some(wm) = state.wm.clone() else { return };
 
-    let pending_count = state.pending.manage.len();
-    for (&window_id, &(w, h)) in &state.pending.manage {
-        if let Some(proxy) = state.windows_by_id.get(&window_id) {
-            let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
-            tracing::info!(window_id, app_id, w, h, "propose_dimensions");
-            proxy.propose_dimensions(w, h);
+    // Drain into an owned vec so we can mutate `state.deferred_size` inside
+    // the loop without aliasing `state.pending.manage`.
+    let manage: Vec<(u32, (i32, i32))> = state.pending.manage.drain().collect();
+    let pending_count = manage.len();
+    for (window_id, (w, h)) in manage {
+        let Some(proxy) = state.windows_by_id.get(&window_id).cloned() else {
+            continue;
+        };
+        let app_id = state
+            .registry
+            .app_id_for(window_id)
+            .unwrap_or("?")
+            .to_string();
+        let initialized = state.first_dimensions.contains(&window_id);
+        match size_decision((w, h), initialized) {
+            SizeDecision::Propose(pw, ph) => {
+                tracing::info!(window_id, %app_id, w = pw, h = ph, "propose_dimensions");
+                proxy.propose_dimensions(pw, ph);
+            }
+            SizeDecision::Defer(dw, dh) => {
+                tracing::info!(
+                    window_id,
+                    %app_id,
+                    w = dw,
+                    h = dh,
+                    "deferring size until first dimensions; self-sizing"
+                );
+                state.deferred_size.insert(window_id, (dw, dh));
+                proxy.propose_dimensions(0, 0);
+            }
         }
     }
     state.pending.manage_dirty = false;
-    state.pending.manage.clear();
+    // `pending.manage` was drained above; no separate clear needed.
 
     if let Some(focus) = state.pending.focus.take() {
         if let Some(seat) = state.seat.as_ref() {
