@@ -105,6 +105,15 @@ impl ZoningState {
             return None;
         }
         let zone = self.app_zone_config.get(app_id).copied()?;
+        // Floating windows are positioned by sola-river (centered) but never
+        // sized by the shell. Record the assignment so it isn't retried each
+        // Windows event and so phases B/D can see it, then emit no frame.
+        // No output geometry is required.
+        if matches!(zone, Zone::Float) {
+            self.config_applied.insert(window_id);
+            self.window_zones.insert(window_id, zone);
+            return None;
+        }
         // If geometry hasn't arrived yet we can't compute the frame. Bail
         // without mutating state so a later Apps event retries once
         // OutputGeometry has been cached.
@@ -121,14 +130,6 @@ impl ZoningState {
     pub fn handle_key(&mut self, code: u32, focused_window_id: Option<u32>) -> Option<FrameUpdate> {
         let zone = zone_for_keycode(code)?;
 
-        let (w, h) = match self.output_size {
-            Some(s) => s,
-            None => {
-                warn!("zone key pressed but no output geometry cached");
-                return None;
-            }
-        };
-
         let app_id = match self.focused_app_id.clone() {
             Some(id) => id,
             None => {
@@ -141,6 +142,27 @@ impl ZoningState {
             Some(wid) => wid,
             None => {
                 warn!("zone key pressed but no focused window_id");
+                return None;
+            }
+        };
+
+        // Floating: record + persist the assignment, emit no frame. The
+        // client keeps its own size; sola-river centers it. Unfloat is just
+        // pressing any other Meta+Numpad zone key, which overwrites the zone
+        // here and emits a sizing frame as usual.
+        if matches!(zone, Zone::Float) {
+            info!(app_id = %app_id, window_id, "floating window (no sizing frame)");
+            self.window_zones.insert(window_id, zone);
+            self.app_zone_config.insert(app_id, zone);
+            self.config_applied.insert(window_id);
+            self.zones_dirty = true;
+            return None;
+        }
+
+        let (w, h) = match self.output_size {
+            Some(s) => s,
+            None => {
+                warn!("zone key pressed but no output geometry cached");
                 return None;
             }
         };
@@ -215,6 +237,7 @@ pub const ZONING_KEYCODES: &[u32] = &[
     KeyCode::KP_EQUAL.raw(),
     KeyCode::KP_DECIMAL.raw(),
     KeyCode::KP_ENTER.raw(),
+    KeyCode::KP_MULTIPLY.raw(),
 ];
 
 fn zone_for_keycode(code: u32) -> Option<Zone> {
@@ -228,6 +251,7 @@ fn zone_for_keycode(code: u32) -> Option<Zone> {
         c if c == KeyCode::KP_EQUAL.raw() => Some(Zone::Top),
         c if c == KeyCode::KP_DECIMAL.raw() => Some(Zone::Bottom),
         c if c == KeyCode::KP_ENTER.raw() => Some(Zone::Cinema),
+        c if c == KeyCode::KP_MULTIPLY.raw() => Some(Zone::Float),
         _ => None,
     }
 }
@@ -424,6 +448,43 @@ mod tests {
         // relaunched external app lands back where it was.
         let reapplied = s.apply_config_zone("helium", 8);
         assert!(reapplied.is_some(), "saved external zone must re-apply on new window");
+    }
+
+    #[test]
+    fn kp_multiply_maps_to_float() {
+        assert_eq!(zone_for_keycode(KeyCode::KP_MULTIPLY.raw()), Some(Zone::Float));
+    }
+
+    #[test]
+    fn zoning_keycodes_include_float_key() {
+        assert!(ZONING_KEYCODES.contains(&KeyCode::KP_MULTIPLY.raw()));
+    }
+
+    #[test]
+    fn handle_key_float_records_zone_emits_no_frame() {
+        let mut s = state_with_output(1920, 1080);
+        s.set_focused("UnrealEditor".to_string());
+        let frame = s.handle_key(KeyCode::KP_MULTIPLY.raw(), Some(42));
+        // No sizing frame for a floating window.
+        assert!(frame.is_none(), "Float must not emit a frame");
+        // But the assignment is recorded + persisted.
+        assert_eq!(s.window_zones.get(&42).copied(), Some(Zone::Float));
+        let update = s.take_zones_update().expect("Float must dirty zones");
+        assert_eq!(update.get("UnrealEditor").copied(), Some(Zone::Float));
+    }
+
+    #[test]
+    fn apply_config_zone_float_records_zone_emits_no_frame() {
+        let mut s = state_with_output(1920, 1080);
+        let mut zones = std::collections::HashMap::new();
+        zones.insert("UnrealEditor".to_string(), Zone::Float);
+        s.set_zones(zones);
+
+        let frame = s.apply_config_zone("UnrealEditor", 7);
+        assert!(frame.is_none(), "Float config must not emit a frame");
+        assert_eq!(s.window_zones.get(&7).copied(), Some(Zone::Float));
+        // Marked applied so it isn't retried every Windows event.
+        assert!(s.apply_config_zone("UnrealEditor", 7).is_none());
     }
 
     #[test]
