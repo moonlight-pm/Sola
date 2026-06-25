@@ -1,7 +1,13 @@
 # Floating / App-Sized Windows — Design
 
 **Date:** 2026-06-24
-**Status:** Approved design, pre-implementation
+**Status:** Phase A implemented & committed. **The §1 root-cause claim below is
+SUPERSEDED** — Phase A did *not* fix the UnrealEditor crash (floating the window
+removed the forced resize, yet UE still crashed identically). The live
+investigation moved to
+[`2026-06-24-unreal-editor-crash-investigation.md`](./2026-06-24-unreal-editor-crash-investigation.md).
+Phase A still stands as a standalone feature + robustness gate. Phases B/D remain
+unplanned.
 **Scope:** New window class whose size is chosen by the application, positioned
 but never force-resized by the shell. Generalizes a robustness fix for all
 GPU/Vulkan clients. Adds runtime float toggle, live geometry reporting,
@@ -28,6 +34,12 @@ Clean exit (code 0, no crash dump). The compositor dropped the client because
 SDL3 hit a fatal Wayland protocol error during a resize. UE did not crash.
 
 ### Root cause (confirmed in-repo)
+
+> **⚠️ SUPERSEDED (2026-06-24).** The mechanism below was disproven by testing:
+> with `Zones: UnrealEditor: Float` sola sends no resize (only `propose(0,0)`),
+> yet UE crashes identically at the same spot. The forced resize is not the (sole)
+> cause. See `2026-06-24-unreal-editor-crash-investigation.md`. The text is kept
+> for history; the Phase A design built on it is still sound as a feature.
 
 Sola force-resizes the window to a zone on map, and that early resize
 invalidates UE's Vulkan swapchain before SDL3 has stabilized the surface:
