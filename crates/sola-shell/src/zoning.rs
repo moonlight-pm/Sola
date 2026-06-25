@@ -6,7 +6,7 @@
 //! (Shell::update) emits on their behalf.
 use std::collections::{HashMap, HashSet};
 
-use sola_bus::topics::{FloatGeometry, FrameUpdate, OutputGeometry, Zone};
+use sola_bus::topics::{FloatGeometry, FrameUpdate, OutputGeometry, WindowGeometry, Zone};
 use sola_core::KeyCode;
 use tracing::{info, warn};
 
@@ -18,6 +18,10 @@ pub const MENUBAR_HEIGHT: i32 = 28;
 /// titlebar exists, the only visible proof the float key fired). 50px/side =
 /// the window's dimensions drop by 100×100 off the full output.
 pub const FLOAT_MARGIN: i32 = 50;
+
+/// Floor for a floated window's dimensions after insetting, so a float from
+/// a very small source rect can't collapse to a sliver (or go negative).
+const MIN_FLOAT_DIM: i32 = 100;
 
 pub struct ZoningState {
     pub output_size: Option<(i32, i32)>,
@@ -43,6 +47,10 @@ pub struct ZoningState {
     /// `Topic::WindowGeometry` for floating windows and by `Topic::FloatGeometry`
     /// replay at startup; consumed by `apply_config_zone` to restore on relaunch.
     pub float_geometry: HashMap<String, FloatGeometry>,
+    /// Latest on-screen rectangle of every known window, keyed by window_id.
+    /// Fed by `Topic::WindowGeometry` (sola-river) for all windows; read by
+    /// `current_rect` so an explicit float can shrink the window in place.
+    pub live_geometry: HashMap<u32, WindowGeometry>,
 }
 
 impl ZoningState {
@@ -55,6 +63,7 @@ impl ZoningState {
             config_applied: HashSet::new(),
             zones_dirty: false,
             float_geometry: HashMap::new(),
+            live_geometry: HashMap::new(),
         }
     }
 
@@ -99,6 +108,7 @@ impl ZoningState {
     pub fn forget_windows(&mut self, removed_wids: &[u32]) {
         for wid in removed_wids {
             self.config_applied.remove(wid);
+            self.live_geometry.remove(wid);
         }
     }
 
@@ -209,12 +219,18 @@ impl ZoningState {
         // apply_config_zone. Unfloat is just pressing any other Meta+Numpad
         // zone key, which overwrites the zone here and snaps as usual.
         if matches!(zone, Zone::Float) {
+            // Inset from the window's current rect (read BEFORE we overwrite
+            // its zone), so an explicit float shrinks it in place. Fall back
+            // to the centered output inset when the current rect is unknown,
+            // or to no frame at all when we lack output geometry.
+            let frame = self
+                .current_rect(window_id)
+                .map(|(x, y, w, h)| inset_rect(window_id, x, y, w, h))
+                .or_else(|| self.output_size.map(|(w, h)| float_frame(window_id, w, h)));
             self.window_zones.insert(window_id, zone);
             self.app_zone_config.insert(app_id.clone(), zone);
             self.config_applied.insert(window_id);
             self.zones_dirty = true;
-            // Without output geometry we can only record the zone (no frame).
-            let frame = self.output_size.map(|(w, h)| float_frame(window_id, w, h));
             info!(app_id = %app_id, window_id, floated = frame.is_some(), "floating window");
             return frame;
         }
@@ -280,6 +296,24 @@ impl ZoningState {
 
     /// Compute the Frame for an explicitly-zoned window.
     /// Returns None if the window has no zone assignment.
+
+    /// The focused window's current on-screen rectangle, as best the shell
+    /// knows it: the live geometry reported by sola-river if we have it, else
+    /// the rect implied by its current (non-Float) zone. `None` when neither
+    /// is known — e.g. a self-sized window before sola-river reports geometry.
+    fn current_rect(&self, window_id: u32) -> Option<(i32, i32, i32, i32)> {
+        if let Some(g) = self.live_geometry.get(&window_id) {
+            return Some((g.x, g.y, g.width, g.height));
+        }
+        let (w, h) = self.output_size?;
+        match self.window_zones.get(&window_id) {
+            Some(zone) if !matches!(zone, Zone::Float) => {
+                let f = compute_frame(*zone, window_id, w, h);
+                Some((f.x, f.y, f.width, f.height))
+            }
+            _ => None,
+        }
+    }
     pub fn window_frame(&self, window_id: u32) -> Option<FrameUpdate> {
         let zone = self.window_zones.get(&window_id)?;
         let (w, h) = self.output_size?;
@@ -357,6 +391,20 @@ fn float_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
         y: MENUBAR_HEIGHT + FLOAT_MARGIN,
         width: output_w - 2 * FLOAT_MARGIN,
         height: (output_h - MENUBAR_HEIGHT) - 2 * FLOAT_MARGIN,
+        fullscreen: false,
+    }
+}
+
+/// Inset a source rectangle by `FLOAT_MARGIN` on every edge (each dimension
+/// clamped to at least `MIN_FLOAT_DIM`). This is how an explicit float
+/// shrinks a window in place rather than recentering it on the output.
+fn inset_rect(window_id: u32, x: i32, y: i32, w: i32, h: i32) -> FrameUpdate {
+    FrameUpdate {
+        window_id,
+        x: x + FLOAT_MARGIN,
+        y: y + FLOAT_MARGIN,
+        width: (w - 2 * FLOAT_MARGIN).max(MIN_FLOAT_DIM),
+        height: (h - 2 * FLOAT_MARGIN).max(MIN_FLOAT_DIM),
         fullscreen: false,
     }
 }
@@ -610,6 +658,37 @@ mod tests {
             .apply_config_zone("Blender", 10)
             .expect("no saved geometry → default inset frame");
         assert_eq!((frame.x, frame.y, frame.width, frame.height), (50, 78, 5020, 2032));
+    }
+
+    #[test]
+    fn float_insets_from_current_zone_rect() {
+        // A window snapped to the right zone, then floated, shrinks in place —
+        // inset from the right-zone rect, not recentered on the full output.
+        let mut s = state_with_output(1920, 1080);
+        s.set_focused("helium".to_string());
+        s.handle_key(KeyCode::KP_6.raw(), Some(7)); // snap to Right first
+        let frame = s
+            .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(7))
+            .expect("float must emit a frame");
+        // Right = (0.72,0,0.28,1.0) on 1920×1080 below the 28px menubar,
+        // inset 50px/edge: x 1382→1432, y 28→78, w 538→438, h 1052→952.
+        assert_eq!((frame.x, frame.y, frame.width, frame.height), (1432, 78, 438, 952));
+    }
+
+    #[test]
+    fn float_insets_from_live_geometry() {
+        // When sola-river has reported a live rect, float insets from that
+        // exact geometry regardless of zone.
+        let mut s = state_with_output(1920, 1080);
+        s.set_focused("helium".to_string());
+        s.live_geometry.insert(
+            5,
+            WindowGeometry { window_id: 5, x: 300, y: 200, width: 800, height: 600 },
+        );
+        let frame = s
+            .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(5))
+            .expect("float must emit a frame");
+        assert_eq!((frame.x, frame.y, frame.width, frame.height), (350, 250, 700, 500));
     }
 
     #[test]

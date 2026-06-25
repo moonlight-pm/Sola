@@ -12,14 +12,20 @@ implemented** — see `2026-06-24-floating-windows-phase-b-plan.md`. Phase D
 (move/resize + titlebar + window menu) remains unplanned.
 
 **Post-B refinements (2026-06-25):**
-- **Float now resizes for visible feedback.** The original "Float = position
-  only, never resize" rule (A2/A4 below) left a float visually indistinguishable
-  from its prior state — there was no way to tell the key had even fired. A
-  freshly-floated window with no remembered geometry now snaps to a centered
-  frame inset `FLOAT_MARGIN` (50px) per edge below the menubar
-  (`zoning::float_frame`). Explicit `Meta`+numpad-`*` always re-centers to that
-  inset; relaunch still restores saved geometry (Phase B). The first-`dimensions`
-  gate still applies, so this can't reproduce the resize-before-init failure mode.
+- **Float now resizes for visible feedback, inset from where the window is.**
+  The original "Float = position only, never resize" rule (A2/A4 below) left a
+  float visually indistinguishable from its prior state — there was no way to
+  tell the key had even fired. An explicit `Meta`+numpad-`*` now shrinks the
+  window *in place*: it insets `FLOAT_MARGIN` (50px) per edge from the window's
+  current rect (`zoning::inset_rect`). The current rect is sourced by
+  `zoning::current_rect`, in order: (1) the live `WindowGeometry` sola-river
+  reports for that window (exact, any window — Phase B), (2) the rect implied by
+  its current non-Float zone (so a right-zoned window insets from the right
+  strip even before sola-river reports geometry), (3) failing both, a centered
+  output-inset (`zoning::float_frame`). First-launch auto-float
+  (`apply_config_zone`, no saved geometry) keeps the centered default; relaunch
+  still restores saved geometry. The first-`dimensions` gate still applies, so
+  none of this can reproduce the resize-before-init failure mode.
 - **`Meta`+numpad-`*` keysym fix.** `keycode_to_keysym` (sola-shell) had no arm
   for `KP_MULTIPLY`, so the Float chord registered as keysym `63` (`?`) and
   River never matched the numpad `*` — the same class of bug as the arrow keys.

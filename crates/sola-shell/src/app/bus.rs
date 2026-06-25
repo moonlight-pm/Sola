@@ -652,6 +652,9 @@ impl Shell {
     /// window is currently floating, persist its rectangle per app_id so the
     /// float restores there on relaunch. Non-floating windows are ignored.
     fn on_window_geometry(&mut self, g: WindowGeometry) {
+        // Track every window's live rect so an explicit float can inset from
+        // where the window currently sits (see ZoningState::current_rect).
+        self.zoning.live_geometry.insert(g.window_id, g.clone());
         let Some(app_id) = self
             .known_windows
             .iter()
