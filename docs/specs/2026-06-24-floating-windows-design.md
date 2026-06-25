@@ -10,6 +10,21 @@ Phase A still stands as a standalone feature + robustness gate. **Phase B
 (live geometry + per-app float position/size memory) is now planned and
 implemented** — see `2026-06-24-floating-windows-phase-b-plan.md`. Phase D
 (move/resize + titlebar + window menu) remains unplanned.
+
+**Post-B refinements (2026-06-25):**
+- **Float now resizes for visible feedback.** The original "Float = position
+  only, never resize" rule (A2/A4 below) left a float visually indistinguishable
+  from its prior state — there was no way to tell the key had even fired. A
+  freshly-floated window with no remembered geometry now snaps to a centered
+  frame inset `FLOAT_MARGIN` (50px) per edge below the menubar
+  (`zoning::float_frame`). Explicit `Meta`+numpad-`*` always re-centers to that
+  inset; relaunch still restores saved geometry (Phase B). The first-`dimensions`
+  gate still applies, so this can't reproduce the resize-before-init failure mode.
+- **`Meta`+numpad-`*` keysym fix.** `keycode_to_keysym` (sola-shell) had no arm
+  for `KP_MULTIPLY`, so the Float chord registered as keysym `63` (`?`) and
+  River never matched the numpad `*` — the same class of bug as the arrow keys.
+  Both `keycode_to_keysym` and `keysym_to_keycode` now map `KP_MULTIPLY` ↔
+  `0xFFAA` (`XK_KP_Multiply`).
 **Scope:** New window class whose size is chosen by the application, positioned
 but never force-resized by the shell. Generalizes a robustness fix for all
 GPU/Vulkan clients. Adds runtime float toggle, live geometry reporting,
