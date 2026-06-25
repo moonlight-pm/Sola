@@ -139,13 +139,26 @@ impl ZoningState {
             return None;
         }
         let zone = self.app_zone_config.get(app_id).copied()?;
-        // Floating windows are positioned by sola-river (centered) but never
-        // sized by the shell. Record the assignment so it isn't retried each
-        // Windows event and so phases B/D can see it, then emit no frame.
-        // No output geometry is required.
+        // Floating windows are never zone-sized by the shell. Record the
+        // assignment so it isn't retried each Windows event, then either restore
+        // the float's remembered rectangle (if we have one) or emit no frame and
+        // let sola-river center it. No output geometry is required.
         if matches!(zone, Zone::Float) {
             self.config_applied.insert(window_id);
             self.window_zones.insert(window_id, zone);
+            // The restored size rides sola-river's first-`dimensions` gate
+            // (deferred until the surface initializes); position applies
+            // immediately. So restore can't reproduce the resize-before-init crash.
+            if let Some(g) = self.float_geometry.get(app_id) {
+                return Some(FrameUpdate {
+                    window_id,
+                    x: g.x,
+                    y: g.y,
+                    width: g.width,
+                    height: g.height,
+                    fullscreen: false,
+                });
+            }
             return None;
         }
         // If geometry hasn't arrived yet we can't compute the frame. Bail
@@ -535,6 +548,30 @@ mod tests {
         z.window_zones.insert(8, Zone::Left);
         assert!(!z.note_window_geometry("Helium", 8, 0, 0, 100, 100));
         assert!(z.float_geometry.get("Helium").is_none());
+    }
+
+    #[test]
+    fn float_with_saved_geometry_restores_a_frame() {
+        let mut z = ZoningState::new();
+        z.set_output_size(&OutputGeometry { width: 5120, height: 2160 });
+        z.set_focused("UnrealEditor".to_string());
+        z.handle_key(KeyCode::KP_MULTIPLY.raw(), Some(3)); // float it (records Zone::Float)
+        z.float_geometry.insert(
+            "UnrealEditor".into(),
+            FloatGeometry { app_id: "UnrealEditor".into(), x: 100, y: 50, width: 1280, height: 800 },
+        );
+        // config_applied was set by handle_key for window 3; restore targets a
+        // *fresh* window (relaunch → new window_id), so use a different id.
+        let frame = z
+            .apply_config_zone("UnrealEditor", 9)
+            .expect("saved geometry → restore frame");
+        assert_eq!((frame.x, frame.y, frame.width, frame.height), (100, 50, 1280, 800));
+        assert!(!frame.fullscreen);
+
+        // A float without saved geometry still returns None (centered by sola-river).
+        z.set_focused("Blender".to_string());
+        z.handle_key(KeyCode::KP_MULTIPLY.raw(), Some(4));
+        assert!(z.apply_config_zone("Blender", 10).is_none());
     }
 
     #[test]
