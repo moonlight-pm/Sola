@@ -6,8 +6,10 @@ SUPERSEDED** — Phase A did *not* fix the UnrealEditor crash (floating the wind
 removed the forced resize, yet UE still crashed identically). The live
 investigation moved to
 [`2026-06-24-unreal-editor-crash-investigation.md`](./2026-06-24-unreal-editor-crash-investigation.md).
-Phase A still stands as a standalone feature + robustness gate. Phases B/D remain
-unplanned.
+Phase A still stands as a standalone feature + robustness gate. **Phase B
+(live geometry + per-app float position/size memory) is now planned and
+implemented** — see `2026-06-24-floating-windows-phase-b-plan.md`. Phase D
+(move/resize + titlebar + window menu) remains unplanned.
 **Scope:** New window class whose size is chosen by the application, positioned
 but never force-resized by the shell. Generalizes a robustness fix for all
 GPU/Vulkan clients. Adds runtime float toggle, live geometry reporting,
