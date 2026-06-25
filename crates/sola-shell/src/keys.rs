@@ -146,8 +146,9 @@ fn keycode_to_keysym(k: KeyCode) -> u32 {
         KeyCode::KP_8 => KEYSYM_KP_0 + 8,
         KeyCode::KP_EQUAL => 0xFFBD,   // XK_KP_Equal
         KeyCode::KP_DECIMAL => 0xFFAE, // XK_KP_Decimal
-        KeyCode::KP_ENTER => 0xFF8D,   // XK_KP_Enter
-        KeyCode::F12 => 0xFFC9,        // XK_F12
+        KeyCode::KP_ENTER => 0xFF8D,    // XK_KP_Enter
+        KeyCode::KP_MULTIPLY => 0xFFAA, // XK_KP_Multiply — floats the window
+        KeyCode::F12 => 0xFFC9,         // XK_F12
         _ => {
             if let Some(sym) = letter_keysym(k) {
                 sym
@@ -244,6 +245,7 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
         0xFFBD => Some(KeyCode::KP_EQUAL),
         0xFFAE => Some(KeyCode::KP_DECIMAL),
         0xFF8D => Some(KeyCode::KP_ENTER),
+        0xFFAA => Some(KeyCode::KP_MULTIPLY),
         0xFFC9 => Some(KeyCode::F12),
         // NumLock-off variants of the zoning numpad keys.
         KEYSYM_KP_UP => Some(KeyCode::KP_8),
@@ -354,6 +356,30 @@ mod tests {
         })
         .expect("KP_UP keysym must round-trip to KP_8");
         assert_eq!(back.keycode, KeyCode::KP_8);
+    }
+
+    #[test]
+    fn round_trip_kp_multiply() {
+        // Regression: KP_MULTIPLY was missing from keycode_to_keysym, so
+        // ⌘+numpad-* (Float) registered as keysym 63 (= '?') and never
+        // fired — the same class of bug as round_trip_arrow_keys. It must
+        // map to XK_KP_Multiply (0xFFAA) and round-trip back to KP_MULTIPLY.
+        let chord = KeyChord {
+            keycode: KeyCode::KP_MULTIPLY,
+            meta: true,
+            alt: false,
+            ctrl: false,
+            shift: false,
+        };
+        let reg = to_registered(&chord);
+        assert_eq!(reg.keysym, 0xFFAA, "KP_MULTIPLY must map to XK_KP_Multiply");
+        let back = from_chord_event(&ChordEvent {
+            keysym: reg.keysym,
+            modifiers: reg.modifiers,
+        })
+        .expect("KP_Multiply keysym must round-trip");
+        assert_eq!(back.keycode, KeyCode::KP_MULTIPLY);
+        assert!(back.meta);
     }
 
     #[test]
