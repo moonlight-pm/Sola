@@ -3,6 +3,8 @@
 use tracing::{error, info, warn};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
 
+use sola_bus::topics::{Topic, WindowGeometry};
+
 use crate::client::AppData;
 use crate::protocol::river_window_management_v1::{
     river_output_v1::RiverOutputV1, river_seat_v1::RiverSeatV1,
@@ -141,6 +143,16 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 state.deferred_size.remove(&window_id);
                 state.last_proposed.remove(&window_id);
                 state.last_position.remove(&window_id);
+                // Drop the window's sticky geometry so a late subscriber can't
+                // resurrect a closed window's rectangle. Retract keys on
+                // window_id; the other fields are ignored.
+                let _ = state.bus.retract(Topic::WindowGeometry(WindowGeometry {
+                    window_id,
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0,
+                }));
                 window.destroy();
                 apps_dirty = true;
             }
@@ -189,6 +201,9 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     // turns manage_dirty into a manage cycle that proposes it.
                     state.pending.manage.insert(window_id, (w, h));
                     state.pending.manage_dirty = true;
+                }
+                if state.registry.set_size(window_id, width, height) {
+                    crate::translator::emit_geometry(state, window_id);
                 }
                 tracing::debug!(window_id, width, height, newly_initialized, "window dimensions");
             }

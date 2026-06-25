@@ -236,20 +236,37 @@ pub fn handle_render_start(state: &mut AppData) {
         }
     }
 
-    for (&window_id, &(x, y)) in &state.pending.render_positions {
-        if let Some(node) = state.nodes_by_window.get(&window_id) {
-            // Skip repositioning a window that has not moved — the shell
-            // re-broadcasts frames for every window on any change, so without
-            // this we re-issue set_position for windows that stayed put. See
-            // `should_send`.
-            if should_send(state.last_position.get(&window_id).copied(), (x, y)) {
-                node.set_position(x, y);
-                state.last_position.insert(window_id, (x, y));
-            }
-            state.placed.insert(window_id);
-        }
-    }
+    // Drain into an owned Vec first: the body below mutates `state` (registry +
+    // bus via `emit_geometry`), which can't coexist with an immutable borrow of
+    // `state.pending.render_positions`.
+    let positions: Vec<(u32, (i32, i32))> = state
+        .pending
+        .render_positions
+        .iter()
+        .map(|(&id, &xy)| (id, xy))
+        .collect();
     state.pending.render_positions.clear();
+    for (window_id, (x, y)) in positions {
+        if !state.nodes_by_window.contains_key(&window_id) {
+            continue;
+        }
+        // Skip repositioning a window that has not moved — the shell
+        // re-broadcasts frames for every window on any change, so without
+        // this we re-issue set_position for windows that stayed put. See
+        // `should_send`.
+        if should_send(state.last_position.get(&window_id).copied(), (x, y)) {
+            if let Some(node) = state.nodes_by_window.get(&window_id) {
+                node.set_position(x, y);
+            }
+            state.last_position.insert(window_id, (x, y));
+            // Record actual position and publish geometry on change. (node
+            // borrow above is dropped before this whole-state mutation.)
+            if state.registry.set_position(window_id, x, y) {
+                crate::translator::emit_geometry(state, window_id);
+            }
+        }
+        state.placed.insert(window_id);
+    }
 
     apply_default_placement(state);
 
@@ -280,10 +297,16 @@ fn apply_default_placement(state: &mut AppData) {
         let (w, h) = default_size_for(state, window_id, out_w, out_h);
         let x = ((out_w - w) / 2).max(0);
         let y = ((out_h - h) / 2).max(0);
-        if let Some(node) = state.nodes_by_window.get(&window_id) {
-            node.set_position(x, y);
+        if state.nodes_by_window.contains_key(&window_id) {
+            if let Some(node) = state.nodes_by_window.get(&window_id) {
+                node.set_position(x, y);
+            }
             state.placed.insert(window_id);
             debug!(window_id, x, y, w, h, "default-centered unzoned window");
+            // Record actual position and publish geometry on change.
+            if state.registry.set_position(window_id, x, y) {
+                crate::translator::emit_geometry(state, window_id);
+            }
         }
     }
 }

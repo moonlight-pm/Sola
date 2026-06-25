@@ -15,6 +15,24 @@ pub fn emit_windows(state: &mut AppData) {
     state.bus.emit(Topic::Windows(windows));
 }
 
+/// Emit the window's current rectangle as the sticky `Topic::WindowGeometry`.
+/// No-op until both size and position are known. Callers gate on the registry
+/// setter returning `true` (changed) so this fires only on a real move/resize.
+pub fn emit_geometry(state: &mut AppData, window_id: u32) {
+    let Some(g) = state.registry.geometry(window_id) else {
+        return;
+    };
+    debug!(
+        window_id,
+        x = g.x,
+        y = g.y,
+        width = g.width,
+        height = g.height,
+        "emitting WindowGeometry"
+    );
+    state.bus.emit(Topic::WindowGeometry(g));
+}
+
 /// Apply a chord-set update from `pending.chords`. MUST be called
 /// during a manage sequence: `xkb_binding_v1.enable` and `disable` are
 /// both manage-sequence requests per River's protocol.

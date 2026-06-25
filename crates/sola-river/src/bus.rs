@@ -42,6 +42,14 @@ impl BusClient {
         }
     }
 
+    /// Retract a sticky topic (keyed by the payload's key fields). Used to drop
+    /// a closed window's `WindowGeometry` so late subscribers can't resurrect it.
+    pub fn retract(&mut self, topic: Topic) {
+        if let Err(e) = self.inner.retract(topic) {
+            tracing::warn!(%e, "bus retract failed");
+        }
+    }
+
     /// File descriptor that becomes readable when messages arrive.
     /// Used to register the bus with calloop.
     pub fn notify_fd(&self) -> Option<RawFd> {
