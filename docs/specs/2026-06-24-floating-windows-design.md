@@ -18,11 +18,17 @@ implemented** — see `2026-06-24-floating-windows-phase-b-plan.md`. Phase D
   tell the key had even fired. An explicit `Meta`+numpad-`*` now shrinks the
   window *in place*: it insets `FLOAT_MARGIN` (50px) per edge from the window's
   current rect (`zoning::inset_rect`). The current rect is sourced by
-  `zoning::current_rect`, in order: (1) the live `WindowGeometry` sola-river
-  reports for that window (exact, any window — Phase B), (2) the rect implied by
-  its current non-Float zone (so a right-zoned window insets from the right
-  strip even before sola-river reports geometry), (3) failing both, a centered
-  output-inset (`zoning::float_frame`). First-launch auto-float
+  `zoning::current_rect`, **zone-first**: (1) the window's runtime non-Float
+  zone, (2) the app's *configured* zone (`app_zone_config`, replayed from
+  persisted `Zones` at startup), each via `compute_frame`; (3) the live
+  `WindowGeometry` sola-river reports (for genuinely unzoned, self-sized
+  windows); (4) failing all, a centered output-inset (`zoning::float_frame`).
+  Zone-first is deliberate: a zoned window's zone is authoritative and is known
+  *immediately* after a restart, whereas live geometry can lag or hold a stale
+  float rect. Earlier "live-geometry-first" ordering meant that floating right
+  after a self-watch re-exec — before per-window state or live geometry caught
+  up — fell through to the full-output `float_frame`, which then got persisted
+  as the per-app `FloatGeometry` and self-perpetuated. First-launch auto-float
   (`apply_config_zone`, no saved geometry) keeps the centered default; relaunch
   still restores saved geometry. The first-`dimensions` gate still applies, so
   none of this can reproduce the resize-before-init failure mode.

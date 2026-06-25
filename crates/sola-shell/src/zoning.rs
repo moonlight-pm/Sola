@@ -224,14 +224,14 @@ impl ZoningState {
             // to the centered output inset when the current rect is unknown,
             // or to no frame at all when we lack output geometry.
             let frame = self
-                .current_rect(window_id)
+                .current_rect(window_id, &app_id)
                 .map(|(x, y, w, h)| inset_rect(window_id, x, y, w, h))
                 .or_else(|| self.output_size.map(|(w, h)| float_frame(window_id, w, h)));
             self.window_zones.insert(window_id, zone);
             self.app_zone_config.insert(app_id.clone(), zone);
             self.config_applied.insert(window_id);
             self.zones_dirty = true;
-            info!(app_id = %app_id, window_id, floated = frame.is_some(), "floating window");
+            info!(app_id = %app_id, window_id, ?frame, "floating window");
             return frame;
         }
 
@@ -292,28 +292,33 @@ impl ZoningState {
         })
     }
 
-    
-
-    /// Compute the Frame for an explicitly-zoned window.
-    /// Returns None if the window has no zone assignment.
-
     /// The focused window's current on-screen rectangle, as best the shell
-    /// knows it: the live geometry reported by sola-river if we have it, else
-    /// the rect implied by its current (non-Float) zone. `None` when neither
-    /// is known — e.g. a self-sized window before sola-river reports geometry.
-    fn current_rect(&self, window_id: u32) -> Option<(i32, i32, i32, i32)> {
-        if let Some(g) = self.live_geometry.get(&window_id) {
-            return Some((g.x, g.y, g.width, g.height));
-        }
-        let (w, h) = self.output_size?;
-        match self.window_zones.get(&window_id) {
-            Some(zone) if !matches!(zone, Zone::Float) => {
-                let f = compute_frame(*zone, window_id, w, h);
-                Some((f.x, f.y, f.width, f.height))
+    /// knows it. A non-Float **zone** is authoritative: it's where the shell
+    /// put the window, and the app's configured zone is replayed from
+    /// persisted `Zones` immediately at startup — so this works even in the
+    /// window right after a restart, before per-window state or live geometry
+    /// has caught up. The runtime per-window zone wins, then the app's
+    /// configured zone, then the live rect reported by sola-river (for
+    /// genuinely unzoned, self-sized windows). `None` if nothing is known.
+    fn current_rect(&self, window_id: u32, app_id: &str) -> Option<(i32, i32, i32, i32)> {
+        let zone = self
+            .window_zones
+            .get(&window_id)
+            .or_else(|| self.app_zone_config.get(app_id))
+            .copied();
+        if let Some(zone) = zone {
+            if !matches!(zone, Zone::Float) {
+                if let Some((w, h)) = self.output_size {
+                    let f = compute_frame(zone, window_id, w, h);
+                    return Some((f.x, f.y, f.width, f.height));
+                }
             }
-            _ => None,
         }
+        self.live_geometry
+            .get(&window_id)
+            .map(|g| (g.x, g.y, g.width, g.height))
     }
+
     pub fn window_frame(&self, window_id: u32) -> Option<FrameUpdate> {
         let zone = self.window_zones.get(&window_id)?;
         let (w, h) = self.output_size?;
@@ -689,6 +694,25 @@ mod tests {
             .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(5))
             .expect("float must emit a frame");
         assert_eq!((frame.x, frame.y, frame.width, frame.height), (350, 250, 700, 500));
+    }
+
+    #[test]
+    fn float_insets_from_app_zone_config_when_window_zone_unset() {
+        // Post-restart race: the per-window zone hasn't been applied yet, but
+        // the app's configured zone (replayed from persisted Zones) is known.
+        // Float must still inset from that zone, NOT blow up to the centered
+        // output fallback. Regression for "float flouts out to full screen".
+        let mut s = state_with_output(1920, 1080);
+        s.set_focused("sola-settings".to_string());
+        let mut zones = std::collections::HashMap::new();
+        zones.insert("sola-settings".to_string(), Zone::Right);
+        s.set_zones(zones); // populates app_zone_config, NOT window_zones
+        assert!(s.window_zones.get(&7).is_none(), "precondition: window zone unset");
+        let frame = s
+            .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(7))
+            .expect("float must emit a frame");
+        // Right (0.72,0,0.28,1.0) on 1920×1080 inset 50/edge → (1432,78,438,952).
+        assert_eq!((frame.x, frame.y, frame.width, frame.height), (1432, 78, 438, 952));
     }
 
     #[test]
