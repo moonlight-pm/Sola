@@ -5,7 +5,7 @@
 //! can be unit-tested without a compositor.
 use std::collections::HashMap;
 
-use sola_bus::topics::Window;
+use sola_bus::topics::{Window, WindowGeometry};
 use wayland_client::backend::ObjectId;
 
 use crate::protocol::river_xkb_bindings_v1::river_xkb_binding_v1::RiverXkbBindingV1;
@@ -41,6 +41,13 @@ pub struct Entry {
     /// Used by solactl's per-window screenshot to pass a region to
     /// `grim`. May be stale immediately after a resize but converges.
     pub frame: Option<(i32, i32, i32, i32)>,
+    /// Actual content size from `river_window_v1.dimensions`. `None` until the
+    /// first dimensions event. Distinct from `frame` (the shell's requested
+    /// rect) — this is what the window actually reports.
+    pub size: Option<(i32, i32)>,
+    /// Actual on-screen position from the last `node.set_position`. `None`
+    /// until the window is first placed.
+    pub position: Option<(i32, i32)>,
 }
 
 impl WindowRegistry {
@@ -58,6 +65,8 @@ impl WindowRegistry {
                 max_size: (0, 0),
                 pid: None,
                 frame: None,
+                size: None,
+                position: None,
             },
         );
         self.next_id
@@ -100,6 +109,47 @@ impl WindowRegistry {
         if let Some(e) = self.by_id.get_mut(&id) {
             e.frame = Some((x, y, w, h));
         }
+    }
+
+    /// Record the window's actual content size (from the `dimensions` event).
+    /// Returns true if it changed, so the caller emits geometry only on change.
+    pub fn set_size(&mut self, id: u32, width: i32, height: i32) -> bool {
+        let Some(e) = self.by_id.get_mut(&id) else {
+            return false;
+        };
+        if e.size == Some((width, height)) {
+            return false;
+        }
+        e.size = Some((width, height));
+        true
+    }
+
+    /// Record the window's actual on-screen position (from `set_position`).
+    /// Returns true if it changed.
+    pub fn set_position(&mut self, id: u32, x: i32, y: i32) -> bool {
+        let Some(e) = self.by_id.get_mut(&id) else {
+            return false;
+        };
+        if e.position == Some((x, y)) {
+            return false;
+        }
+        e.position = Some((x, y));
+        true
+    }
+
+    /// The window's full rectangle, available once both size and position are
+    /// known. `None` while either is still unset.
+    pub fn geometry(&self, id: u32) -> Option<WindowGeometry> {
+        let e = self.by_id.get(&id)?;
+        let (width, height) = e.size?;
+        let (x, y) = e.position?;
+        Some(WindowGeometry {
+            window_id: id,
+            x,
+            y,
+            width,
+            height,
+        })
     }
 
     /// Find a window matching `app_id` and (optionally) `title`. If
@@ -165,6 +215,23 @@ mod tests {
         let mut r = WindowRegistry::new();
         assert_eq!(r.mint(), 1);
         assert_eq!(r.mint(), 2);
+    }
+
+    #[test]
+    fn geometry_is_some_only_when_size_and_position_known() {
+        let mut r = WindowRegistry::new();
+        let id = r.mint();
+        assert!(r.geometry(id).is_none());
+        assert!(r.set_size(id, 800, 600)); // changed
+        assert!(r.geometry(id).is_none()); // position still unknown
+        assert!(r.set_position(id, 10, 20)); // changed
+        let g = r.geometry(id).expect("both known now");
+        assert_eq!(
+            (g.window_id, g.x, g.y, g.width, g.height),
+            (id, 10, 20, 800, 600)
+        );
+        assert!(!r.set_size(id, 800, 600)); // unchanged → false
+        assert!(!r.set_position(id, 10, 20)); // unchanged → false
     }
 
     #[test]
