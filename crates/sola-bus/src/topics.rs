@@ -101,6 +101,34 @@ pub struct OutputGeometry {
     pub height: i32,
 }
 
+/// A window's live on-screen rectangle, emitted by sola-river whenever the
+/// window's size (`river_window_v1.dimensions`) or position (`node.set_position`)
+/// changes. Carried by the sticky `Topic::WindowGeometry`, keyed by `window_id`,
+/// so a late subscriber (e.g. a per-window titlebar overlay) learns the current
+/// rectangle without waiting for the next move. Retracted when the window closes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowGeometry {
+    pub window_id: u32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// A floating app's remembered rectangle, keyed by `app_id`. Carried by the
+/// persistent `Topic::FloatGeometry` so a floating window restores to where it
+/// last was across relaunch and across a full restart. Kept separate from the
+/// `Zones:` map so `Zone` stays a clean unit enum and geometry churn doesn't
+/// rewrite the zone assignments.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FloatGeometry {
+    pub app_id: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 /// Emitted by compositor when pointer enters a different surface/window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
@@ -494,6 +522,12 @@ define_topics! {
     #[sticky]
     OutputGeometry(OutputGeometry),
 
+    // A window's live rectangle (sola-river → shell). Sticky and keyed by
+    // window_id so each window has its own retained slot and a late subscriber
+    // learns the current geometry; sola-river retracts it on window close.
+    #[sticky(keys = [window_id])]
+    WindowGeometry(WindowGeometry),
+
     // Mouse events (sola-river → shell)
     MouseEntered(MouseEnteredPayload),
     MouseLeft,
@@ -518,6 +552,13 @@ define_topics! {
     // copy after each snap. Persistent so layouts survive restart.
     #[persistent]
     Zones(HashMap<String, Zone>),
+
+    // Remembered rectangle of each floating app, keyed by app_id. Shell owns
+    // it: records from Topic::WindowGeometry while a window is floating, restores
+    // on relaunch. Persistent so float placement survives a restart. Separate
+    // from Zones so geometry churn doesn't rewrite the zone map.
+    #[persistent(keys = [app_id])]
+    FloatGeometry(FloatGeometry),
 
     // Open user apps to restore on next start. sola-session owns the list
     // and emits a fresh copy whenever its child set changes. Persistent so
@@ -789,6 +830,35 @@ mod tests {
     fn session_apps_is_persistent() {
         use crate::topic::Behavior;
         assert_eq!(TopicKind::SessionApps.behavior(), Behavior::Persistent);
+    }
+
+    #[test]
+    fn float_geometry_is_persistent_and_roundtrips() {
+        use crate::topic::Behavior;
+        assert_eq!(TopicKind::FloatGeometry.behavior(), Behavior::Persistent);
+        let fg = FloatGeometry {
+            app_id: "UnrealEditor".into(),
+            x: 10,
+            y: 20,
+            width: 1280,
+            height: 800,
+        };
+        let value = Topic::FloatGeometry(fg.clone())
+            .to_yaml_value()
+            .expect("FloatGeometry is persistent; must serialize to YAML");
+        match Topic::from_yaml_section(TopicKind::FloatGeometry, value) {
+            Some(Topic::FloatGeometry(back)) => {
+                assert_eq!(back.app_id, fg.app_id);
+                assert_eq!((back.x, back.y, back.width, back.height), (10, 20, 1280, 800));
+            }
+            other => panic!("expected FloatGeometry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn window_geometry_is_sticky_not_persistent() {
+        use crate::topic::Behavior;
+        assert_eq!(TopicKind::WindowGeometry.behavior(), Behavior::Sticky);
     }
 
     #[test]
