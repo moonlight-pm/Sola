@@ -139,6 +139,8 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 state.currently_fullscreen.remove(&window_id);
                 state.first_dimensions.remove(&window_id);
                 state.deferred_size.remove(&window_id);
+                state.last_proposed.remove(&window_id);
+                state.last_position.remove(&window_id);
                 window.destroy();
                 apps_dirty = true;
             }

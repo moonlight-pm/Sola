@@ -76,6 +76,15 @@ pub struct AppData {
     /// as a normal runtime resize on the next manage cycle. See
     /// `manage::note_dimensions`.
     pub deferred_size: HashMap<u32, (i32, i32)>,
+    /// Last dimensions we sent River via `propose_dimensions` for each
+    /// window. We skip re-proposing an unchanged size so an identical
+    /// configure isn't re-sent to the client every time the shell
+    /// re-broadcasts its frames. See `manage::should_send`.
+    pub last_proposed: HashMap<u32, (i32, i32)>,
+    /// Last position we sent River via `node.set_position` for each window.
+    /// We skip repositioning a window that has not moved. See
+    /// `manage::should_send`.
+    pub last_position: HashMap<u32, (i32, i32)>,
     /// Windows currently in compositor-fullscreen state because we
     /// called `proxy.fullscreen`. Used by the focus-change handler to
     /// auto-exit fullscreen when the user Alt-Tabs away — many games
@@ -127,6 +136,8 @@ impl AppData {
             placed: std::collections::HashSet::new(),
             first_dimensions: std::collections::HashSet::new(),
             deferred_size: HashMap::new(),
+            last_proposed: HashMap::new(),
+            last_position: HashMap::new(),
             currently_fullscreen: std::collections::HashSet::new(),
             output_config: output_config::OutputConfigState::default(),
             virtual_keyboard: virtual_keyboard::VirtualKeyboardState::default(),

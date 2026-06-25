@@ -57,6 +57,22 @@ pub(crate) fn note_dimensions(
     deferred_size.remove(&window_id)
 }
 
+
+/// Whether a size or position must be forwarded to River.
+///
+/// `last` is the value we most recently sent for this window (`None` if we
+/// have sent nothing yet). We only forward a value that differs from the
+/// last one: River keeps a window at its current dimensions/position without
+/// a fresh request, so re-sending an identical `propose_dimensions` or
+/// `set_position` is pure churn. That churn matters — every redundant
+/// `propose_dimensions` makes River send the client another configure, and
+/// those pile up against a client that is busy and not servicing its socket
+/// (UnrealEditor blocks its Wayland thread for seconds during a project
+/// load), which can overflow the connection and get the client dropped.
+pub(crate) fn should_send(last: Option<(i32, i32)>, requested: (i32, i32)) -> bool {
+    last != Some(requested)
+}
+
 pub fn handle_manage_start(state: &mut AppData) {
     let Some(wm) = state.wm.clone() else { return };
 
@@ -74,11 +90,8 @@ pub fn handle_manage_start(state: &mut AppData) {
             .unwrap_or("?")
             .to_string();
         let initialized = state.first_dimensions.contains(&window_id);
-        match size_decision((w, h), initialized) {
-            SizeDecision::Propose(pw, ph) => {
-                tracing::info!(window_id, %app_id, w = pw, h = ph, "propose_dimensions");
-                proxy.propose_dimensions(pw, ph);
-            }
+        let propose = match size_decision((w, h), initialized) {
+            SizeDecision::Propose(pw, ph) => (pw, ph),
             SizeDecision::Defer(dw, dh) => {
                 tracing::info!(
                     window_id,
@@ -88,8 +101,17 @@ pub fn handle_manage_start(state: &mut AppData) {
                     "deferring size until first dimensions; self-sizing"
                 );
                 state.deferred_size.insert(window_id, (dw, dh));
-                proxy.propose_dimensions(0, 0);
+                // Self-size now; the held size is re-queued on first dimensions.
+                (0, 0)
             }
+        };
+        // Skip re-proposing an unchanged size: re-sending an identical
+        // configure only adds Wayland traffic that piles up against a busy
+        // client. See `should_send`.
+        if should_send(state.last_proposed.get(&window_id).copied(), propose) {
+            tracing::info!(window_id, %app_id, w = propose.0, h = propose.1, "propose_dimensions");
+            proxy.propose_dimensions(propose.0, propose.1);
+            state.last_proposed.insert(window_id, propose);
         }
     }
     state.pending.manage_dirty = false;
@@ -216,7 +238,14 @@ pub fn handle_render_start(state: &mut AppData) {
 
     for (&window_id, &(x, y)) in &state.pending.render_positions {
         if let Some(node) = state.nodes_by_window.get(&window_id) {
-            node.set_position(x, y);
+            // Skip repositioning a window that has not moved — the shell
+            // re-broadcasts frames for every window on any change, so without
+            // this we re-issue set_position for windows that stayed put. See
+            // `should_send`.
+            if should_send(state.last_position.get(&window_id).copied(), (x, y)) {
+                node.set_position(x, y);
+                state.last_position.insert(window_id, (x, y));
+            }
             state.placed.insert(window_id);
         }
     }
@@ -312,5 +341,32 @@ mod tests {
         // Second event: already initialized, nothing left to apply.
         assert_eq!(note_dimensions(&mut first, &mut deferred, 7), None);
         assert!(first.contains(&7));
+    }
+
+
+    #[test]
+    fn first_value_is_always_sent() {
+        // Nothing sent yet for this window — the first propose/position must
+        // go through, even the self-size (0, 0) that the protocol requires
+        // before a window is displayed.
+        assert!(should_send(None, (0, 0)));
+        assert!(should_send(None, (2253, 2132)));
+    }
+
+    #[test]
+    fn unchanged_value_is_skipped() {
+        // Re-sending an identical size/position is pure churn: River keeps
+        // the window as-is, and an identical configure only piles up Wayland
+        // traffic against clients that are busy and not reading their socket.
+        assert!(!should_send(Some((0, 0)), (0, 0)));
+        assert!(!should_send(Some((2253, 2132)), (2253, 2132)));
+    }
+
+    #[test]
+    fn changed_value_is_sent() {
+        // Deferred self-size (0, 0) → real size must propose; a real resize
+        // must propose.
+        assert!(should_send(Some((0, 0)), (2253, 2132)));
+        assert!(should_send(Some((2253, 2132)), (1000, 1000)));
     }
 }
