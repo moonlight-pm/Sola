@@ -41,6 +41,17 @@ implemented** — see `2026-06-24-floating-windows-phase-b-plan.md`. Phase D
   returns `None` for a float and `emit_all_frames` skips floats outright
   (`ZoningState::is_floating`), leaving a floated window at the size it was
   given.
+- **The `Topic::Zones` echo must not restore a stale float rect.** Floating
+  emits `Topic::Zones` (to persist the Float assignment); the shell receives
+  its own echo, and `on_zones` runs `set_zones` (which clears `config_applied`)
+  then re-applies config zones to every known window. So `apply_config_zone`
+  re-fires for the just-floated window ~20ms later and restores its saved
+  `FloatGeometry` — which, if stale (or simply not yet equal to the new inset),
+  clobbers the window to that rect (observed: a correct `(3736,78,1334,2032)`
+  frame followed 20ms later by a stale `(50,78,5020,2032)` one). Fix:
+  `handle_key` caches the float's rect into `float_geometry` immediately, so the
+  re-apply restores the *same* rect (idempotent); the chord handler also emits
+  `Topic::FloatGeometry` so the on-disk value is corrected in the same step.
 - **`Meta`+numpad-`*` keysym fix.** `keycode_to_keysym` (sola-shell) had no arm
   for `KP_MULTIPLY`, so the Float chord registered as keysym `63` (`?`) and
   River never matched the numpad `*` — the same class of bug as the arrow keys.

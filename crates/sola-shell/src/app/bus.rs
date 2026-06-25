@@ -501,10 +501,22 @@ impl Shell {
 
         // Zone snapping (Meta+Numpad).
         if let Some(frame) = self.zoning.handle_key(chord.keycode.raw(), self.focused_window_id) {
+            // If that snap floated the focused window, persist the rect
+            // handle_key just cached so the on-disk FloatGeometry isn't a
+            // stale rect a later restore would clobber with.
+            let float_fg = match (self.focused_window_id, self.focused_app_id.clone()) {
+                (Some(wid), Some(app_id)) if self.zoning.is_floating(wid) => {
+                    self.zoning.float_geometry.get(&app_id).cloned()
+                }
+                _ => None,
+            };
             if let Ok(mut bus) = sola_kit::app::bus().lock() {
                 let _ = bus.emit(Topic::Frame(frame));
                 if let Some(zones) = self.zoning.take_zones_update() {
                     let _ = bus.emit(Topic::Zones(zones));
+                }
+                if let Some(fg) = float_fg {
+                    let _ = bus.emit(Topic::FloatGeometry(fg));
                 }
             }
             return Task::none();

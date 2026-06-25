@@ -231,6 +231,24 @@ impl ZoningState {
             self.app_zone_config.insert(app_id.clone(), zone);
             self.config_applied.insert(window_id);
             self.zones_dirty = true;
+            // Cache the rect we're floating to NOW. apply_config_zone restores
+            // a float from `float_geometry`, and our Topic::Zones echo makes
+            // on_zones clear config_applied and re-run apply_config_zone right
+            // after this — so without this update it would restore a stale
+            // saved rect and clobber the window we just sized to full screen.
+            // The caller persists it on the bus.
+            if let Some(f) = &frame {
+                self.float_geometry.insert(
+                    app_id.clone(),
+                    FloatGeometry {
+                        app_id: app_id.clone(),
+                        x: f.x,
+                        y: f.y,
+                        width: f.width,
+                        height: f.height,
+                    },
+                );
+            }
             info!(app_id = %app_id, window_id, ?frame, "floating window");
             return frame;
         }
@@ -708,6 +726,32 @@ mod tests {
             .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(5))
             .expect("float must emit a frame");
         assert_eq!((frame.x, frame.y, frame.width, frame.height), (350, 250, 700, 500));
+    }
+
+    #[test]
+    fn float_caches_geometry_so_zone_reapply_is_idempotent() {
+        // Reproduces the clobber: floating emits Topic::Zones, whose echo runs
+        // on_zones → set_zones (clears config_applied) → re-applies the zone.
+        // handle_key must cache the float's rect so that re-apply restores the
+        // SAME rect, not a stale saved one. Regression for "float clobbers to
+        // full screen 20ms later".
+        let mut s = state_with_output(1920, 1080);
+        s.set_focused("helium".to_string());
+        s.handle_key(KeyCode::KP_6.raw(), Some(7)); // snap to Right
+        let frame = s
+            .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(7))
+            .expect("float frame");
+        // The float rect is cached against the app immediately.
+        let fg = s.float_geometry.get("helium").expect("float geometry cached");
+        assert_eq!((fg.x, fg.y, fg.width, fg.height), (frame.x, frame.y, frame.width, frame.height));
+        // Simulate the on_zones echo clearing config_applied, then re-applying.
+        s.config_applied.remove(&7);
+        let restored = s.apply_config_zone("helium", 7).expect("re-apply restores a frame");
+        assert_eq!(
+            (restored.x, restored.y, restored.width, restored.height),
+            (frame.x, frame.y, frame.width, frame.height),
+            "re-apply must restore the floated rect, not clobber it"
+        );
     }
 
     #[test]
