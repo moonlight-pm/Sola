@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use iced::Task;
 use sola_bus::topics::{
-    AppMenuPayload, Application, ChordEvent, FocusTarget, LaunchResultPayload,
+    AppMenuPayload, Application, ChordEvent, FloatGeometry, FocusTarget, LaunchResultPayload,
     MouseClickedPayload, MouseEnteredPayload, OutputGeometry, Topic,
-    UserAppExitedPayload, Window,
+    UserAppExitedPayload, Window, WindowGeometry,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -40,6 +40,8 @@ impl Shell {
             Topic::LaunchResult(r) => self.on_launch_result(r),
             Topic::UserAppExited(e) => self.on_user_app_exited(e),
             Topic::Zones(z) => { self.on_zones(z); Task::none() }
+            Topic::WindowGeometry(g) => { self.on_window_geometry(g); Task::none() }
+            Topic::FloatGeometry(f) => { self.on_float_geometry(f); Task::none() }
             // All other topics are not consumed by sola-shell; ignore quietly.
             _ => Task::none(),
         }
@@ -644,5 +646,35 @@ impl Shell {
                 }
             }
         }
+    }
+
+    /// A window moved or resized (Topic::WindowGeometry from sola-river). If the
+    /// window is currently floating, persist its rectangle per app_id so the
+    /// float restores there on relaunch. Non-floating windows are ignored.
+    fn on_window_geometry(&mut self, g: WindowGeometry) {
+        let Some(app_id) = self
+            .known_windows
+            .iter()
+            .find(|w| w.window_id == g.window_id)
+            .map(|w| w.app_id.clone())
+        else {
+            return;
+        };
+        if self
+            .zoning
+            .note_window_geometry(&app_id, g.window_id, g.x, g.y, g.width, g.height)
+        {
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                let _ = bus.emit(Topic::FloatGeometry(
+                    self.zoning.float_geometry[&app_id].clone(),
+                ));
+            }
+        }
+    }
+
+    /// Cache a floating app's remembered rectangle from Topic::FloatGeometry
+    /// (persistent replay at startup, or our own echo after recording).
+    fn on_float_geometry(&mut self, f: FloatGeometry) {
+        self.zoning.float_geometry.insert(f.app_id.clone(), f);
     }
 }

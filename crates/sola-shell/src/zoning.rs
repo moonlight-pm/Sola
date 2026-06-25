@@ -6,7 +6,7 @@
 //! (Shell::update) emits on their behalf.
 use std::collections::{HashMap, HashSet};
 
-use sola_bus::topics::{FrameUpdate, OutputGeometry, Zone};
+use sola_bus::topics::{FloatGeometry, FrameUpdate, OutputGeometry, Zone};
 use sola_core::KeyCode;
 use tracing::{info, warn};
 
@@ -32,6 +32,10 @@ pub struct ZoningState {
     /// Consumed by `take_zones_update` so the caller knows to emit
     /// a fresh `Topic::Zones` for persistence.
     zones_dirty: bool,
+    /// Last known rectangle of each floating app, keyed by app_id. Fed by
+    /// `Topic::WindowGeometry` for floating windows and by `Topic::FloatGeometry`
+    /// replay at startup; consumed by `apply_config_zone` to restore on relaunch.
+    pub float_geometry: HashMap<String, FloatGeometry>,
 }
 
 impl ZoningState {
@@ -43,6 +47,7 @@ impl ZoningState {
             window_zones: HashMap::new(),
             config_applied: HashSet::new(),
             zones_dirty: false,
+            float_geometry: HashMap::new(),
         }
     }
 
@@ -88,6 +93,35 @@ impl ZoningState {
         for wid in removed_wids {
             self.config_applied.remove(wid);
         }
+    }
+
+    /// Record a floating window's geometry against its app_id. Returns true if a
+    /// new/changed `FloatGeometry` should be persisted. Ignores windows that are
+    /// not currently floating — only floats remember their rectangle.
+    pub fn note_window_geometry(
+        &mut self,
+        app_id: &str,
+        window_id: u32,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) -> bool {
+        if self.window_zones.get(&window_id) != Some(&Zone::Float) {
+            return false;
+        }
+        let next = FloatGeometry {
+            app_id: app_id.to_string(),
+            x,
+            y,
+            width,
+            height,
+        };
+        if self.float_geometry.get(app_id) == Some(&next) {
+            return false;
+        }
+        self.float_geometry.insert(app_id.to_string(), next);
+        true
     }
 
     /// Apply the config zone to a window if its app has a saved zone
@@ -485,6 +519,22 @@ mod tests {
         assert_eq!(s.window_zones.get(&7).copied(), Some(Zone::Float));
         // Marked applied so it isn't retried every Windows event.
         assert!(s.apply_config_zone("UnrealEditor", 7).is_none());
+    }
+
+    #[test]
+    fn floating_window_geometry_is_recorded_by_app() {
+        let mut z = ZoningState::new();
+        z.window_zones.insert(7, Zone::Float);
+        let changed = z.note_window_geometry("UnrealEditor", 7, 10, 20, 1280, 800);
+        assert!(changed);
+        let g = z.float_geometry.get("UnrealEditor").expect("recorded");
+        assert_eq!((g.x, g.y, g.width, g.height), (10, 20, 1280, 800));
+        // Re-recording the same rectangle is a no-op (nothing to persist).
+        assert!(!z.note_window_geometry("UnrealEditor", 7, 10, 20, 1280, 800));
+        // A non-floating window's geometry is ignored.
+        z.window_zones.insert(8, Zone::Left);
+        assert!(!z.note_window_geometry("Helium", 8, 0, 0, 100, 100));
+        assert!(z.float_geometry.get("Helium").is_none());
     }
 
     #[test]
