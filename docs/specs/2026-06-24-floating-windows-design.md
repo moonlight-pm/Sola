@@ -32,6 +32,15 @@ implemented** — see `2026-06-24-floating-windows-phase-b-plan.md`. Phase D
   (`apply_config_zone`, no saved geometry) keeps the centered default; relaunch
   still restores saved geometry. The first-`dimensions` gate still applies, so
   none of this can reproduce the resize-before-init failure mode.
+- **`emit_all_frames` must skip floats.** `emit_all_frames` re-broadcasts a
+  frame for every known window on each `Windows`/output event. For a floating
+  window that meant `window_frame` → `compute_frame(Zone::Float)` →
+  `Float.rect()` `(0,0,0,0)` → a 0×0 frame → `propose_dimensions(0,0)` → the
+  client self-sizes to full screen, clobbering the inset `handle_key` had just
+  applied (the bug behind "still floating to full screen"). `window_frame` now
+  returns `None` for a float and `emit_all_frames` skips floats outright
+  (`ZoningState::is_floating`), leaving a floated window at the size it was
+  given.
 - **`Meta`+numpad-`*` keysym fix.** `keycode_to_keysym` (sola-shell) had no arm
   for `KP_MULTIPLY`, so the Float chord registered as keysym `63` (`?`) and
   River never matched the numpad `*` — the same class of bug as the arrow keys.

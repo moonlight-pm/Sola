@@ -479,6 +479,13 @@ impl Shell {
         }
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID { continue; }
+            // A floating window is sized once when floated; re-framing it here
+            // would clobber it — Float's zone rect is 0×0, and the sola-
+            // fallback below is full-screen. Leave it at the size
+            // handle_key/apply_config_zone gave it.
+            if self.zoning.is_floating(w.window_id) {
+                continue;
+            }
             if let Some(f) = self.zoning.window_frame(w.window_id) {
                 frames.push(f);
             } else if w.app_id.starts_with("sola-") {

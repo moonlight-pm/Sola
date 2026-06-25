@@ -321,8 +321,22 @@ impl ZoningState {
 
     pub fn window_frame(&self, window_id: u32) -> Option<FrameUpdate> {
         let zone = self.window_zones.get(&window_id)?;
+        // A floating window has no zone-computed frame — Float's rect is 0×0,
+        // which would size the window to nothing (clients then self-size to
+        // full screen). Its size is owned by handle_key/apply_config_zone, so
+        // callers must not re-impose a frame here.
+        if matches!(zone, Zone::Float) {
+            return None;
+        }
         let (w, h) = self.output_size?;
         Some(compute_frame(*zone, window_id, w, h))
+    }
+
+    /// True while the window is floating. Callers that re-broadcast frames
+    /// (e.g. `emit_all_frames`) skip these so a float keeps the size it was
+    /// given instead of being clobbered back to a default/zero frame.
+    pub fn is_floating(&self, window_id: u32) -> bool {
+        matches!(self.window_zones.get(&window_id), Some(Zone::Float))
     }
 }
 
@@ -694,6 +708,21 @@ mod tests {
             .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(5))
             .expect("float must emit a frame");
         assert_eq!((frame.x, frame.y, frame.width, frame.height), (350, 250, 700, 500));
+    }
+
+    #[test]
+    fn window_frame_is_none_for_floating_window() {
+        // emit_all_frames must not re-frame a float: Float's zone rect is 0×0,
+        // which would size the window to nothing and the client would self-size
+        // to full screen. Regression for "float keeps flouting to full screen".
+        let mut s = state_with_output(1920, 1080);
+        s.window_zones.insert(7, Zone::Float);
+        assert!(s.window_frame(7).is_none(), "float must not be zone-framed");
+        assert!(s.is_floating(7));
+        // A normally-zoned window still produces a frame.
+        s.window_zones.insert(8, Zone::Right);
+        assert!(s.window_frame(8).is_some());
+        assert!(!s.is_floating(8));
     }
 
     #[test]
