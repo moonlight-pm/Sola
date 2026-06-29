@@ -10,7 +10,11 @@ use tracing::info;
 use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
     backend::ObjectId,
-    protocol::{wl_output, wl_registry, wl_seat},
+    protocol::{wl_output, wl_pointer, wl_registry, wl_seat},
+};
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+    wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
 };
 
 use crate::bus::BusClient;
@@ -134,6 +138,16 @@ pub struct AppData {
     pub move_binding: Option<RiverPointerBindingV1>,
     /// Meta+RightDrag resize binding.
     pub resize_binding: Option<RiverPointerBindingV1>,
+    /// `wp_cursor_shape_manager_v1`, bound from the registry. Used to make a
+    /// cursor-shape device for the seat's pointer.
+    pub cursor_shape_manager: Option<WpCursorShapeManagerV1>,
+    /// The seat's `wl_pointer`, obtained from `wl_seat`. Held alive so the
+    /// cursor-shape device stays valid; its own events are ignored.
+    pub wl_pointer: Option<wl_pointer::WlPointer>,
+    /// Cursor-shape device for `wl_pointer`. During an op river uses the WM's
+    /// pointer cursor (no client has focus), so `set_shape` here drives the
+    /// move/resize cursor.
+    pub cursor_device: Option<WpCursorShapeDeviceV1>,
 }
 
 impl AppData {
@@ -171,6 +185,9 @@ impl AppData {
             op: None,
             move_binding: None,
             resize_binding: None,
+            cursor_shape_manager: None,
+            wl_pointer: None,
+            cursor_device: None,
         }
     }
 }
@@ -372,6 +389,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let s: wl_seat::WlSeat = proxy.bind(name, version.min(7), qh, ());
                     state.wl_seat = Some(s);
                 }
+                "wp_cursor_shape_manager_v1" => {
+                    let mgr: WpCursorShapeManagerV1 = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound wp_cursor_shape_manager_v1");
+                    state.cursor_shape_manager = Some(mgr);
+                }
                 "zwlr_output_manager_v1" => {
                     let mgr: ZwlrOutputManagerV1 = proxy.bind(name, version.min(4), qh, ());
                     info!(%version, "bound zwlr_output_manager_v1");
@@ -532,5 +554,46 @@ impl Dispatch<RiverPointerBindingV1, op::OpKind> for AppData {
             Event::Pressed => op::on_pressed(state, *kind),
             Event::Released => op::on_released(state),
         }
+    }
+}
+
+
+impl Dispatch<wl_pointer::WlPointer, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &wl_pointer::WlPointer,
+        _: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // The WM owns no surfaces, so its pointer rarely receives events; the
+        // pointer object exists only to anchor the cursor-shape device.
+    }
+}
+
+impl Dispatch<WpCursorShapeManagerV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &WpCursorShapeManagerV1,
+        _: <WpCursorShapeManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // wp_cursor_shape_manager_v1 has no events.
+    }
+}
+
+impl Dispatch<WpCursorShapeDeviceV1, ()> for AppData {
+    fn event(
+        _: &mut Self,
+        _: &WpCursorShapeDeviceV1,
+        _: <WpCursorShapeDeviceV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // wp_cursor_shape_device_v1 has no events.
     }
 }

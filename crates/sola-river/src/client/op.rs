@@ -14,6 +14,7 @@
 //! smoke, like the rest of the wayland wiring.
 
 use crate::client::AppData;
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 
 /// Which interactive operation a pointer binding triggers. Doubles as the
 /// pointer binding's user-data, so `pressed`/`released` know which fired.
@@ -253,12 +254,57 @@ pub fn ensure_pointer_bindings(state: &mut AppData) {
         state.resize_binding = Some(b);
         tracing::info!("enabled Meta+RightDrag resize binding");
     }
+    ensure_cursor_device(state);
 }
 
-// Cursor feedback is wired in a later step (wp-cursor-shape-v1); these are the
-// hook points op `drive` calls on op start/end.
-fn set_cursor(_state: &mut AppData, _kind: OpKind, _corner: Option<Corner>) {}
-fn clear_cursor(_state: &mut AppData) {}
+/// Create the cursor-shape device for the seat's pointer once both the seat and
+/// the cursor-shape manager have been advertised. Idempotent. During an op
+/// river uses the WM's pointer cursor (no client holds focus), so this device's
+/// `set_shape` drives the move/resize cursor.
+fn ensure_cursor_device(state: &mut AppData) {
+    if state.cursor_device.is_some() {
+        return;
+    }
+    let (Some(seat), Some(mgr), Some(qh)) = (
+        state.wl_seat.clone(),
+        state.cursor_shape_manager.clone(),
+        state.qh.clone(),
+    ) else {
+        return;
+    };
+    let pointer = seat.get_pointer(&qh, ());
+    let device = mgr.get_pointer(&pointer, &qh, ());
+    state.wl_pointer = Some(pointer);
+    state.cursor_device = Some(device);
+    tracing::info!("created cursor-shape device for move/resize feedback");
+}
+
+/// The cursor shape for an op: a move cursor for a move, or the diagonal resize
+/// cursor matching the grabbed corner.
+fn shape_for(kind: OpKind, corner: Option<Corner>) -> Shape {
+    match kind {
+        OpKind::Move => Shape::Move,
+        OpKind::Resize => match corner.unwrap_or(Corner::BottomRight) {
+            Corner::TopLeft | Corner::BottomRight => Shape::NwseResize,
+            Corner::TopRight | Corner::BottomLeft => Shape::NeswResize,
+        },
+    }
+}
+
+/// Show the move/resize cursor for the duration of the op. River ignores the
+/// `set_shape` serial for the WM during an op (seat v4), so 0 is fine.
+fn set_cursor(state: &mut AppData, kind: OpKind, corner: Option<Corner>) {
+    if let Some(dev) = state.cursor_device.as_ref() {
+        dev.set_shape(0, shape_for(kind, corner));
+    }
+}
+
+/// Restore the default cursor when the op ends.
+fn clear_cursor(state: &mut AppData) {
+    if let Some(dev) = state.cursor_device.as_ref() {
+        dev.set_shape(0, Shape::Default);
+    }
+}
 
 #[cfg(test)]
 mod tests {

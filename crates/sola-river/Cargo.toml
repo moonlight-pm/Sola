@@ -14,6 +14,10 @@ tracing = "0.1"
 wayland-client = "0.31"
 wayland-backend = "0.3"
 wayland-scanner = "0.31"
+# Cursor-shape (wp-cursor-shape-v1) for move/resize cursor feedback. The
+# cursor_shape module is gated behind staging+unstable (it references the
+# tablet zv2 interface).
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 calloop = "0.14"
 calloop-wayland-source = "0.4"
 thiserror = "2"
