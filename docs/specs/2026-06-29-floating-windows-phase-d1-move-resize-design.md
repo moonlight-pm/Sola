@@ -1,7 +1,7 @@
 # Floating Windows — Phase D1: Interactive Move/Resize — Design
 
 **Date:** 2026-06-29
-**Status:** Designed; implementing. Part of the floating-windows feature
+**Status:** Implemented (commits `e8b0819` → `88a805a`). Part of the floating-windows feature
 (`2026-06-24-floating-windows-design.md` §6 / Phase D). This is the **D1** slice
 only — river-native interactive move/resize. The shell-drawn titlebar (D2) and
 window menu (D3) remain future work.
