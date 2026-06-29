@@ -39,6 +39,13 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
                 // an interactive resize starts.
                 state.pointer_pos = Some((x, y));
             }
+            Event::OpDelta { dx, dy } => {
+                // Total cumulative motion since the op started.
+                crate::client::op::on_delta(state, dx, dy);
+            }
+            Event::OpRelease => {
+                crate::client::op::on_released(state);
+            }
             Event::WindowInteraction { window } => {
                 if let Some(&id) = state.windows_by_object.get(&window.id()) {
                     debug!(window_id = id, "window_interaction");

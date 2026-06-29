@@ -19,6 +19,12 @@ pub fn emit_windows(state: &mut AppData) {
 /// No-op until both size and position are known. Callers gate on the registry
 /// setter returning `true` (changed) so this fires only on a real move/resize.
 pub fn emit_geometry(state: &mut AppData, window_id: u32) {
+    // During an interactive move/resize we drive River live but stay quiet on
+    // the bus, then emit once when the op ends (op::drive clears `op` first).
+    // This keeps the shell from persisting FloatGeometry on every drag frame.
+    if state.op.is_some() {
+        return;
+    }
     let Some(g) = state.registry.geometry(window_id) else {
         return;
     };

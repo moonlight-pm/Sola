@@ -31,6 +31,7 @@ use crate::registry::{ChordRegistry, WindowRegistry};
 pub mod binding;
 pub mod input;
 pub mod manage;
+pub mod op;
 pub mod output_config;
 pub mod screenshot;
 pub mod seat;
@@ -126,6 +127,13 @@ pub struct AppData {
     /// Latest pointer position in compositor logical coords (`pointer_position`
     /// event). Used to pick the grabbed corner when a resize starts.
     pub pointer_pos: Option<(i32, i32)>,
+    /// The in-flight interactive move/resize, if any. See `client::op`.
+    pub op: Option<op::OpState>,
+    /// Meta+LeftDrag move binding (`river_pointer_binding_v1`), created once the
+    /// seat is available and held so it keeps receiving press/release events.
+    pub move_binding: Option<RiverPointerBindingV1>,
+    /// Meta+RightDrag resize binding.
+    pub resize_binding: Option<RiverPointerBindingV1>,
 }
 
 impl AppData {
@@ -160,6 +168,9 @@ impl AppData {
             floating: std::collections::HashSet::new(),
             pointer_window: None,
             pointer_pos: None,
+            op: None,
+            move_binding: None,
+            resize_binding: None,
         }
     }
 }
@@ -505,14 +516,21 @@ impl Dispatch<RiverDecorationV1, ()> for AppData {
 }
 
 use crate::protocol::river_window_management_v1::river_pointer_binding_v1::RiverPointerBindingV1;
-impl Dispatch<RiverPointerBindingV1, ()> for AppData {
+impl Dispatch<RiverPointerBindingV1, op::OpKind> for AppData {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         _: &RiverPointerBindingV1,
-        _: <RiverPointerBindingV1 as Proxy>::Event,
-        _: &(),
+        event: <RiverPointerBindingV1 as Proxy>::Event,
+        kind: &op::OpKind,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        use crate::protocol::river_window_management_v1::river_pointer_binding_v1::Event;
+        match event {
+            // A bound press over a floating window arms a move/resize; the op
+            // is started on the following manage sequence (op::drive).
+            Event::Pressed => op::on_pressed(state, *kind),
+            Event::Released => op::on_released(state),
+        }
     }
 }

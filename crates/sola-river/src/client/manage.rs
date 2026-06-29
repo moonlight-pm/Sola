@@ -152,6 +152,12 @@ pub fn handle_manage_start(state: &mut AppData) {
 
     apply_fullscreen_requests(state);
 
+    // Interactive move/resize: create the pointer bindings once the seat is up,
+    // then issue any pending op_start_pointer/op_end for this sequence. Both
+    // `enable` and the op requests are manage-sequence-only.
+    crate::client::op::ensure_pointer_bindings(state);
+    crate::client::op::drive(state);
+
     wm.manage_finish();
     debug!(pending_count, "manage_finish sent");
 }
