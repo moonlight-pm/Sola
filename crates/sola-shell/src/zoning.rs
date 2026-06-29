@@ -51,6 +51,10 @@ pub struct ZoningState {
     /// Fed by `Topic::WindowGeometry` (sola-river) for all windows; read by
     /// `current_rect` so an explicit float can shrink the window in place.
     pub live_geometry: HashMap<u32, WindowGeometry>,
+    /// Window IDs we last published as floating via `Topic::WindowFloating`.
+    /// Lets `take_floating_changes` emit only on an actual transition
+    /// (float ↔ unfloat), so a non-floating window never emits at all.
+    floating_emitted: HashSet<u32>,
 }
 
 impl ZoningState {
@@ -64,6 +68,7 @@ impl ZoningState {
             zones_dirty: false,
             float_geometry: HashMap::new(),
             live_geometry: HashMap::new(),
+            floating_emitted: HashSet::new(),
         }
     }
 
@@ -101,6 +106,40 @@ impl ZoningState {
         self.focused_app_id = Some(app_id);
     }
 
+
+    /// Diff each known window's float state against what was last published,
+    /// returning `(window_id, floating)` for every change so the caller can
+    /// emit `Topic::WindowFloating`. A window that has vanished from `known`
+    /// emits `floating = false` once and is then forgotten. Idempotent: a
+    /// second call with no transitions returns an empty vec.
+    pub fn take_floating_changes(&mut self, known: &[u32]) -> Vec<(u32, bool)> {
+        let mut out = Vec::new();
+        let known_set: HashSet<u32> = known.iter().copied().collect();
+        // Windows we'd published as floating that vanished: announce unfloat
+        // once, then drop tracking.
+        let gone: Vec<u32> = self
+            .floating_emitted
+            .iter()
+            .copied()
+            .filter(|w| !known_set.contains(w))
+            .collect();
+        for w in gone {
+            self.floating_emitted.remove(&w);
+            out.push((w, false));
+        }
+        for &w in known {
+            let now = self.is_floating(w);
+            let was = self.floating_emitted.contains(&w);
+            if now && !was {
+                self.floating_emitted.insert(w);
+                out.push((w, true));
+            } else if !now && was {
+                self.floating_emitted.remove(&w);
+                out.push((w, false));
+            }
+        }
+        out
+    }
     /// Forget config-zone tracking for all windows of a departed app.
     /// Pass the set of window IDs that are being removed from the registry.
     /// Called from `on_windows` when an app's windows disappear so that
@@ -459,6 +498,23 @@ mod tests {
     // Helper: compute a frame for a zone on a 1920×1080 output.
     fn frame_for(zone: Zone) -> FrameUpdate {
         compute_frame(zone, 1, 1920, 1080)
+    }
+
+    #[test]
+    fn floating_changes_emit_once_and_track_departures() {
+        let mut s = ZoningState::new();
+        // Window 7 floats → one (7, true) change; idempotent afterwards.
+        s.window_zones.insert(7, Zone::Float);
+        assert_eq!(s.take_floating_changes(&[7]), vec![(7, true)]);
+        assert!(s.take_floating_changes(&[7]).is_empty());
+        // Unfloat (snap to a real zone) → (7, false).
+        s.window_zones.insert(7, Zone::Left);
+        assert_eq!(s.take_floating_changes(&[7]), vec![(7, false)]);
+        // Re-float, then the window departs → emits (7, false) once, forgets.
+        s.window_zones.insert(7, Zone::Float);
+        assert_eq!(s.take_floating_changes(&[7]), vec![(7, true)]);
+        assert_eq!(s.take_floating_changes(&[]), vec![(7, false)]);
+        assert!(s.take_floating_changes(&[]).is_empty());
     }
 
     // Usable height for most zones (below menubar).

@@ -10,7 +10,7 @@ use iced::Task;
 use sola_bus::topics::{
     AppMenuPayload, Application, ChordEvent, FloatGeometry, FocusTarget, LaunchResultPayload,
     MouseClickedPayload, MouseEnteredPayload, OutputGeometry, Topic,
-    UserAppExitedPayload, Window, WindowGeometry,
+    UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -164,6 +164,9 @@ impl Shell {
                 }
             }
         }
+
+        // Tell sola-river which of these windows are floating (for move/resize).
+        self.sync_window_floating();
 
         // Emit frames for menubar and all explicitly-zoned windows.
         self.emit_all_frames();
@@ -519,6 +522,8 @@ impl Shell {
                     let _ = bus.emit(Topic::FloatGeometry(fg));
                 }
             }
+            // Announce the float/unfloat to sola-river (gates move/resize).
+            self.sync_window_floating();
             return Task::none();
         }
 
@@ -658,6 +663,7 @@ impl Shell {
                 }
             }
         }
+        self.sync_window_floating();
     }
 
     /// A window moved or resized (Topic::WindowGeometry from sola-river). If the
@@ -691,5 +697,25 @@ impl Shell {
     /// (persistent replay at startup, or our own echo after recording).
     fn on_float_geometry(&mut self, f: FloatGeometry) {
         self.zoning.float_geometry.insert(f.app_id.clone(), f);
+    }
+
+    /// Publish `Topic::WindowFloating` for any window whose float state changed
+    /// since the last call, so sola-river can gate interactive move/resize on
+    /// the window under the pointer. Called after every handler that can change
+    /// a window's zone (float key, window appearance, zone-map replay).
+    fn sync_window_floating(&mut self) {
+        let ids: Vec<u32> = self.known_windows.iter().map(|w| w.window_id).collect();
+        let changes = self.zoning.take_floating_changes(&ids);
+        if changes.is_empty() {
+            return;
+        }
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            for (window_id, floating) in changes {
+                let _ = bus.emit(Topic::WindowFloating(WindowFloating {
+                    window_id,
+                    floating,
+                }));
+            }
+        }
     }
 }
