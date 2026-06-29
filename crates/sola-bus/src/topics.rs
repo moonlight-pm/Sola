@@ -115,6 +115,17 @@ pub struct WindowGeometry {
     pub height: i32,
 }
 
+/// Whether a window is currently floating (shell → sola-river). Carried by the
+/// sticky `Topic::WindowFloating`, keyed by `window_id`, so sola-river can gate
+/// interactive move/resize on the window under the pointer without learning the
+/// shell's zone vocabulary. The shell sets `floating: false` when the window
+/// leaves the Float zone; sola-river also drops it when the window closes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowFloating {
+    pub window_id: u32,
+    pub floating: bool,
+}
+
 /// A floating app's remembered rectangle, keyed by `app_id`. Carried by the
 /// persistent `Topic::FloatGeometry` so a floating window restores to where it
 /// last was across relaunch and across a full restart. Kept separate from the
@@ -528,6 +539,12 @@ define_topics! {
     #[sticky(keys = [window_id])]
     WindowGeometry(WindowGeometry),
 
+    // Whether a window is floating (shell → sola-river). Sticky and keyed by
+    // window_id so sola-river retains the bit per window and can gate
+    // interactive move/resize at pointer-press time without a bus round-trip.
+    #[sticky(keys = [window_id])]
+    WindowFloating(WindowFloating),
+
     // Mouse events (sola-river → shell)
     MouseEntered(MouseEnteredPayload),
     MouseLeft,
@@ -859,6 +876,18 @@ mod tests {
     fn window_geometry_is_sticky_not_persistent() {
         use crate::topic::Behavior;
         assert_eq!(TopicKind::WindowGeometry.behavior(), Behavior::Sticky);
+    }
+
+    #[test]
+    fn window_floating_is_sticky_and_keyed() {
+        use crate::topic::Behavior;
+        assert_eq!(TopicKind::WindowFloating.behavior(), Behavior::Sticky);
+        let wf = WindowFloating {
+            window_id: 7,
+            floating: true,
+        };
+        assert_eq!(wf.window_id, 7);
+        assert!(wf.floating);
     }
 
     #[test]
