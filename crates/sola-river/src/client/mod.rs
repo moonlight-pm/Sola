@@ -115,6 +115,17 @@ pub struct AppData {
     /// dying window — so we must clear focus ourselves when this window
     /// receives a `closed` event.
     pub focused_window: Option<u32>,
+    /// Windows the shell has marked floating (`Topic::WindowFloating`). Gates
+    /// interactive move/resize: only a floating window under the pointer can be
+    /// Meta-dragged. Dropped when the window closes.
+    pub floating: std::collections::HashSet<u32>,
+    /// Window currently under the pointer, tracked from `river_seat_v1`
+    /// `pointer_enter`/`pointer_leave`. A move/resize op targets this window at
+    /// button-press time.
+    pub pointer_window: Option<u32>,
+    /// Latest pointer position in compositor logical coords (`pointer_position`
+    /// event). Used to pick the grabbed corner when a resize starts.
+    pub pointer_pos: Option<(i32, i32)>,
 }
 
 impl AppData {
@@ -146,6 +157,9 @@ impl AppData {
             qh: None,
             conn: None,
             focused_window: None,
+            floating: std::collections::HashSet::new(),
+            pointer_window: None,
+            pointer_pos: None,
         }
     }
 }
@@ -197,6 +211,13 @@ pub fn bus_tick(state: &mut AppData) {
                 tracing::debug!(count = entries.len(), "got Composition");
                 let ids: Vec<u32> = entries.into_iter().map(|e| e.window_id).collect();
                 state.pending.set_composition(ids);
+            }
+            sola_bus::topics::Topic::WindowFloating(wf) => {
+                if wf.floating {
+                    state.floating.insert(wf.window_id);
+                } else {
+                    state.floating.remove(&wf.window_id);
+                }
             }
             sola_bus::topics::Topic::Frame(f) => {
                 let app_id = state.registry.app_id_for(f.window_id).unwrap_or("?");

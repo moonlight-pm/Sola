@@ -143,6 +143,10 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 state.deferred_size.remove(&window_id);
                 state.last_proposed.remove(&window_id);
                 state.last_position.remove(&window_id);
+                state.floating.remove(&window_id);
+                if state.pointer_window == Some(window_id) {
+                    state.pointer_window = None;
+                }
                 // Drop the window's sticky geometry so a late subscriber can't
                 // resurrect a closed window's rectangle. Retract keys on
                 // window_id; the other fields are ignored.

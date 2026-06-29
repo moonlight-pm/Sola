@@ -22,6 +22,8 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
             Event::PointerEnter { window } => {
                 if let Some(&id) = state.windows_by_object.get(&window.id()) {
                     debug!(window_id = id, "pointer_enter");
+                    // Remember the hovered window so a Meta-drag knows its target.
+                    state.pointer_window = Some(id);
                     state
                         .bus
                         .emit(Topic::MouseEntered(MouseEnteredPayload { window_id: id }));
@@ -29,7 +31,13 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
             }
             Event::PointerLeave => {
                 debug!("pointer_leave");
+                state.pointer_window = None;
                 state.bus.emit(Topic::MouseLeft);
+            }
+            Event::PointerPosition { x, y } => {
+                // Latest pointer position; used to pick the grabbed corner when
+                // an interactive resize starts.
+                state.pointer_pos = Some((x, y));
             }
             Event::WindowInteraction { window } => {
                 if let Some(&id) = state.windows_by_object.get(&window.id()) {
