@@ -127,17 +127,27 @@ pub fn resized(start: Rect, corner: Corner, dx: i32, dy: i32) -> Rect {
 
 // --- Lifecycle (folds into AppData) --------------------------------------
 
-/// A pointer binding fired. If the hovered window is floating and no op is
-/// already running, capture its rectangle and arm an op. `op_start_pointer`
-/// itself is issued on the next manage sequence by `drive`.
 pub fn on_pressed(state: &mut AppData, kind: OpKind) {
+    // A bound press over a non-floating window (or empty space) is a normal,
+    // frequent gesture — Meta+click is a reserved WM gesture that we simply
+    // swallow — so the gate logging is debug, not info. The op lifecycle itself
+    // (`begin interactive op`) is the info-level signal.
+    tracing::debug!(
+        ?kind,
+        pointer_window = ?state.pointer_window,
+        floating = ?state.floating,
+        op_active = state.op.is_some(),
+        "Meta-drag pointer binding pressed"
+    );
     if state.op.is_some() {
         return;
     }
     let Some(wid) = state.pointer_window else {
+        tracing::debug!("Meta-drag ignored: no window under pointer");
         return;
     };
     if !state.floating.contains(&wid) {
+        tracing::debug!(window_id = wid, "Meta-drag ignored: window not floating");
         return; // move/resize is floating-only
     }
     let Some(g) = state.registry.geometry(wid) else {
