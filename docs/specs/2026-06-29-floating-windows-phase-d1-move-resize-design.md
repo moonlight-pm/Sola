@@ -1,7 +1,7 @@
 # Floating Windows — Phase D1: Interactive Move/Resize — Design
 
 **Date:** 2026-06-29
-**Status:** Implemented (commits `e8b0819` → `88a805a`). Part of the floating-windows feature
+**Status:** Implemented (commits `e8b0819` → `88a805a`, fixed in `eeee97b`). Part of the floating-windows feature
 (`2026-06-24-floating-windows-design.md` §6 / Phase D). This is the **D1** slice
 only — river-native interactive move/resize. The shell-drawn titlebar (D2) and
 window menu (D3) remain future work.
@@ -180,6 +180,9 @@ once per drag. (Live bus tracking during a drag — wanted by the future D2 titl
 - `crates/sola-river/src/client/mod.rs` — `AppData` fields; `RiverPointerBindingV1`
   `pressed`/`released` → op; `bus_tick` arm for `WindowFloating`; bind the
   cursor-shape global; create the two pointer bindings.
+- `crates/sola-river/src/main.rs` — **subscribe to `TopicKind::WindowFloating`**.
+  The `bus_tick` arm is dead without it (the bus only delivers subscribed
+  topics); omitting this was the bug fixed in `eeee97b`.
 - `crates/sola-river/src/client/manage.rs` — drive op start/end + binding enable in
   the manage sequence; suppress `emit_geometry` mid-op; apply op rects.
 - `crates/sola-river/src/translator.rs` — pointer-binding create+enable helper;
