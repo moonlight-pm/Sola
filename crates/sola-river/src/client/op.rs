@@ -14,6 +14,7 @@
 //! smoke, like the rest of the wayland wiring.
 
 use crate::client::AppData;
+use crate::protocol::river_window_management_v1::river_window_v1::Edges;
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::Shape;
 
 /// Which interactive operation a pointer binding triggers. Doubles as the
@@ -139,35 +140,55 @@ pub fn on_pressed(state: &mut AppData, kind: OpKind) {
         op_active = state.op.is_some(),
         "Meta-drag pointer binding pressed"
     );
-    if state.op.is_some() {
-        return;
-    }
     let Some(wid) = state.pointer_window else {
         tracing::debug!("Meta-drag ignored: no window under pointer");
         return;
     };
-    if !state.floating.contains(&wid) {
-        tracing::debug!(window_id = wid, "Meta-drag ignored: window not floating");
+    // corner=None → begin_for picks it from pointer_pos for a resize.
+    begin_for(state, kind, wid, None);
+}
+
+/// Map an xdg-shell resize `edges` bitfield to the corner our resize op grabs.
+/// The protocol guarantees `edges` never sets both top+bottom or both
+/// left+right; a single-edge request collapses to the corner on that edge
+/// (free axis defaults to right/bottom). `none` → BottomRight.
+pub fn edges_to_corner(edges: Edges) -> Corner {
+    match (edges.contains(Edges::Top), edges.contains(Edges::Left)) {
+        (true, true) => Corner::TopLeft,
+        (true, false) => Corner::TopRight,
+        (false, true) => Corner::BottomLeft,
+        (false, false) => Corner::BottomRight,
+    }
+}
+
+/// Begin an interactive op on an explicit window. Shared by the Meta-drag
+/// pointer-binding path (`on_pressed`) and the CSD-request path
+/// (`pointer_move_requested` / `pointer_resize_requested`). Floating-gated.
+///
+/// `corner`: `Some(c)` uses that corner (resize from requested edges);
+/// `None` on a resize falls back to `pick_corner` from the pointer position;
+/// ignored for a move.
+pub fn begin_for(state: &mut AppData, kind: OpKind, window_id: u32, corner: Option<Corner>) {
+    if state.op.is_some() {
+        return;
+    }
+    if !state.floating.contains(&window_id) {
+        tracing::debug!(window_id, ?kind, "interactive op ignored: window not floating");
         return; // move/resize is floating-only
     }
-    let Some(g) = state.registry.geometry(wid) else {
-        tracing::debug!(window_id = wid, "Meta-drag ignored: geometry unknown");
+    let Some(g) = state.registry.geometry(window_id) else {
+        tracing::debug!(window_id, "interactive op ignored: geometry unknown");
         return;
     };
-    let start = Rect {
-        x: g.x,
-        y: g.y,
-        w: g.width,
-        h: g.height,
-    };
+    let start = Rect { x: g.x, y: g.y, w: g.width, h: g.height };
     let corner = match kind {
-        OpKind::Resize => Some(pick_corner(start, state.pointer_pos)),
+        OpKind::Resize => corner.or_else(|| Some(pick_corner(start, state.pointer_pos))),
         OpKind::Move => None,
     };
-    tracing::info!(window_id = wid, ?kind, ?corner, ?start, "begin interactive op");
+    tracing::info!(window_id, ?kind, ?corner, ?start, "begin interactive op");
     state.op = Some(OpState {
         kind,
-        window_id: wid,
+        window_id,
         start,
         corner,
         started: false,
@@ -360,5 +381,17 @@ mod tests {
         let r = resized(rect(100, 100, 400, 300), Corner::TopLeft, 1000, 1000);
         assert_eq!((r.w, r.h), (MIN_DIM, MIN_DIM));
         assert_eq!((r.x + r.w, r.y + r.h), (500, 400));
+    }
+
+    #[test]
+    fn edges_map_to_corners() {
+        assert_eq!(edges_to_corner(Edges::Top | Edges::Left), Corner::TopLeft);
+        assert_eq!(edges_to_corner(Edges::Top | Edges::Right), Corner::TopRight);
+        assert_eq!(edges_to_corner(Edges::Bottom | Edges::Left), Corner::BottomLeft);
+        assert_eq!(edges_to_corner(Edges::Bottom | Edges::Right), Corner::BottomRight);
+        // single-edge requests collapse to a corner on that edge
+        assert_eq!(edges_to_corner(Edges::Top), Corner::TopRight);
+        assert_eq!(edges_to_corner(Edges::Left), Corner::BottomLeft);
+        assert_eq!(edges_to_corner(Edges::empty()), Corner::BottomRight);
     }
 }
