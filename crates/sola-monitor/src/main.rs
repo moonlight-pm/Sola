@@ -60,7 +60,7 @@ fn main() -> iced::Result {
         .app_menu("Monitor", [("quit", "Quit Monitor", KeyCode::Q.meta())])
         .install();
 
-    let app = iced::application(App::default, App::update, App::view)
+    let app = iced::application(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
@@ -113,6 +113,10 @@ struct App {
     /// kit's default so the first frame renders before the bus
     /// replay arrives.
     theme: Theme,
+    /// Float-state tracker so a floating Monitor draws its own titlebar.
+    float: sola_kit::FloatState,
+    /// This app's window id, learned on boot (for `iced::window::drag`).
+    window_id: Option<iced::window::Id>,
 }
 
 impl Default for App {
@@ -131,7 +135,15 @@ impl Default for App {
             last_cursor_x: None,
             drag_anchor: None,
             theme: default_theme(),
+            float: sola_kit::FloatState::new(APP_ID),
+            window_id: None,
         }
+    }
+}
+
+impl App {
+    fn boot() -> (Self, iced::Task<Msg>) {
+        (Self::default(), iced::window::latest().map(Msg::WindowReady))
     }
 }
 
@@ -213,6 +225,12 @@ enum Msg {
     CursorMoved(f32),
     /// Global mouse-button-released (only meaningful during drag).
     CursorReleased,
+    /// Window id resolved on boot (for interactive move).
+    WindowReady(Option<iced::window::Id>),
+    /// Titlebar drag started — begin an interactive move.
+    TitleDrag,
+    /// Titlebar close button.
+    TitleClose,
 }
 
 impl App {
@@ -227,6 +245,8 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::BusMessage(message) => {
+                self.float.update(&message);
+
                 // Live theme reload: any Topic::Theme delivery
                 // (sticky-replay on connect, or a later edit from
                 // sola-settings) rebuilds the iced theme and is
@@ -347,6 +367,22 @@ impl App {
                     self.drag_anchor = None;
                 }
             }
+            Msg::WindowReady(id) => {
+                self.window_id = id;
+                return Task::none();
+            }
+            Msg::TitleDrag => {
+                if let Some(id) = self.window_id {
+                    return iced::window::drag(id);
+                }
+                return Task::none();
+            }
+            Msg::TitleClose => {
+                if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                    let _ = bus.emit(Topic::CloseApp(APP_ID.into()));
+                }
+                return Task::none();
+            }
         }
         Task::none()
     }
@@ -398,7 +434,7 @@ impl App {
         // unconditionally declares the desired cursor for the duration
         // of the drag. Stack evaluates mouse_interaction top-down and
         // returns the first non-None, so the overlay wins.
-        if self.dragging_divider {
+        let content: Element<'_, Msg> = if self.dragging_divider {
             stack![
                 body,
                 mouse_area(
@@ -411,6 +447,16 @@ impl App {
             .into()
         } else {
             body
+        };
+
+        if self.float.is_floating_any() {
+            iced::widget::column![
+                sola_kit::components::titlebar::titlebar("Monitor", Msg::TitleDrag, Msg::TitleClose),
+                content,
+            ]
+            .into()
+        } else {
+            content
         }
     }
 
