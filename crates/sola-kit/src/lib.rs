@@ -28,10 +28,12 @@
 
 pub mod app;
 pub mod components;
+pub mod float;
 pub mod fonts;
 pub mod theme;
 
 pub use app::{BusSetup, QUIT_ACTION_ID, apply_theme_update, is_self_quit};
+pub use float::FloatState;
 pub use theme::default_theme;
 
 /// Re-export so consumers don't need a separate `iced` direct dep
