@@ -1288,6 +1288,7 @@ mod tests {
             Page::Popover,
             Page::Sidebar,
             Page::Split,
+            Page::Titlebar,
             Page::Toolbar,
         ];
 
@@ -1310,6 +1311,7 @@ mod tests {
                 | Page::Popover
                 | Page::Sidebar
                 | Page::Split
+                | Page::Titlebar
                 | Page::Toolbar => {}
             }
         }
