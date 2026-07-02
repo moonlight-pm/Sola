@@ -49,6 +49,7 @@ pub enum Page {
     Popover,
     Sidebar,
     Split,
+    Titlebar,
     Toolbar,
 }
 
@@ -63,6 +64,7 @@ impl Page {
         Page::Toolbar,
         Page::Text,
         Page::Button,
+        Page::Titlebar,
         Page::Badge,
         Page::Card,
         Page::Field,
@@ -91,6 +93,7 @@ impl Page {
             Page::Popover => "Popover",
             Page::Sidebar => "Sidebar",
             Page::Split => "Split",
+            Page::Titlebar => "Titlebar",
             Page::Toolbar => "Toolbar",
         }
     }
@@ -103,6 +106,7 @@ impl Page {
             Page::Divider | Page::Split | Page::Toolbar => Some("Layout"),
             Page::Text
             | Page::Button
+            | Page::Titlebar
             | Page::Badge
             | Page::Card
             | Page::Field
@@ -129,6 +133,7 @@ impl Page {
             Page::Theme | Page::Shell => &[],
             Page::Divider => &[Border, Bg],
             Page::Split => &[Bg, BgRaised, Border],
+            Page::Titlebar => &[Bg, BgRaised, Border, Fg],
             Page::Toolbar => &[Bg, BgRaised, BgHover, Border, Fg, FgMuted],
             Page::Text => &[Fg, FgMuted, Accent, Success, Warning, Danger],
             Page::Button => &[Accent, Danger, Bg, BgHover, Border, Fg],
@@ -1212,6 +1217,7 @@ impl Storybook {
             ),
             Page::Text => pages::text::view(),
             Page::Button => pages::button::view(),
+            Page::Titlebar => pages::titlebar::view(),
             Page::Badge => pages::badge::view(),
             Page::Card => pages::card::view(),
             Page::Field => pages::field::view(&self.field).map(Msg::Field),

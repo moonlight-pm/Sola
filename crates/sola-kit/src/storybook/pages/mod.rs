@@ -31,4 +31,5 @@ pub mod sidebar;
 pub mod split;
 pub mod text;
 pub mod theme;
+pub mod titlebar;
 pub mod toolbar;
