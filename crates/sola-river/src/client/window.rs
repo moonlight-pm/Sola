@@ -5,7 +5,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_chi
 
 use sola_bus::topics::{Topic, WindowGeometry};
 
-use crate::client::AppData;
+use crate::client::{op, AppData};
 use crate::protocol::river_window_management_v1::{
     river_output_v1::RiverOutputV1, river_seat_v1::RiverSeatV1,
     river_window_manager_v1::RiverWindowManagerV1, river_window_v1::RiverWindowV1,
@@ -210,6 +210,20 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     crate::translator::emit_geometry(state, window_id);
                 }
                 tracing::debug!(window_id, width, height, newly_initialized, "window dimensions");
+            }
+            Event::PointerMoveRequested { .. } => {
+                // Client-side-decoration move (e.g. a kit titlebar drag → xdg_toplevel.move).
+                // Reuse D1's move op; begin_for gates on `floating` and is a no-op for
+                // tiled windows (Meta+drag still moves those). op_start_pointer is issued
+                // on the manage_start that follows this event.
+                op::begin_for(state, op::OpKind::Move, window_id, None);
+            }
+            Event::PointerResizeRequested { edges, .. } => {
+                // CSD resize (edge/corner drag). `edges` is a bitfield enum arg
+                // (`WEnum<Edges>`); resolve it, defaulting an unknown value to a
+                // pointer-position-derived corner (None).
+                let corner = edges.into_result().ok().map(op::edges_to_corner);
+                op::begin_for(state, op::OpKind::Resize, window_id, corner);
             }
             _ => {}
         }
