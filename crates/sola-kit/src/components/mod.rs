@@ -51,6 +51,7 @@ pub mod style;
 pub mod swatch;
 pub mod text;
 pub mod text_input;
+pub mod titlebar;
 pub mod toolbar;
 
 pub use badge::{Tone, badge};
@@ -72,4 +73,5 @@ pub use sidebar::{
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::split;
 pub use swatch::{swatch, swatch_sized};
+pub use titlebar::titlebar;
 pub use toolbar::{toolbar_button, toolbar_button_msg};
