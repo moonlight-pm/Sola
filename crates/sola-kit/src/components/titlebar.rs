@@ -8,7 +8,7 @@
 //! Borders/fills only — no drop shadow (they render hard here).
 
 use iced::widget::{Space, button, container, mouse_area, row, text};
-use iced::{Alignment, Border, Element, Length, Theme};
+use iced::{Alignment, Border, Element, Length, Padding, Theme};
 
 use crate::components::button as kit_btn;
 use crate::components::text as kit_text;
@@ -30,11 +30,12 @@ where
         .style(kit_btn::ghost)
         .on_press(on_close);
 
+    // Left inset for the label; the close button's own right padding provides
+    // the matching inset on the right, so both content edges sit 8px in.
     let bar = container(
         row![label, Space::new().width(Length::Fill), close]
             .align_y(Alignment::Center)
-            .spacing(8)
-            .padding([0, 8]),
+            .padding(Padding::ZERO.left(8.0)),
     )
     .width(Length::Fill)
     .height(Length::Fixed(HEIGHT))

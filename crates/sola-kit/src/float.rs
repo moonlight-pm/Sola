@@ -35,14 +35,18 @@ impl FloatState {
     /// Fold one bus message. Call from the app's bus-message update arm.
     pub fn update(&mut self, msg: &Message) {
         match Topic::parse(msg) {
-            // Windows is the full list each time — rebuild so closed windows drop.
+            // Windows is the full list each time — rebuild the title map and
+            // prune the float set so closed windows' ids don't linger.
             Some(Topic::Windows(windows)) => {
                 self.ids_by_title.clear();
+                let mut live = HashSet::new();
                 for w in windows {
+                    live.insert(w.window_id);
                     if w.app_id == self.app_id {
                         self.ids_by_title.insert(w.title, w.window_id);
                     }
                 }
+                self.floating.retain(|id| live.contains(id));
             }
             Some(Topic::WindowFloating(wf)) => {
                 if wf.floating {
