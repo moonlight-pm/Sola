@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::{LineHeight, Shaping};
-use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, mouse};
+use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, keyboard, mouse};
 
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
@@ -475,6 +475,17 @@ pub struct SelState {
     /// Whether the current drag has actually extended past its origin cell.
     /// A press+release with no movement is a plain click → clear selection.
     moved: bool,
+    /// Latest keyboard modifiers, tracked from `ModifiersChanged`. A
+    /// Shift+left-click reads this to *extend* the current selection instead of
+    /// starting a new one — the canvas sees every event, so it stays live.
+    modifiers: keyboard::Modifiers,
+}
+
+/// Whether a left-press should *extend* the current selection (Shift held with
+/// something already selected) rather than start a fresh one. Pulled out of the
+/// event handler so the decision has a unit test without standing up a `Term`.
+fn extends_selection(shift: bool, has_selection: bool) -> bool {
+    shift && has_selection
 }
 
 impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
@@ -500,6 +511,12 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
+        // Track modifiers from keyboard events so a Shift-click can extend the
+        // selection. Observe only — return `None` so other widgets still see it.
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) = event {
+            state.modifiers = *mods;
+            return None;
+        }
         let Event::Mouse(mouse_event) = event else {
             return None;
         };
@@ -524,10 +541,26 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 };
                 let (point, side) = point_at(pos);
                 let mut term = self.term.lock();
-                term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+                // Shift+click extends the existing selection from its original
+                // anchor (`Selection::update` moves only the far end), so a
+                // selection can grow past one viewport: select, scroll, then
+                // Shift+click to continue. Without Shift — or with nothing
+                // selected yet — start a fresh selection.
+                let extended = if extends_selection(state.modifiers.shift(), term.selection.is_some())
+                {
+                    if let Some(sel) = term.selection.as_mut() {
+                        sel.update(point, side);
+                    }
+                    true
+                } else {
+                    term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+                    false
+                };
                 drop(term);
                 state.dragging = true;
-                state.moved = false;
+                // A Shift-extend is deliberate — keep it on release even without
+                // a drag. A fresh click that never moves stays a deselect.
+                state.moved = extended;
                 Some(canvas::Action::publish(self.on_select.clone()).and_capture())
             }
             mouse::Event::CursorMoved { .. } if state.dragging => {
@@ -975,6 +1008,17 @@ mod tests {
         // Col 3 starts at PAD + 3*9 = 33; half is at +4.5.
         assert_eq!(cell_side(34.0, 3, m), Side::Left); // 1px in → left half.
         assert_eq!(cell_side(40.0, 3, m), Side::Right); // 7px in → right half.
+    }
+
+    #[test]
+    fn extends_selection_only_on_shift_with_existing() {
+        // Shift + an existing selection → continue it (the reported bug).
+        assert!(extends_selection(true, true));
+        // Shift but nothing selected yet → start fresh (no anchor to extend).
+        assert!(!extends_selection(true, false));
+        // No Shift → always a fresh selection, even over an existing one.
+        assert!(!extends_selection(false, true));
+        assert!(!extends_selection(false, false));
     }
 
     #[test]
