@@ -216,9 +216,23 @@ impl Session {
         // `cargo make install <app>` reloads the running app.
         cmd.env_remove("SOLA_NO_SELF_WATCH");
 
-        // Inherit stdio: systemd-run proxies the scope's stdio to its
-        // own, so this lands in the journal alongside sola-session.
+        // Capture the app's own stdout+stderr to a durable per-app log at
+        // `/opt/sola/log/app-<id>.log`. Without this the scope's output is
+        // lost, so an app that dies during restore before it can log anything
+        // itself (a cold-boot GPU/wayland race, a panic before its own tracing
+        // hook is armed, an `iced::Result` error) leaves nothing to diagnose.
+        // Always on — no flag to remember. Falls back to inheriting
+        // sola-session's stdio if the log file can't be opened.
         cmd.stdin(Stdio::null());
+        if let Some(out) = app_log_file(&app_id) {
+            match out.try_clone() {
+                Ok(err) => {
+                    cmd.stdout(Stdio::from(out));
+                    cmd.stderr(Stdio::from(err));
+                }
+                Err(e) => warn!(%app_id, %e, "app capture: fd clone failed, inheriting stdio"),
+            }
+        }
 
         match cmd.spawn() {
             Ok(child) => {
@@ -386,6 +400,43 @@ fn sanitize_unit_segment(s: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Cap for a per-app capture log before it's truncated on the next launch, so
+/// a chatty long-lived app (steam, an editor) can't grow it without bound.
+/// Crash-on-launch output is tiny and is written *after* this truncation, so
+/// bounding here never races away an imminent failure's log.
+const APP_LOG_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Open the durable per-app capture log at `/opt/sola/log/app-<id>.log`
+/// (create + append), truncating first if it has grown past
+/// [`APP_LOG_MAX_BYTES`]. Returns `None` — leaving the caller on inherited
+/// stdio — if the directory or file can't be opened.
+fn app_log_file(app_id: &str) -> Option<std::fs::File> {
+    let dir = std::path::Path::new("/opt/sola/log");
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        warn!(%app_id, %e, "app capture: could not create /opt/sola/log");
+        return None;
+    }
+    let path = dir.join(format!("app-{}.log", sanitize_unit_segment(app_id)));
+    let oversized = std::fs::metadata(&path)
+        .map(|m| m.len() > APP_LOG_MAX_BYTES)
+        .unwrap_or(false);
+
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).write(true);
+    if oversized {
+        opts.truncate(true);
+    } else {
+        opts.append(true);
+    }
+    match opts.open(&path) {
+        Ok(f) => Some(f),
+        Err(e) => {
+            warn!(%app_id, %e, "app capture: could not open {}", path.display());
+            None
+        }
+    }
 }
 
 /// Collapse `(app_id, command)` pairs into one `SessionApp` per `app_id`,
