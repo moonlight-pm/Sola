@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::{LineHeight, Shaping};
+use iced::advanced::mouse::click;
 use iced::{Color, Font, Point, Rectangle, Renderer, Size, Theme, keyboard, mouse};
 
 use alacritty_terminal::grid::{Dimensions, Scroll};
@@ -466,9 +467,6 @@ impl<'a, Message> TermView<'a, Message> {
     }
 }
 
-/// In-progress drag state for the selection canvas. Lives in the
-/// [`canvas::Program::State`] so it survives between events without `App`
-/// owning it.
 #[derive(Default)]
 pub struct SelState {
     dragging: bool,
@@ -479,6 +477,11 @@ pub struct SelState {
     /// Shift+left-click reads this to *extend* the current selection instead of
     /// starting a new one — the canvas sees every event, so it stays live.
     modifiers: keyboard::Modifiers,
+    /// Previous left-press, for double/triple-click detection. `mouse::Click`
+    /// owns the timing + proximity thresholds; we just thread the last one
+    /// back in. Double-click selects the word (semantic) under the pointer,
+    /// triple selects the line.
+    last_click: Option<click::Click>,
 }
 
 /// Whether a left-press should *extend* the current selection (Shift held with
@@ -486,6 +489,18 @@ pub struct SelState {
 /// event handler so the decision has a unit test without standing up a `Term`.
 fn extends_selection(shift: bool, has_selection: bool) -> bool {
     shift && has_selection
+}
+/// Selection granularity for a fresh left-press, by click count: single =
+/// character range, double = word (alacritty's semantic selection, which is
+/// word-boundary aware — it stops at the configured separators, so it grabs a
+/// whole token like a password or URL), triple = the whole line. Matches the
+/// convention every terminal uses.
+fn selection_type_for_click(kind: click::Kind) -> SelectionType {
+    match kind {
+        click::Kind::Single => SelectionType::Simple,
+        click::Kind::Double => SelectionType::Semantic,
+        click::Kind::Triple => SelectionType::Lines,
+    }
 }
 
 impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
@@ -539,28 +554,35 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 let Some(pos) = cursor.position_in(bounds) else {
                     return None;
                 };
+                // Count consecutive clicks (iced owns the timing + proximity
+                // thresholds) so a double/triple-click can widen the grab.
+                let click = click::Click::new(pos, mouse::Button::Left, state.last_click);
+                state.last_click = Some(click);
+
                 let (point, side) = point_at(pos);
                 let mut term = self.term.lock();
                 // Shift+click extends the existing selection from its original
                 // anchor (`Selection::update` moves only the far end), so a
                 // selection can grow past one viewport: select, scroll, then
-                // Shift+click to continue. Without Shift — or with nothing
-                // selected yet — start a fresh selection.
-                let extended = if extends_selection(state.modifiers.shift(), term.selection.is_some())
+                // Shift+click to continue. Otherwise start a fresh selection
+                // whose granularity is set by the click count: single =
+                // character, double = word, triple = line.
+                let deliberate = if extends_selection(state.modifiers.shift(), term.selection.is_some())
                 {
                     if let Some(sel) = term.selection.as_mut() {
                         sel.update(point, side);
                     }
                     true
                 } else {
-                    term.selection = Some(Selection::new(SelectionType::Simple, point, side));
-                    false
+                    let ty = selection_type_for_click(click.kind());
+                    term.selection = Some(Selection::new(ty, point, side));
+                    // A word/line pick is deliberate — keep it on release. A
+                    // single click that never drags stays a deselect.
+                    !matches!(click.kind(), click::Kind::Single)
                 };
                 drop(term);
                 state.dragging = true;
-                // A Shift-extend is deliberate — keep it on release even without
-                // a drag. A fresh click that never moves stays a deselect.
-                state.moved = extended;
+                state.moved = deliberate;
                 Some(canvas::Action::publish(self.on_select.clone()).and_capture())
             }
             mouse::Event::CursorMoved { .. } if state.dragging => {
@@ -1013,6 +1035,18 @@ mod tests {
     #[test]
     fn extends_selection_only_on_shift_with_existing() {
         // Shift + an existing selection → continue it (the reported bug).
+
+    #[test]
+    fn click_count_sets_selection_granularity() {
+        use super::click::Kind;
+        // Single click → character-precise range (the existing behaviour).
+        assert_eq!(selection_type_for_click(Kind::Single), SelectionType::Simple);
+        // Double click → word (semantic, delimiter-aware) — grabs a token like
+        // a password or URL. This is the reported ask.
+        assert_eq!(selection_type_for_click(Kind::Double), SelectionType::Semantic);
+        // Triple click → whole line.
+        assert_eq!(selection_type_for_click(Kind::Triple), SelectionType::Lines);
+    }
         assert!(extends_selection(true, true));
         // Shift but nothing selected yet → start fresh (no anchor to extend).
         assert!(!extends_selection(true, false));
