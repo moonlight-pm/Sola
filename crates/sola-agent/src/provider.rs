@@ -96,6 +96,93 @@ pub fn build_request_body(model: &str, effort: &str, input: &[InputItem], tools:
     })
 }
 
+/// Map a Responses semantic SSE event (`event_type` + `data` JSON) to a
+/// [`StreamEvent`]. Returns `None` for events we don't consume (or unparseable
+/// data) so the stream loop can skip them.
+///
+/// Function-call correlation: `response.function_call_arguments.delta`/`.done`
+/// carry only `item_id` (surfaced in the `call_id` slot for live UI). The
+/// AUTHORITATIVE call — real `call_id`, `name`, full `arguments` — arrives on
+/// `response.output_item.done`; that is the only `FunctionCallDone` with a
+/// non-empty `name`, and the one the engine collects (see `read_sse_stream`).
+pub fn parse_sse_event(event_type: &str, data_json: &str) -> Option<StreamEvent> {
+    let v: Value = serde_json::from_str(data_json).ok()?;
+    match event_type {
+        "response.output_text.delta" => {
+            Some(StreamEvent::TextDelta(v.get("delta")?.as_str()?.to_string()))
+        }
+        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+            Some(StreamEvent::Reasoning(v.get("delta")?.as_str()?.to_string()))
+        }
+        "response.output_item.added" => {
+            let item = v.get("item")?;
+            if item.get("type")?.as_str()? != "function_call" {
+                return None;
+            }
+            Some(StreamEvent::FunctionCallStarted {
+                call_id: item.get("call_id")?.as_str()?.to_string(),
+                name: item.get("name")?.as_str()?.to_string(),
+            })
+        }
+        "response.function_call_arguments.delta" => Some(StreamEvent::FunctionCallArgsDelta {
+            call_id: v.get("item_id")?.as_str()?.to_string(),
+            delta: v.get("delta")?.as_str()?.to_string(),
+        }),
+        "response.function_call_arguments.done" => Some(StreamEvent::FunctionCallDone {
+            // item_id (not call_id); empty name so the engine skips this one and
+            // takes the authoritative `output_item.done` below.
+            call_id: v.get("item_id")?.as_str()?.to_string(),
+            name: String::new(),
+            arguments: v.get("arguments")?.as_str()?.to_string(),
+        }),
+        "response.output_item.done" => {
+            let item = v.get("item")?;
+            if item.get("type")?.as_str()? != "function_call" {
+                return None;
+            }
+            Some(StreamEvent::FunctionCallDone {
+                call_id: item.get("call_id")?.as_str()?.to_string(),
+                name: item.get("name")?.as_str()?.to_string(),
+                arguments: item
+                    .get("arguments")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        }
+        "response.completed" => {
+            let usage = v
+                .get("response")
+                .and_then(|r| r.get("usage"))
+                .or_else(|| v.get("usage"));
+            let (input_tokens, output_tokens) = match usage {
+                Some(u) => (
+                    u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0),
+                    u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0),
+                ),
+                None => (0, 0),
+            };
+            Some(StreamEvent::Completed { usage: Usage { input_tokens, output_tokens } })
+        }
+        "error" | "response.failed" | "response.error" => {
+            let msg = v
+                .get("message")
+                .and_then(|m| m.as_str())
+                .or_else(|| v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()))
+                .or_else(|| {
+                    v.get("response")
+                        .and_then(|r| r.get("error"))
+                        .and_then(|e| e.get("message"))
+                        .and_then(|m| m.as_str())
+                })
+                .unwrap_or("unknown error")
+                .to_string();
+            Some(StreamEvent::Error(msg))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +232,74 @@ mod tests {
         // tools passed through untouched
         assert_eq!(body["tools"][0]["name"], "read");
         assert_eq!(body["tools"][0]["strict"], true);
+    }
+
+    #[test]
+    fn parse_text_delta() {
+        match parse_sse_event("response.output_text.delta", r#"{"delta":"Hi"}"#) {
+            Some(StreamEvent::TextDelta(t)) => assert_eq!(t, "Hi"),
+            other => panic!("expected TextDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_function_call_started_and_done() {
+        let added = r#"{"item":{"id":"fc_1","type":"function_call","call_id":"call_abc","name":"read","arguments":""}}"#;
+        match parse_sse_event("response.output_item.added", added) {
+            Some(StreamEvent::FunctionCallStarted { call_id, name }) => {
+                assert_eq!(call_id, "call_abc");
+                assert_eq!(name, "read");
+            }
+            other => panic!("expected FunctionCallStarted, got {other:?}"),
+        }
+
+        let done = r#"{"item":{"id":"fc_1","type":"function_call","call_id":"call_abc","name":"read","arguments":"{\"path\":\"a\"}"}}"#;
+        match parse_sse_event("response.output_item.done", done) {
+            Some(StreamEvent::FunctionCallDone { call_id, name, arguments }) => {
+                assert_eq!(call_id, "call_abc");
+                assert_eq!(name, "read");
+                assert_eq!(arguments, r#"{"path":"a"}"#);
+            }
+            other => panic!("expected FunctionCallDone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_args_delta_uses_item_id() {
+        match parse_sse_event(
+            "response.function_call_arguments.delta",
+            r#"{"item_id":"fc_1","delta":"{\"p\":1}"}"#,
+        ) {
+            Some(StreamEvent::FunctionCallArgsDelta { call_id, delta }) => {
+                assert_eq!(call_id, "fc_1");
+                assert_eq!(delta, r#"{"p":1}"#);
+            }
+            other => panic!("expected FunctionCallArgsDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_completed_usage() {
+        let data = r#"{"response":{"usage":{"input_tokens":12,"output_tokens":34}}}"#;
+        match parse_sse_event("response.completed", data) {
+            Some(StreamEvent::Completed { usage }) => {
+                assert_eq!(usage.input_tokens, 12);
+                assert_eq!(usage.output_tokens, 34);
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_error_and_non_function_items() {
+        match parse_sse_event("error", r#"{"type":"error","message":"boom"}"#) {
+            Some(StreamEvent::Error(m)) => assert_eq!(m, "boom"),
+            other => panic!("expected Error, got {other:?}"),
+        }
+        // a non-function_call output item is not our concern -> None
+        let msg_item = r#"{"item":{"id":"msg_1","type":"message","role":"assistant"}}"#;
+        assert!(parse_sse_event("response.output_item.added", msg_item).is_none());
+        // unknown event -> None
+        assert!(parse_sse_event("response.created", "{}").is_none());
     }
 }
