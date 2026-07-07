@@ -124,6 +124,22 @@ fn normalize_lexically(path: &Path) -> PathBuf {
     out
 }
 
+/// Persist an always-allow grant for `tool` in the session policy. The engine
+/// calls this when the user picks "Always allow this kind". Idempotent.
+pub fn remember(policy: &mut Policy, tool: &str) {
+    let already = policy
+        .always
+        .iter()
+        .any(|r| r.tool == tool && r.scope == "always");
+    if already {
+        return;
+    }
+    policy.always.push(Rule {
+        tool: tool.to_string(),
+        scope: "always".to_string(),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +215,31 @@ mod tests {
         });
         let d = static_decision(&p, "bash", &json!({ "command": "ls" }));
         assert!(matches!(d, StaticDecision::AutoAllow), "got {d:?}");
+    }
+
+    #[test]
+    fn remember_then_bash_auto_allows() {
+        let mut p = policy();
+        assert!(
+            matches!(
+                static_decision(&p, "bash", &json!({ "command": "ls" })),
+                StaticDecision::NeedsPrompt { .. }
+            ),
+            "bash should prompt before remember()"
+        );
+
+        remember(&mut p, "bash");
+
+        assert!(
+            matches!(
+                static_decision(&p, "bash", &json!({ "command": "ls" })),
+                StaticDecision::AutoAllow
+            ),
+            "bash should auto-allow after remember()"
+        );
+
+        // idempotent — a second remember() does not duplicate the rule.
+        remember(&mut p, "bash");
+        assert_eq!(p.always.iter().filter(|r| r.tool == "bash").count(), 1);
     }
 }
