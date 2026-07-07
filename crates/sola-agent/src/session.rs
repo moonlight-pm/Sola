@@ -95,12 +95,18 @@ pub fn load_index() -> Vec<IndexEntry> {
 /// Scan every `<id>.jsonl` under the sessions dir, derive an entry per file,
 /// and rewrite `index.json`. Recovers id + derived title + file mtime;
 /// `project_root` is not stored per-node and comes back empty.
+///
+/// Tolerates trouble at two levels so one bad session doesn't cost every
+/// other recovered entry: a per-entry `read_dir` error (permission hiccup,
+/// file vanished mid-scan) skips just that directory entry, and a malformed
+/// session file skips just that file (both `continue`, never abort the scan).
 pub fn rebuild_index() -> std::io::Result<Vec<IndexEntry>> {
     let dir = sessions_dir();
     std::fs::create_dir_all(&dir)?;
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(&dir)? {
-        let path = entry?.path();
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
@@ -118,7 +124,13 @@ pub fn rebuild_index() -> std::io::Result<Vec<IndexEntry>> {
             updated,
         });
     }
-    write_index(&entries)?;
+    // Persisting the rebuilt index is best-effort: if `index.json` can't be
+    // written (disk full, permissions), still return the in-memory entries
+    // recovered from the JSONL scan rather than discarding a correct rebuild.
+    if let Err(e) = write_index(&entries) {
+        tracing::error!(error = %e, count = entries.len(),
+            "failed to persist rebuilt session index; returning in-memory entries anyway");
+    }
     Ok(entries)
 }
 
@@ -195,6 +207,17 @@ impl Session {
     }
 
     /// Upsert this session's entry into `index.json`.
+    ///
+    /// TODO(resume): this unconditionally writes `self.project_root` on every
+    /// `append`. `Session::load` currently hardcodes `project_root` to an
+    /// empty `PathBuf` (see its doc comment) because it isn't stored
+    /// per-node. That's inert today since nothing calls `load` and then
+    /// `append`s to it, but a future "resume an existing session" flow that
+    /// does `Session::load(...)` followed by `append(...)` would upsert an
+    /// empty `project_root` here and silently blank out a previously-good
+    /// value in `index.json`. Whoever wires resume must restore
+    /// `project_root` (e.g. from the existing index entry) onto the loaded
+    /// `Session` before the first `append`.
     fn update_index(&self) {
         let mut entries = load_index();
         let entry = IndexEntry {
@@ -549,6 +572,29 @@ mod tests {
         let rebuilt_entry =
             rebuilt.iter().find(|e| e.id == id).expect("index rebuilt from files");
         assert_eq!(rebuilt_entry.title, "index me", "title recovered from first user node");
+    }
+
+    #[test]
+    fn rebuild_index_skips_bad_entries_without_losing_good_ones() {
+        let (_g, _tmp) = temp_env();
+
+        // A valid session that should survive the rebuild.
+        let mut s = Session::new(PathBuf::from("/home/joshua/proj"));
+        s.append(Role::User, Content::Text("good session".into()), None, None);
+        let good_id = s.id.clone();
+
+        // A malformed "session" file sitting alongside it: right extension,
+        // garbage content. `Session::load` will fail on it; rebuild_index
+        // must skip just this file, not abort the whole scan.
+        std::fs::write(sessions_dir().join("not-a-session.jsonl"), "not json\n").unwrap();
+
+        // A non-.jsonl file should likewise be skipped harmlessly.
+        std::fs::write(sessions_dir().join("README.txt"), "ignore me").unwrap();
+
+        let rebuilt = rebuild_index().expect("rebuild_index tolerates the bad entries");
+        assert_eq!(rebuilt.len(), 1, "only the good session survives the rebuild");
+        assert_eq!(rebuilt[0].id, good_id);
+        assert_eq!(rebuilt[0].title, "good session");
     }
 }
 
