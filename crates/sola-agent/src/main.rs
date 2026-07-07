@@ -17,6 +17,14 @@ use sola_kit::app::{BusSetup, bus_subscription, startup, window_settings};
 use sola_kit::fonts;
 use sola_kit::theme::{default_theme, theme_from_bus};
 
+mod engine;
+mod event;
+mod permit;
+mod provider;
+mod session;
+mod tools;
+mod view;
+
 const APP_ID: &str = "sola-agent";
 
 fn main() -> iced::Result {
