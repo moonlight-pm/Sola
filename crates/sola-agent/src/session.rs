@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::event::NodeId;
+use crate::provider::InputItem;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -207,6 +208,31 @@ impl Session {
     pub fn branch_from(&mut self, parent: NodeId) {
         self.active_leaf = Some(parent);
     }
+
+    /// Map the active branch (root..=leaf) to the provider's `InputItem`s, in
+    /// order. Text nodes become role-tagged messages; function-call and
+    /// function-call-output nodes pass their fields through unchanged.
+    pub fn to_input(&self) -> Vec<InputItem> {
+        self.path_to_leaf()
+            .into_iter()
+            .map(|node| match node.content {
+                Content::Text(text) => InputItem::Message {
+                    role: match node.role {
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                        Role::Tool => "user".to_string(),
+                    },
+                    text,
+                },
+                Content::FunctionCall { call_id, name, arguments } => {
+                    InputItem::FunctionCall { call_id, name, arguments }
+                }
+                Content::FunctionCallOutput { call_id, output } => {
+                    InputItem::FunctionCallOutput { call_id, output }
+                }
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -363,6 +389,59 @@ mod tests {
 
         let leaf_ids: Vec<NodeId> = s.path_to_leaf().into_iter().map(|n| n.id).collect();
         assert_eq!(leaf_ids, vec![root, new], "active path is the new branch");
+    }
+
+    #[test]
+    fn to_input_maps_each_content_variant() {
+        let (_g, _tmp) = temp_env();
+
+        let mut s = Session::new(PathBuf::from("/tmp/project"));
+        s.append(Role::User, Content::Text("hello".into()), None, None);
+        s.append(
+            Role::Assistant,
+            Content::FunctionCall {
+                call_id: "c1".into(),
+                name: "read".into(),
+                arguments: "{\"path\":\"a.txt\"}".into(),
+            },
+            None,
+            None,
+        );
+        s.append(
+            Role::Tool,
+            Content::FunctionCallOutput {
+                call_id: "c1".into(),
+                output: "file body".into(),
+            },
+            None,
+            None,
+        );
+
+        let items = s.to_input();
+        assert_eq!(items.len(), 3);
+
+        match &items[0] {
+            InputItem::Message { role, text } => {
+                assert_eq!(role, "user");
+                assert_eq!(text, "hello");
+            }
+            other => panic!("expected Message, got {other:?}"),
+        }
+        match &items[1] {
+            InputItem::FunctionCall { call_id, name, arguments } => {
+                assert_eq!(call_id, "c1");
+                assert_eq!(name, "read");
+                assert_eq!(arguments, "{\"path\":\"a.txt\"}");
+            }
+            other => panic!("expected FunctionCall, got {other:?}"),
+        }
+        match &items[2] {
+            InputItem::FunctionCallOutput { call_id, output } => {
+                assert_eq!(call_id, "c1");
+                assert_eq!(output, "file body");
+            }
+            other => panic!("expected FunctionCallOutput, got {other:?}"),
+        }
     }
 }
 
