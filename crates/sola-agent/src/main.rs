@@ -1,21 +1,23 @@
-//! sola-agent — minimal iced shell for a focused GUI AI agent.
+//! sola-agent — iced GUI for a focused Sakana Fugu coding agent.
 //!
-//! This is a fresh app scaffold. It deliberately ignores the retired
-//! `apps/agent` WebView/Claude-CLI prototype and follows the current
-//! `sola-kit`/iced app pattern used by `sola-terminal`, `sola-settings`,
-//! and `sola-monitor`.
+//! Grows the original kit stub into a real client: bus + theme (kit helpers),
+//! a background engine worker (event.rs bridge), and a transcript UI. Follows
+//! the `sola-terminal` App::new/update/view shape.
+#![allow(dead_code)] // interim: Turn/tool fields are wired up in later tasks.
 
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
 
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Element, Length, Padding, Subscription, Task, Theme};
+use iced::{Element, Length, Subscription, Task, Theme};
 
 use sola_bus::Message;
-use sola_bus::topics::{MenuActionPayload, Topic, TopicKind};
+use sola_bus::topics::TopicKind;
 use sola_core::KeyCode;
-use sola_kit::app::{BusSetup, bus_subscription, startup, window_settings};
+use sola_kit::app::{
+    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup, window_settings,
+};
 use sola_kit::fonts;
-use sola_kit::theme::{default_theme, theme_from_bus};
+use sola_kit::theme::default_theme;
 
 mod engine;
 mod event;
@@ -23,9 +25,161 @@ mod permit;
 mod provider;
 mod session;
 mod tools;
-mod view;
+
+use event::{AgentEvent, NodeId};
+use session::{Session, Usage};
+use tools::ToolDetail;
 
 const APP_ID: &str = "sola-agent";
+const DEFAULT_MODEL: &str = "fugu";
+const DEFAULT_EFFORT: &str = "high";
+
+/// One display row in the transcript. Driven by `AgentEvent`s, not the persisted
+/// session tree (that stays the engine's single-writer store).
+#[derive(Debug, Clone)]
+enum Turn {
+    User(String),
+    Assistant { id: NodeId, text: String },
+    Reasoning(String),
+    Tool(ToolTurn),
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+struct ToolTurn {
+    call_id: String,
+    tool: String,
+    args: serde_json::Value,
+    output: String,
+    detail: Option<ToolDetail>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingApproval {
+    call_id: String,
+    tool: String,
+    preview: String,
+}
+
+#[derive(Debug, Clone)]
+struct SessionSummary {
+    id: String,
+    title: String,
+    path: PathBuf,
+}
+
+/// On-disk credential wrapper. `Encrypted<String>` ciphers the key on
+/// human-readable serializers (serde_json here), so the file holds an
+/// `age1enc:` blob, not the raw key.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Credentials {
+    sakana_api_key: sola_core::Encrypted<String>,
+}
+
+/// Boot payload assembled in `main` and handed to `App::new` (iced's constructor
+/// takes no args, so a static is the fit).
+struct Boot {
+    session: Arc<Mutex<Session>>,
+    model: String,
+    effort: String,
+    project_root: PathBuf,
+    first_run: bool,
+}
+static BOOT: OnceLock<Boot> = OnceLock::new();
+
+fn credentials_path() -> PathBuf {
+    sola_core::config::sola_config_dir()
+        .join("agent")
+        .join("credentials")
+}
+
+fn sessions_dir() -> PathBuf {
+    sola_core::config::sola_config_dir()
+        .join("agent")
+        .join("sessions")
+}
+
+/// Encrypted credentials file first, then the `SAKANA_API_KEY` env var. `None`
+/// means first-run: the UI prompts instead of the app crashing.
+fn load_api_key() -> Option<String> {
+    let path = credentials_path();
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        match serde_json::from_str::<Credentials>(&raw) {
+            Ok(creds) => return Some(creds.sakana_api_key.0),
+            Err(e) => tracing::warn!(?path, "failed to read agent credentials: {e}"),
+        }
+    }
+    match std::env::var("SAKANA_API_KEY") {
+        Ok(k) if !k.trim().is_empty() => Some(k),
+        _ => None,
+    }
+}
+
+/// Persist the key encrypted at `credentials_path()`.
+fn save_api_key(key: &str) -> std::io::Result<()> {
+    let path = credentials_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let creds = Credentials {
+        sakana_api_key: sola_core::Encrypted(key.to_string()),
+    };
+    let json = serde_json::to_string_pretty(&creds)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(&path, json)
+}
+
+/// Build the real provider + config and hand the turn loop to a worker thread.
+/// Called at boot when a key exists, and again on first-run submit.
+fn spawn_engine(
+    api_key: String,
+    model: String,
+    effort: String,
+    project_root: PathBuf,
+    session: Arc<Mutex<Session>>,
+) {
+    let provider: Arc<dyn provider::LlmStream + Send + Sync> =
+        Arc::new(provider::SakanaProvider {
+            base_url: "https://api.sakana.ai/v1".to_string(),
+            api_key: api_key.clone(),
+        });
+    let config = engine::EngineConfig {
+        api_key,
+        model,
+        effort,
+        project_root,
+        classifier: false,
+    };
+    engine::start(config, provider, session);
+}
+
+/// Scan the sessions dir for `<id>.jsonl` transcripts, loading each for its
+/// title. Called off the render path (boot + New/Select), cached in
+/// `App::sessions`.
+fn list_sessions() -> Vec<SessionSummary> {
+    let dir = sessions_dir();
+    let mut out = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        match Session::load(&path) {
+            Ok(s) => out.push(SessionSummary {
+                id: s.id.clone(),
+                title: s.title.clone(),
+                path,
+            }),
+            Err(e) => tracing::debug!(?path, "skipping unreadable session: {e}"),
+        }
+    }
+    out.sort_by(|a, b| a.title.cmp(&b.title));
+    out
+}
 
 fn main() -> iced::Result {
     startup(APP_ID);
@@ -35,7 +189,41 @@ fn main() -> iced::Result {
         .app_menu("Agent", [("quit", "Quit Agent", KeyCode::Q.meta())])
         .install();
 
-    let app = iced::application(App::default, App::update, App::view)
+    // Wire the UI<->worker channels before anything subscribes or the engine
+    // takes the command receiver.
+    event::init_channels();
+
+    let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let session = Arc::new(Mutex::new(Session::new(project_root.clone())));
+    let model = DEFAULT_MODEL.to_string();
+    let effort = DEFAULT_EFFORT.to_string();
+
+    let first_run = match load_api_key() {
+        Some(api_key) => {
+            spawn_engine(
+                api_key,
+                model.clone(),
+                effort.clone(),
+                project_root.clone(),
+                session.clone(),
+            );
+            false
+        }
+        None => {
+            tracing::warn!("no Sakana API key found; entering first-run key prompt");
+            true
+        }
+    };
+
+    let _ = BOOT.set(Boot {
+        session,
+        model,
+        effort,
+        project_root,
+        first_run,
+    });
+
+    let app = iced::application(App::new, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
@@ -44,63 +232,83 @@ fn main() -> iced::Result {
     app.run()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Role {
-    User,
-    Assistant,
-}
-
-#[derive(Debug, Clone)]
-struct ChatMessage {
-    role: Role,
-    text: String,
-}
-
-#[derive(Debug, Clone)]
-struct Conversation {
-    id: u64,
-    title: String,
-    messages: Vec<ChatMessage>,
-}
-
 struct App {
     theme: Theme,
-    conversations: Vec<Conversation>,
-    active: Option<u64>,
+    session: Arc<Mutex<Session>>,
+    turns: Vec<Turn>,
+    streaming: Option<NodeId>,
+    pending: Option<PendingApproval>,
+    model: String,
+    effort: String,
+    usage: Usage,
     draft: String,
-    next_id: u64,
-}
-
-impl Default for App {
-    fn default() -> Self {
-        let welcome = Conversation {
-            id: 1,
-            title: "New conversation".into(),
-            messages: vec![ChatMessage {
-                role: Role::Assistant,
-                text: "What would you like to work on?".into(),
-            }],
-        };
-        Self {
-            theme: default_theme(),
-            conversations: vec![welcome],
-            active: Some(1),
-            draft: String::new(),
-            next_id: 2,
-        }
-    }
+    project_root: PathBuf,
+    first_run: bool,
+    key_draft: String,
+    sessions: Vec<SessionSummary>,
 }
 
 #[derive(Debug, Clone)]
 enum Msg {
-    BusMessage(Arc<Message>),
-    NewConversation,
-    SelectConversation(u64),
+    Bus(Arc<Message>),
+    Agent(AgentEvent),
     DraftChanged(String),
-    SendDraft,
+    Send,
+    Approve,
+    Always,
+    Deny,
+    Abort,
+    NewSession,
+    SelectSession(PathBuf),
+    KeyDraftChanged(String),
+    KeySubmit,
 }
 
 impl App {
+    /// Construct from raw parts. Side-effect-free (no disk scan) so unit tests
+    /// can build an `App` without touching `~/.config`.
+    fn blank(
+        session: Arc<Mutex<Session>>,
+        model: String,
+        effort: String,
+        project_root: PathBuf,
+        first_run: bool,
+    ) -> Self {
+        Self {
+            theme: default_theme(),
+            session,
+            turns: Vec::new(),
+            streaming: None,
+            pending: None,
+            model,
+            effort,
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+            },
+            draft: String::new(),
+            project_root,
+            first_run,
+            key_draft: String::new(),
+            sessions: Vec::new(),
+        }
+    }
+
+    fn new() -> (Self, Task<Msg>) {
+        let boot = BOOT
+            .get()
+            .expect("BOOT must be initialised in main before App::new");
+        let mut app = App::blank(
+            boot.session.clone(),
+            boot.model.clone(),
+            boot.effort.clone(),
+            boot.project_root.clone(),
+            boot.first_run,
+        );
+        app.sessions = list_sessions();
+        (app, Task::none())
+    }
+
     fn title(&self) -> String {
         "Sola Agent".into()
     }
@@ -110,213 +318,60 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
-        bus_subscription().map(Msg::BusMessage)
+        Subscription::batch([
+            bus_subscription().map(Msg::Bus),
+            event::agent_subscription().map(Msg::Agent),
+        ])
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
-            Msg::BusMessage(message) => {
-                let parsed = Topic::parse(&message);
-
-                if let Some(Topic::Theme(bus_theme)) = &parsed {
-                    self.theme = theme_from_bus(bus_theme);
-                    sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(bus_theme));
-                }
-
-                let our_quit = matches!(
-                    &parsed,
-                    Some(Topic::MenuAction(MenuActionPayload { app_id, action_id }))
-                        if app_id == APP_ID && action_id == "quit"
-                );
-                let close_us = matches!(
-                    &parsed,
-                    Some(Topic::CloseApp(app_id)) if app_id == APP_ID
-                );
-                if our_quit || close_us {
+            Msg::Bus(m) => {
+                apply_theme_update(&m, &mut self.theme);
+                if is_self_quit(&m, APP_ID) {
                     return iced::exit();
                 }
+                Task::none()
             }
-            Msg::NewConversation => {
-                let id = self.next_id;
-                self.next_id += 1;
-                self.conversations.insert(
-                    0,
-                    Conversation {
-                        id,
-                        title: "New conversation".into(),
-                        messages: vec![ChatMessage {
-                            role: Role::Assistant,
-                            text: "Start with a goal, question, or task.".into(),
-                        }],
-                    },
-                );
-                self.active = Some(id);
-                self.draft.clear();
-            }
-            Msg::SelectConversation(id) => {
-                self.active = Some(id);
-                self.draft.clear();
-            }
-            Msg::DraftChanged(value) => {
-                self.draft = value;
-            }
-            Msg::SendDraft => {
-                let text = self.draft.trim().to_string();
-                if text.is_empty() {
-                    return Task::none();
-                }
-                if let Some(conversation) = self.active_conversation_mut() {
-                    if conversation.title == "New conversation" {
-                        conversation.title = summarize_title(&text);
-                    }
-                    conversation.messages.push(ChatMessage {
-                        role: Role::User,
-                        text,
-                    });
-                    conversation.messages.push(ChatMessage {
-                        role: Role::Assistant,
-                        text: "Agent backend is not wired yet.".into(),
-                    });
-                }
-                self.draft.clear();
-            }
+            _ => Task::none(),
         }
-        Task::none()
     }
 
     fn view(&self) -> Element<'_, Msg> {
-        row![self.sidebar(), self.chat()]
+        iced::widget::container(iced::widget::text("sola-agent"))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
     }
-
-    fn sidebar(&self) -> Element<'_, Msg> {
-        let header = row![
-            text("Agent").font(fonts::ui_medium()).size(18),
-            button(text("+").size(18)).on_press(Msg::NewConversation),
-        ]
-        .align_y(Alignment::Center)
-        .spacing(12);
-
-        let mut list = column![header, Space::new().height(Length::Fixed(1.0))].spacing(10);
-        for conversation in &self.conversations {
-            let selected = self.active == Some(conversation.id);
-            let label = if selected {
-                format!("› {}", conversation.title)
-            } else {
-                conversation.title.clone()
-            };
-            list = list.push(
-                button(text(label).size(14))
-                    .width(Length::Fill)
-                    .on_press(Msg::SelectConversation(conversation.id)),
-            );
-        }
-
-        container(scrollable(list.padding(Padding::new(12.0))))
-            .width(Length::Fixed(280.0))
-            .height(Length::Fill)
-            .into()
-    }
-
-    fn chat(&self) -> Element<'_, Msg> {
-        let active = self.active_conversation();
-
-        let title = active
-            .map(|conversation| conversation.title.as_str())
-            .unwrap_or("No conversation");
-
-        let mut messages = column![].spacing(12).padding(Padding::new(20.0));
-        if let Some(conversation) = active {
-            for message in &conversation.messages {
-                messages = messages.push(message_bubble(message));
-            }
-        } else {
-            messages = messages.push(text("Create a conversation to begin."));
-        }
-
-        let input = row![
-            text_input("Ask Sola Agent…", &self.draft)
-                .on_input(Msg::DraftChanged)
-                .on_submit(Msg::SendDraft)
-                .padding(12)
-                .size(15)
-                .width(Length::Fill),
-            button(text("Send")).on_press(Msg::SendDraft),
-        ]
-        .spacing(8)
-        .padding(Padding::new(16.0));
-
-        column![
-            container(text(title).font(fonts::ui_medium()).size(20))
-                .width(Length::Fill)
-                .padding(Padding::new(16.0)),
-            Space::new().height(Length::Fixed(1.0)),
-            scrollable(messages).height(Length::Fill),
-            Space::new().height(Length::Fixed(1.0)),
-            input,
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-    }
-
-    fn active_conversation(&self) -> Option<&Conversation> {
-        let active = self.active?;
-        self.conversations.iter().find(|c| c.id == active)
-    }
-
-    fn active_conversation_mut(&mut self) -> Option<&mut Conversation> {
-        let active = self.active?;
-        self.conversations.iter_mut().find(|c| c.id == active)
-    }
-}
-
-fn message_bubble(message: &ChatMessage) -> Element<'_, Msg> {
-    let label = match message.role {
-        Role::User => "You",
-        Role::Assistant => "Agent",
-    };
-    let align = match message.role {
-        Role::User => Alignment::End,
-        Role::Assistant => Alignment::Start,
-    };
-
-    container(
-        column![
-            text(label).font(fonts::ui_medium()).size(12),
-            text(&message.text).size(15),
-        ]
-        .spacing(4)
-        .padding(Padding::new(12.0)),
-    )
-    .width(Length::Fill)
-    .align_x(align)
-    .into()
-}
-
-fn summarize_title(text: &str) -> String {
-    const MAX_CHARS: usize = 40;
-    let mut title: String = text.chars().take(MAX_CHARS).collect();
-    if text.chars().count() > MAX_CHARS {
-        title.push('…');
-    }
-    title
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
-    #[test]
-    fn title_summarizer_keeps_short_text() {
-        assert_eq!(summarize_title("hello"), "hello");
+    pub(crate) fn blank_app(first_run: bool) -> App {
+        let session = Arc::new(Mutex::new(session::Session::new(PathBuf::from(
+            "/tmp/sola-agent-test",
+        ))));
+        App::blank(
+            session,
+            "fugu".into(),
+            "high".into(),
+            PathBuf::from("/tmp"),
+            first_run,
+        )
     }
 
     #[test]
-    fn title_summarizer_truncates_long_text() {
-        let title = summarize_title("abcdefghijklmnopqrstuvwxyz0123456789----tail");
-        assert_eq!(title, "abcdefghijklmnopqrstuvwxyz0123456789----…");
+    fn blank_starts_empty() {
+        let app = blank_app(true);
+        assert!(app.turns.is_empty());
+        assert!(app.first_run);
+        assert!(app.streaming.is_none());
+        assert!(app.pending.is_none());
+        assert_eq!(app.usage.input_tokens, 0);
+        assert_eq!(app.usage.output_tokens, 0);
     }
 }
