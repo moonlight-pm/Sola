@@ -4,6 +4,9 @@
 //! `Content`, `Node`). The `Session` struct and its methods land in the
 //! session layer.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use crate::event::NodeId;
 use serde::{Deserialize, Serialize};
 
@@ -38,9 +41,79 @@ pub struct Node {
     pub ts: u64,
 }
 
+/// In-memory view of a transcript tree plus its on-disk JSONL location.
+pub struct Session {
+    pub id: String,
+    pub title: String,
+    pub project_root: PathBuf,
+    nodes: HashMap<NodeId, Node>,
+    order: Vec<NodeId>,
+    pub active_leaf: Option<NodeId>,
+}
+
+/// `<config>/sola/agent/sessions`, honoring `$XDG_CONFIG_HOME`.
+fn sessions_dir() -> PathBuf {
+    sola_core::config::sola_config_dir().join("agent").join("sessions")
+}
+
+impl Session {
+    /// A fresh, empty session with a random v4 id and no nodes.
+    pub fn new(project_root: PathBuf) -> Self {
+        Session {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: String::new(),
+            project_root,
+            nodes: HashMap::new(),
+            order: Vec::new(),
+            active_leaf: None,
+        }
+    }
+
+    /// `~/.config/sola/agent/sessions/<id>.jsonl`.
+    pub fn path(&self) -> PathBuf {
+        sessions_dir().join(format!("{}.jsonl", self.id))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Serializes `$XDG_CONFIG_HOME` mutation so the fs tests don't race.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Point `$XDG_CONFIG_HOME` at a fresh tempdir for the test's duration.
+    /// The returned guard + TempDir must be kept alive by the caller.
+    fn temp_env() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: guarded by ENV_LOCK; no other thread reads the env here.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+        }
+        (guard, tmp)
+    }
+
+    #[test]
+    fn new_session_has_unique_id_and_scoped_path() {
+        let (_g, tmp) = temp_env();
+
+        let a = Session::new(PathBuf::from("/home/joshua/project"));
+        let b = Session::new(PathBuf::from("/home/joshua/project"));
+
+        assert_ne!(a.id, b.id, "each session gets a distinct id");
+        assert!(a.active_leaf.is_none(), "a fresh session has no leaf");
+
+        let want = format!("{}.jsonl", a.id);
+        let path = a.path();
+        assert_eq!(path.file_name().and_then(|s| s.to_str()), Some(want.as_str()));
+        assert!(
+            path.starts_with(tmp.path()),
+            "path {path:?} should live under the temp config root {:?}",
+            tmp.path()
+        );
+        assert!(path.ends_with(format!("sola/agent/sessions/{}.jsonl", a.id)));
+    }
 
     #[test]
     fn node_json_round_trips() {
