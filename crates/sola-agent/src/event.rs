@@ -103,6 +103,7 @@ pub(crate) fn emit(ev: AgentEvent) {
 /// than a panic — the same "one receiver per process" discipline
 /// `agent_subscription` uses for the event side.
 pub(crate) fn take_cmd_rx() -> mpsc::Receiver<AgentCmd> {
+    init_channels();
     match CMD_RX.lock().unwrap().take() {
         Some(rx) => rx,
         None => {
