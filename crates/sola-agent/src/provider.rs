@@ -4,6 +4,9 @@
 //! The real `SakanaProvider` impl (ureq streaming, SSE parse) plus
 //! `build_request_body` and `parse_sse_event` land in the provider layer.
 
+use std::io::BufRead;
+use std::sync::Once;
+
 use serde_json::{Value, json};
 
 use crate::session::Usage;
@@ -183,6 +186,139 @@ pub fn parse_sse_event(event_type: &str, data_json: &str) -> Option<StreamEvent>
     }
 }
 
+/// Sakana Fugu Responses client.
+pub struct SakanaProvider {
+    pub base_url: String,
+    pub api_key: String,
+}
+
+impl SakanaProvider {
+    /// `base_url` defaults to the Sakana v1 root.
+    pub fn new(api_key: String) -> Self {
+        Self { base_url: "https://api.sakana.ai/v1".to_string(), api_key }
+    }
+}
+
+static CRYPTO_INIT: Once = Once::new();
+
+/// Pin rustls' crypto backend to aws-lc-rs (the workspace's rustls feature) so
+/// ureq's Rustls TlsProvider selects a deterministic provider from a bare TTY
+/// on NixOS instead of racing ring-vs-aws_lc_rs. Idempotent; call at startup
+/// and defensively before any request.
+pub fn install_crypto_provider() {
+    CRYPTO_INIT.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
+
+/// Fold one decoded event into the running turn state and forward it to `sink`.
+/// Only an `output_item.done` function call (non-empty `name`) is collected as
+/// an authoritative call; args deltas/done are display-only. An `Error` event
+/// is forwarded, then returned as `Err`.
+fn fold_event(
+    ev: StreamEvent,
+    assistant_text: &mut String,
+    calls: &mut Vec<FunctionCall>,
+    usage: &mut Usage,
+    sink: &mut dyn FnMut(StreamEvent),
+) -> Result<(), String> {
+    let err = match &ev {
+        StreamEvent::TextDelta(t) => {
+            assistant_text.push_str(t);
+            None
+        }
+        StreamEvent::FunctionCallDone { call_id, name, arguments } if !name.is_empty() => {
+            calls.push(FunctionCall {
+                call_id: call_id.clone(),
+                name: name.clone(),
+                arguments: arguments.clone(),
+            });
+            None
+        }
+        StreamEvent::Completed { usage: u } => {
+            *usage = *u;
+            None
+        }
+        StreamEvent::Error(msg) => Some(msg.clone()),
+        _ => None,
+    };
+    sink(ev);
+    match err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Drive an SSE byte stream (any `BufRead`) into `sink`, folding events into a
+/// `TurnOutcome`. Splits `event:`/`data:` records on blank lines. Kept generic
+/// over the reader so it is unit-tested offline with a `Cursor`; the live path
+/// feeds it ureq's body reader.
+pub(crate) fn read_sse_stream<R: BufRead>(
+    reader: R,
+    sink: &mut dyn FnMut(StreamEvent),
+) -> Result<TurnOutcome, String> {
+    let mut assistant_text = String::new();
+    let mut calls: Vec<FunctionCall> = Vec::new();
+    let mut usage = Usage { input_tokens: 0, output_tokens: 0 };
+
+    let mut event_type: Option<String> = None;
+    let mut data_buf = String::new();
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("SSE read error: {e}"))?;
+        if line.is_empty() {
+            // Blank line terminates a record.
+            if let Some(et) = event_type.take() {
+                if let Some(ev) = parse_sse_event(&et, &data_buf) {
+                    fold_event(ev, &mut assistant_text, &mut calls, &mut usage, sink)?;
+                }
+            }
+            data_buf.clear();
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("event:") {
+            event_type = Some(rest.trim().to_string());
+        } else if let Some(rest) = line.strip_prefix("data:") {
+            let chunk = rest.strip_prefix(' ').unwrap_or(rest);
+            if !data_buf.is_empty() {
+                data_buf.push('\n');
+            }
+            data_buf.push_str(chunk);
+        }
+        // `:` comment lines and unknown fields are ignored.
+    }
+    // Flush a trailing record that had no terminating blank line.
+    if let Some(et) = event_type.take() {
+        if let Some(ev) = parse_sse_event(&et, &data_buf) {
+            fold_event(ev, &mut assistant_text, &mut calls, &mut usage, sink)?;
+        }
+    }
+
+    Ok(TurnOutcome { assistant_text, calls, usage })
+}
+
+impl LlmStream for SakanaProvider {
+    fn stream_turn(
+        &self,
+        model: &str,
+        effort: &str,
+        input: &[InputItem],
+        tools: &[Value],
+        sink: &mut dyn FnMut(StreamEvent),
+    ) -> Result<TurnOutcome, String> {
+        install_crypto_provider();
+        let body = build_request_body(model, effort, input, tools);
+        let mut resp = ureq::post(&format!("{}/responses", self.base_url))
+            .header("Authorization", &format!("Bearer {}", self.api_key))
+            .header("Accept", "text/event-stream")
+            .send_json(&body)
+            .map_err(|e| format!("Responses POST failed: {e}"))?;
+        // ureq 3: unlimited body reader — correct for an open-ended SSE stream.
+        let reader = std::io::BufReader::new(resp.body_mut().as_reader());
+        read_sse_stream(reader, sink)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,5 +437,75 @@ mod tests {
         assert!(parse_sse_event("response.output_item.added", msg_item).is_none());
         // unknown event -> None
         assert!(parse_sse_event("response.created", "{}").is_none());
+    }
+
+    #[test]
+    fn read_sse_stream_text_then_usage() {
+        let fixture = r#"event: response.output_text.delta
+data: {"delta":"Hello, "}
+
+event: response.output_text.delta
+data: {"delta":"world"}
+
+event: response.completed
+data: {"response":{"usage":{"input_tokens":5,"output_tokens":2}}}
+
+"#;
+        let mut seen = 0usize;
+        let outcome = read_sse_stream(std::io::Cursor::new(fixture), &mut |_ev| {
+            seen += 1;
+        })
+        .expect("stream should succeed");
+        assert_eq!(outcome.assistant_text, "Hello, world");
+        assert_eq!(outcome.usage.input_tokens, 5);
+        assert_eq!(outcome.usage.output_tokens, 2);
+        assert!(outcome.calls.is_empty());
+        assert_eq!(seen, 3, "sink should see all 3 parsed events");
+    }
+
+    #[test]
+    fn read_sse_stream_function_call() {
+        let fixture = r#"event: response.output_item.added
+data: {"output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_abc","name":"read","arguments":""}}
+
+event: response.function_call_arguments.delta
+data: {"item_id":"fc_1","delta":"{\"path\":\""}
+
+event: response.function_call_arguments.delta
+data: {"item_id":"fc_1","delta":"src/main.rs\"}"}
+
+event: response.function_call_arguments.done
+data: {"item_id":"fc_1","arguments":"{\"path\":\"src/main.rs\"}"}
+
+event: response.output_item.done
+data: {"output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_abc","name":"read","arguments":"{\"path\":\"src/main.rs\"}"}}
+
+event: response.completed
+data: {"response":{"usage":{"input_tokens":42,"output_tokens":7}}}
+
+"#;
+        let outcome = read_sse_stream(std::io::Cursor::new(fixture), &mut |_| {})
+            .expect("stream should succeed");
+        assert_eq!(outcome.assistant_text, "");
+        assert_eq!(outcome.calls.len(), 1, "exactly one authoritative call");
+        assert_eq!(outcome.calls[0].call_id, "call_abc");
+        assert_eq!(outcome.calls[0].name, "read");
+        assert_eq!(outcome.calls[0].arguments, r#"{"path":"src/main.rs"}"#);
+        assert_eq!(outcome.usage.input_tokens, 42);
+        assert_eq!(outcome.usage.output_tokens, 7);
+    }
+
+    #[test]
+    fn read_sse_stream_error_aborts() {
+        let fixture = r#"event: response.output_text.delta
+data: {"delta":"partial"}
+
+event: error
+data: {"type":"error","message":"rate limited"}
+
+"#;
+        let err = read_sse_stream(std::io::Cursor::new(fixture), &mut |_| {})
+            .expect_err("error event should surface as Err");
+        assert_eq!(err, "rate limited");
     }
 }
