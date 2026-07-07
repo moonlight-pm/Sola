@@ -9,6 +9,8 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use crate::provider::{InputItem, LlmStream, StreamEvent};
+
 /// One session-policy grant, e.g. `{ tool: "bash", scope: "always" }`.
 #[derive(Debug, Clone)]
 pub struct Rule {
@@ -140,6 +142,64 @@ pub fn remember(policy: &mut Policy, tool: &str) {
     });
 }
 
+/// The classifier's three-way verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Risk {
+    Safe,
+    Caution,
+    Danger,
+}
+
+/// One cheap, non-streaming `fugu` call that rates a would-be-prompted action.
+/// Builds a tiny prompt, runs it through the provider seam (no tools, sink
+/// ignored), and parses a `{"verdict": "safe|caution|danger"}` reply. Anything
+/// that fails to parse — or any transport error — defaults to `Caution`, so the
+/// classifier can only ever soften a prompt to auto-run on an explicit `safe`;
+/// it never escalates a failure into an auto-allow.
+pub fn classify(provider: &dyn LlmStream, tool: &str, args: &serde_json::Value) -> Risk {
+    let prompt = format!(
+        "You are a safety classifier for a coding agent. The agent wants to run \
+         the tool `{tool}` with these arguments:\n{args}\n\n\
+         Reply with ONLY a JSON object: {{\"verdict\": \"safe\" | \"caution\" | \"danger\"}}. \
+         safe = read-only or clearly harmless; caution = could modify local files; \
+         danger = destructive, exfiltrating, or system-wide."
+    );
+    let input = [InputItem::Message {
+        role: "user".to_string(),
+        text: prompt,
+    }];
+    let mut sink = |_ev: StreamEvent| {};
+    match provider.stream_turn("fugu", "high", &input, &[], &mut sink) {
+        Ok(outcome) => parse_verdict(&outcome.assistant_text),
+        Err(_) => Risk::Caution,
+    }
+}
+
+fn parse_verdict(text: &str) -> Risk {
+    let verdict = extract_json(text)
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| {
+            v.get("verdict")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+        });
+    match verdict.as_deref() {
+        Some("safe") => Risk::Safe,
+        Some("danger") => Risk::Danger,
+        _ => Risk::Caution,
+    }
+}
+
+/// Slice the first `{ .. }` span out of a reply that may carry prose around it.
+fn extract_json(text: &str) -> Option<String> {
+    let start = text.find('{')?;
+    let end = text.rfind('}')?;
+    if end < start {
+        return None;
+    }
+    Some(text[start..=end].to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,5 +301,58 @@ mod tests {
         // idempotent — a second remember() does not duplicate the rule.
         remember(&mut p, "bash");
         assert_eq!(p.always.iter().filter(|r| r.tool == "bash").count(), 1);
+    }
+
+    /// Fake provider: a canned assistant reply (or a transport error), no
+    /// streaming, no tool calls — enough to exercise `classify` offline.
+    struct FakeStream {
+        result: Result<String, String>,
+    }
+
+    impl crate::provider::LlmStream for FakeStream {
+        fn stream_turn(
+            &self,
+            _model: &str,
+            _effort: &str,
+            _input: &[crate::provider::InputItem],
+            _tools: &[serde_json::Value],
+            _sink: &mut dyn FnMut(crate::provider::StreamEvent),
+        ) -> Result<crate::provider::TurnOutcome, String> {
+            match &self.result {
+                Ok(text) => Ok(crate::provider::TurnOutcome {
+                    assistant_text: text.clone(),
+                    calls: Vec::new(),
+                    usage: crate::session::Usage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                    },
+                }),
+                Err(e) => Err(e.clone()),
+            }
+        }
+    }
+
+    #[test]
+    fn classify_reads_safe_verdict() {
+        let fake = FakeStream { result: Ok(r#"{"verdict":"safe"}"#.into()) };
+        assert!(matches!(classify(&fake, "bash", &json!({ "command": "ls" })), Risk::Safe));
+    }
+
+    #[test]
+    fn classify_reads_danger_verdict_with_prose() {
+        let fake = FakeStream { result: Ok(r#"Sure: {"verdict":"danger","reason":"rm -rf /"}"#.into()) };
+        assert!(matches!(classify(&fake, "bash", &json!({ "command": "rm -rf /" })), Risk::Danger));
+    }
+
+    #[test]
+    fn classify_garbage_defaults_caution() {
+        let fake = FakeStream { result: Ok("I cannot help with that.".into()) };
+        assert!(matches!(classify(&fake, "bash", &json!({ "command": "ls" })), Risk::Caution));
+    }
+
+    #[test]
+    fn classify_error_defaults_caution() {
+        let fake = FakeStream { result: Err("network down".into()) };
+        assert!(matches!(classify(&fake, "bash", &json!({ "command": "ls" })), Risk::Caution));
     }
 }
