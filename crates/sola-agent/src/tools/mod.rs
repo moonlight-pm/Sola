@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 pub mod read;
+pub mod write;
 
 /// Per-conversation execution context. `project_root` scopes `bash` and
 /// resolves relative tool paths.
