@@ -56,6 +56,25 @@ fn sessions_dir() -> PathBuf {
     sola_core::config::sola_config_dir().join("agent").join("sessions")
 }
 
+/// Milliseconds since the Unix epoch, for `Node::ts`.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Derive a one-line, <=60-char title from the first user message text.
+fn derive_title(text: &str) -> String {
+    let first = text.trim().lines().next().unwrap_or("").trim();
+    if first.chars().count() > 60 {
+        let head: String = first.chars().take(57).collect();
+        format!("{head}...")
+    } else {
+        first.to_string()
+    }
+}
+
 impl Session {
     /// A fresh, empty session with a random v4 id and no nodes.
     pub fn new(project_root: PathBuf) -> Self {
@@ -72,6 +91,74 @@ impl Session {
     /// `~/.config/sola/agent/sessions/<id>.jsonl`.
     pub fn path(&self) -> PathBuf {
         sessions_dir().join(format!("{}.jsonl", self.id))
+    }
+
+    /// Append a node as a child of the current leaf, advance the leaf, and
+    /// persist it as one JSONL line. Returns the new node's id.
+    pub fn append(
+        &mut self,
+        role: Role,
+        content: Content,
+        model: Option<String>,
+        usage: Option<Usage>,
+    ) -> NodeId {
+        let id = uuid::Uuid::new_v4().to_string();
+        let node = Node {
+            id: id.clone(),
+            parent_id: self.active_leaf.clone(),
+            role,
+            content,
+            model,
+            usage,
+            ts: now_ms(),
+        };
+        if self.title.is_empty() {
+            if let (Role::User, Content::Text(t)) = (&node.role, &node.content) {
+                self.title = derive_title(t);
+            }
+        }
+        if let Err(e) = self.write_node_line(&node) {
+            tracing::error!(session = %self.id, node = %id, error = %e,
+                "failed to persist transcript node");
+        }
+        self.order.push(id.clone());
+        self.nodes.insert(id.clone(), node);
+        self.active_leaf = Some(id.clone());
+        id
+    }
+
+    /// Serialize one node and append it as a line to the session file.
+    fn write_node_line(&self, node: &Node) -> std::io::Result<()> {
+        use std::io::Write;
+        let path = self.path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let line = serde_json::to_string(node)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
+        writeln!(file, "{line}")?;
+        Ok(())
+    }
+
+    /// The chain of nodes from the root down to (and including) the active leaf.
+    pub fn path_to_leaf(&self) -> Vec<Node> {
+        let mut chain = Vec::new();
+        let mut cursor = self.active_leaf.clone();
+        while let Some(id) = cursor {
+            match self.nodes.get(&id) {
+                Some(node) => {
+                    cursor = node.parent_id.clone();
+                    chain.push(node.clone());
+                }
+                None => break,
+            }
+        }
+        chain.reverse();
+        chain
     }
 }
 
@@ -149,4 +236,26 @@ mod tests {
             other => panic!("wrong content variant: {other:?}"),
         }
     }
+
+    #[test]
+    fn append_builds_a_linear_path_to_leaf() {
+        let (_g, _tmp) = temp_env();
+
+        let mut s = Session::new(PathBuf::from("/tmp/project"));
+        let n1 = s.append(Role::User, Content::Text("first".into()), None, None);
+        let n2 = s.append(
+            Role::Assistant,
+            Content::Text("second".into()),
+            Some("fugu".into()),
+            Some(Usage { input_tokens: 3, output_tokens: 5 }),
+        );
+
+        assert_eq!(s.active_leaf.as_ref(), Some(&n2));
+        assert_eq!(s.nodes[&n2].parent_id.as_ref(), Some(&n1));
+        assert!(s.nodes[&n1].parent_id.is_none());
+
+        let path: Vec<NodeId> = s.path_to_leaf().into_iter().map(|n| n.id).collect();
+        assert_eq!(path, vec![n1, n2], "path_to_leaf is root..=leaf");
+    }
 }
+
