@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod edit;
 pub mod read;
 pub mod write;
 
