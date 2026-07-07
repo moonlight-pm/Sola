@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
+
 pub mod bash;
 pub mod edit;
 pub mod read;
@@ -47,4 +49,58 @@ pub enum ToolDetail {
     Text(String),
     Diff { path: String, before: String, after: String },
     Bash { code: i32, stdout: String, stderr: String },
+}
+
+/// The full set of function tools advertised to the Responses API this turn.
+pub fn tool_schemas() -> Vec<Value> {
+    vec![read::schema(), write::schema(), edit::schema(), bash::schema(), search::schema()]
+}
+
+/// Route a model tool call to its implementation. Unknown names return an error
+/// result (never panic) so the loop can feed it back to the model.
+pub fn dispatch(name: &str, args: &Value, ctx: &ToolCtx) -> ToolResult {
+    match name {
+        "read" => read::run(args, ctx),
+        "write" => write::run(args, ctx),
+        "edit" => edit::run(args, ctx),
+        "bash" => bash::run(args, ctx),
+        "search" => search::run(args, ctx),
+        other => error_result(format!("dispatch: unknown tool '{other}'")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dispatch, tool_schemas, ToolCtx, ToolDetail};
+    use serde_json::json;
+
+    #[test]
+    fn tool_schemas_lists_five_strict_functions() {
+        let schemas = tool_schemas();
+        assert_eq!(schemas.len(), 5);
+        let names: Vec<&str> = schemas.iter().map(|s| s["name"].as_str().unwrap()).collect();
+        assert_eq!(names, vec!["read", "write", "edit", "bash", "search"]);
+        for s in &schemas {
+            assert_eq!(s["type"], "function");
+            assert_eq!(s["strict"], true);
+            assert!(s["parameters"].is_object());
+        }
+    }
+
+    #[test]
+    fn dispatch_routes_to_bash() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolCtx { project_root: dir.path().to_path_buf() };
+        let res = dispatch("bash", &json!({ "command": "echo hi" }), &ctx);
+        assert!(matches!(res.ui_detail, ToolDetail::Bash { code: 0, .. }));
+    }
+
+    #[test]
+    fn dispatch_unknown_tool_is_error_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolCtx { project_root: dir.path().to_path_buf() };
+        let res = dispatch("nope", &json!({}), &ctx);
+        assert!(res.model_text.contains("unknown tool"));
+        assert!(matches!(res.ui_detail, ToolDetail::Text(_)));
+    }
 }
