@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use iced::{Element, Length, Subscription, Task, Theme};
+use iced::{Element, Subscription, Task, Theme};
 
 use sola_bus::Message;
 use sola_bus::topics::TopicKind;
@@ -25,6 +25,7 @@ mod permit;
 mod provider;
 mod session;
 mod tools;
+mod view;
 
 use event::{AgentCmd, AgentEvent, NodeId};
 use session::{Content, Role, Session, Usage};
@@ -570,10 +571,7 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Msg> {
-        iced::widget::container(iced::widget::text("sola-agent"))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        view::screen(self)
     }
 }
 
