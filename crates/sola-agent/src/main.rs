@@ -515,16 +515,17 @@ impl App {
         }
     }
 
-    /// Append a text delta to the in-flight assistant node (found by id,
-    /// scanning from the back), or start a fresh streaming bubble.
+    /// Append a text delta to the still-open trailing assistant bubble (matched
+    /// by id), or start a fresh streaming bubble. Mirrors `apply_reasoning`'s
+    /// tail-only coalescing: only `self.turns.last_mut()` is eligible for the
+    /// append, so a `Turn::Tool` (or anything else) sitting at the tail forces
+    /// a new bubble instead of splicing text back through it into a stale one.
     fn apply_delta(&mut self, node_id: &str, chunk: &str) {
-        for turn in self.turns.iter_mut().rev() {
-            if let Turn::Assistant { id, text } = turn {
-                if id == node_id {
-                    text.push_str(chunk);
-                    self.streaming = Some(node_id.to_string());
-                    return;
-                }
+        if let Some(Turn::Assistant { id, text }) = self.turns.last_mut() {
+            if id == node_id {
+                text.push_str(chunk);
+                self.streaming = Some(node_id.to_string());
+                return;
             }
         }
         self.turns.push(Turn::Assistant {
@@ -660,6 +661,52 @@ mod tests {
                 assert!(matches!(tt.detail, Some(tools::ToolDetail::Bash { code: 0, .. })));
             }
             other => panic!("expected one tool turn, got {other:?}"),
+        }
+    }
+
+
+    /// Regression for the Task 27 latent-corruption finding: a delta after an
+    /// interleaved tool call must start a NEW assistant bubble, not splice
+    /// into the pre-tool bubble found by scanning back past the tool turn.
+    #[test]
+    fn delta_after_tool_starts_new_bubble() {
+        let mut app = blank_app(false);
+        let _ = app.update(Msg::Agent(AgentEvent::Delta {
+            node_id: "n1".into(),
+            text: "a".into(),
+        }));
+        let _ = app.update(Msg::Agent(AgentEvent::ToolStart {
+            call_id: "c1".into(),
+            tool: "bash".into(),
+            args: serde_json::json!({"cmd": "ls"}),
+        }));
+        let _ = app.update(Msg::Agent(AgentEvent::ToolEnd {
+            call_id: "c1".into(),
+            result: tools::ToolResult {
+                model_text: "ok".into(),
+                ui_detail: tools::ToolDetail::Bash {
+                    code: 0,
+                    stdout: "ok".into(),
+                    stderr: String::new(),
+                },
+            },
+        }));
+        // Same node_id as the pre-tool delta — a naive back-scan would find
+        // and append into the "a" bubble straight through the tool turn.
+        let _ = app.update(Msg::Agent(AgentEvent::Delta {
+            node_id: "n1".into(),
+            text: "b".into(),
+        }));
+        match app.turns.as_slice() {
+            [Turn::Assistant { id: id1, text: t1 }, Turn::Tool(tt), Turn::Assistant { id: id2, text: t2 }] =>
+            {
+                assert_eq!(id1, "n1");
+                assert_eq!(t1, "a");
+                assert_eq!(tt.call_id, "c1");
+                assert_eq!(id2, "n1");
+                assert_eq!(t2, "b");
+            }
+            other => panic!("expected assistant, tool, assistant turns, got {other:?}"),
         }
     }
 }
