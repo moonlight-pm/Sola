@@ -57,6 +57,71 @@ fn sessions_dir() -> PathBuf {
     sola_core::config::sola_config_dir().join("agent").join("sessions")
 }
 
+/// Sidebar metadata for one session, persisted in `sessions/index.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexEntry {
+    pub id: String,
+    pub title: String,
+    pub project_root: PathBuf,
+    pub updated: u64,
+}
+
+fn index_path() -> PathBuf {
+    sessions_dir().join("index.json")
+}
+
+fn write_index(entries: &[IndexEntry]) -> std::io::Result<()> {
+    let path = index_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(entries)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    std::fs::write(path, json)
+}
+
+/// Read the session index, rebuilding it from the JSONL files if the index
+/// file is missing or unparseable.
+pub fn load_index() -> Vec<IndexEntry> {
+    match std::fs::read_to_string(index_path()) {
+        Ok(s) => match serde_json::from_str::<Vec<IndexEntry>>(&s) {
+            Ok(entries) => entries,
+            Err(_) => rebuild_index().unwrap_or_default(),
+        },
+        Err(_) => rebuild_index().unwrap_or_default(),
+    }
+}
+
+/// Scan every `<id>.jsonl` under the sessions dir, derive an entry per file,
+/// and rewrite `index.json`. Recovers id + derived title + file mtime;
+/// `project_root` is not stored per-node and comes back empty.
+pub fn rebuild_index() -> std::io::Result<Vec<IndexEntry>> {
+    let dir = sessions_dir();
+    std::fs::create_dir_all(&dir)?;
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(session) = Session::load(&path) else { continue };
+        let updated = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        entries.push(IndexEntry {
+            id: session.id,
+            title: session.title,
+            project_root: session.project_root,
+            updated,
+        });
+    }
+    write_index(&entries)?;
+    Ok(entries)
+}
+
 /// Milliseconds since the Unix epoch, for `Node::ts`.
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -125,7 +190,26 @@ impl Session {
         self.order.push(id.clone());
         self.nodes.insert(id.clone(), node);
         self.active_leaf = Some(id.clone());
+        self.update_index();
         id
+    }
+
+    /// Upsert this session's entry into `index.json`.
+    fn update_index(&self) {
+        let mut entries = load_index();
+        let entry = IndexEntry {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            project_root: self.project_root.clone(),
+            updated: now_ms(),
+        };
+        match entries.iter_mut().find(|e| e.id == self.id) {
+            Some(existing) => *existing = entry,
+            None => entries.push(entry),
+        }
+        if let Err(e) = write_index(&entries) {
+            tracing::error!(session = %self.id, error = %e, "failed to update session index");
+        }
     }
 
     /// Serialize one node and append it as a line to the session file.
@@ -442,6 +526,29 @@ mod tests {
             }
             other => panic!("expected FunctionCallOutput, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn append_maintains_index_and_rebuild_recovers_it() {
+        let (_g, _tmp) = temp_env();
+
+        let mut s = Session::new(PathBuf::from("/home/joshua/proj"));
+        s.append(Role::User, Content::Text("index me".into()), None, None);
+        let id = s.id.clone();
+
+        // append upserted an entry with live title + project_root
+        let index = load_index();
+        let entry = index.iter().find(|e| e.id == id).expect("append writes an index entry");
+        assert_eq!(entry.title, "index me");
+        assert_eq!(entry.project_root, PathBuf::from("/home/joshua/proj"));
+
+        // wipe the index; load_index must rebuild it from the jsonl files.
+        // (project_root is not stored per-node, so only id + derived title survive.)
+        std::fs::remove_file(index_path()).unwrap();
+        let rebuilt = load_index();
+        let rebuilt_entry =
+            rebuilt.iter().find(|e| e.id == id).expect("index rebuilt from files");
+        assert_eq!(rebuilt_entry.title, "index me", "title recovered from first user node");
     }
 }
 
