@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 pub mod bash;
 pub mod edit;
 pub mod read;
+pub mod search;
 pub mod write;
 
 /// Per-conversation execution context. `project_root` scopes `bash` and
