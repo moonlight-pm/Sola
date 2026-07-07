@@ -18,6 +18,7 @@ sola-core = { path = "../sola-core" }
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ureq = { workspace = true, features = ["rustls"] }
+ureq = { workspace = true, features = ["json"] }
+rustls = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
