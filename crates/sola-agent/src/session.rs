@@ -5,7 +5,7 @@
 //! session layer.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::event::NodeId;
 use serde::{Deserialize, Serialize};
@@ -144,6 +144,47 @@ impl Session {
         Ok(())
     }
 
+    /// Rebuild a session from its append-only JSONL file. `active_leaf` is the
+    /// last node written; `title` is derived from the first user text node;
+    /// `project_root` is not stored per-node, so it is left empty (the session
+    /// index is the authoritative source for it during a live session).
+    pub fn load(path: &Path) -> std::io::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let mut nodes = HashMap::new();
+        let mut order = Vec::new();
+        for line in content.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let node: Node = serde_json::from_str(line)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            order.push(node.id.clone());
+            nodes.insert(node.id.clone(), node);
+        }
+        let id = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+            .unwrap_or_default();
+        let active_leaf = order.last().cloned();
+        let title = order
+            .iter()
+            .filter_map(|nid| nodes.get(nid))
+            .find_map(|n| match (&n.role, &n.content) {
+                (Role::User, Content::Text(t)) => Some(derive_title(t)),
+                _ => None,
+            })
+            .unwrap_or_default();
+        Ok(Session {
+            id,
+            title,
+            project_root: PathBuf::new(),
+            nodes,
+            order,
+            active_leaf,
+        })
+    }
+
     /// The chain of nodes from the root down to (and including) the active leaf.
     pub fn path_to_leaf(&self) -> Vec<Node> {
         let mut chain = Vec::new();
@@ -256,6 +297,34 @@ mod tests {
 
         let path: Vec<NodeId> = s.path_to_leaf().into_iter().map(|n| n.id).collect();
         assert_eq!(path, vec![n1, n2], "path_to_leaf is root..=leaf");
+    }
+
+    #[test]
+    fn reload_reconstructs_tree_and_leaf() {
+        let (_g, _tmp) = temp_env();
+
+        let (path, id, n1, n2) = {
+            let mut s = Session::new(PathBuf::from("/tmp/project"));
+            let n1 = s.append(Role::User, Content::Text("hi".into()), None, None);
+            let n2 = s.append(
+                Role::Assistant,
+                Content::Text("hello".into()),
+                Some("fugu".into()),
+                None,
+            );
+            (s.path(), s.id.clone(), n1, n2)
+        };
+
+        let reloaded = Session::load(&path).expect("load session");
+
+        assert_eq!(reloaded.id, id, "id recovered from filename");
+        assert_eq!(reloaded.active_leaf.as_ref(), Some(&n2));
+        assert_eq!(reloaded.nodes.len(), 2);
+        assert_eq!(reloaded.nodes[&n2].parent_id.as_ref(), Some(&n1));
+        assert!(reloaded.nodes[&n1].parent_id.is_none());
+
+        let ids: Vec<NodeId> = reloaded.path_to_leaf().into_iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec![n1, n2]);
     }
 }
 
