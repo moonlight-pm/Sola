@@ -26,8 +26,8 @@ mod provider;
 mod session;
 mod tools;
 
-use event::{AgentEvent, NodeId};
-use session::{Session, Usage};
+use event::{AgentCmd, AgentEvent, NodeId};
+use session::{Content, Role, Session, Usage};
 use tools::ToolDetail;
 
 const APP_ID: &str = "sola-agent";
@@ -179,6 +179,47 @@ fn list_sessions() -> Vec<SessionSummary> {
     }
     out.sort_by(|a, b| a.title.cmp(&b.title));
     out
+}
+
+/// Rebuild display turns from a persisted session's root..=leaf path.
+/// FunctionCall/Output nodes pair back into a single tool row by call_id.
+fn turns_from_session(session: &Session) -> Vec<Turn> {
+    let mut turns: Vec<Turn> = Vec::new();
+    for node in session.path_to_leaf() {
+        match node.content {
+            Content::Text(t) => match node.role {
+                Role::User => turns.push(Turn::User(t)),
+                Role::Assistant => turns.push(Turn::Assistant {
+                    id: node.id.clone(),
+                    text: t,
+                }),
+                Role::Tool => turns.push(Turn::Error(t)),
+            },
+            Content::FunctionCall { call_id, name, arguments } => {
+                let args = serde_json::from_str(&arguments).unwrap_or(serde_json::Value::Null);
+                turns.push(Turn::Tool(ToolTurn {
+                    call_id,
+                    tool: name,
+                    args,
+                    output: String::new(),
+                    detail: None,
+                }));
+            }
+            Content::FunctionCallOutput { call_id, output } => {
+                let existing = turns.iter_mut().rev().find_map(|t| match t {
+                    Turn::Tool(tt) if tt.call_id == call_id => Some(tt),
+                    _ => None,
+                });
+                if let Some(tt) = existing {
+                    tt.detail = Some(ToolDetail::Text(output.clone()));
+                    tt.output = output;
+                } else {
+                    turns.push(Turn::Error(format!("orphan tool output {call_id}")));
+                }
+            }
+        }
+    }
+    turns
 }
 
 fn main() -> iced::Result {
@@ -333,7 +374,197 @@ impl App {
                 }
                 Task::none()
             }
-            _ => Task::none(),
+            Msg::Agent(ev) => {
+                self.on_agent(ev);
+                Task::none()
+            }
+            Msg::DraftChanged(v) => {
+                self.draft = v;
+                Task::none()
+            }
+            Msg::Send => {
+                let text = self.draft.trim().to_string();
+                if text.is_empty() || self.first_run {
+                    return Task::none();
+                }
+                self.turns.push(Turn::User(text.clone()));
+                self.draft.clear();
+                self.streaming = None;
+                // Engine is the single writer of the session tree; it appends
+                // the user node from this text and drives the turn.
+                event::agent_send(AgentCmd::Send {
+                    text,
+                    branch_from: None,
+                });
+                Task::none()
+            }
+            Msg::Approve => {
+                self.answer_approval(false, false);
+                Task::none()
+            }
+            Msg::Always => {
+                self.answer_approval(true, false);
+                Task::none()
+            }
+            Msg::Deny => {
+                self.answer_approval(false, true);
+                Task::none()
+            }
+            Msg::Abort => {
+                event::agent_send(AgentCmd::Abort);
+                self.streaming = None;
+                self.pending = None;
+                Task::none()
+            }
+            Msg::NewSession => {
+                let fresh = Session::new(self.project_root.clone());
+                if let Ok(mut guard) = self.session.lock() {
+                    *guard = fresh;
+                }
+                self.turns.clear();
+                self.streaming = None;
+                self.pending = None;
+                self.usage = Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                };
+                self.sessions = list_sessions();
+                Task::none()
+            }
+            Msg::SelectSession(path) => {
+                match Session::load(&path) {
+                    Ok(loaded) => {
+                        self.turns = turns_from_session(&loaded);
+                        if let Ok(mut guard) = self.session.lock() {
+                            *guard = loaded;
+                        }
+                        self.streaming = None;
+                        self.pending = None;
+                    }
+                    Err(e) => tracing::warn!(?path, "failed to load session: {e}"),
+                }
+                Task::none()
+            }
+            Msg::KeyDraftChanged(v) => {
+                self.key_draft = v;
+                Task::none()
+            }
+            Msg::KeySubmit => {
+                let key = self.key_draft.trim().to_string();
+                if key.is_empty() {
+                    return Task::none();
+                }
+                if let Err(e) = save_api_key(&key) {
+                    tracing::error!("failed to persist Sakana key: {e}");
+                    return Task::none();
+                }
+                spawn_engine(
+                    key,
+                    self.model.clone(),
+                    self.effort.clone(),
+                    self.project_root.clone(),
+                    self.session.clone(),
+                );
+                self.first_run = false;
+                self.key_draft.clear();
+                Task::none()
+            }
+        }
+    }
+
+    /// Fold one streamed agent event into the display transcript.
+    fn on_agent(&mut self, ev: AgentEvent) {
+        match ev {
+            AgentEvent::Delta { node_id, text } => self.apply_delta(&node_id, &text),
+            AgentEvent::Reasoning { text } => self.apply_reasoning(&text),
+            AgentEvent::ToolStart { call_id, tool, args } => {
+                self.streaming = None;
+                self.turns.push(Turn::Tool(ToolTurn {
+                    call_id,
+                    tool,
+                    args,
+                    output: String::new(),
+                    detail: None,
+                }));
+            }
+            AgentEvent::ToolOutput { call_id, chunk } => {
+                if let Some(tt) = self.tool_turn_mut(&call_id) {
+                    tt.output.push_str(&chunk);
+                }
+            }
+            AgentEvent::ToolEnd { call_id, result } => {
+                if let Some(tt) = self.tool_turn_mut(&call_id) {
+                    if tt.output.is_empty() {
+                        tt.output = result.model_text.clone();
+                    }
+                    tt.detail = Some(result.ui_detail);
+                }
+            }
+            AgentEvent::ApprovalRequest { call_id, tool, preview } => {
+                self.pending = Some(PendingApproval { call_id, tool, preview });
+            }
+            AgentEvent::TurnEnd { usage } => {
+                self.usage.input_tokens += usage.input_tokens;
+                self.usage.output_tokens += usage.output_tokens;
+                self.streaming = None;
+            }
+            AgentEvent::Error { message } => {
+                self.streaming = None;
+                self.turns.push(Turn::Error(message));
+            }
+        }
+    }
+
+    /// Append a text delta to the in-flight assistant node (found by id,
+    /// scanning from the back), or start a fresh streaming bubble.
+    fn apply_delta(&mut self, node_id: &str, chunk: &str) {
+        for turn in self.turns.iter_mut().rev() {
+            if let Turn::Assistant { id, text } = turn {
+                if id == node_id {
+                    text.push_str(chunk);
+                    self.streaming = Some(node_id.to_string());
+                    return;
+                }
+            }
+        }
+        self.turns.push(Turn::Assistant {
+            id: node_id.to_string(),
+            text: chunk.to_string(),
+        });
+        self.streaming = Some(node_id.to_string());
+    }
+
+    /// Coalesce reasoning chunks into a single trailing reasoning row.
+    fn apply_reasoning(&mut self, chunk: &str) {
+        if let Some(Turn::Reasoning(buf)) = self.turns.last_mut() {
+            buf.push_str(chunk);
+            return;
+        }
+        self.turns.push(Turn::Reasoning(chunk.to_string()));
+    }
+
+    fn tool_turn_mut(&mut self, call_id: &str) -> Option<&mut ToolTurn> {
+        self.turns.iter_mut().rev().find_map(|t| match t {
+            Turn::Tool(tt) if tt.call_id == call_id => Some(tt),
+            _ => None,
+        })
+    }
+
+    /// Resolve the pending approval and forward the decision to the worker.
+    fn answer_approval(&mut self, remember: bool, deny: bool) {
+        let Some(p) = self.pending.take() else {
+            return;
+        };
+        if deny {
+            event::agent_send(AgentCmd::Deny {
+                call_id: p.call_id,
+                reason: None,
+            });
+        } else {
+            event::agent_send(AgentCmd::Approve {
+                call_id: p.call_id,
+                remember,
+            });
         }
     }
 
@@ -373,5 +604,62 @@ mod tests {
         assert!(app.pending.is_none());
         assert_eq!(app.usage.input_tokens, 0);
         assert_eq!(app.usage.output_tokens, 0);
+    }
+
+    #[test]
+    fn delta_appends_to_streaming_node() {
+        let mut app = blank_app(false);
+        let _ = app.update(Msg::Agent(AgentEvent::Delta {
+            node_id: "n1".into(),
+            text: "Hel".into(),
+        }));
+        let _ = app.update(Msg::Agent(AgentEvent::Delta {
+            node_id: "n1".into(),
+            text: "lo".into(),
+        }));
+        assert_eq!(app.streaming.as_deref(), Some("n1"));
+        match app.turns.as_slice() {
+            [Turn::Assistant { id, text }] => {
+                assert_eq!(id, "n1");
+                assert_eq!(text, "Hello");
+            }
+            other => panic!("expected one assistant turn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_output_appends_and_end_sets_detail() {
+        let mut app = blank_app(false);
+        let _ = app.update(Msg::Agent(AgentEvent::ToolStart {
+            call_id: "c1".into(),
+            tool: "bash".into(),
+            args: serde_json::json!({"cmd": "ls"}),
+        }));
+        let _ = app.update(Msg::Agent(AgentEvent::ToolOutput {
+            call_id: "c1".into(),
+            chunk: "a\n".into(),
+        }));
+        let _ = app.update(Msg::Agent(AgentEvent::ToolOutput {
+            call_id: "c1".into(),
+            chunk: "b\n".into(),
+        }));
+        let _ = app.update(Msg::Agent(AgentEvent::ToolEnd {
+            call_id: "c1".into(),
+            result: tools::ToolResult {
+                model_text: "a\nb\n".into(),
+                ui_detail: tools::ToolDetail::Bash {
+                    code: 0,
+                    stdout: "a\nb\n".into(),
+                    stderr: String::new(),
+                },
+            },
+        }));
+        match app.turns.as_slice() {
+            [Turn::Tool(tt)] => {
+                assert_eq!(tt.output, "a\nb\n");
+                assert!(matches!(tt.detail, Some(tools::ToolDetail::Bash { code: 0, .. })));
+            }
+            other => panic!("expected one tool turn, got {other:?}"),
+        }
     }
 }
