@@ -201,6 +201,12 @@ impl Session {
         chain.reverse();
         chain
     }
+
+    /// Move the active leaf back to an earlier node so the next `append` forks
+    /// a new child off it, leaving the previous branch intact.
+    pub fn branch_from(&mut self, parent: NodeId) {
+        self.active_leaf = Some(parent);
+    }
 }
 
 #[cfg(test)]
@@ -325,6 +331,38 @@ mod tests {
 
         let ids: Vec<NodeId> = reloaded.path_to_leaf().into_iter().map(|n| n.id).collect();
         assert_eq!(ids, vec![n1, n2]);
+    }
+
+    #[test]
+    fn branch_from_forks_a_sibling_without_touching_old_branch() {
+        let (_g, _tmp) = temp_env();
+
+        let mut s = Session::new(PathBuf::from("/tmp/project"));
+        let root = s.append(Role::User, Content::Text("root".into()), None, None);
+        let old = s.append(Role::Assistant, Content::Text("old reply".into()), None, None);
+
+        s.branch_from(root.clone());
+        assert_eq!(s.active_leaf.as_ref(), Some(&root), "leaf moved back to the parent");
+
+        let new = s.append(Role::Assistant, Content::Text("new reply".into()), None, None);
+
+        // The new node is a second child of root; the old branch is untouched.
+        assert_eq!(s.nodes[&new].parent_id.as_ref(), Some(&root));
+        assert_eq!(s.nodes[&old].parent_id.as_ref(), Some(&root));
+        match &s.nodes[&old].content {
+            Content::Text(t) => assert_eq!(t, "old reply"),
+            other => panic!("old branch content changed: {other:?}"),
+        }
+
+        let children = s
+            .order
+            .iter()
+            .filter(|id| s.nodes.get(*id).and_then(|n| n.parent_id.as_ref()) == Some(&root))
+            .count();
+        assert_eq!(children, 2, "root has two children after branching");
+
+        let leaf_ids: Vec<NodeId> = s.path_to_leaf().into_iter().map(|n| n.id).collect();
+        assert_eq!(leaf_ids, vec![root, new], "active path is the new branch");
     }
 }
 
