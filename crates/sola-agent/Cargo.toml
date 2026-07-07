@@ -1,0 +1,19 @@
+[package]
+name = "sola-agent"
+version.workspace = true
+edition.workspace = true
+
+# Minimal iced-based AI agent shell. This intentionally starts from the
+# current sola-kit app pattern (see sola-terminal / sola-settings), not the
+# retired WebView prototype under apps/agent.
+
+[[bin]]
+name = "sola-agent"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+tracing = "0.1"

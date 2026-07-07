@@ -5045,6 +5045,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-agent"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "tracing",
+]
+
+[[package]]
 name = "sola-app"
 version = "0.1.0"
 dependencies = [
