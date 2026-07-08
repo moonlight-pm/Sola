@@ -1,6 +1,7 @@
 use iced::widget::{column, container, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 
+use super::tool;
 use crate::{Msg, Turn};
 
 pub(crate) fn turn_view<'a>(turn: &'a Turn, theme: &Theme) -> Element<'a, Msg> {
@@ -10,14 +11,7 @@ pub(crate) fn turn_view<'a>(turn: &'a Turn, theme: &Theme) -> Element<'a, Msg> {
             bubble("Agent", body.as_str(), Alignment::Start, role_bg(theme, false), theme)
         }
         Turn::Reasoning(t) => reasoning(t.as_str()),
-        // Placeholder tool render; Task 28 swaps this for tool::tool_view.
-        Turn::Tool(tt) => bubble(
-            "Tool",
-            &format!("{}\n{}", tt.tool, tt.output),
-            Alignment::Start,
-            role_bg(theme, false),
-            theme,
-        ),
+        Turn::Tool(tt) => tool::tool_view(tt, theme),
         Turn::Error(m) => error_view(m.as_str()),
     }
 }

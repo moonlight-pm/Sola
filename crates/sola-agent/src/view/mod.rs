@@ -1,9 +1,12 @@
 //! Agent UI composition. Borders/fills only — this iced stack does not blur
 //! shadows.
+pub(crate) mod approval;
 pub(crate) mod bubble;
 pub(crate) mod footer;
+pub(crate) mod sidebar;
+pub(crate) mod tool;
 
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column};
+use iced::widget::{button, container, row, scrollable, text, text_input, Column};
 use iced::Element;
 use iced::{Length, Padding};
 
@@ -23,19 +26,44 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     )
     .height(Length::Fill);
 
-    column![transcript, input_row(app), footer::view(app)]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    let mut center: Vec<Element<'_, Msg>> = vec![transcript.into()];
+    if let Some(p) = &app.pending {
+        center.push(approval::strip(p, &app.theme));
+    }
+    center.push(input_row(app));
+    center.push(footer::view(app));
+
+    row![
+        sidebar::view(app),
+        Column::with_children(center)
+            .width(Length::Fill)
+            .height(Length::Fill),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
+/// Draft field + Send/Stop. Disabled while an approval is pending: the
+/// worker's `wait_for_decision` discards any `Send` command while
+/// `App.pending` is `Some`, so submitting here would silently drop the
+/// message — gate the field and swap in a static prompt instead.
 fn input_row(app: &App) -> Element<'_, Msg> {
-    let field = text_input("Ask Sola Agent…", &app.draft)
-        .on_input(Msg::DraftChanged)
-        .on_submit(Msg::Send)
-        .padding(12)
-        .size(15)
-        .width(Length::Fill);
+    let gated = app.pending.is_some();
+
+    let field = if gated {
+        text_input("Resolve the pending approval to continue…", &app.draft)
+            .padding(12)
+            .size(15)
+            .width(Length::Fill)
+    } else {
+        text_input("Ask Sola Agent…", &app.draft)
+            .on_input(Msg::DraftChanged)
+            .on_submit(Msg::Send)
+            .padding(12)
+            .size(15)
+            .width(Length::Fill)
+    };
 
     let action: Element<'_, Msg> = if app.streaming.is_some() {
         button(text("Stop"))
@@ -43,10 +71,8 @@ fn input_row(app: &App) -> Element<'_, Msg> {
             .on_press(Msg::Abort)
             .into()
     } else {
-        button(text("Send"))
-            .style(sola_kit::components::button::primary)
-            .on_press(Msg::Send)
-            .into()
+        let send = button(text("Send")).style(sola_kit::components::button::primary);
+        if gated { send.into() } else { send.on_press(Msg::Send).into() }
     };
 
     container(row![field, action].spacing(8))

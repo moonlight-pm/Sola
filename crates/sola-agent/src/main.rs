@@ -223,6 +223,23 @@ fn turns_from_session(session: &Session) -> Vec<Turn> {
     turns
 }
 
+/// Restore `project_root` on a freshly `Session::load`ed session by matching
+/// its id against the session index. `Session::load` cannot recover
+/// `project_root` itself (not stored per-node); doing this before the first
+/// subsequent `append` avoids `Session::update_index` clobbering the
+/// persisted value with an empty path (see the `TODO(resume)` note on
+/// `Session::update_index`). Falls back to leaving `project_root` untouched
+/// (empty) with a warning if no index entry matches.
+fn restore_project_root(session: &mut Session, index: &[session::IndexEntry]) {
+    match index.iter().find(|e| e.id == session.id) {
+        Some(entry) => session.project_root = entry.project_root.clone(),
+        None => tracing::warn!(
+            session = %session.id,
+            "no index entry for loaded session; project_root stays empty"
+        ),
+    }
+}
+
 fn main() -> iced::Result {
     startup(APP_ID);
 
@@ -434,8 +451,15 @@ impl App {
             }
             Msg::SelectSession(path) => {
                 match Session::load(&path) {
-                    Ok(loaded) => {
+                    Ok(mut loaded) => {
+                        // `Session::load` leaves `project_root` empty (it isn't
+                        // stored per-node); restore it from the session index
+                        // BEFORE any subsequent `append`, or `update_index`
+                        // would blank out the good value on the next write
+                        // (see the `TODO(resume)` note on `Session::update_index`).
+                        restore_project_root(&mut loaded, &session::load_index());
                         self.turns = turns_from_session(&loaded);
+                        self.project_root = loaded.project_root.clone();
                         if let Ok(mut guard) = self.session.lock() {
                             *guard = loaded;
                         }
@@ -592,6 +616,34 @@ mod tests {
             PathBuf::from("/tmp"),
             first_run,
         )
+    }
+
+    /// Regression for the Task 27→28 `TODO(resume)` hazard: `Session::load`
+    /// leaves `project_root` empty, and `restore_project_root` is the guard
+    /// that must run before any subsequent `append` re-persists the index —
+    /// otherwise a loaded session's good `project_root` gets blanked out.
+    #[test]
+    fn restore_project_root_matches_by_session_id() {
+        let mut loaded = session::Session::new(PathBuf::from("/should/not/survive"));
+        loaded.project_root = PathBuf::new(); // mirror Session::load's empty root
+        let index = vec![session::IndexEntry {
+            id: loaded.id.clone(),
+            title: "some session".into(),
+            project_root: PathBuf::from("/home/joshua/real-project"),
+            updated: 0,
+        }];
+        restore_project_root(&mut loaded, &index);
+        assert_eq!(loaded.project_root, PathBuf::from("/home/joshua/real-project"));
+    }
+
+    /// No matching index entry: leave `project_root` as-is (empty) rather than
+    /// panicking or guessing.
+    #[test]
+    fn restore_project_root_no_match_leaves_root_untouched() {
+        let mut loaded = session::Session::new(PathBuf::new());
+        loaded.project_root = PathBuf::new();
+        restore_project_root(&mut loaded, &[]);
+        assert_eq!(loaded.project_root, PathBuf::new());
     }
 
     #[test]
