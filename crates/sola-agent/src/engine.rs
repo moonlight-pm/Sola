@@ -279,19 +279,28 @@ mod tests {
     /// Redirect `$XDG_CONFIG_HOME` to a fresh temp dir so `Session` JSONL
     /// persistence never touches the real `~/.config`, and return an
     /// (also-temp) project root for the tools' `ToolCtx`.
-    fn hermetic_root(tag: &str) -> std::path::PathBuf {
+    ///
+    /// Takes `session::tests::ENV_LOCK` — the same lock `session.rs`'s own
+    /// fs tests use — because `$XDG_CONFIG_HOME` is one process-global
+    /// value: two tests setting it concurrently (one here, one in
+    /// `session.rs`) can each have a `Session::append`/`load` land in the
+    /// *other* test's temp dir mid-run. That intermittently broke
+    /// `session::tests::rebuild_index_skips_bad_entries_without_losing_good_ones`
+    /// and its siblings before this fix. The returned guard must be bound
+    /// (not `_`-discarded) and kept alive for the whole test.
+    fn hermetic_root(tag: &str) -> (std::sync::MutexGuard<'static, ()>, std::path::PathBuf) {
+        let guard = crate::session::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let base = std::env::temp_dir()
             .join(format!("sola-agent-{tag}-{}", uuid::Uuid::new_v4()));
         let cfg = base.join("config");
         let root = base.join("project");
         std::fs::create_dir_all(&cfg).unwrap();
         std::fs::create_dir_all(&root).unwrap();
-        // SAFETY (edition 2024): test setup only; the value is always an
-        // absolute temp path, so a successful persist can never land in
-        // the real $HOME. Concurrent tests each point it at their own
-        // temp dir — a benign race (assertions read the in-memory tree).
+        // SAFETY (edition 2024): test setup only, serialized by ENV_LOCK
+        // above; the value is always an absolute temp path, so a
+        // successful persist can never land in the real $HOME.
         unsafe { std::env::set_var("XDG_CONFIG_HOME", &cfg) };
-        root
+        (guard, root)
     }
 
     /// Streams two text deltas + a completed event, then returns the
@@ -321,7 +330,7 @@ mod tests {
 
     #[test]
     fn text_only_turn_streams_and_appends_assistant() {
-        let root = hermetic_root("text");
+        let (_env_guard, root) = hermetic_root("text");
         let session = Arc::new(Mutex::new(Session::new(root.clone())));
         // Simulate the Send handler having already appended the user node.
         session
@@ -441,7 +450,7 @@ mod tests {
 
     #[test]
     fn tool_call_executes_and_feeds_output_back() {
-        let root = hermetic_root("tool");
+        let (_env_guard, root) = hermetic_root("tool");
         std::fs::write(root.join("note.txt"), "hello file").unwrap();
 
         let session = Arc::new(Mutex::new(Session::new(root.clone())));
@@ -553,7 +562,7 @@ mod tests {
 
     #[test]
     fn denied_call_feeds_declined_output_and_skips_dispatch() {
-        let root = hermetic_root("deny");
+        let (_env_guard, root) = hermetic_root("deny");
         let session = Arc::new(Mutex::new(Session::new(root.clone())));
         session.lock().unwrap().append(
             Role::User,
@@ -620,7 +629,7 @@ mod tests {
     /// `AgentEvent::ToolOutput` rather than dropping it on the floor).
     #[test]
     fn allowed_bash_call_streams_output_via_tool_output_events() {
-        let root = hermetic_root("bash-stream");
+        let (_env_guard, root) = hermetic_root("bash-stream");
         let session = Arc::new(Mutex::new(Session::new(root.clone())));
         session.lock().unwrap().append(
             Role::User,

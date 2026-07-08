@@ -342,12 +342,17 @@ impl Session {
     }
 }
 
+// Serializes `$XDG_CONFIG_HOME` mutation across this module's fs tests AND
+// `engine::tests::hermetic_root` (a second mutator of the same process-global
+// var, gated behind the same lock rather than racing this module's tests).
+// Lives outside `mod tests` (but still `#[cfg(test)]`-only) so it's reachable
+// as `crate::session::ENV_LOCK` from a sibling module's test code.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Serializes `$XDG_CONFIG_HOME` mutation so the fs tests don't race.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Point `$XDG_CONFIG_HOME` at a fresh tempdir for the test's duration.
     /// The returned guard + TempDir must be kept alive by the caller.
