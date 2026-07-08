@@ -190,7 +190,7 @@ fn run_turn(
                             tool: call.name.clone(),
                             preview,
                         });
-                        wait_for_decision(cmd_rx, &call.call_id, policy, &call.name, abort)
+                        wait_for_decision(cmd_rx, &call.call_id, policy, &call.name, &args, abort)
                     }
                 }
             };
@@ -243,13 +243,14 @@ fn wait_for_decision(
     call_id: &str,
     policy: &mut Policy,
     tool: &str,
+    args: &serde_json::Value,
     abort: &AtomicBool,
 ) -> bool {
     loop {
         match cmd_rx.recv() {
             Ok(AgentCmd::Approve { call_id: id, remember: r }) if id == call_id => {
                 if r {
-                    remember(policy, tool);
+                    remember(policy, tool, args);
                 }
                 return true;
             }
@@ -646,7 +647,7 @@ mod tests {
         };
         let mut policy = Policy {
             project_root: root.clone(),
-            always: vec![Rule { tool: "bash".into(), scope: "always".into() }],
+            always: vec![Rule { tool: "bash".into(), scope: "always".into(), path: None }],
         };
         let fake = BashFake::new();
         let abort = AtomicBool::new(false);

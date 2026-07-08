@@ -12,10 +12,18 @@ use std::path::{Component, Path, PathBuf};
 use crate::provider::{InputItem, LlmStream, StreamEvent};
 
 /// One session-policy grant, e.g. `{ tool: "bash", scope: "always" }`.
+///
+/// `path` scopes a grant to a single resolved filesystem target. It is
+/// `Some(resolved_path)` for the path-based tools (`read`/`search`/`write`/
+/// `edit`), so clicking "Always allow" on one out-of-root write blesses only
+/// that path — not every write for the session. `None` is a tool-wide grant
+/// (used by `bash`, a deliberate all-bash trust, and by any manually-created
+/// rule that predates path scoping).
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub tool: String,
     pub scope: String,
+    pub path: Option<PathBuf>,
 }
 
 /// The active conversation's permission policy. Task 14 only carries this
@@ -37,33 +45,43 @@ pub enum StaticDecision {
 
 /// Decide a tool call from static rules alone — no network, no side effects.
 ///
-/// * a matching `always` rule → `AutoAllow`
-/// * read-only tools (`read`, `search`) → `AutoAllow`
-/// * `write`/`edit` whose resolved target is inside `project_root` → `AutoAllow`,
-///   otherwise `NeedsPrompt`
+/// * a matching `always` rule → `AutoAllow` (a path-scoped rule matches only
+///   when this call's resolved target equals the rule's path; a tool-wide rule
+///   with `path: None` matches any call of that tool)
+/// * path-based tools (`read`/`search`/`write`/`edit`) whose resolved target is
+///   inside `project_root` → `AutoAllow`, otherwise `NeedsPrompt`; a missing
+///   `path` arg is treated as unsafe and prompts (never auto-allowed)
 /// * `bash` → always `NeedsPrompt` (preview = the command)
 /// * anything else → `NeedsPrompt` (safe default)
 pub fn static_decision(policy: &Policy, tool: &str, args: &serde_json::Value) -> StaticDecision {
-    if policy
-        .always
-        .iter()
-        .any(|r| r.tool == tool && r.scope == "always")
-    {
+    let target = call_target(&policy.project_root, tool, args);
+    if policy.always.iter().any(|r| {
+        r.tool == tool
+            && r.scope == "always"
+            && match &r.path {
+                // Tool-wide grant (bash / legacy) — matches any call of `tool`.
+                None => true,
+                // Path-scoped grant — only this exact resolved target.
+                Some(p) => target.as_ref() == Some(p),
+            }
+    }) {
         return StaticDecision::AutoAllow;
     }
 
     match tool {
-        "read" | "search" => StaticDecision::AutoAllow,
-        "write" | "edit" => {
-            let path = args
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            if path_inside_root(&policy.project_root, path) {
+        "read" | "search" | "write" | "edit" => {
+            // A missing path arg is unsafe: an empty/bare path would fold to the
+            // project root and auto-allow, so prompt instead of trusting it.
+            let Some(raw) = args.get("path").and_then(|v| v.as_str()) else {
+                return StaticDecision::NeedsPrompt {
+                    preview: format!("{tool}: missing path argument"),
+                };
+            };
+            if path_inside_root(&policy.project_root, raw) {
                 StaticDecision::AutoAllow
             } else {
                 StaticDecision::NeedsPrompt {
-                    preview: format!("{tool} target outside project root: {path}"),
+                    preview: format!("{tool} target outside project root: {raw}"),
                 }
             }
         }
@@ -80,6 +98,24 @@ pub fn static_decision(policy: &Policy, tool: &str, args: &serde_json::Value) ->
             preview: format!("{tool}: {args}"),
         },
     }
+}
+
+/// True for the path-based tools whose grants are scoped to a single resolved
+/// filesystem target (as opposed to `bash`, which trusts tool-wide).
+fn is_path_scoped(tool: &str) -> bool {
+    matches!(tool, "read" | "search" | "write" | "edit")
+}
+
+/// The resolved, lexically-normalized filesystem target a path-based tool call
+/// points at, or `None` for a non-path tool or a missing `path` arg. Used both
+/// to match path-scoped `always` rules and to compute the path a `remember`
+/// grant is scoped to, so the two always agree on what "the same target" means.
+fn call_target(root: &Path, tool: &str, args: &serde_json::Value) -> Option<PathBuf> {
+    if !is_path_scoped(tool) {
+        return None;
+    }
+    let raw = args.get("path").and_then(|v| v.as_str())?;
+    Some(resolve_target(root, raw))
 }
 
 /// True when `raw` (relative to `root`, or absolute) resolves *inside* `root`.
@@ -126,19 +162,30 @@ fn normalize_lexically(path: &Path) -> PathBuf {
     out
 }
 
-/// Persist an always-allow grant for `tool` in the session policy. The engine
-/// calls this when the user picks "Always allow this kind". Idempotent.
-pub fn remember(policy: &mut Policy, tool: &str) {
+/// Persist an always-allow grant for this call in the session policy. The
+/// engine calls this when the user picks "Always allow". For the path-based
+/// tools the grant is scoped to the exact resolved target (so "Always" on one
+/// out-of-root write does not bless writes elsewhere); `bash` is stored
+/// tool-wide (`path: None`), a deliberate all-bash trust. Idempotent per
+/// (tool, path).
+pub fn remember(policy: &mut Policy, tool: &str, args: &serde_json::Value) {
+    // Path-based tools always carry a concrete scope path (a missing arg folds
+    // to the project root) so they can never widen into a tool-wide grant.
+    let path = is_path_scoped(tool).then(|| {
+        let raw = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+        resolve_target(&policy.project_root, raw)
+    });
     let already = policy
         .always
         .iter()
-        .any(|r| r.tool == tool && r.scope == "always");
+        .any(|r| r.tool == tool && r.scope == "always" && r.path == path);
     if already {
         return;
     }
     policy.always.push(Rule {
         tool: tool.to_string(),
         scope: "always".to_string(),
+        path,
     });
 }
 
@@ -266,11 +313,57 @@ mod tests {
     }
 
     #[test]
+    fn read_inside_root_auto_allows() {
+        let p = policy();
+        let d = static_decision(&p, "read", &json!({ "path": "src/main.rs" }));
+        assert!(matches!(d, StaticDecision::AutoAllow), "got {d:?}");
+    }
+
+    #[test]
+    fn read_outside_root_prompts() {
+        let p = policy();
+        let d = static_decision(&p, "read", &json!({ "path": "/home/agent/.ssh/id_rsa" }));
+        match d {
+            StaticDecision::NeedsPrompt { preview } => assert!(preview.contains("id_rsa"), "{preview}"),
+            other => panic!("expected prompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_parent_escape_prompts() {
+        let p = policy();
+        let d = static_decision(&p, "read", &json!({ "path": "../../etc/passwd" }));
+        assert!(matches!(d, StaticDecision::NeedsPrompt { .. }), "got {d:?}");
+    }
+
+    #[test]
+    fn search_outside_root_prompts() {
+        let p = policy();
+        let d = static_decision(&p, "search", &json!({ "mode": "grep", "path": "/etc", "query": "root" }));
+        assert!(matches!(d, StaticDecision::NeedsPrompt { .. }), "got {d:?}");
+    }
+
+    #[test]
+    fn read_inside_root_via_search_auto_allows() {
+        let p = policy();
+        let d = static_decision(&p, "search", &json!({ "mode": "ls", "path": "src", "query": null }));
+        assert!(matches!(d, StaticDecision::AutoAllow), "got {d:?}");
+    }
+
+    #[test]
+    fn path_tool_missing_path_prompts() {
+        let p = policy();
+        let d = static_decision(&p, "read", &json!({}));
+        assert!(matches!(d, StaticDecision::NeedsPrompt { .. }), "got {d:?}");
+    }
+
+    #[test]
     fn manual_always_rule_auto_allows_bash() {
         let mut p = policy();
         p.always.push(Rule {
             tool: "bash".into(),
             scope: "always".into(),
+            path: None,
         });
         let d = static_decision(&p, "bash", &json!({ "command": "ls" }));
         assert!(matches!(d, StaticDecision::AutoAllow), "got {d:?}");
@@ -287,19 +380,44 @@ mod tests {
             "bash should prompt before remember()"
         );
 
-        remember(&mut p, "bash");
+        remember(&mut p, "bash", &json!({ "command": "ls" }));
 
+        // A tool-wide bash grant auto-allows any bash command, not just `ls`.
         assert!(
             matches!(
-                static_decision(&p, "bash", &json!({ "command": "ls" })),
+                static_decision(&p, "bash", &json!({ "command": "rm -rf /tmp/x" })),
                 StaticDecision::AutoAllow
             ),
-            "bash should auto-allow after remember()"
+            "bash should auto-allow any command after remember()"
         );
 
         // idempotent — a second remember() does not duplicate the rule.
-        remember(&mut p, "bash");
+        remember(&mut p, "bash", &json!({ "command": "whoami" }));
         assert_eq!(p.always.iter().filter(|r| r.tool == "bash").count(), 1);
+    }
+
+    #[test]
+    fn remember_write_scopes_grant_to_the_prompted_path() {
+        let mut p = policy();
+        // Two distinct out-of-root targets: both prompt before any grant.
+        let a = json!({ "path": "/etc/hosts", "content": "x" });
+        let b = json!({ "path": "/etc/shadow", "content": "y" });
+        assert!(matches!(static_decision(&p, "write", &a), StaticDecision::NeedsPrompt { .. }));
+        assert!(matches!(static_decision(&p, "write", &b), StaticDecision::NeedsPrompt { .. }));
+
+        // "Always" on the write to A grants only A.
+        remember(&mut p, "write", &a);
+
+        assert!(
+            matches!(static_decision(&p, "write", &a), StaticDecision::AutoAllow),
+            "the remembered path A should now auto-allow"
+        );
+        assert!(
+            matches!(static_decision(&p, "write", &b), StaticDecision::NeedsPrompt { .. }),
+            "a different out-of-root path B must still prompt"
+        );
+        // A per-path grant does not widen into a tool-wide write bless.
+        assert!(p.always.iter().all(|r| r.path.is_some()));
     }
 
     /// Fake provider: a canned assistant reply (or a transport error), no
