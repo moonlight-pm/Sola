@@ -20,12 +20,12 @@ pub struct Rule {
 
 /// The active conversation's permission policy. Task 14 only carries this
 /// through the loop; `static_decision`/`remember`/`classify` (Tasks 24-26)
-/// add the actual gating logic.
+/// add the actual gating logic. Whether the classifier pass runs at all is
+/// `EngineConfig.classifier` (a per-process setting, not per-policy).
 #[derive(Debug, Clone)]
 pub struct Policy {
     pub project_root: PathBuf,
     pub always: Vec<Rule>,
-    pub classifier: bool,
 }
 
 /// Result of the static (no-LLM) policy pass.
@@ -209,7 +209,6 @@ mod tests {
         Policy {
             project_root: std::path::PathBuf::from("/home/agent/project"),
             always: Vec::new(),
-            classifier: false,
         }
     }
 

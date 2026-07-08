@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Local tools the agent can call. Each returns a split `ToolResult`:
 //! `model_text` is what the model sees; `ui_detail` is the richer structured
 //! view. Kept in many small files, one per tool.
@@ -57,13 +56,15 @@ pub fn tool_schemas() -> Vec<Value> {
 }
 
 /// Route a model tool call to its implementation. Unknown names return an error
-/// result (never panic) so the loop can feed it back to the model.
-pub fn dispatch(name: &str, args: &Value, ctx: &ToolCtx) -> ToolResult {
+/// result (never panic) so the loop can feed it back to the model. `on_chunk`
+/// is a live-output sink; only `bash` streams through it today, other tools
+/// run to completion synchronously and ignore it.
+pub fn dispatch(name: &str, args: &Value, ctx: &ToolCtx, on_chunk: &mut dyn FnMut(&str)) -> ToolResult {
     match name {
         "read" => read::run(args, ctx),
         "write" => write::run(args, ctx),
         "edit" => edit::run(args, ctx),
-        "bash" => bash::run(args, ctx),
+        "bash" => bash::run(args, ctx, on_chunk),
         "search" => search::run(args, ctx),
         other => error_result(format!("dispatch: unknown tool '{other}'")),
     }
@@ -91,7 +92,7 @@ mod tests {
     fn dispatch_routes_to_bash() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = ToolCtx { project_root: dir.path().to_path_buf() };
-        let res = dispatch("bash", &json!({ "command": "echo hi" }), &ctx);
+        let res = dispatch("bash", &json!({ "command": "echo hi" }), &ctx, &mut |_| {});
         assert!(matches!(res.ui_detail, ToolDetail::Bash { code: 0, .. }));
     }
 
@@ -99,7 +100,7 @@ mod tests {
     fn dispatch_unknown_tool_is_error_text() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = ToolCtx { project_root: dir.path().to_path_buf() };
-        let res = dispatch("nope", &json!({}), &ctx);
+        let res = dispatch("nope", &json!({}), &ctx, &mut |_| {});
         assert!(res.model_text.contains("unknown tool"));
         assert!(matches!(res.ui_detail, ToolDetail::Text(_)));
     }

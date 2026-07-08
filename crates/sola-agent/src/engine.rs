@@ -24,10 +24,10 @@ use crate::provider::{LlmStream, StreamEvent};
 use crate::session::{Content, Role, Session};
 use crate::tools::{dispatch, tool_schemas, ToolCtx, ToolDetail, ToolResult};
 
-/// Static configuration for one worker. `model`/`effort` are mutable at
-/// runtime via `AgentCmd::SetModel`; the rest are fixed for the process.
+/// Static configuration for one worker, fixed for the process. The API key
+/// itself is not carried here — the caller bakes it into the `provider`
+/// passed to `start` instead, so it lives in exactly one place.
 pub struct EngineConfig {
-    pub api_key: String,
     pub model: String,
     pub effort: String,
     pub project_root: std::path::PathBuf,
@@ -37,20 +37,18 @@ pub struct EngineConfig {
 /// Spawn the worker thread. It takes the process-wide command receiver
 /// exactly once, then loops: on `Send` it appends the user node (and
 /// forks first if `branch_from` is set), resets the abort flag, and runs
-/// a turn; `Abort` trips the flag; `SetModel` swaps model/effort.
+/// a turn; `Abort` trips the flag.
 pub fn start(
     config: EngineConfig,
     provider: Arc<dyn LlmStream + Send + Sync>,
     session: Arc<Mutex<Session>>,
 ) {
     std::thread::spawn(move || {
-        let mut config = config;
         let cmd_rx = crate::event::take_cmd_rx();
         let abort = AtomicBool::new(false);
         let mut policy = Policy {
             project_root: config.project_root.clone(),
             always: Vec::new(),
-            classifier: config.classifier,
         };
         while let Ok(cmd) = cmd_rx.recv() {
             match cmd {
@@ -74,10 +72,6 @@ pub fn start(
                     );
                 }
                 AgentCmd::Abort => abort.store(true, Ordering::SeqCst),
-                AgentCmd::SetModel { model, effort } => {
-                    config.model = model;
-                    config.effort = effort;
-                }
                 // No turn is awaiting a decision at loop scope — ignore
                 // stray approvals/denials.
                 AgentCmd::Approve { .. } | AgentCmd::Deny { .. } => {}
@@ -113,6 +107,17 @@ fn run_turn(
                     text: t,
                 }),
                 StreamEvent::Reasoning(t) => emit(AgentEvent::Reasoning { text: t }),
+                // Display-only: the authoritative call (real call_id, full
+                // arguments) arrives later as `FunctionCallDone` and is what
+                // `outcome.calls` collects. These are logged, not surfaced to
+                // the UI, so a slow/chatty model doesn't need new display
+                // plumbing just to be diagnosable after the fact.
+                StreamEvent::FunctionCallStarted { call_id, name } => {
+                    tracing::debug!(%call_id, %name, "model started streaming a function call");
+                }
+                StreamEvent::FunctionCallArgsDelta { call_id, delta } => {
+                    tracing::trace!(%call_id, %delta, "function call arguments delta");
+                }
                 StreamEvent::Error(m) => emit(AgentEvent::Error { message: m }),
                 _ => {}
             };
@@ -192,7 +197,16 @@ fn run_turn(
 
             let result = if allowed {
                 let ctx = ToolCtx { project_root: config.project_root.clone() };
-                dispatch(&call.name, &args, &ctx)
+                // Stream live output (currently just `bash` stdout) straight
+                // to the UI as it arrives, so a long-running call doesn't
+                // leave the transcript looking frozen until it completes.
+                let mut on_chunk = |chunk: &str| {
+                    emit(AgentEvent::ToolOutput {
+                        call_id: call.call_id.clone(),
+                        chunk: chunk.to_string(),
+                    });
+                };
+                dispatch(&call.name, &args, &ctx, &mut on_chunk)
             } else {
                 let msg = format!("Tool call `{}` was declined by the user.", call.name);
                 ToolResult {
@@ -254,7 +268,7 @@ fn wait_for_decision(
 mod tests {
     use super::*;
     use crate::event::{AgentCmd, AgentEvent};
-    use crate::permit::Policy;
+    use crate::permit::{Policy, Rule};
     use crate::provider::{
         FunctionCall, InputItem, LlmStream, StreamEvent, TurnOutcome,
     };
@@ -316,7 +330,6 @@ mod tests {
             .append(Role::User, Content::Text("hi".into()), None, None);
 
         let config = EngineConfig {
-            api_key: String::new(),
             model: "fugu".into(),
             effort: "high".into(),
             project_root: root.clone(),
@@ -326,7 +339,6 @@ mod tests {
         let mut policy = Policy {
             project_root: root.clone(),
             always: Vec::new(),
-            classifier: false,
         };
         let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel::<AgentCmd>();
         let abort = AtomicBool::new(false);
@@ -441,7 +453,6 @@ mod tests {
         );
 
         let config = EngineConfig {
-            api_key: String::new(),
             model: "fugu".into(),
             effort: "high".into(),
             project_root: root.clone(),
@@ -450,7 +461,6 @@ mod tests {
         let mut policy = Policy {
             project_root: root.clone(),
             always: Vec::new(),
-            classifier: false,
         };
         let fake = ToolFake::new();
         let abort = AtomicBool::new(false);
@@ -553,7 +563,6 @@ mod tests {
         );
 
         let config = EngineConfig {
-            api_key: String::new(),
             model: "fugu".into(),
             effort: "high".into(),
             project_root: root.clone(),
@@ -562,7 +571,6 @@ mod tests {
         let mut policy = Policy {
             project_root: root.clone(),
             always: Vec::new(),
-            classifier: false,
         };
         let fake = BashFake::new();
         let abort = AtomicBool::new(false);
@@ -570,7 +578,7 @@ mod tests {
         // `wait_for_decision`'s blocking `recv` picks it up. Keep `cmd_tx` alive.
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<AgentCmd>();
         cmd_tx
-            .send(AgentCmd::Deny { call_id: "b1".into(), reason: None })
+            .send(AgentCmd::Deny { call_id: "b1".into() })
             .unwrap();
 
         let mut events: Vec<AgentEvent> = Vec::new();
@@ -604,5 +612,60 @@ mod tests {
             InputItem::FunctionCallOutput { call_id, output } if call_id == "b1" && output.contains("declined")
         ));
         assert!(fed_declined, "second turn must carry the declined function_call_output");
+    }
+
+    /// An always-allowed `bash` call skips the prompt and runs for real
+    /// (mirrors `tools::bash::run`'s own streaming test, but proves the
+    /// engine actually wires `dispatch`'s `on_chunk` sink to
+    /// `AgentEvent::ToolOutput` rather than dropping it on the floor).
+    #[test]
+    fn allowed_bash_call_streams_output_via_tool_output_events() {
+        let root = hermetic_root("bash-stream");
+        let session = Arc::new(Mutex::new(Session::new(root.clone())));
+        session.lock().unwrap().append(
+            Role::User,
+            Content::Text("run echo".into()),
+            None,
+            None,
+        );
+
+        let config = EngineConfig {
+            model: "fugu".into(),
+            effort: "high".into(),
+            project_root: root.clone(),
+            classifier: false,
+        };
+        let mut policy = Policy {
+            project_root: root.clone(),
+            always: vec![Rule { tool: "bash".into(), scope: "always".into() }],
+        };
+        let fake = BashFake::new();
+        let abort = AtomicBool::new(false);
+        let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel::<AgentCmd>();
+
+        let mut events: Vec<AgentEvent> = Vec::new();
+        {
+            let mut emit = |ev| events.push(ev);
+            run_turn(&config, &fake, &session, &mut policy, &cmd_rx, &abort, &mut emit);
+        }
+
+        assert!(
+            !events.iter().any(|e| matches!(e, AgentEvent::ApprovalRequest { .. })),
+            "the always-allow rule should skip the approval prompt entirely: {events:?}"
+        );
+
+        let streamed = events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ToolOutput { call_id, chunk }
+                if call_id == "b1" && chunk.contains("SENTINEL_RAN")
+        ));
+        assert!(streamed, "bash stdout should stream live via ToolOutput: {events:?}");
+
+        let ran = events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ToolEnd { call_id, result }
+                if call_id == "b1" && result.model_text.contains("SENTINEL_RAN")
+        ));
+        assert!(ran, "bash must have actually executed: {events:?}");
     }
 }

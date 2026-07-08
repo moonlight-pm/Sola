@@ -6,7 +6,9 @@ use iced::{Background, Border, Color, Element, Length, Padding, Theme};
 use crate::tools::ToolDetail;
 use crate::{Msg, ToolTurn};
 
-/// Short label for a detail variant (also used by the compile guard test).
+/// Short label for a detail variant. Drives the header badge in
+/// `tool_view` once the call has finished (also exercised directly by the
+/// compile guard test below).
 pub(crate) fn detail_label(detail: &ToolDetail) -> &'static str {
     match detail {
         ToolDetail::Text(_) => "output",
@@ -15,11 +17,28 @@ pub(crate) fn detail_label(detail: &ToolDetail) -> &'static str {
     }
 }
 
+/// Compact one-line preview of a tool call's arguments, e.g. `{"path":"a"}`.
+/// `None` for calls with no arguments (or a bare `{}`) so the header doesn't
+/// show a redundant empty-object line.
+fn args_summary(args: &serde_json::Value) -> Option<String> {
+    match args {
+        serde_json::Value::Null => None,
+        serde_json::Value::Object(map) if map.is_empty() => None,
+        other => Some(other.to_string()),
+    }
+}
+
 pub(crate) fn tool_view<'a>(tt: &'a ToolTurn, theme: &Theme) -> Element<'a, Msg> {
-    let header = row![
+    let mut header = row![
         text(format!("⚙ {}", tt.tool)).font(sola_kit::fonts::ui_medium()).size(13)
     ]
     .spacing(8);
+    if let Some(d) = &tt.detail {
+        header = header.push(sola_kit::components::badge::badge(
+            detail_label(d),
+            sola_kit::components::badge::Tone::Neutral,
+        ));
+    }
 
     let detail: Element<'a, Msg> = match &tt.detail {
         None => running(tt),
@@ -32,7 +51,17 @@ pub(crate) fn tool_view<'a>(tt: &'a ToolTurn, theme: &Theme) -> Element<'a, Msg>
         }
     };
 
-    let body = column![header, detail].spacing(8);
+    let mut body = column![header].spacing(8);
+    if let Some(summary) = args_summary(&tt.args) {
+        body = body.push(
+            text(summary)
+                .font(sola_kit::fonts::mono())
+                .size(11)
+                .style(sola_kit::components::text::muted),
+        );
+    }
+    body = body.push(detail);
+
     sola_kit::components::card::card(body).width(Length::Fill).into()
 }
 

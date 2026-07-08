@@ -40,9 +40,8 @@ pub enum AgentEvent {
 pub enum AgentCmd {
     Send { text: String, branch_from: Option<NodeId> },
     Approve { call_id: String, remember: bool },
-    Deny { call_id: String, reason: Option<String> },
+    Deny { call_id: String },
     Abort,
-    SetModel { model: String, effort: String },
 }
 
 // ── Process-wide statics ──────────────────────────────────────────────────────

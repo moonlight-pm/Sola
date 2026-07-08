@@ -2,6 +2,7 @@
 //! shadows.
 pub(crate) mod approval;
 pub(crate) mod bubble;
+pub(crate) mod firstrun;
 pub(crate) mod footer;
 pub(crate) mod sidebar;
 pub(crate) mod tool;
@@ -13,6 +14,9 @@ use iced::{Length, Padding};
 use crate::{App, Msg};
 
 pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
+    if app.first_run {
+        return firstrun::view(app);
+    }
     let bubbles: Vec<Element<'_, Msg>> = app
         .turns
         .iter()
