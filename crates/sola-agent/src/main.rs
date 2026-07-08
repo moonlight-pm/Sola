@@ -165,11 +165,15 @@ fn list_sessions() -> Vec<SessionSummary> {
             continue;
         }
         match Session::load(&path) {
-            Ok(s) => out.push(SessionSummary {
+            // `Session::load` tolerates individual bad lines, so a fully
+            // unparseable file loads Ok with zero nodes; skip those (no
+            // `active_leaf`) rather than listing a blank, unselectable row.
+            Ok(s) if s.active_leaf.is_some() => out.push(SessionSummary {
                 id: s.id.clone(),
                 title: s.title.clone(),
                 path,
             }),
+            Ok(_) => tracing::debug!(?path, "skipping empty/unparseable session"),
             Err(e) => tracing::debug!(?path, "skipping unreadable session: {e}"),
         }
     }

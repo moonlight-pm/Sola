@@ -111,6 +111,13 @@ pub fn rebuild_index() -> std::io::Result<Vec<IndexEntry>> {
             continue;
         }
         let Ok(session) = Session::load(&path) else { continue };
+        // `Session::load` now tolerates individual bad lines, so a fully
+        // unparseable file loads Ok with zero nodes instead of erroring. Skip
+        // those (no `active_leaf` ⇒ nothing parsed) so a garbage file still
+        // drops out of the index rather than showing up as a blank entry.
+        if session.active_leaf.is_none() {
+            continue;
+        }
         let updated = std::fs::metadata(&path)
             .and_then(|m| m.modified())
             .ok()
@@ -256,18 +263,31 @@ impl Session {
     /// last node written; `title` is derived from the first user text node;
     /// `project_root` is not stored per-node, so it is left empty (the session
     /// index is the authoritative source for it during a live session).
+    ///
+    /// An unparseable line (e.g. a crash-truncated trailing write) is skipped
+    /// with a warning rather than failing the whole load, so one bad line can't
+    /// make an otherwise-good conversation unloadable and vanish from the
+    /// sidebar. `active_leaf` is the last *successfully-parsed* node.
     pub fn load(path: &Path) -> std::io::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let mut nodes = HashMap::new();
         let mut order = Vec::new();
-        for line in content.lines() {
+        for (lineno, line) in content.lines().enumerate() {
             if line.trim().is_empty() {
                 continue;
             }
-            let node: Node = serde_json::from_str(line)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            order.push(node.id.clone());
-            nodes.insert(node.id.clone(), node);
+            match serde_json::from_str::<Node>(line) {
+                Ok(node) => {
+                    order.push(node.id.clone());
+                    nodes.insert(node.id.clone(), node);
+                }
+                Err(e) => tracing::warn!(
+                    path = %path.display(),
+                    line = lineno + 1,
+                    error = %e,
+                    "skipping unparseable transcript line"
+                ),
+            }
         }
         let id = path
             .file_stem()
@@ -472,6 +492,35 @@ mod tests {
     }
 
     #[test]
+    fn load_skips_trailing_garbage_line_and_keeps_good_nodes() {
+        let (_g, _tmp) = temp_env();
+
+        // Write two good nodes through the normal append path...
+        let (path, n1, n2) = {
+            let mut s = Session::new(PathBuf::from("/tmp/project"));
+            let n1 = s.append(Role::User, Content::Text("hi".into()), None, None);
+            let n2 = s.append(Role::Assistant, Content::Text("hello".into()), None, None);
+            (s.path(), n1, n2)
+        };
+
+        // ...then simulate a crash-truncated trailing write: a partial/garbage
+        // JSONL line appended after the last good node.
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(f, "{{\"id\":\"broken\",\"parent_id\":").unwrap();
+        }
+
+        // The load succeeds (no error) and keeps exactly the two good nodes,
+        // with active_leaf at the last successfully-parsed node.
+        let reloaded = Session::load(&path).expect("load tolerates the trailing garbage line");
+        assert_eq!(reloaded.nodes.len(), 2, "only the two good nodes survive");
+        assert_eq!(reloaded.active_leaf.as_ref(), Some(&n2), "leaf is the last good node");
+        let ids: Vec<NodeId> = reloaded.path_to_leaf().into_iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec![n1, n2]);
+    }
+
+    #[test]
     fn branch_from_forks_a_sibling_without_touching_old_branch() {
         let (_g, _tmp) = temp_env();
 
@@ -589,8 +638,10 @@ mod tests {
         let good_id = s.id.clone();
 
         // A malformed "session" file sitting alongside it: right extension,
-        // garbage content. `Session::load` will fail on it; rebuild_index
-        // must skip just this file, not abort the whole scan.
+        // garbage content. `Session::load` now skips the bad line and returns
+        // Ok with zero nodes, so rebuild_index drops it via the empty-session
+        // guard (no `active_leaf`), not by an error — either way it must not
+        // become an index entry, and must not abort the whole scan.
         std::fs::write(sessions_dir().join("not-a-session.jsonl"), "not json\n").unwrap();
 
         // A non-.jsonl file should likewise be skipped harmlessly.
