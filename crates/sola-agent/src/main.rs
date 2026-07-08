@@ -430,6 +430,14 @@ impl App {
                 Task::none()
             }
             Msg::NewSession => {
+                // Swapping the shared session mid-turn would let the still-running
+                // worker `append` its next nodes into the wrong session's JSONL.
+                // The sidebar controls are disabled while streaming; gate here too
+                // so a stray message can't slip past.
+                if self.streaming.is_some() {
+                    tracing::debug!("ignoring NewSession while a turn is streaming");
+                    return Task::none();
+                }
                 let fresh = Session::new(self.project_root.clone());
                 if let Ok(mut guard) = self.session.lock() {
                     *guard = fresh;
@@ -445,6 +453,12 @@ impl App {
                 Task::none()
             }
             Msg::SelectSession(path) => {
+                // Same hazard as NewSession: never swap the shared session out
+                // from under a streaming worker. Gate, don't rely on Abort.
+                if self.streaming.is_some() {
+                    tracing::debug!("ignoring SelectSession while a turn is streaming");
+                    return Task::none();
+                }
                 match Session::load(&path) {
                     Ok(mut loaded) => {
                         // `Session::load` leaves `project_root` empty (it isn't
@@ -661,6 +675,34 @@ mod tests {
         assert!(app.pending.is_none());
         assert_eq!(app.usage.input_tokens, 0);
         assert_eq!(app.usage.output_tokens, 0);
+    }
+
+    #[test]
+    fn new_session_is_a_no_op_while_streaming() {
+        let mut app = blank_app(false);
+        app.streaming = Some("n1".into());
+        app.turns.push(Turn::User("in flight".into()));
+        let before_id = app.session.lock().unwrap().id.clone();
+
+        let _ = app.update(Msg::NewSession);
+
+        let after_id = app.session.lock().unwrap().id.clone();
+        assert_eq!(before_id, after_id, "NewSession must not swap the session mid-stream");
+        assert_eq!(app.streaming.as_deref(), Some("n1"), "streaming state is untouched");
+        assert_eq!(app.turns.len(), 1, "the in-flight transcript is not cleared");
+    }
+
+    #[test]
+    fn select_session_is_a_no_op_while_streaming() {
+        let mut app = blank_app(false);
+        app.streaming = Some("n1".into());
+        let before_id = app.session.lock().unwrap().id.clone();
+
+        let _ = app.update(Msg::SelectSession(PathBuf::from("/nonexistent/session.jsonl")));
+
+        let after_id = app.session.lock().unwrap().id.clone();
+        assert_eq!(before_id, after_id, "SelectSession must not swap the session mid-stream");
+        assert_eq!(app.streaming.as_deref(), Some("n1"), "streaming state is untouched");
     }
 
     #[test]
