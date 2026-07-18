@@ -174,12 +174,14 @@ struct App {
     /// Last applied grid per PaneId — lets the resize fan-out skip panes whose
     /// dimensions didn't change (avoids TIOCSWINSZ churn during a divider drag).
     pane_grids: HashMap<String, (u16, u16)>,
-    /// Latest keyboard modifiers from `ModifiersChanged`. Unioned with the
-    /// modifiers on each `KeyPressed` when encoding — on some Wayland/winit
-    /// paths the key event's own modifier mask can lag (Shift already held but
-    /// the Enter press arrives with an empty mask), which made Shift+Enter
-    /// collapse to plain CR.
+    /// Latest keyboard modifiers from `ModifiersChanged`.
     keyboard_mods: keyboard::Modifiers,
+    /// Modifier keys held, tracked from KeyPressed/KeyReleased of the modifier
+    /// keys themselves (and their physical codes). On this Wayland stack the
+    /// Enter press's modifier mask and ModifiersChanged often lack SHIFT even
+    /// while Shift is held (keydebug: Shift+Enter → plain CR; Alt+Enter works).
+    /// Tracking the Shift key down/up is the reliable signal.
+    keys_held_mods: keyboard::Modifiers,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +238,7 @@ impl App {
             dragging_split: None,
             pane_grids: HashMap::new(),
             keyboard_mods: keyboard::Modifiers::empty(),
+            keys_held_mods: keyboard::Modifiers::empty(),
         };
         (app, Task::none())
     }
@@ -541,9 +544,24 @@ impl App {
             return Task::none();
         }
 
+        // Track modifier *keys* independently of the modifier mask. Probe
+        // evidence: Shift+Enter arrives as plain CR (mask has no SHIFT) while
+        // Alt+Enter correctly gets ESC+CR. If we see KeyPressed/Released for
+        // Shift itself, we can still arm Shift+Enter.
+        if let iced::Event::Keyboard(keyboard::Event::KeyReleased {
+            key,
+            physical_key,
+            ..
+        }) = &event
+        {
+            self.apply_modifier_key(key, physical_key, false);
+            return Task::none();
+        }
+
         let iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             modified_key,
+            physical_key,
             modifiers,
             location,
             text,
@@ -554,12 +572,18 @@ impl App {
             return Task::none();
         };
 
-        // Prefer the freshest mask: event-local OR the ModifiersChanged
-        // snapshot. On Wayland the Enter press sometimes arrives with an empty
-        // mask even while Shift is held; the snapshot still has it.
+        self.apply_modifier_key(&key, &physical_key, true);
+
+        // Bare modifier presses are not written to the PTY.
+        if modifier_key_bit(&key, &physical_key).is_some() {
+            return Task::none();
+        }
+
+        // Union: event mask | ModifiersChanged | keys-held tracking.
         let event_mods = modifiers;
         let tracked_mods = self.keyboard_mods;
-        let modifiers = event_mods | tracked_mods;
+        let keys_held = self.keys_held_mods;
+        let modifiers = event_mods | tracked_mods | keys_held;
         self.keyboard_mods = modifiers;
 
         // ⌘/Super shortcuts are handled by the shell (menu → MenuAction). A
@@ -581,8 +605,8 @@ impl App {
         // tmux *may* negotiate modifyOtherKeys (CSI > 4 ; Pv m) for other
         // modified keys; when it does, fold that into the kitty disambiguate
         // path. Shift/Ctrl+Enter no longer depend on this — `encode_enter`
-        // always emits CSI-u — because modern tmux never sends XTMODKEYS to
-        // the outer client. Keyed by PaneId (the emulator listener id).
+        // always emits a distinct sequence — because modern tmux never sends
+        // XTMODKEYS to the outer client. Keyed by PaneId.
         let modify_other_keys = extkeys::level(&pane) >= 1;
         if modify_other_keys {
             mode |= alacritty_terminal::term::TermMode::DISAMBIGUATE_ESC_CODES;
@@ -631,13 +655,13 @@ impl App {
                     ctrl = mods.ctrl(),
                     event_shift = event_mods.shift(),
                     tracked_shift = tracked_mods.shift(),
+                    keys_held_shift = keys_held.shift(),
                     key = ?key,
                     modified_key = ?modified_key,
                     text = ?text,
                     encoded = %hex,
                     "enter key → pty"
                 );
-                // Belt-and-suspenders file log (survives if tracing filter is quiet).
                 if let Ok(mut f) = std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
@@ -646,9 +670,10 @@ impl App {
                     use std::io::Write;
                     let _ = writeln!(
                         f,
-                        "event_shift={} tracked_shift={} merged_shift={} alt={} ctrl={} key={key:?} mod_key={modified_key:?} text={text:?} → {hex}",
+                        "event_shift={} tracked_shift={} keys_held_shift={} merged_shift={} alt={} ctrl={} key={key:?} mod_key={modified_key:?} text={text:?} → {hex}",
                         event_mods.shift(),
                         tracked_mods.shift(),
+                        keys_held.shift(),
                         mods.shift(),
                         mods.alt(),
                         mods.ctrl(),
@@ -681,6 +706,35 @@ impl App {
             }
         }
         Task::none()
+    }
+
+    /// Update [`Self::keys_held_mods`] from a modifier key press/release.
+    fn apply_modifier_key(
+        &mut self,
+        key: &keyboard::Key,
+        physical: &keyboard::key::Physical,
+        pressed: bool,
+    ) {
+        let Some(bit) = modifier_key_bit(key, physical) else {
+            return;
+        };
+        if pressed {
+            self.keys_held_mods = self.keys_held_mods | bit;
+        } else {
+            self.keys_held_mods = self.keys_held_mods & !bit;
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/opt/sola/log/sola-terminal-keys.log")
+        {
+            use std::io::Write;
+            let _ = writeln!(
+                f,
+                "mod_key pressed={pressed} key={key:?} physical={physical:?} keys_held_shift={}",
+                self.keys_held_mods.shift(),
+            );
+        }
     }
 
     /// The PaneId of the active tab's focused pane.
@@ -1302,5 +1356,33 @@ impl App {
             self.republish_menu();
         }
         Task::none()
+    }
+}
+
+/// Map a key to its modifier bit, if it is a modifier key.
+fn modifier_key_bit(
+    key: &keyboard::Key,
+    physical: &keyboard::key::Physical,
+) -> Option<keyboard::Modifiers> {
+    use keyboard::key::{Code, Named, Physical};
+    if let keyboard::Key::Named(n) = key {
+        match n {
+            Named::Shift => return Some(keyboard::Modifiers::SHIFT),
+            Named::Control => return Some(keyboard::Modifiers::CTRL),
+            Named::Alt => return Some(keyboard::Modifiers::ALT),
+            Named::Super | Named::Meta => return Some(keyboard::Modifiers::LOGO),
+            _ => {}
+        }
+    }
+    let code = match physical {
+        Physical::Code(c) => *c,
+        _ => return None,
+    };
+    match code {
+        Code::ShiftLeft | Code::ShiftRight => Some(keyboard::Modifiers::SHIFT),
+        Code::ControlLeft | Code::ControlRight => Some(keyboard::Modifiers::CTRL),
+        Code::AltLeft | Code::AltRight => Some(keyboard::Modifiers::ALT),
+        Code::SuperLeft | Code::SuperRight => Some(keyboard::Modifiers::LOGO),
+        _ => None,
     }
 }

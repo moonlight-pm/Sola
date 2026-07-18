@@ -6,15 +6,15 @@ restart Grok). Press keys; each chunk of input is printed as hex + a guess.
 
 What to try:
   Enter              → expect 0d              (CR)
-  Shift+Enter        → expect 1b 5b 31 33 3b 32 75   (CSI 13;2u)
+  Shift+Enter        → expect 1b 0d           (ESC CR — same as Alt+Enter)
   Ctrl+Enter         → expect 1b 5b 31 33 3b 35 75   (CSI 13;5u)
-  Alt+Enter          → expect 1b 0d           (ESC CR)  or CSI 13;3u
+  Alt+Enter          → expect 1b 0d           (ESC CR)
   a / Shift+a        → 61 / 41
   Ctrl+C             → quit
 
-If Shift+Enter prints only 0d, the OUTER terminal is not encoding Shift
-(encoder/input path). If it prints CSI 13;2u, the outer path works and the
-app (Grok) is failing to treat it as newline.
+If Shift+Enter prints only 0d, the OUTER terminal is not seeing Shift
+(modifier tracking). If it prints 1b 0d, newline encoding works (Grok/Claude
+both treat ESC CR as newline).
 
 Usage:
   python3 crates/sola-terminal/scripts/keydebug.py
@@ -36,13 +36,13 @@ def decode_guess(data: bytes) -> str:
     if data == b"\n":
         return "LF (0x0a) — often Ctrl+J"
     if data == b"\x1b\r":
-        return "Alt+Enter (ESC CR) — legacy newline fallback"
+        return "Shift/Alt+Enter (ESC CR) — portable newline ✓"
     if data == b"\x1b[13;2u":
-        return "Shift+Enter (CSI 13;2u) ✓"
+        return "Shift+Enter (CSI 13;2u)"
     if data == b"\x1b[13;5u":
         return "Ctrl+Enter (CSI 13;5u) ✓"
     if data == b"\x1b[13;3u":
-        return "Alt+Enter (CSI 13;3u) ✓"
+        return "Alt+Enter (CSI 13;3u)"
     if data == b"\x1b[13u":
         return "Enter as CSI-u (no modifiers)"
     if data == b"\x03":

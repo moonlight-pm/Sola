@@ -885,18 +885,17 @@ fn encode_mouse_x10(button: MouseButton, col: u16, row: u16, mods: Mods) -> Vec<
 
 /// Encode Enter, including modified forms.
 ///
-/// Plain Enter is CR. Modified Enter is **always** CSI-u (or ESC+CR for
-/// Alt-only), even when the kitty / modifyOtherKeys negotiation bits are off.
+/// Plain Enter is CR.
 ///
-/// Why unconditional: sola-terminal always sits behind tmux with
-/// `terminal-features extkeys` + `extended-keys always`. Modern tmux does
-/// **not** send `CSI > 4 ; 2 m` to the outer client, so our [`crate::extkeys`]
-/// scanner never arms and the kitty push from apps like Grok is eaten by
-/// tmux (it does not implement the full kitty protocol). Waiting for a
-/// negotiated mode left Shift+Enter byte-identical to Enter forever.
-/// CSI-u for Shift/Ctrl+Enter is what Grok / Claude Code / etc. expect;
-/// Alt+Enter uses the legacy `ESC CR` form those apps accept as a newline
-/// fallback on terminals without CSI-u.
+/// **Shift+Enter and Alt+Enter** both emit the portable **ESC+CR** sequence
+/// (`\x1b\r`). That is what Claude Code's VS Code `/terminal-setup` installs
+/// for Shift+Enter (`sendSequence` of `\u001b\r`), and what Grok documents as
+/// the Alt+Enter newline fallback. CSI `13;2u` is nicer when the app has a
+/// working kitty keyboard path, but under tmux many apps (Grok included) skip
+/// the kitty push — ESC+CR is the sequence they actually honour for newline.
+///
+/// **Ctrl+Enter** (and other multi-mod combos) still use CSI-u so Grok's
+/// interject chord stays distinct.
 fn encode_enter(mods: Mods) -> Vec<u8> {
     let shift = mods.shift();
     let alt = mods.alt();
@@ -905,12 +904,12 @@ fn encode_enter(mods: Mods) -> Vec<u8> {
     if !shift && !alt && !ctrl && !logo {
         return b"\r".to_vec();
     }
-    // Alt alone → legacy ESC+CR (widely accepted newline fallback).
-    if alt && !shift && !ctrl && !logo {
+    // Shift and/or Alt, without Ctrl/Logo → portable newline (ESC+CR).
+    // Matches Claude Code's VS Code Shift+Enter binding and Grok's Alt+Enter.
+    if (shift || alt) && !ctrl && !logo {
         return b"\x1b\r".to_vec();
     }
-    // Anything else with modifiers → CSI-u (kitty / fixterms form).
-    // bits: shift=1, alt=2, ctrl=4, super=8; sequence value is bits+1.
+    // Ctrl (and any multi-mod involving Ctrl/Logo) → CSI-u.
     let mut bits = 0u8;
     if shift {
         bits |= 0b0001;
@@ -1049,14 +1048,13 @@ mod tests {
         }
     }
 
-    // THE BUG: under the kitty protocol, Shift+Enter must be a distinct
-    // sequence (CSI 13;2u) so Claude Code inserts a newline instead of
-    // submitting. shift bits=1 → encoded modifier 2.
+    // Modified Enter short-circuits before the kitty encoder: Shift+Enter is
+    // the portable ESC+CR (same as Alt+Enter / Claude VS Code binding).
     #[test]
-    fn shift_enter_is_kitty_csi_u() {
+    fn shift_enter_is_esc_cr_even_under_kitty() {
         assert_eq!(
             resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::SHIFT, kitty())),
-            Some(b"\x1b[13;2u".to_vec())
+            Some(b"\x1b\r".to_vec())
         );
     }
 
@@ -1070,21 +1068,20 @@ mod tests {
         );
     }
 
-    // Even with no kitty / modifyOtherKeys flag negotiated, Shift+Enter must
-    // still be CSI-u: we always sit behind tmux with extkeys, and the
-    // negotiated-mode path never arms (tmux never sends CSI > 4;2m).
+    // Shift+Enter uses the portable ESC+CR sequence (Claude Code's VS Code
+    // Shift+Enter binding, Grok Alt+Enter newline fallback) — not CSI-u.
     #[test]
-    fn shift_enter_without_kitty_is_csi_u() {
+    fn shift_enter_without_kitty_is_esc_cr() {
         assert_eq!(
             resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::SHIFT, normal())),
-            Some(b"\x1b[13;2u".to_vec())
+            Some(b"\x1b\r".to_vec())
         );
     }
 
     // Wayland/winit quirk: base key stays Named::Enter under Shift, but
-    // modified_key can be Unidentified and text is "\r". Must still CSI-u.
+    // modified_key can be Unidentified and text is "\r". Must still get ESC+CR.
     #[test]
-    fn shift_enter_with_unidentified_modified_key_is_csi_u() {
+    fn shift_enter_with_unidentified_modified_key_is_esc_cr() {
         let base = Key::Named(Named::Enter);
         let modified = Key::Unidentified;
         let k = KeyInput {
@@ -1097,12 +1094,12 @@ mod tests {
             repeat: false,
             modify_other_keys: false,
         };
-        assert_eq!(resolve_bytes(&k), Some(b"\x1b[13;2u".to_vec()));
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b\r".to_vec()));
     }
 
     // Same quirk, no Named identity at all — only text "\r" + Shift.
     #[test]
-    fn shift_enter_from_text_cr_only_is_csi_u() {
+    fn shift_enter_from_text_cr_only_is_esc_cr() {
         let unidentified = Key::Unidentified;
         let k = KeyInput {
             key: &unidentified,
@@ -1114,7 +1111,7 @@ mod tests {
             repeat: false,
             modify_other_keys: false,
         };
-        assert_eq!(resolve_bytes(&k), Some(b"\x1b[13;2u".to_vec()));
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b\r".to_vec()));
     }
 
     // Ctrl+Enter (Grok interject) is CSI 13;5u in the legacy path too.
@@ -1265,14 +1262,13 @@ mod tests {
         );
     }
 
-    // Modified keys still encode as CSI-u under modifyOtherKeys — the whole
-    // point of the tmux path. Shift+Enter stays CSI 13;2u.
+    // Shift+Enter under modifyOtherKeys is still ESC+CR (portable newline).
     #[test]
-    fn shift_enter_under_modify_other_keys_is_csi_u() {
+    fn shift_enter_under_modify_other_keys_is_esc_cr() {
         let key = Key::Named(Named::Enter);
         let mut k = kk(&key, Mods::SHIFT, kitty());
         k.modify_other_keys = true;
-        assert_eq!(resolve_bytes(&k), Some(b"\x1b[13;2u".to_vec()));
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b\r".to_vec()));
     }
 
     // Unmodified numpad under modifyOtherKeys stays legacy (numpad Enter → CR),
