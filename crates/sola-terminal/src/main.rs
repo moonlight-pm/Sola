@@ -174,6 +174,12 @@ struct App {
     /// Last applied grid per PaneId — lets the resize fan-out skip panes whose
     /// dimensions didn't change (avoids TIOCSWINSZ churn during a divider drag).
     pane_grids: HashMap<String, (u16, u16)>,
+    /// Latest keyboard modifiers from `ModifiersChanged`. Unioned with the
+    /// modifiers on each `KeyPressed` when encoding — on some Wayland/winit
+    /// paths the key event's own modifier mask can lag (Shift already held but
+    /// the Enter press arrives with an empty mask), which made Shift+Enter
+    /// collapse to plain CR.
+    keyboard_mods: keyboard::Modifiers,
 }
 
 #[derive(Debug, Clone)]
@@ -229,6 +235,7 @@ impl App {
             cursor_on: true,
             dragging_split: None,
             pane_grids: HashMap::new(),
+            keyboard_mods: keyboard::Modifiers::empty(),
         };
         (app, Task::none())
     }
@@ -253,7 +260,15 @@ impl App {
             emulator::output_subscription().map(Msg::PtyOutput),
             emulator::exit_subscription().map(Msg::PtyExit),
             emulator::title_subscription().map(|(id, t)| Msg::Title(id, t)),
-            iced::event::listen().map(Msg::Input),
+            // Keyboard must be seen even when a widget (e.g. canvas) has
+            // captured the event — `event::listen()` only yields Ignored
+            // events, which can drop keys. Mouse still uses the ignored-only
+            // path below for the drag gestures.
+            event::listen_with(|ev, status, _| match &ev {
+                Event::Keyboard(_) => Some(Msg::Input(ev)),
+                _ if matches!(status, iced::event::Status::Ignored) => Some(Msg::Input(ev)),
+                _ => None,
+            }),
             iced::window::resize_events().map(|(_id, size)| Msg::Resized(size)),
             iced::time::every(Duration::from_millis(530)).map(|_| Msg::BlinkTick),
             // Single always-on global cursor + release listener, shared by the
@@ -520,6 +535,12 @@ impl App {
 
     /// Route a raw iced keyboard event to the active pane's PTY.
     fn on_input(&mut self, event: iced::Event) -> Task<Msg> {
+        // Keep a live modifier snapshot — see `keyboard_mods` on `App`.
+        if let iced::Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) = event {
+            self.keyboard_mods = mods;
+            return Task::none();
+        }
+
         let iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             modified_key,
@@ -532,6 +553,12 @@ impl App {
         else {
             return Task::none();
         };
+
+        // Prefer the freshest mask: event-local OR the ModifiersChanged
+        // snapshot. On Wayland the Enter press sometimes arrives with an empty
+        // mask even while Shift is held; the snapshot still has it.
+        let modifiers = modifiers | self.keyboard_mods;
+        self.keyboard_mods = modifiers;
 
         // ⌘/Super shortcuts are handled by the shell (menu → MenuAction). A
         // Super-modified key must never encode to the PTY, so ⌘W (unbound) and
@@ -560,9 +587,19 @@ impl App {
         }
 
         let mods = input::Mods::from(modifiers);
+        // Prefer the base `key` for Enter identity: some winit paths leave
+        // `modified_key` as Unidentified under Shift while `key` is still
+        // Named::Enter. resolve_bytes also special-cases Enter via either.
+        let enter_key = match (&key, &modified_key) {
+            (keyboard::Key::Named(keyboard::key::Named::Enter), _)
+            | (_, keyboard::Key::Named(keyboard::key::Named::Enter)) => {
+                keyboard::Key::Named(keyboard::key::Named::Enter)
+            }
+            _ => modified_key.clone(),
+        };
         let bytes = input::resolve_bytes(&input::KeyInput {
             key: &key,
-            modified_key: &modified_key,
+            modified_key: &enter_key,
             mods,
             mode,
             location,
@@ -572,6 +609,21 @@ impl App {
         });
 
         if let Some(bytes) = bytes {
+            // One-line diagnosis for Shift/Ctrl/Alt+Enter (quiet for plain CR).
+            if matches!(
+                (&key, &enter_key),
+                (keyboard::Key::Named(keyboard::key::Named::Enter), _)
+                    | (_, keyboard::Key::Named(keyboard::key::Named::Enter))
+            ) || text.as_deref() == Some("\r")
+            {
+                tracing::debug!(
+                    shift = mods.shift(),
+                    alt = mods.alt(),
+                    ctrl = mods.ctrl(),
+                    encoded = %bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "),
+                    "enter key → pty"
+                );
+            }
             {
                 let term = rt.emulator.term();
                 let mut guard = term.lock();

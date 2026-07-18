@@ -335,12 +335,29 @@ pub struct KeyInput<'a> {
 /// layout-unshifted). Ctrl is excluded from `modified_key`, so Ctrl-letter
 /// still computes the control byte correctly.
 pub fn resolve_bytes(input: &KeyInput) -> Option<Vec<u8>> {
+    // Modified Enter is forced through `encode_enter` *before* the kitty
+    // branch. Two reasons:
+    // 1. We always want CSI-u (or ESC+CR for Alt) for Shift/Ctrl/Alt+Enter,
+    //    independent of negotiation state.
+    // 2. Under a synthesised/real kitty mode, `build_sequence` returns `None`
+    //    (and would emit nothing) when `modified_key` lost the Named::Enter
+    //    identity — observed on some Wayland/winit paths under Shift.
+    if is_enter_key(input) && enter_has_modifiers(input.mods) {
+        return Some(encode_enter(input.mods));
+    }
+
     if kitty_active(input.mode) && should_build_sequence(input) {
         // The kitty encoder owns this key. A `None` here (a key it doesn't
         // model, e.g. a bare modifier) means "emit nothing" — falling through
         // to the legacy path would send bytes the app doesn't expect while in
         // kitty mode.
         return build_sequence(input);
+    }
+
+    // Plain Enter (no modifiers): prefer the base key if `modified_key` lost
+    // Named::Enter, so we still emit CR rather than falling through to text.
+    if is_enter_key(input) {
+        return Some(encode_enter(input.mods));
     }
 
     let mk = input.modified_key;
@@ -358,6 +375,18 @@ pub fn resolve_bytes(input: &KeyInput) -> Option<Vec<u8>> {
                 .filter(|t| !t.is_empty())
                 .map(|t| t.as_bytes().to_vec())
         })
+}
+
+/// True when this press is Enter by any of the identities iced may give us:
+/// base key, modified key, or platform text of CR/LF.
+fn is_enter_key(input: &KeyInput) -> bool {
+    matches!(input.key, keyboard::Key::Named(Named::Enter))
+        || matches!(input.modified_key, keyboard::Key::Named(Named::Enter))
+        || matches!(input.text, Some("\r") | Some("\n"))
+}
+
+fn enter_has_modifiers(mods: Mods) -> bool {
+    mods.shift() || mods.alt() || mods.ctrl() || mods.logo()
 }
 
 // ── Kitty keyboard protocol ─────────────────────────────────────────────────
@@ -1050,6 +1079,42 @@ mod tests {
             resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::SHIFT, normal())),
             Some(b"\x1b[13;2u".to_vec())
         );
+    }
+
+    // Wayland/winit quirk: base key stays Named::Enter under Shift, but
+    // modified_key can be Unidentified and text is "\r". Must still CSI-u.
+    #[test]
+    fn shift_enter_with_unidentified_modified_key_is_csi_u() {
+        let base = Key::Named(Named::Enter);
+        let modified = Key::Unidentified;
+        let k = KeyInput {
+            key: &base,
+            modified_key: &modified,
+            mods: Mods::SHIFT,
+            mode: normal(),
+            location: keyboard::Location::Standard,
+            text: Some("\r"),
+            repeat: false,
+            modify_other_keys: false,
+        };
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b[13;2u".to_vec()));
+    }
+
+    // Same quirk, no Named identity at all — only text "\r" + Shift.
+    #[test]
+    fn shift_enter_from_text_cr_only_is_csi_u() {
+        let unidentified = Key::Unidentified;
+        let k = KeyInput {
+            key: &unidentified,
+            modified_key: &unidentified,
+            mods: Mods::SHIFT,
+            mode: normal(),
+            location: keyboard::Location::Standard,
+            text: Some("\r"),
+            repeat: false,
+            modify_other_keys: false,
+        };
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b[13;2u".to_vec()));
     }
 
     // Ctrl+Enter (Grok interject) is CSI 13;5u in the legacy path too.
