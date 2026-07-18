@@ -34,6 +34,19 @@ pub fn reload_config() {
     }
 }
 
+// TERM_PROGRAM=alacritty: Sola's grid is alacritty_terminal with
+// kitty_keyboard=true. Apps like Grok only *request* the kitty keyboard
+// protocol when they recognise a KKP-capable host. COLORTERM unlocks truecolor.
+//
+// extended-keys always (not "on"): Grok/Claude request extended keys via the
+// kitty push sequence, which tmux does not implement — under "on" the request
+// is ignored and CSI-u from the outer terminal is never accepted, so
+// Shift+Enter collapses to plain Enter. "always" keeps CSI-u acceptance on
+// permanently; our encoder always emits CSI-u for Shift/Ctrl+Enter to match.
+//
+// update-environment pulls the client-side values into the session on
+// create/attach; set-environment -g seeds the global env for new panes even
+// when a session already exists.
 const TMUX_CONF: &str = "\
 set -g status off
 set -g prefix None
@@ -42,12 +55,15 @@ set -g mouse off
 set -g history-limit 10000
 set -g default-terminal xterm-256color
 set -g escape-time 0
-set -g extended-keys on
+set -g extended-keys always
 set -g extended-keys-format csi-u
 set -as terminal-features 'xterm*:extkeys'
 set -ga terminal-overrides ',*:smcup@:rmcup@'
 set -g set-titles off
 set -g allow-passthrough on
+set -ga update-environment ' TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM'
+set-environment -g TERM_PROGRAM alacritty
+set-environment -g COLORTERM truecolor
 ";
 
 /// Remove a stale tmux socket left behind by a crashed or killed server.
@@ -356,5 +372,19 @@ mod tests {
     fn tmux_conf_disables_status() {
         assert!(TMUX_CONF.contains("status off"));
         assert!(TMUX_CONF.contains("prefix None"));
+    }
+
+    #[test]
+    fn tmux_conf_advertises_kkp_capable_host() {
+        // Grok (and peers) only negotiate kitty keyboard / Shift+Enter when
+        // the session env identifies a known KKP-capable terminal. CSI-u
+        // acceptance must be permanent (`always`) because apps request via
+        // kitty push, which tmux ignores under request-based `on`.
+        assert!(TMUX_CONF.contains("TERM_PROGRAM alacritty"));
+        assert!(TMUX_CONF.contains("COLORTERM truecolor"));
+        assert!(TMUX_CONF.contains("update-environment"));
+        assert!(TMUX_CONF.contains("extended-keys always"));
+        assert!(TMUX_CONF.contains("extended-keys-format csi-u"));
+        assert!(TMUX_CONF.contains("xterm*:extkeys"));
     }
 }

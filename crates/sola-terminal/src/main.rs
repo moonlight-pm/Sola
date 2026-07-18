@@ -200,6 +200,10 @@ enum Msg {
     Resized(iced::Size),
     SelectionChanged,
     Scrolled,
+    /// Mouse-wheel bytes destined for a pane's PTY (PaneId, encoded report),
+    /// emitted when a mouse-tracking app owns the wheel. Written straight to
+    /// the pane's backend.
+    WheelToPty(String, Vec<u8>),
     Pasted(Option<String>),
     /// OSC 0/2 title for a pane (PaneId, title).
     Title(String, String),
@@ -297,6 +301,16 @@ impl App {
             Msg::Resized(size) => self.on_resized(size),
             Msg::SelectionChanged | Msg::Scrolled => {
                 self.tabs.clear_all_caches();
+                Task::none()
+            }
+            Msg::WheelToPty(pane, bytes) => {
+                // A mouse-tracking app (e.g. Claude Code) took the wheel: hand
+                // the encoded mouse report to that pane's PTY. tmux passes it
+                // through to the app, which scrolls its own content. No cache
+                // clear — the app's redraw arrives as PtyOutput.
+                if let Some(rt) = self.tabs.pane_runtime(&pane) {
+                    rt.backend.write(&bytes);
+                }
                 Task::none()
             }
             Msg::Pasted(text) => self.on_pasted(text),
@@ -467,6 +481,10 @@ impl App {
                     active: pane_id == active_pane,
                     on_select: Msg::SelectionChanged,
                     on_scroll: Msg::Scrolled,
+                    on_wheel_pty: Box::new({
+                        let pid = pane_id.to_string();
+                        move |bytes| Msg::WheelToPty(pid.clone(), bytes)
+                    }),
                 };
                 canvas(view).width(Length::Fill).height(Length::Fill).into()
             }
@@ -531,9 +549,11 @@ impl App {
 
         let mut mode = { *rt.emulator.term().lock().mode() };
 
-        // tmux negotiates modifyOtherKeys on behalf of its inner app; when
-        // active, fold it into the kitty disambiguate path so Shift+Enter is
-        // distinct from Enter. Keyed by PaneId (the emulator listener id).
+        // tmux *may* negotiate modifyOtherKeys (CSI > 4 ; Pv m) for other
+        // modified keys; when it does, fold that into the kitty disambiguate
+        // path. Shift/Ctrl+Enter no longer depend on this — `encode_enter`
+        // always emits CSI-u — because modern tmux never sends XTMODKEYS to
+        // the outer client. Keyed by PaneId (the emulator listener id).
         let modify_other_keys = extkeys::level(&pane) >= 1;
         if modify_other_keys {
             mode |= alacritty_terminal::term::TermMode::DISAMBIGUATE_ESC_CODES;

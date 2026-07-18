@@ -67,10 +67,11 @@ impl From<keyboard::Modifiers> for Mods {
 
 // ── MouseButton ───────────────────────────────────────────────────────────
 
-/// Terminal mouse button identity for [`encode_mouse_sgr`].
-// Reserved for mouse-mode SGR reporting (Task 2.5).
-#[allow(dead_code)]
+/// Terminal mouse button identity for [`encode_mouse_sgr`] / [`wheel_dispatch`].
+/// Click buttons are used by the SGR encoder (and its tests); the wheel path
+/// only constructs `WheelUp`/`WheelDown` today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum MouseButton {
     Left,
     Middle,
@@ -130,7 +131,7 @@ pub fn encode_key(key: &keyboard::Key, mods: Mods, mode: TermMode) -> Option<Vec
 
     match key {
         keyboard::Key::Named(named) => match named {
-            Named::Enter => Some(b"\r".to_vec()),
+            Named::Enter => Some(encode_enter(mods)),
             Named::Tab => {
                 if mods.shift() {
                     // Shift-Tab = CSI Z (back-tab)
@@ -733,9 +734,8 @@ pub fn paste(text: &str, mode: TermMode) -> Vec<u8> {
 ///
 /// The renderer (Task 2.5) decides whether mouse reporting is active by
 /// checking `TermMode::MOUSE_REPORT_CLICK` / `TermMode::SGR_MOUSE` etc.;
-/// this function is the pure encoder and does not inspect mode bits.
-// Reserved for mouse-mode SGR reporting (Task 2.5).
-#[allow(dead_code)]
+/// this function is the pure encoder and does not inspect mode bits — the
+/// caller ([`wheel_dispatch`]) checks the mode.
 pub fn encode_mouse_sgr(
     button: MouseButton,
     col: u16,
@@ -776,7 +776,127 @@ pub fn encode_mouse_sgr(
         .into_bytes()
 }
 
+/// What a mouse-wheel notch should do, given the terminal's current mode.
+///
+/// Under sola's tmux config the *outer* emulator never enters the alternate
+/// screen (tmux strips `smcup`/`rmcup`), so the classic "alt-screen +
+/// ALTERNATE_SCROLL → arrow keys" branch alacritty uses never fires here and is
+/// deliberately omitted. Only two outcomes matter: forward the wheel to a
+/// mouse-tracking app, or scroll our own scrollback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WheelAction {
+    /// Forward the wheel to the application as mouse reports (already encoded,
+    /// one report per scrolled line). Emitted when the app has enabled mouse
+    /// tracking and Shift is not held.
+    Report(Vec<u8>),
+    /// Scroll the emulator's own scrollback by this many lines (positive = up
+    /// into history, matching `alacritty_terminal::grid::Scroll::Delta`). The
+    /// default, and the Shift override even under mouse tracking.
+    Scroll(i32),
+}
+
+/// Route a mouse-wheel notch count to either a PTY mouse report or a local
+/// scrollback scroll, mirroring alacritty's `scroll_terminal` priority ladder
+/// (minus the dead alt-screen branch — see [`WheelAction`]).
+///
+/// `notches` is signed: positive scrolls up (into history / wheel-up). `col`
+/// and `row` are the 1-based cell under the pointer, used as the report's
+/// position. When the app has mouse tracking on (`TermMode::MOUSE_MODE`) and
+/// Shift is not held, one report per line is emitted — SGR when the app
+/// negotiated `SGR_MOUSE`, else legacy X10. Otherwise (or with Shift held) the
+/// wheel scrolls our own buffer.
+pub fn wheel_dispatch(mode: TermMode, mods: Mods, notches: i32, col: u16, row: u16) -> WheelAction {
+    if !mods.shift() && mode.intersects(TermMode::MOUSE_MODE) {
+        let button = if notches > 0 {
+            MouseButton::WheelUp
+        } else {
+            MouseButton::WheelDown
+        };
+        let sgr = mode.contains(TermMode::SGR_MOUSE);
+        let mut bytes = Vec::new();
+        for _ in 0..notches.unsigned_abs() {
+            if sgr {
+                bytes.extend(encode_mouse_sgr(button, col, row, true, mods));
+            } else {
+                bytes.extend(encode_mouse_x10(button, col, row, mods));
+            }
+        }
+        return WheelAction::Report(bytes);
+    }
+    WheelAction::Scroll(notches)
+}
+
+/// Encode a mouse event in the legacy X10 form `ESC [ M Cb Cx Cy`, where each
+/// trailing byte is `32 + value` (button code, then 1-based col, then row).
+/// Coordinates are clamped to the classic 223 limit. Used for apps that enabled
+/// mouse tracking without SGR (no `TermMode::SGR_MOUSE`).
+fn encode_mouse_x10(button: MouseButton, col: u16, row: u16, mods: Mods) -> Vec<u8> {
+    let base: u8 = match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+        MouseButton::WheelUp => 64,
+        MouseButton::WheelDown => 65,
+    };
+    let mut code = base;
+    if mods.shift() {
+        code += 4;
+    }
+    if mods.alt() {
+        code += 8;
+    }
+    if mods.ctrl() {
+        code += 16;
+    }
+    let coord = |v: u16| -> u8 { 32u8.saturating_add(v.min(223) as u8) };
+    vec![0x1b, b'[', b'M', 32 + code, coord(col), coord(row)]
+}
+
 // ── internal helpers ──────────────────────────────────────────────────────
+
+/// Encode Enter, including modified forms.
+///
+/// Plain Enter is CR. Modified Enter is **always** CSI-u (or ESC+CR for
+/// Alt-only), even when the kitty / modifyOtherKeys negotiation bits are off.
+///
+/// Why unconditional: sola-terminal always sits behind tmux with
+/// `terminal-features extkeys` + `extended-keys always`. Modern tmux does
+/// **not** send `CSI > 4 ; 2 m` to the outer client, so our [`crate::extkeys`]
+/// scanner never arms and the kitty push from apps like Grok is eaten by
+/// tmux (it does not implement the full kitty protocol). Waiting for a
+/// negotiated mode left Shift+Enter byte-identical to Enter forever.
+/// CSI-u for Shift/Ctrl+Enter is what Grok / Claude Code / etc. expect;
+/// Alt+Enter uses the legacy `ESC CR` form those apps accept as a newline
+/// fallback on terminals without CSI-u.
+fn encode_enter(mods: Mods) -> Vec<u8> {
+    let shift = mods.shift();
+    let alt = mods.alt();
+    let ctrl = mods.ctrl();
+    let logo = mods.logo();
+    if !shift && !alt && !ctrl && !logo {
+        return b"\r".to_vec();
+    }
+    // Alt alone → legacy ESC+CR (widely accepted newline fallback).
+    if alt && !shift && !ctrl && !logo {
+        return b"\x1b\r".to_vec();
+    }
+    // Anything else with modifiers → CSI-u (kitty / fixterms form).
+    // bits: shift=1, alt=2, ctrl=4, super=8; sequence value is bits+1.
+    let mut bits = 0u8;
+    if shift {
+        bits |= 0b0001;
+    }
+    if alt {
+        bits |= 0b0010;
+    }
+    if ctrl {
+        bits |= 0b0100;
+    }
+    if logo {
+        bits |= 0b1000;
+    }
+    format!("\x1b[13;{}u", bits + 1).into_bytes()
+}
 
 /// Map a [`keyboard::Key::Character`] string under Ctrl to its control byte,
 /// if the character is an ASCII letter.
@@ -921,13 +1041,32 @@ mod tests {
         );
     }
 
-    // With no kitty flag negotiated, Shift+Enter falls to the legacy encoder
-    // and stays CR — unchanged from before this feature.
+    // Even with no kitty / modifyOtherKeys flag negotiated, Shift+Enter must
+    // still be CSI-u: we always sit behind tmux with extkeys, and the
+    // negotiated-mode path never arms (tmux never sends CSI > 4;2m).
     #[test]
-    fn shift_enter_without_kitty_is_cr() {
+    fn shift_enter_without_kitty_is_csi_u() {
         assert_eq!(
             resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::SHIFT, normal())),
-            Some(b"\r".to_vec())
+            Some(b"\x1b[13;2u".to_vec())
+        );
+    }
+
+    // Ctrl+Enter (Grok interject) is CSI 13;5u in the legacy path too.
+    #[test]
+    fn ctrl_enter_without_kitty_is_csi_u() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::CTRL, normal())),
+            Some(b"\x1b[13;5u".to_vec())
+        );
+    }
+
+    // Alt+Enter is the legacy ESC+CR newline fallback (Grok/xterm.js).
+    #[test]
+    fn alt_enter_without_kitty_is_esc_cr() {
+        assert_eq!(
+            resolve_bytes(&kk(&Key::Named(Named::Enter), Mods::ALT, normal())),
+            Some(b"\x1b\r".to_vec())
         );
     }
 
@@ -1418,6 +1557,74 @@ mod tests {
         // Alt adds +8 to button code.
         let result = encode_mouse_sgr(MouseButton::Middle, 2, 3, true, Mods::ALT);
         assert_eq!(result, b"\x1b[<9;2;3M".to_vec());
+    }
+
+    // ── wheel_dispatch (route a wheel notch by terminal mode) ─────────
+
+    #[test]
+    fn wheel_no_mouse_mode_scrolls_local() {
+        // Bare shell (no mouse tracking): the wheel scrolls the emulator's own
+        // scrollback, unchanged from the pre-fix behaviour.
+        let action = wheel_dispatch(TermMode::empty(), Mods::NONE, 5, 10, 3);
+        assert_eq!(action, WheelAction::Scroll(5));
+    }
+
+    #[test]
+    fn wheel_mouse_mode_sgr_forwards_report_up() {
+        // App with SGR mouse tracking: one wheel-up notch → one SGR report
+        // (button 64) at the cursor cell, not a local scroll.
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        let action = wheel_dispatch(mode, Mods::NONE, 1, 7, 2);
+        assert_eq!(action, WheelAction::Report(b"\x1b[<64;7;2M".to_vec()));
+    }
+
+    #[test]
+    fn wheel_mouse_mode_sgr_forwards_report_down() {
+        // Negative notches = wheel down → button 65.
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        let action = wheel_dispatch(mode, Mods::NONE, -1, 7, 2);
+        assert_eq!(action, WheelAction::Report(b"\x1b[<65;7;2M".to_vec()));
+    }
+
+    #[test]
+    fn wheel_mouse_mode_emits_one_report_per_line() {
+        // Three notches → three stacked reports (alacritty's per-line loop).
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        let action = wheel_dispatch(mode, Mods::NONE, 3, 1, 1);
+        assert_eq!(
+            action,
+            WheelAction::Report(b"\x1b[<64;1;1M\x1b[<64;1;1M\x1b[<64;1;1M".to_vec())
+        );
+    }
+
+    #[test]
+    fn wheel_shift_forces_local_scroll_even_in_mouse_mode() {
+        // Shift is the escape hatch: scroll the emulator's own history even
+        // while an app has mouse tracking on (xterm/alacritty convention).
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        let action = wheel_dispatch(mode, Mods::SHIFT, 4, 5, 5);
+        assert_eq!(action, WheelAction::Scroll(4));
+    }
+
+    #[test]
+    fn wheel_mouse_mode_without_sgr_uses_x10() {
+        // Mouse tracking without SGR (no DECSET 1006) → legacy X10 report:
+        // ESC [ M  (32+button)  (32+col)  (32+row). 32+64=96, 32+1=33, 32+1=33.
+        let mode = TermMode::MOUSE_REPORT_CLICK;
+        let action = wheel_dispatch(mode, Mods::NONE, 1, 1, 1);
+        assert_eq!(
+            action,
+            WheelAction::Report(vec![0x1b, b'[', b'M', 96, 33, 33])
+        );
+    }
+
+    #[test]
+    fn wheel_motion_only_mouse_mode_still_reports() {
+        // MOUSE_MODE covers motion and drag too, not just click; any of them
+        // means the app wants the wheel.
+        let mode = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
+        let action = wheel_dispatch(mode, Mods::NONE, -1, 4, 8);
+        assert_eq!(action, WheelAction::Report(b"\x1b[<65;4;8M".to_vec()));
     }
 
     // ── Fix 1: Ctrl-? = DEL (0x7f), Ctrl-/ has no special mapping ────

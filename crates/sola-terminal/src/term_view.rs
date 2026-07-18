@@ -29,6 +29,7 @@ use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
 
 use crate::emulator::Listener;
+use crate::input::{self, Mods, WheelAction};
 use sola_kit::fonts;
 
 /// Padding around the grid, in px. Matches the spike.
@@ -455,6 +456,13 @@ pub struct TermView<'a, Message> {
     /// offset (scrollback). `App` handles it the same way as `on_select` —
     /// clearing the geometry cache so the new viewport repaints.
     pub on_scroll: Message,
+    /// Builds the message that forwards encoded mouse-wheel bytes to this
+    /// pane's PTY, used when a mouse-tracking app (e.g. Claude Code) has the
+    /// wheel and should scroll its own content instead of our scrollback.
+    /// `App` writes the bytes to the pane's backend. Called at most once per
+    /// wheel event, so it captures the pane id rather than being a plain
+    /// message like `on_scroll`.
+    pub on_wheel_pty: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
 }
 
 impl<'a, Message> TermView<'a, Message> {
@@ -618,23 +626,45 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 }
             }
             mouse::Event::WheelScrolled { delta } => {
-                // Scroll the engine's own scrollback (display offset). Require
-                // the pointer to be over the grid so the event still falls
+                // Require the pointer over the grid so the event still falls
                 // through to other widgets (e.g. the sidebar) when it isn't.
-                if cursor.position_in(bounds).is_none() {
+                let Some(pos) = cursor.position_in(bounds) else {
+                    return None;
+                };
+                let notches = wheel_lines(*delta, self.metrics.cell_h);
+                if notches == 0 {
                     return None;
                 }
-                let lines = wheel_lines(*delta, self.metrics.cell_h);
-                if lines == 0 {
-                    return None;
-                }
-                // Positive `lines` scrolls up into history. `scroll_display`
-                // clamps to [0, history_size], so over-scrolling either end is
-                // a harmless no-op.
-                let mut term = self.term.lock();
-                term.scroll_display(Scroll::Delta(lines));
+                // Snapshot the mode + grid size under one lock so classification
+                // and the report's cell position see a consistent screen.
+                let term = self.term.lock();
+                let mode = *term.mode();
+                let cols = term.columns() as u16;
+                let rows = term.screen_lines() as u16;
                 drop(term);
-                Some(canvas::Action::publish(self.on_scroll.clone()).and_capture())
+                let (col0, row0) = pixel_to_cell(pos.x, pos.y, self.metrics, cols, rows);
+                let mods = Mods::from(state.modifiers);
+
+                // Positive `notches` scrolls up into history. A mouse-tracking
+                // app takes the wheel as a report; otherwise we scroll our own
+                // scrollback (also the Shift-held override).
+                match input::wheel_dispatch(mode, mods, notches, col0 as u16 + 1, row0 as u16 + 1)
+                {
+                    WheelAction::Report(bytes) => {
+                        // A mouse-tracking app (e.g. Claude Code) owns the wheel:
+                        // forward the encoded report to its PTY and let it scroll
+                        // its own content. Do NOT touch our scrollback.
+                        Some(canvas::Action::publish((self.on_wheel_pty)(bytes)).and_capture())
+                    }
+                    WheelAction::Scroll(n) => {
+                        // `scroll_display` clamps to [0, history_size], so
+                        // over-scrolling either end is a harmless no-op.
+                        let mut term = self.term.lock();
+                        term.scroll_display(Scroll::Delta(n));
+                        drop(term);
+                        Some(canvas::Action::publish(self.on_scroll.clone()).and_capture())
+                    }
+                }
             }
             _ => None,
         }
