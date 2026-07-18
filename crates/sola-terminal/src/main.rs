@@ -557,7 +557,9 @@ impl App {
         // Prefer the freshest mask: event-local OR the ModifiersChanged
         // snapshot. On Wayland the Enter press sometimes arrives with an empty
         // mask even while Shift is held; the snapshot still has it.
-        let modifiers = modifiers | self.keyboard_mods;
+        let event_mods = modifiers;
+        let tracked_mods = self.keyboard_mods;
+        let modifiers = event_mods | tracked_mods;
         self.keyboard_mods = modifiers;
 
         // ⌘/Super shortcuts are handled by the shell (menu → MenuAction). A
@@ -609,20 +611,49 @@ impl App {
         });
 
         if let Some(bytes) = bytes {
-            // One-line diagnosis for Shift/Ctrl/Alt+Enter (quiet for plain CR).
+            // Always log Enter presses to a dedicated file so we can diagnose
+            // Shift+Enter without needing RUST_LOG. Probe side: scripts/keydebug.py.
             if matches!(
                 (&key, &enter_key),
                 (keyboard::Key::Named(keyboard::key::Named::Enter), _)
                     | (_, keyboard::Key::Named(keyboard::key::Named::Enter))
             ) || text.as_deref() == Some("\r")
+                || text.as_deref() == Some("\n")
             {
-                tracing::debug!(
+                let hex = bytes
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                tracing::info!(
                     shift = mods.shift(),
                     alt = mods.alt(),
                     ctrl = mods.ctrl(),
-                    encoded = %bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "),
+                    event_shift = event_mods.shift(),
+                    tracked_shift = tracked_mods.shift(),
+                    key = ?key,
+                    modified_key = ?modified_key,
+                    text = ?text,
+                    encoded = %hex,
                     "enter key → pty"
                 );
+                // Belt-and-suspenders file log (survives if tracing filter is quiet).
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/opt/sola/log/sola-terminal-keys.log")
+                {
+                    use std::io::Write;
+                    let _ = writeln!(
+                        f,
+                        "event_shift={} tracked_shift={} merged_shift={} alt={} ctrl={} key={key:?} mod_key={modified_key:?} text={text:?} → {hex}",
+                        event_mods.shift(),
+                        tracked_mods.shift(),
+                        mods.shift(),
+                        mods.alt(),
+                        mods.ctrl(),
+                    );
+                }
             }
             {
                 let term = rt.emulator.term();
