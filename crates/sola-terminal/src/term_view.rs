@@ -30,6 +30,7 @@ use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
 
 use crate::emulator::Listener;
 use crate::input::{self, Mods, WheelAction};
+use crate::links::{self, UrlSpan};
 use sola_kit::fonts;
 
 /// Padding around the grid, in px. Matches the spike.
@@ -456,6 +457,9 @@ pub struct TermView<'a, Message> {
     /// offset (scrollback). `App` handles it the same way as `on_select` —
     /// clearing the geometry cache so the new viewport repaints.
     pub on_scroll: Message,
+    /// Builds the message that opens a URL in the default browser. Fired on a
+    /// plain left-click (no drag) over a detected link.
+    pub on_open_url: Box<dyn Fn(String) -> Message + 'a>,
     /// Builds the message that forwards encoded mouse-wheel bytes to this
     /// pane's PTY, used when a mouse-tracking app (e.g. Claude Code) has the
     /// wheel and should scroll its own content instead of our scrollback.
@@ -479,7 +483,8 @@ impl<'a, Message> TermView<'a, Message> {
 pub struct SelState {
     dragging: bool,
     /// Whether the current drag has actually extended past its origin cell.
-    /// A press+release with no movement is a plain click → clear selection.
+    /// A press+release with no movement is a plain click → clear selection
+    /// (or open a pending URL).
     moved: bool,
     /// Latest keyboard modifiers, tracked from `ModifiersChanged`. A
     /// Shift+left-click reads this to *extend* the current selection instead of
@@ -490,7 +495,22 @@ pub struct SelState {
     /// back in. Double-click selects the word (semantic) under the pointer,
     /// triple selects the line.
     last_click: Option<click::Click>,
+    /// URL under the pointer at press time. If the press releases without a
+    /// drag, we open it; if the pointer moves, we promote to a normal
+    /// selection instead (so drag-select still works over links).
+    pending_url: Option<String>,
+    /// Buffer point + side of the press that armed `pending_url`, used when a
+    /// drag cancels the open and starts a selection from that origin.
+    pending_origin: Option<(GridPoint, Side)>,
+    /// Canvas-local press position for the pending URL open. A drag only
+    /// cancels the open once the pointer moves past
+    /// [`LINK_DRAG_SLOP_PX`] — platforms often emit a zero/subpixel
+    /// `CursorMoved` on press that must not steal the click.
+    pending_press_pos: Option<Point>,
 }
+
+/// Pixel slop before a press-on-URL becomes a drag-select instead of an open.
+const LINK_DRAG_SLOP_PX: f32 = 4.0;
 
 /// Whether a left-press should *extend* the current selection (Shift held with
 /// something already selected) rather than start a fresh one. Pulled out of the
@@ -514,14 +534,15 @@ fn selection_type_for_click(kind: click::Kind) -> SelectionType {
 impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
     type State = SelState;
 
-    /// Mouse-driven selection.
+    /// Mouse-driven selection + plain-click link open.
     ///
-    /// - Left press inside bounds: start a new `Simple` selection anchored at
-    ///   the cell under the cursor (in BUFFER coords) and arm the drag.
-    /// - Cursor move while dragging: extend the selection to the cell under the
-    ///   cursor; mark the drag as "moved" so release knows it wasn't a click.
-    /// - Left release: disarm. If the drag never moved, treat it as a plain
-    ///   click and clear any selection (so a stray click deselects).
+    /// - Left press on a URL (single click): arm a pending open; no selection
+    ///   yet. Release without movement opens the URL; movement promotes the
+    ///   press into a normal drag-select from the same origin.
+    /// - Left press elsewhere: start a selection (simple/semantic/lines by
+    ///   click count), Shift extends an existing one.
+    /// - Cursor move while dragging: extend the selection.
+    /// - Left release: disarm. Plain click with no pending URL clears selection.
     ///
     /// All term mutation happens under a brief lock that is released before
     /// returning — `draw` only locks inside its own `cache.draw` closure and
@@ -566,8 +587,33 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 // thresholds) so a double/triple-click can widen the grab.
                 let click = click::Click::new(pos, mouse::Button::Left, state.last_click);
                 state.last_click = Some(click);
+                state.pending_url = None;
+                state.pending_origin = None;
+                state.pending_press_pos = None;
 
                 let (point, side) = point_at(pos);
+
+                // Single-click on a URL: arm open-on-release. Double/triple
+                // still select the word/line so the URL remains copyable.
+                // Shift+click always extends selection (never opens).
+                if matches!(click.kind(), click::Kind::Single)
+                    && !state.modifiers.shift()
+                {
+                    let term = self.term.lock();
+                    let uri = links::url_at_point(&term, point);
+                    drop(term);
+                    if let Some(uri) = uri {
+                        state.pending_url = Some(uri);
+                        state.pending_origin = Some((point, side));
+                        state.pending_press_pos = Some(pos);
+                        state.dragging = true;
+                        state.moved = false;
+                        // Capture so the pointer stays ours through release;
+                        // do not publish yet — nothing on screen changed.
+                        return Some(canvas::Action::capture());
+                    }
+                }
+
                 let mut term = self.term.lock();
                 // Shift+click extends the existing selection from its original
                 // anchor (`Selection::update` moves only the far end), so a
@@ -602,6 +648,31 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                         .map(|p| Point::new(p.x - bounds.x, p.y - bounds.y))
                 })?;
                 let (point, side) = point_at(pos);
+
+                // Pending link open: ignore sub-slop jitter so a press still
+                // opens on release. Past the slop → promote to drag-select.
+                if state.pending_url.is_some() {
+                    let origin_pos = state.pending_press_pos.unwrap_or(pos);
+                    let dx = pos.x - origin_pos.x;
+                    let dy = pos.y - origin_pos.y;
+                    if dx * dx + dy * dy < LINK_DRAG_SLOP_PX * LINK_DRAG_SLOP_PX {
+                        return Some(canvas::Action::capture());
+                    }
+                    let (origin, origin_side) = state
+                        .pending_origin
+                        .take()
+                        .unwrap_or((point, side));
+                    state.pending_url = None;
+                    state.pending_press_pos = None;
+                    let mut term = self.term.lock();
+                    let mut sel = Selection::new(SelectionType::Simple, origin, origin_side);
+                    sel.update(point, side);
+                    term.selection = Some(sel);
+                    drop(term);
+                    state.moved = true;
+                    return Some(canvas::Action::publish(self.on_select.clone()).and_capture());
+                }
+
                 let mut term = self.term.lock();
                 if let Some(sel) = term.selection.as_mut() {
                     sel.update(point, side);
@@ -614,6 +685,15 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 state.dragging = false;
                 let was_drag = state.moved;
                 state.moved = false;
+                state.pending_origin = None;
+                state.pending_press_pos = None;
+                if let Some(uri) = state.pending_url.take() {
+                    // Press+release with no drag on a URL → open it.
+                    // (A drag already cleared pending_url above.)
+                    return Some(
+                        canvas::Action::publish((self.on_open_url)(uri)).and_capture(),
+                    );
+                }
                 if was_drag {
                     // Real drag → keep the installed selection for copy.
                     Some(canvas::Action::capture())
@@ -670,20 +750,36 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
         }
     }
 
-    /// Show the text I-beam whenever the pointer is over the grid, matching a
-    /// conventional terminal. The selection drag uses the same cursor, so this
-    /// holds across hover and drag alike.
+    /// Text I-beam over the grid by default. Over a URL (or while a link
+    /// click is armed) switch to the pointing hand so the target stays
+    /// obvious through press → release.
     fn mouse_interaction(
         &self,
-        _state: &SelState,
+        state: &SelState,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        if cursor.is_over(bounds) {
-            mouse::Interaction::Text
-        } else {
-            mouse::Interaction::None
+        if !cursor.is_over(bounds) {
+            return mouse::Interaction::None;
         }
+        // Keep the finger cursor for the whole click if we armed a URL open,
+        // even if the platform briefly reports the pointer outside bounds
+        // mid-press (which would otherwise fall through to the default arrow).
+        if state.pending_url.is_some() {
+            return mouse::Interaction::Pointer;
+        }
+        if let Some(pos) = cursor.position_in(bounds) {
+            let term = self.term.lock();
+            let cols = term.columns() as u16;
+            let rows = term.screen_lines() as u16;
+            let display_offset = term.grid().display_offset();
+            let (col, row) = pixel_to_cell(pos.x, pos.y, self.metrics, cols, rows);
+            let point = viewport_cell_to_point(col, row, display_offset);
+            if links::url_at_point(&term, point).is_some() {
+                return mouse::Interaction::Pointer;
+            }
+        }
+        mouse::Interaction::Text
     }
 
     fn draw(
@@ -880,9 +976,75 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                         .with_width(1.0),
                 );
             }
+
+            // Always-on link underlines. Bright-blue ANSI slot = theme accent.
+            // Drawn last so they sit above selection wash / glyphs.
+            let screen_lines = term.screen_lines();
+            let cols = term.columns();
+            let link_color = palette.ansi[12];
+            for span in links::visible_urls(&term) {
+                draw_url_underline(
+                    frame,
+                    &span,
+                    metrics,
+                    link_color,
+                    display_offset,
+                    screen_lines,
+                    cols,
+                );
+            }
         });
 
         vec![geometry]
+    }
+}
+
+/// Underline a URL span across its visible cells. Handles wrap-joined spans
+/// that cross multiple viewport rows.
+fn draw_url_underline(
+    frame: &mut Frame<Renderer>,
+    span: &UrlSpan,
+    metrics: CellMetrics,
+    color: Color,
+    display_offset: usize,
+    screen_lines: usize,
+    cols: usize,
+) {
+    let to_visible = |line: i32| -> Option<i32> {
+        let vis = line + display_offset as i32;
+        if vis < 0 || vis as usize >= screen_lines {
+            None
+        } else {
+            Some(vis)
+        }
+    };
+
+    for buf_line in span.start.line.0..=span.end.line.0 {
+        let Some(vis) = to_visible(buf_line) else {
+            continue;
+        };
+        let (col_start, col_end) = if span.start.line.0 == span.end.line.0 {
+            (span.start.column.0, span.end.column.0)
+        } else if buf_line == span.start.line.0 {
+            (span.start.column.0, cols.saturating_sub(1))
+        } else if buf_line == span.end.line.0 {
+            (0, span.end.column.0)
+        } else {
+            (0, cols.saturating_sub(1))
+        };
+        if col_end < col_start {
+            continue;
+        }
+        let x = PAD + col_start as f32 * metrics.cell_w;
+        let y = PAD + vis as f32 * metrics.cell_h + metrics.cell_h - 2.0;
+        let w = (col_end - col_start + 1) as f32 * metrics.cell_w;
+        // Slightly thicker than a normal cell underline so the hint is
+        // obvious even on light glyphs.
+        let path = Path::line(Point::new(x, y), Point::new(x + w, y));
+        frame.stroke(
+            &path,
+            Stroke::default().with_color(color).with_width(1.5),
+        );
     }
 }
 

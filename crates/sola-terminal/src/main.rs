@@ -15,6 +15,7 @@ use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 mod emulator;
 mod extkeys;
 mod input;
+mod links;
 mod menu;
 mod pty;
 mod sidebar;
@@ -208,6 +209,8 @@ enum Msg {
     Resized(iced::Size),
     SelectionChanged,
     Scrolled,
+    /// Plain left-click on a URL; open it in Helium.
+    OpenUrl(String),
     /// Mouse-wheel bytes destined for a pane's PTY (PaneId, encoded report),
     /// emitted when a mouse-tracking app owns the wheel. Written straight to
     /// the pane's backend.
@@ -319,6 +322,10 @@ impl App {
             Msg::Resized(size) => self.on_resized(size),
             Msg::SelectionChanged | Msg::Scrolled => {
                 self.tabs.clear_all_caches();
+                Task::none()
+            }
+            Msg::OpenUrl(uri) => {
+                links::open_url(&uri);
                 Task::none()
             }
             Msg::WheelToPty(pane, bytes) => {
@@ -499,6 +506,7 @@ impl App {
                     active: pane_id == active_pane,
                     on_select: Msg::SelectionChanged,
                     on_scroll: Msg::Scrolled,
+                    on_open_url: Box::new(|uri| Msg::OpenUrl(uri)),
                     on_wheel_pty: Box::new({
                         let pid = pane_id.to_string();
                         move |bytes| Msg::WheelToPty(pid.clone(), bytes)
