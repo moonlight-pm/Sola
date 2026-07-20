@@ -2,6 +2,13 @@
 
 Sola is a Wayland desktop shell — a full compositor and desktop environment built in Rust with Smithay, using WebKit6 WebViews for all UI rendering.
 
+## Active work
+
+Queued work lives in [`.grok/rules/active-work.md`](.grok/rules/active-work.md)
+(auto-loaded every session). If the user signals go-ahead without a new task
+("go", "ok go", "continue", etc.), execute that file's **Current** work — do not
+re-plan from scratch. Keep `active-work.md` updated as phases complete.
+
 ## Architecture
 
 - **Process manager (`sola`):** Launches and supervises all components. No desktop or bus logic — pure process management.
