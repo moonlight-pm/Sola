@@ -110,6 +110,10 @@ Agent opens the PNG and confirms desktop chrome is visible.
 
 Lightweight, mostly process + paths (not a large product feature).
 
+**Status (2026-07-20):** convention landed under `docs/visual/`; baseline
+`01`–`04` captured on first output (5120×2160). `05-storybook-theme`
+deferred (sola-kit was blank / region geometry unusable during capture).
+
 ```
 docs/visual/
   README.md                 # how to capture states; chord cheat sheet
