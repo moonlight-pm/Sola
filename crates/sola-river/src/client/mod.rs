@@ -233,6 +233,8 @@ pub fn connect(
 pub fn bus_tick(state: &mut AppData) {
     state.bus.ensure_connected();
     state.bus.drain_notify();
+    // Screenshot PNG encode runs off-thread; deliver results here.
+    screenshot::poll_results(state);
     while let Some(msg) = state.bus.try_recv() {
         let Some(topic) = sola_bus::topics::Topic::parse(&msg) else {
             continue;

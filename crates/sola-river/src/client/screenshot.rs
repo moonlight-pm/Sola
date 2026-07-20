@@ -16,18 +16,30 @@
 //! 2. `manager.capture_output[_region](…)` on the first `wl_output`.
 //! 3. On `Buffer` + `BufferDone`: allocate SHM (`memfd` + event stride),
 //!    `frame.copy(buffer)`.
-//! 4. On `Ready`: mmap, convert to RGBA8 (honour `y_invert`), PNG encode,
-//!    emit `Ok(path)`. On `Failed` / any error: emit `Err(msg)`.
+//! 4. On `Ready`: **copy** SHM bytes off the mmap, destroy Wayland
+//!    resources, and spawn a worker thread for convert+PNG. The result is
+//!    polled from `bus_tick` and emitted as `Topic::Screenshot`.
+//!    On `Failed` / any error: emit `Err(msg)`.
 //!
-//! V1 concurrency: a single in-flight capture. A second request while one
-//! is running gets `Err("screenshot already in progress")`.
+//! ## Why off-thread encode?
+//!
+//! A 5120×2160 capture is ~44 MB RGBA. Convert + `png` encode can take
+//! multiple seconds on the CPU. River disconnects the window-management
+//! client if it is unresponsive for **>3 s** (`window manager unresponsive
+//! … disconnecting`). Doing encode on the calloop/Wayland thread froze the
+//! desktop and broke clients (terminals lost input / Broken pipe).
+//!
+//! V1 concurrency: a single in-flight capture (Wayland flight **or** encode
+//! worker). A second request while one is running gets
+//! `Err("screenshot already in progress")`.
 
 use std::ffi::c_void;
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::os::fd::{AsFd, OwnedFd};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use rustix::fs::{MemfdFlags, ftruncate, memfd_create};
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
@@ -49,8 +61,11 @@ pub struct ScreenshotState {
     pub shm: Option<wl_shm::WlShm>,
     /// Bound `wl_output` globals (first is used for V1 single-output capture).
     pub outputs: Vec<wl_output::WlOutput>,
-    /// At most one capture in flight.
+    /// At most one capture in flight (Wayland phase).
     pub flight: Option<CaptureFlight>,
+    /// Encode-worker result channel. While `Some`, a capture is still in
+    /// progress even if `flight` is already cleared.
+    result_rx: Option<Receiver<Result<PathBuf, String>>>,
 }
 
 /// In-flight screencopy state machine.
@@ -78,9 +93,36 @@ pub struct CaptureFlight {
 // Wayland dispatch path. The mmap pointer is not shared across threads.
 unsafe impl Send for CaptureFlight {}
 
+/// True while either the Wayland screencopy or the encode worker is active.
+fn in_progress(state: &AppData) -> bool {
+    state.screenshot.flight.is_some() || state.screenshot.result_rx.is_some()
+}
+
+/// Poll the encode worker from `bus_tick` (must not run on the worker thread).
+pub fn poll_results(state: &mut AppData) {
+    let Some(rx) = state.screenshot.result_rx.as_ref() else {
+        return;
+    };
+    match rx.try_recv() {
+        Ok(Ok(path)) => {
+            state.screenshot.result_rx = None;
+            emit_ok(state, path);
+        }
+        Ok(Err(msg)) => {
+            state.screenshot.result_rx = None;
+            emit_err(state, msg);
+        }
+        Err(TryRecvError::Empty) => {}
+        Err(TryRecvError::Disconnected) => {
+            state.screenshot.result_rx = None;
+            emit_err(state, "screenshot encode thread died");
+        }
+    }
+}
+
 /// Handle a `Topic::CaptureScreen` request.
 pub fn handle(state: &mut AppData, req: CaptureScreenPayload) {
-    if state.screenshot.flight.is_some() {
+    if in_progress(state) {
         emit_err(state, "screenshot already in progress");
         return;
     }
@@ -330,7 +372,9 @@ fn try_copy(state: &mut AppData) {
     }
 }
 
-/// On Ready: convert pixels → PNG → emit result.
+/// On Ready: copy SHM off the event-loop thread, free Wayland resources,
+/// and hand convert+PNG to a worker. River kills the WM client if we block
+/// the calloop thread for >3s — encode of a 5K buffer routinely exceeds that.
 fn finalize_ready(state: &mut AppData) {
     let Some(flight) = state.screenshot.flight.as_ref() else {
         return;
@@ -352,23 +396,54 @@ fn finalize_ready(state: &mut AppData) {
     // Safety: compositor has finished writing; we own the mapping until clear.
     let src = unsafe { std::slice::from_raw_parts(ptr as *const u8, map_len) };
 
-    let rgba = match pixels_to_rgba8(src, format, width, height, stride, y_invert) {
-        Ok(v) => v,
-        Err(e) => {
-            clear_flight(state);
-            emit_err(state, e);
-            return;
-        }
-    };
+    // Copy only — keep this under River's WM responsiveness budget.
+    let t_copy = Instant::now();
+    let raw = src.to_vec();
+    let copy_ms = t_copy.elapsed().as_millis();
+    info!(
+        width,
+        height,
+        stride,
+        bytes = raw.len(),
+        copy_ms,
+        "screenshot: SHM copied; encode offloaded to worker"
+    );
 
-    if let Err(e) = write_png(&path, width, height, &rgba) {
-        clear_flight(state);
-        emit_err(state, e);
-        return;
-    }
-
+    // Drop Wayland proxies / munmap before starting the slow work.
     clear_flight(state);
-    emit_ok(state, path);
+
+    let (tx, rx) = mpsc::channel();
+    state.screenshot.result_rx = Some(rx);
+
+    if let Err(e) = std::thread::Builder::new()
+        .name("sola-screenshot-encode".into())
+        .spawn(move || {
+            let t0 = Instant::now();
+            let result = (|| {
+                let rgba = pixels_to_rgba8(&raw, format, width, height, stride, y_invert)?;
+                let convert_ms = t0.elapsed().as_millis();
+                let t1 = Instant::now();
+                write_png(&path, width, height, &rgba)?;
+                let encode_ms = t1.elapsed().as_millis();
+                info!(
+                    path = %path.display(),
+                    convert_ms,
+                    encode_ms,
+                    total_ms = t0.elapsed().as_millis(),
+                    "screenshot: encode worker finished"
+                );
+                Ok(path)
+            })();
+            // If the main loop dropped the receiver (shutdown), ignore.
+            let _ = tx.send(result);
+        })
+    {
+        state.screenshot.result_rx = None;
+        emit_err(
+            state,
+            format!("failed to spawn screenshot encode thread: {e}"),
+        );
+    }
 }
 
 fn write_png(path: &PathBuf, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
