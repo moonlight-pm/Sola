@@ -13,32 +13,18 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P2 token & type baseline** — branch `feat/token-type-baseline`
-(worktree `.worktrees/token-baseline`). Code + build done; needs install +
-after screenshots.
+**none** (P2 token/type baseline + fonts ready to merge / just merged)
 
-Delivered in branch:
-
-- `hex::*` + `Palette::seed` → macOS system greys
-- Keep cyan accent; quiet selection `#1a3a45`
-- Neutral switcher glass (not cyan tint)
-- Font seed stays Inter + JetBrains Mono; SF Pro docs note
-- Pass dir `docs/visual/passes/p2-token-greys/` with before shots + notes
-
-**Blocked on user:**
-
-1. `cargo make install` from worktree (or kit + shell + core consumers)
-2. Reset sticky theme if needed: storybook Default, or remove
-   `~/.config/sola/theme/current.yaml` and restart
-3. Agent captures after shots into the pass dir
-
-**Stop after after-shots:** critique vs design language; merge if keep.
-
-Next after merge: **P3** menubar density.
+Next when user says go: **P3** menubar density + type —
+see `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P3.
 
 ### Last completed
 
-**P1 visual baselines + Bgr888 fix** — merged to `master` at `d483d66`
-(2026-07-20). Branch `docs/visual-baseline`.
+**P2 token & type baseline** — branch `feat/token-type-baseline`:
+macOS greys seed, quiet selection, neutral switcher, keep cyan;
+mono default Iosevka Term Slab; SF Pro Text preferred for UI when
+installed; `.local/fonts/` stash (gitignored binaries + README).
 
-**P0 screenshot capture** — merged earlier same day.
+**P1 visual baselines + Bgr888 fix** — merged to `master` at `d483d66`.
+
+**P0 screenshot capture** — merged earlier.
