@@ -133,7 +133,12 @@ impl BusSetup {
     /// process — that's a setup-order bug.
     pub fn install(self) {
         let mut client = BusClient::new();
+        // `connect_blocking` returns `()` and loops until `connect()`
+        // succeeds (it already warns once on the first failure). When
+        // it returns, the bus is connected — log with app_id for
+        // diagnosability ("never lose output").
         client.connect_blocking(self.connect_timeout);
+        tracing::info!(app_id = self.app_id, "bus connected");
         if let Some(kinds) = self.subscribe {
             if let Err(e) = client.subscribe(kinds) {
                 tracing::warn!("bus subscribe failed: {e}");
