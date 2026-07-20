@@ -100,9 +100,22 @@ fn output_stream() -> impl Stream<Item = String> {
                         break;
                     }
                     match std_rx.recv() {
-                        Ok(tab_id) => {
-                            if iced_tx.unbounded_send(tab_id).is_err() {
-                                break;
+                        Ok(first) => {
+                            // Coalesce a burst of reader notifies into one
+                            // wakeup per pane. A mouse-tracking TUI that
+                            // full-repaints on every wheel unit can enqueue
+                            // hundreds of identical tab-ids per frame; without
+                            // this, iced spends the frame processing
+                            // Msg::PtyOutput / cache clears instead of input.
+                            let mut dirty = std::collections::HashSet::new();
+                            dirty.insert(first);
+                            while let Ok(id) = std_rx.try_recv() {
+                                dirty.insert(id);
+                            }
+                            for tab_id in dirty {
+                                if iced_tx.unbounded_send(tab_id).is_err() {
+                                    return;
+                                }
                             }
                         }
                         // All senders dropped — no more tabs live. Stop.

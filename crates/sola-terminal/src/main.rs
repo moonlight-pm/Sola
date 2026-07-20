@@ -329,10 +329,12 @@ impl App {
                 Task::none()
             }
             Msg::WheelToPty(pane, bytes) => {
-                // A mouse-tracking app (e.g. Claude Code) took the wheel: hand
-                // the encoded mouse report to that pane's PTY. tmux passes it
-                // through to the app, which scrolls its own content. No cache
-                // clear — the app's redraw arrives as PtyOutput.
+                // A mouse-tracking app (e.g. Grok / Claude Code) took the
+                // wheel: enqueue the encoded mouse report on that pane's PTY
+                // write queue. The writer thread owns the actual write(2), so
+                // a full input buffer cannot stall the iced UI (tab switches,
+                // other panes). No cache clear — the app's redraw arrives as
+                // PtyOutput.
                 if let Some(rt) = self.tabs.pane_runtime(&pane) {
                     rt.backend.write(&bytes);
                 }

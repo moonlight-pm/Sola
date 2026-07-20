@@ -814,13 +814,16 @@ pub fn encode_mouse_sgr(
 /// mouse-tracking app, or scroll our own scrollback.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WheelAction {
-    /// Forward the wheel to the application as mouse reports (already encoded,
-    /// one report per scrolled line). Emitted when the app has enabled mouse
-    /// tracking and Shift is not held.
+    /// Forward the wheel to the application as a mouse report (already encoded).
+    /// Emitted when the app has enabled mouse tracking and Shift is not held.
+    /// Exactly **one** SGR/X10 report per wheel event — xterm-style. Multiplying
+    /// by local-scroll line counts flooded mouse-tracking TUIs (Grok, etc.)
+    /// into full-redraw storms that locked the UI.
     Report(Vec<u8>),
     /// Scroll the emulator's own scrollback by this many lines (positive = up
     /// into history, matching `alacritty_terminal::grid::Scroll::Delta`). The
-    /// default, and the Shift override even under mouse tracking.
+    /// default, and the Shift override even under mouse tracking. Uses the full
+    /// line-count multiplier so host history still tracks the wheel.
     Scroll(i32),
 }
 
@@ -831,25 +834,26 @@ pub enum WheelAction {
 /// `notches` is signed: positive scrolls up (into history / wheel-up). `col`
 /// and `row` are the 1-based cell under the pointer, used as the report's
 /// position. When the app has mouse tracking on (`TermMode::MOUSE_MODE`) and
-/// Shift is not held, one report per line is emitted — SGR when the app
-/// negotiated `SGR_MOUSE`, else legacy X10. Otherwise (or with Shift held) the
-/// wheel scrolls our own buffer.
+/// Shift is not held, **one** report is emitted for the event (SGR when the app
+/// negotiated `SGR_MOUSE`, else legacy X10) — not one per local-scroll line.
+/// Otherwise (or with Shift held) the wheel scrolls our own buffer by `notches`.
+///
+/// Callers must skip zero `notches` (no event).
 pub fn wheel_dispatch(mode: TermMode, mods: Mods, notches: i32, col: u16, row: u16) -> WheelAction {
+    if notches == 0 {
+        return WheelAction::Scroll(0);
+    }
     if !mods.shift() && mode.intersects(TermMode::MOUSE_MODE) {
         let button = if notches > 0 {
             MouseButton::WheelUp
         } else {
             MouseButton::WheelDown
         };
-        let sgr = mode.contains(TermMode::SGR_MOUSE);
-        let mut bytes = Vec::new();
-        for _ in 0..notches.unsigned_abs() {
-            if sgr {
-                bytes.extend(encode_mouse_sgr(button, col, row, true, mods));
-            } else {
-                bytes.extend(encode_mouse_x10(button, col, row, mods));
-            }
-        }
+        let bytes = if mode.contains(TermMode::SGR_MOUSE) {
+            encode_mouse_sgr(button, col, row, true, mods)
+        } else {
+            encode_mouse_x10(button, col, row, mods)
+        };
         return WheelAction::Report(bytes);
     }
     WheelAction::Scroll(notches)
@@ -1648,14 +1652,20 @@ mod tests {
     }
 
     #[test]
-    fn wheel_mouse_mode_emits_one_report_per_line() {
-        // Three notches → three stacked reports (alacritty's per-line loop).
+    fn wheel_mouse_mode_emits_one_report_per_event() {
+        // Local-scroll multiplies by lines-per-notch (e.g. 3), but mouse-mode
+        // reports must stay one SGR event — otherwise TUIs redraw once per
+        // virtual line and flood the PTY/UI.
         let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
         let action = wheel_dispatch(mode, Mods::NONE, 3, 1, 1);
-        assert_eq!(
-            action,
-            WheelAction::Report(b"\x1b[<64;1;1M\x1b[<64;1;1M\x1b[<64;1;1M".to_vec())
-        );
+        assert_eq!(action, WheelAction::Report(b"\x1b[<64;1;1M".to_vec()));
+    }
+
+    #[test]
+    fn wheel_mouse_mode_zero_notches_is_noop_scroll() {
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        let action = wheel_dispatch(mode, Mods::NONE, 0, 1, 1);
+        assert_eq!(action, WheelAction::Scroll(0));
     }
 
     #[test]

@@ -7,21 +7,26 @@
 //! `alacritty_terminal` `Processor` straight into the tab's shared
 //! `Term<Listener>` grid.
 //!
-//! Threading model (one reader thread per tab)
-//! -------------------------------------------
+//! Threading model (one reader + one writer thread per tab)
+//! -------------------------------------------------------
 //! - `App` state owns the `Emulator` (for the renderer + `resize`). The reader
 //!   thread does NOT call `Emulator::advance` -- that would need `&mut` to
 //!   state-owned data. Instead, at attach time we clone the term handle
 //!   (`emulator.term()` -> `Arc<FairMutex<Term<Listener>>>`) and move that
 //!   clone plus a FRESH `Processor` into the reader thread. The reader loop
 //!   locks the term, advances bytes, and notifies iced.
-//! - Terminal replies (DSR / cursor-position / DA) flow out through the
-//!   `Listener`'s `pty_write` channel as `(tab_id, bytes)`. A SINGLE
-//!   process-wide drain thread reads that channel and writes the bytes back to
-//!   the tab's master fd, looked up in a global fd registry. A tab whose fd is
-//!   gone (closed) is dropped silently -- the drain thread never panics.
+//! - Keyboard / wheel / paste input and terminal replies (DSR / DA / …) are
+//!   **never written from the iced UI thread**. Every write is enqueued on a
+//!   per-tab `mpsc` and drained by a dedicated writer thread. That keeps the
+//!   UI responsive when a mouse-tracking TUI fills the PTY input buffer
+//!   (blocking `write(2)` would otherwise freeze tab switching).
+//! - Terminal replies flow through the `Listener`'s process-wide channel as
+//!   `(tab_id, bytes)`. The drain thread looks up the tab's write-queue sender
+//!   in a global registry and enqueues — same path as keyboard input, so one
+//!   writer serialises all bytes for that master fd.
 
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::os::unix::process::CommandExt;
@@ -37,19 +42,19 @@ use crate::emulator::Listener;
 // -- Process-wide pty-write drain ----------------------------------------------
 //
 // The `Listener` inside every `Term` sends replies as `(tab_id, bytes)` on a
-// single process-wide channel. One drain thread looks up the tab's master fd in
-// a global registry and writes the bytes. Registering/unregistering the fd is
-// done by `PtyBackend` at attach/close.
+// single process-wide channel. One drain thread looks up the tab's write-queue
+// sender in a global registry and enqueues. Registering/unregistering is done
+// by `PtyBackend` at attach/close.
 
 /// Global pty-write sender, cloned for every tab's `Listener`.
 static PTY_WRITE_TX: OnceLock<mpsc::Sender<(String, Vec<u8>)>> = OnceLock::new();
 
-/// Map of `tab_id -> master fd`, populated at attach and cleared at close.
+/// Map of `tab_id -> write-queue sender`, populated at attach and cleared at close.
 /// The drain thread reads it; `PtyBackend` mutates it.
-static FD_REGISTRY: OnceLock<Mutex<HashMap<String, RawFd>>> = OnceLock::new();
+static WRITE_REGISTRY: OnceLock<Mutex<HashMap<String, mpsc::Sender<Vec<u8>>>>> = OnceLock::new();
 
-fn fd_registry() -> &'static Mutex<HashMap<String, RawFd>> {
-    FD_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+fn write_registry() -> &'static Mutex<HashMap<String, mpsc::Sender<Vec<u8>>>> {
+    WRITE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Initialise the pty-write channel + drain thread exactly once.
@@ -59,24 +64,21 @@ fn ensure_pty_write_drain() {
         std::thread::spawn(move || {
             // Blocking recv -- exits when every sender is dropped (process end).
             while let Ok((tab_id, bytes)) = rx.recv() {
-                let fd = {
+                let sender = {
                     // Poison-tolerant: a panic elsewhere must not kill the one
                     // process-wide drain thread (that would hang every TUI).
-                    let map = fd_registry().lock().unwrap_or_else(|e| e.into_inner());
-                    map.get(&tab_id).copied()
+                    let map = write_registry().lock().unwrap_or_else(|e| e.into_inner());
+                    map.get(&tab_id).cloned()
                 };
-                match fd {
-                    Some(fd) => {
-                        let n = unsafe {
-                            libc::write(fd, bytes.as_ptr() as *const libc::c_void, bytes.len())
-                        };
-                        if n < 0 {
-                            // fd closed out from under us, or transient error --
-                            // drop the reply and keep draining. Never panic.
-                            warn!(
+                match sender {
+                    Some(tx) => {
+                        // Enqueue only — the per-tab writer thread owns the fd.
+                        // If the tab is mid-teardown the receiver may be gone;
+                        // drop the reply and keep draining. Never panic.
+                        if tx.send(bytes).is_err() {
+                            debug!(
                                 tab_id = %tab_id,
-                                "pty-write drain: write failed: {}",
-                                std::io::Error::last_os_error()
+                                "pty-write drain: writer queue closed (tab gone)"
                             );
                         }
                     }
@@ -96,17 +98,15 @@ pub fn pty_write_sender() -> mpsc::Sender<(String, Vec<u8>)> {
     PTY_WRITE_TX.get().unwrap().clone()
 }
 
-fn register_fd(tab_id: &str, fd: RawFd) {
-    // Poison-tolerant: see the drain thread's lock above.
-    fd_registry()
+fn register_writer(tab_id: &str, tx: mpsc::Sender<Vec<u8>>) {
+    write_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(tab_id.to_string(), fd);
+        .insert(tab_id.to_string(), tx);
 }
 
-fn unregister_fd(tab_id: &str) {
-    // Poison-tolerant: see the drain thread's lock above.
-    fd_registry()
+fn unregister_writer(tab_id: &str) {
+    write_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(tab_id);
@@ -115,28 +115,57 @@ fn unregister_fd(tab_id: &str) {
     crate::extkeys::clear(tab_id);
 }
 
+/// Write every byte in `buf` to `fd`, retrying short writes and EINTR.
+///
+/// Only called from the per-tab writer thread. May block when the PTY input
+/// buffer is full — that is intentional; the iced UI enqueues and never waits.
+fn write_all_blocking(fd: RawFd, mut buf: &[u8], tab_id: &str) {
+    while !buf.is_empty() {
+        let n = unsafe { libc::write(fd, buf.as_ptr() as *const libc::c_void, buf.len()) };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == ErrorKind::Interrupted {
+                continue;
+            }
+            // EAGAIN should not happen on a blocking fd; treat like any other
+            // error and drop the rest of this chunk so one stuck write can't
+            // hang the queue forever if flags were ever flipped.
+            warn!(tab_id = %tab_id, "pty writer: write failed: {err}");
+            return;
+        }
+        if n == 0 {
+            warn!(tab_id = %tab_id, "pty writer: write returned 0");
+            return;
+        }
+        buf = &buf[n as usize..];
+    }
+}
+
 // -- PtyBackend -- per-tab handle ----------------------------------------------
 
-/// Per-tab PTY handle: master fd + child pid + tmux session name.
+/// Per-tab PTY handle: master fd + child pid + tmux session name + write queue.
 ///
 /// Drop semantics intentionally match the legacy `PtyManager`: a plain drop
 /// (shutdown / crash) closes the master fd (once, via `OwnedFd`), unregisters
-/// it from the drain registry, and SIGHUPs the tmux *client* but LEAVES THE
+/// it from the write registry, and SIGHUPs the tmux *client* but LEAVES THE
 /// TMUX SESSION ALIVE so it can be restored. Only an explicit
 /// [`close`](Self::close) tears down the tmux session.
 pub struct PtyBackend {
     tab_id: String,
     /// The pty master. Owned exactly once here: dropping the `OwnedFd` is the
     /// single close of this fd (see `Drop`). `close()` must NOT close it.
+    /// Reader and writer threads hold their own `dup`s.
     master_fd: OwnedFd,
     child_pid: i32,
     tmux_session: String,
+    /// Input path for keyboard / wheel / paste. Sends into the writer thread;
+    /// never blocks the iced UI on a full PTY buffer.
+    write_tx: mpsc::Sender<Vec<u8>>,
 }
 
 impl PtyBackend {
     /// Open a pty, exec `tmux new-session -A -s <tmux_session>`, register the
-    /// master fd for pty-write replies, and start the reader thread that drives
-    /// `term` from the master fd.
+    /// write queue for pty-write replies, and start the reader + writer threads.
     ///
     /// `cwd` sets the new session's start directory (ignored by tmux when the
     /// session already exists, i.e. on reattach). The reader thread sends
@@ -218,10 +247,29 @@ impl PtyBackend {
             "spawned PTY"
         );
 
-        // Register the raw fd so terminal replies can be written back. The
-        // registry stores a bare int; the entry is removed (in close()/Drop)
-        // before this OwnedFd drops, so the drain thread never sees a stale fd.
-        register_fd(tab_id, master_fd.as_raw_fd());
+        // Writer thread: owns a dup'd master fd + drains the per-tab queue.
+        // Keyboard/wheel/paste and Listener replies all serialise here so the
+        // UI never calls write(2) and concurrent writers never interleave
+        // mid-sequence on the same fd.
+        let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>();
+        // SAFETY: `libc::dup` returns a fresh, owned fd; the writer thread is
+        // its sole owner and the OwnedFd closes it when the loop exits.
+        let write_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(master_fd.as_raw_fd())) };
+        let writer_tab_id = tab_id.to_string();
+        std::thread::spawn(move || {
+            while let Ok(mut bytes) = write_rx.recv() {
+                // Coalesce a burst of enqueued chunks (e.g. rapid wheel reports
+                // or multi-key auto-repeat) into one write_all to cut syscalls
+                // while a TUI is slow to drain.
+                while let Ok(more) = write_rx.try_recv() {
+                    bytes.extend(more);
+                }
+                write_all_blocking(write_fd.as_raw_fd(), &bytes, &writer_tab_id);
+            }
+            drop(write_fd);
+            debug!(tab_id = %writer_tab_id, "PTY writer thread exited");
+        });
+        register_writer(tab_id, write_tx.clone());
 
         // Reader thread: own a dup'd fd + the term Arc + a FRESH Processor.
         // SAFETY: `libc::dup` returns a fresh, owned fd distinct from the
@@ -272,23 +320,22 @@ impl PtyBackend {
             master_fd,
             child_pid,
             tmux_session: tmux_session.to_string(),
+            write_tx,
         })
     }
 
-    /// Write bytes to the master fd (keyboard input -> shell).
+    /// Enqueue bytes for the master fd (keyboard / wheel / paste → shell).
+    ///
+    /// Returns immediately. The per-tab writer thread performs the actual
+    /// `write(2)`, so a full PTY input buffer cannot stall the iced UI.
     pub fn write(&self, bytes: &[u8]) {
-        let n = unsafe {
-            libc::write(
-                self.master_fd.as_raw_fd(),
-                bytes.as_ptr() as *const libc::c_void,
-                bytes.len(),
-            )
-        };
-        if n < 0 {
+        if bytes.is_empty() {
+            return;
+        }
+        if self.write_tx.send(bytes.to_vec()).is_err() {
             warn!(
                 tab_id = %self.tab_id,
-                "pty write failed: {}",
-                std::io::Error::last_os_error()
+                "pty write queue closed (writer gone)"
             );
         }
     }
@@ -330,8 +377,8 @@ impl PtyBackend {
         }
     }
 
-    /// Explicitly tear down: unregister the fd, kill the tmux session, and
-    /// SIGHUP->SIGKILL the child process group. This is the ONLY path that
+    /// Explicitly tear down: unregister the write queue, kill the tmux session,
+    /// and SIGHUP->SIGKILL the child process group. This is the ONLY path that
     /// kills the tmux session (plain drop preserves it).
     ///
     /// Note: `close()` does NOT close the master fd. The fd is owned by
@@ -341,7 +388,7 @@ impl PtyBackend {
     /// closing the master -- is what hangs up the pty and unblocks the reader.
     pub fn close(&self) {
         debug!(tab_id = %self.tab_id, child_pid = self.child_pid, "closing PTY");
-        unregister_fd(&self.tab_id);
+        unregister_writer(&self.tab_id);
         crate::tmux::kill_session(&self.tmux_session);
 
         let pid = self.child_pid;
@@ -368,13 +415,12 @@ impl Drop for PtyBackend {
         // Preserve the tmux session (shutdown / crash path). SIGHUP the tmux
         // *client* pid so the session survives for restore.
         //
-        // Unregister the fd FIRST so the drain thread can never write to it
-        // after this point (a stale registry entry would be a recycle hazard:
-        // the fd number is about to be freed when `master_fd` drops). The
-        // master fd itself is closed exactly once -- automatically -- when the
-        // `master_fd: OwnedFd` field drops at the end of this method. No manual
-        // `libc::close` here; that was the old double-close bug.
-        unregister_fd(&self.tab_id);
+        // Unregister the writer FIRST so the drain thread can never enqueue to
+        // a half-dead tab. Dropping `write_tx` then ends the writer thread
+        // (after it drains any remaining chunks). The master fd itself is
+        // closed exactly once -- automatically -- when the `master_fd: OwnedFd`
+        // field drops at the end of this method.
+        unregister_writer(&self.tab_id);
         let pid = self.child_pid;
         unsafe {
             libc::kill(pid, libc::SIGHUP);

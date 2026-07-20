@@ -726,14 +726,16 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 let mods = Mods::from(state.modifiers);
 
                 // Positive `notches` scrolls up into history. A mouse-tracking
-                // app takes the wheel as a report; otherwise we scroll our own
-                // scrollback (also the Shift-held override).
+                // app takes the wheel as a single report (not one per local
+                // line); otherwise we scroll our own scrollback (also the
+                // Shift-held override).
                 match input::wheel_dispatch(mode, mods, notches, col0 as u16 + 1, row0 as u16 + 1)
                 {
                     WheelAction::Report(bytes) => {
-                        // A mouse-tracking app (e.g. Claude Code) owns the wheel:
-                        // forward the encoded report to its PTY and let it scroll
-                        // its own content. Do NOT touch our scrollback.
+                        // A mouse-tracking app (e.g. Grok) owns the wheel:
+                        // forward one encoded report to its PTY write queue and
+                        // let it scroll its own content. Do NOT touch our
+                        // scrollback.
                         Some(canvas::Action::publish((self.on_wheel_pty)(bytes)).and_capture())
                     }
                     WheelAction::Scroll(n) => {
