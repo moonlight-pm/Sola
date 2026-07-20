@@ -1,6 +1,14 @@
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// Minimum gap between mouse-mode wheel flushes to a single pane. Caps the
+/// SGR report rate a TUI sees so a high-rate touchpad doesn't enqueue a
+/// full-repaint per event. Intermediate notches are accumulated and drained
+/// (up to [`WHEEL_MAX_REPORTS_PER_FLUSH`] per tick) so distance is mostly kept.
+const WHEEL_MIN_INTERVAL: Duration = Duration::from_millis(12);
+/// Max SGR wheel reports written per flush tick (after accumulation).
+const WHEEL_MAX_REPORTS_PER_FLUSH: i32 = 2;
 
 use iced::widget::{canvas, container, mouse_area, row, text};
 use iced::{Border, Element, Event, Length, Subscription, Task, Theme};
@@ -183,6 +191,24 @@ struct App {
     /// while Shift is held (keydebug: Shift+Enter → plain CR; Alt+Enter works).
     /// Tracking the Shift key down/up is the reliable signal.
     keys_held_mods: keyboard::Modifiers,
+    /// Per-pane mouse-mode wheel accumulator. High-rate touchpad events are
+    /// folded here and flushed at [`WHEEL_MIN_INTERVAL`] so TUIs don't full-
+    /// repaint on every iced wheel sample.
+    wheel_burst: HashMap<String, WheelBurst>,
+}
+
+/// Accumulated mouse-mode wheel reports awaiting a paced flush.
+#[derive(Debug, Default)]
+struct WheelBurst {
+    /// Signed pending report count: positive = wheel-up, negative = wheel-down.
+    pending: i32,
+    /// Last encoded report (carries col/row/SGR vs X10). Direction is adjusted
+    /// at flush time from `pending`'s sign.
+    sample: Vec<u8>,
+    /// When we last wrote wheel bytes for this pane.
+    last_flush: Option<Instant>,
+    /// A `FlushWheel` task is already scheduled for this pane.
+    scheduled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -208,13 +234,16 @@ enum Msg {
     Input(iced::Event),
     Resized(iced::Size),
     SelectionChanged,
-    Scrolled,
+    /// Local scrollback moved on this pane (PaneId).
+    Scrolled(String),
     /// Plain left-click on a URL; open it in Helium.
     OpenUrl(String),
     /// Mouse-wheel bytes destined for a pane's PTY (PaneId, encoded report),
-    /// emitted when a mouse-tracking app owns the wheel. Written straight to
-    /// the pane's backend.
+    /// emitted when a mouse-tracking app owns the wheel. Accumulated and
+    /// rate-limited before enqueue on the write queue.
     WheelToPty(String, Vec<u8>),
+    /// Drain a pane's wheel accumulator (scheduled after a throttle gap).
+    FlushWheel(String),
     Pasted(Option<String>),
     /// OSC 0/2 title for a pane (PaneId, title).
     Title(String, String),
@@ -242,6 +271,7 @@ impl App {
             pane_grids: HashMap::new(),
             keyboard_mods: keyboard::Modifiers::empty(),
             keys_held_mods: keyboard::Modifiers::empty(),
+            wheel_burst: HashMap::new(),
         };
         (app, Task::none())
     }
@@ -315,31 +345,30 @@ impl App {
             }
             Msg::BlinkTick => {
                 self.cursor_on = !self.cursor_on;
-                self.tabs.clear_all_caches();
+                // Only the active pane draws a blinking cursor; invalidating
+                // every pane's geometry cache twice a second hitch-scrolled
+                // under load for no visual gain.
+                if let Some(pane) = self.active_pane() {
+                    self.tabs.clear_pane_cache(&pane);
+                }
                 Task::none()
             }
             Msg::Input(event) => self.on_input(event),
             Msg::Resized(size) => self.on_resized(size),
-            Msg::SelectionChanged | Msg::Scrolled => {
+            Msg::SelectionChanged => {
                 self.tabs.clear_all_caches();
+                Task::none()
+            }
+            Msg::Scrolled(pane) => {
+                self.tabs.clear_pane_cache(&pane);
                 Task::none()
             }
             Msg::OpenUrl(uri) => {
                 links::open_url(&uri);
                 Task::none()
             }
-            Msg::WheelToPty(pane, bytes) => {
-                // A mouse-tracking app (e.g. Grok / Claude Code) took the
-                // wheel: enqueue the encoded mouse report on that pane's PTY
-                // write queue. The writer thread owns the actual write(2), so
-                // a full input buffer cannot stall the iced UI (tab switches,
-                // other panes). No cache clear — the app's redraw arrives as
-                // PtyOutput.
-                if let Some(rt) = self.tabs.pane_runtime(&pane) {
-                    rt.backend.write(&bytes);
-                }
-                Task::none()
-            }
+            Msg::WheelToPty(pane, bytes) => self.on_wheel_to_pty(pane, bytes),
+            Msg::FlushWheel(pane) => self.flush_wheel(&pane),
             Msg::Pasted(text) => self.on_pasted(text),
             Msg::SidebarDragStart => {
                 self.sidebar.dragging_divider = true;
@@ -507,7 +536,7 @@ impl App {
                     cursor_on: self.cursor_on,
                     active: pane_id == active_pane,
                     on_select: Msg::SelectionChanged,
-                    on_scroll: Msg::Scrolled,
+                    on_scroll: Msg::Scrolled(pane_id.to_string()),
                     on_open_url: Box::new(|uri| Msg::OpenUrl(uri)),
                     on_wheel_pty: Box::new({
                         let pid = pane_id.to_string();
@@ -544,6 +573,100 @@ impl App {
                 ..container::Style::default()
             })
             .into()
+    }
+
+    /// Accumulate a mouse-mode wheel report and flush on the throttle cadence.
+    fn on_wheel_to_pty(&mut self, pane: String, bytes: Vec<u8>) -> Task<Msg> {
+        let dir = wheel_report_dir(&bytes);
+        if dir == 0 {
+            // Not a recognisable wheel report — pass through immediately.
+            if let Some(rt) = self.tabs.pane_runtime(&pane) {
+                rt.backend.write(&bytes);
+            }
+            return Task::none();
+        }
+
+        let burst = self.wheel_burst.entry(pane.clone()).or_default();
+        // Same-direction notches stack; reversing direction discards the
+        // opposite backlog so a flick-then-reverse doesn't play both ways.
+        if burst.pending != 0 && burst.pending.signum() != dir {
+            burst.pending = 0;
+        }
+        burst.pending += dir;
+        burst.sample = bytes;
+
+        let now = Instant::now();
+        let ready = match burst.last_flush {
+            None => true,
+            Some(t) => now.duration_since(t) >= WHEEL_MIN_INTERVAL,
+        };
+        if ready {
+            return self.flush_wheel(&pane);
+        }
+        if burst.scheduled {
+            return Task::none();
+        }
+        burst.scheduled = true;
+        let wait = burst
+            .last_flush
+            .map(|t| {
+                WHEEL_MIN_INTERVAL
+                    .checked_sub(now.duration_since(t))
+                    .unwrap_or(Duration::ZERO)
+            })
+            .unwrap_or(Duration::ZERO);
+        let pane_for_task = pane;
+        Task::perform(
+            async move {
+                tokio::time::sleep(wait).await;
+                pane_for_task
+            },
+            Msg::FlushWheel,
+        )
+    }
+
+    /// Write up to [`WHEEL_MAX_REPORTS_PER_FLUSH`] accumulated wheel reports
+    /// for `pane`, and re-schedule if more remain.
+    fn flush_wheel(&mut self, pane: &str) -> Task<Msg> {
+        let Some(burst) = self.wheel_burst.get_mut(pane) else {
+            return Task::none();
+        };
+        burst.scheduled = false;
+        if burst.pending == 0 || burst.sample.is_empty() {
+            return Task::none();
+        }
+
+        let n = burst
+            .pending
+            .clamp(-WHEEL_MAX_REPORTS_PER_FLUSH, WHEEL_MAX_REPORTS_PER_FLUSH);
+        burst.pending -= n;
+        let sample = burst.sample.clone();
+        burst.last_flush = Some(Instant::now());
+        let more = burst.pending != 0;
+
+        let bytes = set_wheel_report_dir(&sample, n > 0);
+        if let Some(rt) = self.tabs.pane_runtime(pane) {
+            for _ in 0..n.unsigned_abs() {
+                rt.backend.write(&bytes);
+            }
+        }
+
+        if more {
+            if let Some(burst) = self.wheel_burst.get_mut(pane) {
+                if !burst.scheduled {
+                    burst.scheduled = true;
+                    let pane_for_task = pane.to_string();
+                    return Task::perform(
+                        async move {
+                            tokio::time::sleep(WHEEL_MIN_INTERVAL).await;
+                            pane_for_task
+                        },
+                        Msg::FlushWheel,
+                    );
+                }
+            }
+        }
+        Task::none()
     }
 
     /// Route a raw iced keyboard event to the active pane's PTY.
@@ -902,6 +1025,7 @@ impl App {
                         self.tabs.remove_pane(p);
                         self.titles.remove(p);
                         self.pane_grids.remove(p);
+                        self.wheel_burst.remove(p);
                     }
                     self.tabs.remove_tab(&s.id);
                     self.republish_menu();
@@ -1164,6 +1288,7 @@ impl App {
         self.tabs.remove_pane(pane_id);
         self.titles.remove(pane_id);
         self.pane_grids.remove(pane_id);
+        self.wheel_burst.remove(pane_id);
 
         match new_tree {
             None => self.close_tab(&tab_id),
@@ -1197,6 +1322,7 @@ impl App {
             self.tabs.remove_pane(p);
             self.titles.remove(p);
             self.pane_grids.remove(p);
+            self.wheel_burst.remove(p);
         }
 
         if self.active.as_deref() == Some(tab_id) {
@@ -1366,6 +1492,85 @@ impl App {
             self.republish_menu();
         }
         Task::none()
+    }
+}
+
+/// Signed direction of an encoded wheel mouse report: `+1` up, `-1` down,
+/// `0` if the bytes don't look like a wheel report.
+fn wheel_report_dir(bytes: &[u8]) -> i32 {
+    // SGR: ESC [ < 64 ; … M  /  ESC [ < 65 ; … M
+    // X10: ESC [ M  (32+64=96) …  /  ESC [ M  (32+65=97) …
+    if bytes.windows(4).any(|w| w == b"<64;") || bytes.windows(3).any(|w| w == b"<64") {
+        return 1;
+    }
+    if bytes.windows(4).any(|w| w == b"<65;") || bytes.windows(3).any(|w| w == b"<65") {
+        return -1;
+    }
+    // Legacy X10 button byte is index 3: 32+64=96 (up), 32+65=97 (down).
+    if bytes.len() >= 4 && bytes[0] == 0x1b && bytes[1] == b'[' && bytes[2] == b'M' {
+        match bytes[3] {
+            96 => return 1,
+            97 => return -1,
+            _ => {}
+        }
+    }
+    0
+}
+
+/// Rewrite a sample wheel report so its button matches `up` (wheel-up vs down),
+/// preserving col/row and SGR vs X10 form.
+fn set_wheel_report_dir(sample: &[u8], up: bool) -> Vec<u8> {
+    let mut out = sample.to_vec();
+    let want = if up { b"64" } else { b"65" };
+    let other = if up { b"65" } else { b"64" };
+    // SGR: replace the first "64"/"65" after '<' .
+    if let Some(i) = out.windows(2).position(|w| w == other) {
+        out[i] = want[0];
+        out[i + 1] = want[1];
+        return out;
+    }
+    if out.windows(2).any(|w| w == want) {
+        return out;
+    }
+    // X10: button byte at index 3.
+    if out.len() >= 4 && out[0] == 0x1b && out[1] == b'[' && out[2] == b'M' {
+        out[3] = if up { 96 } else { 97 };
+    }
+    out
+}
+
+#[cfg(test)]
+mod wheel_throttle_tests {
+    use super::{set_wheel_report_dir, wheel_report_dir};
+
+    #[test]
+    fn sgr_wheel_up_dir() {
+        assert_eq!(wheel_report_dir(b"\x1b[<64;7;2M"), 1);
+    }
+
+    #[test]
+    fn sgr_wheel_down_dir() {
+        assert_eq!(wheel_report_dir(b"\x1b[<65;7;2M"), -1);
+    }
+
+    #[test]
+    fn x10_wheel_dirs() {
+        assert_eq!(wheel_report_dir(&[0x1b, b'[', b'M', 96, 33, 33]), 1);
+        assert_eq!(wheel_report_dir(&[0x1b, b'[', b'M', 97, 33, 33]), -1);
+    }
+
+    #[test]
+    fn flip_sgr_direction() {
+        let up = b"\x1b[<64;10;3M";
+        let down = set_wheel_report_dir(up, false);
+        assert_eq!(down, b"\x1b[<65;10;3M");
+        assert_eq!(set_wheel_report_dir(&down, true), up);
+    }
+
+    #[test]
+    fn non_wheel_is_zero() {
+        assert_eq!(wheel_report_dir(b"hello"), 0);
+        assert_eq!(wheel_report_dir(b"\x1b[<0;1;1M"), 0);
     }
 }
 

@@ -23,10 +23,18 @@
 //! racing on the single receiver — same pattern used by sola-kit's
 //! `bus_subscription`.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::time::{Duration, Instant};
 
 use iced::futures::Stream;
 use iced::Subscription;
+
+/// How long the output-notify forwarder holds a dirty batch open before
+/// delivering pane-ids to iced. Absorbs the full-repaint storm a mouse-tracking
+/// TUI (Grok, etc.) emits while the user is scrolling, so iced redraws at
+/// roughly display cadence instead of once per 4 KB chunk.
+const OUTPUT_BATCH_WINDOW: Duration = Duration::from_millis(12);
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
@@ -101,16 +109,36 @@ fn output_stream() -> impl Stream<Item = String> {
                     }
                     match std_rx.recv() {
                         Ok(first) => {
-                            // Coalesce a burst of reader notifies into one
-                            // wakeup per pane. A mouse-tracking TUI that
-                            // full-repaints on every wheel unit can enqueue
-                            // hundreds of identical tab-ids per frame; without
-                            // this, iced spends the frame processing
-                            // Msg::PtyOutput / cache clears instead of input.
-                            let mut dirty = std::collections::HashSet::new();
+                            // Hold a short batch window so a TUI full-repaint
+                            // storm collapses into one iced redraw per pane.
+                            // Without the timed wait, try_recv alone only
+                            // merges what already piled up — under continuous
+                            // output iced still wakes every few hundred µs.
+                            let mut dirty = HashSet::new();
                             dirty.insert(first);
-                            while let Ok(id) = std_rx.try_recv() {
-                                dirty.insert(id);
+                            let deadline = Instant::now() + OUTPUT_BATCH_WINDOW;
+                            loop {
+                                while let Ok(id) = std_rx.try_recv() {
+                                    dirty.insert(id);
+                                }
+                                let now = Instant::now();
+                                if now >= deadline {
+                                    break;
+                                }
+                                match std_rx.recv_timeout(deadline.saturating_duration_since(now))
+                                {
+                                    Ok(id) => {
+                                        dirty.insert(id);
+                                    }
+                                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                                        // Flush what we have, then exit outer loop.
+                                        for tab_id in dirty {
+                                            let _ = iced_tx.unbounded_send(tab_id);
+                                        }
+                                        return;
+                                    }
+                                }
                             }
                             for tab_id in dirty {
                                 if iced_tx.unbounded_send(tab_id).is_err() {
