@@ -34,6 +34,15 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{Config, Term};
 use alacritty_terminal::vte::ansi::Processor;
 
+/// Characters that terminate a double-click "word" (alacritty semantic selection).
+///
+/// Alacritty's default plus `=`. The equals sign is the important addition: a
+/// double-click on either side of an assignment (e.g. `.env` line
+/// `API_KEY=secret`) selects just the key or just the value, not `KEY=value`
+/// as one token. Extend this string as more real-world cases show up; do not
+/// reintroduce path/URL breakers like `/`, `.`, or `-`.
+const SEMANTIC_ESCAPE_CHARS: &str = ",│`|:\"' ()[]{}<>\t=";
+
 // ── Process-wide output-notify channel ────────────────────────────────────────
 
 /// The single global sender. Cloned for every tab's reader thread.
@@ -377,8 +386,12 @@ impl Emulator {
         // `input::resolve_bytes` honours those bits to disambiguate keys such
         // as Shift+Enter (CSI 13;2u) from plain Enter (CR). Without this flag
         // the engine ignores the negotiation entirely.
+        //
+        // Semantic escape chars drive double-click word selection (and vi-mode
+        // word motions). See `SEMANTIC_ESCAPE_CHARS`.
         let mut config = Config::default();
         config.kitty_keyboard = true;
+        config.semantic_escape_chars = SEMANTIC_ESCAPE_CHARS.to_owned();
         let term = Term::new(config, &dims, listener);
         Self {
             term: Arc::new(FairMutex::new(term)),
@@ -485,6 +498,49 @@ mod tests {
             'i',
             "Expected 'i' at (0,1), got {:?}",
             cell_i.unwrap().cell.c
+        );
+    }
+
+    /// Double-click word selection must stop at `=` so `.env`-style
+    /// `KEY=value` lines select the key or the value, not the whole line.
+    #[test]
+    fn semantic_selection_stops_at_equals() {
+        use alacritty_terminal::index::{Column, Line, Point as GridPoint, Side};
+        use alacritty_terminal::selection::{Selection, SelectionType};
+
+        let (ptx, _prx) = mpsc::channel::<(String, Vec<u8>)>();
+        let (ntx, _nrx) = mpsc::channel::<String>();
+        let (ttx, _trx) = mpsc::channel::<(String, String)>();
+        let mut e = Emulator::new(80, 24, Listener::new("t".into(), ptx, ntx, ttx));
+
+        // `API_KEY=secret` — cols 0..6 key, 7 '=', 8..13 value.
+        e.advance(b"API_KEY=secret");
+
+        let term = e.term();
+        let mut term = term.lock();
+
+        // Click on the value (`s` of secret).
+        term.selection = Some(Selection::new(
+            SelectionType::Semantic,
+            GridPoint::new(Line(0), Column(8)),
+            Side::Left,
+        ));
+        assert_eq!(
+            term.selection_to_string().as_deref(),
+            Some("secret"),
+            "double-click on value should select only the right-hand side"
+        );
+
+        // Click on the key (`A` of API_KEY).
+        term.selection = Some(Selection::new(
+            SelectionType::Semantic,
+            GridPoint::new(Line(0), Column(0)),
+            Side::Left,
+        ));
+        assert_eq!(
+            term.selection_to_string().as_deref(),
+            Some("API_KEY"),
+            "double-click on key should select only the left-hand side"
         );
     }
 }
