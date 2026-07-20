@@ -14,18 +14,22 @@ If Current is `none`, ask what they want instead of inventing work.
 ## Current
 
 **P1 visual-state convention + baseline** — branch `docs/visual-baseline`
-(worktree `.worktrees/visual-baseline`). Ready for user review / merge.
+(worktree `.worktrees/visual-baseline`).
 
 Delivered:
 
 - `docs/visual/README.md` — capture convention, chords, pass layout
-- `docs/visual/baseline/01`–`04` PNGs (full-output chrome states)
+- `docs/visual/baseline/01`–`04` PNGs (full-output chrome states; **colors
+  wrong** — Bgr888 R↔B swap, fixed in `sola-river` commit on this branch)
+- Fix: `pixels_to_rgba8` Bgr888 LE memory is R,G,B (not B,G,R)
 - `05-storybook-theme` deferred (kit blank / bad region during capture)
-- Roadmap §4 P1 status note
 
-**Stop:** user agrees “this is current Sola” baseline, then merge branch and
-cleanup worktree. Next auto-start: **P2** token & type baseline —
-`docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P2.
+**Blocked on user:** `cargo make install sola-river` from this worktree
+(or equivalent), then agent re-captures `docs/visual/baseline/01`–`04`
+with correct slate/cyan colors.
+
+**Stop after recapture:** user agrees “this is current Sola” baseline,
+then merge branch and cleanup worktree. Next: **P2** token & type baseline.
 
 ### Last completed
 
