@@ -1,25 +1,28 @@
 //! Iced-based Sola app kit.
 //!
 //! An app's `main` composes the kit's building blocks (it builds its own
-//! `iced::application`/`daemon`). The kit handles:
+//! `iced::application`/`daemon`). Scaffolding is [`app::startup`] +
+//! [`BusSetup`] + an app-owned iced builder — there is no generic
+//! `run::<A>()` wrapper. The kit handles:
 //!
-//! - bus connection + subscription
+//! - bus connection + subscription ([`BusSetup`], [`app::bus_subscription`])
 //! - app-menu publishing (so `Cmd+Q` quits without per-app glue)
 //! - system font resolution (no bundled fonts; see `fonts::ensure_system_fonts`)
 //! - window settings (no decorations, correct `xdg_toplevel.app_id`)
 //! - theme construction from the shared sola palette
 //!
-//! `sola-monitor` is the canonical first consumer; consult it for
-//! a worked example. New apps should follow the same shape.
+//! Active consumers: `sola-monitor`, `sola-settings`, `sola-shell`,
+//! `sola-terminal`, agent, browser-core, and this crate's storybook.
 //!
 //! ## Theme protocol
 //!
-//! The kit ships a default palette via [`theme::default_theme`]. The
-//! bus-driven theme protocol (`Topic::Theme` + `sola_core::theme`) is
-//! shared with the legacy kit and the WebView apps — both engines
-//! eventually resolve the same token vocabulary. Wiring iced apps to
-//! the live bus theme is a v0.2 task; today every kit app reads the
-//! hardcoded default at startup.
+//! The bus theme is process-wide via `Topic::Theme` (`sola_core::theme`).
+//! Iced consumers map it with [`theme::theme_from_bus`]. Live bus theme
+//! is the steady state: apps store an `iced::Theme`, subscribe via
+//! [`app::bus_subscription`], and apply updates with
+//! [`apply_theme_update`] (or shell's `on_theme` + [`theme::ShellStyle`]).
+//! [`default_theme`] is the pre-replay / offline default. Legacy
+//! WebView (`sola-app`) is frozen and out of kit scope.
 //!
 //! ## Components
 //!

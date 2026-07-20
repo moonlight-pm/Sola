@@ -5,14 +5,17 @@ edition = "2024"
 
 # Iced-based Sola app kit. Successor to the now-removed CEF/Remix-v3
 # kit. Provides:
-#   - app scaffolding (`sola_kit::run::<A>()` — bus, fonts, window,
-#     theme wired up so apps don't repeat boilerplate)
-#   - the canonical sola palette as an `iced::Theme`
+#   - app scaffolding (`startup` + `BusSetup` + app-owned iced
+#     builder — bus, fonts, window, theme helpers so apps don't
+#     repeat boilerplate; no generic `run::<A>()` wrapper)
+#   - the canonical sola palette as an `iced::Theme` (live bus theme
+#     via `Topic::Theme` / `theme_from_bus`; `default_theme` offline)
 #   - shared font constants + loading helper
 #   - reusable iced widgets / styles under `sola_kit::components`
 #
 # Library + the storybook binary. Consumed by sola-monitor,
-# sola-settings, sola-shell, and the browser crates.
+# sola-settings, sola-shell, sola-terminal, agent, browser-core,
+# and the in-tree storybook.
 
 [lib]
 # default — uses src/lib.rs
