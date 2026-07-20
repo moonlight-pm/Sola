@@ -50,28 +50,30 @@ use sola_core::theme::Theme as BusTheme;
 pub const THEME_NAME: &str = "sola";
 
 pub mod hex {
-    pub const BG: &str = "#0d1117";
-    pub const FG: &str = "#e6edf3";
+    // macOS Dark Mode–aligned greys (systemBackground / systemGray ladder).
+    // Keep in sync with `Palette::seed` in sola-core.
+    /// Window / canvas base (`secondarySystemBackground`-ish).
+    pub const BG: &str = "#1c1c1e";
+    /// Primary label — near-white for contrast on dark fills.
+    pub const FG: &str = "#f5f5f7";
+    /// Sparse accent (selection chrome, focus, key status) — keep cyan.
     pub const ACCENT: &str = "#00d4ff";
-    pub const SUCCESS: &str = "#3fb950";
-    pub const WARNING: &str = "#d29922";
-    pub const DANGER: &str = "#f85149";
-    /// Muted variant of the foreground — secondary text (timestamps,
-    /// deemphasized cells, captions).
-    pub const FG_MUTED: &str = "#6e7681";
-    /// Slightly lifted background — panels, sticky cards, sidebars.
-    pub const BG_RAISED: &str = "#161b22";
-    /// More lifted — hover / selected rows.
-    pub const BG_HOVER: &str = "#1a2030";
-    /// 1px hairline color.
-    pub const BORDER: &str = "#2d333b";
-    /// Selected-row highlight — a saturated, accent-tinted fill drawn
-    /// behind the active item in lists/sidebars. Deliberately distinct
-    /// from (and stronger than) `BG_HOVER` so a selection reads louder
-    /// than a hover. iced's `Extended` palette has no selection slot, so
-    /// this rides a process-wide cell (see [`super::install_selection`] /
-    /// [`super::selection`]) rather than `extended_from_atoms`.
-    pub const SELECTION: &str = "#1f6feb";
+    pub const SUCCESS: &str = "#30d158";
+    pub const WARNING: &str = "#ffd60a";
+    pub const DANGER: &str = "#ff453a";
+    /// Muted / secondary label.
+    pub const FG_MUTED: &str = "#98989d";
+    /// Raised panel / sidebar / card (`tertiarySystemBackground`-ish).
+    pub const BG_RAISED: &str = "#2c2c2e";
+    /// Hover lift (`systemGray4`-ish).
+    pub const BG_HOVER: &str = "#3a3a3c";
+    /// Hairline separators.
+    pub const BORDER: &str = "#48484a";
+    /// Selected-row fill — quiet accent-tinted, not loud GitHub blue.
+    /// Distinct from `BG_HOVER` so selection still reads; sparse vs full
+    /// accent fills. iced has no selection slot — see
+    /// [`super::install_selection`] / [`super::selection`].
+    pub const SELECTION: &str = "#1a3a45";
 }
 
 /// Build the kit's iced theme from its compile-time default atoms.
@@ -514,13 +516,17 @@ pub fn color_to_hex(c: Color) -> String {
 /// `Palette::seed` in sola-core byte-for-byte — `resync_active_theme`
 /// matches presets to live themes by value equality, so a drift here
 /// would unmatch every untouched preset.
+///
+/// Menubar stays near-black (opaque greys first; blur deferred). Switcher
+/// backplate is a **neutral** material — not neon cyan glass. Selected
+/// tile fill still uses sparse accent.
 const SHELL_MENUBAR_BG: &str = "#000000";
-const SHELL_BACKDROP_DIM: &str = "#00000066";
-const SHELL_SWITCHER_BG: &str = "#00d4ff2e";
-const SHELL_SWITCHER_BORDER: &str = "#00d4ff59";
-const SHELL_SWITCHER_ICON_BG: &str = "#00d4ff"; // selected tile fill (accent by default)
-const SHELL_SWITCHER_ICON_FG: &str = "#e6edf3"; // glyph + label on an unselected tile
-const SHELL_SWITCHER_ICON_FG_SEL: &str = "#e6edf3"; // glyph + label on the selected (highlighted) tile
+const SHELL_BACKDROP_DIM: &str = "#00000099";
+const SHELL_SWITCHER_BG: &str = "#2c2c2ecc";
+const SHELL_SWITCHER_BORDER: &str = "#ffffff26";
+const SHELL_SWITCHER_ICON_BG: &str = "#00d4ff"; // selected tile only (sparse accent)
+const SHELL_SWITCHER_ICON_FG: &str = "#f5f5f7"; // glyph + label on an unselected tile
+const SHELL_SWITCHER_ICON_FG_SEL: &str = "#1c1c1e"; // glyph on accent tile — dark for contrast
 const SHELL_SWITCHER_PAD: f32 = 36.0;
 const SHELL_SWITCHER_TILE_PAD: f32 = 16.0;
 const SHELL_LAUNCHER_WIDTH: f32 = 640.0;
@@ -701,12 +707,14 @@ mod tests {
     }
 
     // A3: the hover elevation must come from the seed's real `bg-hover`
-    // token (#1a2030), not `bg-tertiary` (#1c2129).
+    // token, not a different surface step.
     #[test]
     fn hover_atom_reads_bg_hover_not_bg_tertiary() {
         let atoms = atoms_from_bus_theme(&BusTheme::default());
-        assert_eq!(atoms.bg_hover, parse("#1a2030"));
-        assert_ne!(atoms.bg_hover, parse("#1c2129"));
+        assert_eq!(atoms.bg_hover, parse(hex::BG_HOVER));
+        // Seed currently uses the same step for tertiary + hover; still
+        // must load via the `bg-hover` token binding, not hard-coded elsewhere.
+        assert_eq!(atoms.bg_hover, parse("#3a3a3c"));
     }
 
     // Sub-decision (A4): the seed speaks the kit's font-role vocabulary,
@@ -775,16 +783,36 @@ mod tests {
 
     #[test]
     fn try_parse_eight_hex_roundtrip() {
-        let c = try_parse("#00d4ff2e").expect("8-hex parses");
-        assert!((c.a - 0.18).abs() < 0.005, "alpha ≈ 0.18, got {}", c.a);
-        assert_eq!(color_to_hex(c), "#00d4ff2e");
+        let c = try_parse("#2c2c2ecc").expect("8-hex parses");
+        assert!((c.a - 0.8).abs() < 0.01, "alpha ≈ 0.8, got {}", c.a);
+        assert_eq!(color_to_hex(c), "#2c2c2ecc");
     }
 
     #[test]
     fn color_to_hex_opaque_stays_six_digits() {
-        let c = try_parse("#0d1117").expect("6-hex parses");
+        let c = try_parse("#1c1c1e").expect("6-hex parses");
         assert_eq!(c.a, 1.0);
-        assert_eq!(color_to_hex(c), "#0d1117");
+        assert_eq!(color_to_hex(c), "#1c1c1e");
+    }
+
+    #[test]
+    fn seed_surfaces_are_macos_greys_not_primer() {
+        let atoms = Atoms::default();
+        assert_eq!(atoms.bg, parse("#1c1c1e"));
+        assert_eq!(atoms.bg_raised, parse("#2c2c2e"));
+        assert_eq!(atoms.accent, parse("#00d4ff"), "keep cyan accent");
+        assert_eq!(atoms.selection, parse("#1a3a45"), "quiet selection");
+        // Not the old Primer canvas
+        assert_ne!(atoms.bg, parse("#0d1117"));
+    }
+
+    #[test]
+    fn switcher_defaults_are_neutral_not_cyan_glass() {
+        let s = ShellStyle::default();
+        assert_eq!(color_to_hex(s.switcher_bg), "#2c2c2ecc");
+        assert_eq!(color_to_hex(s.switcher_border), "#ffffff26");
+        // Selected tile still sparse accent
+        assert_eq!(color_to_hex(s.switcher_icon_bg), "#00d4ff");
     }
 
     #[test]

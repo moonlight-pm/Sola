@@ -33,17 +33,21 @@ If a visual choice is not listed as a departure in the design language §1,
 - Font roles (`fonts::ui` / `chrome` / `mono`)
 - Design language + suggested redesign order (design language §9)
 
-### Visual defaults (early / wrong target)
+### Visual defaults
 
-Current seed is still **GitHub Primer dark + cyan**, not Apple dark greys:
+**P2 (2026-07-20):** seed retuned toward macOS Dark Mode greys. Accent stays
+cyan (sparse). Persistent user presets on disk may still carry older Primer
+values until re-saved / reset.
 
-| Role | Today (approx) | Direction |
-|------|----------------|-----------|
-| Canvas / raised | `#0d1117` / `#161b22` | Cooler system greys, elevation by step |
-| Accent | `#00d4ff` | Keep tunable; use **sparsely** |
-| Selection | `#1f6feb` | Quieter accent-tinted selection |
-| Menubar | solid `#000` | Translucent material values (opaque greys first if blur not ready) |
-| Switcher glass | cyan tint `#00d4ff2e` | Neutral material, not neon |
+| Role | Seed (P2) | Notes |
+|------|-----------|--------|
+| Canvas / raised | `#1c1c1e` / `#2c2c2e` | system grey ladder |
+| Hover / tertiary | `#3a3a3c` | elevation step |
+| Text | `#f5f5f7` / `#98989d` | primary / muted |
+| Accent | `#00d4ff` | keep; use sparsely |
+| Selection | `#1a3a45` | quiet accent-tinted |
+| Menubar | solid `#000` | opaque greys first; blur deferred |
+| Switcher glass | `#2c2c2ecc` + `#ffffff26` | neutral material, not neon cyan |
 
 ### Tooling gap (blocker for iteration)
 
@@ -159,13 +163,13 @@ solactl screenshot -o docs/visual/baseline/04-switcher.png
 
 Align kit / seed greys and hierarchy with macOS dark mode **without** a layout rewrite.
 
-- Retune `hex::*` / `Palette::seed` surfaces, borders, text hierarchy  
-- Decide accent identity: keep cyan as sparse signal **or** move default accent toward system blue (product call at start of P2)  
-- Quiet selection atom; stop painting switcher with neon cyan glass in **defaults**  
-- Font roles: ensure SF Pro path documented; seed family names match installed reality  
+- [x] Retune `hex::*` / `Palette::seed` surfaces, borders, text hierarchy  
+- [x] Accent identity: **keep cyan** as sparse signal (design language §2.1)  
+- [x] Quiet selection atom; neutral switcher glass defaults  
+- [x] Font seed stays Inter + JetBrains Mono (installed); SF Pro optional when user-placed  
 - Storybook Theme page is the regression surface  
 
-**Stop:** Full-output + storybook screenshots before/after. Keep accent change only if sparse usage still holds.
+**Stop:** Full-output + storybook screenshots before/after.
 
 ### P3 — Menubar
 

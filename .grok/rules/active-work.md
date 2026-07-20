@@ -13,31 +13,32 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P1 visual-state convention + baseline** — branch `docs/visual-baseline`
-(worktree `.worktrees/visual-baseline`). Ready for user review / merge.
+**P2 token & type baseline** — branch `feat/token-type-baseline`
+(worktree `.worktrees/token-baseline`). Code + build done; needs install +
+after screenshots.
 
-Delivered:
+Delivered in branch:
 
-- `docs/visual/README.md` — capture convention, chords, pass layout
-- `Bgr888` R↔B fix in `sola-river` screenshot encode
-- `docs/visual/baseline/01`–`05` PNGs (slate/cyan verified after fix)
-- Roadmap §4 P1 status note
+- `hex::*` + `Palette::seed` → macOS system greys
+- Keep cyan accent; quiet selection `#1a3a45`
+- Neutral switcher glass (not cyan tint)
+- Font seed stays Inter + JetBrains Mono; SF Pro docs note
+- Pass dir `docs/visual/passes/p2-token-greys/` with before shots + notes
 
-**Stop:** user agrees “this is current Sola” baseline, then merge branch and
-cleanup worktree. Next auto-start: **P2** token & type baseline —
-`docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P2.
+**Blocked on user:**
+
+1. `cargo make install` from worktree (or kit + shell + core consumers)
+2. Reset sticky theme if needed: storybook Default, or remove
+   `~/.config/sola/theme/current.yaml` and restart
+3. Agent captures after shots into the pass dir
+
+**Stop after after-shots:** critique vs design language; merge if keep.
+
+Next after merge: **P3** menubar density.
 
 ### Last completed
 
-**P0 screenshot capture** — merged to `master` (2026-07-20). Branch
-`feat/screenshot-capture` (`216340b` + encode fix `fdd5c58`). Plan:
-`docs/specs/2026-07-20-screenshot-capture-plan.md`.
+**P1 visual baselines + Bgr888 fix** — merged to `master` at `d483d66`
+(2026-07-20). Branch `docs/visual-baseline`.
 
-Smoke-tested: `solactl screenshot` full-output PNG; Super+Shift freeze
-fixed by off-thread encode.
-
-**sola-kit hardening** (A + B + C1) — merged to `master` at `cd3d2f1`
-(2026-07-20). Smoke-tested. Plan:
-`docs/specs/2026-07-19-sola-kit-hardening-plan.md`.
-
-Deferred (not auto-start): C2 notify-fd, Phase D/E.
+**P0 screenshot capture** — merged earlier same day.

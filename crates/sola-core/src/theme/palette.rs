@@ -12,75 +12,80 @@ impl Palette {
     /// grows.
     pub fn seed() -> Self {
         let mut palette = Palette::default();
-        // Colors — surfaces
+        // Colors — surfaces (macOS Dark Mode system greys; not GitHub Primer).
+        // Keep in sync with `sola_kit::theme::hex::*`.
         palette
             .tokens
-            .insert("bg-primary".into(), Token::new(TokenKind::Color, "#0d1117", &["surface"]));
+            .insert("bg-primary".into(), Token::new(TokenKind::Color, "#1c1c1e", &["surface"]));
         palette
             .tokens
-            .insert("bg-secondary".into(), Token::new(TokenKind::Color, "#161b22", &["surface"]));
+            .insert("bg-secondary".into(), Token::new(TokenKind::Color, "#2c2c2e", &["surface"]));
         palette
             .tokens
-            .insert("bg-tertiary".into(), Token::new(TokenKind::Color, "#1c2129", &["surface"]));
+            .insert("bg-tertiary".into(), Token::new(TokenKind::Color, "#3a3a3c", &["surface"]));
         palette
             .tokens
-            .insert("bg-hover".into(), Token::new(TokenKind::Color, "#1a2030", &["surface"]));
+            .insert("bg-hover".into(), Token::new(TokenKind::Color, "#3a3a3c", &["surface"]));
         // Colors — borders
         palette
             .tokens
-            .insert("border".into(), Token::new(TokenKind::Color, "#2d333b", &["border"]));
+            .insert("border".into(), Token::new(TokenKind::Color, "#48484a", &["border"]));
         palette
             .tokens
-            .insert("border-subtle".into(), Token::new(TokenKind::Color, "#21262d", &["border"]));
+            .insert("border-subtle".into(), Token::new(TokenKind::Color, "#38383a", &["border"]));
         // Colors — text
         palette
             .tokens
-            .insert("text-primary".into(), Token::new(TokenKind::Color, "#e6edf3", &["text"]));
+            .insert("text-primary".into(), Token::new(TokenKind::Color, "#f5f5f7", &["text"]));
         palette
             .tokens
-            .insert("text-secondary".into(), Token::new(TokenKind::Color, "#8b949e", &["text"]));
+            .insert("text-secondary".into(), Token::new(TokenKind::Color, "#98989d", &["text"]));
         palette
             .tokens
-            .insert("text-tertiary".into(), Token::new(TokenKind::Color, "#6e7681", &["text"]));
-        // text-muted is the brightest of the gray atoms; doubles as a
-        // strong border (e.g. scrollbar thumb on hover) which is why
-        // it's eligible for both `text` and `border` groups.
+            .insert("text-tertiary".into(), Token::new(TokenKind::Color, "#636366", &["text"]));
+        // text-muted doubles as a strong border (e.g. scrollbar thumb on
+        // hover) which is why it's eligible for both `text` and `border`.
         palette
             .tokens
             .insert(
                 "text-muted".into(),
-                Token::new(TokenKind::Color, "#484f58", &["text", "border"]),
+                Token::new(TokenKind::Color, "#48484a", &["text", "border"]),
             );
         palette.tokens.insert(
             "text-accent".into(),
-            Token::new(TokenKind::Color, "#58a6ff", &["text", "accent"]),
+            Token::new(TokenKind::Color, "#00d4ff", &["text", "accent"]),
         );
-        // Colors — accent + status
+        // Colors — accent + status (accent stays cyan, used sparsely)
         palette
             .tokens
             .insert("accent".into(), Token::new(TokenKind::Color, "#00d4ff", &["accent"]));
         palette.tokens.insert(
             "accent-dim".into(),
-            Token::new(TokenKind::Color, "rgba(0, 212, 255, 0.12)", &["accent-tint"]),
+            Token::new(TokenKind::Color, "rgba(0, 212, 255, 0.10)", &["accent-tint"]),
+        );
+        // Quiet selection fill (kit `hex::SELECTION`); not a loud blue slab.
+        palette.tokens.insert(
+            "selection".into(),
+            Token::new(TokenKind::Color, "#1a3a45", &["surface", "accent-tint"]),
         );
         palette
             .tokens
-            .insert("danger".into(), Token::new(TokenKind::Color, "#f85149", &["status"]));
+            .insert("danger".into(), Token::new(TokenKind::Color, "#ff453a", &["status"]));
         palette
             .tokens
-            .insert("success".into(), Token::new(TokenKind::Color, "#3fb950", &["status"]));
+            .insert("success".into(), Token::new(TokenKind::Color, "#30d158", &["status"]));
         palette
             .tokens
-            .insert("warning".into(), Token::new(TokenKind::Color, "#d29922", &["status"]));
+            .insert("warning".into(), Token::new(TokenKind::Color, "#ffd60a", &["status"]));
         // Fonts — the kit's semantic role vocabulary
         // (`font-ui` / `font-ui-medium` / `font-display` / `font-chrome` /
-        // `font-mono`). Defaults are the kit's role defaults: Inter for
-        // every UI-shaped role, JetBrains Mono for code. The kit's
-        // `fonts_from_families` applies the Medium weight to the
-        // `ui-medium` / `display` roles, so the *family* name is "Inter"
-        // for all four sans roles. Picker selections overwrite these at
-        // runtime. Both families must be installed system-wide (see
-        // docs/manual/distribution.md).
+        // `font-mono`). Defaults match installed reality: Inter for UI
+        // roles, JetBrains Mono for code (both ship via sola assets /
+        // system packages). SF Pro may be placed manually for a closer
+        // macOS match — see docs/manual/design-language.md §2.4 and
+        // docs/visual/README.md; picker can select it when installed.
+        // `fonts_from_families` applies Medium weight to ui-medium /
+        // display; the family name stays "Inter" for all four sans roles.
         for (name, family) in [
             ("font-ui", "Inter"),
             ("font-ui-medium", "Inter"),
@@ -139,23 +144,23 @@ impl Palette {
             .tokens
             .insert("radius-lg".into(), Token::new(TokenKind::Radius, "6px", &["radius"]));
         // Shell — sola-shell's customizable chrome. Colors carry alpha
-        // (#rrggbbaa). Seed values reproduce the shell's original
-        // hardcoded look exactly; see
-        // docs/specs/2026-06-06-shell-customization-design.md.
+        // (#rrggbbaa). Neutral switcher material (not cyan glass); see
+        // docs/specs/2026-06-06-shell-customization-design.md and
+        // docs/specs/2026-07-20-macos-look-and-feel-roadmap.md P2.
         palette
             .tokens
             .insert("shell-menubar-bg".into(), Token::new(TokenKind::Color, "#000000", &["shell"]));
         palette.tokens.insert(
             "shell-backdrop-dim".into(),
-            Token::new(TokenKind::Color, "#00000066", &["shell"]),
+            Token::new(TokenKind::Color, "#00000099", &["shell"]),
         );
         palette.tokens.insert(
             "shell-switcher-bg".into(),
-            Token::new(TokenKind::Color, "#00d4ff2e", &["shell"]),
+            Token::new(TokenKind::Color, "#2c2c2ecc", &["shell"]),
         );
         palette.tokens.insert(
             "shell-switcher-border".into(),
-            Token::new(TokenKind::Color, "#00d4ff59", &["shell"]),
+            Token::new(TokenKind::Color, "#ffffff26", &["shell"]),
         );
         palette
             .tokens

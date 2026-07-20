@@ -42,6 +42,14 @@ slate `#0d1117` / `#161b22` — not yellow/brown).
 
 Agree “this is current Sola” before treating these as the compare root for P2+.
 
+### Fonts (seed vs macOS)
+
+Seed font roles default to **Inter** (UI) + **JetBrains Mono** (mono) — both
+are installed with Sola. Design language prefers SF Pro for chrome when
+available; place SF Pro manually under `/opt/sola/share/fonts/` (license) and
+pick it in the storybook Theme page / theme editor. Do not hard-code SF Pro
+in the seed until it is guaranteed on every install.
+
 ### Where PNGs live
 
 - **In-repo** (`docs/visual/…`) when you want agents and git history to share

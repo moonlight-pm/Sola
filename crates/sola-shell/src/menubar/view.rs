@@ -84,7 +84,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         .into();
 
     // ── System-stat indicators (left of clock) ───────────────────────
-    let neutral = iced::Color::from_rgb(0.902, 0.929, 0.953); // #e6edf3
+    let neutral = iced::Color::from_rgb(0.961, 0.961, 0.969); // #f5f5f7 text-primary
     let first_tick = shell.cpu_hist.is_empty();
     let cpu_pct = shell.stats.cpu_pct;
     let cpu_btn: Element<'_, Msg> = iced::widget::button(

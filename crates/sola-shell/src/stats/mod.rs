@@ -27,8 +27,8 @@ pub enum Metric {
 }
 
 /// Threshold colors for level metrics (cpu/gpu/mem). Rates have no level.
-pub const AMBER: Color = Color::from_rgb(0.824, 0.600, 0.133); // #d29922
-pub const RED: Color = Color::from_rgb(0.973, 0.318, 0.286); // #f85149
+pub const AMBER: Color = Color::from_rgb(1.0, 0.839, 0.039); // #ffd60a warning
+pub const RED: Color = Color::from_rgb(1.0, 0.271, 0.227); // #ff453a danger
 pub const WARN_PCT: f32 = 75.0;
 pub const CRIT_PCT: f32 = 90.0;
 
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn threshold_color_bands() {
         // neutral below warn, amber in [warn,crit), red at/above crit
-        let neutral = Color::from_rgb(0.902, 0.929, 0.953); // #e6edf3
+        let neutral = Color::from_rgb(0.961, 0.961, 0.969); // #f5f5f7
         assert_eq!(level_color(10.0, neutral), neutral);
         assert_eq!(level_color(80.0, neutral), AMBER);
         assert_eq!(level_color(95.0, neutral), RED);
