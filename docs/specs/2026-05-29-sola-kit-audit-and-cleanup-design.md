@@ -1,5 +1,9 @@
 # sola-kit Audit & Cleanup — Design
 
+**Status (2026-07-19):** Most workstreams landed. Residual work and consumer
+selection fixes are tracked in
+`docs/specs/2026-07-19-sola-kit-hardening-plan.md`.
+
 Date: 2026-05-29
 Status: Proposal (for review — no code changed in this pass)
 Scope: `sola-kit` (core, theme, fonts, components, storybook), with supporting
