@@ -7,12 +7,16 @@
 //! on PTY output (see `main.rs`), so a redraw only happens when the grid
 //! actually changed — this is what kept the spike at ~0.12 ms/frame.
 //!
-//! The renderer is read-only: it locks the term, snapshots
-//! `renderable_content()`, draws, and releases. Mouse-driven selection and
-//! copy are Task 4.1; the palette is hardcoded here and Task 4.4 will drive it
-//! from the bus theme.
+//! Hot path:
+//! 1. On cache miss: briefly lock the term, snapshot cells/selection/urls,
+//!    **drop the lock**, then paint. Holding `FairMutex` across `fill_text`
+//!    starved the PTY reader under mouse-mode TUI scroll storms.
+//! 2. Cursor is an **uncached** second geometry so blink does not invalidate
+//!    the grid cache.
 
+use std::cell::Cell as StdCell;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::{LineHeight, Shaping};
@@ -31,7 +35,30 @@ use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
 use crate::emulator::Listener;
 use crate::input::{self, Mods, WheelAction};
 use crate::links::{self, UrlSpan};
+use crate::perf;
 use sola_kit::fonts;
+
+/// Owned cell snapshot used after the term lock is released.
+#[derive(Clone, Copy)]
+struct SnapCell {
+    /// Visible row (0-based in the viewport).
+    line: i32,
+    col: usize,
+    c: char,
+    fg: Color,
+    bg: Color,
+    flags: Flags,
+}
+
+/// Grid data captured under a short `FairMutex` hold.
+struct GridSnap {
+    cells: Vec<SnapCell>,
+    selection: Option<SelectionRange>,
+    display_offset: usize,
+    screen_lines: usize,
+    cols: usize,
+    urls: Vec<UrlSpan>,
+}
 
 /// Padding around the grid, in px. Matches the spike.
 const PAD: f32 = 6.0;
@@ -469,16 +496,6 @@ pub struct TermView<'a, Message> {
     pub on_wheel_pty: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
 }
 
-impl<'a, Message> TermView<'a, Message> {
-    /// Top-left px of the cell at visible grid `point` (line ≥ 0).
-    fn cell_xy(&self, line: i32, col: usize) -> (f32, f32) {
-        (
-            PAD + col as f32 * self.metrics.cell_w,
-            PAD + line as f32 * self.metrics.cell_h,
-        )
-    }
-}
-
 #[derive(Default)]
 pub struct SelState {
     dragging: bool,
@@ -792,36 +809,75 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry<Renderer>> {
+        let t_draw = Instant::now();
         let metrics = self.metrics;
         let palette = self.palette;
 
-        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
+        // Filled by the cache rebuild closure when it actually runs.
+        let rebuilt = StdCell::new(false);
+        let lock_us = StdCell::new(Duration::ZERO);
+        let paint_us = StdCell::new(Duration::ZERO);
+        let cell_n = StdCell::new(0usize);
+        let glyph_n = StdCell::new(0usize);
+
+        let grid = self.cache.draw(renderer, bounds.size(), |frame| {
+            rebuilt.set(true);
             // Backdrop — one fill behind the whole pane.
             frame.fill_rectangle(Point::ORIGIN, frame.size(), palette.bg);
 
-            let term = self.term.lock();
+            // ── Snapshot under lock, then DROP before fill_text ──────────
+            let t_lock = Instant::now();
+            let snap = {
+                let term = self.term.lock();
+                let content = term.renderable_content();
+                let RenderableContent {
+                    display_iter,
+                    colors,
+                    selection,
+                    display_offset,
+                    ..
+                } = content;
+                let screen_lines = term.screen_lines();
+                let cols = term.columns();
+                let mut cells = Vec::with_capacity(screen_lines * cols);
+                for indexed in display_iter {
+                    let cell = indexed.cell;
+                    if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                        continue;
+                    }
+                    let (mut fg, mut bg) = (
+                        palette.resolve(cell.fg, colors),
+                        palette.resolve(cell.bg, colors),
+                    );
+                    if cell.flags.contains(Flags::INVERSE) {
+                        std::mem::swap(&mut fg, &mut bg);
+                    }
+                    cells.push(SnapCell {
+                        line: visible_row(indexed.point.line.0, display_offset),
+                        col: indexed.point.column.0,
+                        c: cell.c,
+                        fg,
+                        bg,
+                        flags: cell.flags,
+                    });
+                }
+                let urls = links::visible_urls(&term);
+                GridSnap {
+                    cells,
+                    selection,
+                    display_offset,
+                    screen_lines,
+                    cols,
+                    urls,
+                }
+            };
+            lock_us.set(t_lock.elapsed());
 
-            // Fetch renderable content ONCE per frame and collect the
-            // display iterator into a Vec so both passes can iterate it
-            // without re-deriving the display window.
-            let content = term.renderable_content();
-            let RenderableContent {
-                display_iter,
-                colors,
-                cursor,
-                selection,
-                display_offset,
-                ..
-            } = content;
-            let cells: Vec<_> = display_iter.collect();
+            let t_paint = Instant::now();
+            let mut glyphs = 0usize;
 
             // ── Pass 1: backgrounds, batched into contiguous same-bg runs ──
-            //
-            // We walk cells (row-major) and coalesce neighbouring cells
-            // on the same row that share a bg colour into a single fill rect.
-            // This avoids a fill per blank cell AND the hairline seams that
-            // per-cell rects leave between fills.
-            let mut run: Option<(i32, usize, usize, Color)> = None; // (line, start_col, end_col, bg)
+            let mut run: Option<(i32, usize, usize, Color)> = None;
             let flush = |frame: &mut Frame<Renderer>, run: &Option<(i32, usize, usize, Color)>| {
                 if let Some((line, start, end, bg)) = *run {
                     if bg != palette.bg {
@@ -837,168 +893,151 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 }
             };
 
-            for indexed in &cells {
-                let cell = indexed.cell;
-                let point = indexed.point;
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-                let (mut fg, mut bg) = (
-                    palette.resolve(cell.fg, colors),
-                    palette.resolve(cell.bg, colors),
-                );
-                if cell.flags.contains(Flags::INVERSE) {
-                    std::mem::swap(&mut fg, &mut bg);
-                }
-                let line = visible_row(point.line.0, display_offset);
-                let col = point.column.0;
-
+            for cell in &snap.cells {
                 match run.as_mut() {
                     Some((rl, _rs, re, rbg))
-                        if *rl == line && *re + 1 == col && *rbg == bg =>
+                        if *rl == cell.line && *re + 1 == cell.col && *rbg == cell.bg =>
                     {
-                        *re = col; // extend the run
+                        *re = cell.col;
                     }
                     _ => {
                         flush(frame, &run);
-                        run = Some((line, col, col, bg));
+                        run = Some((cell.line, cell.col, cell.col, cell.bg));
                     }
                 }
             }
             flush(frame, &run);
 
-            // ── Selection highlight (render-only; Task 4.1 owns interaction) ──
-            //
-            // Task 4.1: mouse selection + copy. Here we only paint an existing
-            // `selection` if the emulator already has one.
-            if let Some(range) = selection {
-                draw_selection(frame, &range, metrics, palette.selection, display_offset, term.screen_lines());
+            // ── Selection highlight ──
+            if let Some(range) = snap.selection {
+                draw_selection(
+                    frame,
+                    &range,
+                    metrics,
+                    palette.selection,
+                    snap.display_offset,
+                    snap.screen_lines,
+                );
             }
 
-            // ── Pass 2: glyphs ──
-            for indexed in &cells {
-                let cell = indexed.cell;
-                let point = indexed.point;
-                let flags = cell.flags;
-
-                // Skip non-printing cells.
+            // ── Pass 2: glyphs (no term lock) ──
+            for cell in &snap.cells {
                 if cell.c == ' ' || cell.c == '\0' {
                     continue;
                 }
-                if flags.contains(Flags::WIDE_CHAR_SPACER) || flags.contains(Flags::HIDDEN) {
+                if cell.flags.contains(Flags::HIDDEN) {
                     continue;
                 }
 
-                let mut fg = palette.resolve(cell.fg, colors);
-                let mut bg = palette.resolve(cell.bg, colors);
-                if flags.contains(Flags::INVERSE) {
-                    std::mem::swap(&mut fg, &mut bg);
-                }
-                if flags.contains(Flags::DIM) {
+                let mut fg = cell.fg;
+                if cell.flags.contains(Flags::DIM) {
                     fg = dim(fg);
                 }
-
-                // Font role per weight/style flags. Variant fonts aren't packaged
-                // yet, so bold/italic fall back to mono — only the synthetic
-                // weight/style on the Font struct distinguishes them. (NOTE:
-                // a dedicated bold/italic mono face is a follow-up.)
-                // `glyph_font()` reads `fonts::mono()`, which the bus theme
-                // hot-swaps via `apply_theme_update` — so the font FAMILY
-                // updates live on `Topic::Theme`. The cell geometry comes from
-                // `CellMetrics::for_font`, derived from the active mono font's
-                // real metrics (`sola_kit::fonts::mono_metrics()`); the terminal
-                // recomputes it on `Topic::Theme` so a font change reshapes the
-                // cell box to match.
-                let font = glyph_font(flags);
-
-                let (x, y) = self.cell_xy(visible_row(point.line.0, display_offset), point.column.0);
+                let font = glyph_font(cell.flags);
+                let (x, y) = cell_xy_metrics(metrics, cell.line, cell.col);
+                // Single-char content without a heap alloc for BMP glyphs.
+                let mut ch_buf = [0u8; 4];
+                let content = cell.c.encode_utf8(&mut ch_buf);
                 frame.fill_text(Text {
-                    content: cell.c.to_string(),
-                    // Snap to integer pixels: fractional glyph origins make the
-                    // rasterizer hint each cell slightly differently, which
-                    // reads as uneven kerning across the monospace grid.
+                    content: content.to_string(),
                     position: Point::new(x.round(), y.round()),
                     color: fg,
                     size: metrics.font_size.into(),
                     font,
                     line_height: LineHeight::Absolute(metrics.cell_h.into()),
-                    // Basic shaping is correct for a single-glyph monospace
-                    // cell — no ligatures/BiDi/fallback runs, so we avoid
-                    // Advanced's per-run positioning variance. (A non-BMP or
-                    // complex char that Basic can't render is an accepted edge
-                    // case for now.)
                     shaping: Shaping::Basic,
                     ..Text::default()
                 });
+                glyphs += 1;
 
-                // Underline / strikeout as stroked lines across the cell.
-                if flags.contains(Flags::UNDERLINE) {
+                if cell.flags.contains(Flags::UNDERLINE) {
                     let uy = y + metrics.cell_h - 2.0;
                     stroke_h(frame, x, uy, metrics.cell_w, fg);
                 }
-                if flags.contains(Flags::STRIKEOUT) {
+                if cell.flags.contains(Flags::STRIKEOUT) {
                     let sy = y + metrics.cell_h * 0.5;
                     stroke_h(frame, x, sy, metrics.cell_w, fg);
                 }
             }
 
-            // ── Cursor: block at the cursor cell ──
-            //
-            // Active pane: filled block in the cursor colour, blinking (App
-            // toggles `cursor_on`). Inactive split panes: a static hollow block
-            // (outline only, no fill, no blink) so only the focused pane draws
-            // attention. Non-block shapes (Beam / Underline) are a follow-up.
-            // NOTE: cursor.shape (Beam/Underline/HollowBlock) not yet honoured.
-            let (cx, cy) = self.cell_xy(
-                visible_row(cursor.point.line.0, display_offset),
-                cursor.point.column.0,
+            // Always-on link underlines (from snapshot).
+            let link_color = palette.ansi[12];
+            for span in &snap.urls {
+                draw_url_underline(
+                    frame,
+                    span,
+                    metrics,
+                    link_color,
+                    snap.display_offset,
+                    snap.screen_lines,
+                    snap.cols,
+                );
+            }
+
+            paint_us.set(t_paint.elapsed());
+            cell_n.set(snap.cells.len());
+            glyph_n.set(glyphs);
+            // Cursor is painted in a separate uncached geometry below so
+            // blink does not force a full grid rebuild.
+        });
+
+        // ── Uncached cursor overlay ──────────────────────────────────────
+        // Brief lock only for the cursor cell; blink toggles `cursor_on`
+        // without clearing the grid cache.
+        let mut cursor_frame = Frame::new(renderer, bounds.size());
+        {
+            let term = self.term.lock();
+            let content = term.renderable_content();
+            let display_offset = content.display_offset;
+            let (cx, cy) = cell_xy_metrics(
+                metrics,
+                visible_row(content.cursor.point.line.0, display_offset),
+                content.cursor.point.column.0,
             );
+            drop(term);
+
             if self.active {
                 if self.cursor_on {
                     let block = Path::rectangle(
                         Point::new(cx, cy),
                         Size::new(metrics.cell_w, metrics.cell_h),
                     );
-                    // Fairly opaque: a low alpha over a dark background muddies
-                    // the warm gold into brown. 0.85 keeps it reading as gold
-                    // while the glyph beneath stays faintly visible.
-                    frame.fill(&block, Color { a: 0.85, ..palette.cursor });
+                    cursor_frame.fill(&block, Color { a: 0.85, ..palette.cursor });
                 }
             } else {
-                // Hollow block, inset 0.5px so the 1px stroke stays inside the
-                // cell. Always drawn (independent of the blink phase).
                 let outline = Path::rectangle(
                     Point::new(cx + 0.5, cy + 0.5),
                     Size::new(metrics.cell_w - 1.0, metrics.cell_h - 1.0),
                 );
-                frame.stroke(
+                cursor_frame.stroke(
                     &outline,
                     Stroke::default()
                         .with_color(Color { a: 0.6, ..palette.cursor })
                         .with_width(1.0),
                 );
             }
+        }
+        let cursor_geom = cursor_frame.into_geometry();
 
-            // Always-on link underlines. Bright-blue ANSI slot = theme accent.
-            // Drawn last so they sit above selection wash / glyphs.
-            let screen_lines = term.screen_lines();
-            let cols = term.columns();
-            let link_color = palette.ansi[12];
-            for span in links::visible_urls(&term) {
-                draw_url_underline(
-                    frame,
-                    &span,
-                    metrics,
-                    link_color,
-                    display_offset,
-                    screen_lines,
-                    cols,
-                );
-            }
-        });
+        perf::draw(
+            t_draw.elapsed(),
+            lock_us.get(),
+            paint_us.get(),
+            rebuilt.get(),
+            cell_n.get(),
+            glyph_n.get(),
+        );
 
-        vec![geometry]
+        vec![grid, cursor_geom]
     }
+}
+
+/// Cell origin from metrics (same math as `TermView::cell_xy`).
+fn cell_xy_metrics(metrics: CellMetrics, row: i32, col: usize) -> (f32, f32) {
+    (
+        PAD + col as f32 * metrics.cell_w,
+        PAD + row as f32 * metrics.cell_h,
+    )
 }
 
 /// Underline a URL span across its visible cells. Handles wrap-joined spans

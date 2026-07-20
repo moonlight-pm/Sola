@@ -31,6 +31,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::time::Instant;
 
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
@@ -38,6 +39,7 @@ use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 use tracing::{debug, warn};
 
 use crate::emulator::Listener;
+use crate::perf;
 
 // -- Process-wide pty-write drain ----------------------------------------------
 //
@@ -120,6 +122,8 @@ fn unregister_writer(tab_id: &str) {
 /// Only called from the per-tab writer thread. May block when the PTY input
 /// buffer is full — that is intentional; the iced UI enqueues and never waits.
 fn write_all_blocking(fd: RawFd, mut buf: &[u8], tab_id: &str) {
+    let total = buf.len();
+    let t0 = Instant::now();
     while !buf.is_empty() {
         let n = unsafe { libc::write(fd, buf.as_ptr() as *const libc::c_void, buf.len()) };
         if n < 0 {
@@ -131,14 +135,17 @@ fn write_all_blocking(fd: RawFd, mut buf: &[u8], tab_id: &str) {
             // error and drop the rest of this chunk so one stuck write can't
             // hang the queue forever if flags were ever flipped.
             warn!(tab_id = %tab_id, "pty writer: write failed: {err}");
+            perf::write_block(t0.elapsed(), total);
             return;
         }
         if n == 0 {
             warn!(tab_id = %tab_id, "pty writer: write returned 0");
+            perf::write_block(t0.elapsed(), total);
             return;
         }
         buf = &buf[n as usize..];
     }
+    perf::write_block(t0.elapsed(), total);
 }
 
 // -- PtyBackend -- per-tab handle ----------------------------------------------
@@ -304,8 +311,11 @@ impl PtyBackend {
                     crate::extkeys::set_level(&reader_tab_id, level);
                 }
                 {
+                    let t0 = Instant::now();
                     let mut term = term.lock();
                     processor.advance(&mut *term, chunk);
+                    drop(term);
+                    perf::reader_advance(t0.elapsed(), chunk.len());
                 }
                 let _ = notify.send(reader_tab_id.clone());
             }
@@ -332,6 +342,7 @@ impl PtyBackend {
         if bytes.is_empty() {
             return;
         }
+        perf::write_enqueue(bytes.len());
         if self.write_tx.send(bytes.to_vec()).is_err() {
             warn!(
                 tab_id = %self.tab_id,

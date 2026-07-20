@@ -25,6 +25,7 @@ mod extkeys;
 mod input;
 mod links;
 mod menu;
+mod perf;
 mod pty;
 mod sidebar;
 mod state;
@@ -329,6 +330,7 @@ impl App {
             Msg::Noop => Task::none(),
             Msg::PtyExit(pane_id) => self.close_pane_by_id(&pane_id),
             Msg::PtyOutput(pane_id) => {
+                perf::pty_output();
                 self.tabs.clear_pane_cache(&pane_id);
                 // Parked scrollback diagnostics — debug-gated, so quiet by default.
                 // Enable with `RUST_LOG=sola_terminal=debug`; grep `SCROLLBACK`.
@@ -344,13 +346,10 @@ impl App {
                 Task::none()
             }
             Msg::BlinkTick => {
+                // Cursor is an uncached overlay in TermView — flipping the
+                // phase does not need a grid-cache clear (and clearing it
+                // every 530ms was a free hitch under scroll load).
                 self.cursor_on = !self.cursor_on;
-                // Only the active pane draws a blinking cursor; invalidating
-                // every pane's geometry cache twice a second hitch-scrolled
-                // under load for no visual gain.
-                if let Some(pane) = self.active_pane() {
-                    self.tabs.clear_pane_cache(&pane);
-                }
                 Task::none()
             }
             Msg::Input(event) => self.on_input(event),
@@ -577,6 +576,7 @@ impl App {
 
     /// Accumulate a mouse-mode wheel report and flush on the throttle cadence.
     fn on_wheel_to_pty(&mut self, pane: String, bytes: Vec<u8>) -> Task<Msg> {
+        perf::wheel_event();
         let dir = wheel_report_dir(&bytes);
         if dir == 0 {
             // Not a recognisable wheel report — pass through immediately.
@@ -643,6 +643,7 @@ impl App {
         let sample = burst.sample.clone();
         burst.last_flush = Some(Instant::now());
         let more = burst.pending != 0;
+        let pending_left = burst.pending;
 
         let bytes = set_wheel_report_dir(&sample, n > 0);
         if let Some(rt) = self.tabs.pane_runtime(pane) {
@@ -650,6 +651,7 @@ impl App {
                 rt.backend.write(&bytes);
             }
         }
+        perf::wheel_flush(n.unsigned_abs(), pending_left);
 
         if more {
             if let Some(burst) = self.wheel_burst.get_mut(pane) {
