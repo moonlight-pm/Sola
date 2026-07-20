@@ -30,7 +30,8 @@ pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
         Metric::Cpu => cpu_card(shell),
         Metric::Gpu => gpu_card(shell),
         Metric::Mem => mem_card(shell),
-        Metric::Net => net_card(shell),
+        Metric::Rx => rx_card(shell),
+        Metric::Tx => tx_card(shell),
     };
 
     // Anchor the card's left edge under the indicator, clamped so it never
@@ -391,36 +392,82 @@ fn fmt_uptime(secs: u64) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Net card
+// RX / TX cards (one direction each)
 // ---------------------------------------------------------------------------
 
-fn net_card(shell: &Shell) -> Element<'_, Msg> {
-    let s = &shell.stats;
-    let detail = match &s.detail {
+const RX_COLOR: Color = Color::from_rgb(0.0, 0.831, 1.0); // cyan — download
+const TX_COLOR: Color = Color::from_rgb(0.247, 0.725, 0.314); // green — upload
+
+fn rx_card(shell: &Shell) -> Element<'_, Msg> {
+    rate_card(
+        shell,
+        "RX",
+        "Receive",
+        shell.stats.net_down,
+        shell.net_down_hist.to_vec(),
+        RX_COLOR,
+        |d| d.total_down,
+    )
+}
+
+fn tx_card(shell: &Shell) -> Element<'_, Msg> {
+    rate_card(
+        shell,
+        "TX",
+        "Transmit",
+        shell.stats.net_up,
+        shell.net_up_hist.to_vec(),
+        TX_COLOR,
+        |d| d.total_up,
+    )
+}
+
+/// One-direction network card: rate headline, single history graph, iface footer.
+fn rate_card<'a, F>(
+    shell: &'a Shell,
+    label: &'a str,
+    direction: &'a str,
+    rate: f32,
+    samples: Vec<f32>,
+    color: Color,
+    session_bytes: F,
+) -> Element<'a, Msg>
+where
+    F: FnOnce(&crate::stats::net::NetDetail) -> u64,
+{
+    let detail = match &shell.stats.detail {
         Some(crate::stats::Detail::Net(d)) => Some(d),
         _ => None,
     };
 
     let identity = vec![
-        text(format!("\u{2193} {}", fmt_rate(s.net_down)))
-            .font(sola_kit::fonts::MONO)
+        text(direction)
             .size(12)
-            .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.0, 0.831, 1.0)) })
+            .style(|_: &Theme| iced::widget::text::Style {
+                color: Some(Color::from_rgb(0.788, 0.820, 0.851)),
+            })
             .into(),
-        text(format!("\u{2191} {}", fmt_rate(s.net_up)))
-            .font(sola_kit::fonts::MONO)
-            .size(12)
-            .style(|_: &Theme| iced::widget::text::Style { color: Some(Color::from_rgb(0.247, 0.725, 0.314)) })
-            .into(),
+        text(
+            detail
+                .map(|d| {
+                    if d.iface.is_empty() {
+                        "—".into()
+                    } else {
+                        d.iface.clone()
+                    }
+                })
+                .unwrap_or_else(|| "—".into()),
+        )
+        .font(sola_kit::fonts::MONO)
+        .size(11)
+        .style(dim)
+        .into(),
     ];
 
-    let down = shell.net_down_hist.to_vec();
-    let up = shell.net_up_hist.to_vec();
-    let max = peak(&down).max(peak(&up)).max(1.0);
+    let max = peak(&samples).max(1.0);
     let graph = column![
         caption("Last 60 seconds", format!("peak {}", fmt_rate(max))),
-        graph_box(history_graph(down, max, Color::from_rgb(0.0, 0.831, 1.0))),
-        graph_box(history_graph(up, max, Color::from_rgb(0.247, 0.725, 0.314))),
+        graph_box(history_graph(samples, max, color)),
     ]
     .spacing(6)
     .into();
@@ -432,17 +479,12 @@ fn net_card(shell: &Shell) -> Element<'_, Msg> {
             "INTERFACE",
             format!("{}  {}", d.iface, d.ip),
             "SESSION",
-            format!("\u{2193}{} \u{2191}{}", fmt_bytes(d.total_down), fmt_bytes(d.total_up)),
+            fmt_bytes(session_bytes(d)),
         ));
     }
-    // NET headline value uses the down rate; no threshold (rate, not level).
-    stat_card(
-        "NET",
-        fmt_rate(s.net_down),
-        Color::from_rgb(0.902, 0.929, 0.953),
-        identity,
-        body,
-    )
+
+    // Rate metrics have no threshold coloring.
+    stat_card(label, fmt_rate(rate), Color::from_rgb(0.902, 0.929, 0.953), identity, body)
 }
 
 fn fmt_bytes(b: u64) -> String {

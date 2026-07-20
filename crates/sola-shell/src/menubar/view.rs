@@ -104,25 +104,26 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Mem))
     .into();
 
-    let net_inner = iced::widget::column(vec![
-        text(format!("\u{2193} {}", crate::stats::view::fmt_rate(shell.stats.net_down)))
-            .font(sola_kit::fonts::MONO)
-            .size(10)
-            .into(),
-        text(format!("\u{2191} {}", crate::stats::view::fmt_rate(shell.stats.net_up)))
-            .font(sola_kit::fonts::MONO)
-            .size(10)
-            .into(),
-    ])
-    .spacing(1)
-    // Fixed width: the ↓/↑ rate strings vary in length (e.g. "0 B/s" vs
-    // "2.4 MB/s"), so without this the cluster bumps every tick.
-    .width(Length::Fixed(84.0));
-    let net_btn: Element<'_, Msg> = iced::widget::button(net_inner)
-        .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Net))))
-        .padding([2, 8])
-        .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Net))
-        .into();
+    // TX/RX are separate indicators (same style as CPU/MEM), each with its
+    // own detail panel. RX = download (net_down), TX = upload (net_up).
+    let rx_btn: Element<'_, Msg> = iced::widget::button(
+        rate_indicator("RX", shell.stats.net_down, neutral),
+    )
+    .style(kit_btn::menubar(
+        shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Rx)),
+    ))
+    .padding([2, 8])
+    .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Rx))
+    .into();
+    let tx_btn: Element<'_, Msg> = iced::widget::button(
+        rate_indicator("TX", shell.stats.net_up, neutral),
+    )
+    .style(kit_btn::menubar(
+        shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Tx)),
+    ))
+    .padding([2, 8])
+    .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Tx))
+    .into();
 
     // ── Assemble ──────────────────────────────────────────────────────
     let mut left = vec![system_btn, app_title];
@@ -141,7 +142,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         cluster.push(gpu_btn);
     }
     cluster.push(mem_btn);
-    cluster.push(net_btn);
+    cluster.push(rx_btn);
+    cluster.push(tx_btn);
     cluster.push(clock);
 
     row![
@@ -272,6 +274,26 @@ fn stat_indicator<'a>(label: &'a str, value: String, color: iced::Color) -> Elem
         // "100%", and "—" all render the same width; the indicator never
         // reflows as the value changes.
         text(format!("{value:>4}")).font(sola_kit::fonts::MONO).size(13)
+            .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(color) }),
+    ]
+    .spacing(5)
+    .align_y(iced::alignment::Vertical::Center)
+    .into()
+}
+
+/// Menubar rate indicator (TX/RX): same layout as [`stat_indicator`], but
+/// the value is a byte-rate string padded to a fixed field so the cluster
+/// doesn't reflow when units jump (B/s → KB/s → MB/s).
+fn rate_indicator<'a>(label: &'a str, bps: f32, color: iced::Color) -> Element<'a, Msg> {
+    use iced::widget::{row, text};
+    let value = crate::stats::view::fmt_rate(bps);
+    row![
+        text(label).font(sola_kit::fonts::INTER).size(10)
+            .style(|_: &iced::Theme| iced::widget::text::Style {
+                color: Some(iced::Color { r: 0.902, g: 0.929, b: 0.953, a: 0.6 }),
+            }),
+        // 9 chars covers "999 KB/s" / "12.3 MB/s"; mono keeps tabular width.
+        text(format!("{value:>9}")).font(sola_kit::fonts::MONO).size(13)
             .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(color) }),
     ]
     .spacing(5)

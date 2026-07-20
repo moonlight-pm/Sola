@@ -20,10 +20,13 @@ pub enum Metric {
     Cpu,
     Gpu,
     Mem,
-    Net,
+    /// Receive (download) rate.
+    Rx,
+    /// Transmit (upload) rate.
+    Tx,
 }
 
-/// Threshold colors for level metrics (cpu/gpu/mem). Net is a rate, no level.
+/// Threshold colors for level metrics (cpu/gpu/mem). Rates have no level.
 pub const AMBER: Color = Color::from_rgb(0.824, 0.600, 0.133); // #d29922
 pub const RED: Color = Color::from_rgb(0.973, 0.318, 0.286); // #f85149
 pub const WARN_PCT: f32 = 75.0;
@@ -179,7 +182,10 @@ fn stats_stream() -> impl Stream<Item = Arc<Snapshot>> {
                     Some(Detail::Cpu(cpu::detail(per_core, top)))
                 }
                 Some(Metric::Mem) => Some(Detail::Mem(mem::detail())),
-                Some(Metric::Net) => Some(Detail::Net(net::detail(&cur_net))),
+                // RX and TX share the same tier-2 Net detail (iface/IP/totals).
+                Some(Metric::Rx) | Some(Metric::Tx) => {
+                    Some(Detail::Net(net::detail(&cur_net)))
+                }
                 Some(Metric::Gpu) => gpu::detail().map(Detail::Gpu),
                 None => None,
             };
