@@ -783,12 +783,18 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             return mouse::Interaction::Pointer;
         }
         if let Some(pos) = cursor.position_in(bounds) {
-            let term = self.term.lock();
+            // Never block the UI thread waiting on the PTY reader just to pick
+            // an I-beam vs hand cursor. try_lock: if the reader holds the term
+            // mid-advance, keep the default text cursor this sample.
+            let Some(term) = self.term.try_lock_unfair() else {
+                return mouse::Interaction::Text;
+            };
             let cols = term.columns() as u16;
             let rows = term.screen_lines() as u16;
             let display_offset = term.grid().display_offset();
             let (col, row) = pixel_to_cell(pos.x, pos.y, self.metrics, cols, rows);
             let point = viewport_cell_to_point(col, row, display_offset);
+            // url_at_point is O(line) only — must stay that way (see links.rs).
             if links::url_at_point(&term, point).is_some() {
                 return mouse::Interaction::Pointer;
             }

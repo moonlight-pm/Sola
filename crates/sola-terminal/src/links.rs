@@ -91,9 +91,15 @@ fn helium_appimage() -> Option<PathBuf> {
 
 /// Find a URL under `point`, if any.
 ///
-/// Prefers an OSC 8 hyperlink attached to the cell; otherwise scans the
-/// (possibly wrap-joined) logical line for a plain-text match covering the
-/// column.
+/// Prefers an OSC 8 hyperlink attached to the cell; otherwise scans **only
+/// the logical line containing `point`** (wrap-joined) for a plain-text match.
+///
+/// # Performance
+///
+/// This is called from `mouse_interaction` on essentially every pointer sample
+/// while the cursor is over the terminal. It must stay O(line), never O(grid).
+/// The original implementation called [`visible_urls`] (full viewport scan)
+/// here and tanked scroll performance as soon as clickable links landed.
 pub fn url_at_point<T>(term: &Term<T>, point: GridPoint) -> Option<String> {
     // OSC 8 wins when present — the app authored an explicit link.
     if let Some(link) = term.grid()[point].hyperlink() {
@@ -103,13 +109,35 @@ pub fn url_at_point<T>(term: &Term<T>, point: GridPoint) -> Option<String> {
         }
     }
 
-    visible_urls(term)
+    urls_on_line_at(term, point)
         .into_iter()
         .find(|span| point_in_span(point, span))
         .map(|span| span.uri)
 }
 
+/// Plain-text + OSC 8 URLs on the single logical line that contains `point`.
+///
+/// Walks wrapline flags so a URL split across rows still matches, but never
+/// touches other lines of the viewport.
+fn urls_on_line_at<T>(term: &Term<T>, point: GridPoint) -> Vec<UrlSpan> {
+    let cols = term.columns();
+    let (text, col_map) = collect_logical_line_at(term, point.line.0, cols);
+    let mut out = Vec::new();
+    collect_osc8_spans(term, point.line.0, &col_map, &mut out);
+    for m in find_urls_in_text(&text) {
+        if let Some(span) = match_to_span(&m, &col_map, point.line.0) {
+            if !out.iter().any(|s| s.start == span.start && s.end == span.end) {
+                out.push(span);
+            }
+        }
+    }
+    out
+}
+
 /// All plain-text + OSC 8 URLs currently visible in the viewport.
+///
+/// **Not for the mouse hot path.** Use [`url_at_point`] for hit-testing.
+#[allow(dead_code)] // kept for a future rate-limited underline pass
 pub fn visible_urls<T>(term: &Term<T>) -> Vec<UrlSpan> {
     let display_offset = term.grid().display_offset();
     let cols = term.columns();
@@ -138,6 +166,68 @@ pub fn visible_urls<T>(term: &Term<T>) -> Vec<UrlSpan> {
     }
 
     out
+}
+
+/// Collect the wrap-joined logical line that contains buffer line `buf_line`.
+///
+/// Walks **up** via `WRAPLINE` on the previous row's last cell to find the
+/// start, then **down** collecting characters — same semantics as
+/// [`collect_logical_line`] but keyed by buffer line (for hit-testing) rather
+/// than visible row.
+fn collect_logical_line_at<T>(
+    term: &Term<T>,
+    buf_line: i32,
+    cols: usize,
+) -> (String, Vec<ColMap>) {
+    let grid = term.grid();
+    let last_col = cols.saturating_sub(1);
+
+    // Walk back to the first row of this logical line.
+    let mut start = buf_line;
+    loop {
+        let prev = start - 1;
+        // Stop if previous line is outside the grid's absolute range.
+        let top = grid.topmost_line().0;
+        if prev < top {
+            break;
+        }
+        let prev_last = GridPoint::new(Line(prev), Column(last_col));
+        if !grid[prev_last].flags.contains(Flags::WRAPLINE) {
+            break;
+        }
+        start = prev;
+    }
+
+    let mut text = String::new();
+    let mut map = Vec::new();
+    let mut line = start;
+    let bottom = grid.bottommost_line().0;
+    loop {
+        for col in 0..cols {
+            let point = GridPoint::new(Line(line), Column(col));
+            let cell = &grid[point];
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let c = cell.c;
+            text.push(if c == '\0' { ' ' } else { c });
+            map.push(ColMap {
+                buf_line: line,
+                col,
+            });
+        }
+        let last = GridPoint::new(Line(line), Column(last_col));
+        if !grid[last].flags.contains(Flags::WRAPLINE) || line >= bottom {
+            break;
+        }
+        line += 1;
+    }
+
+    while text.ends_with(' ') {
+        text.pop();
+        map.pop();
+    }
+    (text, map)
 }
 
 /// Whether `point` falls inside `span` (same line range, inclusive columns).
@@ -490,5 +580,33 @@ mod tests {
         assert_eq!(url_at_point(&term, GridPoint::new(Line(0), Column(3))), None);
         // "please" is not a link.
         assert_eq!(url_at_point(&term, GridPoint::new(Line(0), Column(30))), None);
+    }
+
+    /// Hit-testing must only look at the line under the pointer — a full
+    /// viewport scan here is what made scroll unusable after clickable links.
+    #[test]
+    fn url_at_point_ignores_urls_on_other_lines() {
+        use crate::emulator::{Emulator, Listener};
+        use std::sync::mpsc;
+
+        let (ptx, _prx) = mpsc::channel::<(String, Vec<u8>)>();
+        let (ntx, _nrx) = mpsc::channel::<String>();
+        let (ttx, _trx) = mpsc::channel::<(String, String)>();
+        let mut e = Emulator::new(80, 24, Listener::new("t".into(), ptx, ntx, ttx));
+        // Line 0 has a URL; line 1 is plain text under the pointer.
+        e.advance(b"https://other.com/nowhere\r\nplain text here");
+
+        let term = e.term();
+        let term = term.lock();
+        // Pointer on line 1, column 0 — must not pick up line 0's URL.
+        assert_eq!(
+            url_at_point(&term, GridPoint::new(Line(1), Column(0)),),
+            None
+        );
+        // And line 0 still works.
+        assert_eq!(
+            url_at_point(&term, GridPoint::new(Line(0), Column(0))).as_deref(),
+            Some("https://other.com/nowhere")
+        );
     }
 }
