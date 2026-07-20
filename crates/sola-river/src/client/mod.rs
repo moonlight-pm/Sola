@@ -10,7 +10,7 @@ use tracing::info;
 use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
     backend::ObjectId,
-    protocol::{wl_output, wl_pointer, wl_registry, wl_seat},
+    protocol::{wl_output, wl_pointer, wl_registry, wl_seat, wl_shm},
 };
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
@@ -148,6 +148,8 @@ pub struct AppData {
     /// pointer cursor (no client has focus), so `set_shape` here drives the
     /// move/resize cursor.
     pub cursor_device: Option<WpCursorShapeDeviceV1>,
+    /// `wlr-screencopy` + `wl_shm` + `wl_output` state for screenshots.
+    pub screenshot: screenshot::ScreenshotState,
 }
 
 impl AppData {
@@ -188,6 +190,7 @@ impl AppData {
             cursor_shape_manager: None,
             wl_pointer: None,
             cursor_device: None,
+            screenshot: screenshot::ScreenshotState::default(),
         }
     }
 }
@@ -230,6 +233,8 @@ pub fn connect(
 pub fn bus_tick(state: &mut AppData) {
     state.bus.ensure_connected();
     state.bus.drain_notify();
+    // Screenshot PNG encode runs off-thread; deliver results here.
+    screenshot::poll_results(state);
     while let Some(msg) = state.bus.try_recv() {
         let Some(topic) = sola_bus::topics::Topic::parse(&msg) else {
             continue;
@@ -416,6 +421,24 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let cfg: RiverLibinputConfigV1 = proxy.bind(name, version.min(1), qh, ());
                     info!(%version, "bound river_libinput_config_v1");
                     state.libinput_config = Some(cfg);
+                }
+                "zwlr_screencopy_manager_v1" => {
+                    use crate::protocol::wlr_screencopy_unstable_v1::zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1;
+                    let mgr: ZwlrScreencopyManagerV1 = proxy.bind(name, version.min(3), qh, ());
+                    info!(%version, "bound zwlr_screencopy_manager_v1");
+                    state.screenshot.manager = Some(mgr);
+                }
+                "wl_shm" => {
+                    let shm: wl_shm::WlShm = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound wl_shm");
+                    state.screenshot.shm = Some(shm);
+                }
+                "wl_output" => {
+                    // Screencopy needs a real wl_output (river_output_v1 is a
+                    // different object). V1 uses the first bound output.
+                    let output: wl_output::WlOutput = proxy.bind(name, version.min(4), qh, ());
+                    info!(%version, "bound wl_output for screencopy");
+                    state.screenshot.outputs.push(output);
                 }
                 _ => {}
             }

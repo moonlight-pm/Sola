@@ -239,13 +239,13 @@ Implement `wayland_client::Dispatch` for screencopy frame (and manager if needed
 - Modify: `crates/sola-river/Cargo.toml`
 - Modify: `crates/sola-river/src/client/mod.rs` (`AppData` fields + registry bind + init)
 
-- [ ] **Step 1:** Vendor the XML (copy from wayland-protocols-wlr upstream; do not invent interface names).  
-- [ ] **Step 2:** Add `protocol.rs` module as above.  
-- [ ] **Step 3:** Add `png` (+ mmap) deps.  
-- [ ] **Step 4:** On `AppData`, add fields for screencopy manager, `wl_shm`, outputs list, and screenshot flight state (can be empty stub struct for now).  
-- [ ] **Step 5:** Bind globals in the existing registry `Global` match. Log `info!` on bind.  
-- [ ] **Step 6:** `cargo make build sola-river` (or workspace build). Fix compile errors.  
-- [ ] **Step 7:** Commit: `feat(sola-river): vendor wlr-screencopy and bind globals`
+- [x] **Step 1:** Vendor the XML (copy from wayland-protocols-wlr upstream; do not invent interface names).  
+- [x] **Step 2:** Add `protocol.rs` module as above.  
+- [x] **Step 3:** Add `png` (+ mmap) deps.  
+- [x] **Step 4:** On `AppData`, add fields for screencopy manager, `wl_shm`, outputs list, and screenshot flight state (can be empty stub struct for now).  
+- [x] **Step 5:** Bind globals in the existing registry `Global` match. Log `info!` on bind.  
+- [x] **Step 6:** `cargo make build sola-river` (or workspace build). Fix compile errors.  
+- [x] **Step 7:** Commit: `feat(sola-river): vendor wlr-screencopy and bind globals`
 
 ---
 
@@ -259,12 +259,12 @@ Implement `wayland_client::Dispatch` for screencopy frame (and manager if needed
 - `handle` for `CaptureTarget::FullOutput` (window path can still Err temporarily if Task 3 separate)
 - Resolve path, create dirs, start screencopy, complete async, emit `Screenshot`
 
-- [ ] **Step 1:** Design flight struct: path, target, buffer fd/mmap state, dimensions, format, stride.  
-- [ ] **Step 2:** Implement SHM alloc + copy + Ready/Failed handlers.  
-- [ ] **Step 3:** Implement pixel→RGBA + PNG encode helpers (private fns in same module).  
-- [ ] **Step 4:** On any error path, emit `Topic::Screenshot(Err(...))` and clean up proxies/fds.  
-- [ ] **Step 5:** Build.  
-- [ ] **Step 6:** Commit: `feat(sola-river): implement full-output screencopy capture`
+- [x] **Step 1:** Design flight struct: path, target, buffer fd/mmap state, dimensions, format, stride.  
+- [x] **Step 2:** Implement SHM alloc + copy + Ready/Failed handlers.  
+- [x] **Step 3:** Implement pixel→RGBA + PNG encode helpers (private fns in same module).  
+- [x] **Step 4:** On any error path, emit `Topic::Screenshot(Err(...))` and clean up proxies/fds.  
+- [x] **Step 5:** Build.  
+- [x] **Step 6:** Commit: `feat(sola-river): implement full-output screencopy capture`
 
 **Unit tests:** Pure helpers only if easy (e.g. format conversion on a tiny synthetic buffer). Do not mock full Wayland in-process for V1.
 
@@ -276,10 +276,10 @@ Implement `wayland_client::Dispatch` for screencopy frame (and manager if needed
 - Modify: `crates/sola-river/src/client/screenshot.rs`
 - Possibly: `registry.rs` (read-only use of `find_by_app_title`)
 
-- [ ] **Step 1:** For `CaptureTarget::Window { app_id, title }`, resolve entry + frame.  
-- [ ] **Step 2:** Call `capture_output_region` with x/y/w/h (protocol arg types are i32; cast carefully).  
-- [ ] **Step 3:** Same Ready path as full output.  
-- [ ] **Step 4:** Build + commit: `feat(sola-river): window-region screenshot capture`
+- [x] **Step 1:** For `CaptureTarget::Window { app_id, title }`, resolve entry + frame.  
+- [x] **Step 2:** Call `capture_output_region` with x/y/w/h (protocol arg types are i32; cast carefully).  
+- [x] **Step 3:** Same Ready path as full output.  
+- [x] **Step 4:** Build + commit: `feat(sola-river): window-region screenshot capture`
 
 ---
 
@@ -289,8 +289,8 @@ Implement `wayland_client::Dispatch` for screencopy frame (and manager if needed
 - Modify: `crates/solactl/src/screenshot.rs` module docs (remove “delegated to grim”)
 - Optional: `crates/solactl/src/main.rs` help text if it still implies grim
 
-- [ ] **Step 1:** Document: capture performed by sola-river via wlr-screencopy; path printed on success.  
-- [ ] **Step 2:** Build solactl. Commit: `docs(solactl): screenshot no longer claims grim`
+- [x] **Step 1:** Document: capture performed by sola-river via wlr-screencopy; path printed on success.  
+- [x] **Step 2:** Build solactl. Commit: `docs(solactl): screenshot no longer claims grim`
 
 ---
 
@@ -301,20 +301,20 @@ Implement `wayland_client::Dispatch` for screencopy frame (and manager if needed
 - Modify: `crates/sola-shell/src/app/bus.rs` (`Topic::Screenshot`, capture emit)
 - Possibly: Msg variants if needed (`Msg` already has bus path)
 
-- [ ] **Step 1:** Push `KeyCode::KEY_3.meta_shift()` and `KEY_4.meta_shift()` into `shell_key_chords`.  
-- [ ] **Step 2:** On matching chord in update/bus handler: emit `CaptureScreen` (full vs focused window).  
-- [ ] **Step 3:** On `Topic::Screenshot` from bus: `push_toast` success/error; schedule `ToastExpire` like other toast sites.  
-- [ ] **Step 4:** Ensure shell bus subscription includes `Screenshot` if topics are filtered (subscribe to all or add kind).  
-- [ ] **Step 5:** Build sola-shell. Commit: `feat(sola-shell): Super+Shift+3/4 screenshot chords`
+- [x] **Step 1:** Push `KeyCode::KEY_3.meta_shift()` and `KEY_4.meta_shift()` into `shell_key_chords`.  
+- [x] **Step 2:** On matching chord in update/bus handler: emit `CaptureScreen` (full vs focused window).  
+- [x] **Step 3:** On `Topic::Screenshot` from bus: `push_toast` success/error; schedule `ToastExpire` like other toast sites.  
+- [x] **Step 4:** Ensure shell bus subscription includes `Screenshot` if topics are filtered (subscribe to all or add kind).  
+- [x] **Step 5:** Build sola-shell. Commit: `feat(sola-shell): Super+Shift+3/4 screenshot chords`
 
 ---
 
 ### Task 6: Agent self-check (build-only)
 
-- [ ] **Step 1:** `cargo make build` for touched crates (at least `sola-river`, `solactl`, `sola-shell`).  
-- [ ] **Step 2:** Grep for leftover stub string `"screenshot not yet implemented"` — must be gone from success path.  
-- [ ] **Step 3:** Update plan checkboxes / note residual risks in the PR/commit message.  
-- [ ] **Step 4:** Do **not** install. Hand off to user for smoke.
+- [x] **Step 1:** `cargo make build` for touched crates (at least `sola-river`, `solactl`, `sola-shell`).  
+- [x] **Step 2:** Grep for leftover stub string `"screenshot not yet implemented"` — must be gone from success path.  
+- [x] **Step 3:** Update plan checkboxes / note residual risks in the PR/commit message.  
+- [x] **Step 4:** Do **not** install. Hand off to user for smoke.
 
 ---
 
