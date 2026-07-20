@@ -13,23 +13,19 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**macOS look-and-feel — P0 screenshot capture**
+**none** (P0 screenshot capture merged to `master`)
 
-- **Roadmap:** `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md`
-- **Execute plan:** `docs/specs/2026-07-20-screenshot-capture-plan.md`
-- **Next phase:** P0 Tasks 1–6 (river wlr-screencopy + solactl docs + shell
-  Super+Shift+3/4). Stop for user install + smoke PNGs before P1/P2.
-- **Constraints:** worktree only; build only (no install without permission);
-  do **not** retune theme tokens or shell chrome in this phase.
-
-### After P0 smoke (do not auto-start until user says go)
-
-1. **P1** — visual-state convention + baseline shots (`docs/visual/` or
-   `/tmp/sola/visual/`) — see roadmap §4 P1  
-2. **P2** — token / grey baseline toward macOS dark mode  
-3. **P3+** — menubar → menus → launcher → switcher → kit controls  
+Next when user says go: **P1** visual-state convention + baseline shots —
+see `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P1.
 
 ### Last completed
+
+**P0 screenshot capture** — merged to `master` (2026-07-20). Branch
+`feat/screenshot-capture` (`216340b` + encode fix `fdd5c58`). Plan:
+`docs/specs/2026-07-20-screenshot-capture-plan.md`.
+
+Smoke-tested: `solactl screenshot` full-output PNG; Super+Shift freeze
+fixed by off-thread encode.
 
 **sola-kit hardening** (A + B + C1) — merged to `master` at `cd3d2f1`
 (2026-07-20). Smoke-tested. Plan:
