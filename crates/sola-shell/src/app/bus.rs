@@ -56,6 +56,9 @@ impl Shell {
         self.theme = sola_kit::theme::theme_from_bus(&t);
         self.style = sola_kit::theme::shell_style_from_bus_theme(&t);
         sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(&t));
+        sola_kit::theme::install_selection(
+            sola_kit::theme::atoms_from_bus_theme(&t).selection,
+        );
     }
 
     /// Store output geometry, emit frames for all windows, and emit composition.
