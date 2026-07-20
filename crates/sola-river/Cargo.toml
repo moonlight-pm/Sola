@@ -22,4 +22,5 @@ calloop = "0.14"
 calloop-wayland-source = "0.4"
 thiserror = "2"
 bitflags = "2"
-rustix = { version = "1", features = ["fs"] }
+rustix = { version = "1", features = ["fs", "mm"] }
+png = "0.18"

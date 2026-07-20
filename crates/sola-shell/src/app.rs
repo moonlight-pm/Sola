@@ -441,6 +441,9 @@ impl Shell {
         bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::Q.meta());     // Meta+Q → close focused app
+        // Super+Shift+3 full output / Super+Shift+4 focused window (macOS-style).
+        bindings.push(KeyCode::KEY_3.meta_shift());
+        bindings.push(KeyCode::KEY_4.meta_shift());
 
         // Meta+Numpad zones a window.
         for &raw in crate::zoning::ZONING_KEYCODES {

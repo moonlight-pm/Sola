@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use iced::Task;
 use sola_bus::topics::{
-    AppMenuPayload, Application, ChordEvent, FloatGeometry, FocusTarget, LaunchResultPayload,
-    MouseClickedPayload, MouseEnteredPayload, OutputGeometry, Topic,
-    UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
+    AppMenuPayload, Application, CaptureScreenPayload, CaptureTarget, ChordEvent, FloatGeometry,
+    FocusTarget, LaunchResultPayload, MouseClickedPayload, MouseEnteredPayload, OutputGeometry,
+    ScreenshotPayload, Topic, UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -42,6 +42,7 @@ impl Shell {
             Topic::Zones(z) => { self.on_zones(z); Task::none() }
             Topic::WindowGeometry(g) => { self.on_window_geometry(g); Task::none() }
             Topic::FloatGeometry(f) => { self.on_float_geometry(f); Task::none() }
+            Topic::Screenshot(r) => self.on_screenshot(r),
             // All other topics are not consumed by sola-shell; ignore quietly.
             _ => Task::none(),
         }
@@ -322,6 +323,20 @@ impl Shell {
         )
     }
 
+    /// Screenshot capture finished in sola-river — toast path or error.
+    fn on_screenshot(&mut self, r: ScreenshotPayload) -> Task<Msg> {
+        let msg = match r.result {
+            Ok(path) => format!("Screenshot saved: {}", path.display()),
+            Err(e) => format!("Screenshot failed: {e}"),
+        };
+        self.menubar.push_toast(msg);
+        let toast_gen = self.menubar.toast_generation;
+        Task::perform(
+            tokio::time::sleep(Duration::from_secs(5)),
+            move |_| Msg::ToastExpire(toast_gen),
+        )
+    }
+
     // -------------------------------------------------------------------------
     // Application catalog
     // -------------------------------------------------------------------------
@@ -468,6 +483,55 @@ impl Shell {
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     let _ = bus.emit(Topic::CloseApp(focused.clone()));
                 }
+            }
+            return Task::none();
+        }
+
+        // Super+Shift+3: full-output screenshot (auto path).
+        if chord.meta
+            && chord.shift
+            && !chord.ctrl
+            && !chord.alt
+            && chord.keycode == sola_core::KeyCode::KEY_3
+        {
+            tracing::info!("Super+Shift+3 — full-output screenshot");
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                let _ = bus.emit(Topic::CaptureScreen(CaptureScreenPayload {
+                    path: None,
+                    target: CaptureTarget::FullOutput,
+                }));
+            }
+            return Task::none();
+        }
+
+        // Super+Shift+4: focused-window region screenshot.
+        if chord.meta
+            && chord.shift
+            && !chord.ctrl
+            && !chord.alt
+            && chord.keycode == sola_core::KeyCode::KEY_4
+        {
+            tracing::info!("Super+Shift+4 — focused-window screenshot");
+            let Some(app_id) = self.focused_app_id.clone() else {
+                self.menubar
+                    .push_toast("Screenshot failed: no focused window");
+                let toast_gen = self.menubar.toast_generation;
+                return Task::perform(
+                    tokio::time::sleep(Duration::from_secs(5)),
+                    move |_| Msg::ToastExpire(toast_gen),
+                );
+            };
+            let title = self.focused_window_id.and_then(|wid| {
+                self.known_windows
+                    .iter()
+                    .find(|w| w.window_id == wid)
+                    .map(|w| w.title.clone())
+            });
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                let _ = bus.emit(Topic::CaptureScreen(CaptureScreenPayload {
+                    path: None,
+                    target: CaptureTarget::Window { app_id, title },
+                }));
             }
             return Task::none();
         }

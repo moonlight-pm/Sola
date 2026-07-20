@@ -1,7 +1,8 @@
 //! `solactl screenshot` — capture the compositor output to a PNG.
 //!
 //! Emits `Topic::CaptureScreen` and waits for `Topic::Screenshot` from
-//! sola-river. The actual capture is delegated to `grim`.
+//! sola-river. Capture is performed by sola-river via `wlr-screencopy`
+//! (not an external `grim` binary). On success the PNG path is printed.
 
 use std::path::Path;
 
@@ -21,6 +22,8 @@ pub fn run(
     let target = match app {
         Some(app_id) => CaptureTarget::Window {
             app_id: app_id.to_string(),
+            // Region is screen content at the window's frame rect,
+            // including any overlapping surfaces.
             title: window.map(str::to_string),
         },
         None => CaptureTarget::FullOutput,
