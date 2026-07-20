@@ -13,18 +13,18 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none** (P2 token/type baseline + fonts ready to merge / just merged)
+**none**
 
 Next when user says go: **P3** menubar density + type —
 see `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P3.
 
 ### Last completed
 
-**P2 token & type baseline** — branch `feat/token-type-baseline`:
-macOS greys seed, quiet selection, neutral switcher, keep cyan;
-mono default Iosevka Term Slab; SF Pro Text preferred for UI when
-installed; `.local/fonts/` stash (gitignored binaries + README).
+**P2 token & type baseline** — merged to `master` at `4ed660c`
+(2026-07-20). macOS greys seed, quiet selection, neutral switcher,
+keep cyan; mono **Iosevka Term Slab**; UI prefers **SF Pro Text**
+(fallback Inter); `.local/fonts/` stash (gitignored binaries + README).
 
-**P1 visual baselines + Bgr888 fix** — merged to `master` at `d483d66`.
+**P1 visual baselines + Bgr888 fix** — merged earlier same day.
 
 **P0 screenshot capture** — merged earlier.
