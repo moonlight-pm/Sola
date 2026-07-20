@@ -29,13 +29,16 @@ docs/visual/
 
 ### Current baseline set (2026-07-20)
 
+Recaptured after the `Bgr888` R↔B fix in `sola-river` (cyan `#00d4ff`,
+slate `#0d1117` / `#161b22` — not yellow/brown).
+
 | File | Status | Notes |
 |------|--------|--------|
 | `01-menubar-idle.png` | present | Full output; menubar, no overlays |
-| `02-menu-open.png` | present | Shell → Table dropdown via `solactl click 200 20` |
-| `03-launcher.png` | present | `Meta+Space` launcher list |
-| `04-switcher.png` | present | `Meta+Tab` app icons |
-| `05-storybook-theme.png` | omitted | kit process up but surface blank / `-a sola-kit` hit wrong stack |
+| `02-menu-open.png` | present | System menu open (`solactl click 280 16` on this layout) |
+| `03-launcher.png` | present | `Meta+Space` launcher; cyan selection row |
+| `04-switcher.png` | present | `Meta+Tab` app icons; cyan selected tile |
+| `05-storybook-theme.png` | present | Region capture `-a sola-kit` Theme page |
 
 Agree “this is current Sola” before treating these as the compare root for P2+.
 
