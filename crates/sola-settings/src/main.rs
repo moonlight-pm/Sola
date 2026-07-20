@@ -12,15 +12,14 @@ use iced::widget::{column, container, row, scrollable, text};
 use iced::{Element, Length, Padding, Subscription, Task, Theme};
 
 use sola_bus::Message;
-use sola_bus::topics::{
-    ApplicationsConfig, MailConfig, MenuActionPayload, Topic, TopicKind,
-    Window as BusWindow,
-};
+use sola_bus::topics::{ApplicationsConfig, MailConfig, Topic, TopicKind, Window as BusWindow};
 use sola_core::KeyCode;
-use sola_kit::app::{BusSetup, bus_subscription, startup, window_settings};
+use sola_kit::app::{
+    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup, window_settings,
+};
 use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 use sola_kit::fonts;
-use sola_kit::theme::{default_theme, theme_from_bus};
+use sola_kit::theme::default_theme;
 
 mod applications;
 mod mail;
@@ -65,8 +64,9 @@ struct App {
     /// "running, not configured" candidate list under Applications.
     running: Vec<BusWindow>,
     /// Live iced theme — replaced on every `Topic::Theme` delivery
-    /// via [`from_bus_theme`]. Initialized to the kit's default so
-    /// the first frame renders before the bus replay arrives.
+    /// via [`apply_theme_update`] (theme + fonts + selection).
+    /// Initialized to the kit's default so the first frame renders
+    /// before the bus replay arrives.
     theme: Theme,
     /// Per-panel local UI state (drafts, edit buffers, errors).
     apps_ui: AppsState,
@@ -107,26 +107,14 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::BusMessage(message) => {
-                let parsed = Topic::parse(&message);
+                // Live theme reload: Theme + fonts + selection atoms.
+                apply_theme_update(&message, &mut self.theme);
 
-                // Live theme reload on every Topic::Theme delivery.
-                if let Some(Topic::Theme(bus_theme)) = &parsed {
-                    self.theme = theme_from_bus(bus_theme);
-                    sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(bus_theme));
+                if is_self_quit(&message, APP_ID) {
+                    return iced::exit();
                 }
 
-                // CloseApp / our own MenuAction("quit") both exit.
-                let our_quit = matches!(
-                    &parsed,
-                    Some(Topic::MenuAction(MenuActionPayload { app_id, action_id }))
-                        if app_id == APP_ID && action_id == "quit"
-                );
-                let close_us = matches!(
-                    &parsed,
-                    Some(Topic::CloseApp(app_id)) if app_id == APP_ID
-                );
-
-                match parsed {
+                match Topic::parse(&message) {
                     Some(Topic::Application(app)) => {
                         // Persistent topic: sticky=true is an upsert,
                         // sticky=false is a retract. The host normally
@@ -146,10 +134,6 @@ impl App {
                         self.running = windows;
                     }
                     _ => {}
-                }
-
-                if our_quit || close_us {
-                    return iced::exit();
                 }
             }
             Msg::SelectPanel(p) => self.panel = p,
