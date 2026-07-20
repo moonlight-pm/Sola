@@ -34,7 +34,7 @@ use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
 
 use crate::emulator::Listener;
 use crate::input::{self, Mods, WheelAction};
-use crate::links::{self, UrlSpan};
+use crate::links::{self, UrlSpan}; // UrlSpan: draw_url_underline (rate-limited pass TBD)
 use crate::perf;
 use sola_kit::fonts;
 
@@ -51,16 +51,6 @@ struct RawCell {
     flags: Flags,
 }
 
-/// Resolved cell ready for painting (no term lock held).
-#[derive(Clone, Copy)]
-struct SnapCell {
-    line: i32,
-    col: usize,
-    c: char,
-    fg: Color,
-    bg: Color,
-    flags: Flags,
-}
 
 /// Padding around the grid, in px. Matches the spike.
 const PAD: f32 = 6.0;
@@ -832,7 +822,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             // NO URL scan here — those were ~3–6 ms on a ~12k-cell grid and
             // starved the PTY reader (see sola-terminal-perf.log lock_us).
             let t_lock = Instant::now();
-            let (raw_cells, selection, display_offset, screen_lines, cols, colors) = {
+            let (raw_cells, selection, display_offset, screen_lines, colors) = {
                 // Unfair: don't queue behind the reader's fair-lease. Snapshot
                 // is brief (raw Copy fields only); starving a single advance
                 // is fine.
@@ -864,46 +854,22 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                         flags: cell.flags,
                     });
                 }
-                (raw, selection, display_offset, screen_lines, cols, colors)
+                (raw, selection, display_offset, screen_lines, colors)
             };
             lock_us.set(t_lock.elapsed());
 
             let t_paint = Instant::now();
-
-            // Resolve colours + invert OFF the lock.
-            let cells: Vec<SnapCell> = raw_cells
-                .iter()
-                .map(|r| {
-                    let (mut fg, mut bg) = (
-                        palette.resolve(r.fg, &colors),
-                        palette.resolve(r.bg, &colors),
-                    );
-                    if r.flags.contains(Flags::INVERSE) {
-                        std::mem::swap(&mut fg, &mut bg);
-                    }
-                    SnapCell {
-                        line: r.line,
-                        col: r.col,
-                        c: r.c,
-                        fg,
-                        bg,
-                        flags: r.flags,
-                    }
-                })
-                .collect();
-
-            // URL scan: only if we can grab the lock without waiting. Under a
-            // scroll/repaint storm the reader owns the mutex; skipping
-            // underlines for a frame is fine (they reappear on the next calm
-            // rebuild).
-            let urls: Vec<UrlSpan> = match self.term.try_lock_unfair() {
-                Some(term) => links::visible_urls(&term),
-                None => Vec::new(),
-            };
+            // NOTE: Do NOT call `links::visible_urls` here. Post-fix perf logs
+            // showed paint_avg_us ~3.2 ms with only ~600 glyphs — the URL scan
+            // of a 12k-cell grid was burning ~2 ms per rebuild at ~30 rebuilds/s
+            // under Grok's continuous TUI refresh. Click-to-open still uses
+            // `url_at_point` on press; underlines are deferred (cheap follow-up:
+            // rate-limited cache on SelState).
 
             let mut glyphs = 0usize;
 
             // ── Pass 1: backgrounds, batched into contiguous same-bg runs ──
+            // Resolve bg only (not fg) and only emit non-default runs.
             let mut run: Option<(i32, usize, usize, Color)> = None;
             let flush = |frame: &mut Frame<Renderer>, run: &Option<(i32, usize, usize, Color)>| {
                 if let Some((line, start, end, bg)) = *run {
@@ -920,16 +886,17 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 }
             };
 
-            for cell in &cells {
+            for r in &raw_cells {
+                let bg = resolved_bg(palette, r, &colors);
                 match run.as_mut() {
                     Some((rl, _rs, re, rbg))
-                        if *rl == cell.line && *re + 1 == cell.col && *rbg == cell.bg =>
+                        if *rl == r.line && *re + 1 == r.col && *rbg == bg =>
                     {
-                        *re = cell.col;
+                        *re = r.col;
                     }
                     _ => {
                         flush(frame, &run);
-                        run = Some((cell.line, cell.col, cell.col, cell.bg));
+                        run = Some((r.line, r.col, r.col, bg));
                     }
                 }
             }
@@ -947,25 +914,28 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 );
             }
 
-            // ── Pass 2: glyphs ──
-            for cell in &cells {
-                if cell.c == ' ' || cell.c == '\0' {
+            // ── Pass 2: glyphs (resolve fg only for non-blank cells) ──
+            // Reuse one String to avoid per-glyph heap churn (iced Text wants
+            // owned content).
+            let mut glyph_str = String::with_capacity(4);
+            for r in &raw_cells {
+                if r.c == ' ' || r.c == '\0' {
                     continue;
                 }
-                if cell.flags.contains(Flags::HIDDEN) {
+                if r.flags.contains(Flags::HIDDEN) {
                     continue;
                 }
 
-                let mut fg = cell.fg;
-                if cell.flags.contains(Flags::DIM) {
+                let mut fg = resolved_fg(palette, r, &colors);
+                if r.flags.contains(Flags::DIM) {
                     fg = dim(fg);
                 }
-                let font = glyph_font(cell.flags);
-                let (x, y) = cell_xy_metrics(metrics, cell.line, cell.col);
-                let mut ch_buf = [0u8; 4];
-                let content = cell.c.encode_utf8(&mut ch_buf);
+                let font = glyph_font(r.flags);
+                let (x, y) = cell_xy_metrics(metrics, r.line, r.col);
+                glyph_str.clear();
+                glyph_str.push(r.c);
                 frame.fill_text(Text {
-                    content: content.to_string(),
+                    content: glyph_str.clone(),
                     position: Point::new(x.round(), y.round()),
                     color: fg,
                     size: metrics.font_size.into(),
@@ -976,31 +946,18 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 });
                 glyphs += 1;
 
-                if cell.flags.contains(Flags::UNDERLINE) {
+                if r.flags.contains(Flags::UNDERLINE) {
                     let uy = y + metrics.cell_h - 2.0;
                     stroke_h(frame, x, uy, metrics.cell_w, fg);
                 }
-                if cell.flags.contains(Flags::STRIKEOUT) {
+                if r.flags.contains(Flags::STRIKEOUT) {
                     let sy = y + metrics.cell_h * 0.5;
                     stroke_h(frame, x, sy, metrics.cell_w, fg);
                 }
             }
 
-            let link_color = palette.ansi[12];
-            for span in &urls {
-                draw_url_underline(
-                    frame,
-                    span,
-                    metrics,
-                    link_color,
-                    display_offset,
-                    screen_lines,
-                    cols,
-                );
-            }
-
             paint_us.set(t_paint.elapsed());
-            cell_n.set(cells.len());
+            cell_n.set(raw_cells.len());
             glyph_n.set(glyphs);
         });
 
@@ -1063,8 +1020,39 @@ fn cell_xy_metrics(metrics: CellMetrics, row: i32, col: usize) -> (f32, f32) {
     )
 }
 
+/// Resolve background (with inverse) for a raw cell.
+#[inline]
+fn resolved_bg(palette: &Palette, r: &RawCell, colors: &Colors) -> Color {
+    if r.flags.contains(Flags::INVERSE) {
+        palette.resolve(r.fg, colors)
+    } else {
+        // Fast path: default background is the common case on sparse TUIs.
+        match r.bg {
+            AnsiColor::Named(NamedColor::Background) => palette.bg,
+            other => palette.resolve(other, colors),
+        }
+    }
+}
+
+/// Resolve foreground (with inverse) for a raw cell.
+#[inline]
+fn resolved_fg(palette: &Palette, r: &RawCell, colors: &Colors) -> Color {
+    if r.flags.contains(Flags::INVERSE) {
+        palette.resolve(r.bg, colors)
+    } else {
+        match r.fg {
+            AnsiColor::Named(NamedColor::Foreground) => palette.fg,
+            other => palette.resolve(other, colors),
+        }
+    }
+}
+
 /// Underline a URL span across its visible cells. Handles wrap-joined spans
 /// that cross multiple viewport rows.
+///
+/// Currently unused in the hot paint path (URL scan was too expensive under
+/// continuous TUI refresh). Kept for a rate-limited underline pass.
+#[allow(dead_code)]
 fn draw_url_underline(
     frame: &mut Frame<Renderer>,
     span: &UrlSpan,

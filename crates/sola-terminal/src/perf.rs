@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const LOG_PATH: &str = "/opt/sola/log/sola-terminal-perf.log";
 
 /// Events at or above this duration get an immediate line.
-const SLOW_US: u64 = 8_000; // 8 ms
+const SLOW_US: u64 = 4_000; // 4 ms — half a 60 Hz frame
 
 /// How often to flush the aggregate summary.
 const SUMMARY_EVERY: Duration = Duration::from_secs(1);
