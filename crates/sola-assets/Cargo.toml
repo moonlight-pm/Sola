@@ -5,7 +5,8 @@ edition.workspace = true
 
 [dependencies]
 # Intentionally dependency-free at the GUI layer: this crate is pure
-# on-disk asset resolution (icons, fonts). The `sola-assets://` WebKit
-# URI-scheme glue lives in its only consumer, `sola-app`, so pulling
-# `webkit6`/`gtk4` here never leaks `libwebkitgtk-6.0` into iced/WPE
-# consumers (it would shadow the WPE browser's `webkit_web_view_new`).
+# on-disk asset resolution (icons, fonts). Live consumers are iced apps
+# via sola-kit (`components/icon` reads SVGs from /opt/sola/share). The
+# historical `sola-assets://` WebKit URI-scheme glue lived in the
+# apocrypha `sola-app` host — do not reintroduce webkit/gtk deps here
+# (they would shadow the WPE browser's `webkit_web_view_new`).

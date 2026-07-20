@@ -1,0 +1,35 @@
+[package]
+name = "sola-mail"
+version = "0.1.0"
+edition = "2024"
+description = "Legacy WebView mail client (apocrypha — reference for a future crates/sola-mail)"
+
+# Reference only. See apocrypha/README.md. Not a workspace member.
+
+[[bin]]
+name = "sola-mail"
+path = "src/main.rs"
+
+[dependencies]
+sola-app = { path = "../../sola-app" }
+sola-bus = { path = "../../../crates/sola-bus" }
+sola-core = { path = "../../../crates/sola-core" }
+
+gtk4 = "0.9"
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+tracing = "0.1"
+anyhow = "1"
+async-trait = "0.1"
+
+imap = { version = "2", default-features = false }
+rustls = { version = "0.23", features = ["aws_lc_rs"] }
+rustls-connector = { version = "0.21", features = ["native-certs"] }
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "rustls-tls", "hostname"] }
+mail-parser = "0.9"
+ureq = "3"
+base64 = "0.22"

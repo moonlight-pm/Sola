@@ -5,7 +5,7 @@ edition.workspace = true
 
 # Minimal iced-based AI agent shell. This intentionally starts from the
 # current sola-kit app pattern (see sola-terminal / sola-settings), not the
-# retired WebView prototype under apps/agent.
+# retired WebView prototype under apocrypha/apps/agent.
 
 [[bin]]
 name = "sola-agent"

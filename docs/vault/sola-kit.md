@@ -13,9 +13,10 @@ consumers: `sola-monitor`, `sola-settings`, `sola-shell`,
 
 Do **not** confuse this crate with:
 
-- **`sola-app`** — the **legacy GTK4 + WebKit6** WebView host. Frozen;
-  out of kit scope. Not iced. See [[sola-app]].
-- **`apps/*`** — deprecated / not on the iced kit path.
+- **`apocrypha/sola-app`** — the **legacy GTK4 + WebKit6** WebView
+  host. Reference only; not a workspace member. See [[sola-app]].
+- **`apocrypha/apps/*`** — retired WebView prototypes (agent, mail
+  reference). Not on the iced kit path.
 - The **removed CEF/Remix kit** — historical only; there is no second
   "sola-kit" web stack.
 

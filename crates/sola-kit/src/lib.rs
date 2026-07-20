@@ -21,8 +21,8 @@
 //! is the steady state: apps store an `iced::Theme`, subscribe via
 //! [`app::bus_subscription`], and apply updates with
 //! [`apply_theme_update`] (or shell's `on_theme` + [`theme::ShellStyle`]).
-//! [`default_theme`] is the pre-replay / offline default. Legacy
-//! WebView (`sola-app`) is frozen and out of kit scope.
+//! [`default_theme`] is the pre-replay / offline default. The old
+//! WebView host (`apocrypha/sola-app`) is out of kit scope.
 //!
 //! ## Components
 //!

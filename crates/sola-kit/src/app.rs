@@ -206,7 +206,7 @@ pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
 ///    `SOLA_NO_SELF_WATCH=1` is set in the environment (sola the
 ///    process manager sets this when launching apps it already
 ///    supervises directly, to avoid a double restart). Mirrors the
-///    legacy `sola-app` behavior.
+///    historical `sola-app` behavior (now under `apocrypha/`).
 ///
 /// Returns the resolved Wayland socket name so the caller can log it.
 /// Apps that need different log init or a different Wayland timeout

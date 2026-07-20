@@ -23,14 +23,14 @@ edition = "2024"
 
 [workspace.dependencies]
 base64 = "0.22"
-imap = { version = "2", default-features = false }
-lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "rustls-tls", "hostname"] }
-mail-parser = "0.9"
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
-rustls-connector = { version = "0.21", features = ["native-certs"] }
 serde_yaml_ng = "0.10"
 toml = "0.8"
 ureq = "3"
+# imap / lettre / mail-parser / rustls-connector lived here for the
+# legacy WebView mail app; that tree is now apocrypha/apps/mail with
+# pinned versions. Reintroduce as workspace deps when crates/sola-mail
+# lands on sola-kit.
 
 # Substitute a zero-dep stub for tauri-apps/download-cef. The upstream
 # crate is a build-dependency of cef-dll-sys (transitive via `cef`)

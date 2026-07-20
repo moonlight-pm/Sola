@@ -39,10 +39,10 @@ in
       xdg-utils           # xdg-open / xdg-mime for default-browser routing
       desktop-file-utils  # update-desktop-database
 
-      # WebKitGTK (legacy sola-app stack) modules. Sola-kit apps don't
-      # need these, but several legacy apps (sola-browser,
-      # sola-terminal, sola-shell, sola-mail) still depend on them at
-      # runtime.
+      # GStreamer / glib-networking historically pulled for WebKitGTK
+      # (apocrypha sola-app stack). Kept for media / TLS helpers used
+      # by other packages in this list; iced sola-kit apps do not need
+      # WebKitGTK itself.
       glib-networking     # WebKit TLS
       gst_all_1.gstreamer
       gst_all_1.gst-plugins-base

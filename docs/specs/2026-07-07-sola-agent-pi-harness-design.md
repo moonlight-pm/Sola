@@ -14,9 +14,9 @@ minimalism and un-knobbed loop — but pi is TypeScript with no Rust library, so
 this is a **from-scratch reimplementation of pi's ideas**, not a dependency on
 pi. No Node, no WebView, no external CLI.
 
-This replaces the retired `apps/agent` prototype (a GTK4/WebKit WebView that
-shelled out to the `claude` CLI). Nothing from that host layer survives; a few
-engine-level ideas do (below).
+This replaces the retired WebView prototype (now `apocrypha/apps/agent`, a
+GTK4/WebKit host that shelled out to the `claude` CLI). Nothing from that host
+layer survives; a few engine-level ideas do (below).
 
 ## Non-goals (deliberately not built)
 
@@ -45,8 +45,8 @@ These are defaults, not walls — each could return later as an opt-in.
    appends a canned *"Agent backend is not wired yet."* reply. We grow this;
    we do not restart it.
 
-2. **The retired prototype** (`apps/agent`, not a workspace member, on the
-   frozen `sola-app` stack). Worth carrying forward at the engine level:
+2. **The retired prototype** (`apocrypha/apps/agent`, on the frozen
+   `apocrypha/sola-app` stack). Worth carrying forward at the engine level:
    - the **stream reader state machine** shape (`in_turn` / text accumulation /
      block tracking; delta → tool-start → tool-result → usage),
    - a clean **internal event vocabulary** as a UI protocol,

@@ -158,7 +158,7 @@ the TTY.
 
 ## 6. Repository layout
 
-See `CLAUDE.md` at the repo root for the canonical workspace structure
+See `AGENTS.md` at the repo root for the canonical workspace structure
 and project conventions. The headline pieces:
 
 - `crates/sola/` — process manager (the binary you actually launch).
@@ -166,11 +166,12 @@ and project conventions. The headline pieces:
 - `crates/sola-shell/` — menubar, launcher, switcher, zoning.
 - `crates/sola-river/` — bridges River (the underlying Wayland compositor)
   events onto the bus.
-- `crates/sola-kit/` — CEF/Remix v3 app framework (current).
-- `crates/sola-app/` — GTK4/WebKit app framework (legacy, being ported away).
-- `crates/sola-*` — individual apps (settings, monitor, browser, terminal, mail).
+- `crates/sola-kit/` — Iced app kit + storybook (production UI path).
+- `crates/sola-*` — individual apps (settings, monitor, browser, terminal,
+  agent, …).
 - `crates/sola-make/` — the `cargo make ...` build system.
 - `crates/sola-assets/` — third-party asset pulls (icons, fonts, cursors).
+- `apocrypha/` — frozen legacy WebView stack (reference only; not built).
 - `docs/manual/` — long-form architecture & reference docs.
 - `docs/specs/` — design docs and implementation plans (date-prefixed).
 - `docs/vault/` — Obsidian vault; the canonical one to skim is

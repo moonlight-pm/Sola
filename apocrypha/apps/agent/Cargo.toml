@@ -1,0 +1,27 @@
+[package]
+name = "sola-agent-webview"
+version = "0.1.0"
+edition = "2024"
+description = "Retired WebView agent prototype (apocrypha — not a workspace member)"
+
+# Package renamed from `sola-agent` so it cannot clash with crates/sola-agent.
+# Reference only. See apocrypha/README.md. Live app: crates/sola-agent.
+
+[dependencies]
+sola-app = { path = "../../sola-app" }
+sola-bus = { path = "../../../crates/sola-bus" }
+sola-core = { path = "../../../crates/sola-core" }
+gtk4 = "0.9"
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "process", "io-util"] }
+tokio-util = "0.7"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+tracing = "0.1"
+
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+async-trait = "0.1"
+libc = "0.2"

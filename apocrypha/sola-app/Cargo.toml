@@ -1,12 +1,15 @@
 [package]
 name = "sola-app"
-version.workspace = true
-edition.workspace = true
+version = "0.1.0"
+edition = "2024"
+description = "Legacy GTK4 + WebKit6 WebView host (apocrypha — not a workspace member)"
+
+# Reference only. See apocrypha/README.md.
 
 [dependencies]
-sola-bus = { path = "../sola-bus" }
-sola-assets = { path = "../sola-assets" }
-sola-core = { path = "../sola-core" }
+sola-bus = { path = "../../crates/sola-bus" }
+sola-assets = { path = "../../crates/sola-assets" }
+sola-core = { path = "../../crates/sola-core" }
 gtk4 = "0.9"
 gdk4 = "0.9"
 glib = "0.20"

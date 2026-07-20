@@ -1,6 +1,8 @@
 # Sola
 
-Sola is a Wayland desktop shell — a full compositor and desktop environment built in Rust with Smithay, using WebKit6 WebViews for all UI rendering.
+Sola is a Wayland desktop shell — a full compositor and desktop environment
+built in Rust. UI is pure Rust via **Iced** (`sola-kit`); River is the
+Wayland compositor, bridged by `sola-river`.
 
 ## Active work
 
@@ -13,10 +15,9 @@ re-plan from scratch. Keep `active-work.md` updated as phases complete.
 
 - **Process manager (`sola`):** Launches and supervises all components. No desktop or bus logic — pure process management.
 - **Bus (`sola-bus`):** General-purpose IPC bus. Separate process. All Sola components communicate via bus events over a Unix socket.
-- **Compositor (`sola-compositor`):** Smithay (pure Rust) — DRM/KMS backend, input handling, Wayland protocol, surface management, XWayland hosting. Separate process, bus client.
-- **Renderer:** Smithay GlesRenderer (OpenGL ES) — composites Wayland client surfaces
-- **Shell apps:** WebKit6 WebViews as Wayland clients + bus clients. Each is a separate process (switcher, launcher, panel, etc.).
-- **Web frontends:** Framework-agnostic. Any app or component can use any web framework (Svelte, React, vanilla, etc.)
+- **Compositor:** River (external), bridged by `sola-river` (bus client).
+- **Shell / apps:** Iced programs via `sola-kit` — Wayland clients + bus clients. Each is a separate process.
+- **Browser:** Custom iced chrome with WPE (primary) or CEF (parallel) engines.
 - **IPC:** Sola Bus (events over Unix socket) + Wayland protocols for surfaces/input
 - **Build system:** `cargo make` (xtask pattern via `sola-make` crate)
 
@@ -29,20 +30,24 @@ crates/
   sola/                # Process manager (binary entry point)
   sola-bus/            # IPC bus host + client library
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
-  sola-app/            # WebView app framework (GTK4 + WebKit6, legacy)
-  sola-kit/            # Iced-based app kit (new) — workspace-excluded; lib + `sola-kit` storybook binary
+  sola-kit/            # Iced app kit + storybook binary
   sola-assets/         # Vendored icon/asset bundles
-  sola-browser/        # WebKit browser
+  sola-browser/        # Thin engine dispatcher (exec WPE or CEF)
+  sola-browser-core/   # Shared iced browser chrome
+  sola-browser-wpe/    # Primary browser engine
+  sola-browser-cef/    # Parallel CEF engine
   sola-make/           # Build/install orchestration (xtask)
-  sola-monitor/        # System monitor / bus audit (iced, first sola-kit consumer)
+  sola-monitor/        # System monitor / bus audit
   sola-river/          # River compositor bridge (bus ↔ wayland)
   sola-session/        # User-app session manager
-  sola-settings/       # Settings panel
+  sola-settings/       # Settings panel (incl. mail config)
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
-  sola-terminal/       # Terminal emulator (xterm.js + tmux)
-apps/
-  agent/               # AI agent frontend (not in workspace yet)
-  mail/                # IMAP/SMTP mail client (not in workspace yet)
+  sola-terminal/       # Terminal emulator (alacritty grid + iced)
+  sola-agent/          # Coding agent (iced + Fugu)
+apocrypha/             # Reference-only: legacy WebView stack (not built)
+  sola-app/            # Frozen GTK4 + WebKit6 host
+  apps/agent/          # Retired WebView agent prototype
+  apps/mail/           # Reference for future crates/sola-mail
 docs/
   manual/              # Architecture docs, references
   specs/               # Design specs and implementation plans
@@ -135,22 +140,19 @@ tail -100 /opt/sola/log/sola.log
 - Logs go to `/opt/sola/log/`
 - User launches sola manually from a physical TTY — no display manager, no auto-login
 
-## UI Stack — Iced (current) + legacy WebView
+## UI Stack — Iced
 
 Sola's app UI is built with **[Iced](https://iced.rs) 0.14** — pure Rust, no
 web engine. Apps are `iced` programs (wgpu renderer, wayland feature, svg) that
 run as wayland clients of `sola-river` and talk to the rest of the system over
 the bus. There is no HTML/JS/CSS, no bundler, no WebView in the active stack.
 
-One earlier stack survives only as a legacy crate, frozen until its last
-consumer is ported off it:
-
-- **`sola-app`** — the original GTK4 + WebKit6 host. No new work here.
-
-`sola-shell` and `sola-settings` are already ported to Iced; `sola-monitor` is
-the canonical first Iced consumer. Do **not** write new apps against the legacy
-stack. The CEF binding notes at the end of this file apply to `sola-browser-cef`,
-not to the Iced kit.
+The old GTK4 + WebKit6 host (`sola-app`) and its apps live under
+`apocrypha/` for reference only — not workspace members, not installed.
+Do **not** write new apps against that stack. The only remaining product
+gap from that era is a kit-native mail client (`crates/sola-mail`); use
+`apocrypha/apps/mail` as the logic/UI reference. CEF binding notes at the
+end of this file apply to `sola-browser-cef`, not to the Iced kit.
 
 ## sola-kit (the Iced app kit)
 

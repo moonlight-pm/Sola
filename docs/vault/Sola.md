@@ -39,8 +39,8 @@ bus and compositor restarts.
 | sola-river      | River ↔ bus bridge (window manager, xkb bindings)       | Separate  |
 | sola-shell      | Desktop shell — launcher, switcher, menubar, zoning     | Separate  |
 | sola-session    | User app session manager (spawn, close, reap)           | Separate  |
-| [[sola-app]]    | WebView app framework (GTK4 + WebKit6) — being replaced | Library   |
-| [[sola-kit]]    | WebView app framework (CEF + sctk) + theme-editor bin   | Lib + bin |
+| [[sola-kit]]    | Iced app kit + storybook binary                         | Lib + bin |
+| [[sola-app]]    | Legacy WebView host — **apocrypha only**                | Archive   |
 | sola-core       | Shared primitives — log, env, process, keys, encrypted  | Library   |
 | sola-assets     | Vendored icon/asset bundles                             | Library   |
 | [[sola-make]]   | Build/install orchestration (xtask)                     | Dev tool  |
@@ -98,8 +98,7 @@ crates/
   sola/                # Process manager
   sola-bus/            # Bus host + client library + protocol
   sola-core/           # Shared primitives (env, process, log, keys, encrypted, watcher)
-  sola-app/            # WebView app framework (GTK4 + WebKit6) — being replaced
-  sola-kit/            # WebView app framework (CEF + sctk) + theme-editor binary
+  sola-kit/            # Iced app kit + storybook binary
   sola-assets/         # Vendored icon/asset bundles
   sola-make/           # Build/install orchestration (xtask)
   sola-monitor/        # System monitor / bus audit
@@ -107,14 +106,18 @@ crates/
   sola-session/        # User-app session manager (spawn/close/reap)
   sola-settings/       # Settings panel
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
+  sola-terminal/       # Terminal (iced)
+  sola-agent/          # Coding agent (iced)
+  sola-browser*/       # Browser dispatcher + WPE/CEF engines
+apocrypha/             # Legacy WebView stack (not built; reference only)
 docs/
   specs/               # Design specs and implementation plans
   vault/               # Canonical architecture docs (this vault)
 ```
 
-`apps/*` (browser, mail, terminal, agent) are temporarily excluded
-from the workspace. They'll be re-added as each is rewritten against
-the new bus model.
+Production UI is iced via [[sola-kit]]. The old GTK/WebKit host and
+apps live under `apocrypha/` (see `apocrypha/README.md`). Mail client
+rewrite still pending; settings already owns iced mail config.
 
 ## Runtime Environment
 
