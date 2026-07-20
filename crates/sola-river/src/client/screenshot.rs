@@ -546,7 +546,11 @@ fn pixels_to_rgba8(
                 }
             }
         }
-        // Memory LE: B, G, R (3 bpp) — use event stride, pack α=255
+        // DRM/Wayland `bgr888`: [23:0] B:G:R little-endian → **memory** R, G, B.
+        // (The bitfield name is high→low; LE puts the low bits first.)
+        // Earlier this arm treated memory as B,G,R and R↔B-swapped every PNG
+        // (seed cyan `#00d4ff` became yellow `#ffd400`, slate `#161b22` → brown).
+        // Use event stride; pack α=255.
         wl_shm::Format::Bgr888 => {
             for y in 0..h {
                 let row = row_src(y)?;
@@ -555,9 +559,9 @@ fn pixels_to_rgba8(
                     if i + 2 >= row.len() {
                         return Err("row shorter than width*3 for Bgr888".into());
                     }
-                    let b = row[i];
+                    let r = row[i];
                     let g = row[i + 1];
-                    let r = row[i + 2];
+                    let b = row[i + 2];
                     let o = (y * w + x) * 4;
                     out[o] = r;
                     out[o + 1] = g;
@@ -625,7 +629,9 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for AppData {
                         return;
                     }
                 };
-                debug!(?fmt, width, height, stride, "screencopy buffer params");
+                // info: channel-order bugs only show up with the live format;
+                // keep this visible without RUST_LOG=debug.
+                info!(?fmt, width, height, stride, "screencopy buffer params");
                 if let Some(flight) = state.screenshot.flight.as_mut() {
                     flight.format = Some(fmt);
                     flight.width = width;
@@ -703,10 +709,18 @@ mod tests {
 
     #[test]
     fn bgr888_converts_to_rgba() {
-        // One pixel B=1,G=2,R=3 with stride 3
+        // DRM bgr888 LE memory is R,G,B (not B,G,R). One pixel R=1,G=2,B=3.
         let src = [1u8, 2, 3];
         let out = pixels_to_rgba8(&src, wl_shm::Format::Bgr888, 1, 1, 3, false).unwrap();
-        assert_eq!(out, vec![3, 2, 1, 255]);
+        assert_eq!(out, vec![1, 2, 3, 255]);
+    }
+
+    #[test]
+    fn bgr888_accent_cyan_not_yellow() {
+        // Seed accent #00d4ff must not become #ffd400 (the P1 baseline bug).
+        let src = [0x00u8, 0xd4, 0xff];
+        let out = pixels_to_rgba8(&src, wl_shm::Format::Bgr888, 1, 1, 3, false).unwrap();
+        assert_eq!(out, vec![0x00, 0xd4, 0xff, 255]);
     }
 
     #[test]
