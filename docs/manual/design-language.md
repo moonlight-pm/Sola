@@ -297,6 +297,8 @@ When executing visual polish against this language:
 
 ### Product / in-repo
 
+- **macOS L&F roadmap (phased, screenshot-first):** `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md`  
+- **Screenshot capture plan (P0 tooling):** `docs/specs/2026-07-20-screenshot-capture-plan.md`  
 - Theme protocol: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`  
 - Shell customization tokens: `docs/specs/2026-06-06-shell-customization-design.md`  
 - Shell iced port: `docs/specs/2026-05-22-sola-shell-iced-port-design.md`  
