@@ -15,7 +15,7 @@
 //!    the grid cache.
 
 use std::cell::Cell as StdCell;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
@@ -32,7 +32,7 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
 
-use crate::emulator::Listener;
+use crate::emulator::{self, CursorSnap, Listener};
 use crate::input::{self, Mods, WheelAction};
 use crate::links::{self, UrlSpan}; // UrlSpan: draw_url_underline (rate-limited pass TBD)
 use crate::perf;
@@ -457,6 +457,9 @@ fn dim(c: Color) -> Color {
 /// owner (Task 4.4's edit point).
 pub struct TermView<'a, Message> {
     pub term: Arc<FairMutex<Term<Listener>>>,
+    /// Lock-free cursor position (updated by the PTY reader). Overlay paint
+    /// must never lock `term` — see [`CursorSnap`].
+    pub cursor_snap: Arc<RwLock<CursorSnap>>,
     pub cache: &'a canvas::Cache,
     pub palette: &'a Palette,
     pub metrics: CellMetrics,
@@ -854,6 +857,8 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                         flags: cell.flags,
                     });
                 }
+                // Refresh lock-free cursor while we still hold the term.
+                emulator::publish_cursor(&*term, &self.cursor_snap);
                 (raw, selection, display_offset, screen_lines, colors)
             };
             lock_us.set(t_lock.elapsed());
@@ -961,20 +966,22 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             glyph_n.set(glyphs);
         });
 
-        // ── Uncached cursor overlay ──────────────────────────────────────
-        // Brief unfair lock only for the cursor cell; blink toggles
-        // `cursor_on` without clearing the grid cache.
+        // ── Uncached cursor overlay (NO term lock) ───────────────────────
+        // Perf log: reader holds the term ~4 ms per 4 KB advance under Grok;
+        // locking here every frame dropped the UI to ~15 fps. Cursor is
+        // published by the reader / grid snapshot into `cursor_snap`.
         let mut cursor_frame = Frame::new(renderer, bounds.size());
         {
-            let term = self.term.lock_unfair();
-            let content = term.renderable_content();
-            let display_offset = content.display_offset;
+            let snap = self
+                .cursor_snap
+                .read()
+                .map(|g| *g)
+                .unwrap_or_default();
             let (cx, cy) = cell_xy_metrics(
                 metrics,
-                visible_row(content.cursor.point.line.0, display_offset),
-                content.cursor.point.column.0,
+                visible_row(snap.line, snap.display_offset),
+                snap.col,
             );
-            drop(term);
 
             if self.active {
                 if self.cursor_on {

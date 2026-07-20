@@ -529,6 +529,7 @@ impl App {
             Some(rt) => {
                 let view = term_view::TermView {
                     term: rt.emulator.term(),
+                    cursor_snap: rt.emulator.cursor_snap(),
                     cache: &rt.cache,
                     palette: &self.palette,
                     metrics: self.metrics,
@@ -1120,6 +1121,7 @@ impl App {
         );
         let em = emulator::Emulator::new(cols, rows, listener);
         let term = em.term();
+        let cursor = em.cursor_snap();
 
         if seed_scrollback {
             match tmux::capture_scrollback(&meta.tmux_session) {
@@ -1130,6 +1132,7 @@ impl App {
                     > = alacritty_terminal::vte::ansi::Processor::new();
                     let mut t = term.lock();
                     processor.advance(&mut *t, seed.as_bytes());
+                    emulator::publish_cursor(&*t, &cursor);
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(pane = %pane_id, "scrollback capture failed: {e}"),
@@ -1143,6 +1146,7 @@ impl App {
             rows,
             meta.cwd.as_deref(),
             term,
+            cursor,
             emulator::notify_sender(),
             emulator::exit_sender(),
         ) {

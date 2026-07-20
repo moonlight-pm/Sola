@@ -24,20 +24,43 @@
 //! `bus_subscription`.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, mpsc};
 use std::time::{Duration, Instant};
 
 use iced::futures::Stream;
 use iced::Subscription;
 
-/// How long the output-notify forwarder holds a dirty batch open before
-/// delivering pane-ids to iced. Absorbs the full-repaint storm a mouse-tracking
-/// TUI (Grok, etc.) emits while the user is scrolling, so iced redraws at
-/// roughly display cadence instead of once per 4 KB chunk.
 /// Cap content wakeups under continuous TUI refresh (Grok streams ~30–60
 /// PtyOutput/s even with no wheel). 33 ms ≈ 30 Hz — enough for smooth scroll
 /// feel without spending 30×3 ms of paint every second.
 const OUTPUT_BATCH_WINDOW: Duration = Duration::from_millis(33);
+
+/// Last-known cursor position for lock-free cursor painting.
+///
+/// Updated by the PTY reader (already holds the term lock after `advance`) and
+/// by grid snapshots during cache rebuild. The canvas cursor overlay **must
+/// not** lock the term every frame — under Grok the reader holds the mutex for
+/// ~4 ms per chunk and a blocking cursor lock froze the whole UI at ~15 fps.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CursorSnap {
+    /// Buffer line (can be negative in scrollback; usually on-screen).
+    pub line: i32,
+    pub col: usize,
+    pub display_offset: usize,
+}
+
+/// Publish cursor from a term that is already locked.
+pub fn publish_cursor(term: &alacritty_terminal::term::Term<Listener>, snap: &RwLock<CursorSnap>) {
+    let grid = term.grid();
+    let point = grid.cursor.point;
+    if let Ok(mut g) = snap.write() {
+        *g = CursorSnap {
+            line: point.line.0,
+            col: point.column.0,
+            display_offset: grid.display_offset(),
+        };
+    }
+}
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
@@ -409,6 +432,8 @@ impl Dimensions for TermDims {
 /// `parser` field is exercised only by the headless `advance` unit test.
 pub struct Emulator {
     term: Arc<FairMutex<Term<Listener>>>,
+    /// Lock-free cursor for the canvas overlay (see [`CursorSnap`]).
+    cursor: Arc<RwLock<CursorSnap>>,
     // Used by Emulator::advance (called from unit tests and future PTY path).
     #[allow(dead_code)]
     parser: Processor,
@@ -439,6 +464,7 @@ impl Emulator {
         let term = Term::new(config, &dims, listener);
         Self {
             term: Arc::new(FairMutex::new(term)),
+            cursor: Arc::new(RwLock::new(CursorSnap::default())),
             parser: Processor::new(),
         }
     }
@@ -476,6 +502,12 @@ impl Emulator {
     /// deadlock.
     pub fn term(&self) -> Arc<FairMutex<Term<Listener>>> {
         self.term.clone()
+    }
+
+    /// Shared cursor snap for lock-free overlay painting. Clone into the
+    /// reader thread and the `TermView`.
+    pub fn cursor_snap(&self) -> Arc<RwLock<CursorSnap>> {
+        self.cursor.clone()
     }
 
     /// `(history_size, display_offset)` — scrollback diagnostics for the parked

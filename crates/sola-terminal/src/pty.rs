@@ -186,6 +186,7 @@ impl PtyBackend {
         rows: u16,
         cwd: Option<&str>,
         term: Arc<FairMutex<Term<Listener>>>,
+        cursor: Arc<std::sync::RwLock<crate::emulator::CursorSnap>>,
         notify: mpsc::Sender<String>,
         exit: mpsc::Sender<String>,
     ) -> std::io::Result<Self> {
@@ -316,10 +317,12 @@ impl PtyBackend {
                     crate::extkeys::set_level(&reader_tab_id, level);
                 }
                 let t0 = Instant::now();
-                // Unfair: barge past the fair-queue lease the UI uses for
-                // snapshots. UI still wins its own fair lock between advances.
+                // Unfair: barge past a fair waiter. Publish cursor while we
+                // still hold the lock so the UI never needs to lock just to
+                // blink the caret.
                 let mut guard = term.lock_unfair();
                 processor.advance(&mut *guard, chunk);
+                crate::emulator::publish_cursor(&*guard, &cursor);
                 drop(guard);
                 perf::reader_advance(t0.elapsed(), chunk.len());
                 let _ = notify.send(reader_tab_id.clone());
