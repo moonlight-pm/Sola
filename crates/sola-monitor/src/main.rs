@@ -25,11 +25,11 @@ use iced::{event, mouse};
 use sola_bus::topics::{Topic, TopicKind};
 use sola_bus::Message;
 use sola_core::KeyCode;
-use sola_kit::app::{BusSetup, startup, window_settings};
+use sola_kit::app::{BusSetup, apply_theme_update, startup, window_settings};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar_button;
 use sola_kit::fonts;
-use sola_kit::theme::{default_theme, parse as hex, theme_from_bus};
+use sola_kit::theme::{default_theme, parse as hex};
 
 const APP_ID: &str = "sola-monitor";
 
@@ -109,8 +109,8 @@ struct App {
     /// from the cursor).
     drag_anchor: Option<(f32, f32)>,
     /// Live iced theme — replaced on every `Topic::Theme` delivery
-    /// via `sola_kit::theme::from_bus_theme`. Initialized to the
-    /// kit's default so the first frame renders before the bus
+    /// via `apply_theme_update` (theme + fonts + selection). Initialized
+    /// to the kit's default so the first frame renders before the bus
     /// replay arrives.
     theme: Theme,
     /// Float-state tracker so a floating Monitor draws its own titlebar.
@@ -247,15 +247,8 @@ impl App {
             Msg::BusMessage(message) => {
                 self.float.update(&message);
 
-                // Live theme reload: any Topic::Theme delivery
-                // (sticky-replay on connect, or a later edit from
-                // sola-settings) rebuilds the iced theme and is
-                // picked up on the next render via `App::theme`.
-                let parsed = Topic::parse(&message);
-                if let Some(Topic::Theme(bus_theme)) = &parsed {
-                    self.theme = theme_from_bus(bus_theme);
-                    sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(bus_theme));
-                }
+                // Live theme reload: Theme + fonts + selection atoms.
+                apply_theme_update(&message, &mut self.theme);
 
                 // Exit on our own MenuAction("quit") (Cmd+Q) or a
                 // CloseApp addressed to us — both via the shared helper.
