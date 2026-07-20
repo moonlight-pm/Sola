@@ -34,7 +34,9 @@ use iced::Subscription;
 /// delivering pane-ids to iced. Absorbs the full-repaint storm a mouse-tracking
 /// TUI (Grok, etc.) emits while the user is scrolling, so iced redraws at
 /// roughly display cadence instead of once per 4 KB chunk.
-const OUTPUT_BATCH_WINDOW: Duration = Duration::from_millis(12);
+/// ~one display frame. Larger windows cut iced redraw rate under TUI storms
+/// (Grok full-repaints) at a small cost in input→pixel latency.
+const OUTPUT_BATCH_WINDOW: Duration = Duration::from_millis(16);
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;

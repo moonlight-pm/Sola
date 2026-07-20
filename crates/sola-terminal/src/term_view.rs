@@ -38,26 +38,28 @@ use crate::links::{self, UrlSpan};
 use crate::perf;
 use sola_kit::fonts;
 
-/// Owned cell snapshot used after the term lock is released.
+/// Raw cell captured under the term lock (no colour resolution — that runs
+/// after the lock is dropped so a 12k-cell grid doesn't stall the PTY reader).
+#[derive(Clone, Copy)]
+struct RawCell {
+    /// Visible row (0-based in the viewport).
+    line: i32,
+    col: usize,
+    c: char,
+    fg: AnsiColor,
+    bg: AnsiColor,
+    flags: Flags,
+}
+
+/// Resolved cell ready for painting (no term lock held).
 #[derive(Clone, Copy)]
 struct SnapCell {
-    /// Visible row (0-based in the viewport).
     line: i32,
     col: usize,
     c: char,
     fg: Color,
     bg: Color,
     flags: Flags,
-}
-
-/// Grid data captured under a short `FairMutex` hold.
-struct GridSnap {
-    cells: Vec<SnapCell>,
-    selection: Option<SelectionRange>,
-    display_offset: usize,
-    screen_lines: usize,
-    cols: usize,
-    urls: Vec<UrlSpan>,
 }
 
 /// Padding around the grid, in px. Matches the spike.
@@ -825,10 +827,16 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             // Backdrop — one fill behind the whole pane.
             frame.fill_rectangle(Point::ORIGIN, frame.size(), palette.bg);
 
-            // ── Snapshot under lock, then DROP before fill_text ──────────
+            // ── Minimal snapshot under lock ─────────────────────────────
+            // Copy only Copy fields + the Colors table. NO colour resolve and
+            // NO URL scan here — those were ~3–6 ms on a ~12k-cell grid and
+            // starved the PTY reader (see sola-terminal-perf.log lock_us).
             let t_lock = Instant::now();
-            let snap = {
-                let term = self.term.lock();
+            let (raw_cells, selection, display_offset, screen_lines, cols, colors) = {
+                // Unfair: don't queue behind the reader's fair-lease. Snapshot
+                // is brief (raw Copy fields only); starving a single advance
+                // is fine.
+                let term = self.term.lock_unfair();
                 let content = term.renderable_content();
                 let RenderableContent {
                     display_iter,
@@ -839,41 +847,60 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 } = content;
                 let screen_lines = term.screen_lines();
                 let cols = term.columns();
-                let mut cells = Vec::with_capacity(screen_lines * cols);
+                // `Colors` is Copy (fixed-size array of Option<Rgb>).
+                let colors = *colors;
+                let mut raw = Vec::with_capacity(screen_lines * cols);
                 for indexed in display_iter {
                     let cell = indexed.cell;
                     if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                         continue;
                     }
-                    let (mut fg, mut bg) = (
-                        palette.resolve(cell.fg, colors),
-                        palette.resolve(cell.bg, colors),
-                    );
-                    if cell.flags.contains(Flags::INVERSE) {
-                        std::mem::swap(&mut fg, &mut bg);
-                    }
-                    cells.push(SnapCell {
+                    raw.push(RawCell {
                         line: visible_row(indexed.point.line.0, display_offset),
                         col: indexed.point.column.0,
                         c: cell.c,
-                        fg,
-                        bg,
+                        fg: cell.fg,
+                        bg: cell.bg,
                         flags: cell.flags,
                     });
                 }
-                let urls = links::visible_urls(&term);
-                GridSnap {
-                    cells,
-                    selection,
-                    display_offset,
-                    screen_lines,
-                    cols,
-                    urls,
-                }
+                (raw, selection, display_offset, screen_lines, cols, colors)
             };
             lock_us.set(t_lock.elapsed());
 
             let t_paint = Instant::now();
+
+            // Resolve colours + invert OFF the lock.
+            let cells: Vec<SnapCell> = raw_cells
+                .iter()
+                .map(|r| {
+                    let (mut fg, mut bg) = (
+                        palette.resolve(r.fg, &colors),
+                        palette.resolve(r.bg, &colors),
+                    );
+                    if r.flags.contains(Flags::INVERSE) {
+                        std::mem::swap(&mut fg, &mut bg);
+                    }
+                    SnapCell {
+                        line: r.line,
+                        col: r.col,
+                        c: r.c,
+                        fg,
+                        bg,
+                        flags: r.flags,
+                    }
+                })
+                .collect();
+
+            // URL scan: only if we can grab the lock without waiting. Under a
+            // scroll/repaint storm the reader owns the mutex; skipping
+            // underlines for a frame is fine (they reappear on the next calm
+            // rebuild).
+            let urls: Vec<UrlSpan> = match self.term.try_lock_unfair() {
+                Some(term) => links::visible_urls(&term),
+                None => Vec::new(),
+            };
+
             let mut glyphs = 0usize;
 
             // ── Pass 1: backgrounds, batched into contiguous same-bg runs ──
@@ -893,7 +920,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 }
             };
 
-            for cell in &snap.cells {
+            for cell in &cells {
                 match run.as_mut() {
                     Some((rl, _rs, re, rbg))
                         if *rl == cell.line && *re + 1 == cell.col && *rbg == cell.bg =>
@@ -909,19 +936,19 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
             flush(frame, &run);
 
             // ── Selection highlight ──
-            if let Some(range) = snap.selection {
+            if let Some(range) = selection {
                 draw_selection(
                     frame,
                     &range,
                     metrics,
                     palette.selection,
-                    snap.display_offset,
-                    snap.screen_lines,
+                    display_offset,
+                    screen_lines,
                 );
             }
 
-            // ── Pass 2: glyphs (no term lock) ──
-            for cell in &snap.cells {
+            // ── Pass 2: glyphs ──
+            for cell in &cells {
                 if cell.c == ' ' || cell.c == '\0' {
                     continue;
                 }
@@ -935,7 +962,6 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 }
                 let font = glyph_font(cell.flags);
                 let (x, y) = cell_xy_metrics(metrics, cell.line, cell.col);
-                // Single-char content without a heap alloc for BMP glyphs.
                 let mut ch_buf = [0u8; 4];
                 let content = cell.c.encode_utf8(&mut ch_buf);
                 frame.fill_text(Text {
@@ -960,33 +986,30 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 }
             }
 
-            // Always-on link underlines (from snapshot).
             let link_color = palette.ansi[12];
-            for span in &snap.urls {
+            for span in &urls {
                 draw_url_underline(
                     frame,
                     span,
                     metrics,
                     link_color,
-                    snap.display_offset,
-                    snap.screen_lines,
-                    snap.cols,
+                    display_offset,
+                    screen_lines,
+                    cols,
                 );
             }
 
             paint_us.set(t_paint.elapsed());
-            cell_n.set(snap.cells.len());
+            cell_n.set(cells.len());
             glyph_n.set(glyphs);
-            // Cursor is painted in a separate uncached geometry below so
-            // blink does not force a full grid rebuild.
         });
 
         // ── Uncached cursor overlay ──────────────────────────────────────
-        // Brief lock only for the cursor cell; blink toggles `cursor_on`
-        // without clearing the grid cache.
+        // Brief unfair lock only for the cursor cell; blink toggles
+        // `cursor_on` without clearing the grid cache.
         let mut cursor_frame = Frame::new(renderer, bounds.size());
         {
-            let term = self.term.lock();
+            let term = self.term.lock_unfair();
             let content = term.renderable_content();
             let display_offset = content.display_offset;
             let (cx, cy) = cell_xy_metrics(

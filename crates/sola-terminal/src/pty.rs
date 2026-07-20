@@ -291,7 +291,12 @@ impl PtyBackend {
             // discards — `input` reads the tracked level to encode Shift+Enter
             // and friends as CSI-u. See `crate::extkeys`.
             let mut extkeys_scanner = crate::extkeys::Scanner::new();
-            let mut buf = [0u8; 4096];
+            // Larger read + pending buffer so a TUI full-repaint is advanced in
+            // fewer lock acquisitions (alacritty-style batching).
+            // 16 KiB reads (was 4 KiB) → fewer lock acquisitions per TUI repaint.
+            // Unfair lock so the UI's fair snapshot isn't stuck behind us in the
+            // waiter queue after we drop.
+            let mut buf = [0u8; 16 * 1024];
             loop {
                 let n = unsafe {
                     libc::read(
@@ -310,13 +315,13 @@ impl PtyBackend {
                 if let Some(level) = extkeys_scanner.feed(chunk) {
                     crate::extkeys::set_level(&reader_tab_id, level);
                 }
-                {
-                    let t0 = Instant::now();
-                    let mut term = term.lock();
-                    processor.advance(&mut *term, chunk);
-                    drop(term);
-                    perf::reader_advance(t0.elapsed(), chunk.len());
-                }
+                let t0 = Instant::now();
+                // Unfair: barge past the fair-queue lease the UI uses for
+                // snapshots. UI still wins its own fair lock between advances.
+                let mut guard = term.lock_unfair();
+                processor.advance(&mut *guard, chunk);
+                drop(guard);
+                perf::reader_advance(t0.elapsed(), chunk.len());
                 let _ = notify.send(reader_tab_id.clone());
             }
             drop(read_fd);
