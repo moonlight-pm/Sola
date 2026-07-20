@@ -382,9 +382,9 @@ pub fn bus_theme_from_atoms(atoms: &Atoms) -> BusTheme {
 
 
 /// Per-role family selection — what `Topic::Theme` carries on the wire
-/// for the kit's font roles. Defaults match [`crate::fonts::Fonts::default`]
-/// so a fresh storybook starts with Inter everywhere it offers a
-/// pickable role.
+/// for the kit's font roles. Defaults match seed strings (SF Pro Text +
+/// Iosevka Term Slab); [`crate::fonts::fonts_from_families`] falls back
+/// when a face is not installed.
 #[derive(Debug, Clone)]
 pub struct FontSelection {
     pub ui: String,
@@ -397,11 +397,11 @@ pub struct FontSelection {
 impl Default for FontSelection {
     fn default() -> Self {
         Self {
-            ui: "Inter".to_string(),
-            ui_medium: "Inter".to_string(),
-            display: "Inter".to_string(),
-            chrome: "Inter".to_string(),
-            mono: "JetBrains Mono".to_string(),
+            ui: crate::fonts::DEFAULT_UI_FAMILY.to_string(),
+            ui_medium: crate::fonts::DEFAULT_UI_FAMILY.to_string(),
+            display: crate::fonts::DEFAULT_UI_FAMILY.to_string(),
+            chrome: crate::fonts::DEFAULT_UI_FAMILY.to_string(),
+            mono: crate::fonts::DEFAULT_MONO_FAMILY.to_string(),
         }
     }
 }

@@ -17,7 +17,7 @@ pub fn view() -> Element<'static, Msg> {
             subheading("Subheading — 18px condensed-bold"),
             body("Body — 14px normal"),
             caption("Caption — 11px normal").style(muted),
-            code("Code — 12px JetBrains Mono"),
+            code("Code — 12px mono (Iosevka Term Slab)"),
         ]
         .spacing(8),
     );

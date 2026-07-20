@@ -2,28 +2,31 @@
 //!
 //! Sola no longer bundles or registers font files. Fonts are resolved
 //! by family name through the system fontconfig database, loaded into
-//! iced's font db by [`ensure_system_fonts`]. The two families Sola
-//! defaults to — `Inter` (UI) and `JetBrains Mono` (mono) — must be
-//! installed system-wide. See `docs/manual/distribution.md`.
+//! iced's font db by [`ensure_system_fonts`].
+//!
+//! Defaults prefer **SF Pro Text** (UI chrome) and **Iosevka Term Slab**
+//! (mono) when installed; fall back to Inter / JetBrains Mono. Licensed
+//! SF faces live in a **gitignored** stash at `.local/fonts/` (see that
+//! README) and must be installed system-wide (`fc-cache`) to be used.
+//! See `docs/manual/distribution.md`.
 
 use iced::Font;
 
-/// Mono font for code, JSON, table rows. Family name `JetBrains Mono`;
-/// must be installed system-wide.
-pub const MONO: Font = Font::with_name("JetBrains Mono");
+/// Mono font for code, JSON, table rows, terminals.
+/// Preferred: `Iosevka Term Slab`. Fallback: `JetBrains Mono`.
+pub const MONO: Font = Font::with_name("Iosevka Term Slab");
 
-/// Inter — open-source UI font that closely matches Apple's San
-/// Francisco. Family name `Inter`; must be installed system-wide. Used
-/// for all UI-shaped roles (body, chrome, display).
+/// Inter — open-source UI fallback when SF Pro is not installed.
 pub const INTER: Font = Font::with_name("Inter");
 
-/// Inter Medium (weight 500) — used for menubar chrome labels and the clock
-/// so they read at the same visual weight as the legacy CEF shell's 500-weight
-/// Inter text at 13 px.
+/// Inter Medium (weight 500) — fallback for medium UI roles.
 pub const INTER_MEDIUM: Font = Font {
     weight: iced::font::Weight::Medium,
     ..Font::with_name("Inter")
 };
+
+/// SF Pro Text — preferred UI face for macOS-like chrome (when installed).
+pub const SF_PRO_TEXT: Font = Font::with_name("SF Pro Text");
 
 /// Register every system-installed font into iced's *global* font
 /// database so `Font::with_name(family)` resolves for any family the
@@ -55,12 +58,12 @@ pub fn ensure_system_fonts() {
 
 /// Semantic font roles — what kit components actually reach for.
 ///
-/// Each field is a `Font` (a family + weight + style). Defaults bias
-/// toward Inter for everything UI-shaped, with JetBrains Mono for
-/// code; apps that want a different family install a custom `Fonts`
-/// at startup via [`install`]. Components never reach for a family
-/// constant directly — they call the role accessors below
-/// ([`ui`], [`ui_medium`], [`display`], [`chrome`], [`mono`]).
+/// Each field is a `Font` (a family + weight + style). Defaults prefer
+/// SF Pro Text for UI-shaped roles and Iosevka Term Slab for mono when
+/// those families are installed; otherwise Inter / JetBrains Mono.
+/// Components never reach for a family constant directly — they call
+/// the role accessors below ([`ui`], [`ui_medium`], [`display`],
+/// [`chrome`], [`mono`]).
 ///
 /// The role vocabulary mirrors how the legacy CEF kit named font
 /// tokens (`--font-ui`, `--font-display`, …). Adding a new role is a
@@ -81,12 +84,14 @@ pub struct Fonts {
 
 impl Default for Fonts {
     fn default() -> Self {
+        let ui_fam = preferred_ui_family();
+        let mono_fam = preferred_mono_family();
         Self {
-            ui: INTER,
-            ui_medium: INTER_MEDIUM,
-            display: INTER_MEDIUM,
-            chrome: INTER,
-            mono: MONO,
+            ui: Font::with_name(ui_fam),
+            ui_medium: medium(ui_fam),
+            display: medium(ui_fam),
+            chrome: Font::with_name(ui_fam),
+            mono: Font::with_name(mono_fam),
         }
     }
 }
@@ -235,25 +240,52 @@ fn metrics_from_face(face: &ttf_parser::Face) -> Option<FontMetrics> {
 }
 
 
-/// Recommended families Sola defaults to; must be installed system-wide
-/// (see `docs/manual/distribution.md`). These seed the font picker — but
-/// [`pickable_families`] folds in every system-installed family on top,
-/// so a user can still select anything fontconfig knows about. These are
-/// also the strings the bus theme's `FontFamily` tokens carry.
-pub const INSTALLED_FAMILIES: &[&str] = &["Inter", "JetBrains Mono"];
+/// Recommended families Sola defaults to (and common fallbacks). These seed
+/// the font picker vocabulary; [`pickable_families`] folds in every
+/// system-installed family on top. SF faces are **not** shipped in-repo —
+/// see `.local/fonts/README.md`.
+pub const INSTALLED_FAMILIES: &[&str] = &[
+    "SF Pro Text",
+    "SF Pro Display",
+    "Inter",
+    "Iosevka Term Slab",
+    "JetBrains Mono",
+];
 
-/// Default family for all UI-shaped roles (ui, ui_medium, display, chrome).
-pub const DEFAULT_UI_FAMILY: &str = "Inter";
-/// Default family for the mono role.
-pub const DEFAULT_MONO_FAMILY: &str = "JetBrains Mono";
+/// Preferred UI family when installed (macOS chrome feel).
+pub const DEFAULT_UI_FAMILY: &str = "SF Pro Text";
+/// Fallback UI family (always expected via distro packages).
+pub const FALLBACK_UI_FAMILY: &str = "Inter";
+/// Preferred mono family (terminals, code).
+pub const DEFAULT_MONO_FAMILY: &str = "Iosevka Term Slab";
+/// Fallback mono family.
+pub const FALLBACK_MONO_FAMILY: &str = "JetBrains Mono";
 
-/// Build a `Fonts` table from a per-role family-name selection.
+/// Resolve UI family: SF Pro Text if available, else Inter.
+pub fn preferred_ui_family() -> &'static str {
+    if family_available(DEFAULT_UI_FAMILY) {
+        DEFAULT_UI_FAMILY
+    } else {
+        FALLBACK_UI_FAMILY
+    }
+}
+
+/// Resolve mono family: Iosevka Term Slab if available, else JetBrains Mono.
+pub fn preferred_mono_family() -> &'static str {
+    if family_available(DEFAULT_MONO_FAMILY) {
+        DEFAULT_MONO_FAMILY
+    } else if family_available(FALLBACK_MONO_FAMILY) {
+        FALLBACK_MONO_FAMILY
+    } else {
+        DEFAULT_MONO_FAMILY
+    }
+}
+
 /// Build a `Fonts` table from a per-role family-name selection.
 ///
 /// If a requested family is empty or not present in iced's font database,
-/// that role silently falls back to its default family ([`DEFAULT_UI_FAMILY`]
-/// or [`DEFAULT_MONO_FAMILY`]) instead of producing a `Font` that fontconfig
-/// resolves to an unrelated face (e.g. a proportional sans instead of a mono).
+/// that role falls back through preferred → distro fallback so we never
+/// emit a `Font` that fontconfig remaps to an unrelated face.
 pub fn fonts_from_families(
     ui_family: &str,
     ui_medium_family: &str,
@@ -261,9 +293,8 @@ pub fn fonts_from_families(
     chrome_family: &str,
     mono_family: &str,
 ) -> Fonts {
-    // Returns the &'static str to pass to Font::with_name / medium().
-    // If `requested` is empty or not in the renderer's font DB, returns the
-    // static `default` slice instead.
+    let ui_default = preferred_ui_family();
+    let mono_default = preferred_mono_family();
     let pick = |requested: &str, default: &'static str| -> &'static str {
         if !requested.is_empty() && family_available(requested) {
             static_family(requested)
@@ -273,14 +304,19 @@ pub fn fonts_from_families(
     };
 
     Fonts {
-        ui: Font::with_name(pick(ui_family, DEFAULT_UI_FAMILY)),
-        ui_medium: medium(pick(ui_medium_family, DEFAULT_UI_FAMILY)),
-        display: medium(pick(display_family, DEFAULT_UI_FAMILY)),
-        chrome: Font::with_name(pick(chrome_family, DEFAULT_UI_FAMILY)),
-        mono: Font::with_name(pick(mono_family, DEFAULT_MONO_FAMILY)),
+        ui: Font::with_name(pick(ui_family, ui_default)),
+        ui_medium: medium(pick(ui_medium_family, ui_default)),
+        display: medium(pick(display_family, ui_default)),
+        chrome: Font::with_name(pick(chrome_family, ui_default)),
+        mono: Font::with_name(pick(mono_family, mono_default)),
     }
-}fn medium(family: &'static str) -> Font {
-    Font { weight: iced::font::Weight::Medium, ..Font::with_name(family) }
+}
+
+fn medium(family: &'static str) -> Font {
+    Font {
+        weight: iced::font::Weight::Medium,
+        ..Font::with_name(family)
+    }
 }
 
 /// `iced::Font::with_name` needs a `&'static str`. Intern incoming
@@ -377,48 +413,56 @@ mod tests {
     }
 
     #[test]
-    fn mono_metrics_default_is_jetbrains_mono_ratios() {
-        // The fallback (and the value the parser should read for JetBrains
-        // Mono) is advance 0.6 / line 1.32 per em.
+    fn mono_metrics_default_is_sane_cell_ratios() {
+        // Compile-time fallback when no face can be measured (headless /
+        // missing mono). Not tied to a specific family.
         let d = FontMetrics::default();
         assert!((d.advance_per_em - 0.6).abs() < 1e-6);
         assert!((d.line_per_em - 1.32).abs() < 1e-6);
     }
 
     #[test]
-    fn mono_metrics_resolves_jetbrains_mono_from_system_db() {
-        // Default mono is JetBrains Mono (system-installed). After loading
-        // system fonts, mono_metrics() should read ≈0.6 / ≈1.32 per em off the
-        // real face. When the font isn't present in the test env, mono_metrics()
-        // falls back to FontMetrics::default() — which carries the same ratios —
-        // so the assertion holds either way (the values agree by construction).
+    fn mono_metrics_resolves_active_mono_from_system_db() {
+        // Preferred mono is Iosevka Term Slab when installed. Metrics must
+        // be positive and mono-like (advance roughly 0.45–0.65 em).
         ensure_system_fonts();
         let m = mono_metrics();
         assert!(
-            (m.advance_per_em - 0.6).abs() < 0.02,
-            "JetBrains Mono advance_per_em ≈ 0.6, got {}",
+            m.advance_per_em > 0.4 && m.advance_per_em < 0.75,
+            "mono advance_per_em out of range: {}",
             m.advance_per_em
         );
         assert!(
-            (m.line_per_em - 1.32).abs() < 0.02,
-            "JetBrains Mono line_per_em ≈ 1.32, got {}",
+            m.line_per_em > 1.0 && m.line_per_em < 1.6,
+            "mono line_per_em out of range: {}",
             m.line_per_em
         );
     }
 
-    // pickable_families() returns only system-installed families (or the
-    // INSTALLED_FAMILIES fallback on headless boxes).  Either way the shipped
-    // defaults must appear in the list: Inter + JetBrains Mono are installed
-    // system-wide on the dev box, and on a headless box the fallback path
-    // returns INSTALLED_FAMILIES directly.
+    // pickable_families() returns system-installed families (or
+    // INSTALLED_FAMILIES on headless). Only require that installed
+    // fallbacks appear — SF Pro may be absent until the user installs
+    // faces from `.local/fonts/`.
     #[test]
     fn pickable_families_always_contains_shipped() {
         let all = pickable_families();
-        for fam in INSTALLED_FAMILIES {
-            assert!(
-                all.contains(&fam.to_string()),
-                "{fam} missing from pickable_families"
-            );
+        let sys = system_families();
+        if sys.is_empty() {
+            for fam in INSTALLED_FAMILIES {
+                assert!(
+                    all.contains(&fam.to_string()),
+                    "{fam} missing from headless pickable_families"
+                );
+            }
+            return;
+        }
+        for fam in [FALLBACK_UI_FAMILY, FALLBACK_MONO_FAMILY, DEFAULT_MONO_FAMILY] {
+            if family_available(fam) {
+                assert!(
+                    all.contains(&fam.to_string()),
+                    "{fam} installed but missing from pickable_families"
+                );
+            }
         }
     }
 
@@ -464,9 +508,12 @@ mod tests {
         let sys = system_families();
         // Positive assertion only makes sense when the system DB is populated.
         if !sys.is_empty() {
+            // At least one of our mono defaults should be present on dev boxes.
             assert!(
-                family_available("JetBrains Mono"),
-                "JetBrains Mono should be available (it is installed)"
+                family_available(DEFAULT_MONO_FAMILY)
+                    || family_available(FALLBACK_MONO_FAMILY)
+                    || family_available(FALLBACK_UI_FAMILY),
+                "expected a known Sola font family to be available"
             );
         }
         assert!(

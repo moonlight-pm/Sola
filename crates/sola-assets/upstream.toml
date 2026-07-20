@@ -2,8 +2,9 @@
 #
 # Fonts are NOT synced here. Sola no longer bundles font files — it
 # resolves fonts by family name through the system fontconfig database.
-# The two families Sola defaults to (Inter + JetBrains Mono) must be
-# installed system-wide. See docs/manual/distribution.md.
+# Preferred defaults: SF Pro Text (UI) + Iosevka Term Slab (mono);
+# fallbacks Inter + JetBrains Mono. Licensed SF faces live in the
+# gitignored stash `.local/fonts/` (see that README).
 #
 # `cargo make assets sync` reconciles /opt/sola/share/<category>/<name>/
 # with this file: pulls missing or out-of-date packs, skips packs already

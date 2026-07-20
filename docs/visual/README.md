@@ -44,11 +44,10 @@ Agree “this is current Sola” before treating these as the compare root for P
 
 ### Fonts (seed vs macOS)
 
-Seed font roles default to **Inter** (UI) + **JetBrains Mono** (mono) — both
-are installed with Sola. Design language prefers SF Pro for chrome when
-available; place SF Pro manually under `/opt/sola/share/fonts/` (license) and
-pick it in the storybook Theme page / theme editor. Do not hard-code SF Pro
-in the seed until it is guaranteed on every install.
+Seed prefers **SF Pro Text** (UI) + **Iosevka Term Slab** (mono), falling
+back to Inter / JetBrains Mono when a family is missing. SF faces are **not**
+in git — stash under `.local/fonts/` (see README there) and install into
+fontconfig (`~/.local/share/fonts` + `fc-cache`).
 
 ### Where PNGs live
 

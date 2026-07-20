@@ -11,3 +11,7 @@ crates/*/Cargo.lock
 # nix-build result symlinks
 /result
 /result-*
+
+# Local font stash (SF Pro, etc.) — binaries only; README is tracked
+.local/fonts/**
+!.local/fonts/README.md

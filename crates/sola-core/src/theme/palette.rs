@@ -79,19 +79,15 @@ impl Palette {
             .insert("warning".into(), Token::new(TokenKind::Color, "#ffd60a", &["status"]));
         // Fonts — the kit's semantic role vocabulary
         // (`font-ui` / `font-ui-medium` / `font-display` / `font-chrome` /
-        // `font-mono`). Defaults match installed reality: Inter for UI
-        // roles, JetBrains Mono for code (both ship via sola assets /
-        // system packages). SF Pro may be placed manually for a closer
-        // macOS match — see docs/manual/design-language.md §2.4 and
-        // docs/visual/README.md; picker can select it when installed.
-        // `fonts_from_families` applies Medium weight to ui-medium /
-        // display; the family name stays "Inter" for all four sans roles.
+        // `font-mono`). Prefer SF Pro Text + Iosevka Term Slab; kit falls
+        // back to Inter / JetBrains Mono when a family is missing.
+        // SF faces are not in-repo — see `.local/fonts/README.md`.
         for (name, family) in [
-            ("font-ui", "Inter"),
-            ("font-ui-medium", "Inter"),
-            ("font-display", "Inter"),
-            ("font-chrome", "Inter"),
-            ("font-mono", "JetBrains Mono"),
+            ("font-ui", "SF Pro Text"),
+            ("font-ui-medium", "SF Pro Text"),
+            ("font-display", "SF Pro Text"),
+            ("font-chrome", "SF Pro Text"),
+            ("font-mono", "Iosevka Term Slab"),
         ] {
             palette.tokens.insert(
                 name.into(),
