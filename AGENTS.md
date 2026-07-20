@@ -60,6 +60,10 @@ docs/
 - Always use `.worktrees/` for git worktrees.
 - Only make code modifications in worktrees. Never commit code changes directly to master.
 - Only merge worktree branches to master with explicit user permission.
+- **After merging a worktree branch to master, always clean up:** remove the
+  worktree (`git worktree remove .worktrees/<name>`) and delete the local
+  branch (`git branch -d <branch>`). Do this in the same turn as the merge
+  unless the user asks to keep it — no leftover feature worktrees/branches.
 
 ### Installing
 - **NEVER run `cargo make install` (or any variant) without express user permission for that specific install.** This applies to subagents too — if you delegate work, your prompt MUST tell the subagent not to install. Permission for one install is not permission for the next; ask each time.
