@@ -13,33 +13,29 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P4** menus & popovers — **code ready**, visual stop.
-Branch `p4-menus-popovers` @ worktree `.worktrees/p4-menus-popovers`.
-See `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P4.
+**P5** launcher — **code ready**, visual stop.
+Branch `p5-launcher` @ worktree `.worktrees/p5-launcher`.
+See `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P5.
 
-Signature move: calm kit popover materials (MD radius, SM pad, tight
-shadow); shell menu density (chrome 13, compact rows, padded separators,
-`menu_item` hover). Stat/calendar popovers inherit kit chrome.
+Signature move: Spotlight restraint — quiet selection (not cyan pill),
+calmer modal panel, denser query/list hierarchy, default 560×pad 8.
 
-**User:** install shell (+ kit if viewing storybook), open a menubar menu
-and a stat/calendar popover, recapture if desired, critique.
+**User:** `cargo make install sola-shell` (kit optional for storybook),
+Meta+Space, critique.
 
-Next when user says go after P4 merges: **P5** launcher.
+Next when user says go after P5 merges: **P6** switcher.
 
 ### Last completed
 
-**Stat menubar width pin** — merged to `master` at `302ae8b`
-(2026-07-20). Fixed-width value slots on CPU/GPU/MEM/RX/TX.
+**P4 menus & popovers** — merged to `master` at `cddffae`
+(2026-07-20). Calm kit popover materials; shell menu density + separators.
 
-**P3 menubar density + type** — merged to `master` at `a2cc87a`
-(2026-07-20). Compact menubar chrome type, bold app title, flower optical
-lift, Restart Shell, theme-derived fg, tighter pad/cluster spacing.
+**Stat menubar width pin** — merged earlier same day.
 
-**P2 token & type baseline** — merged to `master` at `4ed660c`
-(2026-07-20). macOS greys seed, quiet selection, neutral switcher,
-keep cyan; mono **Iosevka Term Slab**; UI prefers **SF Pro Text**
-(fallback Inter); `.local/fonts/` stash (gitignored binaries + README).
+**P3 menubar density + type** — merged to `master` at `a2cc87a`.
 
-**P1 visual baselines + Bgr888 fix** — merged earlier same day.
+**P2 token & type baseline** — merged to `master` at `4ed660c`.
+
+**P1 visual baselines + Bgr888 fix** — merged earlier.
 
 **P0 screenshot capture** — merged earlier.

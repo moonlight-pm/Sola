@@ -9,7 +9,7 @@
 use iced::widget::{Container, container};
 use iced::{Background, Color, Element, Shadow, Theme, Vector};
 
-use crate::components::style::{hairline, RADIUS_LG, RADIUS_MD, RADIUS_XL, SPACE_XL};
+use crate::components::style::{hairline, RADIUS_LG, RADIUS_MD, SPACE_XL};
 
 /// Wrap `content` in a card-styled container. Default padding is 16px;
 /// override with `.padding(...)` on the returned container if needed.
@@ -29,8 +29,8 @@ pub fn style(theme: &Theme) -> container::Style {
 }
 
 /// Style for [`modal`]: opaque raised background, hairline border at
-/// `RADIUS_XL` (14px), and a heavy drop shadow to lift the panel off
-/// the dimmed backdrop.
+/// `RADIUS_LG` (8px), and a soft drop shadow — Spotlight/command-palette
+/// restraint, not a marketing card lift.
 ///
 /// **Background is `weaker`, not `base`**: overlay windows set
 /// `base`'s alpha to zero for the see-through window fill; the modal
@@ -42,19 +42,18 @@ pub fn modal_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(p.background.weaker.color)),
-        border: hairline(p, RADIUS_XL),
+        border: hairline(p, RADIUS_LG),
         shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.55),
-            offset: Vector::new(0.0, 16.0),
-            blur_radius: 48.0,
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.38),
+            offset: Vector::new(0.0, 8.0),
+            blur_radius: 28.0,
         },
         ..container::Style::default()
     }
 }
 
-/// Deep-shadow modal card chrome (e.g. a centred launcher or command
-/// palette panel). Opaque canvas background (`weaker` tier), hairline
-/// border at `RADIUS_XL` (14px), and a heavy drop shadow. Returns a
+/// Centred overlay panel chrome (launcher / command palette). Opaque
+/// `weaker` bg, hairline at `RADIUS_LG`, soft shadow. Returns a
 /// `Container` so the caller can chain `.width(..)`, `.padding(..)`, etc.
 pub fn modal<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
@@ -67,10 +66,9 @@ pub fn modal<'a, Message: 'a>(
 /// `shell-switcher-border` tokens). Radius and border width are fixed
 /// to the backplate's values.
 ///
-/// Radius choice: `RADIUS_XL` (14px) is used for the modal; the
-/// switcher backplate is a slightly softer 16px to visually distinguish
-/// it as a secondary frame. Using a plain literal keeps the two values
-/// intentionally independent — don't abstract them into the same const.
+/// Radius choice: modal uses `RADIUS_LG` (8px); the switcher backplate
+/// is a softer 16px to distinguish it as a secondary frame. Using a
+/// plain literal keeps the two values intentionally independent.
 ///
 /// No drop shadow: the shell's renderer doesn't blur shadow quads, so a
 /// shadow renders as a hard offset rectangle that pokes out past the

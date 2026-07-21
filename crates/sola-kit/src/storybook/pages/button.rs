@@ -61,7 +61,7 @@ pub fn view() -> Element<'static, Msg> {
             buttons,
             caption("Disabled (no on_press)").style(muted),
             disabled,
-            caption("List item — selected / unselected").style(muted),
+            caption("List item — quiet selection / unselected").style(muted),
             list_items,
             caption("Menu item — compact hover (shell menus)").style(muted),
             menu_items,

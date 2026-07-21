@@ -529,8 +529,9 @@ const SHELL_SWITCHER_ICON_FG: &str = "#f5f5f7"; // glyph + label on an unselecte
 const SHELL_SWITCHER_ICON_FG_SEL: &str = "#1c1c1e"; // glyph on accent tile — dark for contrast
 const SHELL_SWITCHER_PAD: f32 = 36.0;
 const SHELL_SWITCHER_TILE_PAD: f32 = 16.0;
-const SHELL_LAUNCHER_WIDTH: f32 = 640.0;
-const SHELL_LAUNCHER_PAD: f32 = 12.0;
+// Spotlight-ish defaults: slightly narrower than a settings form; compact rows.
+const SHELL_LAUNCHER_WIDTH: f32 = 560.0;
+const SHELL_LAUNCHER_PAD: f32 = 8.0;
 
 /// sola-shell's customizable chrome, extracted from the bus theme's
 /// `shell-*` tokens. Colors carry alpha (the switcher backplate fill is

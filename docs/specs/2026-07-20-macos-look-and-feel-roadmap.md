@@ -187,16 +187,22 @@ Density, type, status items, quiet scanability. Tokens only; no new hex.
 
 Spacing, separators, materials values, kit popover calm.
 
-**Status (in progress on `p4-menus-popovers`):**
+**Status (merged):**
 
 - [x] Kit `popover`: `RADIUS_MD`, pad `SPACE_SM`, tighter shadow (blur 10 / y 2)
 - [x] Kit `button::menu_item` compact hover for shell menus
 - [x] Shell menu: chrome type 13, denser row pad, separator vertical pad
-- [ ] User install + after shot (`docs/visual/passes/p4-menus/`)
 
 ### P5 — Launcher
 
 Spotlight-like restraint (single focus, dim backdrop, list hierarchy).
+
+**Status (in progress on `p5-launcher`):**
+
+- [x] Quiet list selection (`selection` atom, not accent pill)
+- [x] Calmer modal chrome (RADIUS_LG, softer shadow)
+- [x] Denser query/rows; default width 560 / pad 8
+- [ ] User install + after shot (`docs/visual/passes/p5-launcher/`)
 
 ### P6 — Switcher
 

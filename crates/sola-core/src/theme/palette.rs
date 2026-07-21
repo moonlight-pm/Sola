@@ -167,11 +167,11 @@ impl Palette {
         );
         palette.tokens.insert(
             "shell-launcher-width".into(),
-            Token::new(TokenKind::Space, "640px", &["shell"]),
+            Token::new(TokenKind::Space, "560px", &["shell"]),
         );
         palette
             .tokens
-            .insert("shell-launcher-pad".into(), Token::new(TokenKind::Space, "12px", &["shell"]));
+            .insert("shell-launcher-pad".into(), Token::new(TokenKind::Space, "8px", &["shell"]));
         palette
     }
 }

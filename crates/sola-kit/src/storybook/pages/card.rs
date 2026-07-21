@@ -24,7 +24,7 @@ pub fn view() -> Element<'static, Msg> {
     .width(Length::Fill);
 
     let modal_demo = modal(
-        body("Modal card — opaque weaker bg, hairline at RADIUS_XL (14px), deep shadow.")
+        body("Modal card — opaque weaker bg, hairline at RADIUS_LG (8px), soft shadow.")
             .style(muted),
     )
     .padding(24)

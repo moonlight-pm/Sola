@@ -152,19 +152,24 @@ pub fn confirm_button<'a, Message: Clone + 'a>(
     }
 }
 
-/// Style for a selectable list-row button.
+/// Style for a selectable list-row button (launcher, pickers, …).
 ///
 /// `selected` is owned by the app (keyboard/MRU selection), independent of the
-/// pointer `Status`. Selected → filled `primary` pill. Unselected → transparent,
-/// lifting to `background.strong` on hover/press.
+/// pointer `Status`. Selected → quiet [`crate::theme::selection`] fill (not a
+/// full accent pill — Spotlight restraint). Unselected → transparent, lifting
+/// to `background.strong` on hover/press.
 pub fn list_item(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = theme.extended_palette();
         if selected {
             return button::Style {
-                background: Some(Background::Color(p.primary.base.color)),
-                text_color: p.primary.base.text,
-                border: Border { color: Color::TRANSPARENT, width: 0.0, radius: RADIUS_MD.into() },
+                background: Some(Background::Color(crate::theme::selection())),
+                text_color: p.background.base.text,
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: RADIUS_SM.into(),
+                },
                 shadow: Default::default(),
                 snap: false,
             };
@@ -176,7 +181,11 @@ pub fn list_item(selected: bool) -> impl Fn(&Theme, button::Status) -> button::S
         button::Style {
             background: Some(Background::Color(bg)),
             text_color: p.background.base.text,
-            border: Border { color: Color::TRANSPARENT, width: 0.0, radius: RADIUS_MD.into() },
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_SM.into(),
+            },
             shadow: Default::default(),
             snap: false,
         }
