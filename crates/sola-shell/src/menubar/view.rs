@@ -5,12 +5,12 @@
 //!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
 //!
 //! Type matches macOS menu bar: one chrome face throughout (labels, stats,
-//! clock). Only the focused-app name is medium weight. Colours come from the
-//! live theme palette (no view-local hex). Mono is for code/detail panels,
-//! not menubar status values.
+//! clock). Focused-app name is bold (macOS application menu title). Colours
+//! come from the live theme palette (no view-local hex). Mono is for
+//! code/detail panels, not menubar status values.
 
 use iced::widget::{container, mouse_area, row, text};
-use iced::{Color, Element, Length, Theme};
+use iced::{Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon_colored;
 use sola_kit::fonts;
@@ -22,19 +22,30 @@ use crate::menu::state::synthesized_menu;
 use crate::menubar::FlashTarget;
 
 // ── Density (logical px) ────────────────────────────────────────────────
-// macOS menu bar ~13pt system chrome, regular weight; app name slightly
-// heavier. Horizontal rhythm comes from per-item pad, not big row gaps.
+// macOS menu bar ~13pt system chrome, regular weight; app name bold.
+// Horizontal rhythm comes from per-item pad, not big row gaps.
 // Bar height stays at `WINDOW_HEIGHT` (28) for zoning.
 const CHROME_SIZE: f32 = 13.0;
 const ICON_SIZE: u16 = 14;
 /// Vertical, horizontal padding inside each menubar hit target.
 /// ~9px horizontal ≈ macOS menu-title breathing room at 13pt.
 const ITEM_PAD: [u16; 2] = [2, 9];
+/// Optical nudge for the flower glyph (SVG visual center sits slightly
+/// low relative to SF Pro Text cap height at 13pt).
+const FLOWER_NUDGE_UP: f32 = 1.5;
 /// Gap *between* right-cluster status buttons (CPU … clock). Combined with
 /// ITEM_PAD this reads like separate menu extras, not one fused strip.
 const CLUSTER_SPACING: f32 = 4.0;
 /// Gap between label and value inside one status indicator.
 const STAT_INNER_SPACING: f32 = 5.0;
+
+/// Bold chrome for the focused-app title (macOS application menu name).
+fn app_title_font() -> iced::Font {
+    iced::Font {
+        weight: iced::font::Weight::Bold,
+        ..fonts::chrome()
+    }
+}
 
 /// Render the menubar for `shell`.
 pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
@@ -47,8 +58,16 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // ── System-menu icon ──────────────────────────────────────────────
     let system_active =
         (shell.menu_open && shell.current_open_is_system) || flashing(shell, true, 0);
+    // Extra bottom pad optically lifts the flower into the text baseline
+    // band without changing the outer hit target height much.
+    let flower = container(icon_colored("sola/flower", ICON_SIZE, fg)).padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: FLOWER_NUDGE_UP,
+        left: 0.0,
+    });
     let system_btn: Element<'_, Msg> = mouse_area(
-        iced::widget::button(container(icon_colored("sola/flower", ICON_SIZE, fg)))
+        iced::widget::button(flower)
             .style(kit_btn::menubar(system_active))
             .padding(ITEM_PAD)
             .on_press(Msg::OpenMenu {
@@ -63,7 +82,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .into();
 
     // ── Focused-app title ─────────────────────────────────────────────
-    // Medium weight only — the one menubar weight departure (macOS app name).
+    // Bold — matches macOS application menu title vs regular menu labels.
     let app_title_str = focused_app_title(shell);
     let clickable = has_menu(shell);
     let title_active = (shell.menu_open
@@ -74,7 +93,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         mouse_area(
             iced::widget::button(
                 text(app_title_str)
-                    .font(fonts::ui_medium())
+                    .font(app_title_font())
                     .size(CHROME_SIZE),
             )
             .style(kit_btn::menubar(title_active))
@@ -92,7 +111,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     } else {
         container(
             text(app_title_str)
-                .font(fonts::ui_medium())
+                .font(app_title_font())
                 .size(CHROME_SIZE),
         )
         .padding(ITEM_PAD)
