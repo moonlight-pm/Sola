@@ -177,11 +177,10 @@ Density, type, status items, quiet scanability. Tokens only; no new hex.
 
 **Status (in progress on `p3-menubar-density`):**
 
-- [x] Menu labels / app title → `fonts::chrome()` / `fonts::ui_medium()`, size **13**
-- [x] Clock → `fonts::mono()`, size **13**
-- [x] Stat indicators → chrome label **10** + mono value **12**; theme `palette().text` (no view hex)
-- [x] Tighter pad `[1, 6]` and status cluster spacing **2** (was 16)
-- [x] Flower icon **14**; bar height stays **28** (zoning)
+- [x] One chrome face for labels, stats, clock (size **13**); app name **medium** only
+- [x] Stats values **not** mono — same type as menu titles (user correction)
+- [x] Pad `[2, 9]`; status cluster spacing **4**; label↔value gap **5**
+- [x] Theme `palette().text` (no view hex); flower **14**; bar height **28**
 - [ ] User install + after shot (`docs/visual/passes/p3-menubar/`)
 
 ### P4 — Menus & popovers

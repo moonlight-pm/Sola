@@ -1,15 +1,15 @@
 //! Clock widget — formats a `chrono::DateTime<chrono::Local>` for display
 //! in the menubar right cluster: `HH:MM Weekday YYYY-MM-DD`.
 //!
-//! Type uses the mono role (data) at menubar chrome size — denser than body
-//! UI, matching design-language clock guidance.
+//! Uses the same chrome face/size as menu titles (macOS menu bar clock is
+//! system UI type, not mono).
 
 use chrono::{DateTime, Local};
 use iced::widget::text;
 use iced::Element;
 use sola_kit::fonts;
 
-/// Menubar clock type size (logical px). Matches menu labels at 13.
+/// Matches menubar menu-label size.
 const CLOCK_SIZE: f32 = 13.0;
 
 /// Format a local timestamp as `HH:MM Weekday YYYY-MM-DD`.
@@ -20,7 +20,7 @@ pub fn format_clock(now: &DateTime<Local>) -> String {
 /// Render the clock as an iced text widget.
 pub fn clock_widget<Msg: 'static>(now: &DateTime<Local>) -> Element<'_, Msg> {
     text(format_clock(now))
-        .font(fonts::mono())
+        .font(fonts::chrome())
         .size(CLOCK_SIZE)
         .into()
 }

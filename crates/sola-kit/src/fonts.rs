@@ -76,7 +76,7 @@ pub struct Fonts {
     pub ui_medium: Font,
     /// Page titles, large headings.
     pub display: Font,
-    /// Dense desktop chrome — small uppercase labels, section headers.
+    /// Dense desktop chrome — menubar labels, status extras, section headers.
     pub chrome: Font,
     /// Code, JSON, terminal-shaped output.
     pub mono: Font,

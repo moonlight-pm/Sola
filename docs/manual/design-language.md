@@ -65,12 +65,16 @@ Follow a **role system**, not ad-hoc sizes:
 
 | Role | Use | Sola mapping |
 |------|-----|----------------|
-| Chrome | Menu bar labels, menu items | `fonts::chrome()` / kit UI roles |
+| Chrome | Menu bar labels, menu items, menubar status/clock | `fonts::chrome()` / kit UI roles |
 | Body UI | Settings rows, dialogs, lists | `fonts::ui()` / `ui_medium()` |
 | Display | Rare emphasis (app title in menubar can be medium weight) | `fonts::display()` sparingly |
-| Mono / data | Clocks, stats, rates, code | `fonts::mono()` |
+| Mono / data | Code, terminal, detail-panel numbers | `fonts::mono()` |
 
-macOS uses SF Pro for UI and SF Mono for data. Sola already leans that way (SF Pro + mono). **Do not introduce extra display faces** for shell chrome. Max two UI faces + mono.
+macOS uses SF Pro for UI and SF Mono for data. **Menubar is all chrome** —
+status values and the clock match menu titles (regular weight); only the
+focused-app name uses medium. Reserve mono for code and dense detail
+panels, not menu-bar extras. **Do not introduce extra display faces** for
+shell chrome. Max two UI faces + mono.
 
 ### 2.5 Color roles (semantic, not raw hex in views)
 
