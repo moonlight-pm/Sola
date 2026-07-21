@@ -31,7 +31,7 @@ pub fn view() -> Element<'static, Msg> {
     .width(Length::Fill);
 
     let backplate_demo = accent_backplate(
-        body("Accent backplate — primary-tinted fill and border at RADIUS_LG.")
+        body("Accent backplate — primary-tinted fill and border at RADIUS_XL.")
             .style(muted),
     )
     .padding(24)
@@ -61,15 +61,16 @@ pub fn view() -> Element<'static, Msg> {
         body("Modal card chrome — opaque panel lifted over a dimmed backdrop.").style(muted),
         modal_demo,
         code("modal(content)").style(muted),
-        body("Accent backplate — primary-tinted demo frame (RADIUS_LG).").style(muted),
+        body("Accent backplate — primary-tinted demo frame (RADIUS_XL).").style(muted),
         backplate_demo,
         code("accent_backplate(content)").style(muted),
-        body("Parameterized backplate — shell switcher uses this with shell-* tokens.").style(muted),
+        body("Parameterized backplate — shell switcher HUD uses this with shell-* tokens.")
+            .style(muted),
         custom_backplate_demo,
         code("backplate(content, fill, border)").style(muted),
         body(
-            "Selectable tile — quiet selection fill (container analog of \
-             button::list_item for mouse_area tiles).",
+            "Selectable cell — soft plate under large icons (container analog \
+             of button::list_item for mouse_area cells).",
         )
         .style(muted),
         iced::widget::row![tile_selected, tile_unselected].spacing(8),

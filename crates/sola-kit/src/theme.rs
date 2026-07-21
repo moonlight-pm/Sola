@@ -518,19 +518,18 @@ pub fn color_to_hex(c: Color) -> String {
 /// would unmatch every untouched preset.
 ///
 /// Menubar stays near-black (opaque greys first; blur deferred). Switcher
-/// backplate is a **neutral** material — not neon cyan glass. Selected
-/// tile uses the quiet selection atom (Mission Control restraint), not a
-/// full accent pill.
+/// is a Cmd+Tab-style HUD: neutral frosted pill, soft light plate under
+/// the selected icon (not an accent pill).
 const SHELL_MENUBAR_BG: &str = "#000000";
 const SHELL_BACKDROP_DIM: &str = "#00000099";
-const SHELL_SWITCHER_BG: &str = "#2c2c2ecc";
-const SHELL_SWITCHER_BORDER: &str = "#ffffff26";
-const SHELL_SWITCHER_ICON_BG: &str = "#1a3a45"; // selected tile — quiet selection
-const SHELL_SWITCHER_ICON_FG: &str = "#f5f5f7"; // glyph + label on an unselected tile
-const SHELL_SWITCHER_ICON_FG_SEL: &str = "#f5f5f7"; // same face on quiet selection
-// Mission Control–ish density: tighter frame and tiles than the old 36/16.
-const SHELL_SWITCHER_PAD: f32 = 20.0;
-const SHELL_SWITCHER_TILE_PAD: f32 = 10.0;
+const SHELL_SWITCHER_BG: &str = "#1c1c1ee6"; // more opaque HUD glass
+const SHELL_SWITCHER_BORDER: &str = "#ffffff1a";
+const SHELL_SWITCHER_ICON_BG: &str = "#ffffff2e"; // soft raised plate under icon
+const SHELL_SWITCHER_ICON_FG: &str = "#f5f5f7";
+const SHELL_SWITCHER_ICON_FG_SEL: &str = "#f5f5f7";
+// Compact frame around a large-icon strip.
+const SHELL_SWITCHER_PAD: f32 = 14.0;
+const SHELL_SWITCHER_TILE_PAD: f32 = 8.0;
 // Spotlight-ish defaults: slightly narrower than a settings form; compact rows.
 const SHELL_LAUNCHER_WIDTH: f32 = 560.0;
 const SHELL_LAUNCHER_PAD: f32 = 8.0;
@@ -539,9 +538,9 @@ const SHELL_LAUNCHER_PAD: f32 = 8.0;
 /// `shell-*` tokens. Colors carry alpha (the switcher backplate fill is
 /// translucent by design); spacing values are plain pixels.
 ///
-/// Where the shell's original layout used a vertical/horizontal padding
-/// pair, the knob is the vertical value and **horizontal = vertical +
-/// 4px** (switcher tile pad 10 → 10/14; launcher row pad 8 → 8/12).
+/// Switcher HUD: frame pad is vertical; horizontal = pad + 8 on the
+/// pill. Tile pad is icon-cell inset. Launcher rows: vertical =
+/// launcher_pad, horizontal = pad + 4.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShellStyle {
     pub menubar_bg: Color,
@@ -809,15 +808,15 @@ mod tests {
     }
 
     #[test]
-    fn switcher_defaults_are_neutral_not_cyan_glass() {
+    fn switcher_defaults_are_cmd_tab_hud() {
         let s = ShellStyle::default();
-        assert_eq!(color_to_hex(s.switcher_bg), "#2c2c2ecc");
-        assert_eq!(color_to_hex(s.switcher_border), "#ffffff26");
-        // Selected tile: quiet selection, not full cyan accent pill
-        assert_eq!(color_to_hex(s.switcher_icon_bg), "#1a3a45");
+        assert_eq!(color_to_hex(s.switcher_bg), "#1c1c1ee6");
+        assert_eq!(color_to_hex(s.switcher_border), "#ffffff1a");
+        // Soft light plate under icon — not cyan, not selection-atom teal
+        assert_eq!(color_to_hex(s.switcher_icon_bg), "#ffffff2e");
         assert_eq!(color_to_hex(s.switcher_icon_fg_sel), "#f5f5f7");
-        assert_eq!(s.switcher_pad, 20.0);
-        assert_eq!(s.switcher_tile_pad, 10.0);
+        assert_eq!(s.switcher_pad, 14.0);
+        assert_eq!(s.switcher_tile_pad, 8.0);
     }
 
     #[test]

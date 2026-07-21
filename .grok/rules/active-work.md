@@ -15,11 +15,11 @@ If Current is `none`, ask what they want instead of inventing work.
 
 **P6 switcher** — worktree `.worktrees/p6-switcher`, branch `p6-switcher`.
 
-Mission Control restraint: quiet selection tile (not cyan pill), denser
-pads/icons, `RADIUS_LG` backplate. See roadmap §4 P6.
+Cmd+Tab HUD: horizontal large-icon strip, selected-only caption, soft light
+selection plate, frosted pill backplate (`RADIUS_XL`). See roadmap §4 P6.
 
-**Next step:** user install shell (+ kit if storybook) and capture after shot
-under `docs/visual/passes/p6-switcher/`. Then visual stop / merge approval.
+**Next step:** user install shell (and kit if storybook tokens) and capture
+after shot under `docs/visual/passes/p6-switcher/`. Then visual stop / merge.
 
 ### Last completed
 

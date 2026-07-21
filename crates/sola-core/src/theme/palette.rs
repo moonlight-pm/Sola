@@ -140,9 +140,9 @@ impl Palette {
             .tokens
             .insert("radius-lg".into(), Token::new(TokenKind::Radius, "6px", &["radius"]));
         // Shell — sola-shell's customizable chrome. Colors carry alpha
-        // (#rrggbbaa). Neutral switcher material (not cyan glass); see
+        // (#rrggbbaa). Cmd+Tab HUD materials (not cyan glass); see
         // docs/specs/2026-06-06-shell-customization-design.md and
-        // docs/specs/2026-07-20-macos-look-and-feel-roadmap.md P2.
+        // docs/specs/2026-07-20-macos-look-and-feel-roadmap.md P6.
         palette
             .tokens
             .insert("shell-menubar-bg".into(), Token::new(TokenKind::Color, "#000000", &["shell"]));
@@ -152,18 +152,18 @@ impl Palette {
         );
         palette.tokens.insert(
             "shell-switcher-bg".into(),
-            Token::new(TokenKind::Color, "#2c2c2ecc", &["shell"]),
+            Token::new(TokenKind::Color, "#1c1c1ee6", &["shell"]),
         );
         palette.tokens.insert(
             "shell-switcher-border".into(),
-            Token::new(TokenKind::Color, "#ffffff26", &["shell"]),
+            Token::new(TokenKind::Color, "#ffffff1a", &["shell"]),
         );
         palette
             .tokens
-            .insert("shell-switcher-pad".into(), Token::new(TokenKind::Space, "20px", &["shell"]));
+            .insert("shell-switcher-pad".into(), Token::new(TokenKind::Space, "14px", &["shell"]));
         palette.tokens.insert(
             "shell-switcher-tile-pad".into(),
-            Token::new(TokenKind::Space, "10px", &["shell"]),
+            Token::new(TokenKind::Space, "8px", &["shell"]),
         );
         palette.tokens.insert(
             "shell-launcher-width".into(),

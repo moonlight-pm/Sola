@@ -85,9 +85,10 @@ pub fn view<'a>(
 
         subheading("Switcher"),
         body(
-            "Mission Control restraint: ICON_BG is a quiet selection fill \
-             (not full accent). ICON_FG / ICON_FG_SEL tint glyph + label; \
-             seed uses the same face on both states.",
+            "Cmd+Tab HUD: ICON_BG is a soft light plate under the selected \
+             icon (not accent). ICON_FG / ICON_FG_SEL tint stroke icons; \
+             seed uses the same face on both states. Name is a caption \
+             under the strip, not per-tile labels.",
         )
         .style(muted),
         icon_color_row,

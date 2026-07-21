@@ -1,39 +1,43 @@
-//! Switcher overlay view — alt-tab equivalent.
+//! Switcher overlay view — macOS Cmd+Tab–style app HUD.
 //!
-//! Mission Control / app-switcher restraint: neutral translucent backplate,
-//! quiet selection (not an accent pill), denser tile grid. Renders a
-//! centered grid of app tiles over a transparent full-screen backdrop.
-//! The grid wraps so the switcher grows to fit any number of open apps.
+//! A short centered horizontal strip of large app icons on a frosted
+//! pill backplate. Selection is a soft neutral plate under the icon;
+//! the selected app's name is a single caption under the strip (not a
+//! label under every tile). Click outside cancels.
+//!
 //! When `switcher.active` is false, returns an invisible placeholder so the
-//! surface stays alive without rendering content.
+//! surface stays mapped without drawing content.
 
 use iced::widget::{column, container, mouse_area, row, text};
 use iced::{Alignment, Element, Length, Padding};
-use sola_kit::components::icon_colored;
+use sola_kit::components::icon;
 use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
 
-// ── Density (Mission Control–ish) ─────────────────────────────────────
-const TILE_W: f32 = 112.0;
-const ICON_SIZE: u16 = 48;
-const LABEL_SIZE: f32 = 12.0;
-const ICON_LABEL_GAP: f32 = 6.0;
-const GRID_GAP: f32 = 8.0;
-const SCREEN_MARGIN: f32 = 24.0;
+// ── Cmd+Tab HUD density ───────────────────────────────────────────────
+/// Large icon face — closer to macOS dock/switcher than list chrome.
+const ICON_SIZE: u16 = 72;
+/// Soft plate around the selected icon (icon + pad).
+const ICON_CELL: f32 = 96.0;
+/// Gap between icon cells in the strip.
+const ICON_GAP: f32 = 6.0;
+/// Caption under the strip (selected app only).
+const CAPTION_SIZE: f32 = 13.0;
+const CAPTION_GAP: f32 = 10.0;
+/// Keep the pill off the screen edges.
+const SCREEN_MARGIN: f32 = 48.0;
 
 /// Render the switcher overlay for `shell`.
 ///
 /// Layout:
 ///   Full-screen invisible mouse_area (click-outside-to-cancel)
-///   └─ Centered backplate card with shell-switcher-pad padding.
-///      Background: shell-switcher-bg (neutral translucent fill).
-///      Inside: a balanced grid of uniform-width tiles, one per open app.
-///      The grid wraps to extra rows so the switcher grows to fit any number
-///      of open apps instead of overflowing (and clipping at) the screen width.
+///   └─ Centered column:
+///        · Pill backplate (shell-switcher-bg/border/pad)
+///          └─ Horizontal row of large icons; selected has soft plate
+///        · Selected app name caption (chrome type)
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     if !shell.switcher.active {
-        // Invisible placeholder — keeps iced from getting an empty view.
         return container(text(""))
             .width(Length::Fill)
             .height(Length::Fill)
@@ -41,18 +45,15 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     }
 
     let switcher = &shell.switcher;
+    let tp = shell.style.switcher_tile_pad;
 
-    // --- app tiles (uniform width) ---
-    let cards: Vec<Element<'_, Msg>> = switcher
+    // --- icon strip (one row; macOS Cmd+Tab language) ---
+    let cells: Vec<Element<'_, Msg>> = switcher
         .apps
         .iter()
         .enumerate()
         .map(|(i, app)| {
-            // Look up display label and icon from the application catalog.
             let catalog_entry = shell.applications.get(&app.app_id);
-            let label_str = catalog_entry
-                .map(|a| a.label.as_str())
-                .unwrap_or(app.app_id.as_str());
             let icon_name = catalog_entry
                 .map(|a| a.icon.as_str())
                 .filter(|s| !s.is_empty())
@@ -60,169 +61,100 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
             let is_selected = i == switcher.selected;
 
-            // Glyph + label foreground differs by state only when the theme
-            // sets distinct icon-fg / icon-fg-sel (seed uses the same face).
-            let icon_fg = if is_selected {
-                shell.style.switcher_icon_fg_sel
-            } else {
-                shell.style.switcher_icon_fg
-            };
+            // Theme-tinted stroke icons (full-color app icons deferred).
+            // Keep both states on the same face — selection is the plate.
+            let icon_el: Element<'_, Msg> = icon(icon_name, ICON_SIZE);
 
-            let icon_el: Element<'_, Msg> = icon_colored(icon_name, ICON_SIZE, icon_fg);
-            // Label fills the tile width and centers, wrapping if it's long —
-            // this is what keeps every tile a uniform TILE_W.
-            let label_el: Element<'_, Msg> = text(label_str)
-                .font(fonts::chrome())
-                .size(LABEL_SIZE)
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Center)
-                .into();
-
-            let card_content: Element<'_, Msg> = column![icon_el, label_el]
-                .spacing(ICON_LABEL_GAP)
-                .align_x(Alignment::Center)
-                .width(Length::Fill)
-                .into();
-
-            // Fixed-width tile: selected fills with shell-switcher-icon-bg
-            // (quiet selection seed), unselected is transparent. Tile padding
-            // knob: vertical = shell-switcher-tile-pad, horizontal = vertical + 4.
-            let tp = shell.style.switcher_tile_pad;
-            let card_container: Element<'_, Msg> = container(card_content)
-                .width(Length::Fixed(TILE_W))
-                .padding(Padding {
-                    top: tp,
-                    bottom: tp,
-                    left: tp + 4.0,
-                    right: tp + 4.0,
-                })
+            let cell: Element<'_, Msg> = container(icon_el)
+                .width(Length::Fixed(ICON_CELL))
+                .height(Length::Fixed(ICON_CELL))
+                .center_x(Length::Fixed(ICON_CELL))
+                .center_y(Length::Fixed(ICON_CELL))
+                .padding(Padding::new(tp))
                 .style(sola_kit::components::card::list_tile_style_colored(
                     is_selected,
                     shell.style.switcher_icon_bg,
-                    icon_fg,
+                    shell.style.switcher_icon_fg,
                 ))
                 .into();
 
-            mouse_area(card_container)
+            mouse_area(cell)
                 .on_enter(Msg::SwitcherHover { index: i })
                 .into()
         })
         .collect();
 
-    // --- wrap the tiles into a balanced grid ---
-    // The grid grows to fit every open app: tiles flow across as many columns
-    // as fit the screen width, then wrap to new rows. We balance the column
-    // count so the last row isn't left with a single stranded tile.
-    let n = cards.len();
-    let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
-    // Width available to the grid: screen minus backplate padding (both sides)
-    // and a small margin so the panel never reaches the screen edges.
-    let avail = (output_w - 2.0 * (shell.style.switcher_pad + SCREEN_MARGIN)).max(TILE_W);
-    let cols_cap = (((avail + GRID_GAP) / (TILE_W + GRID_GAP)).floor() as usize).max(1);
-    let cols = grid_columns(n, cols_cap);
-
-    let mut grid_rows: Vec<Element<'_, Msg>> = Vec::new();
-    let mut current: Vec<Element<'_, Msg>> = Vec::new();
-    for card in cards {
-        current.push(card);
-        if current.len() == cols {
-            grid_rows.push(
-                row(std::mem::take(&mut current))
-                    .spacing(GRID_GAP)
-                    .align_y(Alignment::Center)
-                    .into(),
-            );
-        }
-    }
-    if !current.is_empty() {
-        grid_rows.push(
-            row(current)
-                .spacing(GRID_GAP)
-                .align_y(Alignment::Center)
-                .into(),
-        );
-    }
-    let grid: Element<'_, Msg> = column(grid_rows)
-        .spacing(GRID_GAP)
-        .align_x(Alignment::Center)
+    let strip: Element<'_, Msg> = row(cells)
+        .spacing(ICON_GAP)
+        .align_y(Alignment::Center)
         .into();
 
-    // Backplate fill/border from shell-* tokens (alpha-capable);
-    // padding from shell-switcher-pad. RADIUS_LG via kit backplate.
+    // Horizontal pad on the pill is a bit wider than vertical (macOS
+    // HUD is short and wide). Vertical = shell-switcher-pad; horizontal
+    // = pad + 8.
+    let pad = shell.style.switcher_pad;
     let backplate: Element<'_, Msg> = sola_kit::components::backplate(
-        grid,
+        strip,
         shell.style.switcher_bg,
         shell.style.switcher_border,
     )
-    .padding(Padding::new(shell.style.switcher_pad))
+    .padding(Padding {
+        top: pad,
+        bottom: pad,
+        left: pad + 8.0,
+        right: pad + 8.0,
+    })
     .into();
 
-    // Center the backplate on screen.
-    let centered: Element<'_, Msg> = container(backplate)
+    // Selected app name — one caption under the strip, not per-tile labels.
+    let caption_str = switcher
+        .apps
+        .get(switcher.selected)
+        .map(|app| {
+            shell
+                .applications
+                .get(&app.app_id)
+                .map(|a| a.label.as_str())
+                .unwrap_or(app.app_id.as_str())
+        })
+        .unwrap_or("");
+
+    let caption: Element<'_, Msg> = text(caption_str)
+        .font(fonts::chrome())
+        .size(CAPTION_SIZE)
+        .style(|theme: &iced::Theme| iced::widget::text::Style {
+            color: Some(iced::Color {
+                a: 0.92,
+                ..theme.palette().text
+            }),
+        })
+        .into();
+
+    // Soft drop shadow under caption for legibility over busy desktops
+    // is not available without blur; the caption sits outside the pill
+    // so it still reads as macOS's "name below the HUD" treatment.
+    let hud: Element<'_, Msg> = column![backplate, caption]
+        .spacing(CAPTION_GAP)
+        .align_x(Alignment::Center)
+        .into();
+
+    // Cap width so a very long MRU strip doesn't hit the bezel; the row
+    // still lays out left-to-right (no wrapping grid).
+    let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
+    let max_w = (output_w - 2.0 * SCREEN_MARGIN).max(ICON_CELL);
+
+    let constrained: Element<'_, Msg> = container(hud)
+        .max_width(max_w)
+        .into();
+
+    let centered: Element<'_, Msg> = container(constrained)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
         .into();
 
-    // Full-screen invisible click-catcher dismisses the switcher. The
-    // backplate sits inside its own region and absorbs hover/clicks first,
-    // so clicking outside the cards is what reaches this layer.
     mouse_area(centered)
         .on_press(Msg::SwitcherCancel)
         .into()
-}
-
-/// Balanced column count for `n` tiles when at most `cap` fit per row.
-///
-/// Spreads tiles as evenly as possible across the rows actually needed, so the
-/// last row isn't left with a single stranded tile. Example: 15 tiles with a
-/// cap of 13 wraps to 8 columns over 2 rows (8 + 7), not 13 + 2.
-fn grid_columns(n: usize, cap: usize) -> usize {
-    if n <= 1 {
-        return 1;
-    }
-    let cap = cap.max(1);
-    let rows_needed = n.div_ceil(cap);
-    n.div_ceil(rows_needed).max(1)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::grid_columns;
-
-    #[test]
-    fn columns_empty_or_single_is_one() {
-        assert_eq!(grid_columns(0, 13), 1);
-        assert_eq!(grid_columns(1, 13), 1);
-    }
-
-    #[test]
-    fn columns_fit_in_one_row() {
-        assert_eq!(grid_columns(5, 13), 5);
-        assert_eq!(grid_columns(13, 13), 13);
-    }
-
-    #[test]
-    fn columns_balance_across_two_rows() {
-        // 14 over a cap of 13 → 2 rows, balanced to 7 each (not 13 + 1).
-        assert_eq!(grid_columns(14, 13), 7);
-        // 15 → 2 rows balanced to 8 (8 + 7), not 13 + 2.
-        assert_eq!(grid_columns(15, 13), 8);
-        // Exactly two full rows.
-        assert_eq!(grid_columns(26, 13), 13);
-    }
-
-    #[test]
-    fn columns_balance_across_three_rows() {
-        // 27 over a cap of 13 → 3 rows, balanced to 9 each.
-        assert_eq!(grid_columns(27, 13), 9);
-    }
-
-    #[test]
-    fn columns_cap_of_one_is_single_column() {
-        // Degenerate narrow screen: one tile per row.
-        assert_eq!(grid_columns(3, 1), 1);
-        assert_eq!(grid_columns(3, 0), 1);
-    }
 }

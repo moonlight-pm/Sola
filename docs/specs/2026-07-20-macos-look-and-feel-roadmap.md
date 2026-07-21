@@ -47,7 +47,7 @@ values until re-saved / reset.
 | Accent | `#00d4ff` | keep; use sparsely |
 | Selection | `#1a3a45` | quiet accent-tinted |
 | Menubar | solid `#000` | opaque greys first; blur deferred |
-| Switcher glass | `#2c2c2ecc` + `#ffffff26` | neutral material, not neon cyan |
+| Switcher glass | `#1c1c1ee6` + soft icon plate | Cmd+Tab HUD pill, not neon cyan |
 
 ### Tooling gap (blocker for iteration)
 
@@ -206,14 +206,15 @@ Spotlight-like restraint (single focus, dim backdrop, list hierarchy).
 
 ### P6 — Switcher
 
-Mission Control / app-switcher restraint; neutral backplate tokens.
+Cmd+Tab HUD (not Mission Control grid): horizontal icon strip, selected-only
+caption, soft plate under icon, frosted pill backplate.
 
 **Status (in progress on `p6-switcher`):**
 
-- [x] Quiet tile selection (`#1a3a45` selection, not cyan accent pill)
-- [x] Same glyph/label face on selected + unselected tiles
-- [x] Denser frame/tiles (pad 20 / tile-pad 10; 48px icons; tighter grid)
-- [x] Backplate radius `RADIUS_LG` (8px); kit `list_tile_style` uses selection
+- [x] Layout: single horizontal icon strip (no wrapping label grid)
+- [x] Large icons (72px); selected app name as one caption under the strip
+- [x] Soft light selection plate (`#ffffff2e`), not cyan / teal fill
+- [x] HUD pill material (`#1c1c1ee6`, `RADIUS_XL`); pad 14 / tile-pad 8
 - [ ] User install + after shot (`docs/visual/passes/p6-switcher/`)
 
 ### P7 — Kit controls

@@ -9,7 +9,7 @@
 use iced::widget::{Container, container};
 use iced::{Background, Color, Element, Shadow, Theme, Vector};
 
-use crate::components::style::{hairline, RADIUS_LG, RADIUS_MD, SPACE_XL};
+use crate::components::style::{hairline, RADIUS_LG, RADIUS_XL, SPACE_XL};
 
 /// Wrap `content` in a card-styled container. Default padding is 16px;
 /// override with `.padding(...)` on the returned container if needed.
@@ -66,8 +66,8 @@ pub fn modal<'a, Message: 'a>(
 /// `shell-switcher-border` tokens). Radius and border width are fixed
 /// to the backplate's values.
 ///
-/// Radius matches modal (`RADIUS_LG` / 8px) — Mission Control restraint,
-/// not a marketing HUD card.
+/// Radius is `RADIUS_XL` (14px) — Cmd+Tab HUD pill, rounder than modal
+/// (`RADIUS_LG`) so the strip reads as system chrome, not a form card.
 ///
 /// No drop shadow: the shell's renderer doesn't blur shadow quads, so a
 /// shadow renders as a hard offset rectangle that pokes out past the
@@ -79,7 +79,7 @@ pub fn backplate_style(fill: Color, border: Color) -> impl Fn(&Theme) -> contain
         border: iced::Border {
             color: border,
             width: 1.0,
-            radius: RADIUS_LG.into(),
+            radius: RADIUS_XL.into(),
         },
         shadow: Shadow::default(),
         ..container::Style::default()
@@ -98,15 +98,15 @@ pub fn backplate<'a, Message: 'a>(
 }
 
 /// Style for [`accent_backplate`]: primary-tinted translucent fill and
-/// border at `RADIUS_LG`, with a deep drop shadow. Thin wrapper over
-/// [`backplate_style`] passing the palette-derived defaults.
+/// border at `RADIUS_XL`. Thin wrapper over [`backplate_style`] passing
+/// the palette-derived defaults.
 pub fn accent_backplate_style(theme: &Theme) -> container::Style {
     let accent = theme.extended_palette().primary.base.color;
     backplate_style(Color { a: 0.18, ..accent }, Color { a: 0.35, ..accent })(theme)
 }
 
 /// Accent-tinted translucent backplate (storybook demo of primary glass):
-/// primary colour at low alpha for fill and border, `RADIUS_LG`. Returns a
+/// primary colour at low alpha for fill and border, `RADIUS_XL`. Returns a
 /// `Container` so the caller can chain sizing/padding.
 pub fn accent_backplate<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
@@ -114,12 +114,12 @@ pub fn accent_backplate<'a, Message: 'a>(
     container(content).style(accent_backplate_style)
 }
 
-/// Container style for a selectable tile (e.g. an app card in a switcher
-/// grid). The container analog of `button::list_item` for tiles that need a
-/// `mouse_area` wrapper (hover-driven selection) instead of a pressable
-/// button: selected → quiet [`crate::theme::selection`] fill (not a full
-/// accent pill); unselected → transparent with no text-colour override
-/// (inherits the window default).
+/// Container style for a selectable tile (e.g. an icon cell in the app
+/// switcher strip). The container analog of `button::list_item` for tiles
+/// that need a `mouse_area` wrapper (hover-driven selection) instead of a
+/// pressable button: selected → quiet fill (default: selection atom);
+/// unselected → transparent. Radius is `RADIUS_LG` so the plate reads as
+/// a soft HUD highlight under a large icon, not a list-row chip.
 pub fn list_tile_style(selected: bool) -> impl Fn(&Theme) -> container::Style {
     move |theme| {
         let p = theme.extended_palette();
@@ -134,7 +134,7 @@ pub fn list_tile_style(selected: bool) -> impl Fn(&Theme) -> container::Style {
             border: iced::Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
-                radius: RADIUS_MD.into(),
+                radius: RADIUS_LG.into(),
             },
             ..container::Style::default()
         }
@@ -142,11 +142,10 @@ pub fn list_tile_style(selected: bool) -> impl Fn(&Theme) -> container::Style {
 }
 
 /// Like [`list_tile_style`] but with caller-supplied colors: `fill` is the
-/// selected-tile background and `fg` the tile's text/foreground (applied
-/// in both states so SVG glyphs and labels tint consistently). Lets shell
-/// chrome drive switcher tiles from its own `shell-switcher-icon-*` tokens
-/// instead of the palette's selection / fg. Same radius (`RADIUS_MD`) and
-/// transparent-when-unselected behaviour as [`list_tile_style`].
+/// selected-cell background and `fg` the text/foreground (applied in both
+/// states so SVG glyphs tint consistently). Shell chrome drives switcher
+/// cells from `shell-switcher-icon-*` tokens. Same radius (`RADIUS_LG`)
+/// and transparent-when-unselected behaviour as [`list_tile_style`].
 pub fn list_tile_style_colored(
     selected: bool,
     fill: Color,
@@ -158,7 +157,7 @@ pub fn list_tile_style_colored(
         border: iced::Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: RADIUS_MD.into(),
+            radius: RADIUS_LG.into(),
         },
         ..container::Style::default()
     }
