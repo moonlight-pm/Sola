@@ -135,7 +135,7 @@ where
             // the plain `button(..).on_press(item.message)` path — byte-
             // for-byte the prior `sidebar_item` behaviour. `index`/`n` are
             // only read on the reorder path, so the values are irrelevant.
-            col = col.push(render_item(item, None, 0, 0));
+            col = col.push(render_item(item, None, 0));
         }
     }
     container(col)
@@ -418,11 +418,12 @@ pub struct ReorderCfg<'a, Message> {
     pub on_press: Box<dyn Fn(usize) -> Message + 'a>,
     /// `Some((from_index, start_y))` once the gesture passes the movement
     /// threshold (a real drag); `None` during a not-yet-moved press or when
-    /// idle. Drives the drop-slot highlight and the dragged-row "lifted"
+    /// idle. Drives the live-reorder preview and the dragged-row "lifted"
     /// look, so a plain click never flashes drag chrome.
     pub active: Option<(usize, f32)>,
-    /// Current cursor-y during the gesture (used with [`panel_drop_index`]
-    /// to compute the highlighted drop slot).
+    /// Current cursor-y during the gesture (used with
+    /// [`panel_drop_index_relative`] to place the dragged row in the
+    /// live-reorder preview).
     pub cursor_y: f32,
 }
 
@@ -443,7 +444,6 @@ fn render_item<'a, Message>(
     item: SidebarItem<Message>,
     reorder: Option<&ReorderCfg<'a, Message>>,
     index: usize,
-    n: usize,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -472,23 +472,14 @@ where
     // ── Reorder-enabled path. ──
     // Drag chrome shows only while `reorder.active` is `Some` — the consumer
     // populates that only after the gesture passes the movement threshold,
-    // so a plain press (no movement) leaves the row looking normal. The drop
-    // slot is anchor-relative (the grabbed row shifted by how many
-    // row-heights the cursor has travelled), so it's correct regardless of
-    // where the panel sits in the window.
-    let (is_dragged, is_drop_target) = match reorder.active {
-        Some((from, start_y)) => {
-            let to = panel_drop_index_relative(
-                from,
-                start_y,
-                reorder.cursor_y,
-                PANEL_ROW_H,
-                n,
-            );
-            (from == index, to == index && from != index)
-        }
-        None => (false, false),
-    };
+    // so a plain press (no movement) leaves the row looking normal.
+    //
+    // While active, [`SidebarPanel::build`] live-reorders the displayed
+    // rows so the grabbed item travels with the cursor. `index` is the
+    // item's *stable* (pre-drag) index in the consumer's order — used for
+    // press messages and for marking the lifted row. No separate
+    // drop-slot highlight: the provisional position *is* the feedback.
+    let is_dragged = matches!(reorder.active, Some((from, _)) if from == index);
 
     let content = item_content(&label, secondary.as_deref(), shortcut);
     let pressable = mouse_area(
@@ -496,13 +487,16 @@ where
             .width(Length::Fill)
             .padding(Padding::from([6, 10]))
             .style(move |theme: &Theme| {
-                row_container_style(theme, active, is_drop_target, is_dragged)
+                // Live-reorder preview: only the in-flight row gets chrome.
+                row_container_style(theme, active, is_dragged)
             }),
     )
-    // Match the plain-path `button`, which sets a pointer cursor on hover.
-    // A bare `mouse_area` leaves the cursor unchanged, so reorderable rows
-    // (the terminal's tabs) otherwise wouldn't show the pointer.
-    .interaction(mouse::Interaction::Pointer)
+    // Pointer at rest; grabbing while this row is the one in flight.
+    .interaction(if is_dragged {
+        mouse::Interaction::Grabbing
+    } else {
+        mouse::Interaction::Pointer
+    })
     .on_press((reorder.on_press)(index));
 
     if let Some(close_msg) = on_close {
@@ -651,29 +645,65 @@ where
             );
         }
 
-        // Total item count across all sections — the `n` passed to the
-        // drop-index geometry so the highlighted slot clamps correctly.
+        // Total item count across all sections — clamps the drop slot.
         let total_items: usize = sections.iter().map(|s| s.items.len()).sum();
+        let dragging = reorder_ref.and_then(|r| r.active);
 
-        // Item rows. A global row index drives the reorder geometry and
-        // the collapsed fallback number, counted across all sections.
-        let mut row_index = 0usize;
-        for (si, section) in sections.into_iter().enumerate() {
-            if si > 0 && !collapsed {
-                col = col.push(Space::new().height(Length::Fixed(12.0)));
-            }
-            if let Some(label) = section.label {
-                if !collapsed {
-                    col = col.push(section_header(label));
+        if let Some((from, start_y)) = dragging {
+            // Live preview: flatten every section into one strip, move the
+            // grabbed row to its provisional slot, and render without
+            // section headers (they would fight a mid-drag shuffle). Each
+            // entry keeps its *stable* pre-drag index so press messages
+            // and the lifted-row mark still point at the consumer's order.
+            let cursor_y = reorder_ref.map(|r| r.cursor_y).unwrap_or(0.0);
+            let to = panel_drop_index_relative(
+                from,
+                start_y,
+                cursor_y,
+                PANEL_ROW_H,
+                total_items,
+            );
+            let mut flat: Vec<(usize, SidebarItem<Message>)> = Vec::with_capacity(total_items);
+            let mut row_index = 0usize;
+            for section in sections {
+                for item in section.items {
+                    flat.push((row_index, item));
+                    row_index += 1;
                 }
             }
-            for item in section.items {
+            if from != to && !flat.is_empty() {
+                let from = from.min(flat.len() - 1);
+                let to = to.min(flat.len() - 1);
+                let entry = flat.remove(from);
+                flat.insert(to, entry);
+            }
+            for (stable_index, item) in flat {
                 if collapsed {
-                    col = col.push(collapsed_row(&item, row_index, reorder_ref));
+                    col = col.push(collapsed_row(&item, stable_index, reorder_ref));
                 } else {
-                    col = col.push(render_item(item, reorder_ref, row_index, total_items));
+                    col = col.push(render_item(item, reorder_ref, stable_index));
                 }
-                row_index += 1;
+            }
+        } else {
+            // At rest: original sectioned layout (headers + gaps).
+            let mut row_index = 0usize;
+            for (si, section) in sections.into_iter().enumerate() {
+                if si > 0 && !collapsed {
+                    col = col.push(Space::new().height(Length::Fixed(12.0)));
+                }
+                if let Some(label) = section.label {
+                    if !collapsed {
+                        col = col.push(section_header(label));
+                    }
+                }
+                for item in section.items {
+                    if collapsed {
+                        col = col.push(collapsed_row(&item, row_index, reorder_ref));
+                    } else {
+                        col = col.push(render_item(item, reorder_ref, row_index));
+                    }
+                    row_index += 1;
+                }
             }
         }
 
@@ -696,31 +726,42 @@ where
             .width(Length::Fixed(width))
             .height(Length::Fill);
 
-        // No resize → just the column.
-        let Some((_, dragging, on_press)) = resize else {
-            return panel.into();
+        // Gesture flags captured before we move `resize` into the divider.
+        let resize_dragging = resize.as_ref().is_some_and(|(_, d, _)| *d);
+        let reorder_dragging = reorder_ref.is_some_and(|r| r.active.is_some());
+
+        // Compose optional resize divider.
+        let body: Element<'a, Message, Theme> = match resize {
+            Some((_, _, on_press)) => {
+                let divider = mouse_area(
+                    container(Space::new().width(Length::Fill).height(Length::Fill))
+                        .style(divider_style)
+                        .width(Length::Fixed(6.0))
+                        .height(Length::Fill),
+                )
+                .interaction(iced::mouse::Interaction::ResizingColumn)
+                .on_press(on_press);
+                row![panel, divider].height(Length::Fill).into()
+            }
+            None => panel.into(),
         };
 
-        // A thin divider mouse_area to the right of the column.
-        let divider = mouse_area(
-            container(Space::new().width(Length::Fill).height(Length::Fill))
-                .style(divider_style)
-                .width(Length::Fixed(6.0))
-                .height(Length::Fill),
-        )
-        .interaction(iced::mouse::Interaction::ResizingColumn)
-        .on_press(on_press);
-
-        let body: Element<'a, Message, Theme> =
-            row![panel, divider].height(Length::Fill).into();
-
-        if dragging {
-            // Full-window transparent overlay so a fast drag keeps the
-            // resize cursor / capture (iced has no pointer capture).
+        // Full-window transparent overlay while a gesture is live so a fast
+        // drag keeps the right cursor (iced has no pointer capture). Resize
+        // and reorder are mutually exclusive in practice (different press
+        // targets); resize wins if both somehow fire.
+        if resize_dragging {
             stack![
                 body,
                 mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                     .interaction(iced::mouse::Interaction::ResizingColumn),
+            ]
+            .into()
+        } else if reorder_dragging {
+            stack![
+                body,
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                    .interaction(iced::mouse::Interaction::Grabbing),
             ]
             .into()
         } else {
@@ -747,7 +788,7 @@ where
             container(collapsed_content::<Message>(number))
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
-                .style(move |theme: &Theme| row_container_style(theme, active, false, false)),
+                .style(move |theme: &Theme| row_container_style(theme, active, false)),
         )
         .on_press((cfg.on_press)(index))
         .into(),
@@ -784,43 +825,27 @@ fn divider_style(theme: &Theme) -> container::Style {
 
 /// Background style for a row rendered as a non-pressable `container`
 /// (the reorder path). Priority: the row being dragged reads as "lifted"
-/// (faint, dimmed), then the live drop slot (accent fill + ring), then a
-/// resting selected row (the dedicated [`crate::theme::selection`]
-/// highlight, matching [`item_style`]); everything else is flat (the
-/// `mouse_area` exposes no hover status, so resting rows don't lift).
-fn row_container_style(
-    theme: &Theme,
-    active: bool,
-    drop_target: bool,
-    dragged: bool,
-) -> container::Style {
+/// (accent ring + soft fill so it tracks as the moving tab during the
+/// live-reorder preview), then a resting selected row (the dedicated
+/// [`crate::theme::selection`] highlight, matching [`item_style`]);
+/// everything else is flat (the `mouse_area` exposes no hover status, so
+/// resting rows don't lift).
+fn row_container_style(theme: &Theme, active: bool, dragged: bool) -> container::Style {
     let p = theme.extended_palette();
     let flat_border = Border {
         color: Color::TRANSPARENT,
         width: 0.0,
         radius: RADIUS_SM.into(),
     };
-    // The row in flight: faint fill + dimmed label so it clearly reads as
-    // the item being moved.
+    // The row in flight: soft accent plate + ring so it reads as the item
+    // being moved while the list live-reorders around it.
     if dragged {
-        return container::Style {
-            background: Some(Background::Color(Color {
-                a: 0.35,
-                ..p.background.weak.color
-            })),
-            text_color: Some(Color { a: 0.5, ..p.background.base.text }),
-            border: flat_border,
-            ..container::Style::default()
-        };
-    }
-    // The live destination slot: accent fill + accent ring = "lands here".
-    if drop_target {
         return container::Style {
             background: Some(Background::Color(p.primary.weak.color)),
             text_color: Some(p.background.base.text),
             border: Border {
                 color: p.primary.base.color,
-                width: 2.0,
+                width: 1.5,
                 radius: RADIUS_SM.into(),
             },
             ..container::Style::default()

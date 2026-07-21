@@ -375,8 +375,11 @@ impl App {
                 Task::none()
             }
             Msg::ReorderStart(index) => {
+                // start_y = 0.0 sentinel; captured on first CursorMoved.
+                // Drag chrome stays off until movement crosses the threshold.
                 self.sidebar.reorder = Some((index, 0.0));
                 self.sidebar.reorder_cursor_y = 0.0;
+                self.sidebar.reorder_dragging = false;
                 Task::none()
             }
             Msg::SplitDividerPress(split_id) => {
@@ -424,6 +427,11 @@ impl App {
                         *start_y = y;
                     }
                     self.sidebar.reorder_cursor_y = y;
+                    // Promote to a live drag once the cursor moves past the
+                    // threshold — until then it stays a candidate click.
+                    if (y - *start_y).abs() >= sola_kit::components::PANEL_REORDER_THRESHOLD {
+                        self.sidebar.reorder_dragging = true;
+                    }
                 }
                 // Pane split divider.
                 if let Some(split_id) = self.dragging_split.clone() {
@@ -1449,18 +1457,18 @@ impl App {
     fn finish_reorder(&mut self) -> Task<Msg> {
         let gesture = self.sidebar.reorder.take();
         let final_cursor_y = self.sidebar.reorder_cursor_y;
+        let was_dragging = self.sidebar.reorder_dragging;
         self.sidebar.reorder_cursor_y = 0.0;
+        self.sidebar.reorder_dragging = false;
 
         let Some((from, start_y)) = gesture else {
             return Task::none();
         };
 
-        let total_movement = (final_cursor_y - start_y).abs();
-        let is_click = start_y == 0.0
-            || total_movement < sola_kit::components::PANEL_REORDER_THRESHOLD;
-
         let ids = self.tabs.tab_ids_in_order();
-        if is_click {
+        // Never crossed the threshold → click, not drag: select the tab.
+        // (`start_y == 0.0` covers press-with-no-move before the first sample.)
+        if !was_dragging || start_y == 0.0 {
             if let Some(id) = ids.get(from) {
                 return self.select_tab(&id.clone());
             }
@@ -1471,9 +1479,13 @@ impl App {
         if n == 0 {
             return Task::none();
         }
-        let to = sola_kit::components::panel_drop_index(
+        // Anchor-relative: same formula the kit uses for the drop-slot
+        // highlight. Absolute `panel_drop_index` + PANEL_HEADER_H was wrong
+        // here (terminal has no collapse header, and Y is window-absolute).
+        let to = sola_kit::components::panel_drop_index_relative(
+            from,
+            start_y,
             final_cursor_y,
-            sola_kit::components::PANEL_HEADER_H,
             sola_kit::components::PANEL_ROW_H,
             n,
         );

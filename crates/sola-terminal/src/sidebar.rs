@@ -11,15 +11,19 @@ pub struct SidebarState {
     pub drag_anchor: Option<(f32, f32)>,
     /// Active tab-reorder gesture.
     ///
-    /// `Some((from_index, start_y))` while a drag is in progress.
+    /// `Some((from_index, start_y))` from press until release.
     /// `from_index` is the position of the pressed tab in `ids_in_order()`.
-    /// `start_y` is the cursor-y captured on the first `ReorderMove` after
-    /// the press (mirrors the divider's anchor-on-first-move pattern).
+    /// `start_y` is the cursor-y captured on the first move after the press
+    /// (mirrors the divider's anchor-on-first-move pattern; `0.0` sentinel
+    /// until that first sample).
     /// `None` means no reorder gesture is active.
     pub reorder: Option<(usize, f32)>,
     /// Current cursor-y during a reorder gesture; used to render the drop
-    /// target highlight and to compute the drop slot on `ReorderEnd`.
+    /// target highlight and to compute the drop slot on release.
     pub reorder_cursor_y: f32,
+    /// True once the gesture has moved past [`PANEL_REORDER_THRESHOLD`].
+    /// Gates drag chrome so a plain click never flashes the lifted/drop look.
+    pub reorder_dragging: bool,
 }
 
 /// cwd basename → tab label, falling back to "shell".
@@ -41,8 +45,8 @@ pub fn tab_label(cwd: &Option<String>) -> String {
 /// Each tab becomes one [`SidebarItem`] in a single unlabeled section. The
 /// item label carries the tab number + cwd basename; collapse/resize/reorder
 /// are all delegated to the kit (which owns the divider mouse_area, the drag
-/// overlay, and the drop-target highlight). The terminal still owns the cursor
-/// subscriptions, `SidebarState`, and the `ReorderEnd` click-vs-drag logic.
+/// overlay, and the live-reorder preview). The terminal still owns the cursor
+/// subscriptions, `SidebarState`, and the release click-vs-drag logic.
 ///
 /// The per-item `message` is **never fired** in this app: reorder is always
 /// enabled, so the kit wraps each row in a `mouse_area` whose press emits
@@ -82,7 +86,14 @@ pub fn view<'a>(
         )
         .reorderable(ReorderCfg {
             on_press: Box::new(Msg::ReorderStart),
-            active: state.reorder,
+            // Expose the gesture as "active" only once it's a real drag, so the
+            // panel shows no drag chrome on a plain (un-moved) press. Matches
+            // the kit storybook and the ReorderCfg contract.
+            active: if state.reorder_dragging {
+                state.reorder
+            } else {
+                None
+            },
             cursor_y: state.reorder_cursor_y,
         })
         .build()
