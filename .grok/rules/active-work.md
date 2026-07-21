@@ -13,15 +13,17 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P6 switcher** — worktree `.worktrees/p6-switcher`, branch `p6-switcher`.
+**none**
 
-Cmd+Tab HUD: horizontal large-icon strip, selected-only caption, soft light
-selection plate, frosted pill backplate (`RADIUS_XL`). See roadmap §4 P6.
-
-**Next step:** user install shell (and kit if storybook tokens) and capture
-after shot under `docs/visual/passes/p6-switcher/`. Then visual stop / merge.
+Next when user says go: **P7** kit controls —
+see `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P7.
 
 ### Last completed
+
+**P6 switcher** — merged to `master` at `4b49dec`
+(2026-07-21). Cmd+Tab HUD: horizontal large-icon strip, selected-only
+caption, soft light selection plate, frosted pill backplate. Also multi-app
+`cargo make install`.
 
 **P5 launcher** — merged to `master` at `a2b2e7f`
 (2026-07-20). Spotlight restraint: quiet selection, calmer modal, denser

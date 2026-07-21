@@ -209,13 +209,12 @@ Spotlight-like restraint (single focus, dim backdrop, list hierarchy).
 Cmd+Tab HUD (not Mission Control grid): horizontal icon strip, selected-only
 caption, soft plate under icon, frosted pill backplate.
 
-**Status (in progress on `p6-switcher`):**
+**Status (merged at `4b49dec`):**
 
 - [x] Layout: single horizontal icon strip (no wrapping label grid)
 - [x] Large icons (72px); selected app name as one caption under the strip
 - [x] Soft light selection plate (`#ffffff2e`), not cyan / teal fill
 - [x] HUD pill material (`#1c1c1ee6`, `RADIUS_XL`); pad 14 / tile-pad 8
-- [ ] User install + after shot (`docs/visual/passes/p6-switcher/`)
 
 ### P7 — Kit controls
 
