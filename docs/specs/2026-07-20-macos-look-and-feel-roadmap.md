@@ -215,6 +215,8 @@ caption, soft plate under icon, frosted pill backplate.
 - [x] Large icons (72px); selected app name as one caption under the strip
 - [x] Soft light selection plate (`#ffffff2e`), not cyan / teal fill
 - [x] HUD pill material (`#1c1c1ee6`, `RADIUS_XL`); pad 14 / tile-pad 8
+- [x] Caption inside the pill (legible on light wallpapers; follow-up after
+  outside-white-on-white regression)
 
 ### P7 — Kit controls
 

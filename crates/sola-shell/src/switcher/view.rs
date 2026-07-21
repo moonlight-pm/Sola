@@ -2,8 +2,8 @@
 //!
 //! A short centered horizontal strip of large app icons on a frosted
 //! pill backplate. Selection is a soft neutral plate under the icon;
-//! the selected app's name is a single caption under the strip (not a
-//! label under every tile). Click outside cancels.
+//! the selected app's name is a single caption under the strip *inside*
+//! the pill (readable on any desktop wallpaper). Click outside cancels.
 //!
 //! When `switcher.active` is false, returns an invisible placeholder so the
 //! surface stays mapped without drawing content.
@@ -24,7 +24,8 @@ const ICON_CELL: f32 = 96.0;
 const ICON_GAP: f32 = 6.0;
 /// Caption under the strip (selected app only).
 const CAPTION_SIZE: f32 = 13.0;
-const CAPTION_GAP: f32 = 10.0;
+/// Space between icon strip and caption inside the pill.
+const CAPTION_GAP: f32 = 8.0;
 /// Keep the pill off the screen edges.
 const SCREEN_MARGIN: f32 = 48.0;
 
@@ -32,10 +33,9 @@ const SCREEN_MARGIN: f32 = 48.0;
 ///
 /// Layout:
 ///   Full-screen invisible mouse_area (click-outside-to-cancel)
-///   └─ Centered column:
-///        · Pill backplate (shell-switcher-bg/border/pad)
-///          └─ Horizontal row of large icons; selected has soft plate
-///        · Selected app name caption (chrome type)
+///   └─ Centered pill backplate (shell-switcher-bg/border/pad)
+///        · Horizontal row of large icons; selected has soft plate
+///        · Selected app name caption (chrome type) — inside the glass
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     if !shell.switcher.active {
         return container(text(""))
@@ -89,24 +89,10 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .align_y(Alignment::Center)
         .into();
 
-    // Horizontal pad on the pill is a bit wider than vertical (macOS
-    // HUD is short and wide). Vertical = shell-switcher-pad; horizontal
-    // = pad + 8.
-    let pad = shell.style.switcher_pad;
-    let backplate: Element<'_, Msg> = sola_kit::components::backplate(
-        strip,
-        shell.style.switcher_bg,
-        shell.style.switcher_border,
-    )
-    .padding(Padding {
-        top: pad,
-        bottom: pad,
-        left: pad + 8.0,
-        right: pad + 8.0,
-    })
-    .into();
-
     // Selected app name — one caption under the strip, not per-tile labels.
+    // Lives *inside* the frosted pill so theme text (light on dark glass)
+    // stays legible over any wallpaper; outside-the-box white captions
+    // disappear on light desktops.
     let caption_str = switcher
         .apps
         .get(switcher.selected)
@@ -130,20 +116,36 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         })
         .into();
 
-    // Soft drop shadow under caption for legibility over busy desktops
-    // is not available without blur; the caption sits outside the pill
-    // so it still reads as macOS's "name below the HUD" treatment.
-    let hud: Element<'_, Msg> = column![backplate, caption]
+    let body: Element<'_, Msg> = column![strip, caption]
         .spacing(CAPTION_GAP)
         .align_x(Alignment::Center)
         .into();
+
+    // Horizontal pad on the pill is a bit wider than vertical (macOS
+    // HUD is short and wide). Vertical = shell-switcher-pad; horizontal
+    // = pad + 8.
+    let pad = shell.style.switcher_pad;
+    let backplate: Element<'_, Msg> = sola_kit::components::backplate(
+        body,
+        shell.style.switcher_bg,
+        shell.style.switcher_border,
+    )
+    .padding(Padding {
+        top: pad,
+        // Slightly tighter under the caption so the name doesn't float
+        // in a tall empty pad band at the bottom of the pill.
+        bottom: (pad - 2.0).max(6.0),
+        left: pad + 8.0,
+        right: pad + 8.0,
+    })
+    .into();
 
     // Cap width so a very long MRU strip doesn't hit the bezel; the row
     // still lays out left-to-right (no wrapping grid).
     let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
     let max_w = (output_w - 2.0 * SCREEN_MARGIN).max(ICON_CELL);
 
-    let constrained: Element<'_, Msg> = container(hud)
+    let constrained: Element<'_, Msg> = container(backplate)
         .max_width(max_w)
         .into();
 

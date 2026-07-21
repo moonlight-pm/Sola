@@ -88,7 +88,7 @@ pub fn view<'a>(
             "Cmd+Tab HUD: ICON_BG is a soft light plate under the selected \
              icon (not accent). ICON_FG / ICON_FG_SEL tint stroke icons; \
              seed uses the same face on both states. Name is a caption \
-             under the strip, not per-tile labels.",
+             under the strip inside the pill (not per-tile labels).",
         )
         .style(muted),
         icon_color_row,
