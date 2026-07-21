@@ -22,7 +22,8 @@ pub struct SidebarState {
     /// target highlight and to compute the drop slot on release.
     pub reorder_cursor_y: f32,
     /// True once the gesture has moved past [`PANEL_REORDER_THRESHOLD`].
-    /// Gates drag chrome so a plain click never flashes the lifted/drop look.
+    /// Distinguishes click (select tab) from drag (reorder) on release.
+    /// Press highlight is driven by `reorder` alone so it shows on mousedown.
     pub reorder_dragging: bool,
 }
 
@@ -86,14 +87,10 @@ pub fn view<'a>(
         )
         .reorderable(ReorderCfg {
             on_press: Box::new(Msg::ReorderStart),
-            // Expose the gesture as "active" only once it's a real drag, so the
-            // panel shows no drag chrome on a plain (un-moved) press. Matches
-            // the kit storybook and the ReorderCfg contract.
-            active: if state.reorder_dragging {
-                state.reorder
-            } else {
-                None
-            },
+            // Highlight the pressed tab immediately on mousedown. Live-reorder
+            // only moves the row once the cursor travels a half-row; click-vs-
+            // drag is still decided by `reorder_dragging` + the threshold.
+            active: state.reorder,
             cursor_y: state.reorder_cursor_y,
         })
         .build()

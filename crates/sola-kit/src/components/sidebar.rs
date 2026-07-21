@@ -416,10 +416,12 @@ pub struct ReorderCfg<'a, Message> {
     /// Maps a pressed row's index → the message that begins the gesture
     /// (the consumer's `ReorderStart(usize)`).
     pub on_press: Box<dyn Fn(usize) -> Message + 'a>,
-    /// `Some((from_index, start_y))` once the gesture passes the movement
-    /// threshold (a real drag); `None` during a not-yet-moved press or when
-    /// idle. Drives the live-reorder preview and the dragged-row "lifted"
-    /// look, so a plain click never flashes drag chrome.
+    /// `Some((from_index, start_y))` while a press/drag gesture is live;
+    /// `None` when idle. Drives the pressed-row highlight immediately, and
+    /// the live-reorder preview as the cursor moves. Consumers that want
+    /// zero chrome until the movement threshold can keep this `None` until
+    /// then (the storybook does); apps that want mousedown feedback (the
+    /// terminal) set it on press.
     pub active: Option<(usize, f32)>,
     /// Current cursor-y during the gesture (used with
     /// [`panel_drop_index_relative`] to place the dragged row in the
@@ -470,15 +472,12 @@ where
     };
 
     // ── Reorder-enabled path. ──
-    // Drag chrome shows only while `reorder.active` is `Some` — the consumer
-    // populates that only after the gesture passes the movement threshold,
-    // so a plain press (no movement) leaves the row looking normal.
-    //
-    // While active, [`SidebarPanel::build`] live-reorders the displayed
-    // rows so the grabbed item travels with the cursor. `index` is the
-    // item's *stable* (pre-drag) index in the consumer's order — used for
-    // press messages and for marking the lifted row. No separate
-    // drop-slot highlight: the provisional position *is* the feedback.
+    // Pressed/dragged chrome shows while `reorder.active` is `Some` (the
+    // consumer chooses whether that's on mousedown or only after the
+    // movement threshold). While active, [`SidebarPanel::build`] also
+    // live-reorders the strip so the grabbed item travels with the cursor.
+    // `index` is the item's *stable* (pre-drag) index in the consumer's
+    // order — used for press messages and for marking the lifted row.
     let is_dragged = matches!(reorder.active, Some((from, _)) if from == index);
 
     let content = item_content(&label, secondary.as_deref(), shortcut);
@@ -728,7 +727,15 @@ where
 
         // Gesture flags captured before we move `resize` into the divider.
         let resize_dragging = resize.as_ref().is_some_and(|(_, d, _)| *d);
-        let reorder_dragging = reorder_ref.is_some_and(|r| r.active.is_some());
+        // Grabbing overlay only after real movement — press-only highlight
+        // shouldn't cover the panel (and steal the pointer look) on a click.
+        let reorder_dragging = reorder_ref.is_some_and(|r| match r.active {
+            Some((_, start_y)) => {
+                start_y != 0.0
+                    && (r.cursor_y - start_y).abs() >= PANEL_REORDER_THRESHOLD
+            }
+            None => false,
+        });
 
         // Compose optional resize divider.
         let body: Element<'a, Message, Theme> = match resize {
