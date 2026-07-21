@@ -55,11 +55,12 @@ enum Commands {
 
     /// Install binaries locally to /opt/sola/bin.
     Install {
-        /// Specific app to install (e.g. "terminal").
-        /// Omit to install all binaries.
-        app: Option<String>,
+        /// Specific app(s) to install (e.g. "terminal", "shell kit").
+        /// Short names resolve via `sola-<name>`. Omit to install all binaries.
+        apps: Vec<String>,
 
         /// Watch for changes and reinstall automatically.
+        /// Requires exactly one app name.
         #[arg(long)]
         watch: bool,
     },
@@ -103,15 +104,15 @@ fn main() {
         Commands::Assets { action } => match action {
             AssetsAction::Sync { refresh } => assets::sync(refresh),
         },
-        Commands::Install { app, watch } => {
-            if watch && app.is_none() {
-                eprintln!("error: --watch requires an app name");
-                exit(1);
-            }
+        Commands::Install { apps, watch } => {
             if watch {
-                watch::watch_and_install(&app.unwrap());
+                if apps.len() != 1 {
+                    eprintln!("error: --watch requires exactly one app name");
+                    exit(1);
+                }
+                watch::watch_and_install(&apps[0]);
             } else {
-                install::install(app.as_deref());
+                install::install(&apps);
             }
         }
         Commands::InstallCef => {
@@ -132,19 +133,22 @@ fn main() {
 /// Construct the `cargo build` arguments for the given options.
 ///
 /// Separated from execution so it can be tested without running cargo.
-/// When no specific `target` is given, switches to a `--workspace`
-/// build with `--exclude` flags for each entry in [`EXCLUDED_TARGETS`]
-/// so retired apps don't slow the default full build.
-fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
+/// When `packages` is empty, switches to a `--workspace` build with
+/// `--exclude` flags for each entry in [`EXCLUDED_TARGETS`] so retired
+/// apps don't slow the default full build. Otherwise emits one
+/// `-p <name>` per package (cargo accepts multiple).
+fn build_args(packages: &[String], release: bool) -> Vec<String> {
     let mut args = vec!["build".to_string()];
-    if let Some(t) = target {
-        args.push("-p".to_string());
-        args.push(t.to_string());
-    } else {
+    if packages.is_empty() {
         args.push("--workspace".to_string());
         for excl in EXCLUDED_TARGETS {
             args.push("--exclude".to_string());
             args.push((*excl).to_string());
+        }
+    } else {
+        for pkg in packages {
+            args.push("-p".to_string());
+            args.push(pkg.clone());
         }
     }
     if release {
@@ -157,12 +161,12 @@ fn build_args(target: Option<&str>, release: bool) -> Vec<String> {
 ///
 /// Spawns cargo as a child process. Use this when the caller needs to
 /// do further work after the build (e.g. `install`'s post-build copy
-/// steps). When `target` is `None` (whole-workspace build), also walks
+/// steps). When `packages` is empty (whole-workspace build), also walks
 /// the isolated-crates list (see `isolated::discover`) and builds each
-/// with its own manifest.
-fn build(target: Option<String>, release: bool) {
-    let resolved = target.as_deref().map(resolve_crate_name);
-    let args = build_args(resolved.as_deref(), release);
+/// with its own manifest. Package names must already be resolved
+/// (e.g. via [`resolve_crate_name`]).
+fn build(packages: &[String], release: bool) {
+    let args = build_args(packages, release);
     let status = Command::new("cargo")
         .args(&args)
         .status()
@@ -170,8 +174,8 @@ fn build(target: Option<String>, release: bool) {
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
-    // Whole-workspace build only — single-target requests stay focused.
-    if target.is_none() {
+    // Whole-workspace build only — targeted requests stay focused.
+    if packages.is_empty() {
         let _ = isolated::build_all(release);
     }
 }
@@ -201,8 +205,11 @@ fn build_exec(target: Option<String>, release: bool) -> ! {
     if target.is_none() {
         let _ = isolated::build_all(release);
     }
-    let resolved = target.as_deref().map(resolve_crate_name);
-    let args = build_args(resolved.as_deref(), release);
+    let packages: Vec<String> = match target.as_deref() {
+        Some(name) => vec![resolve_crate_name(name)],
+        None => Vec::new(),
+    };
+    let args = build_args(&packages, release);
     // `exec` only returns on failure (e.g. cargo not on PATH).
     let err = Command::new("cargo").args(&args).exec();
     eprintln!("failed to exec cargo: {err}");
@@ -290,12 +297,12 @@ mod tests {
 
     #[test]
     fn build_args_default() {
-        // No target ⇒ plain `--workspace` build. EXCLUDED_TARGETS is
+        // No packages ⇒ plain `--workspace` build. EXCLUDED_TARGETS is
         // currently empty, so no `--exclude` flags are appended.
         // Concrete contents pinned so accidental additions to
         // EXCLUDED_TARGETS get noticed in review.
         assert_eq!(
-            build_args(None, false),
+            build_args(&[], false),
             vec!["build", "--workspace"]
         );
     }
@@ -303,15 +310,26 @@ mod tests {
     #[test]
     fn build_args_with_target() {
         assert_eq!(
-            build_args(Some("sola-compositor"), false),
+            build_args(&[String::from("sola-compositor")], false),
             vec!["build", "-p", "sola-compositor"]
+        );
+    }
+
+    #[test]
+    fn build_args_with_multiple_targets() {
+        assert_eq!(
+            build_args(
+                &[String::from("sola-shell"), String::from("sola-kit")],
+                false,
+            ),
+            vec!["build", "-p", "sola-shell", "-p", "sola-kit"]
         );
     }
 
     #[test]
     fn build_args_release() {
         assert_eq!(
-            build_args(None, true),
+            build_args(&[], true),
             vec!["build", "--workspace", "--release"]
         );
     }
@@ -319,7 +337,7 @@ mod tests {
     #[test]
     fn build_args_target_and_release() {
         assert_eq!(
-            build_args(Some("sola"), true),
+            build_args(&[String::from("sola")], true),
             vec!["build", "-p", "sola", "--release"]
         );
     }
@@ -363,9 +381,9 @@ mod tests {
         assert!(matches!(
             cli.command,
             Commands::Install {
-                app: None,
+                ref apps,
                 watch: false
-            }
+            } if apps.is_empty()
         ));
     }
 
@@ -374,7 +392,17 @@ mod tests {
         let cli = Cli::try_parse_from(["sola-make", "install", "terminal"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Install { app: Some(ref a), watch: false } if a == "terminal"
+            Commands::Install { ref apps, watch: false } if apps == &["terminal".to_string()]
+        ));
+    }
+
+    #[test]
+    fn cli_parses_install_multiple_apps() {
+        let cli = Cli::try_parse_from(["sola-make", "install", "shell", "kit"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install { ref apps, watch: false }
+                if apps == &["shell".to_string(), "kit".to_string()]
         ));
     }
 
@@ -383,7 +411,7 @@ mod tests {
         let cli = Cli::try_parse_from(["sola-make", "install", "terminal", "--watch"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Install { app: Some(ref a), watch: true } if a == "terminal"
+            Commands::Install { ref apps, watch: true } if apps == &["terminal".to_string()]
         ));
     }
 

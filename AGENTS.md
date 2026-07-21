@@ -76,7 +76,7 @@ docs/
 - Use `cargo make build` (or `cargo build`) to verify a change compiles. Stop there. Do not install just because a plan or task description says "install and smoke" — that step is for the user to run.
 - Install is local: binaries go to `/opt/sola/bin/`.
 - `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
-- `cargo make install <app>` — builds and installs a single app.
+- `cargo make install <app>…` — builds and installs one or more apps (e.g. `shell kit`).
 - `cargo make install <app> --watch` — watches for changes, rebuilds, and reinstalls automatically.
 - The user launches `sola` manually from a physical TTY. Do not configure auto-start.
 
@@ -103,7 +103,7 @@ Uses the xtask pattern with a `sola-make` crate:
 cargo make build                                  # Build everything
 cargo make build <target>                         # Build a specific target
 cargo make install                                # Build + install all to /opt/sola/bin
-cargo make install <app>                          # Build + install a single app
+cargo make install <app>…                         # Build + install one or more apps
 cargo make install <app> --watch                  # Watch + reinstall on change
 ```
 
