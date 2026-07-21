@@ -6,6 +6,10 @@
 //! split's main axis, mapped to `FillPortion` weights so the layout
 //! reflows when the window resizes.
 //!
+//! The divider is a hairline-in-hit-strip: [`DIVIDER_HIT_PX`] layout
+//! thickness with a centered 1px border-colored line (see
+//! [`crate::components::divider`]).
+//!
 //! Drag state stays with the caller (iced has no pointer-capture): the
 //! divider emits `on_drag` on press, and the consumer's update fn
 //! listens for that plus global cursor motion / release to compute the

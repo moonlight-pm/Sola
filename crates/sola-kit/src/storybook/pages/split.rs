@@ -45,7 +45,7 @@ pub fn view() -> Element<'static, Msg> {
 
     column![
         heading("Split"),
-        body("Two-pane split, side-by-side or stacked. The divider emits on_drag; the consumer tracks the cursor to update the ratio.")
+        body("Two-pane split, side-by-side or stacked. Divider is a 1px hairline in an 8px hit strip (macOS-style); on_drag press, consumer tracks the cursor for ratio.")
             .style(muted),
         body("Vertical — side-by-side (new pane on the right, ⌘⇧→)").style(muted),
         vertical,

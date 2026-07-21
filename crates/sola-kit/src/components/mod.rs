@@ -58,7 +58,9 @@ pub use badge::{Tone, badge};
 pub use button::confirm_button;
 pub use card::{accent_backplate, backplate, card, modal};
 pub use color_picker::ColorPicker;
-pub use divider::{horizontal_divider, horizontal_divider_drag, vertical_divider};
+pub use divider::{
+    DIVIDER_HIT_PX, horizontal_divider, horizontal_divider_drag, vertical_divider,
+};
 pub use field::field;
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
 pub use number_input::number_input;

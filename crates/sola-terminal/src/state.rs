@@ -8,8 +8,9 @@ use crate::pty::PtyBackend;
 pub use sola_bus::topics::{PaneLayout, SplitDir};
 
 /// Divider thickness in logical pixels — must match the kit `split`
-/// divider so the consumer's pane rects line up with what's drawn.
-pub const DIVIDER_PX: f32 = 8.0;
+/// hit strip (`sola_kit::components::DIVIDER_HIT_PX`) so pane rects
+/// line up with what's drawn.
+pub const DIVIDER_PX: f32 = sola_kit::components::DIVIDER_HIT_PX;
 
 /// A plain rectangle in window-logical pixels. Kept iced-free so the
 /// layout helpers stay unit-testable headlessly.
