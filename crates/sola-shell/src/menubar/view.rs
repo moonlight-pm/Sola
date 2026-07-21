@@ -38,6 +38,11 @@ const FLOWER_NUDGE_UP: f32 = 1.5;
 const CLUSTER_SPACING: f32 = 4.0;
 /// Gap between label and value inside one status indicator.
 const STAT_INNER_SPACING: f32 = 5.0;
+// Fixed value-slot widths so indicators don't reflow as digits change.
+// Chrome type is proportional — space-padding alone cannot pin layout.
+// "100%" / "—" ≈ 36px; rates up to "999.9 MB/s" ≈ 78px at 13pt.
+const STAT_VALUE_W: f32 = 36.0;
+const RATE_VALUE_W: f32 = 78.0;
 
 /// Bold chrome for the focused-app title (macOS application menu name).
 fn app_title_font() -> iced::Font {
@@ -143,6 +148,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         },
         crate::stats::level_color(cpu_pct, neutral),
         muted,
+        STAT_VALUE_W,
     ))
     .style(kit_btn::menubar(
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Cpu)),
@@ -161,6 +167,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         },
         crate::stats::level_color(mem_pct, neutral),
         muted,
+        STAT_VALUE_W,
     ))
     .style(kit_btn::menubar(
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Mem)),
@@ -205,6 +212,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             format!("{:.0}%", g.util),
             crate::stats::level_color(g.util, neutral),
             muted,
+            STAT_VALUE_W,
         ))
         .style(kit_btn::menubar(
             shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Gpu)),
@@ -322,11 +330,15 @@ fn display_label(shell: &crate::app::Shell, app_id: &str) -> String {
 
 /// Status indicator: muted chrome label + chrome value (same face/size as
 /// menu titles). No mono — menubar reads as one type system.
+///
+/// `value_w` pins the value slot so the cluster doesn't bounce when
+/// digits/units change (chrome is proportional).
 fn stat_indicator<'a>(
     label: &'a str,
     value: String,
     color: Color,
     muted: Color,
+    value_w: f32,
 ) -> Element<'a, Msg> {
     row![
         text(label)
@@ -338,6 +350,8 @@ fn stat_indicator<'a>(
         text(value)
             .font(fonts::chrome())
             .size(CHROME_SIZE)
+            .width(Length::Fixed(value_w))
+            .align_x(iced::alignment::Horizontal::Right)
             .style(move |_: &Theme| iced::widget::text::Style {
                 color: Some(color),
             }),
@@ -355,5 +369,5 @@ fn rate_indicator<'a>(
     muted: Color,
 ) -> Element<'a, Msg> {
     let value = crate::stats::view::fmt_rate(bps);
-    stat_indicator(label, value, color, muted)
+    stat_indicator(label, value, color, muted, RATE_VALUE_W)
 }

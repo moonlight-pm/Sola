@@ -600,11 +600,13 @@ impl Shell {
     pub fn estimate_stat_x(&self, metric: crate::stats::Metric) -> f32 {
         use crate::stats::Metric;
 
-        // Indicator button widths (content + the [2,8] button padding = 16px).
-        const STAT_W: f32 = 70.0; // CPU/GPU/MEM: "LBL" + 4-char mono value
-        const RATE_W: f32 = 100.0; // TX/RX: "LBL" + 9-char mono rate + 16px pad
-        const CLOCK_W: f32 = 166.0; // clock: 20-char "%H:%M %a %Y-%m-%d" + 16px pad
-        const GAP: f32 = 16.0; // row(cluster).spacing(16)
+        // Indicator button widths (content + ITEM_PAD [2,9] = 18px).
+        // Keep roughly in sync with STAT_VALUE_W / RATE_VALUE_W / CLUSTER_SPACING
+        // in menubar/view.rs (chrome type, not mono).
+        const STAT_W: f32 = 80.0; // CPU/GPU/MEM: label + 36px fixed value + pad
+        const RATE_W: f32 = 115.0; // TX/RX: label + 78px fixed rate + pad
+        const CLOCK_W: f32 = 166.0; // clock: "%H:%M %a %Y-%m-%d" + pad
+        const GAP: f32 = 4.0; // cluster spacing (menubar CLUSTER_SPACING)
 
         let output_w = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
         let has_gpu = self.stats.gpu.is_some();
