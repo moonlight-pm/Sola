@@ -13,8 +13,9 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P3** menubar density + type — in progress on branch
-`p3-menubar-density` (worktree `.worktrees/p3-menubar-density`).
+**P3** menubar density + type — **code ready**, visual stop.
+Branch `p3-menubar-density` @ `160bda9`
+(worktree `.worktrees/p3-menubar-density`).
 See `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P3.
 
 Signature move: compact menubar type (13 chrome / 12 mono values),
@@ -22,7 +23,9 @@ font roles (`chrome` / `ui_medium` / `mono`), theme-derived fg (no
 view hex), tighter item pad + status cluster spacing. Bar height
 stays 28 (zoning).
 
-Next when user says go after P3: **P4** menus & popovers.
+**User:** install shell, recapture menubar idle, critique.
+
+Next when user says go after P3 merges: **P4** menus & popovers.
 
 ### Last completed
 
