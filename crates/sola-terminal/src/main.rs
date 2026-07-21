@@ -501,7 +501,14 @@ impl App {
             };
 
         let body: Element<'_, Msg> = row![
-            sidebar::view(&self.sidebar, &self.tabs, self.active.as_deref(), &self.config),
+            sidebar::view(
+                &self.sidebar,
+                &self.tabs,
+                self.active.as_deref(),
+                &self.config,
+                &self.theme,
+                self.palette.bg,
+            ),
             pane,
         ]
         .into();
@@ -525,12 +532,17 @@ impl App {
             state::PaneNode::Split { id, dir, ratio, a, b } => {
                 let a_el = self.render_node(a, active_pane);
                 let b_el = self.render_node(b, active_pane);
-                sola_kit::components::split(
+                // Match both panes' cell bg so only the 1px hairline shows
+                // (no canvas-grey gutter between black terminal surfaces).
+                let line = self.theme.extended_palette().background.stronger.color;
+                let colors = sola_kit::components::DividerColors::uniform(self.palette.bg, line);
+                sola_kit::components::split_with(
                     *dir,
                     a_el,
                     *ratio,
                     Msg::SplitDividerPress(id.clone()),
                     b_el,
+                    colors,
                 )
             }
         }

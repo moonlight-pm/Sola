@@ -1,29 +1,26 @@
-//! Divider showcase — the 8px draggable column divider that
-//! `sola-monitor` uses between its messages table and topics sidebar.
-//!
-//! Static showcase for v0 — clicking the divider does nothing because
-//! the storybook doesn't carry the drag state the consumer would.
-//! That's the canonical pattern though: the divider emits an
-//! `on_press` and the consumer manages cursor motion / release at the
-//! application level.
+//! Divider showcase — three-band hit strip (a | line | b) with a 1px
+//! hairline. Static showcase for v0 — clicking the divider does nothing
+//! because the storybook doesn't carry the drag state the consumer would.
 
 use iced::widget::{column, container, row};
 use iced::{Element, Length};
 
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::text::{body, code, heading, muted};
-use sola_kit::components::{horizontal_divider, vertical_divider};
+use sola_kit::components::{DividerColors, horizontal_divider, vertical_divider_with};
 
 use crate::storybook::Msg;
 
 pub fn view() -> Element<'static, Msg> {
+    let chrome = DividerColors::raised(&sola_kit::theme::default_theme());
+
     let left = panel("Left panel");
     let right = panel("Right panel");
 
     let vertical_demo = container(
         row![
             container(left).width(Length::Fixed(220.0)).height(Length::Fill),
-            vertical_divider::<Msg>(Msg::Noop),
+            vertical_divider_with::<Msg>(Msg::Noop, chrome),
             container(right).width(Length::Fill).height(Length::Fill),
         ]
         .height(Length::Fill),
@@ -48,14 +45,14 @@ pub fn view() -> Element<'static, Msg> {
     column![
         heading("Divider"),
         body(
-            "8px-wide draggable column divider with the col-resize cursor. \
-             Consumer wires drag state via cursor motion + release at the \
-             application level."
+            "Draggable column divider: 8px hit strip, 1px hairline, consumer-owned \
+             a | line | b colours. col-resize cursor; consumer wires drag via cursor \
+             motion + release."
         )
         .style(muted),
         vertical_demo,
-        code("vertical_divider(on_press)").style(muted),
-        body("1px horizontal hairline. Non-interactive — no resize semantics yet.")
+        code("vertical_divider_with(on_press, DividerColors::raised(theme))").style(muted),
+        body("1px horizontal hairline. Non-interactive — no resize semantics.")
             .style(muted),
         horizontal_demo,
         code("horizontal_divider()").style(muted),

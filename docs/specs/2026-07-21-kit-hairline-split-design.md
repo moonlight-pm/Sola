@@ -20,22 +20,28 @@ is the regression surface. Monitor’s local divider is **out of scope**.
 
 ## Decision
 
-**Approach 1 — fat hit, thin paint**
+**Approach 1 — fat hit, thin paint, consumer colours**
 
 | Constant | Value | Role |
 |----------|--------|------|
 | `DIVIDER_HIT_PX` | `8.0` | Layout thickness + drag hit strip |
-| Line | `1.0` | Centered hairline |
-| Fill (rest of strip) | canvas `background.weakest` | Opaque — not transparent (transparent read as a dark gutter) |
+| `LINE_PX` | `1.0` | Centre band only — true 1px hairline |
+| Side bands | `(HIT − 1) / 2` each | Consumer-owned colours |
 | Hover / drag paint | none | Resize cursor only |
 
-**Color:** hairline uses kit border atom (`background.stronger`); strip
-fill uses canvas base.
+**`DividerColors { a, line, b }`:** each consumer matches **a**/**b** to the
+surfaces being split so the hit strip is invisible and only the 1px line
+shows. Helpers: `uniform`, `from_theme`, `raised`, `raised_to_canvas`.
 
-**Iced pitfall:** `Container::center_x(Length::Fill)` / `center_y` **replace**
-width/height with the argument. Using them to center the 1px line collapses
-the hit strip to flex `Fill` (≈1px between `FillPortion` panes). Center with
-`align_x` / `align_y` and keep `width(Fixed(DIVIDER_HIT_PX))`.
+| Consumer | Colours |
+|----------|---------|
+| Terminal pane split | `uniform(term_bg, border)` |
+| Terminal sidebar edge | raised \| border \| term_bg |
+| Storybook card split | `raised(theme)` |
+| Browser tab column | `raised_to_canvas(theme)` |
+
+APIs: `vertical_divider_with` / `horizontal_divider_drag_with` / `split_with`
+/ `SidebarPanel::resizable_with`. Theme-default variants keep prior call sites.
 
 ---
 

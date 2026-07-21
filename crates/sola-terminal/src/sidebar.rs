@@ -1,6 +1,8 @@
-use iced::Element;
+use iced::{Element, Theme};
 use sola_bus::topics::TerminalConfig;
-use sola_kit::components::{ReorderCfg, SidebarItem, SidebarPanel, SidebarSection};
+use sola_kit::components::{
+    DividerColors, ReorderCfg, SidebarItem, SidebarPanel, SidebarSection,
+};
 
 use crate::state::Tabs;
 use crate::Msg;
@@ -53,11 +55,17 @@ pub fn tab_label(cwd: &Option<String>) -> String {
 /// enabled, so the kit wraps each row in a `mouse_area` whose press emits
 /// `ReorderStart`; selection is decided by `ReorderEnd`'s click threshold. We
 /// pass `Msg::Noop` (a no-op-on-receive variant) to satisfy the API.
+///
+/// `term_bg` is the terminal cell background — used as the **b** band of the
+/// resize divider so the hit strip blends into the pane instead of painting
+/// a canvas-grey gutter between raised sidebar and black grid.
 pub fn view<'a>(
     state: &'a SidebarState,
     tabs: &'a Tabs,
     active: Option<&str>,
     config: &TerminalConfig,
+    theme: &Theme,
+    term_bg: iced::Color,
 ) -> Element<'a, Msg> {
     let ordered = tabs.tab_strip();
 
@@ -79,11 +87,19 @@ pub fn view<'a>(
 
     let sections = vec![SidebarSection::unlabeled(items)];
 
+    let p = theme.extended_palette();
+    let divider = DividerColors {
+        a: p.background.weaker.color, // raised sidebar panel
+        line: p.background.stronger.color,
+        b: term_bg, // terminal canvas
+    };
+
     SidebarPanel::new(sections)
-        .resizable(
+        .resizable_with(
             config.sidebar_width as f32,
             state.dragging_divider,
             Msg::SidebarDragStart,
+            divider,
         )
         .reorderable(ReorderCfg {
             on_press: Box::new(Msg::ReorderStart),

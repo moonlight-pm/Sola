@@ -578,7 +578,9 @@ fn close_button<'a, Message: Clone + 'a>(msg: Message) -> Element<'a, Message> {
 pub struct SidebarPanel<'a, Message> {
     sections: Vec<SidebarSection<Message>>,
     collapse: Option<(bool, Message)>,
-    resize: Option<(f32, bool, Message)>,
+    /// `(width, dragging, on_press, colors)` — `colors` is `None` for
+    /// theme-default divider chrome.
+    resize: Option<(f32, bool, Message, Option<crate::components::DividerColors>)>,
     reorder: Option<ReorderCfg<'a, Message>>,
     footer: Option<Element<'a, Message, Theme>>,
 }
@@ -606,9 +608,25 @@ where
 
     /// Render a drag divider on the right edge. `width` is the current
     /// column width; `dragging` toggles the full-window overlay;
-    /// `on_divider_press` begins the resize gesture.
+    /// `on_divider_press` begins the resize gesture. Divider colours
+    /// use the theme default (canvas | border | canvas); prefer
+    /// [`Self::resizable_with`] when the adjacent surfaces differ.
     pub fn resizable(mut self, width: f32, dragging: bool, on_divider_press: Message) -> Self {
-        self.resize = Some((width, dragging, on_divider_press));
+        self.resize = Some((width, dragging, on_divider_press, None));
+        self
+    }
+
+    /// Like [`Self::resizable`], but with explicit **a | line | b**
+    /// divider colours so the hit strip matches the panel and its
+    /// neighbour (e.g. raised sidebar | terminal canvas).
+    pub fn resizable_with(
+        mut self,
+        width: f32,
+        dragging: bool,
+        on_divider_press: Message,
+        colors: crate::components::DividerColors,
+    ) -> Self {
+        self.resize = Some((width, dragging, on_divider_press, Some(colors)));
         self
     }
 
@@ -715,7 +733,7 @@ where
         }
 
         let width = match &resize {
-            Some((w, _, _)) if !collapsed => *w,
+            Some((w, _, _, _)) if !collapsed => *w,
             _ if collapsed => 36.0,
             _ => SIDEBAR_WIDTH,
         };
@@ -726,7 +744,7 @@ where
             .height(Length::Fill);
 
         // Gesture flags captured before we move `resize` into the divider.
-        let resize_dragging = resize.as_ref().is_some_and(|(_, d, _)| *d);
+        let resize_dragging = resize.as_ref().is_some_and(|(_, d, _, _)| *d);
         // Grabbing overlay only after real movement — press-only highlight
         // shouldn't cover the panel (and steal the pointer look) on a click.
         let reorder_dragging = reorder_ref.is_some_and(|r| match r.active {
@@ -737,11 +755,14 @@ where
             None => false,
         });
 
-        // Compose optional resize divider — same hairline-in-hit-strip as
-        // kit `split` / terminal pane dividers (not a solid 6px slab).
+        // Compose optional resize divider — same three-band hit strip as
+        // kit `split` / terminal pane dividers.
         let body: Element<'a, Message, Theme> = match resize {
-            Some((_, _, on_press)) => {
-                let divider = crate::components::vertical_divider(on_press);
+            Some((_, _, on_press, colors)) => {
+                let divider = match colors {
+                    Some(c) => crate::components::vertical_divider_with(on_press, c),
+                    None => crate::components::vertical_divider(on_press),
+                };
                 row![panel, divider].height(Length::Fill).into()
             }
             None => panel.into(),

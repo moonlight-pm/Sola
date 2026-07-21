@@ -59,7 +59,8 @@ pub use button::confirm_button;
 pub use card::{accent_backplate, backplate, card, modal};
 pub use color_picker::ColorPicker;
 pub use divider::{
-    DIVIDER_HIT_PX, horizontal_divider, horizontal_divider_drag, vertical_divider,
+    DIVIDER_HIT_PX, LINE_PX, DividerColors, horizontal_divider, horizontal_divider_drag,
+    horizontal_divider_drag_with, vertical_divider, vertical_divider_with,
 };
 pub use field::field;
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
@@ -73,7 +74,7 @@ pub use sidebar::{
     panel_renumber_changed, panel_reordered, sidebar, vertical_tabs, vertical_tabs_sized,
 };
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
-pub use split::split;
+pub use split::{split, split_with};
 pub use swatch::{swatch, swatch_sized};
 pub use titlebar::titlebar;
 pub use toolbar::{toolbar_button, toolbar_button_msg};

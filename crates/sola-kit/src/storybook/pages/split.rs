@@ -9,12 +9,18 @@ use iced::{Element, Length};
 
 use sola_bus::topics::SplitDir;
 use sola_kit::components::card::style as card_style;
-use sola_kit::components::split;
+use sola_kit::components::split_with;
 use sola_kit::components::text::{body, code, heading, muted};
+use sola_kit::components::DividerColors;
 
 use crate::storybook::Msg;
 
 pub fn view() -> Element<'static, Msg> {
+    // Card-raised panels sit on canvas — divider sides must match the
+    // raised fill or the hit strip paints a canvas gutter through the card.
+    // Storybook pages don't hold Theme in view state; seed snapshot is fine.
+    let chrome = DividerColors::raised(&sola_kit::theme::default_theme());
+
     let left = container(body("Pane A — 60%").style(muted))
         .padding(16)
         .width(Length::Fill)
@@ -24,10 +30,17 @@ pub fn view() -> Element<'static, Msg> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let vertical = container(split(SplitDir::Vertical, left, 0.6, Msg::Noop, right))
-        .style(card_style)
-        .height(Length::Fixed(200.0))
-        .width(Length::Fill);
+    let vertical = container(split_with(
+        SplitDir::Vertical,
+        left,
+        0.6,
+        Msg::Noop,
+        right,
+        chrome,
+    ))
+    .style(card_style)
+    .height(Length::Fixed(200.0))
+    .width(Length::Fill);
 
     let top = container(body("Pane A — 40%").style(muted))
         .padding(16)
@@ -38,20 +51,30 @@ pub fn view() -> Element<'static, Msg> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let horizontal = container(split(SplitDir::Horizontal, top, 0.4, Msg::Noop, bottom))
-        .style(card_style)
-        .height(Length::Fixed(200.0))
-        .width(Length::Fill);
+    let horizontal = container(split_with(
+        SplitDir::Horizontal,
+        top,
+        0.4,
+        Msg::Noop,
+        bottom,
+        chrome,
+    ))
+    .style(card_style)
+    .height(Length::Fixed(200.0))
+    .width(Length::Fill);
 
     column![
         heading("Split"),
-        body("Two-pane split, side-by-side or stacked. Divider is a 1px hairline in an 8px hit strip (macOS-style); on_drag press, consumer tracks the cursor for ratio.")
-            .style(muted),
+        body(
+            "Two-pane split. Divider is a | line | b bands (1px hairline in an 8px hit \
+             strip). Pass DividerColors so side bands match the panes being split."
+        )
+        .style(muted),
         body("Vertical — side-by-side (new pane on the right, ⌘⇧→)").style(muted),
         vertical,
         body("Horizontal — stacked (new pane below, ⌘⇧↓)").style(muted),
         horizontal,
-        code("split(dir, a, ratio, on_drag, b)").style(muted),
+        code("split_with(dir, a, ratio, on_drag, b, DividerColors::raised(theme))").style(muted),
     ]
     .spacing(16)
     .into()

@@ -12,7 +12,7 @@ use iced::widget::{Shader, Space, column, container, mouse_area, row, stack};
 use sola_kit::components::text_input::text_input;
 use iced::{Element, Event, Length, Subscription, Task, event, mouse};
 use sola_kit::components::{
-    TabDescriptor, TabSize, horizontal_divider, toolbar_button, vertical_divider,
+    TabDescriptor, TabSize, horizontal_divider, toolbar_button, vertical_divider_with,
     vertical_tabs_sized,
 };
 
@@ -354,7 +354,10 @@ impl<E: Engine> App<E> {
             container(self.view_tab_sidebar())
                 .width(Length::Fixed(self.sidebar_w))
                 .height(Length::Fill),
-            vertical_divider(Msg::DividerPress),
+            vertical_divider_with(
+                Msg::DividerPress,
+                sola_kit::components::DividerColors::raised_to_canvas(&self.theme),
+            ),
             container(content).width(Length::Fill).height(Length::Fill),
         ]
         .height(Length::Fill);
