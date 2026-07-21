@@ -66,9 +66,8 @@ pub fn modal<'a, Message: 'a>(
 /// `shell-switcher-border` tokens). Radius and border width are fixed
 /// to the backplate's values.
 ///
-/// Radius choice: modal uses `RADIUS_LG` (8px); the switcher backplate
-/// is a softer 16px to distinguish it as a secondary frame. Using a
-/// plain literal keeps the two values intentionally independent.
+/// Radius matches modal (`RADIUS_LG` / 8px) — Mission Control restraint,
+/// not a marketing HUD card.
 ///
 /// No drop shadow: the shell's renderer doesn't blur shadow quads, so a
 /// shadow renders as a hard offset rectangle that pokes out past the
@@ -80,7 +79,7 @@ pub fn backplate_style(fill: Color, border: Color) -> impl Fn(&Theme) -> contain
         border: iced::Border {
             color: border,
             width: 1.0,
-            radius: 16.0.into(), // switcher backplate: 2px softer than modal
+            radius: RADIUS_LG.into(),
         },
         shadow: Shadow::default(),
         ..container::Style::default()
@@ -99,16 +98,16 @@ pub fn backplate<'a, Message: 'a>(
 }
 
 /// Style for [`accent_backplate`]: primary-tinted translucent fill and
-/// border at 16px radius, with a deep drop shadow. Thin wrapper over
+/// border at `RADIUS_LG`, with a deep drop shadow. Thin wrapper over
 /// [`backplate_style`] passing the palette-derived defaults.
 pub fn accent_backplate_style(theme: &Theme) -> container::Style {
     let accent = theme.extended_palette().primary.base.color;
     backplate_style(Color { a: 0.18, ..accent }, Color { a: 0.35, ..accent })(theme)
 }
 
-/// Accent-tinted translucent backplate (e.g. the app switcher's frame):
-/// primary colour at low alpha for fill and border, 16px radius, deep
-/// shadow. Returns a `Container` so the caller can chain sizing/padding.
+/// Accent-tinted translucent backplate (storybook demo of primary glass):
+/// primary colour at low alpha for fill and border, `RADIUS_LG`. Returns a
+/// `Container` so the caller can chain sizing/padding.
 pub fn accent_backplate<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
 ) -> Container<'a, Message, Theme> {
@@ -118,20 +117,20 @@ pub fn accent_backplate<'a, Message: 'a>(
 /// Container style for a selectable tile (e.g. an app card in a switcher
 /// grid). The container analog of `button::list_item` for tiles that need a
 /// `mouse_area` wrapper (hover-driven selection) instead of a pressable
-/// button: selected → filled accent pill with `primary.base.text` label
-/// colour for legibility on the tinted fill; unselected → transparent with
-/// no text-colour override (inherits the window default).
+/// button: selected → quiet [`crate::theme::selection`] fill (not a full
+/// accent pill); unselected → transparent with no text-colour override
+/// (inherits the window default).
 pub fn list_tile_style(selected: bool) -> impl Fn(&Theme) -> container::Style {
     move |theme| {
         let p = theme.extended_palette();
         let background = if selected {
-            Some(Background::Color(p.primary.base.color))
+            Some(Background::Color(crate::theme::selection()))
         } else {
             None
         };
         container::Style {
             background,
-            text_color: selected.then_some(p.primary.base.text),
+            text_color: selected.then_some(p.background.base.text),
             border: iced::Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
@@ -146,7 +145,7 @@ pub fn list_tile_style(selected: bool) -> impl Fn(&Theme) -> container::Style {
 /// selected-tile background and `fg` the tile's text/foreground (applied
 /// in both states so SVG glyphs and labels tint consistently). Lets shell
 /// chrome drive switcher tiles from its own `shell-switcher-icon-*` tokens
-/// instead of the palette's accent / fg. Same radius (`RADIUS_MD`) and
+/// instead of the palette's selection / fg. Same radius (`RADIUS_MD`) and
 /// transparent-when-unselected behaviour as [`list_tile_style`].
 pub fn list_tile_style_colored(
     selected: bool,

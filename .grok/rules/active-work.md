@@ -13,10 +13,13 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**P6 switcher** — worktree `.worktrees/p6-switcher`, branch `p6-switcher`.
 
-Next when user says go: **P6** switcher —
-see `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P6.
+Mission Control restraint: quiet selection tile (not cyan pill), denser
+pads/icons, `RADIUS_LG` backplate. See roadmap §4 P6.
+
+**Next step:** user install shell (+ kit if storybook) and capture after shot
+under `docs/visual/passes/p6-switcher/`. Then visual stop / merge approval.
 
 ### Last completed
 

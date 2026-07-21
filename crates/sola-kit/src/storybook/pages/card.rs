@@ -31,7 +31,7 @@ pub fn view() -> Element<'static, Msg> {
     .width(Length::Fill);
 
     let backplate_demo = accent_backplate(
-        body("Accent backplate — primary-tinted fill and border at 16px, deep shadow.")
+        body("Accent backplate — primary-tinted fill and border at RADIUS_LG.")
             .style(muted),
     )
     .padding(24)
@@ -47,10 +47,10 @@ pub fn view() -> Element<'static, Msg> {
     .width(Length::Fill);
 
     let tile_selected = iced::widget::container(body("Selected tile"))
-        .padding([16, 20])
+        .padding([10, 14])
         .style(card::list_tile_style(true));
     let tile_unselected = iced::widget::container(body("Unselected tile"))
-        .padding([16, 20])
+        .padding([10, 14])
         .style(card::list_tile_style(false));
 
     column![
@@ -61,13 +61,17 @@ pub fn view() -> Element<'static, Msg> {
         body("Modal card chrome — opaque panel lifted over a dimmed backdrop.").style(muted),
         modal_demo,
         code("modal(content)").style(muted),
-        body("Accent backplate — primary-tinted switcher frame.").style(muted),
+        body("Accent backplate — primary-tinted demo frame (RADIUS_LG).").style(muted),
         backplate_demo,
         code("accent_backplate(content)").style(muted),
         body("Parameterized backplate — shell switcher uses this with shell-* tokens.").style(muted),
         custom_backplate_demo,
         code("backplate(content, fill, border)").style(muted),
-        body("Selectable tile — container analog of button::list_item for mouse_area tiles.").style(muted),
+        body(
+            "Selectable tile — quiet selection fill (container analog of \
+             button::list_item for mouse_area tiles).",
+        )
+        .style(muted),
         iced::widget::row![tile_selected, tile_unselected].spacing(8),
         code("container(content).style(card::list_tile_style(selected))").style(muted),
     ]

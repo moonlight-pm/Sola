@@ -519,16 +519,18 @@ pub fn color_to_hex(c: Color) -> String {
 ///
 /// Menubar stays near-black (opaque greys first; blur deferred). Switcher
 /// backplate is a **neutral** material — not neon cyan glass. Selected
-/// tile fill still uses sparse accent.
+/// tile uses the quiet selection atom (Mission Control restraint), not a
+/// full accent pill.
 const SHELL_MENUBAR_BG: &str = "#000000";
 const SHELL_BACKDROP_DIM: &str = "#00000099";
 const SHELL_SWITCHER_BG: &str = "#2c2c2ecc";
 const SHELL_SWITCHER_BORDER: &str = "#ffffff26";
-const SHELL_SWITCHER_ICON_BG: &str = "#00d4ff"; // selected tile only (sparse accent)
+const SHELL_SWITCHER_ICON_BG: &str = "#1a3a45"; // selected tile — quiet selection
 const SHELL_SWITCHER_ICON_FG: &str = "#f5f5f7"; // glyph + label on an unselected tile
-const SHELL_SWITCHER_ICON_FG_SEL: &str = "#1c1c1e"; // glyph on accent tile — dark for contrast
-const SHELL_SWITCHER_PAD: f32 = 36.0;
-const SHELL_SWITCHER_TILE_PAD: f32 = 16.0;
+const SHELL_SWITCHER_ICON_FG_SEL: &str = "#f5f5f7"; // same face on quiet selection
+// Mission Control–ish density: tighter frame and tiles than the old 36/16.
+const SHELL_SWITCHER_PAD: f32 = 20.0;
+const SHELL_SWITCHER_TILE_PAD: f32 = 10.0;
 // Spotlight-ish defaults: slightly narrower than a settings form; compact rows.
 const SHELL_LAUNCHER_WIDTH: f32 = 560.0;
 const SHELL_LAUNCHER_PAD: f32 = 8.0;
@@ -539,8 +541,7 @@ const SHELL_LAUNCHER_PAD: f32 = 8.0;
 ///
 /// Where the shell's original layout used a vertical/horizontal padding
 /// pair, the knob is the vertical value and **horizontal = vertical +
-/// 4px** — this reproduces both original layouts exactly (switcher tile
-/// 16/20, launcher row 12/16) from one knob each.
+/// 4px** (switcher tile pad 10 → 10/14; launcher row pad 8 → 8/12).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShellStyle {
     pub menubar_bg: Color,
@@ -812,8 +813,11 @@ mod tests {
         let s = ShellStyle::default();
         assert_eq!(color_to_hex(s.switcher_bg), "#2c2c2ecc");
         assert_eq!(color_to_hex(s.switcher_border), "#ffffff26");
-        // Selected tile still sparse accent
-        assert_eq!(color_to_hex(s.switcher_icon_bg), "#00d4ff");
+        // Selected tile: quiet selection, not full cyan accent pill
+        assert_eq!(color_to_hex(s.switcher_icon_bg), "#1a3a45");
+        assert_eq!(color_to_hex(s.switcher_icon_fg_sel), "#f5f5f7");
+        assert_eq!(s.switcher_pad, 20.0);
+        assert_eq!(s.switcher_tile_pad, 10.0);
     }
 
     #[test]

@@ -197,7 +197,7 @@ Spacing, separators, materials values, kit popover calm.
 
 Spotlight-like restraint (single focus, dim backdrop, list hierarchy).
 
-**Status (in progress on `p5-launcher`):**
+**Status (merged):**
 
 - [x] Quiet list selection (`selection` atom, not accent pill)
 - [x] Calmer modal chrome (RADIUS_LG, softer shadow)
@@ -207,6 +207,14 @@ Spotlight-like restraint (single focus, dim backdrop, list hierarchy).
 ### P6 — Switcher
 
 Mission Control / app-switcher restraint; neutral backplate tokens.
+
+**Status (in progress on `p6-switcher`):**
+
+- [x] Quiet tile selection (`#1a3a45` selection, not cyan accent pill)
+- [x] Same glyph/label face on selected + unselected tiles
+- [x] Denser frame/tiles (pad 20 / tile-pad 10; 48px icons; tighter grid)
+- [x] Backplate radius `RADIUS_LG` (8px); kit `list_tile_style` uses selection
+- [ ] User install + after shot (`docs/visual/passes/p6-switcher/`)
 
 ### P7 — Kit controls
 

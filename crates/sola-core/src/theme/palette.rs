@@ -160,10 +160,10 @@ impl Palette {
         );
         palette
             .tokens
-            .insert("shell-switcher-pad".into(), Token::new(TokenKind::Space, "36px", &["shell"]));
+            .insert("shell-switcher-pad".into(), Token::new(TokenKind::Space, "20px", &["shell"]));
         palette.tokens.insert(
             "shell-switcher-tile-pad".into(),
-            Token::new(TokenKind::Space, "16px", &["shell"]),
+            Token::new(TokenKind::Space, "10px", &["shell"]),
         );
         palette.tokens.insert(
             "shell-launcher-width".into(),

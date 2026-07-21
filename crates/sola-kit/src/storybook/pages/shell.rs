@@ -85,9 +85,9 @@ pub fn view<'a>(
 
         subheading("Switcher"),
         body(
-            "Icon tile colors — ICON_BG fills the selected tile. ICON_FG tints \
-             the glyph + label on unselected tiles; ICON_FG_SEL tints them on \
-             the selected (highlighted) tile.",
+            "Mission Control restraint: ICON_BG is a quiet selection fill \
+             (not full accent). ICON_FG / ICON_FG_SEL tint glyph + label; \
+             seed uses the same face on both states.",
         )
         .style(muted),
         icon_color_row,

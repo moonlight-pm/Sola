@@ -1,6 +1,8 @@
 //! Switcher overlay view — alt-tab equivalent.
 //!
-//! Renders a centered grid of app tiles over a transparent full-screen backdrop.
+//! Mission Control / app-switcher restraint: neutral translucent backplate,
+//! quiet selection (not an accent pill), denser tile grid. Renders a
+//! centered grid of app tiles over a transparent full-screen backdrop.
 //! The grid wraps so the switcher grows to fit any number of open apps.
 //! When `switcher.active` is false, returns an invisible placeholder so the
 //! surface stays alive without rendering content.
@@ -8,15 +10,24 @@
 use iced::widget::{column, container, mouse_area, row, text};
 use iced::{Alignment, Element, Length, Padding};
 use sola_kit::components::icon_colored;
+use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
+
+// ── Density (Mission Control–ish) ─────────────────────────────────────
+const TILE_W: f32 = 112.0;
+const ICON_SIZE: u16 = 48;
+const LABEL_SIZE: f32 = 12.0;
+const ICON_LABEL_GAP: f32 = 6.0;
+const GRID_GAP: f32 = 8.0;
+const SCREEN_MARGIN: f32 = 24.0;
 
 /// Render the switcher overlay for `shell`.
 ///
 /// Layout:
 ///   Full-screen invisible mouse_area (click-outside-to-cancel)
 ///   └─ Centered backplate card with shell-switcher-pad padding.
-///      Background: shell-switcher-bg (translucent accent fill by default).
+///      Background: shell-switcher-bg (neutral translucent fill).
 ///      Inside: a balanced grid of uniform-width tiles, one per open app.
 ///      The grid wraps to extra rows so the switcher grows to fit any number
 ///      of open apps instead of overflowing (and clipping at) the screen width.
@@ -30,10 +41,6 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     }
 
     let switcher = &shell.switcher;
-
-    // Uniform tile width so the grid wraps predictably; each tile holds a
-    // 52px icon over a centered, wrapping label.
-    const TILE_W: f32 = 128.0;
 
     // --- app tiles (uniform width) ---
     let cards: Vec<Element<'_, Msg>> = switcher
@@ -53,38 +60,42 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
             let is_selected = i == switcher.selected;
 
-            // Glyph + label foreground differs by state: the highlighted tile
-            // uses shell-switcher-icon-fg-sel, the rest shell-switcher-icon-fg.
+            // Glyph + label foreground differs by state only when the theme
+            // sets distinct icon-fg / icon-fg-sel (seed uses the same face).
             let icon_fg = if is_selected {
                 shell.style.switcher_icon_fg_sel
             } else {
                 shell.style.switcher_icon_fg
             };
 
-            let icon_el: Element<'_, Msg> = icon_colored(icon_name, 52, icon_fg);
+            let icon_el: Element<'_, Msg> = icon_colored(icon_name, ICON_SIZE, icon_fg);
             // Label fills the tile width and centers, wrapping if it's long —
             // this is what keeps every tile a uniform TILE_W.
             let label_el: Element<'_, Msg> = text(label_str)
-                .size(13)
+                .font(fonts::chrome())
+                .size(LABEL_SIZE)
                 .width(Length::Fill)
                 .align_x(iced::alignment::Horizontal::Center)
                 .into();
 
             let card_content: Element<'_, Msg> = column![icon_el, label_el]
-                .spacing(8)
+                .spacing(ICON_LABEL_GAP)
                 .align_x(Alignment::Center)
                 .width(Length::Fill)
                 .into();
 
-            // Fixed-width tile: selected fills with shell-switcher-icon-bg,
-            // unselected is transparent; shell-switcher-icon-fg tints the
-            // glyph + label in both states (RADIUS_MD=6). Tile padding knob:
-            // vertical = shell-switcher-tile-pad, horizontal = vertical + 4
-            // (preserves the original 16/20).
+            // Fixed-width tile: selected fills with shell-switcher-icon-bg
+            // (quiet selection seed), unselected is transparent. Tile padding
+            // knob: vertical = shell-switcher-tile-pad, horizontal = vertical + 4.
             let tp = shell.style.switcher_tile_pad;
             let card_container: Element<'_, Msg> = container(card_content)
                 .width(Length::Fixed(TILE_W))
-                .padding(Padding { top: tp, bottom: tp, left: tp + 4.0, right: tp + 4.0 })
+                .padding(Padding {
+                    top: tp,
+                    bottom: tp,
+                    left: tp + 4.0,
+                    right: tp + 4.0,
+                })
                 .style(sola_kit::components::card::list_tile_style_colored(
                     is_selected,
                     shell.style.switcher_icon_bg,
@@ -102,14 +113,12 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     // The grid grows to fit every open app: tiles flow across as many columns
     // as fit the screen width, then wrap to new rows. We balance the column
     // count so the last row isn't left with a single stranded tile.
-    let gap = 12.0_f32;
     let n = cards.len();
     let output_w = shell.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
     // Width available to the grid: screen minus backplate padding (both sides)
     // and a small margin so the panel never reaches the screen edges.
-    let margin = 24.0_f32;
-    let avail = (output_w - 2.0 * (shell.style.switcher_pad + margin)).max(TILE_W);
-    let cols_cap = (((avail + gap) / (TILE_W + gap)).floor() as usize).max(1);
+    let avail = (output_w - 2.0 * (shell.style.switcher_pad + SCREEN_MARGIN)).max(TILE_W);
+    let cols_cap = (((avail + GRID_GAP) / (TILE_W + GRID_GAP)).floor() as usize).max(1);
     let cols = grid_columns(n, cols_cap);
 
     let mut grid_rows: Vec<Element<'_, Msg>> = Vec::new();
@@ -119,23 +128,27 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         if current.len() == cols {
             grid_rows.push(
                 row(std::mem::take(&mut current))
-                    .spacing(gap)
+                    .spacing(GRID_GAP)
                     .align_y(Alignment::Center)
                     .into(),
             );
         }
     }
     if !current.is_empty() {
-        grid_rows.push(row(current).spacing(gap).align_y(Alignment::Center).into());
+        grid_rows.push(
+            row(current)
+                .spacing(GRID_GAP)
+                .align_y(Alignment::Center)
+                .into(),
+        );
     }
     let grid: Element<'_, Msg> = column(grid_rows)
-        .spacing(gap)
+        .spacing(GRID_GAP)
         .align_x(Alignment::Center)
         .into();
 
-    // Backplate fill/border come from the shell-* tokens (alpha-capable);
-    // padding from shell-switcher-pad. Seed values match the old
-    // accent-derived look exactly.
+    // Backplate fill/border from shell-* tokens (alpha-capable);
+    // padding from shell-switcher-pad. RADIUS_LG via kit backplate.
     let backplate: Element<'_, Msg> = sola_kit::components::backplate(
         grid,
         shell.style.switcher_bg,
