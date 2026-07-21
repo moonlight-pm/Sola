@@ -11,7 +11,7 @@ const WHEEL_MIN_INTERVAL: Duration = Duration::from_millis(12);
 const WHEEL_MAX_REPORTS_PER_FLUSH: i32 = 2;
 
 use iced::widget::{canvas, container, mouse_area, row, text};
-use iced::{Border, Element, Event, Length, Subscription, Task, Theme};
+use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard, mouse};
 
 use sola_bus::topics::{PaneLayout, SplitDir, TerminalConfig, Topic, TopicKind};
@@ -51,11 +51,13 @@ const MIN_PANE_PX: f32 = 80.0;
 /// Compute the pane *area size* (the canvas region the terminal grids occupy)
 /// from the window size and the sidebar width.
 ///
-/// The sidebar takes `sidebar_w` logical pixels on the left; the rest is the
-/// content area, full height. Clamps to zero so the value is always safe to
-/// pass to [`term_view::cols_rows_for`]. Pure for headless testing.
+/// The sidebar panel takes `sidebar_w` logical pixels on the left, plus the
+/// kit resize divider ([`sola_kit::components::DIVIDER_HIT_PX`]); the rest is
+/// the content area, full height. Clamps to zero so the value is always safe
+/// to pass to [`term_view::cols_rows_for`]. Pure for headless testing.
 pub(crate) fn pane_size(window: iced::Size, sidebar_w: f32) -> iced::Size {
-    let w = (window.width - sidebar_w).max(0.0);
+    let chrome = sidebar_w + sola_kit::components::DIVIDER_HIT_PX;
+    let w = (window.width - chrome).max(0.0);
     iced::Size::new(w, window.height)
 }
 
@@ -72,10 +74,11 @@ mod tests {
     use term_view::CellMetrics;
 
     #[test]
-    fn pane_size_subtracts_sidebar() {
+    fn pane_size_subtracts_sidebar_and_divider() {
         let window = iced::Size::new(800.0, 480.0);
         let pane = pane_size(window, 200.0);
-        assert_eq!(pane.width, 600.0);
+        let expect_w = 800.0 - 200.0 - sola_kit::components::DIVIDER_HIT_PX;
+        assert_eq!(pane.width, expect_w);
         assert_eq!(pane.height, 480.0);
     }
 
@@ -91,7 +94,8 @@ mod tests {
         let window = iced::Size::new(800.0, 480.0);
         let pane = pane_size(window, 200.0);
         let (cols, rows) = term_view::cols_rows_for(pane, CellMetrics::default());
-        assert_eq!(cols, 65);
+        // 592px content − pad, ÷ default cell metrics (see term_view).
+        assert_eq!(cols, 64);
         assert_eq!(rows, 23);
     }
 
@@ -559,27 +563,12 @@ impl App {
                 .into(),
         };
 
-        // Pointer-enter focuses this pane (sloppy focus).
-        let focusable = mouse_area(inner).on_enter(Msg::PaneFocused(pane_id.to_string()));
-
-        // Active-pane border (accent); inactive panes get a same-as-bg 1px
-        // border so the layout doesn't shift between focus states.
-        let border_color = if pane_id == active_pane {
-            self.theme.extended_palette().primary.base.color
-        } else {
-            self.palette.bg
-        };
-        container(focusable)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(move |_theme| container::Style {
-                border: Border {
-                    color: border_color,
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..container::Style::default()
-            })
+        // Pointer-enter focuses this pane (sloppy focus). Focus is shown by
+        // the cursor style in TermView (blinking block vs hollow), not a
+        // cyan border — macOS Terminal does the same and a 1px accent ring
+        // next to the split hairline reads as noisy chrome.
+        mouse_area(inner)
+            .on_enter(Msg::PaneFocused(pane_id.to_string()))
             .into()
     }
 

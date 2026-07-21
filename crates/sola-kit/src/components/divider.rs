@@ -1,12 +1,18 @@
 //! Split / column dividers — hairline paint, fat hit target.
 //!
-//! The draggable dividers used by [`crate::components::split`] (and
-//! historically by sola-monitor as a hand-rolled twin) reserve
-//! [`DIVIDER_HIT_PX`] of layout so nested terminal splits stay easy to
-//! grab. Only a centered 1px hairline is painted, using the kit border
-//! atom (`background.stronger`) so the gutter no longer reads as a
-//! solid 8px slab. macOS Terminal / Xcode inspector splits are the
-//! reference: quiet line, resize cursor on hover, no hover fill.
+//! The draggable dividers used by [`crate::components::split`] (and the
+//! kit sidebar resize edge) reserve [`DIVIDER_HIT_PX`] of layout so
+//! nested terminal splits stay easy to grab. Only a centered 1px
+//! hairline is painted; the rest of the strip is the canvas background
+//! so it does not read as a darker gutter. macOS Terminal / Xcode
+//! inspector splits are the reference: quiet line, resize cursor on
+//! hover, no hover fill.
+//!
+//! **Layout note:** do not call [`iced::widget::Container::center_x`] /
+//! `center_y` with `Length::Fill` to center the hairline — those helpers
+//! *replace* width/height with the argument, which collapses a fixed hit
+//! strip to a flex `Fill` (≈1px between `FillPortion` panes). Use
+//! [`align_x`] / [`align_y`] with an explicit `Fixed(DIVIDER_HIT_PX)`.
 //!
 //! Drag state stays with the caller (iced has no pointer-capture): the
 //! divider emits `on_press`, and the consumer listens for that plus
@@ -20,8 +26,9 @@
 //! (McMojave included), and wlroots silently substitutes default when
 //! the requested name isn't found.
 
+use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{Space, container, mouse_area};
-use iced::{Background, Border, Color, Element, Length, Theme, mouse};
+use iced::{Background, Border, Element, Length, Theme, mouse};
 
 /// Layout thickness of the draggable divider strip (logical px). The
 /// visible hairline is 1px centered inside this; consumers that compute
@@ -40,10 +47,12 @@ pub fn line_style(theme: &Theme) -> container::Style {
     }
 }
 
-/// Transparent hit-strip chrome — only the inner hairline is visible.
-fn hit_style(_theme: &Theme) -> container::Style {
+/// Hit-strip chrome — canvas base so the reserved strip is not a darker
+/// transparent hole between panes.
+fn hit_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
     container::Style {
-        background: Some(Background::Color(Color::TRANSPARENT)),
+        background: Some(Background::Color(p.background.weakest.color)),
         border: Border::default(),
         ..container::Style::default()
     }
@@ -66,7 +75,7 @@ where
             .style(hit_style)
             .width(Length::Fixed(DIVIDER_HIT_PX))
             .height(Length::Fill)
-            .center_x(Length::Fill),
+            .align_x(Horizontal::Center),
     )
     .interaction(mouse::Interaction::ResizingColumn)
     .on_press(on_press)
@@ -90,7 +99,7 @@ where
             .style(hit_style)
             .width(Length::Fill)
             .height(Length::Fixed(DIVIDER_HIT_PX))
-            .center_y(Length::Fill),
+            .align_y(Vertical::Center),
     )
     .interaction(mouse::Interaction::ResizingRow)
     .on_press(on_press)

@@ -737,17 +737,11 @@ where
             None => false,
         });
 
-        // Compose optional resize divider.
+        // Compose optional resize divider — same hairline-in-hit-strip as
+        // kit `split` / terminal pane dividers (not a solid 6px slab).
         let body: Element<'a, Message, Theme> = match resize {
             Some((_, _, on_press)) => {
-                let divider = mouse_area(
-                    container(Space::new().width(Length::Fill).height(Length::Fill))
-                        .style(divider_style)
-                        .width(Length::Fixed(6.0))
-                        .height(Length::Fill),
-                )
-                .interaction(iced::mouse::Interaction::ResizingColumn)
-                .on_press(on_press);
+                let divider = crate::components::vertical_divider(on_press);
                 row![panel, divider].height(Length::Fill).into()
             }
             None => panel.into(),
@@ -814,17 +808,6 @@ pub fn style(theme: &Theme) -> container::Style {
         background: Some(Background::Color(p.background.weaker.color)),
         // No border — the sidebar track is a flat raised panel; the
         // divider/zoning chrome around it carries any separating line.
-        border: Border::default(),
-        ..container::Style::default()
-    }
-}
-
-/// Thin resize divider fill — picks up the panel's stronger background so
-/// it reads as a hairline groove between the column and its neighbour.
-fn divider_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(p.background.strong.color)),
         border: Border::default(),
         ..container::Style::default()
     }
