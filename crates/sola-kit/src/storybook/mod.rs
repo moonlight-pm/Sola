@@ -158,6 +158,7 @@ pub enum Msg {
     NumberInput(pages::number_input::Msg),
     ColorPicker(pages::color_picker::Msg),
     Sidebar(pages::sidebar::Msg),
+    Split(pages::split::Msg),
     /// Bus message arriving via [`sola_kit::app::bus_subscription`].
     Bus(Arc<sola_bus::Message>),
     /// Open the inline color picker for one palette atom. No-op when
@@ -376,6 +377,7 @@ pub struct Storybook {
     number_input: pages::number_input::State,
     color_picker: pages::color_picker::State,
     sidebar: pages::sidebar::State,
+    split: pages::split::State,
     /// All known themes. `themes[0]` is always Default and can't be
     /// edited or deleted. Subsequent entries are user copies.
     themes: Vec<ThemePreset>,
@@ -452,6 +454,7 @@ impl Storybook {
             number_input: pages::number_input::State::default(),
             color_picker: pages::color_picker::State::default(),
             sidebar: pages::sidebar::State::default(),
+            split: pages::split::State::default(),
             themes: vec![default_preset],
             active_theme: 0,
             naming: None,
@@ -523,6 +526,22 @@ impl Storybook {
             }));
         }
 
+        // Split dogfood: live divider drag on the Split page.
+        if self.split.needs_cursor_subscription() {
+            subs.push(event::listen_with(|ev, _, _| match ev {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Msg::Split(pages::split::Msg::CursorMoved {
+                        x: position.x,
+                        y: position.y,
+                    }))
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::Split(pages::split::Msg::Release))
+                }
+                _ => None,
+            }));
+        }
+
         Subscription::batch(subs)
     }
 
@@ -540,6 +559,7 @@ impl Storybook {
             Msg::NumberInput(m) => self.number_input.update(m),
             Msg::ColorPicker(m) => self.color_picker.update(m),
             Msg::Sidebar(m) => self.sidebar.update(m),
+            Msg::Split(m) => self.split.update(m),
             Msg::Bus(message) => {
                 let Some(topic) = Topic::parse(&message) else { return };
                 match topic {
@@ -1231,8 +1251,8 @@ impl Storybook {
             }
             Page::Divider => pages::divider::view(),
             Page::Popover => pages::popover::view(),
-            Page::Sidebar => pages::sidebar::view(&self.sidebar).map(Msg::Sidebar),
-            Page::Split => pages::split::view(),
+            Page::Sidebar => pages::sidebar::view(&self.sidebar, &self.theme).map(Msg::Sidebar),
+            Page::Split => pages::split::view(&self.split, &self.theme).map(Msg::Split),
             Page::Toolbar => pages::toolbar::view(&self.toolbar).map(Msg::Toolbar),
         };
 

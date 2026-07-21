@@ -8,13 +8,13 @@
 //! messages into its own `State`.
 
 use iced::widget::{button, column, container, row, text};
-use iced::{Element, Length};
+use iced::{Element, Length, Theme};
 
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::text::{body, code, heading, muted};
 use sola_kit::components::{
-    ReorderCfg, SidebarItem, SidebarPanel, SidebarSection, TabDescriptor, TabSize,
-    panel_dragged_width, vertical_tabs_sized,
+    DividerColors, ReorderCfg, SidebarItem, SidebarPanel, SidebarSection, TabDescriptor,
+    TabSize, panel_dragged_width, vertical_tabs_sized,
 };
 
 /// The demo item labels, in their current (reorderable) order.
@@ -176,7 +176,7 @@ impl State {
     }
 }
 
-pub fn view(state: &State) -> Element<'_, Msg> {
+pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     // Build one section of items in the current order, decorating each
     // with a shortcut hint, and demoing a close button + a secondary
     // label on two of them.
@@ -209,9 +209,14 @@ pub fn view(state: &State) -> Element<'_, Msg> {
         cursor_y: state.reorder_cursor_y,
     };
 
+    // Demo sits in a raised card; the sidebar panel is also raised. Match
+    // both divider side-bands to raised so only the 1px hairline shows
+    // (theme-default canvas bands read as a black/grey/black gutter).
+    let divider = DividerColors::raised(theme);
+
     let panel = SidebarPanel::new(sections)
         .collapsible(state.collapsed, Msg::Toggle)
-        .resizable(state.width, state.dragging, Msg::DividerPress)
+        .resizable_with(state.width, state.dragging, Msg::DividerPress, divider)
         .reorderable(cfg)
         .footer(footer())
         .build();
