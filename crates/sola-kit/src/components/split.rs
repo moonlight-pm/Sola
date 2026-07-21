@@ -11,6 +11,12 @@
 //! [`DividerColors`] via [`split_with`] so the side bands match the
 //! surfaces being split.
 //!
+//! **Bordered parents:** the split fills its layout box edge-to-edge
+//! (correct for terminal panes). If you wrap it in a card or other
+//! hairline-bordered container, inset the content by the border width
+//! (e.g. `.padding(1.0)`) so the divider does not paint over the outer
+//! stroke and notch the outline at the T-junction.
+//!
 //! Drag state stays with the caller (iced has no pointer-capture): the
 //! divider emits `on_drag` on press, and the consumer's update fn
 //! listens for that plus global cursor motion / release to compute the

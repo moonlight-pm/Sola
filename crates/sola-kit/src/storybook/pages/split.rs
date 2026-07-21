@@ -15,10 +15,14 @@ use sola_kit::components::split_with;
 use sola_kit::components::text::{body, code, heading, muted};
 use sola_kit::components::DividerColors;
 
-/// Logical size of each demo card's content area. Fixed so drag→ratio
-/// math does not need widget layout geometry.
+/// Logical size of each demo card's **content** area (inside the border).
+/// Fixed so drag→ratio math does not need widget layout geometry.
 const DEMO_W: f32 = 560.0;
 const DEMO_H: f32 = 200.0;
+
+/// Card hairline width — content (the split) must sit inside this so the
+/// divider does not paint over the outer border and notch the outline.
+const BORDER_INSET: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
@@ -110,6 +114,12 @@ impl State {
 pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     let chrome = DividerColors::raised(theme);
 
+    // Outer size = content + border inset on each side. The split fills
+    // only the content box; without the pad it paints over the card's
+    // 1px hairline where the divider meets the edge (a visible notch).
+    let outer_w = DEMO_W + 2.0 * BORDER_INSET;
+    let outer_h = DEMO_H + 2.0 * BORDER_INSET;
+
     let left = pane("Pane A");
     let right = pane("Pane B");
     let vertical = container(split_with(
@@ -121,8 +131,9 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         chrome,
     ))
     .style(card_style)
-    .height(Length::Fixed(DEMO_H))
-    .width(Length::Fixed(DEMO_W));
+    .padding(BORDER_INSET)
+    .height(Length::Fixed(outer_h))
+    .width(Length::Fixed(outer_w));
 
     let top = pane("Pane A");
     let bottom = pane("Pane B");
@@ -135,8 +146,9 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         chrome,
     ))
     .style(card_style)
-    .height(Length::Fixed(DEMO_H))
-    .width(Length::Fixed(DEMO_W));
+    .padding(BORDER_INSET)
+    .height(Length::Fixed(outer_h))
+    .width(Length::Fixed(outer_w));
 
     // While dragging, a transparent overlay over the demo keeps the
     // resize cursor even if the pointer races past the hairline (same
