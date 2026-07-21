@@ -13,22 +13,18 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P5** launcher — **code ready**, visual stop.
-Branch `p5-launcher` @ worktree `.worktrees/p5-launcher`.
-See `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P5.
+**none**
 
-Signature move: Spotlight restraint — quiet selection (not cyan pill),
-calmer modal panel, denser query/list hierarchy, default 560×pad 8.
-
-**User:** `cargo make install sola-shell` (kit optional for storybook),
-Meta+Space, critique.
-
-Next when user says go after P5 merges: **P6** switcher.
+Next when user says go: **P6** switcher —
+see `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P6.
 
 ### Last completed
 
-**P4 menus & popovers** — merged to `master` at `cddffae`
-(2026-07-20). Calm kit popover materials; shell menu density + separators.
+**P5 launcher** — merged to `master` at `a2b2e7f`
+(2026-07-20). Spotlight restraint: quiet selection, calmer modal, denser
+query/list hierarchy, default width 560 / pad 8.
+
+**P4 menus & popovers** — merged to `master` at `cddffae`.
 
 **Stat menubar width pin** — merged earlier same day.
 
