@@ -1,7 +1,7 @@
 //! sola-shell — iced-native desktop shell. Four windows on one
 //! iced multi-window application.
 
-use sola_bus::topics::TopicKind;
+use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup};
 use sola_kit::fonts::INTER;
@@ -24,9 +24,32 @@ const APP_ID: &str = "sola-shell";
 fn main() -> iced::Result {
     startup(APP_ID);
 
+    // Flower / system menu (and the shell's own app menu when focused).
+    // "Restart Shell" exits this process only — the process manager
+    // respawns `/opt/sola/bin/sola-shell`. "Quit Shell" still shuts the
+    // whole session down via `Topic::Shutdown`.
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
-        .app_menu("Shell", [("quit", "Quit Shell", KeyCode::Q.meta())])
+        .app_menu_definition(MenuDefinition {
+            label: "Shell".into(),
+            items: vec![
+                MenuItem::Action {
+                    id: "restart".into(),
+                    label: "Restart Shell".into(),
+                    shortcut: None,
+                    disabled: false,
+                    checked: false,
+                },
+                MenuItem::Divider,
+                MenuItem::Action {
+                    id: "quit".into(),
+                    label: "Quit Shell".into(),
+                    shortcut: Some(KeyCode::Q.meta()),
+                    disabled: false,
+                    checked: false,
+                },
+            ],
+        })
         .install();
 
     // Use iced::daemon so we can open multiple windows and dispatch view()

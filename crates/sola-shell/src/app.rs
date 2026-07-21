@@ -813,6 +813,13 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::MenuAction { app_id, action_id } => {
+                // Restart this process only. `sola` (process manager)
+                // respawns managed `sola-shell` on exit — used after
+                // font/theme changes that don't require a reinstall.
+                if app_id == Self::APP_ID && action_id == "restart" {
+                    tracing::info!("restart shell requested via menu");
+                    return iced::exit();
+                }
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     if app_id == Self::APP_ID && (action_id == "exit" || action_id == "quit") {
                         let _ = bus.emit(Topic::Shutdown);
