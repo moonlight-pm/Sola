@@ -13,21 +13,20 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P3** menubar density + type — **code ready**, visual stop.
-Branch `p3-menubar-density` @ `160bda9`
-(worktree `.worktrees/p3-menubar-density`).
-See `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P3.
+**none**
 
-Signature move: compact menubar type (13 chrome / 12 mono values),
-font roles (`chrome` / `ui_medium` / `mono`), theme-derived fg (no
-view hex), tighter item pad + status cluster spacing. Bar height
-stays 28 (zoning).
-
-**User:** install shell, recapture menubar idle, critique.
-
-Next when user says go after P3 merges: **P4** menus & popovers.
+Next when user says go: **P4** menus & popovers —
+see `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P4.
 
 ### Last completed
+
+**Stat menubar width pin** — merged to `master` (2026-07-20). Fixed-width
+value slots on CPU/GPU/MEM/RX/TX so proportional chrome type doesn't reflow
+the right cluster as numbers update.
+
+**P3 menubar density + type** — merged to `master` at `a2cc87a`
+(2026-07-20). Compact menubar chrome type, bold app title, flower optical
+lift, Restart Shell, theme-derived fg, tighter pad/cluster spacing.
 
 **P2 token & type baseline** — merged to `master` at `4ed660c`
 (2026-07-20). macOS greys seed, quiet selection, neutral switcher,

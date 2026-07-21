@@ -60,6 +60,12 @@ docs/
 - Always use `.worktrees/` for git worktrees.
 - Only make code modifications in worktrees. Never commit code changes directly to master.
 - Only merge worktree branches to master with explicit user permission.
+- **Approval = merge + clean up in the same turn.** When the user signals the
+  work is good — e.g. "nailed it", "looks good", "merge that", "ship it",
+  "LGTM", "perfect", "do it", or similar approval of the current worktree —
+  commit any uncommitted work if needed, merge the branch to master, then
+  clean up immediately. Do **not** leave approved work sitting in a worktree
+  waiting for a second explicit "please merge" (unless they say hold off).
 - **After merging a worktree branch to master, always clean up:** remove the
   worktree (`git worktree remove .worktrees/<name>`) and delete the local
   branch (`git branch -d <branch>`). Do this in the same turn as the merge
