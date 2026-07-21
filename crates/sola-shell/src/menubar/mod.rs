@@ -2,9 +2,11 @@
 //!
 //! The menubar is the first of the four shell windows to open. It provides:
 //! - Left cluster: system-menu button, focused-app title, app-menu labels.
-//! - Right cluster: toast notification overlay, clock.
+//! - Right cluster: toast + status indicators (CPU/GPU/MEM/RX/TX) + clock.
 //!
 //! Window state lives in [`MenubarState`]; the view is in [`view`].
+//! Density and type live in the view (compact chrome sizes, font roles);
+//! bar height stays fixed so zoning / overlay Y offsets stay stable.
 
 pub mod view;
 
@@ -13,6 +15,7 @@ use iced::window;
 use sola_kit::app::window_settings;
 
 /// Height of the menubar window in logical pixels.
+/// Keep in sync with [`crate::zoning::MENUBAR_HEIGHT`] and overlay Y=28.
 pub const WINDOW_HEIGHT: u32 = 28;
 
 /// Identifies one menubar label for the keyboard-shortcut "flash" feedback,

@@ -175,6 +175,15 @@ Align kit / seed greys and hierarchy with macOS dark mode **without** a layout r
 
 Density, type, status items, quiet scanability. Tokens only; no new hex.
 
+**Status (in progress on `p3-menubar-density`):**
+
+- [x] Menu labels / app title → `fonts::chrome()` / `fonts::ui_medium()`, size **13**
+- [x] Clock → `fonts::mono()`, size **13**
+- [x] Stat indicators → chrome label **10** + mono value **12**; theme `palette().text` (no view hex)
+- [x] Tighter pad `[1, 6]` and status cluster spacing **2** (was 16)
+- [x] Flower icon **14**; bar height stays **28** (zoning)
+- [ ] User install + after shot (`docs/visual/passes/p3-menubar/`)
+
 ### P4 — Menus & popovers
 
 Spacing, separators, materials values, kit popover calm.

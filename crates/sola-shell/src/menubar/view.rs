@@ -3,12 +3,16 @@
 //! Layout (left-to-right):
 //!   [≡] [App Name] [Menu1] [Menu2] … ──────────────── [toast] [clock]
 //!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
+//!
+//! Density targets macOS menu bar: compact type, tight horizontal padding,
+//! quiet status cluster. Type uses kit font *roles* (not family constants);
+//! colours come from the live theme palette (no view-local hex).
 
 use iced::widget::{container, mouse_area, row, text};
-use iced::{Element, Length};
+use iced::{Color, Element, Length, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon_colored;
-use sola_kit::fonts::{INTER, INTER_MEDIUM};
+use sola_kit::fonts;
 
 use crate::app::Msg;
 use crate::components::clock::clock_widget;
@@ -16,31 +20,52 @@ use crate::components::toast::toast_widget;
 use crate::menu::state::synthesized_menu;
 use crate::menubar::FlashTarget;
 
+// ── Density (logical px) ────────────────────────────────────────────────
+// macOS menu bar reads ~13pt chrome with tight hit padding. Keep bar height
+// at `WINDOW_HEIGHT` (28); only type + padding tighten here.
+const LABEL_SIZE: f32 = 13.0;
+const TITLE_SIZE: f32 = 13.0;
+const STAT_LABEL_SIZE: f32 = 10.0;
+const STAT_VALUE_SIZE: f32 = 12.0;
+const ICON_SIZE: u16 = 14;
+/// Vertical, horizontal padding inside each menubar button.
+const ITEM_PAD: [u16; 2] = [1, 6];
+/// Gap between right-cluster status items (CPU … clock). Item pad already
+/// supplies most breathing room; large inter-item gaps fight scanability.
+const CLUSTER_SPACING: f32 = 2.0;
+/// Gap between left-cluster labels (flower / app / File / …).
+const LEFT_SPACING: f32 = 0.0;
+
 /// Render the menubar for `shell`.
 pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mb = &shell.menubar;
+    let fg = shell.theme.palette().text;
+    let muted = Color { a: 0.55, ..fg };
 
     // ── System-menu icon ──────────────────────────────────────────────
-    // White flower glyph; clickable region is whole padded area.
-    let system_fg = iced::Color::WHITE;
+    // Flower glyph; clickable region is whole padded area.
     let system_active =
         (shell.menu_open && shell.current_open_is_system) || flashing(shell, true, 0);
     // button: press + hover-fill; mouse_area: hover-to-switch signal
     // (outer mouse_area still receives on_enter — only presses are captured by the button).
     let system_btn: Element<'_, Msg> = mouse_area(
-        iced::widget::button(
-            container(icon_colored("sola/flower", 16, system_fg))
-        )
-        .style(kit_btn::menubar(system_active))
-        .padding([2, 8])
-        .on_press(Msg::OpenMenu { index: 0, is_system: true }),
+        iced::widget::button(container(icon_colored("sola/flower", ICON_SIZE, fg)))
+            .style(kit_btn::menubar(system_active))
+            .padding(ITEM_PAD)
+            .on_press(Msg::OpenMenu {
+                index: 0,
+                is_system: true,
+            }),
     )
-    .on_enter(Msg::HoverMenu { index: 0, is_system: true })
+    .on_enter(Msg::HoverMenu {
+        index: 0,
+        is_system: true,
+    })
     .into();
 
     // ── Focused-app title ─────────────────────────────────────────────
-    // Bold text of the focused app's display name (first menu label, or
-    // the app label from the applications catalog, or the raw app_id).
+    // Medium-weight chrome of the focused app's display name (first menu
+    // label, or the app label from the applications catalog, or the raw app_id).
     let app_title_str = focused_app_title(shell);
     let clickable = has_menu(shell);
     let title_active = (shell.menu_open
@@ -51,22 +76,28 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         mouse_area(
             iced::widget::button(
                 text(app_title_str)
-                    .font(INTER_MEDIUM)
-                    .size(15),
+                    .font(fonts::ui_medium())
+                    .size(TITLE_SIZE),
             )
             .style(kit_btn::menubar(title_active))
-            .padding([2, 8])
-            .on_press(Msg::OpenMenu { index: 0, is_system: false }),
+            .padding(ITEM_PAD)
+            .on_press(Msg::OpenMenu {
+                index: 0,
+                is_system: false,
+            }),
         )
-        .on_enter(Msg::HoverMenu { index: 0, is_system: false })
+        .on_enter(Msg::HoverMenu {
+            index: 0,
+            is_system: false,
+        })
         .into()
     } else {
         container(
             text(app_title_str)
-                .font(INTER_MEDIUM)
-                .size(15),
+                .font(fonts::ui_medium())
+                .size(TITLE_SIZE),
         )
-        .padding([2, 8])
+        .padding(ITEM_PAD)
         .into()
     };
 
@@ -79,49 +110,74 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let clock_active = shell.menu_open && shell.open_panel == Some(crate::app::Panel::Calendar);
     let clock: Element<'_, Msg> = iced::widget::button(clock_widget(&mb.clock_now))
         .style(kit_btn::menubar(clock_active))
-        .padding([2, 8])
+        .padding(ITEM_PAD)
         .on_press(Msg::ToggleCalendar)
         .into();
 
     // ── System-stat indicators (left of clock) ───────────────────────
-    let neutral = iced::Color::from_rgb(0.961, 0.961, 0.969); // #f5f5f7 text-primary
+    // Neutral value colour = live theme text (not a frozen hex).
+    let neutral = fg;
     let first_tick = shell.cpu_hist.is_empty();
     let cpu_pct = shell.stats.cpu_pct;
-    let cpu_btn: Element<'_, Msg> = iced::widget::button(
-        stat_indicator("CPU", if first_tick { "\u{2014}".to_string() } else { format!("{:.0}%", cpu_pct) }, crate::stats::level_color(cpu_pct, neutral)),
-    )
-    .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Cpu))))
-    .padding([2, 8])
+    let cpu_btn: Element<'_, Msg> = iced::widget::button(stat_indicator(
+        "CPU",
+        if first_tick {
+            "\u{2014}".to_string()
+        } else {
+            format!("{:.0}%", cpu_pct)
+        },
+        crate::stats::level_color(cpu_pct, neutral),
+        muted,
+    ))
+    .style(kit_btn::menubar(
+        shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Cpu)),
+    ))
+    .padding(ITEM_PAD)
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Cpu))
     .into();
 
     let mem_pct = shell.stats.mem_pct;
-    let mem_btn: Element<'_, Msg> = iced::widget::button(
-        stat_indicator("MEM", if first_tick { "\u{2014}".to_string() } else { format!("{:.0}%", mem_pct) }, crate::stats::level_color(mem_pct, neutral)),
-    )
-    .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Mem))))
-    .padding([2, 8])
+    let mem_btn: Element<'_, Msg> = iced::widget::button(stat_indicator(
+        "MEM",
+        if first_tick {
+            "\u{2014}".to_string()
+        } else {
+            format!("{:.0}%", mem_pct)
+        },
+        crate::stats::level_color(mem_pct, neutral),
+        muted,
+    ))
+    .style(kit_btn::menubar(
+        shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Mem)),
+    ))
+    .padding(ITEM_PAD)
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Mem))
     .into();
 
     // TX/RX are separate indicators (same style as CPU/MEM), each with its
     // own detail panel. RX = download (net_down), TX = upload (net_up).
-    let rx_btn: Element<'_, Msg> = iced::widget::button(
-        rate_indicator("RX", shell.stats.net_down, neutral),
-    )
+    let rx_btn: Element<'_, Msg> = iced::widget::button(rate_indicator(
+        "RX",
+        shell.stats.net_down,
+        neutral,
+        muted,
+    ))
     .style(kit_btn::menubar(
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Rx)),
     ))
-    .padding([2, 8])
+    .padding(ITEM_PAD)
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Rx))
     .into();
-    let tx_btn: Element<'_, Msg> = iced::widget::button(
-        rate_indicator("TX", shell.stats.net_up, neutral),
-    )
+    let tx_btn: Element<'_, Msg> = iced::widget::button(rate_indicator(
+        "TX",
+        shell.stats.net_up,
+        neutral,
+        muted,
+    ))
     .style(kit_btn::menubar(
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Tx)),
     ))
-    .padding([2, 8])
+    .padding(ITEM_PAD)
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Tx))
     .into();
 
@@ -132,11 +188,16 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // ── Indicator cluster (GPU hidden when no NVIDIA GPU) ─────────────
     let mut cluster: Vec<Element<'_, Msg>> = vec![cpu_btn];
     if let Some(g) = shell.stats.gpu {
-        let gpu_btn: Element<'_, Msg> = iced::widget::button(
-            stat_indicator("GPU", format!("{:.0}%", g.util), crate::stats::level_color(g.util, neutral)),
-        )
-        .style(kit_btn::menubar(shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Gpu))))
-        .padding([2, 8])
+        let gpu_btn: Element<'_, Msg> = iced::widget::button(stat_indicator(
+            "GPU",
+            format!("{:.0}%", g.util),
+            crate::stats::level_color(g.util, neutral),
+            muted,
+        ))
+        .style(kit_btn::menubar(
+            shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Gpu)),
+        ))
+        .padding(ITEM_PAD)
         .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Gpu))
         .into();
         cluster.push(gpu_btn);
@@ -147,14 +208,17 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     cluster.push(clock);
 
     row![
-        row(left),
+        row(left)
+            .spacing(LEFT_SPACING)
+            .align_y(iced::alignment::Vertical::Center),
         iced::widget::Space::new().width(iced::Length::Fill),
         toast,
         iced::widget::row(cluster)
-            .spacing(16)
+            .spacing(CLUSTER_SPACING)
             .align_y(iced::alignment::Vertical::Center),
     ]
     .height(Length::Fill)
+    .align_y(iced::alignment::Vertical::Center)
     .into()
 }
 
@@ -235,14 +299,20 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
             mouse_area(
                 iced::widget::button(
                     text(menu.label.clone())
-                        .font(INTER)
-                        .size(15),
+                        .font(fonts::chrome())
+                        .size(LABEL_SIZE),
                 )
                 .style(kit_btn::menubar(active))
-                .padding([2, 8])
-                .on_press(Msg::OpenMenu { index, is_system: false }),
+                .padding(ITEM_PAD)
+                .on_press(Msg::OpenMenu {
+                    index,
+                    is_system: false,
+                }),
             )
-            .on_enter(Msg::HoverMenu { index, is_system: false })
+            .on_enter(Msg::HoverMenu {
+                index,
+                is_system: false,
+            })
             .into()
         })
         .collect()
@@ -261,22 +331,32 @@ fn display_label(shell: &crate::app::Shell, app_id: &str) -> String {
     }
 }
 
-/// One numbers-only menubar indicator: muted label + mono value.
-fn stat_indicator<'a>(label: &'a str, value: String, color: iced::Color) -> Element<'a, Msg> {
-    use iced::widget::{row, text};
+/// One numbers-only menubar indicator: muted chrome label + mono value.
+fn stat_indicator<'a>(
+    label: &'a str,
+    value: String,
+    color: Color,
+    muted: Color,
+) -> Element<'a, Msg> {
     row![
         // Label stays a fixed muted gray; only the value tints on threshold.
-        text(label).font(sola_kit::fonts::INTER).size(10)
-            .style(|_: &iced::Theme| iced::widget::text::Style {
-                color: Some(iced::Color { r: 0.902, g: 0.929, b: 0.953, a: 0.6 }),
+        text(label)
+            .font(fonts::chrome())
+            .size(STAT_LABEL_SIZE)
+            .style(move |_: &Theme| iced::widget::text::Style {
+                color: Some(muted),
             }),
         // Value padded to a fixed 4-char field (mono → tabular) so "9%",
         // "100%", and "—" all render the same width; the indicator never
         // reflows as the value changes.
-        text(format!("{value:>4}")).font(sola_kit::fonts::MONO).size(13)
-            .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(color) }),
+        text(format!("{value:>4}"))
+            .font(fonts::mono())
+            .size(STAT_VALUE_SIZE)
+            .style(move |_: &Theme| iced::widget::text::Style {
+                color: Some(color),
+            }),
     ]
-    .spacing(5)
+    .spacing(4)
     .align_y(iced::alignment::Vertical::Center)
     .into()
 }
@@ -284,19 +364,29 @@ fn stat_indicator<'a>(label: &'a str, value: String, color: iced::Color) -> Elem
 /// Menubar rate indicator (TX/RX): same layout as [`stat_indicator`], but
 /// the value is a byte-rate string padded to a fixed field so the cluster
 /// doesn't reflow when units jump (B/s → KB/s → MB/s).
-fn rate_indicator<'a>(label: &'a str, bps: f32, color: iced::Color) -> Element<'a, Msg> {
-    use iced::widget::{row, text};
+fn rate_indicator<'a>(
+    label: &'a str,
+    bps: f32,
+    color: Color,
+    muted: Color,
+) -> Element<'a, Msg> {
     let value = crate::stats::view::fmt_rate(bps);
     row![
-        text(label).font(sola_kit::fonts::INTER).size(10)
-            .style(|_: &iced::Theme| iced::widget::text::Style {
-                color: Some(iced::Color { r: 0.902, g: 0.929, b: 0.953, a: 0.6 }),
+        text(label)
+            .font(fonts::chrome())
+            .size(STAT_LABEL_SIZE)
+            .style(move |_: &Theme| iced::widget::text::Style {
+                color: Some(muted),
             }),
         // 9 chars covers "999 KB/s" / "12.3 MB/s"; mono keeps tabular width.
-        text(format!("{value:>9}")).font(sola_kit::fonts::MONO).size(13)
-            .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(color) }),
+        text(format!("{value:>9}"))
+            .font(fonts::mono())
+            .size(STAT_VALUE_SIZE)
+            .style(move |_: &Theme| iced::widget::text::Style {
+                color: Some(color),
+            }),
     ]
-    .spacing(5)
+    .spacing(4)
     .align_y(iced::alignment::Vertical::Center)
     .into()
 }
