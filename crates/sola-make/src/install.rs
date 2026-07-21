@@ -324,9 +324,10 @@ fn files_identical(a: &str, b: &str) -> Result<bool, String> {
 
 /// Build and install binaries locally.
 ///
-/// If `app` is provided, builds and installs only that app.
-/// Otherwise builds and installs all workspace binaries.
-pub fn install(app: Option<&str>) {
+/// If `apps` is non-empty, builds and installs only those apps (short
+/// names like `shell` resolve to `sola-shell`). Otherwise builds and
+/// installs all workspace binaries.
+pub fn install(apps: &[String]) {
     // Bootstrap third-party assets if any pack is missing.
     // /opt/sola/share is the single source of truth at runtime; install
     // never rsyncs it from the source tree (nothing's committed there).
@@ -337,20 +338,22 @@ pub fn install(app: Option<&str>) {
         super::assets::sync(false);
     }
 
+    let binaries: Vec<String> = if apps.is_empty() {
+        super::discover_binaries()
+    } else {
+        apps.iter().map(|n| super::resolve_crate_name(n)).collect()
+    };
+
     println!("Building...");
-    super::build(app.map(|s| s.to_string()), false);
+    // Empty packages ⇒ full workspace build; otherwise one `-p` per app
+    // so `cargo make install shell kit` is a single cargo invocation.
+    super::build(if apps.is_empty() { &[] } else { &binaries }, false);
 
     println!("Preparing install...");
     if let Err(e) = ensure_dirs() {
         eprintln!("failed to create directories: {e}");
         std::process::exit(1);
     }
-
-    let binaries: Vec<String> = if let Some(name) = app {
-        vec![super::resolve_crate_name(name)]
-    } else {
-        super::discover_binaries()
-    };
 
     // Replacing `sola` itself restarts the process manager, which tears
     // down every Sola process. Confirm before doing that — and if the
@@ -389,8 +392,8 @@ pub fn install(app: Option<&str>) {
     // target dirs. Whole-workspace install picks them up here so the
     // user gets a single `cargo make install` UX even when the
     // workspace is bifurcated for feature-isolation reasons. Targeted
-    // single-app installs skip this loop entirely.
-    if app.is_none() {
+    // app installs skip this loop entirely.
+    if apps.is_empty() {
         for c in super::isolated::discover() {
             if !super::isolated::has_binary(&c) {
                 continue;
