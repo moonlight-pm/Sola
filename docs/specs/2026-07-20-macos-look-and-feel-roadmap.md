@@ -175,17 +175,24 @@ Align kit / seed greys and hierarchy with macOS dark mode **without** a layout r
 
 Density, type, status items, quiet scanability. Tokens only; no new hex.
 
-**Status (in progress on `p3-menubar-density`):**
+**Status (merged):**
 
-- [x] One chrome face for labels, stats, clock (size **13**); app name **medium** only
+- [x] One chrome face for labels, stats, clock (size **13**); app name **bold**
 - [x] Stats values **not** mono — same type as menu titles (user correction)
 - [x] Pad `[2, 9]`; status cluster spacing **4**; label↔value gap **5**
 - [x] Theme `palette().text` (no view hex); flower **14**; bar height **28**
-- [ ] User install + after shot (`docs/visual/passes/p3-menubar/`)
+- [x] Fixed-width stat value slots (no reflow as digits change)
 
 ### P4 — Menus & popovers
 
 Spacing, separators, materials values, kit popover calm.
+
+**Status (in progress on `p4-menus-popovers`):**
+
+- [x] Kit `popover`: `RADIUS_MD`, pad `SPACE_SM`, tighter shadow (blur 10 / y 2)
+- [x] Kit `button::menu_item` compact hover for shell menus
+- [x] Shell menu: chrome type 13, denser row pad, separator vertical pad
+- [ ] User install + after shot (`docs/visual/passes/p4-menus/`)
 
 ### P5 — Launcher
 

@@ -21,8 +21,9 @@ pub fn view() -> Element<'static, Msg> {
             body("Item two"),
             body("Item three").style(muted),
         ]
-        .spacing(6),
-    );
+        .spacing(4),
+    )
+    .width(220);
 
     let demo = container(
         row![trigger, menu].spacing(16),
@@ -34,13 +35,14 @@ pub fn view() -> Element<'static, Msg> {
     column![
         heading("Popover"),
         body(
-            "Floating-panel chrome — raised bg, hairline border, soft drop \
-             shadow. v0 ships visual chrome only; anchor/show-hide logic is \
-             the caller's concern (use iced::widget::Stack or Float)."
+            "Floating-panel chrome — raised bg, hairline at RADIUS_MD, tight \
+             soft shadow (menu-bar dropdown calm). Default pad SPACE_SM. \
+             v0 ships visual chrome only; anchor/show-hide is the caller's \
+             concern (Stack / Float / shell Menu window)."
         )
         .style(muted),
         demo,
-        code("popover(content)").style(muted),
+        code("popover(content)  // RADIUS_MD, pad 4, shadow blur 10").style(muted),
     ]
     .spacing(16)
     .into()

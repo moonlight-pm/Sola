@@ -19,30 +19,29 @@ use iced::{
     Background, Element, Event, Length, Point, Rectangle, Shadow, Size, Theme, Vector,
 };
 
-use crate::components::style::{hairline, RADIUS_LG, SPACE_LG};
+use crate::components::style::{hairline, RADIUS_MD, SPACE_SM};
 
 /// Wrap `content` in a popover-styled container. Default padding is
-/// 12px; override with `.padding(...)` if needed.
+/// 4px (menu-bar dropdown density); override with `.padding(...)` if needed.
 pub fn popover<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
 ) -> Container<'a, Message, Theme> {
-    container(content).style(style).padding(SPACE_LG)
+    container(content).style(style).padding(SPACE_SM)
 }
 
+/// Floating-panel chrome tuned for macOS menu-bar dropdown calm:
+/// raised bg, hairline at `RADIUS_MD`, tight soft shadow (not a marketing
+/// card). Escape hatch: iced's palette has no shadow token, so the drop
+/// shadow is a fixed translucent black (see convention note in `mod.rs`).
 pub fn style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(p.background.weaker.color)),
-        border: hairline(p, RADIUS_LG),
-        // Escape hatch: iced's palette vocabulary carries no shadow
-        // token, so the drop shadow is a fixed translucent black rather
-        // than a themed atom. This is the one non-palette colour in the
-        // kit's components (see the convention note in `mod.rs`); a
-        // floating panel needs the lift regardless of theme.
+        border: hairline(p, RADIUS_MD),
         shadow: Shadow {
-            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-            offset: Vector::new(0.0, 4.0),
-            blur_radius: 16.0,
+            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.28),
+            offset: Vector::new(0.0, 2.0),
+            blur_radius: 10.0,
         },
         ..container::Style::default()
     }

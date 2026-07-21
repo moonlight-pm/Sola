@@ -13,16 +13,23 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**P4** menus & popovers — **code ready**, visual stop.
+Branch `p4-menus-popovers` @ worktree `.worktrees/p4-menus-popovers`.
+See `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P4.
 
-Next when user says go: **P4** menus & popovers —
-see `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P4.
+Signature move: calm kit popover materials (MD radius, SM pad, tight
+shadow); shell menu density (chrome 13, compact rows, padded separators,
+`menu_item` hover). Stat/calendar popovers inherit kit chrome.
+
+**User:** install shell (+ kit if viewing storybook), open a menubar menu
+and a stat/calendar popover, recapture if desired, critique.
+
+Next when user says go after P4 merges: **P5** launcher.
 
 ### Last completed
 
-**Stat menubar width pin** — merged to `master` (2026-07-20). Fixed-width
-value slots on CPU/GPU/MEM/RX/TX so proportional chrome type doesn't reflow
-the right cluster as numbers update.
+**Stat menubar width pin** — merged to `master` at `302ae8b`
+(2026-07-20). Fixed-width value slots on CPU/GPU/MEM/RX/TX.
 
 **P3 menubar density + type** — merged to `master` at `a2cc87a`
 (2026-07-20). Compact menubar chrome type, bold app title, flower optical

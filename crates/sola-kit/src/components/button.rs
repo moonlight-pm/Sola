@@ -183,6 +183,30 @@ pub fn list_item(selected: bool) -> impl Fn(&Theme, button::Status) -> button::S
     }
 }
 
+/// Menu-row hover style — list_item calm without selection chrome.
+///
+/// Transparent at rest; `background.strong` on hover/press with a small
+/// radius so the highlight reads as a compact macOS menu row, not a
+/// fat list pill.
+pub fn menu_item(theme: &Theme, status: button::Status) -> button::Style {
+    let p = theme.extended_palette();
+    let bg = match status {
+        button::Status::Hovered | button::Status::Pressed => p.background.strong.color,
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: p.background.base.text,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_SM.into(),
+        },
+        shadow: Default::default(),
+        snap: false,
+    }
+}
+
 /// Style for a menubar label button. `active` = its menu is open.
 ///
 /// Transparent at rest; a translucent fg-tinted highlight on hover or while

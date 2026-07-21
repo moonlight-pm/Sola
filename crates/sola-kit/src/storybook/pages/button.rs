@@ -33,6 +33,12 @@ pub fn view() -> Element<'static, Msg> {
     ]
     .spacing(8);
 
+    let menu_items = row![
+        button(text("Copy")).style(kit_btn::menu_item).on_press(Msg::Noop).width(180),
+        button(text("Paste")).style(kit_btn::menu_item).on_press(Msg::Noop).width(180),
+    ]
+    .spacing(8);
+
     // Menubar demo: dark bar container with rest / active buttons.
     let menubar_bar = container(
         row![
@@ -57,6 +63,8 @@ pub fn view() -> Element<'static, Msg> {
             disabled,
             caption("List item — selected / unselected").style(muted),
             list_items,
+            caption("Menu item — compact hover (shell menus)").style(muted),
+            menu_items,
             caption("Menubar — rest / active (\"Edit\" is open)").style(muted),
             menubar_bar,
         ]
