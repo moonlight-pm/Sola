@@ -13,14 +13,17 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P7 Pass B** (type + control density) — **visual stop**
-Branch/worktree: `p7b-control-density` / `.worktrees/p7b-control-density`
-Plan: `docs/specs/2026-07-21-p7-kit-controls-plan.md` Pass B
+**none**
 
-Awaiting user install smoke (storybook Text / Button / Field) then approve → merge.
-Next pass after merge: **P7 Pass C** (quiet interactions).
+Next when user says go: **P7 Pass C** (quiet interactions) —
+see `docs/specs/2026-07-21-p7-kit-controls-plan.md`.
+Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P7.
 
 ### Last completed
+
+**P7 Pass B** — type + control density — merged to `master` at `6dae05a`
+(2026-07-21). Body 13, named PAD_CONTROL pads, field labels body+muted,
+button::labeled / labeled_sm.
 
 **P7 Pass A** — theme binding — merged to `master` at `f8fb072`
 (2026-07-21). `overlay` / `menubar` preserve sola Extended atom map
