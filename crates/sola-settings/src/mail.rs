@@ -682,7 +682,7 @@ where
             .padding(Padding::new(6.0).left(10.0).right(10.0))
             .size(13)
             .style(kit_input::style);
-        field("Destination", dest_input, None).into()
+        field("Destination", dest_input, None, None).into()
     } else {
         iced::widget::Space::new().height(Length::Fixed(0.0)).into()
     };
@@ -742,8 +742,8 @@ where
     );
 
     column![
-        field("Name", name_input, None),
-        field("Action", action_picker, None),
+        field("Name", name_input, None, None),
+        field("Action", action_picker, None, None),
         dest_block,
         conditions_header,
         cond_col,
@@ -767,7 +767,7 @@ fn account_input<'a>(
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);
-    field(label, input, None).into()
+    field(label, input, None, None).into()
 }
 
 fn password_input<'a>(label: &'a str, value: &'a str) -> Element<'a, MailMsg> {
@@ -778,7 +778,7 @@ fn password_input<'a>(label: &'a str, value: &'a str) -> Element<'a, MailMsg> {
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);
-    field(label, input, None).into()
+    field(label, input, None, None).into()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

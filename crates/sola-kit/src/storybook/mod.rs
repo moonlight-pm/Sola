@@ -41,6 +41,7 @@ pub enum Page {
     Badge,
     Card,
     Field,
+    Form,
     Icon,
     NumberInput,
     Readable,
@@ -68,6 +69,7 @@ impl Page {
         Page::Badge,
         Page::Card,
         Page::Field,
+        Page::Form,
         Page::Icon,
         Page::NumberInput,
         Page::Readable,
@@ -85,6 +87,7 @@ impl Page {
             Page::Badge => "Badge",
             Page::Card => "Card",
             Page::Field => "Field",
+            Page::Form => "Form",
             Page::Icon => "Icon",
             Page::NumberInput => "NumberInput",
             Page::Readable => "Readable",
@@ -110,6 +113,7 @@ impl Page {
             | Page::Badge
             | Page::Card
             | Page::Field
+            | Page::Form
             | Page::Icon
             | Page::NumberInput
             | Page::Readable
@@ -139,7 +143,8 @@ impl Page {
             Page::Button => &[Accent, Danger, Bg, BgHover, Border, Fg],
             Page::Badge => &[Accent, Success, Warning, Danger, Border, FgMuted],
             Page::Card => &[Bg, BgRaised, Border, Fg, Accent],
-            Page::Field => &[BgRaised, Border, Fg, FgMuted],
+            Page::Field => &[BgRaised, Border, Fg, FgMuted, Danger, Selection, Accent],
+            Page::Form => &[Accent, BgRaised, BgHover, Border, Fg, FgMuted],
             Page::Icon => &[Fg, FgMuted, Accent],
             Page::NumberInput => &[Bg, Border, Fg, FgMuted, Accent],
             Page::Readable => &[Bg, BgRaised, Fg, FgMuted],
@@ -156,6 +161,7 @@ pub enum Msg {
     Toolbar(pages::toolbar::Msg),
     Button(pages::button::Msg),
     Field(pages::field::Msg),
+    Form(pages::form::Msg),
     NumberInput(pages::number_input::Msg),
     ColorPicker(pages::color_picker::Msg),
     Sidebar(pages::sidebar::Msg),
@@ -376,6 +382,7 @@ pub struct Storybook {
     toolbar: pages::toolbar::State,
     button: pages::button::State,
     field: pages::field::State,
+    form: pages::form::State,
     number_input: pages::number_input::State,
     color_picker: pages::color_picker::State,
     sidebar: pages::sidebar::State,
@@ -454,6 +461,7 @@ impl Storybook {
             toolbar: pages::toolbar::State::default(),
             button: pages::button::State::default(),
             field: pages::field::State::default(),
+            form: pages::form::State::default(),
             number_input: pages::number_input::State::default(),
             color_picker: pages::color_picker::State::default(),
             sidebar: pages::sidebar::State::default(),
@@ -560,6 +568,7 @@ impl Storybook {
             Msg::Toolbar(m) => self.toolbar.update(m),
             Msg::Button(m) => self.button.update(m),
             Msg::Field(m) => self.field.update(m),
+            Msg::Form(m) => self.form.update(m),
             Msg::NumberInput(m) => self.number_input.update(m),
             Msg::ColorPicker(m) => self.color_picker.update(m),
             Msg::Sidebar(m) => self.sidebar.update(m),
@@ -1245,6 +1254,7 @@ impl Storybook {
             Page::Badge => pages::badge::view(),
             Page::Card => pages::card::view(),
             Page::Field => pages::field::view(&self.field).map(Msg::Field),
+            Page::Form => pages::form::view(&self.form).map(Msg::Form),
             Page::Icon => pages::icon::view(),
             Page::NumberInput => {
                 pages::number_input::view(&self.number_input).map(Msg::NumberInput)
@@ -1304,6 +1314,7 @@ mod tests {
             Page::Badge,
             Page::Card,
             Page::Field,
+            Page::Form,
             Page::Icon,
             Page::NumberInput,
             Page::Readable,
@@ -1327,6 +1338,7 @@ mod tests {
                 | Page::Badge
                 | Page::Card
                 | Page::Field
+                | Page::Form
                 | Page::Icon
                 | Page::NumberInput
                 | Page::Readable

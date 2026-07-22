@@ -1,5 +1,5 @@
-//! Field showcase — labelled form rows with the kit's text_input.
-//! Stateful so the input actually reacts.
+//! Field showcase — stacked labelled form rows with kit text_input,
+//! help text, and validation error state.
 
 use iced::widget::column;
 use iced::Element;
@@ -13,12 +13,14 @@ use sola_kit::components::text_input as kit_input;
 pub enum Msg {
     Username(String),
     Email(String),
+    Broken(String),
 }
 
 #[derive(Default)]
 pub struct State {
     pub username: String,
     pub email: String,
+    pub broken: String,
 }
 
 impl State {
@@ -26,6 +28,7 @@ impl State {
         match msg {
             Msg::Username(v) => self.username = v,
             Msg::Email(v) => self.email = v,
+            Msg::Broken(v) => self.broken = v,
         }
     }
 }
@@ -39,6 +42,7 @@ pub fn view(state: &State) -> Element<'_, Msg> {
                     .on_input(Msg::Username)
                     .style(kit_input::style),
                 Some("3–20 characters"),
+                None,
             ),
             field(
                 "Email",
@@ -46,6 +50,15 @@ pub fn view(state: &State) -> Element<'_, Msg> {
                     .on_input(Msg::Email)
                     .style(kit_input::style),
                 None,
+                None,
+            ),
+            field(
+                "Broken field",
+                kit_input::text_input("must-not-be-empty", &state.broken)
+                    .on_input(Msg::Broken)
+                    .style(kit_input::style),
+                Some("help is suppressed when error is set"),
+                Some("This field is required"),
             ),
         ]
         .spacing(16),
@@ -53,9 +66,16 @@ pub fn view(state: &State) -> Element<'_, Msg> {
 
     column![
         heading("Field"),
-        body("Label body 13 muted; selection uses selection atom; focus border is accent.").style(muted),
+        body(
+            "Stacked label + control. Label body 13 muted; help is caption muted; \
+             error is danger caption and replaces help."
+        )
+        .style(muted),
         demo,
-        code("field(\"Label\", text_input(...).style(text_input::style), Some(\"help\"))").style(muted),
+        code(
+            "field(\"Label\", text_input(...).style(text_input::style), Some(\"help\"), None)"
+        )
+        .style(muted),
     ]
     .spacing(16)
     .into()
