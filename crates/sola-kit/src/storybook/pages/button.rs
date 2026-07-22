@@ -6,11 +6,33 @@ use iced::{Element, Length};
 
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::card::style as card_style;
+use sola_kit::components::icon;
 use sola_kit::components::text::{body, caption, code, heading, muted};
 
-use crate::storybook::Msg;
+#[derive(Clone, Debug)]
+pub enum Msg {
+    ArmConfirm,
+    Confirm,
+    Noop,
+}
 
-pub fn view() -> Element<'static, Msg> {
+#[derive(Default)]
+pub struct State {
+    pub confirm_armed: bool,
+}
+
+impl State {
+    pub fn update(&mut self, msg: Msg) {
+        match msg {
+            Msg::ArmConfirm => self.confirm_armed = true,
+            Msg::Confirm => self.confirm_armed = false,
+            Msg::Noop => {}
+        }
+    }
+}
+
+pub fn view(state: &State) -> Element<'_, Msg> {
+    // One filled primary in this row — secondary/ghost/danger for the rest.
     let buttons = row![
         button(text("Primary")).style(kit_btn::primary).on_press(Msg::Noop),
         button(text("Secondary")).style(kit_btn::secondary).on_press(Msg::Noop),
@@ -35,6 +57,20 @@ pub fn view() -> Element<'static, Msg> {
     ]
     .spacing(8);
 
+    // Destructive matrix: outline alone + two-stage confirm.
+    let destructive = row![
+        kit_btn::labeled("Danger outline", kit_btn::danger_outline).on_press(Msg::Noop),
+        kit_btn::confirm_button(
+            state.confirm_armed,
+            "Delete",
+            "Confirm?",
+            Msg::ArmConfirm,
+            Msg::Confirm,
+        )
+        .padding(sola_kit::components::style::PAD_CONTROL),
+    ]
+    .spacing(8);
+
     let list_items = row![
         button(text("Selected row")).style(kit_btn::list_item(true)).on_press(Msg::Noop).width(200),
         button(text("Unselected row")).style(kit_btn::list_item(false)).on_press(Msg::Noop).width(200),
@@ -47,10 +83,13 @@ pub fn view() -> Element<'static, Msg> {
     ]
     .spacing(8);
 
-    // Menubar demo: dark bar container with rest / active buttons.
+    // Menubar demo: dark bar container with system flower + rest / active labels.
     let menubar_bar = container(
         row![
-            button(text("Apple")).style(kit_btn::menubar(false)).on_press(Msg::Noop),
+            button(icon("sola/flower", 14))
+                .style(kit_btn::menubar(false))
+                .padding([2, 9])
+                .on_press(Msg::Noop),
             button(text("File")).style(kit_btn::menubar(false)).on_press(Msg::Noop),
             button(text("Edit")).style(kit_btn::menubar(true)).on_press(Msg::Noop),
         ]
@@ -65,12 +104,14 @@ pub fn view() -> Element<'static, Msg> {
 
     let demo = container(
         column![
-            caption("Interactive (style only — app supplies pad)").style(muted),
+            caption("Interactive — one primary per group; ghost hover is grey lift only").style(muted),
             buttons,
             caption("labeled / labeled_sm — PAD_CONTROL [5,12] / PAD_CONTROL_SM [3,10]").style(muted),
             labeled,
             caption("Disabled (no on_press)").style(muted),
             disabled,
+            caption("Destructive — danger_outline + confirm_button (armed state)").style(muted),
+            destructive,
             caption("List item — quiet selection / unselected").style(muted),
             list_items,
             caption("Menu item — compact hover (shell menus)").style(muted),
@@ -86,9 +127,9 @@ pub fn view() -> Element<'static, Msg> {
 
     column![
         heading("Button"),
-        body("Named style fns + density helpers (labeled / labeled_sm).").style(muted),
+        body("Quiet ghost hover; sparse primary; confirm for destructive.").style(muted),
         demo,
-        code("button::labeled(\"Save\", button::primary).on_press(Msg::Save)").style(muted),
+        code("button::labeled(\"Save\", button::primary) · confirm_button(armed, …)").style(muted),
     ]
     .spacing(16)
     .into()

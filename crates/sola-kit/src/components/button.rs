@@ -52,6 +52,8 @@ pub fn labeled_sm<'a, Message: Clone + 'a>(
         .style(style_fn)
 }
 
+/// Filled accent action. Keep **one primary per group** — cyan is product
+/// identity, but sparse (HIG: accent for the single default action).
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     style::filled(p.primary.base, p.primary.strong, p.primary.weak, status)
@@ -84,6 +86,9 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// Ghost — transparent at rest; hover/press lift background only.
+/// Text stays `background.base.text` (never accent) so everyday chrome
+/// stays calm.
 pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let base = button::Style {
@@ -96,12 +101,10 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     match status {
         button::Status::Hovered => button::Style {
             background: Some(Background::Color(p.background.strong.color)),
-            text_color: p.primary.base.color,
             ..base
         },
         button::Status::Pressed => button::Style {
             background: Some(Background::Color(p.background.stronger.color)),
-            text_color: p.primary.base.color,
             ..base
         },
         button::Status::Disabled => style::dim(base),

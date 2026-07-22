@@ -53,7 +53,7 @@ pub fn view(state: &State) -> Element<'_, Msg> {
 
     column![
         heading("Field"),
-        body("Label is body 13 muted; help is caption 11; input pad [4, 8].").style(muted),
+        body("Label body 13 muted; selection uses selection atom; focus border is accent.").style(muted),
         demo,
         code("field(\"Label\", text_input(...).style(text_input::style), Some(\"help\"))").style(muted),
     ]

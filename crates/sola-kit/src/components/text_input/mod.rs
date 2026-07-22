@@ -1800,7 +1800,8 @@ pub fn default(theme: &Theme, status: Status) -> Style {
         icon: palette.background.weak.text,
         placeholder: palette.secondary.base.color,
         value: palette.background.base.text,
-        selection: palette.primary.weak.color,
+        // Quiet selection atom — same language as list/sidebar rows.
+        selection: crate::theme::selection(),
     };
 
     match status {
@@ -1843,6 +1844,10 @@ where
 /// Kit text-input style — the look of the former `components::text_input::style`
 /// (canvas BG, hairline border, accent focus), now returning this widget's own
 /// [`Style`]. Pass it to [`TextInput::style`].
+///
+/// Text selection uses [`crate::theme::selection`] (quiet teal-grey), not
+/// primary accent. Focused border stays `primary.base` — correct sparse
+/// accent use for focus.
 pub fn style(theme: &Theme, status: Status) -> Style {
     let p = theme.extended_palette();
     let active = Style {
@@ -1854,7 +1859,7 @@ pub fn style(theme: &Theme, status: Status) -> Style {
         icon: p.secondary.base.text,
         placeholder: p.secondary.base.text,
         value: p.background.base.text,
-        selection: p.primary.weak.color,
+        selection: crate::theme::selection(),
     };
     match status {
         Status::Active => active,

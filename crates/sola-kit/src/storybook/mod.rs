@@ -154,6 +154,7 @@ impl Page {
 pub enum Msg {
     Select(Page),
     Toolbar(pages::toolbar::Msg),
+    Button(pages::button::Msg),
     Field(pages::field::Msg),
     NumberInput(pages::number_input::Msg),
     ColorPicker(pages::color_picker::Msg),
@@ -373,6 +374,7 @@ impl ThemePreset {
 pub struct Storybook {
     page: Page,
     toolbar: pages::toolbar::State,
+    button: pages::button::State,
     field: pages::field::State,
     number_input: pages::number_input::State,
     color_picker: pages::color_picker::State,
@@ -450,6 +452,7 @@ impl Storybook {
         Self {
             page: Page::Theme,
             toolbar: pages::toolbar::State::default(),
+            button: pages::button::State::default(),
             field: pages::field::State::default(),
             number_input: pages::number_input::State::default(),
             color_picker: pages::color_picker::State::default(),
@@ -555,6 +558,7 @@ impl Storybook {
                 self.picker = None;
             }
             Msg::Toolbar(m) => self.toolbar.update(m),
+            Msg::Button(m) => self.button.update(m),
             Msg::Field(m) => self.field.update(m),
             Msg::NumberInput(m) => self.number_input.update(m),
             Msg::ColorPicker(m) => self.color_picker.update(m),
@@ -1236,7 +1240,7 @@ impl Storybook {
                 self.picker.as_ref().map(|p| p.view().map(Msg::Picker)),
             ),
             Page::Text => pages::text::view(),
-            Page::Button => pages::button::view(),
+            Page::Button => pages::button::view(&self.button).map(Msg::Button),
             Page::Titlebar => pages::titlebar::view(),
             Page::Badge => pages::badge::view(),
             Page::Card => pages::card::view(),
