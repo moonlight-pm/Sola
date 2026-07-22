@@ -13,14 +13,17 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P7 Pass C** (quiet interactions) — **visual stop**
-Branch/worktree: `p7c-quiet-interactions` / `.worktrees/p7c-quiet-interactions`
-Plan: `docs/specs/2026-07-21-p7-kit-controls-plan.md` Pass C
+**none**
 
-Awaiting user install smoke (storybook Button + Field) then approve → merge.
-Next pass after merge: **P7 Pass D** (form primitives).
+Next when user says go: **P7 Pass D** (form primitives) —
+see `docs/specs/2026-07-21-p7-kit-controls-plan.md`.
+Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P7.
 
 ### Last completed
+
+**P7 Pass C** — quiet interactions — merged to `master` at `6cceda8`
+(2026-07-21). Ghost hover grey-only; text selection uses selection atom;
+storybook Button covers danger_outline + confirm + flower menubar.
 
 **P7 Pass B** — type + control density — merged to `master` at `6dae05a`
 (2026-07-21). Body 13, named PAD_CONTROL pads, field labels body+muted,
