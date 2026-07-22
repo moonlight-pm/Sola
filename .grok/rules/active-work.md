@@ -13,14 +13,17 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P7 Pass A** (theme binding) — **visual stop**
-Branch/worktree: `p7a-theme-binding` / `.worktrees/p7a-theme-binding`
-Plan: `docs/specs/2026-07-21-p7-kit-controls-plan.md` Pass A
+**none**
 
-Awaiting user install smoke (menu / launcher / menubar) then approve → merge.
-Next pass after merge: **P7 Pass B** (type + control density).
+Next when user says go: **P7 Pass B** (type + control density) —
+see `docs/specs/2026-07-21-p7-kit-controls-plan.md`.
+Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P7.
 
 ### Last completed
+
+**P7 Pass A** — theme binding — merged to `master` at `f8fb072`
+(2026-07-21). `overlay` / `menubar` preserve sola Extended atom map
+instead of iced `Extended::generate`.
 
 **P6 switcher** — merged to `master` at `4b49dec`
 (2026-07-21). Cmd+Tab HUD: horizontal large-icon strip, selected-only
