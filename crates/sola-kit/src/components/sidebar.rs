@@ -416,12 +416,11 @@ pub struct ReorderCfg<'a, Message> {
     /// Maps a pressed row's index → the message that begins the gesture
     /// (the consumer's `ReorderStart(usize)`).
     pub on_press: Box<dyn Fn(usize) -> Message + 'a>,
-    /// `Some((from_index, start_y))` while a press/drag gesture is live;
-    /// `None` when idle. Drives the pressed-row highlight immediately, and
-    /// the live-reorder preview as the cursor moves. Consumers that want
-    /// zero chrome until the movement threshold can keep this `None` until
-    /// then (the storybook does); apps that want mousedown feedback (the
-    /// terminal) set it on press.
+    /// `Some((from_index, start_y))` once the gesture is a real drag;
+    /// `None` during a not-yet-moved press or when idle. Drives the
+    /// live-reorder preview (and the grabbing cursor once past the
+    /// movement threshold). Consumers should keep this `None` until
+    /// [`PANEL_REORDER_THRESHOLD`] so a plain click never shuffles rows.
     pub active: Option<(usize, f32)>,
     /// Current cursor-y during the gesture (used with
     /// [`panel_drop_index_relative`] to place the dragged row in the
@@ -472,10 +471,11 @@ where
     };
 
     // ── Reorder-enabled path. ──
-    // While `reorder.active` is `Some` (consumer chooses mousedown vs.
-    // movement threshold), [`SidebarPanel::build`] live-reorders the strip
-    // so the grabbed item travels with the cursor. No special fill/ring —
-    // the row keeps its resting selected/flat style; only the cursor changes.
+    // Live-reorder chrome is active only while `reorder.active` is `Some` —
+    // consumers populate that after the movement threshold so a plain press
+    // leaves the strip alone. While active, [`SidebarPanel::build`] moves
+    // the grabbed row with the cursor. No special fill/ring — the row keeps
+    // its resting selected/flat style; only the cursor changes.
     // `index` is the item's *stable* (pre-drag) index in the consumer's
     // order — used for press messages and for the grabbing cursor.
     let is_dragged = matches!(reorder.active, Some((from, _)) if from == index);
@@ -742,15 +742,9 @@ where
 
         // Gesture flags captured before we move `resize` into the divider.
         let resize_dragging = resize.as_ref().is_some_and(|(_, d, _, _)| *d);
-        // Grabbing overlay only after real movement — press-only highlight
-        // shouldn't cover the panel (and steal the pointer look) on a click.
-        let reorder_dragging = reorder_ref.is_some_and(|r| match r.active {
-            Some((_, start_y)) => {
-                start_y != 0.0
-                    && (r.cursor_y - start_y).abs() >= PANEL_REORDER_THRESHOLD
-            }
-            None => false,
-        });
+        // `active` is only set after the movement threshold, so this is a
+        // real drag (not a plain press).
+        let reorder_dragging = reorder_ref.is_some_and(|r| r.active.is_some());
 
         // Compose optional resize divider — same three-band hit strip as
         // kit `split` / terminal pane dividers.

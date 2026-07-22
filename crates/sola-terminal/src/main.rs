@@ -380,7 +380,7 @@ impl App {
             }
             Msg::ReorderStart(index) => {
                 // start_y = 0.0 sentinel; captured on first CursorMoved.
-                // Drag chrome stays off until movement crosses the threshold.
+                // Live-reorder stays off until movement crosses the threshold.
                 self.sidebar.reorder = Some((index, 0.0));
                 self.sidebar.reorder_cursor_y = 0.0;
                 self.sidebar.reorder_dragging = false;
