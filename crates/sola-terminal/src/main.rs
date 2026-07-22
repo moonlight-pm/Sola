@@ -1022,7 +1022,17 @@ impl App {
         // 3. Dispatch by topic.
         match Topic::parse(m) {
             Some(Topic::TerminalConfig(cfg)) => {
+                let preferred = cfg.active_tab_id.clone();
                 self.config = cfg;
+                // Sticky replay / re-emit may land after sessions. Apply the
+                // remembered active tab once the target exists.
+                if let Some(id) = preferred {
+                    if self.active.as_deref() != Some(id.as_str())
+                        && self.tabs.get_tab(&id).is_some()
+                    {
+                        return self.select_tab(&id);
+                    }
+                }
             }
             Some(Topic::TerminalSession(s)) => {
                 if !m.sticky {
@@ -1093,21 +1103,26 @@ impl App {
             self.tabs.upsert_pane_meta(meta.clone());
         }
         let active_pane = state::first_leaf(&tree);
-        let was_empty = self.tabs.is_empty();
         self.tabs.upsert_tab(state::Tab {
             id: s.id.clone(),
             layout: tree,
             active_pane,
             ordinal: s.ordinal,
         });
-        if self.active.is_none() {
+        // Prefer the tab remembered in TerminalConfig. Until that config
+        // (or a matching session) arrives, provisionally take the first
+        // sticky tab so the window isn't blank during boot.
+        let preferred = self.config.active_tab_id.as_deref();
+        if preferred == Some(s.id.as_str()) {
+            self.active = Some(s.id.clone());
+        } else if self.active.is_none() {
             self.active = Some(s.id.clone());
         }
         self.republish_menu();
 
         // Attach the active tab's panes eagerly (seed scrollback). Other tabs
         // lazy-attach on `select_tab`.
-        if was_empty || self.active.as_deref() == Some(s.id.as_str()) {
+        if self.active.as_deref() == Some(s.id.as_str()) {
             return self.attach_all_panes(&s.id, true);
         }
         Task::none()
@@ -1237,6 +1252,8 @@ impl App {
             ordinal,
         });
         self.active = Some(tab_id.clone());
+        self.config.active_tab_id = Some(tab_id.clone());
+        self.persist_config();
 
         self.persist_tab(&tab_id);
         self.republish_menu();
@@ -1343,6 +1360,8 @@ impl App {
         if self.active.as_deref() == Some(tab_id) {
             let order = self.tabs.tab_ids_in_order();
             self.active = state::next_active_after_close(&order, tab_id);
+            self.config.active_tab_id = self.active.clone();
+            self.persist_config();
         }
 
         let ordinal = self.tabs.get_tab(tab_id).map(|t| t.ordinal).unwrap_or(0);
@@ -1445,6 +1464,10 @@ impl App {
             None => return Task::none(),
         };
         self.active = Some(id.to_string());
+        if self.config.active_tab_id.as_deref() != Some(id) {
+            self.config.active_tab_id = Some(id.to_string());
+            self.persist_config();
+        }
         self.tabs.clear_all_caches();
 
         if leaves.iter().any(|p| !self.tabs.has_pane_runtime(p)) {
@@ -1452,6 +1475,15 @@ impl App {
         }
         self.resize_all_panes();
         Task::none()
+    }
+
+    /// Emit the current `TerminalConfig` (sidebar + active tab) as sticky state.
+    fn persist_config(&self) {
+        if let Ok(mut client) = bus().lock() {
+            if let Err(e) = client.emit(Topic::TerminalConfig(self.config.clone())) {
+                tracing::warn!("emit TerminalConfig failed: {e:?}");
+            }
+        }
     }
 
     /// Finish a tab-reorder gesture: click → select; drag → renumber ordinals.

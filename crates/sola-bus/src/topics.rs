@@ -300,6 +300,11 @@ pub struct MailRuleCondition {
 pub struct TerminalConfig {
     pub sidebar_width: u32,
     pub sidebar_collapsed: bool,
+    /// Tab selected when the terminal last quit. Restored on boot so a
+    /// restart lands on the same tab rather than whichever sticky
+    /// `TerminalSession` arrives first.
+    #[serde(default)]
+    pub active_tab_id: Option<String>,
 }
 
 impl Default for TerminalConfig {
@@ -307,6 +312,7 @@ impl Default for TerminalConfig {
         Self {
             sidebar_width: 220,
             sidebar_collapsed: false,
+            active_tab_id: None,
         }
     }
 }
@@ -977,6 +983,7 @@ mod tests {
         let cfg = TerminalConfig {
             sidebar_width: 312,
             sidebar_collapsed: true,
+            active_tab_id: Some("tab-xyz".into()),
         };
         let topic = Topic::TerminalConfig(cfg.clone());
         let msg = topic.to_message();
@@ -985,6 +992,7 @@ mod tests {
             Topic::TerminalConfig(back) => {
                 assert_eq!(back.sidebar_width, 312);
                 assert!(back.sidebar_collapsed);
+                assert_eq!(back.active_tab_id.as_deref(), Some("tab-xyz"));
             }
             other => panic!("expected TerminalConfig, got {other:?}"),
         }
@@ -995,6 +1003,7 @@ mod tests {
         let cfg = TerminalConfig {
             sidebar_width: 240,
             sidebar_collapsed: false,
+            active_tab_id: Some("tab-abc".into()),
         };
         let topic = Topic::TerminalConfig(cfg);
         let value = topic
@@ -1006,6 +1015,23 @@ mod tests {
             Topic::TerminalConfig(back) => {
                 assert_eq!(back.sidebar_width, 240);
                 assert!(!back.sidebar_collapsed);
+                assert_eq!(back.active_tab_id.as_deref(), Some("tab-abc"));
+            }
+            other => panic!("expected TerminalConfig, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn terminal_config_yaml_without_active_tab_defaults_to_none() {
+        // Old state.yaml records only had sidebar fields.
+        let value = serde_yaml_ng::from_str("sidebar_width: 250\nsidebar_collapsed: false\n")
+            .expect("yaml");
+        let restored = Topic::from_yaml_section(TopicKind::TerminalConfig, value)
+            .expect("section should deserialize");
+        match restored {
+            Topic::TerminalConfig(back) => {
+                assert_eq!(back.sidebar_width, 250);
+                assert!(back.active_tab_id.is_none());
             }
             other => panic!("expected TerminalConfig, got {other:?}"),
         }
