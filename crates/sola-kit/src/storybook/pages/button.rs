@@ -19,6 +19,14 @@ pub fn view() -> Element<'static, Msg> {
     ]
     .spacing(8);
 
+    // Density-baked helpers: 13 + PAD_CONTROL / 12 + PAD_CONTROL_SM.
+    let labeled = row![
+        kit_btn::labeled("Labeled primary", kit_btn::primary).on_press(Msg::Noop),
+        kit_btn::labeled("Labeled secondary", kit_btn::secondary).on_press(Msg::Noop),
+        kit_btn::labeled_sm("Labeled sm", kit_btn::ghost).on_press(Msg::Noop),
+    ]
+    .spacing(8);
+
     let disabled = row![
         button(text("Primary")).style(kit_btn::primary),
         button(text("Secondary")).style(kit_btn::secondary),
@@ -57,8 +65,10 @@ pub fn view() -> Element<'static, Msg> {
 
     let demo = container(
         column![
-            caption("Interactive").style(muted),
+            caption("Interactive (style only — app supplies pad)").style(muted),
             buttons,
+            caption("labeled / labeled_sm — PAD_CONTROL [5,12] / PAD_CONTROL_SM [3,10]").style(muted),
+            labeled,
             caption("Disabled (no on_press)").style(muted),
             disabled,
             caption("List item — quiet selection / unselected").style(muted),
@@ -76,9 +86,9 @@ pub fn view() -> Element<'static, Msg> {
 
     column![
         heading("Button"),
-        body("Named style fns — same shape as iced's built-in button::primary.").style(muted),
+        body("Named style fns + density helpers (labeled / labeled_sm).").style(muted),
         demo,
-        code("button(label).style(sola_kit::components::button::primary)").style(muted),
+        code("button::labeled(\"Save\", button::primary).on_press(Msg::Save)").style(muted),
     ]
     .spacing(16)
     .into()

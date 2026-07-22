@@ -13,13 +13,16 @@ use iced::widget::{button, text};
 use iced::widget::text::IntoFragment;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
-use crate::components::style::RADIUS_SM;
+use crate::components::style::{PAD_CONTROL_SM, RADIUS_SM};
 
 use crate::fonts;
 
 /// Compact toolbar button with the kit's medium-weight label font and
 /// shrink-to-content width. Returns the configured button without an
 /// `on_press` so the caller picks whether to enable it.
+///
+/// Density matches [`crate::components::button::labeled_sm`]: 12px type
+/// + [`PAD_CONTROL_SM`].
 ///
 /// `label` accepts both `&str` and `String` (anything that's
 /// `IntoFragment` — matches iced's own `text(...)` signature).
@@ -30,7 +33,7 @@ where
     Message: Clone + 'a,
 {
     button(text(label).font(fonts::ui_medium()).size(12))
-        .padding([4, 10])
+        .padding(PAD_CONTROL_SM)
         .width(Length::Shrink)
         .style(style)
 }

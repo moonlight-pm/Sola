@@ -53,7 +53,7 @@ pub fn view(state: &State) -> Element<'_, Msg> {
 
     column![
         heading("Field"),
-        body("Label + input + optional help text, with kit-standard spacing.").style(muted),
+        body("Label is body 13 muted; help is caption 11; input pad [4, 8].").style(muted),
         demo,
         code("field(\"Label\", text_input(...).style(text_input::style), Some(\"help\"))").style(muted),
     ]

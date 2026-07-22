@@ -66,9 +66,14 @@ Follow a **role system**, not ad-hoc sizes:
 | Role | Use | Sola mapping |
 |------|-----|----------------|
 | Chrome | Menu bar labels, menu items, menubar status/clock | `fonts::chrome()` / kit UI roles |
-| Body UI | Settings rows, dialogs, lists | `fonts::ui()` / `ui_medium()` |
-| Display | Rare emphasis (app title in menubar can be medium weight) | `fonts::display()` sparingly |
-| Mono / data | Code, terminal, detail-panel numbers | `fonts::mono()` |
+| Body UI | Settings rows, dialogs, lists | `fonts::ui()` / `ui_medium()` — kit `text::body` **13** |
+| Display | Rare emphasis (app title in menubar can be medium weight) | `fonts::display()` sparingly — `heading` 22 / `subheading` 15 |
+| Caption | Help, secondary labels | `text::caption` **11** |
+| Mono / data | Code, terminal, detail-panel numbers | `fonts::mono()` — `text::code` 12 |
+
+Control pads: `PAD_CONTROL` `[5, 12]`, `PAD_CONTROL_SM` `[3, 10]`; field
+inputs default to padding `[4, 8]`. Prefer `button::labeled` /
+`labeled_sm` over inventing pads.
 
 macOS uses SF Pro for UI and SF Mono for data. **Menubar is all chrome** —
 status values and the clock match menu titles (regular weight); only the

@@ -8,6 +8,8 @@
 //! use sola_kit::components::button as kit_btn;
 //!
 //! button("Save").style(kit_btn::primary).on_press(Msg::Save)
+//! // or density-baked:
+//! kit_btn::labeled("Save", kit_btn::primary).on_press(Msg::Save)
 //! ```
 //!
 //! The kit's `toolbar` button (with its condensed-bold label and
@@ -20,9 +22,35 @@
 //! deriving from kit palette tiers.
 
 use iced::widget::{button, text};
+use iced::widget::text::IntoFragment;
 use iced::{Background, Border, Color, Theme};
 
-use crate::components::style::{self, RADIUS_MD, RADIUS_SM};
+use crate::components::style::{self, PAD_CONTROL, PAD_CONTROL_SM, RADIUS_MD, RADIUS_SM};
+use crate::fonts;
+
+/// Regular labeled button: 13px UI type + [`PAD_CONTROL`].
+///
+/// Prefer this over hand-rolled `button(text(...)).padding(...)` so
+/// apps inherit kit density without inventing pads.
+pub fn labeled<'a, Message: Clone + 'a>(
+    label: impl IntoFragment<'a>,
+    style_fn: impl Fn(&Theme, button::Status) -> button::Style + 'a,
+) -> button::Button<'a, Message> {
+    button(text(label).font(fonts::ui()).size(13))
+        .padding(PAD_CONTROL)
+        .style(style_fn)
+}
+
+/// Compact labeled button: 12px UI type + [`PAD_CONTROL_SM`] (toolbar /
+/// dense chrome density).
+pub fn labeled_sm<'a, Message: Clone + 'a>(
+    label: impl IntoFragment<'a>,
+    style_fn: impl Fn(&Theme, button::Status) -> button::Style + 'a,
+) -> button::Button<'a, Message> {
+    button(text(label).font(fonts::ui()).size(12))
+        .padding(PAD_CONTROL_SM)
+        .style(style_fn)
+}
 
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();

@@ -13,11 +13,12 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**P7 Pass B** (type + control density) — **visual stop**
+Branch/worktree: `p7b-control-density` / `.worktrees/p7b-control-density`
+Plan: `docs/specs/2026-07-21-p7-kit-controls-plan.md` Pass B
 
-Next when user says go: **P7 Pass B** (type + control density) —
-see `docs/specs/2026-07-21-p7-kit-controls-plan.md`.
-Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P7.
+Awaiting user install smoke (storybook Text / Button / Field) then approve → merge.
+Next pass after merge: **P7 Pass C** (quiet interactions).
 
 ### Last completed
 

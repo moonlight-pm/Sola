@@ -9,11 +9,15 @@
 use iced::widget::{Container, column, container};
 use iced::{Element, Length, Theme};
 
-use crate::components::text::{caption, muted};
+use crate::components::style::SPACE_SM;
+use crate::components::text::{body, caption, muted};
 
 /// Wrap an input with a label above and optional help text below.
 /// Returns a `Container` (defaulting to full width, overridable via
 /// `.width(..)`) so callers can fold it into wider layouts.
+///
+/// Label is body (13) + muted — macOS form-label weight, not caption.
+/// Help stays caption + muted.
 ///
 /// ```ignore
 /// field("Username",
@@ -26,8 +30,8 @@ pub fn field<'a, Message: 'a>(
     input: impl Into<Element<'a, Message, Theme>>,
     help: Option<&'a str>,
 ) -> Container<'a, Message, Theme> {
-    let label_el = caption(label.into()).style(muted);
-    let mut col = column![label_el, input.into()].spacing(4);
+    let label_el = body(label.into()).style(muted);
+    let mut col = column![label_el, input.into()].spacing(SPACE_SM);
     if let Some(help_text) = help {
         col = col.push(caption(help_text).style(muted));
     }

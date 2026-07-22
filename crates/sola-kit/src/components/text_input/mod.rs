@@ -121,8 +121,14 @@ pub struct TextInput<
     last_status: Option<Status>,
 }
 
-/// The default [`Padding`] of a [`TextInput`].
-pub const DEFAULT_PADDING: Padding = Padding::new(5.0);
+/// The default [`Padding`] of a [`TextInput`] — compact field density
+/// (`[vertical, horizontal]` ≈ 4 / 8).
+pub const DEFAULT_PADDING: Padding = Padding {
+    top: 4.0,
+    right: 8.0,
+    bottom: 4.0,
+    left: 8.0,
+};
 
 impl<'a, Message, Theme, Renderer> TextInput<'a, Message, Theme, Renderer>
 where

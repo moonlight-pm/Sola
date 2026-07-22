@@ -13,11 +13,11 @@ use crate::storybook::Msg;
 pub fn view() -> Element<'static, Msg> {
     let sizes = card(
         column![
-            heading("Heading — 24px condensed-bold"),
-            subheading("Subheading — 18px condensed-bold"),
-            body("Body — 14px normal"),
-            caption("Caption — 11px normal").style(muted),
-            code("Code — 12px mono (Iosevka Term Slab)"),
+            heading("Heading — 22px display"),
+            subheading("Subheading — 15px display"),
+            body("Body — 13px UI"),
+            caption("Caption — 11px UI").style(muted),
+            code("Code — 12px mono"),
         ]
         .spacing(8),
     );

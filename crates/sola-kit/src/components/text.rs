@@ -11,20 +11,21 @@ use iced::{Theme, widget::text as iced_text};
 
 use crate::fonts;
 
-/// 24px display — page titles and dialog headers.
+/// 22px display — page titles and dialog headers.
 pub fn heading<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
-    iced_text(content).font(fonts::display()).size(24)
+    iced_text(content).font(fonts::display()).size(22)
 }
 
-/// 18px display — section dividers within a page.
+/// 15px display — section dividers within a page.
 pub fn subheading<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
-    iced_text(content).font(fonts::display()).size(18)
+    iced_text(content).font(fonts::display()).size(15)
 }
 
-/// 14px UI — default body text. Use plain `iced::widget::text` if
-/// you need a different size; this is the canonical body size only.
+/// 13px UI — default body text (macOS-like control density). Use plain
+/// `iced::widget::text` if you need a different size; this is the
+/// canonical body size only.
 pub fn body<'a>(content: impl text::IntoFragment<'a>) -> Text<'a, Theme> {
-    iced_text(content).font(fonts::ui()).size(14)
+    iced_text(content).font(fonts::ui()).size(13)
 }
 
 /// 11px UI — timestamps, secondary labels, helper copy. Pair with

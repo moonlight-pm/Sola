@@ -33,6 +33,12 @@ pub const SPACE_MD: f32 = 8.0;
 pub const SPACE_LG: f32 = 12.0;
 pub const SPACE_XL: f32 = 16.0;
 
+/// Regular control content padding `[vertical, horizontal]` — buttons,
+/// default actions. Prefer this over inventing pad literals in apps.
+pub const PAD_CONTROL: [u16; 2] = [5, 12];
+/// Compact control padding — toolbar, steppers, dense chrome.
+pub const PAD_CONTROL_SM: [u16; 2] = [3, 10];
+
 pub fn hairline(palette: &Extended, radius: f32) -> Border {
     Border {
         color: palette.background.stronger.color,
