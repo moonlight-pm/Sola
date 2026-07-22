@@ -222,6 +222,17 @@ caption, soft plate under icon, frosted pill backplate.
 
 Buttons, fields, sidebar, cards via storybook; small radii, quiet hover.
 
+**Plan:** `docs/specs/2026-07-21-p7-kit-controls-plan.md`
+
+| Pass | Signature move | Status |
+|------|----------------|--------|
+| A | Fix `overlay` / `menubar` Extended binding | visual stop |
+| B | Type + control density (body 13, named pads) | pending |
+| C | Quiet ghost / unify text selection atom | pending |
+| D | Form row + field error + checkbox/toggle styles | pending |
+| E | Badge / sidebar headers / storybook matrix | pending |
+| F | Docs + handoff to P8 | pending |
+
 ### P8 — Kit apps inherit
 
 Settings / monitor / terminal / agent / browser chrome — inherit tokens; no per-app themes.

@@ -13,10 +13,12 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**P7 Pass A** (theme binding) — **visual stop**
+Branch/worktree: `p7a-theme-binding` / `.worktrees/p7a-theme-binding`
+Plan: `docs/specs/2026-07-21-p7-kit-controls-plan.md` Pass A
 
-Next when user says go: **P7** kit controls —
-see `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P7.
+Awaiting user install smoke (menu / launcher / menubar) then approve → merge.
+Next pass after merge: **P7 Pass B** (type + control density).
 
 ### Last completed
 

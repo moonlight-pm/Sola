@@ -86,36 +86,36 @@ pub fn default_theme() -> Theme {
 /// Theme for an OS-transparent overlay window (menu / launcher / switcher).
 ///
 /// The window fill is painted from `extended_palette().background.base.color`
-/// (iced 0.14), so we generate the `Extended` palette from the real palette —
-/// keeping every tier opaque so kit chrome (`card`, `popover`, `button`) reads
-/// correct colours — then force only `background.base.color` transparent so the
-/// area around the card stays see-through.
+/// (iced 0.14). We start from the base theme's **sola** `Extended` binding
+/// (raised / hover / border ladder intact) and force only
+/// `background.base.color` transparent so the area around kit chrome stays
+/// see-through. Do **not** route through iced's `Extended::generate` — that
+/// drops the atom→slot map and washes shell chrome with mid-greys.
 pub fn overlay(base: &Theme) -> Theme {
     let palette = base.palette();
-    Theme::custom_with_fn(
-        "sola-overlay".to_string(),
-        palette,
-        |p| {
-            let mut ext = Extended::generate(p);
-            ext.background.base.color = Color::TRANSPARENT;
-            ext
-        },
-    )
+    let mut ext = *base.extended_palette();
+    // Keep base.text and every other tier; only the window fill goes clear.
+    ext.background.base.color = Color::TRANSPARENT;
+    Theme::custom_with_fn("sola-overlay".to_string(), palette, move |_| ext)
 }
 
 /// Theme for the menubar. `bg` is the menubar background
 /// (`shell-menubar-bg` — black by default).
 ///
-/// Background tiers are generated from the bg base so hover/active fills
-/// derive from it; foreground text and icons still follow the real palette.
+/// Starts from the base theme's sola `Extended` so primary / secondary /
+/// raised / hover / border mappings stay correct for kit buttons. Only
+/// `background.base` and `background.weakest` rebind to the menubar fill;
+/// mid-tiers keep the sola ladder (row hovers use `button::menubar` alpha,
+/// not `background.strong`).
 pub fn menubar(base: &Theme, bg: Color) -> Theme {
     let mut palette = base.palette();
     palette.background = bg;
-    Theme::custom_with_fn(
-        "sola-menubar".to_string(),
-        palette,
-        Extended::generate,
-    )
+    let mut ext = *base.extended_palette();
+    let fg = ext.background.base.text;
+    ext.background.base = Pair::new(bg, fg);
+    // weakest aliases base for scrollables — keep menubar strip consistent.
+    ext.background.weakest = Pair::new(bg, fg);
+    Theme::custom_with_fn("sola-menubar".to_string(), palette, move |_| ext)
 }
 
 /// The binding layer — maps the kit's 10 colour atoms into iced's
@@ -767,6 +767,39 @@ mod tests {
         assert!(ext.background.base.text.a > 0.0, "base text must be readable");
     }
 
+    // overlay must preserve sola atom tiers — not iced Extended::generate greys.
+    #[test]
+    fn overlay_preserves_sola_background_tiers() {
+        let base = default_theme();
+        let base_ext = base.extended_palette();
+        let themed = overlay(&base);
+        let ext = themed.extended_palette();
+        assert_eq!(
+            ext.background.weaker.color, base_ext.background.weaker.color,
+            "weaker must stay raised atom, not iced mid-grey"
+        );
+        assert_eq!(
+            ext.background.stronger.color, base_ext.background.stronger.color,
+            "stronger must stay border atom path"
+        );
+        assert_eq!(
+            ext.background.strong.color, base_ext.background.strong.color,
+            "strong must stay hover atom"
+        );
+        assert_eq!(
+            ext.background.base.text, base_ext.background.base.text,
+            "base text must stay sola fg"
+        );
+        assert_eq!(
+            ext.primary.base.color, base_ext.primary.base.color,
+            "primary accent must survive overlay"
+        );
+        assert_eq!(
+            ext.secondary.base.text, base_ext.secondary.base.text,
+            "secondary muted text must survive overlay"
+        );
+    }
+
     // menubar(): background must be opaque black; accent (primary) unchanged.
     #[test]
     fn menubar_chrome_theme() {
@@ -779,6 +812,44 @@ mod tests {
             ext.primary.base.color,
             default_theme().extended_palette().primary.base.color,
             "accent must be unchanged"
+        );
+    }
+
+    // menubar rebinds only base/weakest fill; keeps sola primary/secondary/mid-tiers.
+    #[test]
+    fn menubar_preserves_sola_tiers_with_custom_bg() {
+        let base = default_theme();
+        let base_ext = base.extended_palette();
+        let menubar_bg = parse("#000000");
+        let themed = menubar(&base, menubar_bg);
+        let ext = themed.extended_palette();
+        assert_eq!(
+            ext.background.base.color, menubar_bg,
+            "background.base.color must be the supplied menubar bg"
+        );
+        assert_eq!(
+            ext.background.weakest.color, menubar_bg,
+            "weakest must match menubar strip fill"
+        );
+        assert_eq!(
+            ext.background.base.text, base_ext.background.base.text,
+            "menubar text must stay sola fg"
+        );
+        assert_eq!(
+            ext.primary.base.color, base_ext.primary.base.color,
+            "primary.base must be unchanged"
+        );
+        assert_eq!(
+            ext.secondary.base.text, base_ext.secondary.base.text,
+            "secondary.base.text must stay muted"
+        );
+        assert_eq!(
+            ext.background.weaker.color, base_ext.background.weaker.color,
+            "raised mid-tier must not be recolored to black"
+        );
+        assert_eq!(
+            ext.background.strong.color, base_ext.background.strong.color,
+            "hover mid-tier must not be recolored to black"
         );
     }
 
