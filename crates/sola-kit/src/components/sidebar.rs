@@ -472,12 +472,12 @@ where
     };
 
     // ── Reorder-enabled path. ──
-    // Pressed/dragged chrome shows while `reorder.active` is `Some` (the
-    // consumer chooses whether that's on mousedown or only after the
-    // movement threshold). While active, [`SidebarPanel::build`] also
-    // live-reorders the strip so the grabbed item travels with the cursor.
+    // While `reorder.active` is `Some` (consumer chooses mousedown vs.
+    // movement threshold), [`SidebarPanel::build`] live-reorders the strip
+    // so the grabbed item travels with the cursor. No special fill/ring —
+    // the row keeps its resting selected/flat style; only the cursor changes.
     // `index` is the item's *stable* (pre-drag) index in the consumer's
-    // order — used for press messages and for marking the lifted row.
+    // order — used for press messages and for the grabbing cursor.
     let is_dragged = matches!(reorder.active, Some((from, _)) if from == index);
 
     let content = item_content(&label, secondary.as_deref(), shortcut);
@@ -485,10 +485,7 @@ where
         container(content)
             .width(Length::Fill)
             .padding(Padding::from([6, 10]))
-            .style(move |theme: &Theme| {
-                // Live-reorder preview: only the in-flight row gets chrome.
-                row_container_style(theme, active, is_dragged)
-            }),
+            .style(move |theme: &Theme| row_container_style(theme, active)),
     )
     // Pointer at rest; grabbing while this row is the one in flight.
     .interaction(if is_dragged {
@@ -810,7 +807,7 @@ where
             container(collapsed_content::<Message>(number))
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
-                .style(move |theme: &Theme| row_container_style(theme, active, false)),
+                .style(move |theme: &Theme| row_container_style(theme, active)),
         )
         .on_press((cfg.on_press)(index))
         .into(),
@@ -835,34 +832,17 @@ pub fn style(theme: &Theme) -> container::Style {
 }
 
 /// Background style for a row rendered as a non-pressable `container`
-/// (the reorder path). Priority: the row being dragged reads as "lifted"
-/// (accent ring + soft fill so it tracks as the moving tab during the
-/// live-reorder preview), then a resting selected row (the dedicated
-/// [`crate::theme::selection`] highlight, matching [`item_style`]);
-/// everything else is flat (the `mouse_area` exposes no hover status, so
-/// resting rows don't lift).
-fn row_container_style(theme: &Theme, active: bool, dragged: bool) -> container::Style {
+/// (the reorder path). Selected rows use the dedicated
+/// [`crate::theme::selection`] highlight (matching [`item_style`]);
+/// everything else is flat. Drag reorder keeps this same look — no
+/// accent lift (the grabbing cursor is the only drag affordance).
+fn row_container_style(theme: &Theme, active: bool) -> container::Style {
     let p = theme.extended_palette();
     let flat_border = Border {
         color: Color::TRANSPARENT,
         width: 0.0,
         radius: RADIUS_SM.into(),
     };
-    // The row in flight: soft accent plate + ring so it reads as the item
-    // being moved while the list live-reorders around it.
-    if dragged {
-        return container::Style {
-            background: Some(Background::Color(p.primary.weak.color)),
-            text_color: Some(p.background.base.text),
-            border: Border {
-                color: p.primary.base.color,
-                width: 1.5,
-                radius: RADIUS_SM.into(),
-            },
-            ..container::Style::default()
-        };
-    }
-    // Resting: dedicated selection highlight when active, else flat.
     let bg = active.then(|| Background::Color(crate::theme::selection()));
     container::Style {
         background: bg,
