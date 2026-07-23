@@ -185,7 +185,7 @@ If pins feel noise, later option: pin only via context menu / long-press.
 
 | Phase | Status |
 |---|---|
-| A Composer | pending |
+| A Composer | done |
 | B Sidebar fill | pending |
 | C Row cwd | pending |
 | D Project picker | pending |

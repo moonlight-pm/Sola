@@ -166,7 +166,7 @@ impl App {
             Msg::DraftChanged(s) => self.draft = s,
             Msg::Send => {
                 let text = self.draft.trim().to_string();
-                if text.is_empty() || self.pending.is_some() {
+                if text.is_empty() || self.pending.is_some() || self.streaming {
                     return Task::none();
                 }
                 self.draft.clear();

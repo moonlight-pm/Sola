@@ -135,50 +135,63 @@ fn short_path(p: &str) -> String {
     p.to_string()
 }
 
+/// Roomier single-line field padding — multi-line feel without a textarea.
+const COMPOSER_PAD: Padding = Padding {
+    top: 14.0,
+    right: 16.0,
+    bottom: 14.0,
+    left: 16.0,
+};
+
 fn composer(app: &App) -> Element<'_, Msg> {
     let gated = app.pending.is_some();
-
+    // Single-line kit text_input: Enter submits. No Shift+Enter newline support.
     let field = if gated {
         text_input("Resolve the pending approval to continue…", &app.draft)
-            .size(13)
+            .size(15)
+            .padding(COMPOSER_PAD)
+            .style(text_input::style)
+            .width(Length::Fill)
+    } else if app.streaming {
+        // Draft stays editable while streaming; submit is disabled until Stop.
+        text_input("Message Grok…", &app.draft)
+            .on_input(Msg::DraftChanged)
+            .size(15)
+            .padding(COMPOSER_PAD)
             .style(text_input::style)
             .width(Length::Fill)
     } else {
         text_input("Message Grok…", &app.draft)
             .on_input(Msg::DraftChanged)
             .on_submit(Msg::Send)
-            .size(13)
+            .size(15)
+            .padding(COMPOSER_PAD)
             .style(text_input::style)
             .width(Length::Fill)
     };
 
-    let action: Element<'_, Msg> = if app.streaming {
-        kit_btn::labeled("Stop", kit_btn::danger)
-            .on_press(Msg::Cancel)
-            .into()
+    // No Send button — Enter submits. Stop only while a turn is in flight.
+    let bar: Element<'_, Msg> = if app.streaming {
+        row![
+            field,
+            kit_btn::labeled("Stop", kit_btn::danger).on_press(Msg::Cancel),
+        ]
+        .spacing(SPACE_MD)
+        .align_y(Alignment::Center)
+        .into()
     } else {
-        let mut send = kit_btn::labeled("Send", kit_btn::primary);
-        if !gated && !app.draft.trim().is_empty() {
-            send = send.on_press(Msg::Send);
-        }
-        send.into()
+        field.into()
     };
 
-    let bar = row![field, action]
-        .spacing(SPACE_MD)
-        .align_y(Alignment::Center);
-
     let shell = container(bar)
-        .padding(Padding::from([SPACE_MD, SPACE_MD]))
+        .padding(Padding::from([SPACE_SM, SPACE_SM]))
         .width(Length::Fill)
-        .max_width(CHAT_MAX)
         .style(composer_shell_style);
 
     container(shell)
         .width(Length::Fill)
-        .center_x(Length::Fill)
         .padding(Padding {
-            top: SPACE_SM,
+            top: SPACE_MD,
             right: SPACE_XL,
             bottom: SPACE_MD,
             left: SPACE_XL,

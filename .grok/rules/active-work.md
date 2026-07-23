@@ -17,53 +17,47 @@ If Current is `none`, ask what they want instead of inventing work.
 `.worktrees/agent-acp-runner`
 
 Design: `docs/specs/2026-07-23-sola-agent-acp-runner-design.md`  
-Backlog detail: `docs/specs/2026-07-23-sola-agent-ui-backlog.md`
+Backlog: `docs/specs/2026-07-23-sola-agent-ui-backlog.md`  
+(paths relative to the worktree until merged)
 
 ### Status
 
-v1 ACP runner (Grok stdio) is live and polished enough to use. Next work is
-the **UI backlog** below — do **not** merge to master until the user signs
-off (merge is still gated on approval).
+Phase **A** done. Next: UI backlog phases **B → I**.
+Do **not** merge to master until user approves.
 
-### Star (pin) — answered
+### Star (pin)
 
-The ★ control **pins** a session in the Sola overlay (`~/.config/sola/agent/overlay.json`).
-Pinned sessions sort to the top of the sidebar. It is **not** a Grok-native
-feature; it is Sola-only chrome. Keep unless the user asks to remove pins.
+★ **pins** a session in Sola overlay (`~/.config/sola/agent/overlay.json`) so it
+sorts first. Not a Grok-native flag.
 
-### Backlog (ordered for implementation)
+### Backlog phases (on **go**, start at B unless named)
 
-When user says **go**, execute phases **A → I** in order (or a named phase if
-they specify). Each phase is one focused worktree pass; install only with
-explicit permission.
+| Phase | Item |
+|---|---|
+| ~~A~~ | ~~Composer: roomier, full width, no Send (Enter sends); Stop while streaming~~ |
+| **B** | Sidebar fills full vertical height (header / scroll list / cwd footer) |
+| **C** | Each session row shows **project cwd** (short path) |
+| **D** | New session: **pick project dir** (not silent process cwd) |
+| **E** | Larger transcript fonts; content uses more width |
+| **F** | **Markdown** rendering for assistant content |
+| **G** | Token usage: **`pct% · nnnK/500K`** |
+| **H** | **Rename** session titles |
+| **I** | **Lazy** transcript (tail first, load older on scroll up) + **scroll to bottom** on select |
 
-| Phase | Item | Notes |
-|---|---|---|
-| **A** | **Composer: roomier, fill width, no Send button** | Enter to send; Shift+Enter newline if feasible; taller min height; full available width (drop max-width shell or widen). Stop stays when streaming. |
-| **B** | **Sidebar fills vertical space** | Kit raised column must `height: Fill`; list scroll region takes remaining space between header and cwd footer. |
-| **C** | **Show cwd on each session row** | Secondary line: short path (`~/…`) of that session’s project dir (from `summary.json` / `info.cwd`), not only relative time. |
-| **D** | **New session: pick project dir** | Before `session/new`, UI to choose cwd (default current / last / browse). Persist last cwd in overlay. |
-| **E** | **Transcript density + width** | Larger body type (e.g. 15–16px); chat column uses more horizontal space (raise/remove `CHAT_MAX`). |
-| **F** | **Markdown rendering** | Render assistant (and user?) markdown: headings, lists, code fences, links, bold/italic. Prefer a small pure-Rust md→iced path or existing crate; no WebView. |
-| **G** | **Token usage display** | Status: **percent** + **`nnnK/500K`** (or actual window size from `usage_update` / Grok signals). e.g. `51% · 258K/500K`. Prefer ACP `usage_update`; fallback Grok `_meta` / `signals.json`. |
-| **H** | **Rename session titles** | Double-click or edit affordance on sidebar title; persist via Grok if API exists, else overlay title override (document which). |
-| **I** | **Lazy transcript load + scroll-to-bottom** | On select: load **tail only** (most recent N turns / bytes of `updates.jsonl` or ACP history if available); scroll to bottom. On scroll-up near top: page in older chunks. Do **not** parse entire multi‑MB jsonl into iced state at once. |
+### Future
 
-### Future (not this backlog)
-
-- Leader daemon (`ConnectionMode::Leader`) — multi-client, survive UI quit  
-  (see ACP runner design “Future: Agent leader daemon”)
-- Merge `agent-acp-runner` → master (explicit user approval)
-- Remove stale `.worktrees/sola-agent` after merge
+- Leader daemon (`ConnectionMode::Leader`)
+- Merge `agent-acp-runner` → master + delete stale `.worktrees/sola-agent`
 
 ### Last completed
 
-**Agent ACP runner v1 + first UI polish** — Grok stdio ACP client, hybrid
-sessions, kit sidebar/composer/status; installed for smoke.
+**Phase A — Composer** on `agent-acp-runner`: full-width roomier field, Enter
+sends (no Send button), Stop while streaming.
 
-### How to resume next session
+### Resume
 
-1. Work in `.worktrees/agent-acp-runner` on branch `agent-acp-runner`.
-2. Read `docs/specs/2026-07-23-sola-agent-ui-backlog.md`.
-3. On **go**: start at next unchecked phase (default **A**).
-4. Install only when user grants permission for that install.
+```text
+cd .worktrees/agent-acp-runner   # branch agent-acp-runner
+# read docs/specs/2026-07-23-sola-agent-ui-backlog.md
+# on "go" → Phase B
+```
