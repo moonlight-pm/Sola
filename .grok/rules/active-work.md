@@ -13,55 +13,59 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P8 Pass A — Settings inherits kit density**
+**none**
 
-Plan: `docs/specs/2026-07-23-p8-kit-apps-inherit-plan.md`  
-Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P8.
+Next when user says go: ask — macOS L&F roadmap P0–P8 is complete. Deferred
+items (blur/vibrancy, multi-output screenshot picker, theme dump CLI, etc.)
+live in the roadmap deferred table; pick one explicitly.
 
-Signature move: settings uses `button::labeled` / `labeled_sm`, type roles
-(`heading` / `subheading` / `body` / `caption`), kit text_input default
-padding, and `style::SPACE_*` — no hand-rolled control pads.
-
-Worktree: `.worktrees/p8a-settings-inherit` · branch `p8a-settings-inherit`
+Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md`.
+P8 closed: `docs/specs/2026-07-23-p8-kit-apps-inherit-plan.md` (passes A–F).
 
 ### Last completed
 
-**P7 Pass F** — docs + handoff to P8 — closed P7 kit controls (roadmap
-checklist, design-language already aligned, text_input fork strategy
-documented, AGENTS fonts path corrected).
+**P8 Pass F** — docs + closeout — roadmap P8 done; design-language redesign
+order item 7 marked done; active-work → none.
+
+**P8 Pass E** — browser chrome — URL bar body density + kit DEFAULT_PADDING;
+nav bar `SPACE_*`.
+
+**P8 Pass D** — terminal chrome — selection wash from selection atom; kit
+type roles on empty-pane chrome (sidebar already kit `SidebarPanel`).
+
+**P8 Pass C** — agent chrome — `button::labeled`, type roles, kit text_input
+style, `SPACE_*` / `RADIUS_*` pads.
+
+**P8 Pass B** — monitor — selected rows use `theme::selection()`; body/code
+sizes; `SPACE_*` gaps; JSON syntax hex kept domain-owned.
+
+**P8 Pass A** — settings inherits kit density — merged path on branch
+`p8a-settings-inherit` (awaiting master merge after visual test).
+
+**P7 Pass F** — docs + handoff to P8 — closed P7 kit controls.
 
 **P7 Pass E** — surfaces + storybook completeness — merged to `master` at
-`f064642` (2026-07-23). Quiet Neutral badges; `card::plain` / `style_plain`;
-sidebar section headers title case + muted chrome; storybook matrix.
+`f064642` (2026-07-23).
 
 **P7 Pass D** — form primitives — merged to `master` at `a911207`
-(2026-07-22). `form_row`, field error caption, `checkbox_style` /
-`toggle_style`; storybook Field + Form pages; settings call sites updated.
+(2026-07-22).
 
 **P7 Pass C** — quiet interactions — merged to `master` at `6cceda8`
-(2026-07-21). Ghost hover grey-only; text selection uses selection atom;
-storybook Button covers danger_outline + confirm + flower menubar.
+(2026-07-21).
 
 **P7 Pass B** — type + control density — merged to `master` at `6dae05a`
-(2026-07-21). Body 13, named PAD_CONTROL pads, field labels body+muted,
-button::labeled / labeled_sm.
+(2026-07-21).
 
 **P7 Pass A** — theme binding — merged to `master` at `f8fb072`
-(2026-07-21). `overlay` / `menubar` preserve sola Extended atom map
-instead of iced `Extended::generate`.
+(2026-07-21).
 
 **P6 switcher** — merged to `master` at `4b49dec`
-(2026-07-21). Cmd+Tab HUD: horizontal large-icon strip, selected-only
-caption, soft light selection plate, frosted pill backplate. Also multi-app
-`cargo make install`.
+(2026-07-21).
 
 **P5 launcher** — merged to `master` at `a2b2e7f`
-(2026-07-20). Spotlight restraint: quiet selection, calmer modal, denser
-query/list hierarchy, default width 560 / pad 8.
+(2026-07-20).
 
 **P4 menus & popovers** — merged to `master` at `cddffae`.
-
-**Stat menubar width pin** — merged earlier same day.
 
 **P3 menubar density + type** — merged to `master` at `a2cc87a`.
 

@@ -39,14 +39,14 @@ ghost). Promote a constant to kit only if two apps need the same snowflake.
 
 ## Pass overview
 
-| Pass | Signature move | App(s) |
-|------|----------------|--------|
-| **A** | Settings inherits labeled buttons + type roles + SPACE scale | sola-settings |
-| **B** | Monitor inherits selection atom + type roles (drop row hex) | sola-monitor |
-| **C** | Agent chrome density (`labeled`, type roles, card/plain where fit) | sola-agent |
-| **D** | Terminal chrome only (sidebar/menu density; not ANSI grid) | sola-terminal |
-| **E** | Browser chrome inherits kit helpers | sola-browser-core |
-| **F** | Docs + roadmap closeout | docs |
+| Pass | Signature move | App(s) | Status |
+|------|----------------|--------|--------|
+| **A** | Settings inherits labeled buttons + type roles + SPACE scale | sola-settings | done |
+| **B** | Monitor inherits selection atom + type roles (drop row hex) | sola-monitor | done |
+| **C** | Agent chrome density (`labeled`, type roles, card/plain where fit) | sola-agent | done |
+| **D** | Terminal chrome only (sidebar/menu density; not ANSI grid) | sola-terminal | done |
+| **E** | Browser chrome inherits kit helpers | sola-browser-core | done |
+| **F** | Docs + roadmap closeout | docs | done |
 
 Each pass = one worktree branch, one mergeable unit, visual stop if chrome
 changed visibly.

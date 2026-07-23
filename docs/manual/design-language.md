@@ -301,8 +301,8 @@ Future departures from macOS should be **written into §1** of this document whe
 
 ## 9. Suggested redesign order
 
-When executing visual polish against this language (P0–P7 of the macOS L&F
-roadmap are done; resume at **7**):
+When executing visual polish against this language (P0–P8 of the macOS L&F
+roadmap are done):
 
 1. ~~**Tokens & type baseline**~~ — done (P2).  
 2. ~~**Menubar**~~ — done (P3).  
@@ -310,7 +310,7 @@ roadmap are done; resume at **7**):
 4. ~~**Launcher**~~ — done (P5).  
 5. ~~**Switcher**~~ — done (P6).  
 6. ~~**Kit controls**~~ — done (P7; storybook is the regression surface).  
-7. **Settings / other kit apps** — inherit, don’t re-theme per app (P8).  
+7. ~~**Settings / other kit apps**~~ — done (P8; inherit kit helpers, no per-app themes).  
 
 ---
 

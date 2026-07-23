@@ -239,7 +239,7 @@ atom; `form_row` / field error / checkbox+toggle styles; quiet Neutral
 badges, `card::plain`, calmer sidebar headers; storybook matrix complete.
 Form primitives unlock P8 settings without per-app snowflakes.
 
-### P8 — Kit apps inherit — **in progress**
+### P8 — Kit apps inherit — **done**
 
 Settings / monitor / terminal / agent / browser chrome — inherit tokens; no per-app themes.
 
@@ -250,12 +250,16 @@ shared type roles) rather than local hex, pads, or one-off styles.
 
 | Pass | Signature move | Status |
 |------|----------------|--------|
-| A | Settings inherits labeled + type roles + SPACE | in progress |
-| B | Monitor selection atom + type roles | pending |
-| C | Agent chrome density | pending |
-| D | Terminal chrome only | pending |
-| E | Browser chrome | pending |
-| F | Docs + closeout | pending |
+| A | Settings inherits labeled + type roles + SPACE | done |
+| B | Monitor selection atom + type roles | done |
+| C | Agent chrome density | done |
+| D | Terminal chrome only (selection atom wash) | done |
+| E | Browser chrome | done |
+| F | Docs + closeout | done |
+
+**Outcome:** Kit apps consume `labeled` / type roles / `SPACE_*` / selection
+atom for chrome. JSON syntax colors in monitor and ANSI grid hues remain
+domain-owned.
 
 ### Deferred (not auto-start)
 
@@ -315,17 +319,16 @@ Agents must not “improve taste” without screenshots. When stuck, ask for cap
 
 ## 8. Session handoff
 
-**Status:** P0–P7 complete. Next phase is **P8 — Kit apps inherit**.
+**Status:** P0–P8 complete (macOS L&F chrome/control inheritance closed).
 
 **New session should:**
 
 1. Read this roadmap + design language  
-2. Execute **Current** in `.grok/rules/active-work.md` (P8 when active)  
+2. Execute **Current** in `.grok/rules/active-work.md` (or ask if `none`)  
 3. Prefer storybook + shell screenshots for visual stops  
 4. Work in `.worktrees/` only  
 5. Build (`cargo make build`), not install unless user permits  
 6. Do not re-open P7 kit primitives unless a real binding/density bug surfaces  
-7. P8 = consume kit tokens/helpers in settings / monitor / terminal / agent /
-   browser chrome — no per-app theme forks  
+7. Do not re-open P8 app inheritance unless a real chrome snowflake surfaces  
 
-P0 screenshot tooling and P7 kit plan remain reference docs, not re-entry points.
+P0 screenshot tooling, P7 kit plan, and P8 inherit plan remain reference docs.
