@@ -1,5 +1,7 @@
-use iced::widget::{column, container, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
+use iced::widget::{column, container};
+use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
+use sola_kit::components::style::{RADIUS_LG, SPACE_LG, SPACE_MD, SPACE_SM};
+use sola_kit::components::text as kit_text;
 
 use super::tool;
 use crate::{Msg, Turn};
@@ -34,19 +36,19 @@ fn bubble<'a>(
 ) -> Element<'a, Msg> {
     let border = theme.extended_palette().background.strong.color;
     let inner = column![
-        text(label.to_string()).font(sola_kit::fonts::ui_medium()).size(12),
-        text(body.to_string()).size(15),
+        kit_text::caption(label.to_string()),
+        kit_text::body(body.to_string()),
     ]
-    .spacing(4);
+    .spacing(SPACE_SM);
     let card = container(inner)
-        .padding(Padding::new(12.0))
+        .padding(SPACE_LG)
         .max_width(560.0)
         .style(move |_t: &Theme| container::Style {
             background: Some(Background::Color(bg)),
             border: Border {
                 color: border,
                 width: 1.0,
-                radius: 8.0.into(),
+                radius: RADIUS_LG.into(),
             },
             ..container::Style::default()
         });
@@ -56,14 +58,11 @@ fn bubble<'a>(
 fn reasoning<'a>(body: &str) -> Element<'a, Msg> {
     container(
         column![
-            text("Reasoning")
-                .font(sola_kit::fonts::ui_medium())
-                .size(11)
-                .style(sola_kit::components::text::muted),
-            text(body.to_string()).size(13).style(sola_kit::components::text::muted),
+            kit_text::caption("Reasoning").style(kit_text::muted),
+            kit_text::body(body.to_string()).style(kit_text::muted),
         ]
-        .spacing(4)
-        .padding(Padding::new(10.0)),
+        .spacing(SPACE_SM)
+        .padding(SPACE_MD + SPACE_SM),
     )
     .width(Length::Fill)
     .into()
@@ -72,14 +71,11 @@ fn reasoning<'a>(body: &str) -> Element<'a, Msg> {
 fn error_view<'a>(msg: &str) -> Element<'a, Msg> {
     container(
         column![
-            text("Error")
-                .font(sola_kit::fonts::ui_medium())
-                .size(12)
-                .style(sola_kit::components::text::danger),
-            text(msg.to_string()).size(14).style(sola_kit::components::text::danger),
+            kit_text::caption("Error").style(kit_text::danger),
+            kit_text::body(msg.to_string()).style(kit_text::danger),
         ]
-        .spacing(4)
-        .padding(Padding::new(10.0)),
+        .spacing(SPACE_SM)
+        .padding(SPACE_MD + SPACE_SM),
     )
     .width(Length::Fill)
     .into()

@@ -1,5 +1,7 @@
 //! Agent UI composition. Borders/fills only — this iced stack does not blur
 //! shadows.
+//!
+//! Chrome density inherits kit helpers (`button::labeled`, type roles, SPACE_*).
 pub(crate) mod approval;
 pub(crate) mod bubble;
 pub(crate) mod firstrun;
@@ -7,9 +9,13 @@ pub(crate) mod footer;
 pub(crate) mod sidebar;
 pub(crate) mod tool;
 
-use iced::widget::{button, container, row, scrollable, text, text_input, Column};
+use iced::widget::{container, row, scrollable, Column};
 use iced::Element;
 use iced::{Length, Padding};
+use sola_kit::components::button as kit_btn;
+use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL};
+use sola_kit::components::text_input;
+use sola_kit::components::text_input::text_input;
 
 use crate::{App, Msg};
 
@@ -22,10 +28,11 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
         .iter()
         .map(|t| bubble::turn_view(t, &app.theme))
         .collect();
+    // Transcript pad 20 ≈ SPACE_XL (16) + SPACE_SM (4).
     let transcript = scrollable(
         Column::with_children(bubbles)
-            .spacing(12)
-            .padding(Padding::new(20.0))
+            .spacing(SPACE_LG)
+            .padding(Padding::new(SPACE_XL + SPACE_SM))
             .width(Length::Fill),
     )
     .height(Length::Fill);
@@ -57,30 +64,33 @@ fn input_row(app: &App) -> Element<'_, Msg> {
 
     let field = if gated {
         text_input("Resolve the pending approval to continue…", &app.draft)
-            .padding(12)
-            .size(15)
+            .size(13)
+            .style(text_input::style)
             .width(Length::Fill)
     } else {
         text_input("Ask Sola Agent…", &app.draft)
             .on_input(Msg::DraftChanged)
             .on_submit(Msg::Send)
-            .padding(12)
-            .size(15)
+            .size(13)
+            .style(text_input::style)
             .width(Length::Fill)
     };
 
     let action: Element<'_, Msg> = if app.streaming.is_some() {
-        button(text("Stop"))
-            .style(sola_kit::components::button::danger)
+        kit_btn::labeled("Stop", kit_btn::danger)
             .on_press(Msg::Abort)
             .into()
     } else {
-        let send = button(text("Send")).style(sola_kit::components::button::primary);
-        if gated { send.into() } else { send.on_press(Msg::Send).into() }
+        let send = kit_btn::labeled("Send", kit_btn::primary);
+        if gated {
+            send.into()
+        } else {
+            send.on_press(Msg::Send).into()
+        }
     };
 
-    container(row![field, action].spacing(8))
-        .padding(Padding::new(16.0))
+    container(row![field, action].spacing(SPACE_MD))
+        .padding(SPACE_XL)
         .width(Length::Fill)
         .into()
 }

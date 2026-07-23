@@ -3,6 +3,9 @@
 //! blur shadows.
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length, Padding};
+use sola_kit::components::button as kit_btn;
+use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM};
+use sola_kit::components::text as kit_text;
 
 use crate::{App, Msg};
 
@@ -12,26 +15,24 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
     // withholding their `on_press` — mirrored by the gate in `App::update`.
     let streaming = app.streaming.is_some();
 
-    let mut new_btn =
-        button(text("New")).style(sola_kit::components::button::secondary);
+    let mut new_btn = kit_btn::labeled("New", kit_btn::secondary);
     if !streaming {
         new_btn = new_btn.on_press(Msg::NewSession);
     }
-    let header = row![
-        text("Agent").font(sola_kit::fonts::ui_medium()).size(18),
-        new_btn,
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
+    let header = row![kit_text::subheading("Agent"), new_btn,]
+        .spacing(SPACE_MD)
+        .align_y(Alignment::Center);
 
     let active_id = app.session.lock().ok().map(|s| s.id.clone());
 
-    let mut list = column![header].spacing(6).padding(Padding::new(12.0));
+    let mut list = column![header]
+        .spacing(SPACE_SM)
+        .padding(Padding::new(SPACE_LG));
     for summary in &app.sessions {
         let selected = active_id.as_deref() == Some(summary.id.as_str());
         let mut item = button(text(summary.title.as_str()).size(13))
             .width(Length::Fill)
-            .style(sola_kit::components::button::list_item(selected));
+            .style(kit_btn::list_item(selected));
         if !streaming {
             item = item.on_press(Msg::SelectSession(summary.path.clone()));
         }

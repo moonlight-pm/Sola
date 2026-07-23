@@ -1,8 +1,13 @@
 //! First-run key-entry screen. Shown instead of the normal transcript UI
 //! while `App.first_run` is true (no Sakana API key on disk or in env).
 //! Borders/fills only — this iced stack does not blur shadows.
-use iced::widget::{button, column, container, text, text_input};
+use iced::widget::{column, container};
 use iced::{Alignment, Element, Length};
+use sola_kit::components::button as kit_btn;
+use sola_kit::components::style::{SPACE_LG, SPACE_XL};
+use sola_kit::components::text as kit_text;
+use sola_kit::components::text_input;
+use sola_kit::components::text_input::text_input;
 
 use crate::{App, Msg};
 
@@ -11,21 +16,18 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
         .on_input(Msg::KeyDraftChanged)
         .on_submit(Msg::KeySubmit)
         .secure(true)
-        .padding(12)
-        .size(15)
+        .size(13)
+        .style(text_input::style)
         .width(Length::Fixed(360.0));
 
     let body = column![
-        text("Welcome to Sola Agent").font(sola_kit::fonts::ui_medium()).size(20),
-        text("Paste your Sakana API key to begin. It is encrypted at rest.")
-            .size(13)
-            .style(sola_kit::components::text::muted),
+        kit_text::heading("Welcome to Sola Agent"),
+        kit_text::body("Paste your Sakana API key to begin. It is encrypted at rest.")
+            .style(kit_text::muted),
         field,
-        button(text("Save key"))
-            .style(sola_kit::components::button::primary)
-            .on_press(Msg::KeySubmit),
+        kit_btn::labeled("Save key", kit_btn::primary).on_press(Msg::KeySubmit),
     ]
-    .spacing(14)
+    .spacing(SPACE_LG)
     .align_x(Alignment::Center);
 
     container(body)
@@ -33,5 +35,6 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
         .height(Length::Fill)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
+        .padding(SPACE_XL)
         .into()
 }
