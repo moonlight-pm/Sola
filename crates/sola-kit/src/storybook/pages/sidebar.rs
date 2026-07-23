@@ -199,7 +199,19 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         })
         .collect();
 
-    let sections = vec![SidebarSection::new("Mailboxes", items)];
+    // Two headed sections so section headers (title case, muted chrome)
+    // are visible in the showcase — not only a single group.
+    let mid = items.len().saturating_div(2).max(1);
+    let (primary, secondary): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .enumerate()
+        .partition(|(i, _)| *i < mid);
+    let primary: Vec<_> = primary.into_iter().map(|(_, it)| it).collect();
+    let secondary: Vec<_> = secondary.into_iter().map(|(_, it)| it).collect();
+    let sections = vec![
+        SidebarSection::new("Mailboxes", primary),
+        SidebarSection::new("Smart folders", secondary),
+    ];
 
     let cfg = ReorderCfg {
         on_press: Box::new(Msg::ReorderStart),
@@ -232,9 +244,15 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
 
     column![
         heading("Sidebar"),
-        body("The opt-in SidebarPanel: collapse (»/«), drag the right edge to resize, drag rows to reorder. Each row shows a dim shortcut hint; Drafts carries a secondary count, Spam a × close button.")
-            .style(muted),
+        body(
+            "SidebarPanel: collapse (»/«), resize, reorder. Section headers are \
+             title case + muted chrome (macOS group labels). Drafts has a \
+             secondary count; Spam a × close."
+        )
+        .style(muted),
         demo,
+        code("SidebarSection::new(\"Mailboxes\", items) · title-case headers")
+            .style(muted),
         code("SidebarPanel::new(sections).collapsible(..).resizable(..).reorderable(..).build()")
             .style(muted),
         body("vertical_tabs density: Normal vs Large").style(muted),

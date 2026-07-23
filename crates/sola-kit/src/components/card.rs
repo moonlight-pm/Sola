@@ -28,6 +28,30 @@ pub fn style(theme: &Theme) -> container::Style {
     }
 }
 
+/// Raised background, no border — quieter elevation for dense stacks
+/// where hairlines add noise. Default [`style`] keeps the outline for
+/// existing consumers.
+pub fn style_plain(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.background.weaker.color)),
+        border: iced::Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_LG.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Borderless raised card (see [`style_plain`]). Same default padding as
+/// [`card`]; chain `.padding(...)` to override.
+pub fn plain<'a, Message: 'a>(
+    content: impl Into<Element<'a, Message, Theme>>,
+) -> Container<'a, Message, Theme> {
+    container(content).style(style_plain).padding(SPACE_XL)
+}
+
 /// Style for [`modal`]: opaque raised background, hairline border at
 /// `RADIUS_LG` (8px), and a soft drop shadow — Spotlight/command-palette
 /// restraint, not a marketing card lift.

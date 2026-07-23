@@ -23,9 +23,14 @@ pub fn view() -> Element<'static, Msg> {
 
     column![
         heading("Badge"),
-        body("Status pills — condensed-bold label, rounded ends.").style(muted),
+        body(
+            "Status pills — 10px medium, pad [2, 8]. Neutral is quiet grey + muted \
+             text; status tones keep scanable fills."
+        )
+        .style(muted),
         demo,
-        code("badge(\"Ready\", Tone::Success)").style(muted),
+        code("badge(\"Ready\", Tone::Success) · Neutral → background.strong + muted")
+            .style(muted),
     ]
     .spacing(16)
     .into()

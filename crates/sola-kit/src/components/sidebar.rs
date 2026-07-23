@@ -26,7 +26,7 @@ use iced::widget::{
 };
 use iced::{Background, Border, Color, Element, Length, Padding, Theme, mouse};
 
-use crate::components::style::{RADIUS_SM, SPACE_SM, SPACE_XS};
+use crate::components::style::{RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::fonts;
 
 /// One row in the sidebar. `active` flips on the visual state; `message`
@@ -90,9 +90,10 @@ impl<Message> SidebarItem<Message> {
     }
 }
 
-/// A group of sidebar rows with an optional uppercase header label.
-/// Unlabeled sections render as a plain item group (useful for a top
-/// "Welcome" entry that sits above the first headed section).
+/// A group of sidebar rows with an optional section header label.
+/// Labels render in title case as provided (macOS sidebar group style —
+/// not forced uppercase). Unlabeled sections render as a plain item
+/// group (useful for a top "Welcome" entry above the first headed section).
 pub struct SidebarSection<Message> {
     pub label: Option<String>,
     pub items: Vec<SidebarItem<Message>>,
@@ -275,8 +276,10 @@ where
 }
 
 fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
+    // Title case as authored (not forced uppercase) — closer to macOS
+    // sidebar group labels. chrome + muted, 11px.
     container(
-        text(label.to_uppercase())
+        text(label)
             .font(fonts::chrome())
             .size(11)
             .style(|theme: &Theme| {
@@ -284,7 +287,12 @@ fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
                 iced::widget::text::Style { color: Some(p.secondary.base.text) }
             }),
     )
-    .padding(Padding::from([6, 10]))
+    .padding(Padding {
+        top: SPACE_SM + 2.0,    // 6 — between SPACE_SM and SPACE_MD
+        bottom: SPACE_SM + 2.0,
+        left: SPACE_MD + 2.0,   // 10 — between SPACE_MD and SPACE_LG
+        right: SPACE_MD + 2.0,
+    })
     .into()
 }
 

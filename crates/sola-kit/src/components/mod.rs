@@ -57,7 +57,7 @@ pub mod toolbar;
 
 pub use badge::{Tone, badge};
 pub use button::confirm_button;
-pub use card::{accent_backplate, backplate, card, modal};
+pub use card::{accent_backplate, backplate, card, modal, plain};
 pub use color_picker::ColorPicker;
 pub use divider::{
     DIVIDER_HIT_PX, LINE_PX, DividerColors, horizontal_divider, horizontal_divider_drag,

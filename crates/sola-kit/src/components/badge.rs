@@ -35,18 +35,24 @@ pub fn badge<'a, Message: 'a>(
 
 /// Style fn for the badge container. Exposed so callers building their
 /// own labeled chrome can pick up the same palette mapping.
+///
+/// **Neutral** is quiet chrome: hover-grey fill + muted text — not a
+/// solid border-coloured slab. Status tones keep scanable fills.
 pub fn style(theme: &Theme, tone: Tone) -> container::Style {
     let p = theme.extended_palette();
-    let pair = match tone {
-        Tone::Neutral => p.secondary.base,
-        Tone::Accent => p.primary.base,
-        Tone::Success => p.success.base,
-        Tone::Warning => p.warning.base,
-        Tone::Danger => p.danger.base,
+    let (bg, fg) = match tone {
+        // Quiet secondary surface — background.strong (hover grey) + muted
+        // text. Avoid secondary.base (bound to BORDER), which read as a
+        // solid border-coloured slab next to calm chrome.
+        Tone::Neutral => (p.background.strong.color, p.secondary.base.text),
+        Tone::Accent => (p.primary.base.color, p.primary.base.text),
+        Tone::Success => (p.success.base.color, p.success.base.text),
+        Tone::Warning => (p.warning.base.color, p.warning.base.text),
+        Tone::Danger => (p.danger.base.color, p.danger.base.text),
     };
     container::Style {
-        background: Some(Background::Color(pair.color)),
-        text_color: Some(pair.text),
+        background: Some(Background::Color(bg)),
+        text_color: Some(fg),
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,

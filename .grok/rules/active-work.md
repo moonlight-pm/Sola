@@ -13,11 +13,15 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**P7 Pass E** — surfaces + storybook completeness — branch
+`p7e-surfaces-storybook` (worktree `.worktrees/p7e-surfaces-storybook`).
+Visual stop: storybook **Badge**, **Card**, **Sidebar** (and Button matrix)
+after `cargo make install kit` when permitted.
 
-Next when user says go: **P7 Pass E** (surfaces + storybook completeness) —
-see `docs/specs/2026-07-21-p7-kit-controls-plan.md`.
+Plan: `docs/specs/2026-07-21-p7-kit-controls-plan.md` Pass E.
 Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P7.
+
+Next after merge: **P7 Pass F** (docs + handoff to P8).
 
 ### Last completed
 

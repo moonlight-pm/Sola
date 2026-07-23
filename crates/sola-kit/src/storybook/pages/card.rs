@@ -3,7 +3,7 @@
 use iced::widget::column;
 use iced::{Element, Length};
 
-use sola_kit::components::{accent_backplate, backplate, card, modal};
+use sola_kit::components::{accent_backplate, backplate, card, modal, plain};
 use sola_kit::components::text::{body, code, heading, muted};
 
 use crate::storybook::Msg;
@@ -11,13 +11,22 @@ use crate::storybook::Msg;
 pub fn view() -> Element<'static, Msg> {
     let demo = card(
         column![
-            body("This is a card."),
+            body("Default card — raised bg + hairline border."),
             body(
                 "Default padding is 16px; chain .padding(...) on the returned \
-                 container to override. Background, border, and radius are \
-                 themed via the card style fn."
+                 container to override."
             )
             .style(muted),
+        ]
+        .spacing(8),
+    )
+    .width(Length::Fill);
+
+    let plain_demo = plain(
+        column![
+            body("Plain card — raised bg, no border."),
+            body("Use when stacked surfaces make hairlines noisy.")
+                .style(muted),
         ]
         .spacing(8),
     )
@@ -55,9 +64,13 @@ pub fn view() -> Element<'static, Msg> {
 
     column![
         heading("Card"),
-        body("Container with BG_RAISED, 1px BORDER, 8px corner radius.").style(muted),
+        body("Default keeps hairline; plain is borderless raised elevation.")
+            .style(muted),
         demo,
         code("card(content)").style(muted),
+        body("Plain — raised, no border (style_plain).").style(muted),
+        plain_demo,
+        code("plain(content) · style_plain").style(muted),
         body("Modal card chrome — opaque panel lifted over a dimmed backdrop.").style(muted),
         modal_demo,
         code("modal(content)").style(muted),
