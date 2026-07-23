@@ -13,24 +13,24 @@
 //! Builtin apps (defined in sola-shell) never appear here — they
 //! are seeded by the shell directly and are not part of the
 //! `Topic::Application` stream.
+//!
+//! Chrome density inherits kit helpers (`button::labeled`, type roles,
+//! `SPACE_*`, field + text_input defaults) — no local pad/size snowflakes.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use iced::widget::{button, column, row, text};
+use iced::widget::{column, row};
+use iced::{Element, Length, Task};
 use sola_kit::components::text_input::text_input;
-use iced::{Element, Length, Padding, Task, Theme};
 
 use sola_bus::topics::{Application, ApplicationsConfig, Topic, Window as BusWindow};
 use sola_kit::app::bus;
+use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{Tone, badge, button as kit_btn, card, field, text_input as kit_input};
-use sola_kit::fonts;
 
 use crate::procfs;
-
-const FIELD_GAP: f32 = 12.0;
-const CARD_GAP: f32 = 16.0;
 
 #[derive(Debug, Clone, Copy)]
 pub enum AppField {
@@ -260,13 +260,14 @@ pub fn view<'a>(
     running: &'a [BusWindow],
     ui: &'a AppsState,
 ) -> Element<'a, AppsMsg> {
-    let mut col = column![].spacing(CARD_GAP);
+    let mut col = column![].spacing(SPACE_XL);
 
     if apps.apps.is_empty() && ui.drafts.is_empty() {
         col = col.push(
-            text("No applications configured. Click \"+ Add application\" or pick from the candidates below.")
-                .size(13)
-                .style(kit_text::muted),
+            kit_text::body(
+                "No applications configured. Click \"+ Add application\" or pick from the candidates below.",
+            )
+            .style(kit_text::muted),
         );
     }
 
@@ -278,10 +279,7 @@ pub fn view<'a>(
     }
 
     col = col.push(
-        button(text("+ Add application").size(13))
-            .style(kit_btn::ghost)
-            .padding(Padding::new(6.0).left(10.0).right(10.0))
-            .on_press(AppsMsg::StartBlank),
+        kit_btn::labeled("+ Add application", kit_btn::ghost).on_press(AppsMsg::StartBlank),
     );
 
     let candidates = collect_candidates(apps, running);
@@ -313,11 +311,9 @@ fn configured_card<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, A
         app.label.as_str()
     };
 
-    let mut header = row![
-        text(display_title).font(fonts::ui_medium()).size(16),
-    ]
-    .spacing(8)
-    .align_y(iced::Alignment::Center);
+    let mut header = row![kit_text::subheading(display_title)]
+        .spacing(SPACE_MD)
+        .align_y(iced::Alignment::Center);
     if missing {
         header = header.push(badge("not found", Tone::Warning));
     }
@@ -327,22 +323,16 @@ fn configured_card<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, A
         let orig_discard = app.app_id.clone();
         header = header
             .push(
-                button(text("Save").size(13))
-                    .style(kit_btn::primary)
-                    .padding(Padding::new(6.0).left(12.0).right(12.0))
+                kit_btn::labeled("Save", kit_btn::primary)
                     .on_press(AppsMsg::EditSave(orig_save)),
             )
             .push(
-                button(text("Discard").size(13))
-                    .style(kit_btn::ghost)
-                    .padding(Padding::new(6.0).left(12.0).right(12.0))
+                kit_btn::labeled("Discard", kit_btn::ghost)
                     .on_press(AppsMsg::EditDiscard(orig_discard)),
             );
     }
     header = header.push(
-        button(text("Remove").size(13))
-            .style(kit_btn::danger)
-            .padding(Padding::new(6.0).left(12.0).right(12.0))
+        kit_btn::labeled("Remove", kit_btn::danger)
             .on_press(AppsMsg::Remove(app.app_id.clone())),
     );
 
@@ -352,12 +342,12 @@ fn configured_card<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, A
         edit_text_input("label", label, orig_for_inputs.clone(), AppField::Label),
         edit_text_input("icon", icon, orig_for_inputs.clone(), AppField::Icon),
     ]
-    .spacing(FIELD_GAP);
+    .spacing(SPACE_LG);
     let row2 = edit_text_input("command", command, orig_for_inputs, AppField::Command);
 
-    let mut body = column![header, row1, row2].spacing(FIELD_GAP);
+    let mut body = column![header, row1, row2].spacing(SPACE_LG);
     if let Some(err) = ui.errors.get(&edit_error_key(&app.app_id)) {
-        body = body.push(text(err.as_str()).size(12).style(kit_text::muted));
+        body = body.push(kit_text::caption(err.as_str()).style(kit_text::danger));
     }
 
     card(body).width(Length::Fill).into()
@@ -365,21 +355,12 @@ fn configured_card<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, A
 
 fn draft_card<'a>(draft: &'a DraftRow, ui: &'a AppsState) -> Element<'a, AppsMsg> {
     let header = row![
-        text("New application")
-            .font(fonts::ui_medium())
-            .size(16)
-            .style(kit_text::muted),
+        kit_text::subheading("New application").style(kit_text::muted),
         iced::widget::Space::new().width(Length::Fill),
-        button(text("Add").size(13))
-            .style(kit_btn::primary)
-            .padding(Padding::new(6.0).left(12.0).right(12.0))
-            .on_press(AppsMsg::DraftCommit(draft.key)),
-        button(text("Discard").size(13))
-            .style(kit_btn::ghost)
-            .padding(Padding::new(6.0).left(12.0).right(12.0))
-            .on_press(AppsMsg::DraftDiscard(draft.key)),
+        kit_btn::labeled("Add", kit_btn::primary).on_press(AppsMsg::DraftCommit(draft.key)),
+        kit_btn::labeled("Discard", kit_btn::ghost).on_press(AppsMsg::DraftDiscard(draft.key)),
     ]
-    .spacing(8)
+    .spacing(SPACE_MD)
     .align_y(iced::Alignment::Center);
 
     let row1 = row![
@@ -393,7 +374,7 @@ fn draft_card<'a>(draft: &'a DraftRow, ui: &'a AppsState) -> Element<'a, AppsMsg
             AppField::Icon,
         ),
     ]
-    .spacing(FIELD_GAP);
+    .spacing(SPACE_LG);
     let row2 = draft_text_input(
         "command",
         &draft.command,
@@ -402,9 +383,9 @@ fn draft_card<'a>(draft: &'a DraftRow, ui: &'a AppsState) -> Element<'a, AppsMsg
         AppField::Command,
     );
 
-    let mut body = column![header, row1, row2].spacing(FIELD_GAP);
+    let mut body = column![header, row1, row2].spacing(SPACE_LG);
     if let Some(err) = ui.errors.get(&draft_error_key(draft.key)) {
-        body = body.push(text(err.as_str()).size(12).style(kit_text::muted));
+        body = body.push(kit_text::caption(err.as_str()).style(kit_text::danger));
     }
 
     card(body).width(Length::Fill).into()
@@ -412,14 +393,13 @@ fn draft_card<'a>(draft: &'a DraftRow, ui: &'a AppsState) -> Element<'a, AppsMsg
 
 fn candidates_card<'a>(candidates: Vec<Candidate>) -> Element<'a, AppsMsg> {
     let mut col = column![
-        text("Running, not configured")
-            .font(fonts::ui_medium())
-            .size(14),
-        text("Pre-filled by what's currently running. One click drops a draft above.")
-            .size(12)
-            .style(kit_text::muted),
+        kit_text::subheading("Running, not configured"),
+        kit_text::caption(
+            "Pre-filled by what's currently running. One click drops a draft above.",
+        )
+        .style(kit_text::muted),
     ]
-    .spacing(6);
+    .spacing(SPACE_SM);
 
     for c in candidates {
         let title_owned: String = if c.title.is_empty() {
@@ -435,25 +415,22 @@ fn candidates_card<'a>(candidates: Vec<Candidate>) -> Element<'a, AppsMsg> {
         let app_id_for_text = c.app_id.clone();
         let row = row![
             column![
-                text(app_id_for_text).size(13),
-                text(detail).size(12).style(kit_text::muted),
+                kit_text::body(app_id_for_text),
+                kit_text::caption(detail).style(kit_text::muted),
             ]
-            .spacing(2)
+            .spacing(SPACE_XS)
             .width(Length::Fill),
-            button(text("Configure").size(13))
-                .style(kit_btn::ghost)
-                .padding(Padding::new(6.0).left(12.0).right(12.0))
-                .on_press(AppsMsg::StartFromCandidate {
-                    app_id: c.app_id,
-                    command: c.suggested_command,
-                }),
+            kit_btn::labeled("Configure", kit_btn::ghost).on_press(AppsMsg::StartFromCandidate {
+                app_id: c.app_id,
+                command: c.suggested_command,
+            }),
         ]
-        .spacing(8)
+        .spacing(SPACE_MD)
         .align_y(iced::Alignment::Center);
         col = col.push(row);
     }
 
-    card(col.spacing(10)).width(Length::Fill).into()
+    card(col.spacing(SPACE_LG)).width(Length::Fill).into()
 }
 
 fn draft_text_input<'a>(
@@ -463,9 +440,13 @@ fn draft_text_input<'a>(
     key: u64,
     f: AppField,
 ) -> Element<'a, AppsMsg> {
+    // Padding from kit DEFAULT_PADDING; size 13 = body type role density.
     let input = text_input(placeholder, value)
-        .on_input(move |v| AppsMsg::DraftField { key, field: f, value: v })
-        .padding(Padding::new(6.0).left(10.0).right(10.0))
+        .on_input(move |v| AppsMsg::DraftField {
+            key,
+            field: f,
+            value: v,
+        })
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);
@@ -484,7 +465,6 @@ fn edit_text_input<'a>(
             field: f,
             value: v,
         })
-        .padding(Padding::new(6.0).left(10.0).right(10.0))
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);
@@ -561,6 +541,3 @@ fn retract(topic: Topic) {
         tracing::warn!("bus retract failed: {e}");
     }
 }
-
-// Used internally below — silences `Theme` unused if helpers don't need it.
-const _: fn(&Theme) = |_| {};

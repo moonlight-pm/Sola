@@ -7,26 +7,27 @@
 //! buttons once dirty; a new rule has Add / Discard until committed.
 //! Dirty drafts survive external replays — only clean drafts get
 //! refreshed when the bus pushes a new canonical config.
+//!
+//! Chrome density inherits kit helpers (`button::labeled`, type roles,
+//! `SPACE_*`, field + text_input defaults) — no local pad/size snowflakes.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use iced::widget::{button, column, pick_list, row, text};
+use iced::widget::{column, pick_list, row};
+use iced::{Element, Length, Task};
 use sola_kit::components::text_input::text_input;
-use iced::{Element, Length, Padding, Task};
 
 use sola_bus::topics::{MailConfig, MailRule, MailRuleCondition, Topic};
 use sola_core::Encrypted;
 use sola_kit::app::bus;
+use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{button as kit_btn, card, field, text_input as kit_input};
-use sola_kit::fonts;
 
 const ACTION_OPTIONS: [&str; 2] = ["smart_mailbox", "move"];
 const FIELD_OPTIONS: [&str; 3] = ["from", "to", "subject"];
 const MATCH_OPTIONS: [&str; 4] = ["contains", "equals", "address", "domain"];
-
-const FIELD_GAP: f32 = 12.0;
 
 // ── Drafts ────────────────────────────────────────────────────────
 
@@ -462,7 +463,7 @@ pub fn update(msg: MailMsg, cfg: &mut MailConfig, ui: &mut MailState) -> Task<Ma
 
 pub fn view<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
     column![account_card(cfg, ui), rules_card(cfg, ui)]
-        .spacing(24)
+        .spacing(SPACE_XL + SPACE_MD) // 24 — page section gap
         .into()
 }
 
@@ -470,12 +471,10 @@ fn account_card<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailM
     let dirty = !ui.account.matches(cfg);
 
     let header = column![
-        text("Account").font(fonts::ui_medium()).size(16),
-        text("IMAP receive + SMTP send credentials.")
-            .size(12)
-            .style(kit_text::muted),
+        kit_text::subheading("Account"),
+        kit_text::caption("IMAP receive + SMTP send credentials.").style(kit_text::muted),
     ]
-    .spacing(2);
+    .spacing(SPACE_XS);
 
     let body = column![
         header,
@@ -487,22 +486,25 @@ fn account_card<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailM
         account_input("Username", &ui.account.username, AccountField::Username),
         password_input("Password", &ui.account.password),
         row![
-            button(text("Save account").size(13))
-                .style(if dirty { kit_btn::primary } else { kit_btn::secondary })
-                .padding(Padding::new(6.0).left(12.0).right(12.0))
-                .on_press_maybe(dirty.then_some(MailMsg::AccountSave)),
-            button(text("Revert").size(13))
-                .style(kit_btn::ghost)
-                .padding(Padding::new(6.0).left(12.0).right(12.0))
+            kit_btn::labeled(
+                "Save account",
+                if dirty {
+                    kit_btn::primary
+                } else {
+                    kit_btn::secondary
+                },
+            )
+            .on_press_maybe(dirty.then_some(MailMsg::AccountSave)),
+            kit_btn::labeled("Revert", kit_btn::ghost)
                 .on_press_maybe(dirty.then_some(MailMsg::AccountRevert)),
         ]
-        .spacing(8),
+        .spacing(SPACE_MD),
     ]
-    .spacing(FIELD_GAP);
+    .spacing(SPACE_LG);
 
     let body: Element<'_, MailMsg> = if let Some(err) = ui.errors.get("account") {
-        column![body, text(err.as_str()).size(12).style(kit_text::muted)]
-            .spacing(FIELD_GAP)
+        column![body, kit_text::caption(err.as_str()).style(kit_text::danger)]
+            .spacing(SPACE_LG)
             .into()
     } else {
         body.into()
@@ -513,17 +515,16 @@ fn account_card<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailM
 
 fn rules_card<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
     let header = column![
-        text("Rules").font(fonts::ui_medium()).size(16),
-        text("Each condition row must match for the rule to fire.")
-            .size(12)
+        kit_text::subheading("Rules"),
+        kit_text::caption("Each condition row must match for the rule to fire.")
             .style(kit_text::muted),
     ]
-    .spacing(2);
+    .spacing(SPACE_XS);
 
-    let mut col = column![header].spacing(FIELD_GAP);
+    let mut col = column![header].spacing(SPACE_LG);
 
     if cfg.rules.is_empty() && ui.new_rules.is_empty() {
-        col = col.push(text("No rules configured.").size(13).style(kit_text::muted));
+        col = col.push(kit_text::body("No rules configured.").style(kit_text::muted));
     }
 
     for (idx, rule) in cfg.rules.iter().enumerate() {
@@ -536,12 +537,7 @@ fn rules_card<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg
         col = col.push(new_rule_card(nr.clone(), ui));
     }
 
-    col = col.push(
-        button(text("+ Add rule").size(13))
-            .style(kit_btn::ghost)
-            .padding(Padding::new(6.0).left(10.0).right(10.0))
-            .on_press(MailMsg::NewStart),
-    );
+    col = col.push(kit_btn::labeled("+ Add rule", kit_btn::ghost).on_press(MailMsg::NewStart));
 
     card(col).width(Length::Fill).into()
 }
@@ -559,21 +555,21 @@ fn existing_rule_card<'a>(
     };
 
     let actions = row![
-        button(text("Save").size(13))
-            .style(if dirty { kit_btn::primary } else { kit_btn::secondary })
-            .padding(Padding::new(6.0).left(12.0).right(12.0))
-            .on_press_maybe(dirty.then_some(MailMsg::ExistingSave(idx))),
-        button(text("Discard").size(13))
-            .style(kit_btn::ghost)
-            .padding(Padding::new(6.0).left(12.0).right(12.0))
+        kit_btn::labeled(
+            "Save",
+            if dirty {
+                kit_btn::primary
+            } else {
+                kit_btn::secondary
+            },
+        )
+        .on_press_maybe(dirty.then_some(MailMsg::ExistingSave(idx))),
+        kit_btn::labeled("Discard", kit_btn::ghost)
             .on_press_maybe(dirty.then_some(MailMsg::ExistingDiscard(idx))),
         iced::widget::Space::new().width(Length::Fill),
-        button(text("Remove rule").size(13))
-            .style(kit_btn::danger)
-            .padding(Padding::new(6.0).left(12.0).right(12.0))
-            .on_press(MailMsg::ExistingRemove(idx)),
+        kit_btn::labeled("Remove rule", kit_btn::danger).on_press(MailMsg::ExistingRemove(idx)),
     ]
-    .spacing(8)
+    .spacing(SPACE_MD)
     .align_y(iced::Alignment::Center);
 
     let body_input = rule_body(
@@ -585,14 +581,9 @@ fn existing_rule_card<'a>(
         move |cond_idx| MailMsg::ExistingRemoveCondition(idx, cond_idx),
     );
 
-    let mut inner = column![
-        text(title).font(fonts::ui_medium()).size(14),
-        body_input,
-        actions,
-    ]
-    .spacing(FIELD_GAP);
+    let mut inner = column![kit_text::subheading(title), body_input, actions].spacing(SPACE_LG);
     if let Some(err) = ui.errors.get(&existing_err_key(idx)) {
-        inner = inner.push(text(err.as_str()).size(12).style(kit_text::muted));
+        inner = inner.push(kit_text::caption(err.as_str()).style(kit_text::danger));
     }
     card(inner).width(Length::Fill).into()
 }
@@ -606,16 +597,10 @@ fn new_rule_card<'a>(nr: NewRule, ui: &'a MailState) -> Element<'a, MailMsg> {
     };
 
     let actions = row![
-        button(text("Save").size(13))
-            .style(kit_btn::primary)
-            .padding(Padding::new(6.0).left(12.0).right(12.0))
-            .on_press(MailMsg::NewSave(key)),
-        button(text("Discard").size(13))
-            .style(kit_btn::ghost)
-            .padding(Padding::new(6.0).left(12.0).right(12.0))
-            .on_press(MailMsg::NewDiscard(key)),
+        kit_btn::labeled("Save", kit_btn::primary).on_press(MailMsg::NewSave(key)),
+        kit_btn::labeled("Discard", kit_btn::ghost).on_press(MailMsg::NewDiscard(key)),
     ]
-    .spacing(8)
+    .spacing(SPACE_MD)
     .align_y(iced::Alignment::Center);
 
     let body_input = rule_body(
@@ -628,13 +613,13 @@ fn new_rule_card<'a>(nr: NewRule, ui: &'a MailState) -> Element<'a, MailMsg> {
     );
 
     let mut inner = column![
-        text(title).font(fonts::ui_medium()).size(14).style(kit_text::muted),
+        kit_text::subheading(title).style(kit_text::muted),
         body_input,
         actions,
     ]
-    .spacing(FIELD_GAP);
+    .spacing(SPACE_LG);
     if let Some(err) = ui.errors.get(&new_err_key(key)) {
-        inner = inner.push(text(err.as_str()).size(12).style(kit_text::muted));
+        inner = inner.push(kit_text::caption(err.as_str()).style(kit_text::danger));
     }
     card(inner).width(Length::Fill).into()
 }
@@ -662,7 +647,6 @@ where
     let on_name = on_field.clone();
     let name_input = text_input("rule name", &draft.name)
         .on_input(move |v| on_name(RuleField::Name, v))
-        .padding(Padding::new(6.0).left(10.0).right(10.0))
         .size(13)
         .style(kit_input::style);
 
@@ -673,13 +657,12 @@ where
         move |a: String| on_act(a),
     )
     .text_size(13)
-    .padding(Padding::new(6.0).left(10.0).right(10.0));
+    .padding(SPACE_SM);
 
     let dest_block: Element<'_, MailMsg> = if draft.action == "move" {
         let on_dest = on_field.clone();
         let dest_input = text_input("mailbox (e.g. Trash)", &draft.dest)
             .on_input(move |v| on_dest(RuleField::Dest, v))
-            .padding(Padding::new(6.0).left(10.0).right(10.0))
             .size(13)
             .style(kit_input::style);
         field("Destination", dest_input, None, None).into()
@@ -687,11 +670,10 @@ where
         iced::widget::Space::new().height(Length::Fixed(0.0)).into()
     };
 
-    let conditions_header = text("Conditions (all must match)")
-        .font(fonts::ui_medium())
-        .size(12);
+    let conditions_header =
+        kit_text::caption("Conditions (all must match)").style(kit_text::muted);
 
-    let mut cond_col = column![].spacing(8);
+    let mut cond_col = column![].spacing(SPACE_MD);
     for (i, c) in draft.conditions.iter().enumerate() {
         let on_field_pick = on_cond.clone();
         let field_pick = pick_list(
@@ -700,7 +682,7 @@ where
             move |v: String| on_field_pick(i, CondField::Field, v),
         )
         .text_size(13)
-        .padding(Padding::new(6.0).left(10.0).right(10.0));
+        .padding(SPACE_SM);
 
         let on_match_pick = on_cond.clone();
         let match_pick = pick_list(
@@ -709,13 +691,12 @@ where
             move |v: String| on_match_pick(i, CondField::Match, v),
         )
         .text_size(13)
-        .padding(Padding::new(6.0).left(10.0).right(10.0));
+        .padding(SPACE_SM);
 
         let on_val = on_cond.clone();
         let value_owned = c.value.clone();
         let value_input = text_input("value", &value_owned)
             .on_input(move |v| on_val(i, CondField::Value, v))
-            .padding(Padding::new(6.0).left(10.0).right(10.0))
             .size(13)
             .style(kit_input::style)
             .width(Length::Fill);
@@ -725,20 +706,14 @@ where
             field_pick,
             match_pick,
             value_input,
-            button(text("Remove").size(12))
-                .style(kit_btn::ghost)
-                .padding(Padding::new(4.0).left(8.0).right(8.0))
-                .on_press(on_rm(i)),
+            kit_btn::labeled_sm("Remove", kit_btn::ghost).on_press(on_rm(i)),
         ]
-        .spacing(8)
+        .spacing(SPACE_MD)
         .align_y(iced::Alignment::Center);
         cond_col = cond_col.push(row);
     }
     cond_col = cond_col.push(
-        button(text("+ Add condition").size(13))
-            .style(kit_btn::ghost)
-            .padding(Padding::new(4.0).left(8.0).right(8.0))
-            .on_press(on_add_cond()),
+        kit_btn::labeled_sm("+ Add condition", kit_btn::ghost).on_press(on_add_cond()),
     );
 
     column![
@@ -748,7 +723,7 @@ where
         conditions_header,
         cond_col,
     ]
-    .spacing(FIELD_GAP)
+    .spacing(SPACE_LG)
     .into()
 }
 
@@ -763,7 +738,6 @@ fn account_input<'a>(
 ) -> Element<'a, MailMsg> {
     let input = text_input("", value)
         .on_input(move |v| MailMsg::AccountField(f, v))
-        .padding(Padding::new(6.0).left(10.0).right(10.0))
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);
@@ -774,7 +748,6 @@ fn password_input<'a>(label: &'a str, value: &'a str) -> Element<'a, MailMsg> {
     let input = text_input("", value)
         .on_input(|v| MailMsg::AccountField(AccountField::Password, v))
         .secure(true)
-        .padding(Padding::new(6.0).left(10.0).right(10.0))
         .size(13)
         .style(kit_input::style)
         .width(Length::Fill);

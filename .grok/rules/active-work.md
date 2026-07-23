@@ -13,15 +13,16 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**P8 Pass A — Settings inherits kit density**
 
-Next when user says go: **P8 — Kit apps inherit** —
-settings / monitor / terminal / agent / browser chrome consume kit tokens
-and helpers (`button::labeled`, `field` / `form_row`, type roles, quiet
-selection) with no per-app themes.
-
+Plan: `docs/specs/2026-07-23-p8-kit-apps-inherit-plan.md`  
 Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P8.
-P7 closed: `docs/specs/2026-07-21-p7-kit-controls-plan.md` (passes A–F).
+
+Signature move: settings uses `button::labeled` / `labeled_sm`, type roles
+(`heading` / `subheading` / `body` / `caption`), kit text_input default
+padding, and `style::SPACE_*` — no hand-rolled control pads.
+
+Worktree: `.worktrees/p8a-settings-inherit` · branch `p8a-settings-inherit`
 
 ### Last completed
 

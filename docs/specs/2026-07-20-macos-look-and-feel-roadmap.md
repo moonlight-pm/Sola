@@ -239,12 +239,23 @@ atom; `form_row` / field error / checkbox+toggle styles; quiet Neutral
 badges, `card::plain`, calmer sidebar headers; storybook matrix complete.
 Form primitives unlock P8 settings without per-app snowflakes.
 
-### P8 — Kit apps inherit — **next**
+### P8 — Kit apps inherit — **in progress**
 
 Settings / monitor / terminal / agent / browser chrome — inherit tokens; no per-app themes.
 
 Use kit helpers (`button::labeled`, `field` / `form_row`, `card::plain`,
 shared type roles) rather than local hex, pads, or one-off styles.
+
+**Plan:** `docs/specs/2026-07-23-p8-kit-apps-inherit-plan.md`
+
+| Pass | Signature move | Status |
+|------|----------------|--------|
+| A | Settings inherits labeled + type roles + SPACE | in progress |
+| B | Monitor selection atom + type roles | pending |
+| C | Agent chrome density | pending |
+| D | Terminal chrome only | pending |
+| E | Browser chrome | pending |
+| F | Docs + closeout | pending |
 
 ### Deferred (not auto-start)
 

@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use iced::widget::{column, container, row, scrollable, text};
+use iced::widget::{column, container, row, scrollable};
 use iced::{Element, Length, Padding, Subscription, Task, Theme};
 
 use sola_bus::Message;
@@ -17,6 +17,8 @@ use sola_core::KeyCode;
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup, window_settings,
 };
+use sola_kit::components::style::{SPACE_XL, SPACE_MD};
+use sola_kit::components::text as kit_text;
 use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
@@ -172,14 +174,16 @@ impl App {
             Panel::Mail => mail::view(&self.mail, &self.mail_ui).map(Msg::Mail),
         };
 
+        // Page pad 24 = SPACE_XL + SPACE_MD (content margin, not control density).
+        let page_pad = SPACE_XL + SPACE_MD;
         let main_pane = container(
             scrollable(
                 column![
-                    text(title_text).font(fonts::ui_medium()).size(28),
+                    kit_text::heading(title_text),
                     body,
                 ]
-                .spacing(24)
-                .padding(Padding::new(24.0)),
+                .spacing(page_pad)
+                .padding(Padding::new(page_pad)),
             )
             .height(Length::Fill)
             .width(Length::Fill),
