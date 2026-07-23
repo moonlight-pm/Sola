@@ -230,7 +230,7 @@ Buttons, fields, sidebar, cards via storybook; small radii, quiet hover.
 | B | Type + control density (body 13, named pads) | done (`6dae05a`) |
 | C | Quiet ghost / unify text selection atom | done (`6cceda8`) |
 | D | Form row + field error + checkbox/toggle styles | done (`a911207`) |
-| E | Badge / sidebar headers / storybook matrix | pending |
+| E | Badge / sidebar headers / storybook matrix | done (`f064642`) |
 | F | Docs + handoff to P8 | pending |
 
 ### P8 — Kit apps inherit

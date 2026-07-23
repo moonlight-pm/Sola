@@ -421,12 +421,13 @@ storybook covers every public control style.
 
 ### Acceptance
 
-- [ ] Visual: Badge, Card, Sidebar storybook
-- [ ] Build green
+- [x] Visual: Badge, Card, Sidebar storybook
+- [x] Build green
 
 ### Commit
 
-`feat(kit): quieter badges/headers and complete storybook control matrix`
+`feat(kit): quieter badges/headers and complete storybook control matrix` —
+merged `f064642` (2026-07-23).
 
 ---
 
