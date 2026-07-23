@@ -416,21 +416,22 @@ impl<E: Engine> App<E> {
     /// the global press subscription (`Msg::LeftPressed`) plus a live focus
     /// query, which sees the press regardless of widget capture.
     pub fn view_nav_bar(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
         row![
             toolbar_button("←").on_press(Msg::NavBack),
             toolbar_button("→").on_press(Msg::NavForward),
             toolbar_button("↻").on_press(Msg::NavReload),
+            // Kit body density (13) + DEFAULT_PADDING — chrome inherits tokens.
             text_input("Search or enter URL", &self.url_field)
                 .id(crate::integration::url_input_id())
                 .on_input(Msg::UrlInput)
                 .on_submit(Msg::UrlSubmit)
-                .size(15)
-                .padding([8, 12])
-                .width(Length::Fill)
-                .style(sola_kit::components::text_input::style),
+                .size(13)
+                .style(sola_kit::components::text_input::style)
+                .width(Length::Fill),
         ]
-        .spacing(8)
-        .padding([4, 10])
+        .spacing(SPACE_MD)
+        .padding([SPACE_SM, SPACE_MD + SPACE_SM])
         .align_y(iced::Alignment::Center)
         .height(Length::Fixed(CHROME_HEIGHT))
         .into()
