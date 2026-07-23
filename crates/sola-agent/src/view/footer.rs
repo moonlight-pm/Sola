@@ -26,10 +26,10 @@ pub(crate) fn view(app: &App) -> Element<'_, crate::Msg> {
     let ctx = match (app.usage_used, app.usage_size) {
         (Some(used), Some(size)) if size > 0 => {
             let pct = (used as f64 / size as f64 * 100.0).clamp(0.0, 100.0).round() as u64;
-            format!("Context {pct}% · {used} / {size}")
+            format!("{pct}% context")
         }
-        (Some(used), _) => format!("Tokens ~{used}"),
-        _ => "Context —".into(),
+        (Some(used), _) => format!("~{used} tokens"),
+        _ => String::new(),
     };
 
     let session = app
@@ -48,17 +48,16 @@ pub(crate) fn view(app: &App) -> Element<'_, crate::Msg> {
         })
         .unwrap_or_else(|| "No session".into());
 
-    container(
-        row![
-            conn,
-            turn,
-            kit_text::caption(session).style(kit_text::muted),
-            iced::widget::Space::new().width(Length::Fill),
-            kit_text::caption(ctx).style(kit_text::muted),
-        ]
+    let mut status = row![conn, turn, kit_text::caption(session).style(kit_text::muted)]
         .spacing(SPACE_MD)
-        .align_y(Alignment::Center)
-        .padding(Padding::from([SPACE_SM + 2.0, SPACE_XL])),
+        .align_y(Alignment::Center);
+    status = status.push(iced::widget::Space::new().width(Length::Fill));
+    if !ctx.is_empty() {
+        status = status.push(kit_text::caption(ctx).style(kit_text::muted));
+    }
+
+    container(
+        status.padding(Padding::from([SPACE_SM + 2.0, SPACE_XL])),
     )
     .width(Length::Fill)
     .style(footer_style)

@@ -112,11 +112,8 @@ fn empty_transcript(app: &App) -> Element<'_, Msg> {
             title_row,
             kit_text::body(hint).style(kit_text::muted),
             Space::new().height(SPACE_MD),
-            kit_text::caption(format!(
-                "Project · {}",
-                short_path(&app.project_root.to_string_lossy())
-            ))
-            .style(kit_text::muted),
+            kit_text::caption(short_path(&app.project_root.to_string_lossy()))
+                .style(kit_text::muted),
         ]
         .spacing(SPACE_MD)
         .align_x(Alignment::Center)

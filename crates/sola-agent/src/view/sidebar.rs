@@ -19,14 +19,17 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
         new_btn = new_btn.on_press(Msg::NewSession);
     }
 
-    let header = row![
-        kit_text::subheading("Sessions"),
-        Space::new().width(Length::Fill),
-        new_btn,
-    ]
-    .spacing(SPACE_SM)
-    .align_y(Alignment::Center)
-    .padding(Padding::from([SPACE_MD, SPACE_MD]));
+    let header = container(
+        row![
+            kit_text::subheading("Sessions"),
+            Space::new().width(Length::Fill),
+            new_btn,
+        ]
+        .spacing(SPACE_SM)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding::from([SPACE_LG, SPACE_MD]))
+    .width(Length::Fill);
 
     let list: Element<'_, Msg> = if app.sessions.is_empty() {
         container(
@@ -98,13 +101,22 @@ fn session_row<'a>(summary: &'a SessionSummary, app: &'a App, busy: bool) -> Ele
         item = item.on_press(Msg::SelectSession(summary.id.clone()));
     }
 
+    // Compact star control — ghost chrome, no full labeled_sm padding.
     let pin_label = if summary.pinned { "★" } else { "☆" };
-    let pin = kit_btn::labeled_sm(pin_label, kit_btn::ghost)
+    let pin = button(text(pin_label).size(12))
+        .padding(Padding::from([4, 6]))
+        .style(kit_btn::ghost)
         .on_press(Msg::TogglePin(summary.id.clone()));
 
     row![item, pin]
         .spacing(SPACE_XS)
         .align_y(Alignment::Center)
+        .padding(Padding {
+            top: 0.0,
+            right: SPACE_XS,
+            bottom: 0.0,
+            left: SPACE_XS,
+        })
         .into()
 }
 
