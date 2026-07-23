@@ -13,16 +13,17 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**P7 Pass D** — form primitives — branch `p7d-form-primitives`
-(worktree `.worktrees/p7d-form-primitives`). Visual stop: storybook **Field**
-+ **Form** pages after `cargo make install kit` (when permitted).
+**none**
 
-Plan: `docs/specs/2026-07-21-p7-kit-controls-plan.md` Pass D.
+Next when user says go: **P7 Pass E** (surfaces + storybook completeness) —
+see `docs/specs/2026-07-21-p7-kit-controls-plan.md`.
 Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P7.
 
-Next after merge: **P7 Pass E** (surfaces + storybook completeness).
-
 ### Last completed
+
+**P7 Pass D** — form primitives — merged to `master` at `a911207`
+(2026-07-22). `form_row`, field error caption, `checkbox_style` /
+`toggle_style`; storybook Field + Form pages; settings call sites updated.
 
 **P7 Pass C** — quiet interactions — merged to `master` at `6cceda8`
 (2026-07-21). Ghost hover grey-only; text selection uses selection atom;

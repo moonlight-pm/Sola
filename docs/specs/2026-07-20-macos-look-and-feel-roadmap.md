@@ -229,7 +229,7 @@ Buttons, fields, sidebar, cards via storybook; small radii, quiet hover.
 | A | Fix `overlay` / `menubar` Extended binding | done (`f8fb072`) |
 | B | Type + control density (body 13, named pads) | done (`6dae05a`) |
 | C | Quiet ghost / unify text selection atom | done (`6cceda8`) |
-| D | Form row + field error + checkbox/toggle styles | pending |
+| D | Form row + field error + checkbox/toggle styles | done (`a911207`) |
 | E | Badge / sidebar headers / storybook matrix | pending |
 | F | Docs + handoff to P8 | pending |
 

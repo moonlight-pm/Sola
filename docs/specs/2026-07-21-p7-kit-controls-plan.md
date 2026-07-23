@@ -362,15 +362,16 @@ all call sites (`rg 'components::field|field\('`).
 
 ### Acceptance
 
-- [ ] Storybook Form/Field shows stacked field, form_row, checkbox, toggle,
+- [x] Storybook Form/Field shows stacked field, form_row, checkbox, toggle,
       error state
-- [ ] No consumer migration required beyond compile fixes for `field`
-- [ ] `cargo make build` OK
-- [ ] Visual stop
+- [x] No consumer migration required beyond compile fixes for `field`
+- [x] `cargo make build` OK
+- [x] Visual stop
 
 ### Commit
 
-`feat(kit): form_row, field errors, checkbox/toggle styles (P7d)`
+`feat(kit): form_row, field errors, checkbox/toggle styles (P7d)` — merged
+`a911207` (2026-07-22).
 
 ---
 
