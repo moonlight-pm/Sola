@@ -15,11 +15,19 @@ If Current is `none`, ask what they want instead of inventing work.
 
 **none**
 
-Next when user says go: **P7 Pass F** (docs + handoff to P8) —
-see `docs/specs/2026-07-21-p7-kit-controls-plan.md`.
-Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P7.
+Next when user says go: **P8 — Kit apps inherit** —
+settings / monitor / terminal / agent / browser chrome consume kit tokens
+and helpers (`button::labeled`, `field` / `form_row`, type roles, quiet
+selection) with no per-app themes.
+
+Parent roadmap: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` §4 P8.
+P7 closed: `docs/specs/2026-07-21-p7-kit-controls-plan.md` (passes A–F).
 
 ### Last completed
+
+**P7 Pass F** — docs + handoff to P8 — closed P7 kit controls (roadmap
+checklist, design-language already aligned, text_input fork strategy
+documented, AGENTS fonts path corrected).
 
 **P7 Pass E** — surfaces + storybook completeness — merged to `master` at
 `f064642` (2026-07-23). Quiet Neutral badges; `card::plain` / `style_plain`;

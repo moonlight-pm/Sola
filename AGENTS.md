@@ -232,27 +232,32 @@ defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every
 
 ### Fonts (`src/fonts.rs`)
 
-- **Font files** ship under `/opt/sola/share/fonts/` (synced by
-  `cargo make assets sync`). `load_all()` reads `FONT_FILES` off disk; missing
-  files warn but don't fail. Pass the bytes to the iced builder's `.font(...)`.
-  SF Pro and Iosevka are placed manually by the user (license), not synced.
+- **System fonts only** — kit does **not** bundle or register font files from
+  `/opt/sola/share/fonts/`. `fonts::ensure_system_fonts()` loads the host
+  fontconfig set into iced’s global font db once per process (iced 0.14 does
+  not do this by itself). Preferred faces: **SF Pro Text** (UI) and
+  **Iosevka Term Slab** (mono) when installed; fall back to Inter /
+  JetBrains Mono. Licensed SF/Iosevka stash lives gitignored at
+  `.local/fonts/` and must be installed system-wide (`fc-cache`) — see
+  `docs/manual/distribution.md`.
 - **Semantic roles, not families.** Components never name a family directly —
   they call role accessors: `fonts::ui()`, `ui_medium()`, `display()`,
   `chrome()`, `mono()`. The `Fonts` table (those 5 roles) lives in a process-wide
   `RwLock`; `fonts::install(Fonts)` hot-swaps it, and the bus theme path calls
   `install` on every `Topic::Theme` so a font edit propagates on the next render.
-  Default is SF Pro for everything UI-shaped + JetBrains Mono for code.
-- **`INSTALLED_FAMILIES`** is the font-picker vocabulary (the strings a settings
-  UI offers and that `FontFamily` tokens carry on the bus). `fonts_from_families`
-  builds a `Fonts` table from per-role family-name selections; `FontSelection`
-  (in `theme.rs`) is the per-role wire form.
+- **`INSTALLED_FAMILIES` / `pickable_families()`** is the font-picker vocabulary
+  (settings UI + bus `FontFamily` tokens). `fonts_from_families` builds a
+  `Fonts` table from per-role family-name selections; `FontSelection` (in
+  `theme.rs`) is the per-role wire form.
 
 ### Components (`src/components/`)
 
-`badge`, `button`, `card`, `divider`, `field`, `icon`, `popover`, `sidebar`,
-`split`, `swatch`, `text`, `text_input`, `toolbar`. Each is a reusable iced
-widget/style with a matching storybook page under `src/storybook/pages/`. Grow
-this surface only as real apps need shared pieces — no speculative widgets.
+`badge`, `button`, `card`, `divider`, `field` (incl. `form_row`, error
+caption, checkbox/toggle styles), `icon`, `popover`, `sidebar`, `split`,
+`swatch`, `text`, `text_input` (fork — style/padding only; see module docs),
+`toolbar`. Prefer `button::labeled` / `labeled_sm` and named `PAD_CONTROL*`
+pads. Each has a storybook page under `src/storybook/pages/`. Grow this
+surface only as real apps need shared pieces — no speculative widgets.
 
 ## sola-shell (the Iced desktop shell)
 

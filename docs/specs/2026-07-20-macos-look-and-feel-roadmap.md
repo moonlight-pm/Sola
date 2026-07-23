@@ -218,7 +218,7 @@ caption, soft plate under icon, frosted pill backplate.
 - [x] Caption inside the pill (legible on light wallpapers; follow-up after
   outside-white-on-white regression)
 
-### P7 — Kit controls
+### P7 — Kit controls — **done**
 
 Buttons, fields, sidebar, cards via storybook; small radii, quiet hover.
 
@@ -231,11 +231,20 @@ Buttons, fields, sidebar, cards via storybook; small radii, quiet hover.
 | C | Quiet ghost / unify text selection atom | done (`6cceda8`) |
 | D | Form row + field error + checkbox/toggle styles | done (`a911207`) |
 | E | Badge / sidebar headers / storybook matrix | done (`f064642`) |
-| F | Docs + handoff to P8 | pending |
+| F | Docs + handoff to P8 | done |
 
-### P8 — Kit apps inherit
+**Outcome:** Shell overlay/menubar keep sola Extended atoms; kit body 13 +
+named control pads; ghost hover grey-only; text selection uses selection
+atom; `form_row` / field error / checkbox+toggle styles; quiet Neutral
+badges, `card::plain`, calmer sidebar headers; storybook matrix complete.
+Form primitives unlock P8 settings without per-app snowflakes.
+
+### P8 — Kit apps inherit — **next**
 
 Settings / monitor / terminal / agent / browser chrome — inherit tokens; no per-app themes.
+
+Use kit helpers (`button::labeled`, `field` / `form_row`, `card::plain`,
+shared type roles) rather than local hex, pads, or one-off styles.
 
 ### Deferred (not auto-start)
 
@@ -295,14 +304,17 @@ Agents must not “improve taste” without screenshots. When stuck, ask for cap
 
 ## 8. Session handoff
 
+**Status:** P0–P7 complete. Next phase is **P8 — Kit apps inherit**.
+
 **New session should:**
 
 1. Read this roadmap + design language  
-2. Execute **Current** in `.grok/rules/active-work.md` (starts at P0)  
-3. Use `docs/specs/2026-07-20-screenshot-capture-plan.md`  
+2. Execute **Current** in `.grok/rules/active-work.md` (P8 when active)  
+3. Prefer storybook + shell screenshots for visual stops  
 4. Work in `.worktrees/` only  
-5. Build, not install  
-6. After P0 merges / is smoke-ready, stop for user install + first PNGs  
-7. Only then open P1/P2  
+5. Build (`cargo make build`), not install unless user permits  
+6. Do not re-open P7 kit primitives unless a real binding/density bug surfaces  
+7. P8 = consume kit tokens/helpers in settings / monitor / terminal / agent /
+   browser chrome — no per-app theme forks  
 
-Do **not** re-audit theme system or redesign tokens in the same pass as screenshot capture.
+P0 screenshot tooling and P7 kit plan remain reference docs, not re-entry points.

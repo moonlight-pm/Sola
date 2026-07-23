@@ -104,7 +104,18 @@ macOS controls are familiar: restrained radius, clear disabled state, quiet hove
 
 For Sola:
 
-- Prefer **kit components** (`button`, `field`, `sidebar`, `popover`, `toolbar`, `text`, …) over one-off widgets.
+- Prefer **kit components** (`button`, `field` / `form_row`, `sidebar`,
+  `popover`, `toolbar`, `text`, `card`, …) over one-off widgets.
+- Use **`button::labeled` / `labeled_sm`** and named pads (`PAD_CONTROL`,
+  `PAD_CONTROL_SM`) rather than ad-hoc padding.
+- Ghost buttons: hover/press = grey lift only; text stays base fg (no cyan
+  wash). One primary (filled accent) per control group.
+- Text selection uses the quiet `selection` atom (teal-grey), not
+  `primary.weak`.
+- Cards: default may keep a hairline; use `card::plain` when elevation is
+  enough without a border.
+- Neutral badges stay quiet; strong fills reserved for Accent / Success /
+  Warning / Danger.
 - States to always consider: **default, hover, active/selected, disabled, empty, error**.
 - Popovers and menus: **tools, not hero cards** — compact padding, no oversized titles.
 - Radius: small and consistent (think macOS control radii, not “web card” 16–24px everywhere).
@@ -290,15 +301,16 @@ Future departures from macOS should be **written into §1** of this document whe
 
 ## 9. Suggested redesign order
 
-When executing visual polish against this language:
+When executing visual polish against this language (P0–P7 of the macOS L&F
+roadmap are done; resume at **7**):
 
-1. **Tokens & type baseline** — align kit atoms and type roles closer to macOS dark greys / hierarchy (without losing accent identity if still desired as sparse signal).  
-2. **Menubar** — density, status items, menus.  
-3. **Menus & popovers** — spacing, separators, materials.  
-4. **Launcher** — Spotlight-like restraint.  
-5. **Switcher** — Mission Control / app switcher restraint.  
-6. **Kit controls** — buttons, fields, sidebar, cards via storybook.  
-7. **Settings / other kit apps** — inherit, don’t re-theme per app.  
+1. ~~**Tokens & type baseline**~~ — done (P2).  
+2. ~~**Menubar**~~ — done (P3).  
+3. ~~**Menus & popovers**~~ — done (P4).  
+4. ~~**Launcher**~~ — done (P5).  
+5. ~~**Switcher**~~ — done (P6).  
+6. ~~**Kit controls**~~ — done (P7; storybook is the regression surface).  
+7. **Settings / other kit apps** — inherit, don’t re-theme per app (P8).  
 
 ---
 

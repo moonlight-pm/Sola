@@ -1,4 +1,16 @@
-//! Text inputs display fields that can be filled with text.
+//! Kit text input (forked from iced).
+//!
+//! ## Strategy (P7 debt note)
+//!
+//! This module is a **historical fork** of iced’s text input so kit can own
+//! Theme defaults (padding, selection color, catalog styles) without waiting
+//! on upstream. Keep it for now; **do not expand** the fork with new behavior.
+//!
+//! - **P7 scope:** style + padding only (`DEFAULT_PADDING`, selection atom,
+//!   status colors). No layout/IME/behavior rewrite.
+//! - **Future:** try stock `iced::widget::text_input` + `Catalog` style; delete
+//!   this fork if behavior parity holds. Until then, consumers should import
+//!   kit’s path and treat the API as stable.
 //!
 //! # Example
 //! ```no_run

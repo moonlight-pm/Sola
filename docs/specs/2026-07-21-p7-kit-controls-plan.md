@@ -83,7 +83,7 @@ styles and tokens.
 | **C** | Quiet interactions (ghost, primary, selection unify) | Control calm | B |
 | **D** | Form primitives (field polish + settings row + toggle/checkbox styles) | Unblocks P8 settings | B |
 | **E** | Surfaces polish (badge, card, sidebar headers) + storybook completeness | Polish | C |
-| **F** | Docs + consumer note + handoff to P8 | Process | E |
+| **F** | Docs + consumer note + handoff to P8 | Process | E — **done** |
 
 Each pass is one worktree branch, one mergeable unit, one visual stop.
 
@@ -431,36 +431,33 @@ merged `f064642` (2026-07-23).
 
 ---
 
-## Pass F — Docs, debt notes, P8 handoff
+## Pass F — Docs, debt notes, P8 handoff — **done**
 
 **Signature move:** Process closure — not a visual redesign.
 
 **Files:**
 - Modify: `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md` (P7
   checklist complete)
-- Modify: `.grok/rules/active-work.md` → Current = P8 or next
-- Modify: `docs/manual/design-language.md` only if type sizes or control
-  rules changed in B–E (sync tables)
-- Optional short note in `docs/specs/` or kit module docs:
-  - **text_input fork:** keep for now; do not expand; future: evaluate
-    iced stock + style only
-  - **AGENTS.md** font loading: fix if still describing bundled
-    `load_all` / `/opt/sola/share/fonts` as primary path
+- Modify: `.grok/rules/active-work.md` → next = P8
+- Modify: `docs/manual/design-language.md` — control rules from B–E +
+  redesign order marks P0–P7 done
+- Kit module docs: `text_input` fork strategy
+- **AGENTS.md** fonts: system fontconfig path (not bundled `load_all`)
 
 ### text_input strategy (document only)
 
-Record in plan completion notes / kit `text_input` module docs:
+Recorded in `crates/sola-kit/src/components/text_input/mod.rs`:
 
 1. Fork exists for kit Theme defaults and historical reasons.
 2. P7 only touches `style` + padding.
 3. Future work: try stock `iced::widget::text_input` + `Catalog` style;
-   delete fork if behavior parity holds.
+   delete fork if behavior parity holds. **Do not expand the fork.**
 
 ### Acceptance
 
-- [ ] Roadmap P7 marked done with pass commits listed
-- [ ] active-work points to P8
-- [ ] AGENTS.md / design-language not contradictory
+- [x] Roadmap P7 marked done with pass commits listed
+- [x] active-work points to P8
+- [x] AGENTS.md / design-language not contradictory
 
 ### Commit
 
@@ -515,36 +512,31 @@ If time-boxed: **A + B + C** are the minimum that make kit “feel macOS”;
 
 ## Success criteria for “P7 done”
 
-1. Shell overlay/menubar themes use sola Extended mapping (tests prove it).
-2. Kit body type is 13; control pads are named and used by helpers.
-3. Ghost hover and text selection no longer shout cyan.
+1. Shell overlay/menubar themes use sola Extended mapping (tests prove it). ✅
+2. Kit body type is 13; control pads are named and used by helpers. ✅
+3. Ghost hover and text selection no longer shout cyan. ✅
 4. Storybook can demonstrate the full button matrix + form row +
-   checkbox/toggle.
-5. Neutral badges and sidebar headers no longer read as generic web UI.
-6. Roadmap + active-work hand off cleanly to **P8 — Kit apps inherit**.
+   checkbox/toggle. ✅
+5. Neutral badges and sidebar headers no longer read as generic web UI. ✅
+6. Roadmap + active-work hand off cleanly to **P8 — Kit apps inherit**. ✅
 
 ---
 
-## Open decisions (resolve at visual stops, not by guessing)
+## Open decisions (resolved during A–E visual stops)
 
-| Decision | Default in plan | User may override |
-|----------|-----------------|-------------------|
-| Primary button stays cyan fill | Yes | Quieter neutral primary |
-| Card default keeps hairline | Yes; add plain variant | Flip default to plain |
-| Field signature gains `error` | Yes (breaking monorepo) | Separate `field_error` fn |
-| Toggle widget vs style-only | Style iced toggler if available | Composed fake switch |
-| Pass A shell visual change | May be subtle | If ugly, tune menubar mid-tiers |
+| Decision | Outcome |
+|----------|---------|
+| Primary button stays cyan fill | Kept (one primary per group) |
+| Card default keeps hairline | Kept; added `card::plain` |
+| Field signature gains `error` | Optional error caption on field |
+| Toggle widget vs style-only | Style helpers for iced checkbox/toggler |
+| Pass A shell visual change | Binding correctness; no redesign |
 
 ---
 
 ## Execution handoff
 
-When ready to implement:
+**P7 complete.** Next: **P8 — Kit apps inherit** (roadmap §4). Form
+primitives (`form_row`, etc.) exist; apps should consume kit helpers only.
 
-1. Set `.grok/rules/active-work.md` **Current** to Pass A (or next open
-   pass) with link to this file.
-2. Create worktree → implement → build → user install/smoke → visual stop
-   → approve → merge + cleanup → advance Current.
-
-**Do not** start P8 until Pass D exists (form_row at minimum) or the user
-explicitly scopes P8 to token-only inheritance.
+Pass F updated active-work next pointer; no further P7 code passes planned.
