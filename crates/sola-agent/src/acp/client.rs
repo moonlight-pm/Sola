@@ -1,0 +1,613 @@
+//! JSON-RPC ACP client over a `ChildTransport`.
+
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
+
+use super::transport::ChildTransport;
+use crate::bridge;
+use crate::protocol::{
+    AgentEvent, PermissionChoice, PlanEntry, ToolTurn, Turn,
+};
+use crate::sessions;
+
+pub struct AcpClient {
+    transport: ChildTransport,
+    next_id: u64,
+    /// Pending permission request id → (json-rpc id to respond with).
+    pending_permissions: HashMap<u64, u64>,
+    /// Map our synthetic request_id → option list for UI.
+    permission_options: HashMap<u64, Vec<PermissionChoice>>,
+    session_id: Option<String>,
+    /// Whether a prompt is in flight (waiting for result).
+    prompt_inflight: bool,
+    /// JSON-RPC id of the in-flight `session/prompt` request.
+    prompt_rpc_id: Option<u64>,
+    /// Accumulator while streaming a turn for tool pairing.
+    open_tools: HashMap<String, usize>, // call_id → turn index
+}
+
+impl AcpClient {
+    pub fn new(transport: ChildTransport) -> Self {
+        Self {
+            transport,
+            next_id: 1,
+            pending_permissions: HashMap::new(),
+            permission_options: HashMap::new(),
+            session_id: None,
+            prompt_inflight: false,
+            prompt_rpc_id: None,
+            open_tools: HashMap::new(),
+        }
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
+    pub fn prompt_inflight(&self) -> bool {
+        self.prompt_inflight
+    }
+
+    pub fn initialize(&mut self) -> Result<(), String> {
+        let result = self.request(
+            "initialize",
+            json!({
+                "protocolVersion": 1,
+                "clientCapabilities": {
+                    "fs": { "readTextFile": false, "writeTextFile": false },
+                },
+                "clientInfo": {
+                    "name": "sola-agent",
+                    "version": env!("CARGO_PKG_VERSION"),
+                }
+            }),
+        )?;
+        tracing::info!(?result, "ACP initialize ok");
+        // Some agents require an authenticated notification — ignore failures.
+        let _ = self.notify("authenticated", json!({}));
+        Ok(())
+    }
+
+    pub fn new_session(&mut self, cwd: &str) -> Result<String, String> {
+        let result = self.request(
+            "session/new",
+            json!({
+                "cwd": cwd,
+                "mcpServers": [],
+            }),
+        )?;
+        let id = result
+            .get("sessionId")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("session/new missing sessionId: {result}"))?
+            .to_string();
+        self.session_id = Some(id.clone());
+        self.open_tools.clear();
+        bridge::emit(AgentEvent::SessionReady {
+            id: id.clone(),
+            title: None,
+        });
+        bridge::emit(AgentEvent::Transcript { turns: Vec::new() });
+        Ok(id)
+    }
+
+    pub fn load_session(&mut self, id: &str, cwd: &str) -> Result<(), String> {
+        let _result = self.request(
+            "session/load",
+            json!({
+                "sessionId": id,
+                "cwd": cwd,
+                "mcpServers": [],
+            }),
+        )?;
+        self.session_id = Some(id.to_string());
+        self.open_tools.clear();
+
+        let turns = sessions::turns_from_updates_jsonl(cwd, id);
+        let title = sessions::title_for(cwd, id);
+        bridge::emit(AgentEvent::SessionReady {
+            id: id.to_string(),
+            title,
+        });
+        bridge::emit(AgentEvent::Transcript { turns });
+        Ok(())
+    }
+
+    /// Start a prompt without blocking; completion arrives via `poll`.
+    pub fn send_prompt(&mut self, text: &str) -> Result<(), String> {
+        let sid = self
+            .session_id
+            .clone()
+            .ok_or_else(|| "no active session".to_string())?;
+        if self.prompt_inflight {
+            return Err("turn already in progress".into());
+        }
+        bridge::emit(AgentEvent::UserEcho {
+            text: text.to_string(),
+        });
+        let id = self.next_id;
+        self.next_id += 1;
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "session/prompt",
+            "params": {
+                "sessionId": sid,
+                "prompt": [{ "type": "text", "text": text }],
+            }
+        });
+        self.transport.write_line(&msg.to_string()).map_err(|e| e)?;
+        self.prompt_inflight = true;
+        self.prompt_rpc_id = Some(id);
+        Ok(())
+    }
+
+    pub fn cancel(&mut self) -> Result<(), String> {
+        let Some(sid) = self.session_id.clone() else {
+            return Ok(());
+        };
+        self.notify(
+            "session/cancel",
+            json!({ "sessionId": sid }),
+        )?;
+        Ok(())
+    }
+
+    pub fn respond_permission(&mut self, request_id: u64, option_id: &str) -> Result<(), String> {
+        let Some(rpc_id) = self.pending_permissions.remove(&request_id) else {
+            return Err(format!("unknown permission request {request_id}"));
+        };
+        self.permission_options.remove(&request_id);
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "result": {
+                "outcome": {
+                    "outcome": "selected",
+                    "optionId": option_id,
+                }
+            }
+        });
+        self.transport.write_line(&msg.to_string())
+    }
+
+    pub fn cancel_permission(&mut self, request_id: u64) -> Result<(), String> {
+        let Some(rpc_id) = self.pending_permissions.remove(&request_id) else {
+            return Err(format!("unknown permission request {request_id}"));
+        };
+        self.permission_options.remove(&request_id);
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": rpc_id,
+            "result": {
+                "outcome": { "outcome": "cancelled" }
+            }
+        });
+        self.transport.write_line(&msg.to_string())
+    }
+
+    /// Process available stdout without blocking long. Call from the worker
+    /// idle loop so notifications arrive between commands.
+    pub fn poll(&mut self, budget: Duration) -> Result<(), String> {
+        let deadline = Instant::now() + budget;
+        while Instant::now() < deadline {
+            match self.transport.try_read_line() {
+                Some(Ok(line)) => self.handle_line(&line)?,
+                Some(Err(e)) => return Err(e),
+                None => break,
+            }
+        }
+        Ok(())
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        self.transport.write_line(&msg.to_string())?;
+        self.pump_until_response(id)
+    }
+
+    fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        self.transport.write_line(&msg.to_string())
+    }
+
+    fn pump_until_response(&mut self, expect_id: u64) -> Result<Value, String> {
+        let deadline = Instant::now() + Duration::from_secs(600);
+        loop {
+            if Instant::now() > deadline {
+                return Err(format!("timeout waiting for rpc id {expect_id}"));
+            }
+            let line = self.transport.read_line()?;
+            if let Some(result) = self.handle_line_for_response(&line, expect_id)? {
+                return Ok(result);
+            }
+        }
+    }
+
+    fn handle_line(&mut self, line: &str) -> Result<(), String> {
+        let _ = self.handle_line_for_response(line, u64::MAX)?;
+        Ok(())
+    }
+
+    /// Returns Some(result) if this line was the response for `expect_id`.
+    fn handle_line_for_response(
+        &mut self,
+        line: &str,
+        expect_id: u64,
+    ) -> Result<Option<Value>, String> {
+        let line = line.trim();
+        if line.is_empty() {
+            return Ok(None);
+        }
+        let v: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("skip bad ACP line: {e}; line={}", truncate(line, 200));
+                return Ok(None);
+            }
+        };
+
+        // Response to our request (no method field)
+        if v.get("method").is_none() {
+            if let Some(id) = v.get("id").and_then(|i| i.as_u64()).or_else(|| {
+                v.get("id")
+                    .and_then(|i| i.as_i64())
+                    .map(|i| i as u64)
+            }) {
+                // In-flight prompt completed (async path via poll).
+                if self.prompt_rpc_id == Some(id) {
+                    self.prompt_rpc_id = None;
+                    self.prompt_inflight = false;
+                    if let Some(err) = v.get("error") {
+                        let msg = err
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("prompt error")
+                            .to_string();
+                        bridge::emit(AgentEvent::Error { message: msg });
+                        bridge::emit(AgentEvent::TurnEnded {
+                            stop_reason: "error".into(),
+                        });
+                    } else {
+                        let stop = v
+                            .pointer("/result/stopReason")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("end_turn")
+                            .to_string();
+                        bridge::emit(AgentEvent::TurnEnded {
+                            stop_reason: stop,
+                        });
+                    }
+                    if id == expect_id {
+                        return Ok(Some(v.get("result").cloned().unwrap_or(Value::Null)));
+                    }
+                    return Ok(None);
+                }
+
+                if let Some(err) = v.get("error") {
+                    if id == expect_id {
+                        let msg = err
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("rpc error")
+                            .to_string();
+                        return Err(msg);
+                    }
+                    return Ok(None);
+                }
+                if id == expect_id {
+                    return Ok(Some(v.get("result").cloned().unwrap_or(Value::Null)));
+                }
+                return Ok(None);
+            }
+        }
+
+        // Server request (permission)
+        if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
+            if method == "session/request_permission" {
+                if let Some(rpc_id) = v.get("id").and_then(|i| i.as_u64()).or_else(|| {
+                    v.get("id")
+                        .and_then(|i| i.as_i64())
+                        .map(|i| i as u64)
+                }) {
+                    self.handle_permission_request(rpc_id, v.get("params").cloned().unwrap_or(Value::Null));
+                }
+                return Ok(None);
+            }
+            if method == "session/update" {
+                self.handle_session_update(v.get("params").cloned().unwrap_or(Value::Null));
+                return Ok(None);
+            }
+            // Other server methods: fs/*, etc. — reject minimally so agent doesn't hang
+            if let Some(rpc_id) = v.get("id").and_then(|i| i.as_u64()).or_else(|| {
+                v.get("id")
+                    .and_then(|i| i.as_i64())
+                    .map(|i| i as u64)
+            }) {
+                tracing::debug!(%method, "rejecting unsupported agent→client request");
+                let resp = json!({
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "error": { "code": -32601, "message": format!("method not supported: {method}") }
+                });
+                let _ = self.transport.write_line(&resp.to_string());
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn handle_permission_request(&mut self, rpc_id: u64, params: Value) {
+        let request_id = rpc_id; // reuse
+        let tool = params
+            .pointer("/toolCall/title")
+            .and_then(|t| t.as_str())
+            .or_else(|| params.pointer("/toolCall/kind").and_then(|t| t.as_str()))
+            .unwrap_or("tool")
+            .to_string();
+        let preview = params
+            .pointer("/toolCall/rawInput")
+            .map(|v| v.to_string())
+            .or_else(|| {
+                params
+                    .pointer("/toolCall")
+                    .map(|v| truncate(&v.to_string(), 500))
+            })
+            .unwrap_or_default();
+        let options: Vec<PermissionChoice> = params
+            .get("options")
+            .and_then(|o| o.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|o| {
+                        Some(PermissionChoice {
+                            option_id: o.get("optionId")?.as_str()?.to_string(),
+                            name: o
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("Allow")
+                                .to_string(),
+                            kind: o
+                                .get("kind")
+                                .and_then(|k| k.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        self.pending_permissions.insert(request_id, rpc_id);
+        self.permission_options
+            .insert(request_id, options.clone());
+        bridge::emit(AgentEvent::PermissionRequired {
+            request_id,
+            tool,
+            preview,
+            options,
+        });
+    }
+
+    fn handle_session_update(&mut self, params: Value) {
+        let update = params.get("update").cloned().unwrap_or(Value::Null);
+        let kind = update
+            .get("sessionUpdate")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+
+        // Grok totalTokens fallback
+        if let Some(tokens) = params
+            .pointer("/_meta/totalTokens")
+            .and_then(|t| t.as_u64())
+            .or_else(|| update.pointer("/_meta/totalTokens").and_then(|t| t.as_u64()))
+        {
+            bridge::emit(AgentEvent::Usage {
+                used: tokens,
+                size: None,
+            });
+        }
+
+        match kind {
+            "agent_message_chunk" | "agent_message" => {
+                if let Some(text) = content_text(&update) {
+                    bridge::emit(AgentEvent::AgentDelta { text });
+                }
+            }
+            "agent_thought_chunk" | "agent_thought" => {
+                if let Some(text) = content_text(&update) {
+                    bridge::emit(AgentEvent::ThoughtDelta { text });
+                }
+            }
+            "user_message_chunk" => {
+                // Already echoed from UI; ignore or show if history replay
+                if let Some(text) = content_text(&update) {
+                    // Only emit if not our local echo during live turn — history loads use Transcript
+                    if !self.prompt_inflight {
+                        bridge::emit(AgentEvent::UserEcho { text });
+                    }
+                }
+            }
+            "tool_call" => {
+                let call_id = update
+                    .get("toolCallId")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let tool = update
+                    .get("title")
+                    .and_then(|s| s.as_str())
+                    .or_else(|| update.get("kind").and_then(|s| s.as_str()))
+                    .unwrap_or("tool")
+                    .to_string();
+                let args = update
+                    .get("rawInput")
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                bridge::emit(AgentEvent::ToolStart {
+                    call_id,
+                    tool,
+                    args,
+                });
+            }
+            "tool_call_update" => {
+                let call_id = update
+                    .get("toolCallId")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let status = update
+                    .get("status")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string());
+                let title = update
+                    .get("title")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string());
+                let output = tool_output_text(&update);
+                let done = status
+                    .as_deref()
+                    .is_some_and(|s| matches!(s, "completed" | "failed" | "cancelled"));
+                if done {
+                    bridge::emit(AgentEvent::ToolEnd {
+                        call_id,
+                        status: status.unwrap_or_else(|| "completed".into()),
+                        output,
+                    });
+                } else {
+                    bridge::emit(AgentEvent::ToolUpdate {
+                        call_id,
+                        status,
+                        title,
+                        output,
+                    });
+                }
+            }
+            "plan" => {
+                let entries = update
+                    .get("entries")
+                    .and_then(|e| e.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|e| {
+                                Some(PlanEntry {
+                                    content: e.get("content")?.as_str()?.to_string(),
+                                    status: e
+                                        .get("status")
+                                        .and_then(|s| s.as_str())
+                                        .unwrap_or("pending")
+                                        .to_string(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                bridge::emit(AgentEvent::Plan { entries });
+            }
+            "usage_update" => {
+                let used = update.get("used").and_then(|u| u.as_u64()).unwrap_or(0);
+                let size = update.get("size").and_then(|s| s.as_u64());
+                bridge::emit(AgentEvent::Usage { used, size });
+            }
+            "session_info_update" => {
+                if let Some(title) = update
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+                {
+                    if let Some(id) = self.session_id.clone() {
+                        bridge::emit(AgentEvent::SessionReady {
+                            id,
+                            title: Some(title),
+                        });
+                    }
+                }
+            }
+            _ => {
+                tracing::trace!(%kind, "unhandled session update");
+            }
+        }
+    }
+}
+
+fn content_text(update: &Value) -> Option<String> {
+    let content = update.get("content")?;
+    if let Some(s) = content.as_str() {
+        return Some(s.to_string());
+    }
+    if let Some(t) = content.get("text").and_then(|t| t.as_str()) {
+        return Some(t.to_string());
+    }
+    if let Some(arr) = content.as_array() {
+        let mut out = String::new();
+        for c in arr {
+            if let Some(t) = c.get("text").and_then(|t| t.as_str()) {
+                out.push_str(t);
+            } else if let Some(t) = c.as_str() {
+                out.push_str(t);
+            }
+        }
+        if !out.is_empty() {
+            return Some(out);
+        }
+    }
+    None
+}
+
+fn tool_output_text(update: &Value) -> Option<String> {
+    let content = update.get("content")?;
+    if let Some(arr) = content.as_array() {
+        let mut parts = Vec::new();
+        for item in arr {
+            if let Some(t) = item
+                .pointer("/content/text")
+                .and_then(|t| t.as_str())
+                .or_else(|| item.get("text").and_then(|t| t.as_str()))
+            {
+                parts.push(t.to_string());
+            }
+        }
+        if !parts.is_empty() {
+            return Some(parts.join("\n"));
+        }
+    }
+    content.as_str().map(|s| s.to_string())
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max])
+    }
+}
+
+/// Helpers used when mapping history — re-export turn builders.
+#[allow(dead_code)]
+pub fn empty_tool(call_id: String, tool: String) -> ToolTurn {
+    ToolTurn {
+        call_id,
+        tool,
+        args: Value::Null,
+        status: String::new(),
+        output: String::new(),
+    }
+}
+
+#[allow(dead_code)]
+pub fn turns_demo() -> Vec<Turn> {
+    Vec::new()
+}

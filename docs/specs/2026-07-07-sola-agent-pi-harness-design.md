@@ -1,7 +1,7 @@
 # Sola Agent — Design (pi-inspired harness)
 
 **Date:** 2026-07-07
-**Status:** Approved (design), spec review pending
+**Status:** Superseded by `2026-07-23-sola-agent-acp-runner-design.md` (Grok ACP runner)
 
 ## Goal
 

@@ -3,9 +3,8 @@ name = "sola-agent"
 version.workspace = true
 edition.workspace = true
 
-# Minimal iced-based AI agent shell. This intentionally starts from the
-# current sola-kit app pattern (see sola-terminal / sola-settings), not the
-# retired WebView prototype under apocrypha/apps/agent.
+# Desktop ACP client for coding agents (default backend: Grok Build).
+# Kit-native iced UI; agent process owns tools, sessions, and model.
 
 [[bin]]
 name = "sola-agent"
@@ -18,10 +17,9 @@ sola-core = { path = "../sola-core" }
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ureq = { workspace = true, features = ["json"] }
-rustls = { workspace = true }
-uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
+urlencoding = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
 tempfile = "3"

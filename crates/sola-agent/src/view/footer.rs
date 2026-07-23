@@ -1,39 +1,56 @@
-use iced::widget::{container, row};
-use iced::{Element, Length};
-use sola_kit::components::style::{SPACE_MD, SPACE_SM, SPACE_XL};
+//! Status bar: backend, connection mode, context usage, turn state.
+
+use iced::widget::{container, row, text};
+use iced::{Alignment, Element, Length, Padding};
+use sola_kit::components::style::{SPACE_MD, SPACE_XL};
 use sola_kit::components::text as kit_text;
 
-use crate::session::Usage;
-use crate::{App, Msg};
+use crate::App;
 
-pub(crate) fn token_summary(usage: &Usage) -> String {
-    format!(
-        "tokens: {} in / {} out",
-        usage.input_tokens, usage.output_tokens
+pub(crate) fn view(app: &App) -> Element<'_, crate::Msg> {
+    let backend = app.backend_label.as_str();
+    let mode = app.connection_mode.as_str();
+    let ctx = match (app.usage_used, app.usage_size) {
+        (Some(used), Some(size)) if size > 0 => {
+            let pct = (used as f64 / size as f64 * 100.0).round() as u64;
+            format!("context {used}/{size} ({pct}%)")
+        }
+        (Some(used), _) => format!("tokens ~{used}"),
+        _ => "context —".into(),
+    };
+    let state = if app.pending.is_some() {
+        "waiting for approval"
+    } else if app.streaming {
+        "streaming"
+    } else if app.connected {
+        "idle"
+    } else {
+        "disconnected"
+    };
+    let session = app
+        .session_id
+        .as_deref()
+        .map(|s| {
+            if s.len() > 8 {
+                format!("session {}…", &s[..8])
+            } else {
+                format!("session {s}")
+            }
+        })
+        .unwrap_or_else(|| "no session".into());
+
+    container(
+        row![
+            kit_text::caption(backend),
+            kit_text::caption(mode),
+            kit_text::caption(session),
+            kit_text::caption(ctx),
+            text(state).size(11),
+        ]
+        .spacing(SPACE_MD)
+        .align_y(Alignment::Center)
+        .padding(Padding::from([SPACE_MD, SPACE_XL])),
     )
-}
-
-pub(crate) fn view(app: &App) -> Element<'_, Msg> {
-    let content = row![
-        kit_text::caption(format!("model: {}", app.model)).style(kit_text::muted),
-        kit_text::caption(format!("effort: {}", app.effort)).style(kit_text::muted),
-        kit_text::caption(token_summary(&app.usage)).style(kit_text::muted),
-    ]
-    .spacing(SPACE_XL)
-    .padding(SPACE_MD + SPACE_SM);
-    container(content).width(Length::Fill).into()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn token_summary_formats_counts() {
-        let u = Usage {
-            input_tokens: 12,
-            output_tokens: 34,
-        };
-        assert_eq!(token_summary(&u), "tokens: 12 in / 34 out");
-    }
+    .width(Length::Fill)
+    .into()
 }
