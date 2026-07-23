@@ -36,13 +36,65 @@ fn encode_cwd(cwd: &str) -> String {
 }
 
 /// Sessions for a project working directory, newest first.
+///
+/// Also merges sessions for the git root when `cwd` is a nested path
+/// (e.g. a Sola worktree) so the sidebar isn't empty in common dev setups.
 pub fn list_for_cwd(cwd: &str) -> Vec<SessionSummary> {
-    let group = sessions_root().join(encode_cwd(cwd));
     let pins = overlay::load();
+    let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
+    for root in session_roots(cwd) {
+        collect_group(&root, &pins, &mut seen, &mut out);
+    }
+    out.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.updated.cmp(&a.updated)));
+    out
+}
+
+fn session_roots(cwd: &str) -> Vec<String> {
+    let mut roots = vec![cwd.to_string()];
+    if let Some(git) = find_git_root(Path::new(cwd)) {
+        let g = git.to_string_lossy().into_owned();
+        if g != cwd {
+            roots.push(g);
+        }
+    }
+    // Prefer canonical forms so encode matches Grok's on-disk keys.
+    roots
+        .into_iter()
+        .map(|r| {
+            PathBuf::from(&r)
+                .canonicalize()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or(r)
+        })
+        .collect()
+}
+
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    let mut cur = start.to_path_buf();
+    if let Ok(c) = cur.canonicalize() {
+        cur = c;
+    }
+    loop {
+        if cur.join(".git").exists() {
+            return Some(cur);
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
+fn collect_group(
+    cwd: &str,
+    pins: &overlay::Overlay,
+    seen: &mut std::collections::HashSet<String>,
+    out: &mut Vec<SessionSummary>,
+) {
+    let group = sessions_root().join(encode_cwd(cwd));
     let entries = match fs::read_dir(&group) {
         Ok(e) => e,
-        Err(_) => return out,
+        Err(_) => return,
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -53,6 +105,9 @@ pub fn list_for_cwd(cwd: &str) -> Vec<SessionSummary> {
             Some(s) => s.to_string(),
             None => continue,
         };
+        if !seen.insert(id.clone()) {
+            continue;
+        }
         let summary_path = path.join("summary.json");
         let (title, updated, cwd_s) = match read_summary(&summary_path) {
             Some(t) => t,
@@ -67,8 +122,6 @@ pub fn list_for_cwd(cwd: &str) -> Vec<SessionSummary> {
             pinned,
         });
     }
-    out.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.updated.cmp(&a.updated)));
-    out
 }
 
 fn read_summary(path: &Path) -> Option<(String, u64, String)> {

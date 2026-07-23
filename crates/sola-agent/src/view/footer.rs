@@ -1,56 +1,79 @@
-//! Status bar: backend, connection mode, context usage, turn state.
+//! Status bar — quiet chrome with badges for connection and turn state.
 
-use iced::widget::{container, row, text};
-use iced::{Alignment, Element, Length, Padding};
-use sola_kit::components::style::{SPACE_MD, SPACE_XL};
+use iced::widget::{container, row};
+use iced::{Alignment, Background, Border, Element, Length, Padding, Theme};
+use sola_kit::components::badge::{self, Tone};
+use sola_kit::components::style::{SPACE_MD, SPACE_SM, SPACE_XL};
 use sola_kit::components::text as kit_text;
 
 use crate::App;
 
 pub(crate) fn view(app: &App) -> Element<'_, crate::Msg> {
-    let backend = app.backend_label.as_str();
-    let mode = app.connection_mode.as_str();
+    let conn = if app.connected {
+        badge::badge(format!("{} · {}", app.backend_label, app.connection_mode.as_str()), Tone::Success)
+    } else {
+        badge::badge("disconnected", Tone::Warning)
+    };
+
+    let turn = if app.pending.is_some() {
+        badge::badge("awaiting approval", Tone::Warning)
+    } else if app.streaming {
+        badge::badge("streaming", Tone::Accent)
+    } else {
+        badge::badge("idle", Tone::Neutral)
+    };
+
     let ctx = match (app.usage_used, app.usage_size) {
         (Some(used), Some(size)) if size > 0 => {
-            let pct = (used as f64 / size as f64 * 100.0).round() as u64;
-            format!("context {used}/{size} ({pct}%)")
+            let pct = (used as f64 / size as f64 * 100.0).clamp(0.0, 100.0).round() as u64;
+            format!("Context {pct}% · {used} / {size}")
         }
-        (Some(used), _) => format!("tokens ~{used}"),
-        _ => "context —".into(),
+        (Some(used), _) => format!("Tokens ~{used}"),
+        _ => "Context —".into(),
     };
-    let state = if app.pending.is_some() {
-        "waiting for approval"
-    } else if app.streaming {
-        "streaming"
-    } else if app.connected {
-        "idle"
-    } else {
-        "disconnected"
-    };
+
     let session = app
-        .session_id
+        .session_title
         .as_deref()
-        .map(|s| {
-            if s.len() > 8 {
-                format!("session {}…", &s[..8])
-            } else {
-                format!("session {s}")
-            }
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            app.session_id.as_ref().map(|id| {
+                if id.len() > 10 {
+                    format!("{}…", &id[..8])
+                } else {
+                    id.clone()
+                }
+            })
         })
-        .unwrap_or_else(|| "no session".into());
+        .unwrap_or_else(|| "No session".into());
 
     container(
         row![
-            kit_text::caption(backend),
-            kit_text::caption(mode),
-            kit_text::caption(session),
-            kit_text::caption(ctx),
-            text(state).size(11),
+            conn,
+            turn,
+            kit_text::caption(session).style(kit_text::muted),
+            iced::widget::Space::new().width(Length::Fill),
+            kit_text::caption(ctx).style(kit_text::muted),
         ]
         .spacing(SPACE_MD)
         .align_y(Alignment::Center)
-        .padding(Padding::from([SPACE_MD, SPACE_XL])),
+        .padding(Padding::from([SPACE_SM + 2.0, SPACE_XL])),
     )
     .width(Length::Fill)
+    .style(footer_style)
     .into()
+}
+
+fn footer_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.background.weaker.color)),
+        border: Border {
+            color: p.background.stronger.color,
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..container::Style::default()
+    }
 }
