@@ -26,10 +26,11 @@ use sola_bus::topics::{Topic, TopicKind};
 use sola_bus::Message;
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, apply_theme_update, startup, window_settings};
+use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar_button;
 use sola_kit::fonts;
-use sola_kit::theme::{default_theme, parse as hex};
+use sola_kit::theme::{default_theme, parse as hex, selection};
 
 const APP_ID: &str = "sola-monitor";
 
@@ -39,15 +40,16 @@ const SIDEBAR_W_MIN: f32 = 160.0;
 const SIDEBAR_W_MAX: f32 = 700.0;
 /// Sentinel option in the topic-filter pick_list meaning "no filter".
 const FILTER_ALL: &str = "(all topics)";
+/// Mono / payload size — matches kit `text::code` (12).
 const ROW_FONT_PX: f32 = 12.0;
-const ROW_TEXT_FONT_PX: f32 = 14.0;
+/// Row primary text — kit body density (13).
+const ROW_TEXT_FONT_PX: f32 = 13.0;
+/// Column headers — kit body (13) on chrome face.
 const HEADER_FONT_PX: f32 = 13.0;
 const SELECTED_PAYLOAD_FONT_PX: f32 = 12.0;
 const TIME_COL_W: f32 = 100.0;
 const TOPIC_COL_W: f32 = 200.0;
 const SOURCE_COL_W: f32 = 120.0;
-/// Horizontal gap between cells in the messages row + header row.
-const CELL_GAP: f32 = 16.0;
 
 fn main() -> iced::Result {
     startup(APP_ID);
@@ -457,7 +459,6 @@ impl App {
         let filter = text_input("filter…", &self.filter)
             .on_input(Msg::FilterChanged)
             .font(fonts::ui())
-            .padding(Padding::new(4.0).left(8.0).right(8.0))
             .size(13);
 
         let topic_options = topic_filter_options();
@@ -472,7 +473,7 @@ impl App {
         )
         .font(fonts::chrome())
         .text_size(12)
-        .padding(Padding::new(4.0).left(8.0).right(8.0));
+        .padding(SPACE_SM);
 
         let pause_label = if self.paused {
             format!("Resume ({})", self.pause_buffer.len())
@@ -487,11 +488,11 @@ impl App {
             toolbar_button(pause_label).on_press(Msg::TogglePause),
             toolbar_button("Clear").on_press(Msg::Clear),
         ]
-        .spacing(8)
+        .spacing(SPACE_MD)
         .align_y(iced::Alignment::Center);
 
         container(toolbar_row)
-            .padding(Padding::new(8.0))
+            .padding(SPACE_MD)
             .style(toolbar_style)
             .width(Length::Fill)
             .into()
@@ -516,10 +517,10 @@ impl App {
                 .size(HEADER_FONT_PX)
                 .width(Length::Fill),
         ]
-        .spacing(CELL_GAP);
+        .spacing(SPACE_XL);
 
         let header = container(header)
-            .padding(Padding::new(4.0).left(12.0).right(12.0))
+            .padding(Padding::new(SPACE_SM).left(SPACE_LG).right(SPACE_LG))
             .style(header_style)
             .width(Length::Fill);
 
@@ -570,20 +571,25 @@ impl App {
                 // breaking row alignment.
                 preview_payload(&entry.payload_preview),
             ]
-            .spacing(CELL_GAP)
+            .spacing(SPACE_XL)
             .align_y(iced::Alignment::Center);
 
             let row_content: Element<'_, Msg> = if selected && !entry.payload_pretty.is_empty()
             {
                 column![one_line, expanded_payload(&entry.payload_pretty)]
-                    .spacing(4)
+                    .spacing(SPACE_SM)
                     .into()
             } else {
                 one_line.into()
             };
 
             let body = container(row_content)
-                .padding(Padding::new(2.0).left(12.0).right(12.0))
+                .padding(Padding {
+                    top: SPACE_XS,
+                    bottom: SPACE_XS,
+                    left: SPACE_LG,
+                    right: SPACE_LG,
+                })
                 .width(Length::Fill)
                 .style(if selected {
                     selected_row_style
@@ -614,7 +620,7 @@ impl App {
                 .font(fonts::chrome())
                 .size(HEADER_FONT_PX),
         )
-        .padding(Padding::new(4.0).left(12.0).right(12.0))
+        .padding(Padding::new(SPACE_SM).left(SPACE_LG).right(SPACE_LG))
         .style(header_style)
         .width(Length::Fill);
 
@@ -640,20 +646,20 @@ impl App {
                     .size(ROW_TEXT_FONT_PX)
                     .wrapping(Wrapping::None),
             ]
-            .spacing(CELL_GAP)
+            .spacing(SPACE_XL)
             .align_y(iced::Alignment::Center);
 
             let row_content: Element<'_, Msg> = if selected && !entry.payload_pretty.is_empty()
             {
                 column![one_line, expanded_payload(&entry.payload_pretty)]
-                    .spacing(4)
+                    .spacing(SPACE_SM)
                     .into()
             } else {
                 one_line.into()
             };
 
             let body = container(row_content)
-                .padding(Padding::new(4.0).left(12.0).right(12.0))
+                .padding(Padding::new(SPACE_SM).left(SPACE_LG).right(SPACE_LG))
                 .width(Length::Fill)
                 .style(if selected {
                     selected_row_style
@@ -701,17 +707,8 @@ impl App {
 // ── Styling helpers ────────────────────────────────────────────────
 //
 // Chrome styles resolve via `theme.extended_palette()` — same surface
-// every kit component reads through. The `hex(...)` helper (re-exported
-// from `sola_kit::theme::parse`) is reserved for JSON syntax-highlight
-// colors and the selected-row tint, neither of which fits the kit's
-// atom vocabulary cleanly.
-
-/// In-between dark tint for the currently-expanded message row.
-/// Sits perceptibly above `BG` but below the kit's `BG_HOVER` so
-/// selection reads as "open" rather than "hovered". Local escape
-/// hatch — doesn't belong in the kit palette because no other app
-/// has asked for this specific shade.
-const SELECTED_ROW_BG: &str = "#1c2129";
+// every kit component reads through. The `hex(...)` helper is reserved
+// for JSON syntax-highlight colors (domain content, not product chrome).
 
 fn toolbar_style(t: &Theme) -> container::Style {
     container::Style {
@@ -740,9 +737,10 @@ fn plain_row_style(_: &Theme) -> container::Style {
     container::Style::default()
 }
 
+/// Expanded / selected row — quiet kit selection atom (not a local hex).
 fn selected_row_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(iced::Background::Color(hex(SELECTED_ROW_BG))),
+        background: Some(iced::Background::Color(selection())),
         ..container::Style::default()
     }
 }
