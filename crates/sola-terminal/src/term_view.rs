@@ -269,7 +269,7 @@ impl Palette {
     /// | default bg         | `bg` (bg-primary)                         |
     /// | default fg         | `fg` (text-primary)                       |
     /// | cursor             | `accent`                                  |
-    /// | selection bg       | `accent` @ 35% alpha (muted accent wash)  |
+    /// | selection bg       | `selection` atom @ 55% alpha (quiet wash) |
     ///
     /// ### ANSI table (0..=7 normal, 8..=15 bright)
     ///
@@ -308,9 +308,8 @@ impl Palette {
             // Fixed deep gold, independent of the theme accent — a warm gold
             // cursor reads clearly on every palette and never muddies to brown.
             cursor: rgb(0xff, 0xb8, 0x00),
-            // A muted accent wash, legible over any bg (alpha-blended), instead
-            // of a flat fill that could clash with a light theme.
-            selection: with_alpha(atoms.accent, 0.35),
+            // Quiet selection atom wash (P8) — not a shouting accent fill.
+            selection: with_alpha(atoms.selection, 0.55),
             ansi: [
                 atoms.bg_hover,        // 0  black
                 atoms.danger,          // 1  red
@@ -1416,11 +1415,11 @@ mod tests {
         assert_eq!(p.fg, a.fg, "default fg ← text-primary");
         // Cursor is a fixed deep gold, not theme-derived.
         assert_eq!(p.cursor, Color::from_rgb8(0xff, 0xb8, 0x00), "cursor ← fixed gold");
-        // Selection is the accent wash at 35% alpha.
-        assert_eq!(p.selection.r, a.accent.r);
-        assert_eq!(p.selection.g, a.accent.g);
-        assert_eq!(p.selection.b, a.accent.b);
-        assert!((p.selection.a - 0.35).abs() < 1e-6, "selection ← accent @ 0.35");
+        // Selection is the quiet selection atom wash at 55% alpha.
+        assert_eq!(p.selection.r, a.selection.r);
+        assert_eq!(p.selection.g, a.selection.g);
+        assert_eq!(p.selection.b, a.selection.b);
+        assert!((p.selection.a - 0.55).abs() < 1e-6, "selection ← selection atom @ 0.55");
 
         // Semantic ANSI slots map to the matching kit atoms.
         assert_eq!(p.ansi[1], a.danger, "ansi[1] red ← danger");

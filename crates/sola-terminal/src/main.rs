@@ -10,7 +10,7 @@ const WHEEL_MIN_INTERVAL: Duration = Duration::from_millis(12);
 /// Max SGR wheel reports written per flush tick (after accumulation).
 const WHEEL_MAX_REPORTS_PER_FLUSH: i32 = 2;
 
-use iced::widget::{canvas, container, mouse_area, row, text};
+use iced::widget::{canvas, container, mouse_area, row};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard, mouse};
 
@@ -493,8 +493,11 @@ impl App {
         let pane: Element<'_, Msg> =
             match self.active.as_deref().and_then(|id| self.tabs.get_tab(id)) {
                 Some(tab) => self.render_node(&tab.layout, &tab.active_pane),
-                None => container(text("terminal pane (placeholder)"))
-                    .padding(8)
+                None => container(
+                    sola_kit::components::text::body("terminal pane (placeholder)")
+                        .style(sola_kit::components::text::muted),
+                )
+                    .padding(sola_kit::components::style::SPACE_MD)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .into(),
@@ -569,7 +572,9 @@ impl App {
                 };
                 canvas(view).width(Length::Fill).height(Length::Fill).into()
             }
-            None => container(text("…"))
+            None => container(
+                sola_kit::components::text::caption("…").style(sola_kit::components::text::muted),
+            )
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into(),
