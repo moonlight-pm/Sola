@@ -133,13 +133,13 @@ pub struct TextInput<
     last_status: Option<Status>,
 }
 
-/// The default [`Padding`] of a [`TextInput`] — compact field density
-/// (`[vertical, horizontal]` ≈ 4 / 8).
+/// The default [`Padding`] of a [`TextInput`] — field density
+/// (`[vertical, horizontal]` ≈ 7 / 12, sola-kit-ds).
 pub const DEFAULT_PADDING: Padding = Padding {
-    top: 4.0,
-    right: 8.0,
-    bottom: 4.0,
-    left: 8.0,
+    top: 7.0,
+    right: 12.0,
+    bottom: 7.0,
+    left: 12.0,
 };
 
 impl<'a, Message, Theme, Renderer> TextInput<'a, Message, Theme, Renderer>
@@ -1853,23 +1853,27 @@ where
     TextInput::new(placeholder, value)
 }
 
-/// Kit text-input style — the look of the former `components::text_input::style`
-/// (canvas BG, hairline border, accent focus), now returning this widget's own
-/// [`Style`]. Pass it to [`TextInput::style`].
+/// Kit text-input style — inset well, strong hairline, accent focus
+/// (sola-kit-ds field chrome). Pass it to [`TextInput::style`].
 ///
 /// Text selection uses [`crate::theme::selection`] (quiet teal-grey), not
 /// primary accent. Focused border stays `primary.base` — correct sparse
 /// accent use for focus.
 pub fn style(theme: &Theme, status: Status) -> Style {
+    use crate::components::style::{
+        RADIUS_MD, hairline_strong, inset_surface,
+    };
+
     let p = theme.extended_palette();
+    let well = inset_surface(p.background.base.color, 0.55);
     let active = Style {
-        background: Background::Color(p.background.base.color),
-        border: crate::components::style::hairline(
-            p,
-            crate::components::style::RADIUS_MD,
-        ),
+        background: Background::Color(well),
+        border: hairline_strong(RADIUS_MD),
         icon: p.secondary.base.text,
-        placeholder: p.secondary.base.text,
+        placeholder: Color {
+            a: 0.75,
+            ..p.secondary.base.text
+        },
         value: p.background.base.text,
         selection: crate::theme::selection(),
     };
@@ -1877,16 +1881,20 @@ pub fn style(theme: &Theme, status: Status) -> Style {
         Status::Active => active,
         Status::Hovered => Style {
             border: Border {
-                color: p.background.strongest.color,
-                ..active.border
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.16),
+                width: 1.0,
+                radius: RADIUS_MD.into(),
             },
             ..active
         },
         Status::Focused { .. } => Style {
             border: Border {
-                color: p.primary.base.color,
+                color: Color {
+                    a: 0.55,
+                    ..p.primary.base.color
+                },
                 width: 1.0,
-                ..active.border
+                radius: RADIUS_MD.into(),
             },
             ..active
         },

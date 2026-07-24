@@ -102,11 +102,36 @@ pub fn view(state: &State) -> Element<'_, Msg> {
     .padding(4)
     .width(Length::Fill);
 
+    // Product moment — one primary per group, as the OD control stage shows.
+    let product = container(
+        column![
+            caption("Product moment — session identity footer").style(muted),
+            row![
+                kit_btn::labeled("Save theme", kit_btn::primary).on_press(Msg::Noop),
+                kit_btn::labeled("Cancel", kit_btn::secondary).on_press(Msg::Noop),
+                kit_btn::labeled("Revert", kit_btn::ghost).on_press(Msg::Noop),
+                kit_btn::confirm_button(
+                    state.confirm_armed,
+                    "Delete",
+                    "Confirm?",
+                    Msg::ArmConfirm,
+                    Msg::Confirm,
+                )
+                .padding(sola_kit::components::style::PAD_CONTROL),
+            ]
+            .spacing(8),
+        ]
+        .spacing(10),
+    )
+    .style(card_style)
+    .padding(18)
+    .width(Length::Fill);
+
     let demo = container(
         column![
-            caption("Interactive — one primary per group; ghost hover is grey lift only").style(muted),
+            caption("Interactive — one primary per group; ghost is muted until hover").style(muted),
             buttons,
-            caption("labeled / labeled_sm — PAD_CONTROL [5,12] / PAD_CONTROL_SM [3,10]").style(muted),
+            caption("labeled / labeled_sm — PAD_CONTROL [7,14] / PAD_CONTROL_SM [5,11]").style(muted),
             labeled,
             caption("Disabled (no on_press)").style(muted),
             disabled,
@@ -122,12 +147,17 @@ pub fn view(state: &State) -> Element<'_, Msg> {
         .spacing(12),
     )
     .style(card_style)
-    .padding(16)
+    .padding(18)
     .width(Length::Fill);
 
     column![
         heading("Button"),
-        body("Quiet ghost hover; sparse primary; confirm for destructive.").style(muted),
+        body(
+            "Primary carries soft glow + dark label. Secondary is a quiet fill, \
+             not a bare outline. Ghost stays muted until hover. One primary per group."
+        )
+        .style(muted),
+        product,
         demo,
         code("button::labeled(\"Save\", button::primary) · confirm_button(armed, …)").style(muted),
     ]

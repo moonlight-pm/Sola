@@ -1,4 +1,4 @@
-//! Badge — status pill with a colored background and a short label.
+//! Badge — status pill with a soft tinted background and a short label.
 //!
 //! `badge(label, tone)` returns an `Element` ready to drop into a row
 //! or inline run. Tones map to kit palette tiers so a `Success` badge
@@ -8,7 +8,7 @@
 use iced::widget::{container, text};
 use iced::{Background, Border, Color, Element, Padding, Theme};
 
-use crate::components::style::RADIUS_PILL;
+use crate::components::style::{RADIUS_PILL, alpha};
 use crate::fonts;
 
 /// Visual flavors of badge. Each maps to a palette tier in [`style`].
@@ -21,14 +21,14 @@ pub enum Tone {
     Danger,
 }
 
-/// Compact pill — medium-weight 10px label, 2×8 padding, fully
-/// rounded corners. Pass a [`Tone`] for the color story.
+/// Compact pill — medium-weight 10px label, letterspaced uppercase feel,
+/// soft tone fill + matching border (OD soft badges, not solid slabs).
 pub fn badge<'a, Message: 'a>(
     label: impl text::IntoFragment<'a>,
     tone: Tone,
 ) -> Element<'a, Message, Theme> {
     container(text(label).font(fonts::ui_medium()).size(10))
-        .padding(Padding::from([2, 8]))
+        .padding(Padding::from([3, 8]))
         .style(move |t| style(t, tone))
         .into()
 }
@@ -36,26 +36,39 @@ pub fn badge<'a, Message: 'a>(
 /// Style fn for the badge container. Exposed so callers building their
 /// own labeled chrome can pick up the same palette mapping.
 ///
-/// **Neutral** is quiet chrome: hover-grey fill + muted text — not a
-/// solid border-coloured slab. Status tones keep scanable fills.
+/// Status tones use ~14% tone fill + ~28% tone border + tone-coloured
+/// text. Neutral is quiet hover-grey + hairline.
 pub fn style(theme: &Theme, tone: Tone) -> container::Style {
     let p = theme.extended_palette();
-    let (bg, fg) = match tone {
-        // Quiet secondary surface — background.strong (hover grey) + muted
-        // text. Avoid secondary.base (bound to BORDER), which read as a
-        // solid border-coloured slab next to calm chrome.
-        Tone::Neutral => (p.background.strong.color, p.secondary.base.text),
-        Tone::Accent => (p.primary.base.color, p.primary.base.text),
-        Tone::Success => (p.success.base.color, p.success.base.text),
-        Tone::Warning => (p.warning.base.color, p.warning.base.text),
-        Tone::Danger => (p.danger.base.color, p.danger.base.text),
+    let (bg, fg, border) = match tone {
+        Tone::Neutral => (
+            alpha(p.background.strong.color, 0.80),
+            p.secondary.base.text,
+            Color::from_rgba(1.0, 1.0, 1.0, 0.07),
+        ),
+        Tone::Accent => {
+            let c = p.primary.base.color;
+            (alpha(c, 0.14), c, alpha(c, 0.28))
+        }
+        Tone::Success => {
+            let c = p.success.base.color;
+            (alpha(c, 0.14), c, alpha(c, 0.28))
+        }
+        Tone::Warning => {
+            let c = p.warning.base.color;
+            (alpha(c, 0.14), c, alpha(c, 0.28))
+        }
+        Tone::Danger => {
+            let c = p.danger.base.color;
+            (alpha(c, 0.14), c, alpha(c, 0.28))
+        }
     };
     container::Style {
         background: Some(Background::Color(bg)),
         text_color: Some(fg),
         border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
+            color: border,
+            width: 1.0,
             radius: RADIUS_PILL.into(),
         },
         ..container::Style::default()

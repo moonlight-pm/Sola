@@ -29,7 +29,7 @@ use iced::{
     animation::Easing, mouse, time::Instant, widget::float as float_widget,
 };
 
-use crate::components::style::{RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::components::style::{RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha};
 use crate::fonts;
 
 /// One row in the sidebar. `active` flips on the visual state; `message`
@@ -114,7 +114,7 @@ impl<Message> SidebarSection<Message> {
 
 /// Default sidebar width — matches the storybook's nav column. Public
 /// so consumers can lay out alongside it (`width = Fill - SIDEBAR_WIDTH`).
-pub const SIDEBAR_WIDTH: f32 = 200.0;
+pub const SIDEBAR_WIDTH: f32 = 220.0;
 
 /// Build the sidebar panel from its sections. Returns a `Container` so
 /// callers can override the kit defaults (a fixed [`SIDEBAR_WIDTH`] wide,
@@ -126,10 +126,10 @@ pub fn sidebar<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let mut col = column![].spacing(SPACE_XS).padding(Padding::from([8, 6]));
+    let mut col = column![].spacing(SPACE_XS).padding(Padding::from([12, 10]));
     for (i, section) in sections.into_iter().enumerate() {
         if i > 0 {
-            col = col.push(Space::new().height(Length::Fixed(12.0)));
+            col = col.push(Space::new().height(Length::Fixed(10.0)));
         }
         if let Some(label) = section.label {
             col = col.push(section_header(label));
@@ -279,21 +279,22 @@ where
 }
 
 fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
-    // Title case as authored (not forced uppercase) — closer to macOS
-    // sidebar group labels. chrome + muted, 11px.
+    // Uppercase tracked section labels — graphite tool UI (sola-kit-ds).
     container(
-        text(label)
-            .font(fonts::chrome())
-            .size(11)
+        text(label.to_uppercase())
+            .font(fonts::ui_medium())
+            .size(10)
             .style(|theme: &Theme| {
                 let p = theme.extended_palette();
-                iced::widget::text::Style { color: Some(p.secondary.base.text) }
+                iced::widget::text::Style {
+                    color: Some(p.secondary.base.text),
+                }
             }),
     )
     .padding(Padding {
-        top: SPACE_SM + 2.0,    // 6 — between SPACE_SM and SPACE_MD
-        bottom: SPACE_SM + 2.0,
-        left: SPACE_MD + 2.0,   // 10 — between SPACE_MD and SPACE_LG
+        top: SPACE_SM + 2.0,  // 6
+        bottom: SPACE_SM + 1.0,
+        left: SPACE_MD + 2.0, // 10
         right: SPACE_MD + 2.0,
     })
     .into()
@@ -956,10 +957,14 @@ where
 pub fn style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
+        // Raised graphite panel (opaque stand-in for frosted material).
         background: Some(Background::Color(p.background.weaker.color)),
-        // No border — the sidebar track is a flat raised panel; the
-        // divider/zoning chrome around it carries any separating line.
-        border: Border::default(),
+        // Soft right edge via full hairline — zoning dividers still fine.
+        border: Border {
+            color: Color::from_rgba(1.0, 1.0, 1.0, 0.07),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
         ..container::Style::default()
     }
 }
@@ -971,16 +976,24 @@ pub fn style(theme: &Theme) -> container::Style {
 /// by [`with_reorder_motion`], not here.
 fn row_container_style(theme: &Theme, active: bool) -> container::Style {
     let p = theme.extended_palette();
-    let flat_border = Border {
-        color: Color::TRANSPARENT,
-        width: 0.0,
-        radius: RADIUS_SM.into(),
+    let border = if active {
+        Border {
+            color: alpha(p.primary.base.color, 0.18),
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        }
+    } else {
+        Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_MD.into(),
+        }
     };
     let bg = active.then(|| Background::Color(crate::theme::selection()));
     container::Style {
         background: bg,
         text_color: Some(p.background.base.text),
-        border: flat_border,
+        border,
         ..container::Style::default()
     }
 }
@@ -990,28 +1003,37 @@ fn row_container_style(theme: &Theme, active: bool) -> container::Style {
 /// kit's visual language.
 pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     let p = theme.extended_palette();
-    let bg = if active {
-        // Dedicated, independently-tunable selection highlight. It has no
-        // iced palette slot, so it's delivered process-wide — see
-        // `sola_kit::theme::selection`. Distinct from (and stronger than)
-        // the hover fill so a selection reads louder than a hover.
-        crate::theme::selection()
-    } else {
-        match status {
-            button::Status::Hovered => p.background.strong.color,
-            _ => Color::TRANSPARENT,
-        }
+    if active {
+        // Selection wash + soft accent edge (stands in for OD left bar +
+        // gradient). Distinct from hover so selection still reads.
+        return button::Style {
+            background: Some(Background::Color(crate::theme::selection())),
+            text_color: p.background.base.text,
+            border: Border {
+                color: alpha(p.primary.base.color, 0.18),
+                width: 1.0,
+                radius: RADIUS_MD.into(),
+            },
+            // Fake inset accent bar: tight left-biased shadow using accent.
+            shadow: Shadow {
+                color: alpha(p.primary.base.color, 0.70),
+                offset: Vector::new(-2.0, 0.0),
+                blur_radius: 0.0,
+            },
+            snap: false,
+        };
+    }
+    let bg = match status {
+        button::Status::Hovered => alpha(p.background.strong.color, 0.70),
+        _ => Color::TRANSPARENT,
     };
-    // White-ish foreground reads cleaner on the saturated selection fill
-    // than the accent text the active row used before.
-    let text_color = p.background.base.text;
     button::Style {
         background: Some(Background::Color(bg)),
-        text_color,
+        text_color: p.background.base.text,
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: RADIUS_SM.into(),
+            radius: RADIUS_MD.into(),
         },
         shadow: Default::default(),
         snap: false,

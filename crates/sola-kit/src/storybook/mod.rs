@@ -1075,7 +1075,7 @@ impl Storybook {
 
         let content = scrollable(
             container(self.page_view())
-                .padding(Padding::from([20, 28]))
+                .padding(Padding::from([24, 32]))
                 .width(Length::Fill),
         )
         .width(Length::Fill)
@@ -1219,22 +1219,69 @@ impl Storybook {
             }
         };
 
-        container(body)
-            .padding(Padding::from([10, 28]))
-            .width(Length::Fill)
-            .style(|theme: &iced::Theme| {
-                let p = theme.extended_palette();
-                iced::widget::container::Style {
-                    background: Some(iced::Background::Color(p.background.weaker.color)),
-                    border: iced::Border {
-                        color: p.background.strong.color,
-                        width: 0.0,
-                        radius: 0.0.into(),
-                    },
-                    ..Default::default()
-                }
-            })
-            .into()
+        // Material-ish header strip: raised fill + soft bottom hairline.
+        let chip = {
+            let live = row![
+                container(iced::widget::Space::new().width(6).height(6)).style(|_| {
+                    iced::widget::container::Style {
+                        background: Some(iced::Background::Color(iced::Color::from_rgb(
+                            0.243, 0.812, 0.557,
+                        ))), // success seed
+                        border: iced::Border {
+                            color: iced::Color::from_rgba(0.243, 0.812, 0.557, 0.22),
+                            width: 3.0,
+                            radius: 999.0.into(),
+                        },
+                        ..Default::default()
+                    }
+                }),
+                text("kit · live").size(11).style(|theme: &iced::Theme| {
+                    iced::widget::text::Style {
+                        color: Some(theme.extended_palette().secondary.base.text),
+                    }
+                }),
+            ]
+            .spacing(6)
+            .align_y(iced::Alignment::Center);
+            container(live)
+                .padding(Padding::from([4, 10]))
+                .style(|theme: &iced::Theme| {
+                    let p = theme.extended_palette();
+                    iced::widget::container::Style {
+                        background: Some(iced::Background::Color(iced::Color {
+                            a: 0.55,
+                            ..p.background.base.color
+                        })),
+                        border: iced::Border {
+                            color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+                            width: 1.0,
+                            radius: 999.0.into(),
+                        },
+                        ..Default::default()
+                    }
+                })
+        };
+
+        container(
+            row![body, iced::widget::Space::new().width(Length::Fill), chip]
+                .spacing(8)
+                .align_y(iced::Alignment::Center),
+        )
+        .padding(Padding::from([10, 24]))
+        .width(Length::Fill)
+        .style(|theme: &iced::Theme| {
+            let p = theme.extended_palette();
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(p.background.weaker.color)),
+                border: iced::Border {
+                    color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.07),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .into()
     }
 
     fn page_view(&self) -> Element<'_, Msg> {

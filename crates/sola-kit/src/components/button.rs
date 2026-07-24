@@ -21,11 +21,15 @@
 //! interaction states (Active / Hovered / Pressed / Disabled) by
 //! deriving from kit palette tiers.
 
-use iced::widget::{button, text};
+use iced::widget::button;
+use iced::widget::text;
 use iced::widget::text::IntoFragment;
 use iced::{Background, Border, Color, Theme};
 
-use crate::components::style::{self, PAD_CONTROL, PAD_CONTROL_SM, RADIUS_MD, RADIUS_SM};
+use crate::components::style::{
+    self, ON_FILL_DARK, PAD_CONTROL, PAD_CONTROL_SM, RADIUS_MD, RADIUS_SM, accent_glow, alpha,
+    hairline_strong,
+};
 use crate::fonts;
 
 /// Regular labeled button: 13px UI type + [`PAD_CONTROL`].
@@ -54,27 +58,38 @@ pub fn labeled_sm<'a, Message: Clone + 'a>(
 
 /// Filled accent action. Keep **one primary per group** — cyan is product
 /// identity, but sparse (HIG: accent for the single default action).
+/// Dark label + soft glow approximate the OD gradient primary.
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
-    style::filled(p.primary.base, p.primary.strong, p.primary.weak, status)
+    style::filled_with(
+        p.primary.base,
+        p.primary.strong,
+        p.primary.weak,
+        status,
+        ON_FILL_DARK,
+        Some(accent_glow(p.primary.base.color)),
+    )
 }
 
+/// Soft secondary — quiet fill + strong hairline (not a bare outline).
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
+    let fill = alpha(p.background.strong.color, 0.55);
     let base = button::Style {
-        background: Some(Background::Color(Color::TRANSPARENT)),
+        background: Some(Background::Color(fill)),
         text_color: p.background.base.text,
-        border: Border {
-            color: p.background.stronger.color,
-            width: 1.0,
-            radius: RADIUS_MD.into(),
-        },
+        border: hairline_strong(RADIUS_MD),
         shadow: Default::default(),
         snap: false,
     };
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(p.background.strong.color)),
+            background: Some(Background::Color(alpha(p.background.strong.color, 0.90))),
+            border: Border {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.16),
+                width: 1.0,
+                radius: RADIUS_MD.into(),
+            },
             ..base
         },
         button::Status::Pressed => button::Style {
@@ -86,25 +101,32 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Ghost — transparent at rest; hover/press lift background only.
-/// Text stays `background.base.text` (never accent) so everyday chrome
-/// stays calm.
+/// Ghost — transparent at rest with **muted** text; hover lifts bg and
+/// restores full fg so everyday chrome stays calm.
 pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
+    let muted = p.secondary.base.text;
+    let fg = p.background.base.text;
     let base = button::Style {
         background: Some(Background::Color(Color::TRANSPARENT)),
-        text_color: p.background.base.text,
-        border: Border { color: Color::TRANSPARENT, width: 0.0, radius: RADIUS_SM.into() },
+        text_color: muted,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_SM.into(),
+        },
         shadow: Default::default(),
         snap: false,
     };
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(p.background.strong.color)),
+            background: Some(Background::Color(alpha(p.background.strong.color, 0.70))),
+            text_color: fg,
             ..base
         },
         button::Status::Pressed => button::Style {
-            background: Some(Background::Color(p.background.stronger.color)),
+            background: Some(Background::Color(p.background.strong.color)),
+            text_color: fg,
             ..base
         },
         button::Status::Disabled => style::dim(base),
@@ -112,22 +134,35 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// Filled danger — dark label, same density language as primary.
 pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
-    style::filled(p.danger.base, p.danger.strong, p.danger.weak, status)
+    style::filled_with(
+        p.danger.base,
+        p.danger.strong,
+        p.danger.weak,
+        status,
+        Color::from_rgb(0.102, 0.024, 0.031), // #1a0608
+        None,
+    )
 }
 
-/// Outlined danger — a restrained destructive affordance: transparent
-/// fill with a danger-colored border and text at rest, filling in on
-/// hover/press. The idle half of [`confirm_button`]; also usable alone
-/// for a low-emphasis "Delete" that the caller gates behind a confirm.
+/// Soft danger outline — tinted fill + danger border (restrained destructive).
 pub fn danger_outline(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
+    let danger = p.danger.base.color;
     let base = button::Style {
-        background: Some(Background::Color(Color::TRANSPARENT)),
-        text_color: p.danger.base.color,
+        background: Some(Background::Color(alpha(danger, 0.08))),
+        text_color: Color {
+            a: 0.92,
+            ..Color::from_rgb(
+                danger.r * 0.88 + 0.12,
+                danger.g * 0.88 + 0.12,
+                danger.b * 0.88 + 0.12,
+            )
+        },
         border: Border {
-            color: p.danger.base.color,
+            color: alpha(danger, 0.42),
             width: 1.0,
             radius: RADIUS_MD.into(),
         },
@@ -136,13 +171,18 @@ pub fn danger_outline(theme: &Theme, status: button::Status) -> button::Style {
     };
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(p.danger.base.color)),
-            text_color: p.danger.base.text,
+            background: Some(Background::Color(alpha(danger, 0.18))),
+            border: Border {
+                color: alpha(danger, 0.65),
+                width: 1.0,
+                radius: RADIUS_MD.into(),
+            },
+            text_color: p.background.base.text,
             ..base
         },
         button::Status::Pressed => button::Style {
-            background: Some(Background::Color(p.danger.strong.color)),
-            text_color: p.danger.strong.text,
+            background: Some(Background::Color(alpha(danger, 0.28))),
+            text_color: p.background.base.text,
             ..base
         },
         button::Status::Disabled => style::dim(base),
@@ -197,8 +237,8 @@ pub fn list_item(selected: bool) -> impl Fn(&Theme, button::Status) -> button::S
                 background: Some(Background::Color(crate::theme::selection())),
                 text_color: p.background.base.text,
                 border: Border {
-                    color: Color::TRANSPARENT,
-                    width: 0.0,
+                    color: alpha(p.primary.base.color, 0.18),
+                    width: 1.0,
                     radius: RADIUS_SM.into(),
                 },
                 shadow: Default::default(),
@@ -206,7 +246,9 @@ pub fn list_item(selected: bool) -> impl Fn(&Theme, button::Status) -> button::S
             };
         }
         let bg = match status {
-            button::Status::Hovered | button::Status::Pressed => p.background.strong.color,
+            button::Status::Hovered | button::Status::Pressed => {
+                alpha(p.background.strong.color, 0.70)
+            }
             _ => Color::TRANSPARENT,
         };
         button::Style {
@@ -225,13 +267,14 @@ pub fn list_item(selected: bool) -> impl Fn(&Theme, button::Status) -> button::S
 
 /// Menu-row hover style — list_item calm without selection chrome.
 ///
-/// Transparent at rest; `background.strong` on hover/press with a small
-/// radius so the highlight reads as a compact macOS menu row, not a
-/// fat list pill.
+/// Transparent at rest; soft hover lift with a small radius so the
+/// highlight reads as a compact menu row, not a fat list pill.
 pub fn menu_item(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let bg = match status {
-        button::Status::Hovered | button::Status::Pressed => p.background.strong.color,
+        button::Status::Hovered | button::Status::Pressed => {
+            alpha(p.background.strong.color, 0.75)
+        }
         _ => Color::TRANSPARENT,
     };
     button::Style {
@@ -268,11 +311,13 @@ pub fn menubar(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style
         button::Style {
             background: Some(Background::Color(bg)),
             text_color: fg,
-            border: Border { color: Color::TRANSPARENT, width: 0.0, radius: RADIUS_SM.into() },
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 4.0.into(),
+            },
             shadow: Default::default(),
             snap: false,
         }
     }
 }
-
-

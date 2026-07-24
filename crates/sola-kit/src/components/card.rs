@@ -16,14 +16,19 @@ use crate::components::style::{hairline, RADIUS_LG, RADIUS_XL, SPACE_XL};
 pub fn card<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
 ) -> Container<'a, Message, Theme> {
-    container(content).style(style).padding(SPACE_XL)
+    container(content).style(style).padding(18)
 }
 
 pub fn style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(p.background.weaker.color)),
-        border: hairline(p, RADIUS_LG),
+        border: hairline(p, RADIUS_XL),
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+            offset: Vector::new(0.0, 8.0),
+            blur_radius: 24.0,
+        },
         ..container::Style::default()
     }
 }
@@ -38,7 +43,7 @@ pub fn style_plain(theme: &Theme) -> container::Style {
         border: iced::Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: RADIUS_LG.into(),
+            radius: RADIUS_XL.into(),
         },
         ..container::Style::default()
     }
@@ -53,7 +58,7 @@ pub fn plain<'a, Message: 'a>(
 }
 
 /// Style for [`modal`]: opaque raised background, hairline border at
-/// `RADIUS_LG` (8px), and a soft drop shadow — Spotlight/command-palette
+/// `RADIUS_XL`, and a soft drop shadow — Spotlight/command-palette
 /// restraint, not a marketing card lift.
 ///
 /// **Background is `weaker`, not `base`**: overlay windows set
@@ -66,7 +71,7 @@ pub fn modal_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(p.background.weaker.color)),
-        border: hairline(p, RADIUS_LG),
+        border: hairline(p, RADIUS_XL),
         shadow: Shadow {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.38),
             offset: Vector::new(0.0, 8.0),
@@ -77,7 +82,7 @@ pub fn modal_style(theme: &Theme) -> container::Style {
 }
 
 /// Centred overlay panel chrome (launcher / command palette). Opaque
-/// `weaker` bg, hairline at `RADIUS_LG`, soft shadow. Returns a
+/// `weaker` bg, soft hairline, soft shadow. Returns a
 /// `Container` so the caller can chain `.width(..)`, `.padding(..)`, etc.
 pub fn modal<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
