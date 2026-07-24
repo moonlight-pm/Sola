@@ -1283,11 +1283,14 @@ impl Storybook {
             container(iced::widget::Space::new().width(Length::Fill).height(1))
                 .width(Length::Fill)
                 .height(Length::Fixed(1.0))
-                .style(|_| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        1.0, 1.0, 1.0, 0.07,
-                    ))),
-                    ..Default::default()
+                .style(|theme: &iced::Theme| {
+                    let raised = theme.extended_palette().background.weaker.color;
+                    iced::widget::container::Style {
+                        background: Some(iced::Background::Color(
+                            sola_kit::components::style::mix_white(raised, 0.07),
+                        )),
+                        ..Default::default()
+                    }
                 }),
         ]
         .width(Length::Fill)

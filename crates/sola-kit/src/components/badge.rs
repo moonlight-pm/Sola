@@ -8,7 +8,7 @@
 use iced::widget::{container, text};
 use iced::{Background, Border, Color, Element, Padding, Theme};
 
-use crate::components::style::{RADIUS_PILL, alpha};
+use crate::components::style::{RADIUS_PILL, mix_white};
 use crate::fonts;
 
 /// Visual flavors of badge. Each maps to a palette tier in [`style`].
@@ -40,27 +40,36 @@ pub fn badge<'a, Message: 'a>(
 /// text. Neutral is quiet hover-grey + hairline.
 pub fn style(theme: &Theme, tone: Tone) -> container::Style {
     let p = theme.extended_palette();
+    // Soft fills + borders: bake tone into the raised surface (opaque)
+    // so iced's linear border path doesn't inflate alpha edges.
+    let raised = p.background.weaker.color;
+    let soft = |c: Color, amt: f32| Color {
+        r: raised.r * (1.0 - amt) + c.r * amt,
+        g: raised.g * (1.0 - amt) + c.g * amt,
+        b: raised.b * (1.0 - amt) + c.b * amt,
+        a: 1.0,
+    };
     let (bg, fg, border) = match tone {
         Tone::Neutral => (
-            alpha(p.background.strong.color, 0.80),
+            mix_white(raised, 0.06),
             p.secondary.base.text,
-            Color::from_rgba(1.0, 1.0, 1.0, 0.07),
+            mix_white(raised, 0.08),
         ),
         Tone::Accent => {
             let c = p.primary.base.color;
-            (alpha(c, 0.14), c, alpha(c, 0.28))
+            (soft(c, 0.14), c, soft(c, 0.28))
         }
         Tone::Success => {
             let c = p.success.base.color;
-            (alpha(c, 0.14), c, alpha(c, 0.28))
+            (soft(c, 0.14), c, soft(c, 0.28))
         }
         Tone::Warning => {
             let c = p.warning.base.color;
-            (alpha(c, 0.14), c, alpha(c, 0.28))
+            (soft(c, 0.14), c, soft(c, 0.28))
         }
         Tone::Danger => {
             let c = p.danger.base.color;
-            (alpha(c, 0.14), c, alpha(c, 0.28))
+            (soft(c, 0.14), c, soft(c, 0.28))
         }
     };
     container::Style {

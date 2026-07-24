@@ -10,7 +10,7 @@ use iced::{Background, Border, Color, Element, Length, Padding};
 use sola_kit::components::badge::{self, Tone};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
-use sola_kit::components::style::{RADIUS_MD, RADIUS_SM};
+use sola_kit::components::style::{RADIUS_MD, RADIUS_SM, mix_white};
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
 use sola_kit::components::text_input as kit_text_input;
@@ -268,9 +268,13 @@ fn token_row<'a>(
         container(Space::new().width(Length::Fill).height(1))
             .width(Length::Fill)
             .height(Length::Fixed(1.0))
-            .style(|_| iced::widget::container::Style {
-                background: Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05))),
-                ..Default::default()
+            .style(|theme: &iced::Theme| {
+                let raised = theme.extended_palette().background.weaker.color;
+                iced::widget::container::Style {
+                    // Opaque sRGB mix — translucent white separators look thick.
+                    background: Some(Background::Color(mix_white(raised, 0.06))),
+                    ..Default::default()
+                }
             }),
     ]
     .width(Length::Fill)
@@ -325,10 +329,11 @@ fn scale_chip(name: &'static str, value: &'static str) -> Element<'static, Butto
     .padding(Padding::from([8, 12]))
     .style(|theme: &iced::Theme| {
         let p = theme.extended_palette();
+        let fill = p.background.weaker.color;
         iced::widget::container::Style {
-            background: Some(Background::Color(p.background.weaker.color)),
+            background: Some(Background::Color(fill)),
             border: Border {
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.07),
+                color: mix_white(fill, 0.07),
                 width: 1.0,
                 radius: RADIUS_SM.into(),
             },

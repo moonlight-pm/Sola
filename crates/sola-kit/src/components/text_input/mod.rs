@@ -1860,15 +1860,14 @@ where
 /// primary accent. Focused border stays `primary.base` — correct sparse
 /// accent use for focus.
 pub fn style(theme: &Theme, status: Status) -> Style {
-    use crate::components::style::{
-        RADIUS_MD, hairline_strong, inset_surface,
-    };
+    use crate::components::style::{HAIRLINE_STRONG_A, RADIUS_MD, hairline_on, inset_surface};
 
     let p = theme.extended_palette();
     let well = inset_surface(p.background.base.color, 0.55);
     let active = Style {
         background: Background::Color(well),
-        border: hairline_strong(RADIUS_MD),
+        // Opaque mix over the well — translucent white looks chonky in iced.
+        border: hairline_on(well, HAIRLINE_STRONG_A, RADIUS_MD),
         icon: p.secondary.base.text,
         placeholder: Color {
             a: 0.75,
@@ -1880,24 +1879,28 @@ pub fn style(theme: &Theme, status: Status) -> Style {
     match status {
         Status::Active => active,
         Status::Hovered => Style {
-            border: Border {
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.16),
-                width: 1.0,
-                radius: RADIUS_MD.into(),
-            },
+            border: hairline_on(well, 0.14, RADIUS_MD),
             ..active
         },
-        Status::Focused { .. } => Style {
-            border: Border {
-                color: Color {
-                    a: 0.55,
-                    ..p.primary.base.color
+        Status::Focused { .. } => {
+            // Focus edge: accent blended into the well (opaque). Translucent
+            // accent borders also inflate under iced's linear path.
+            let a = p.primary.base.color;
+            let focus = Color {
+                r: well.r * 0.45 + a.r * 0.55,
+                g: well.g * 0.45 + a.g * 0.55,
+                b: well.b * 0.45 + a.b * 0.55,
+                a: 1.0,
+            };
+            Style {
+                border: Border {
+                    color: focus,
+                    width: 1.0,
+                    radius: RADIUS_MD.into(),
                 },
-                width: 1.0,
-                radius: RADIUS_MD.into(),
-            },
-            ..active
-        },
+                ..active
+            }
+        }
         Status::Disabled => Style {
             background: Background::Color(p.background.weak.color),
             value: active.placeholder,

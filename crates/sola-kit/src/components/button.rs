@@ -27,8 +27,8 @@ use iced::widget::text::IntoFragment;
 use iced::{Background, Border, Color, Theme};
 
 use crate::components::style::{
-    self, ON_FILL_DARK, PAD_CONTROL, PAD_CONTROL_SM, RADIUS_MD, RADIUS_SM, accent_glow, alpha,
-    hairline_strong,
+    self, HAIRLINE_A, HAIRLINE_STRONG_A, ON_FILL_DARK, PAD_CONTROL, PAD_CONTROL_SM, RADIUS_MD,
+    RADIUS_SM, accent_glow, alpha, hairline_on, mix_white,
 };
 use crate::fonts;
 
@@ -71,29 +71,28 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     )
 }
 
-/// Soft secondary — quiet fill + strong hairline (not a bare outline).
+/// Soft secondary — quiet fill + thin hairline (not a bare outline).
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
-    let fill = alpha(p.background.strong.color, 0.55);
+    // Opaque quiet fill (avoid translucent fill + translucent border stack).
+    let fill = mix_white(p.background.weaker.color, 0.04);
+    let fill_hover = mix_white(p.background.strong.color, 0.06);
     let base = button::Style {
         background: Some(Background::Color(fill)),
         text_color: p.background.base.text,
-        border: hairline_strong(RADIUS_MD),
+        border: hairline_on(fill, HAIRLINE_STRONG_A, RADIUS_MD),
         shadow: Default::default(),
-        snap: false,
+        snap: true,
     };
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(alpha(p.background.strong.color, 0.90))),
-            border: Border {
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.16),
-                width: 1.0,
-                radius: RADIUS_MD.into(),
-            },
+            background: Some(Background::Color(fill_hover)),
+            border: hairline_on(fill_hover, 0.14, RADIUS_MD),
             ..base
         },
         button::Status::Pressed => button::Style {
             background: Some(Background::Color(p.background.weak.color)),
+            border: hairline_on(p.background.weak.color, HAIRLINE_A, RADIUS_MD),
             ..base
         },
         button::Status::Disabled => style::dim(base),
@@ -158,29 +157,36 @@ pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
 pub fn danger_outline(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let danger = p.danger.base.color;
+    let raised = p.background.weaker.color;
+    let soft = |amt: f32| Color {
+        r: raised.r * (1.0 - amt) + danger.r * amt,
+        g: raised.g * (1.0 - amt) + danger.g * amt,
+        b: raised.b * (1.0 - amt) + danger.b * amt,
+        a: 1.0,
+    };
+    let fill = soft(0.10);
+    let edge = soft(0.42);
     let base = button::Style {
-        background: Some(Background::Color(alpha(danger, 0.08))),
+        background: Some(Background::Color(fill)),
         text_color: Color {
-            a: 0.92,
-            ..Color::from_rgb(
-                danger.r * 0.88 + 0.12,
-                danger.g * 0.88 + 0.12,
-                danger.b * 0.88 + 0.12,
-            )
+            r: danger.r * 0.88 + 0.12,
+            g: danger.g * 0.88 + 0.12,
+            b: danger.b * 0.88 + 0.12,
+            a: 1.0,
         },
         border: Border {
-            color: alpha(danger, 0.42),
+            color: edge,
             width: 1.0,
             radius: RADIUS_MD.into(),
         },
         shadow: Default::default(),
-        snap: false,
+        snap: true,
     };
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(alpha(danger, 0.18))),
+            background: Some(Background::Color(soft(0.18))),
             border: Border {
-                color: alpha(danger, 0.65),
+                color: soft(0.55),
                 width: 1.0,
                 radius: RADIUS_MD.into(),
             },
@@ -188,7 +194,7 @@ pub fn danger_outline(theme: &Theme, status: button::Status) -> button::Style {
             ..base
         },
         button::Status::Pressed => button::Style {
-            background: Some(Background::Color(alpha(danger, 0.28))),
+            background: Some(Background::Color(soft(0.28))),
             text_color: p.background.base.text,
             ..base
         },

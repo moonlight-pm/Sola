@@ -24,10 +24,11 @@ pub fn style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(p.background.weaker.color)),
         border: hairline(p, RADIUS_XL),
+        // Tight soft lift — heavy blur + high alpha reads as a thick frame.
         shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
-            offset: Vector::new(0.0, 8.0),
-            blur_radius: 24.0,
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.28),
+            offset: Vector::new(0.0, 6.0),
+            blur_radius: 16.0,
         },
         ..container::Style::default()
     }

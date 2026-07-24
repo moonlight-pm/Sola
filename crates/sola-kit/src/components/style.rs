@@ -3,12 +3,23 @@
 //!
 //! - [`filled`] builds the four-state `button::Style` shared by the
 //!   `primary` and `danger` buttons (they differ only by palette tier).
-//! - [`hairline`] / [`hairline_strong`] build soft white@α borders
-//!   (card / popover / swatch / text_input).
+//! - [`hairline`] / [`hairline_strong`] build **thin** edges (card /
+//!   popover / swatch / text_input). See the hairline note below.
 //! - [`dim`] is the shared disabled treatment (halve every alpha).
 //! - the `RADIUS_*` / `SPACE_*` constants name the radii and spacing
 //!   steps the kit uses, so component code stops sprinkling bare
 //!   `6.0.into()` / `padding(16)` literals.
+//!
+//! ## Why hairlines are opaque sRGB mixes (not white@α)
+//!
+//! Open Design uses CSS `color-mix(in srgb, #fff 7%, transparent)`. Iced
+//! packs border colours into **linear RGB** and premultiplies alpha; a
+//! translucent white then reads ~3× brighter after the linear→sRGB
+//! display path (measured ~#3e3f40 instead of ~#262931). That looks
+//! like a heavy "chonky" outline even at `width: 1.0`.
+//!
+//! So we bake the CSS mix as an **opaque** colour on the intended
+//! surface: `mix_white(surface, 0.07)`. Same intent, correct weight.
 
 use iced::theme::palette::{Extended, Pair};
 use iced::widget::button;
@@ -39,25 +50,47 @@ pub const PAD_CONTROL: [u16; 2] = [7, 14];
 /// Compact control padding — toolbar, steppers, dense chrome.
 pub const PAD_CONTROL_SM: [u16; 2] = [5, 11];
 
-/// Soft hairline — white @ 7% alpha (OD `--hairline`). Prefer this over
-/// the solid `border` atom for quiet chrome edges.
+/// Soft hairline weight — OD `--hairline` (white 7% in sRGB over surface).
 pub const HAIRLINE_A: f32 = 0.07;
-/// Stronger hairline — white @ 12% (OD `--hairline-strong`).
+/// Stronger hairline — OD `--hairline-strong` (white 12% in sRGB).
 pub const HAIRLINE_STRONG_A: f32 = 0.12;
 
-/// Soft white@α hairline at the given corner radius.
-pub fn hairline(_palette: &Extended, radius: f32) -> Border {
+/// CSS `color-mix(in srgb, #fff amount, surface)` as an **opaque** colour.
+/// Use this for edges instead of `Color { a: amount, ..WHITE }`.
+pub fn mix_white(surface: Color, amount: f32) -> Color {
+    let t = amount.clamp(0.0, 1.0);
+    let k = 1.0 - t;
+    Color {
+        r: surface.r * k + t,
+        g: surface.g * k + t,
+        b: surface.b * k + t,
+        a: 1.0,
+    }
+}
+
+/// Soft hairline on the raised surface (cards, popovers, swatches).
+pub fn hairline(palette: &Extended, radius: f32) -> Border {
     Border {
-        color: Color::from_rgba(1.0, 1.0, 1.0, HAIRLINE_A),
+        color: mix_white(palette.background.weaker.color, HAIRLINE_A),
         width: 1.0,
         radius: radius.into(),
     }
 }
 
-/// Stronger white@α hairline (secondary buttons, focused fields at rest).
-pub fn hairline_strong(radius: f32) -> Border {
+/// Stronger hairline mixed over the raised surface (secondary buttons,
+/// field wells at rest). Prefer [`hairline_on`] when the fill differs.
+pub fn hairline_strong(palette: &Extended, radius: f32) -> Border {
     Border {
-        color: Color::from_rgba(1.0, 1.0, 1.0, HAIRLINE_STRONG_A),
+        color: mix_white(palette.background.weaker.color, HAIRLINE_STRONG_A),
+        width: 1.0,
+        radius: radius.into(),
+    }
+}
+
+/// Hairline mixed over an arbitrary fill (inset fields, secondary btn).
+pub fn hairline_on(surface: Color, amount: f32, radius: f32) -> Border {
+    Border {
+        color: mix_white(surface, amount),
         width: 1.0,
         radius: radius.into(),
     }
@@ -65,6 +98,8 @@ pub fn hairline_strong(radius: f32) -> Border {
 
 /// Mix `color` toward transparent at `alpha` (0..1). Used for soft
 /// badge / secondary fills that tint without opaque slabs.
+///
+/// Prefer [`mix_white`] / opaque mixes for **borders** — see module docs.
 pub fn alpha(color: Color, alpha: f32) -> Color {
     Color {
         a: color.a * alpha,
@@ -216,14 +251,26 @@ mod tests {
     }
 
     #[test]
-    fn hairline_uses_soft_white_alpha_and_unit_width() {
+    fn hairline_is_opaque_srgb_mix_not_translucent_white() {
         let t = theme::default_theme();
         let ext = t.extended_palette();
         let b = hairline(ext, RADIUS_LG);
-        assert!((b.color.a - HAIRLINE_A).abs() < 1e-6);
-        assert!((b.color.r - 1.0).abs() < 1e-6);
+        assert!((b.color.a - 1.0).abs() < 1e-6, "must be opaque for iced linear path");
+        // Lighter than the raised surface, darker than pure mid-grey.
+        let raised = ext.background.weaker.color;
+        assert!(b.color.r > raised.r);
+        assert!(b.color.r < 0.25, "must stay subtle, got r={}", b.color.r);
         assert_eq!(b.width, 1.0);
         assert_eq!(b.radius, RADIUS_LG.into());
+    }
+
+    #[test]
+    fn mix_white_matches_css_srgb_mix() {
+        let surface = Color::from_rgb(0.082, 0.098, 0.133); // ~#151922
+        let c = mix_white(surface, 0.07);
+        // 0.07*1 + 0.93*channel
+        assert!((c.r - (surface.r * 0.93 + 0.07)).abs() < 1e-5);
+        assert!((c.a - 1.0).abs() < 1e-6);
     }
 
     #[test]
