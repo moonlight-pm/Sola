@@ -228,6 +228,8 @@ enum Msg {
     SidebarDragStart,
     /// Press on a tab row (potential reorder), carrying the row index.
     ReorderStart(usize),
+    /// Animation tick while a tab reorder drag is live (sibling glides).
+    ReorderTick,
     /// Press on a pane split divider (carries the SplitId).
     SplitDividerPress(String),
     /// Pointer entered a pane's area (focus-follows-mouse) — carries PaneId.
@@ -325,6 +327,13 @@ impl App {
                 }
                 _ => None,
             }),
+            // Sibling glide continues between pointer samples while a tab
+            // reorder is mid-drag.
+            if self.sidebar.reorder_dragging {
+                iced::time::every(Duration::from_millis(16)).map(|_| Msg::ReorderTick)
+            } else {
+                Subscription::none()
+            },
         ])
     }
 
@@ -384,6 +393,11 @@ impl App {
                 self.sidebar.reorder = Some((index, 0.0));
                 self.sidebar.reorder_cursor_y = 0.0;
                 self.sidebar.reorder_dragging = false;
+                self.sidebar.reorder_anim.clear();
+                Task::none()
+            }
+            Msg::ReorderTick => {
+                self.sync_reorder_anim();
                 Task::none()
             }
             Msg::SplitDividerPress(split_id) => {
@@ -435,6 +449,9 @@ impl App {
                     // threshold — until then it stays a candidate click.
                     if (y - *start_y).abs() >= sola_kit::components::PANEL_REORDER_THRESHOLD {
                         self.sidebar.reorder_dragging = true;
+                    }
+                    if self.sidebar.reorder_dragging {
+                        self.sync_reorder_anim();
                     }
                 }
                 // Pane split divider.
@@ -1491,6 +1508,30 @@ impl App {
         }
     }
 
+    /// Drive sibling-offset animations for the live tab-reorder preview.
+    fn sync_reorder_anim(&mut self) {
+        let Some((from, start_y)) = self.sidebar.reorder else {
+            return;
+        };
+        if !self.sidebar.reorder_dragging {
+            return;
+        }
+        let n = self.tabs.tab_ids_in_order().len();
+        if n == 0 {
+            return;
+        }
+        let to = sola_kit::components::panel_drop_index_relative(
+            from,
+            start_y,
+            self.sidebar.reorder_cursor_y,
+            sola_kit::components::PANEL_ROW_H,
+            n,
+        );
+        self.sidebar
+            .reorder_anim
+            .sync(from, to, n, iced::time::Instant::now());
+    }
+
     /// Finish a tab-reorder gesture: click → select; drag → renumber ordinals.
     fn finish_reorder(&mut self) -> Task<Msg> {
         let gesture = self.sidebar.reorder.take();
@@ -1498,6 +1539,7 @@ impl App {
         let was_dragging = self.sidebar.reorder_dragging;
         self.sidebar.reorder_cursor_y = 0.0;
         self.sidebar.reorder_dragging = false;
+        self.sidebar.reorder_anim.clear();
 
         let Some((from, start_y)) = gesture else {
             return Task::none();

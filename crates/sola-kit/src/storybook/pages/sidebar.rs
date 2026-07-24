@@ -13,8 +13,8 @@ use iced::{Element, Length, Theme};
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::text::{body, code, heading, muted};
 use sola_kit::components::{
-    DividerColors, ReorderCfg, SidebarItem, SidebarPanel, SidebarSection, TabDescriptor,
-    TabSize, panel_dragged_width, vertical_tabs_sized,
+    DividerColors, ReorderAnim, ReorderCfg, SidebarItem, SidebarPanel, SidebarSection,
+    TabDescriptor, TabSize, panel_dragged_width, vertical_tabs_sized,
 };
 
 /// The demo item labels, in their current (reorderable) order.
@@ -36,6 +36,8 @@ pub enum Msg {
     ReorderMove(f32),
     /// Reorder gesture released — commit the drop (or treat as a click).
     ReorderEnd,
+    /// Animation tick while a reorder drag is live (sibling glides).
+    ReorderTick,
     /// A plain row click (collapsed buttons use this).
     ItemPress(usize),
     /// Demo placeholder (e.g. a close button) with no modelled effect.
@@ -56,6 +58,8 @@ pub struct State {
     /// True once a reorder gesture passes the movement threshold. Gates the
     /// drag chrome so a plain click never flashes a drop highlight.
     pub reorder_dragging: bool,
+    /// Sibling glide offsets while a reorder drag is live.
+    pub reorder_anim: ReorderAnim,
     /// Current item order (indices into [`ITEMS`]).
     pub order: Vec<usize>,
     /// Selected row (by item index), for the active highlight.
@@ -72,6 +76,7 @@ impl Default for State {
             reorder: None,
             reorder_cursor_y: 0.0,
             reorder_dragging: false,
+            reorder_anim: ReorderAnim::new(),
             order: (0..ITEMS.len()).collect(),
             selected: 0,
         }
@@ -111,6 +116,7 @@ impl State {
                 self.reorder = Some((index, 0.0));
                 self.reorder_cursor_y = 0.0;
                 self.reorder_dragging = false;
+                self.reorder_anim.clear();
             }
             Msg::ReorderMove(cursor_y) => {
                 if let Some((_, ref mut start_y)) = self.reorder {
@@ -125,7 +131,13 @@ impl State {
                     {
                         self.reorder_dragging = true;
                     }
+                    if self.reorder_dragging {
+                        self.sync_reorder_anim();
+                    }
                 }
+            }
+            Msg::ReorderTick => {
+                self.sync_reorder_anim();
             }
             Msg::ReorderEnd => {
                 let gesture = self.reorder.take();
@@ -133,6 +145,7 @@ impl State {
                 let was_dragging = self.reorder_dragging;
                 self.reorder_cursor_y = 0.0;
                 self.reorder_dragging = false;
+                self.reorder_anim.clear();
                 let Some((from, start_y)) = gesture else { return };
 
                 // Never crossed the threshold → it was a click, not a drag:
@@ -173,6 +186,28 @@ impl State {
             }
             Msg::Noop => {}
         }
+    }
+
+    fn sync_reorder_anim(&mut self) {
+        let Some((from, start_y)) = self.reorder else {
+            return;
+        };
+        if !self.reorder_dragging {
+            return;
+        }
+        let n = self.order.len();
+        if n == 0 {
+            return;
+        }
+        let to = sola_kit::components::panel_drop_index_relative(
+            from,
+            start_y,
+            self.reorder_cursor_y,
+            sola_kit::components::PANEL_ROW_H,
+            n,
+        );
+        self.reorder_anim
+            .sync(from, to, n, iced::time::Instant::now());
     }
 }
 
@@ -219,6 +254,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         // panel shows no drag chrome on a plain (un-moved) press.
         active: if state.reorder_dragging { state.reorder } else { None },
         cursor_y: state.reorder_cursor_y,
+        anim: state.reorder_dragging.then_some(&state.reorder_anim),
     };
 
     // Demo sits in a raised card; the sidebar panel is also raised. Match

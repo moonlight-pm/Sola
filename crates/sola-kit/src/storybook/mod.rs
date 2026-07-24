@@ -536,6 +536,12 @@ impl Storybook {
                 _ => None,
             }));
         }
+        if self.sidebar.reorder_dragging {
+            subs.push(
+                iced::time::every(std::time::Duration::from_millis(16))
+                    .map(|_| Msg::Sidebar(pages::sidebar::Msg::ReorderTick)),
+            );
+        }
 
         // Split dogfood: live divider drag on the Split page.
         if self.split.needs_cursor_subscription() {
