@@ -1,5 +1,6 @@
 //! List and rebuild Grok sessions from `~/.grok/sessions`.
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -31,26 +32,63 @@ fn sessions_root() -> PathBuf {
 }
 
 fn encode_cwd(cwd: &str) -> String {
-    // Grok URL-encodes the absolute path as the group directory name.
     let abs = PathBuf::from(cwd);
-    let abs = abs
-        .canonicalize()
-        .unwrap_or(abs);
+    let abs = abs.canonicalize().unwrap_or(abs);
     urlencoding::encode(&abs.to_string_lossy()).into_owned()
 }
 
-/// Sessions for a project working directory, newest first.
+/// All sessions across every project group under `~/.grok/sessions`.
 ///
-/// Also merges sessions for the git root when `cwd` is a nested path
-/// (e.g. a Sola worktree) so the sidebar isn't empty in common dev setups.
+/// Sorted: pinned first, then live TUI sessions, then most recent activity.
+pub fn list_all() -> Vec<SessionSummary> {
+    let pins = overlay::load();
+    let live = active_terminal_sessions();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+
+    let groups = match fs::read_dir(sessions_root()) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    for group in groups.flatten() {
+        let group_path = group.path();
+        if !group_path.is_dir() {
+            continue;
+        }
+        let group_cwd = group
+            .file_name()
+            .to_str()
+            .and_then(|n| urlencoding::decode(n).ok())
+            .map(|s| s.into_owned())
+            .unwrap_or_default();
+        collect_group(&group_path, &group_cwd, &pins, &live, &mut seen, &mut out);
+    }
+
+    out.sort_by(|a, b| {
+        b.pinned
+            .cmp(&a.pinned)
+            .then(b.live.cmp(&a.live))
+            .then(b.updated.cmp(&a.updated))
+    });
+    out
+}
+
+/// Back-compat: list for a cwd (+ git root). Prefer [`list_all`] in the UI.
 pub fn list_for_cwd(cwd: &str) -> Vec<SessionSummary> {
     let pins = overlay::load();
-    let mut seen = std::collections::HashSet::new();
+    let live = active_terminal_sessions();
+    let mut seen = HashSet::new();
     let mut out = Vec::new();
     for root in session_roots(cwd) {
-        collect_group(&root, &pins, &mut seen, &mut out);
+        let group = sessions_root().join(encode_cwd(&root));
+        collect_group(&group, &root, &pins, &live, &mut seen, &mut out);
     }
-    out.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.updated.cmp(&a.updated)));
+    out.sort_by(|a, b| {
+        b.pinned
+            .cmp(&a.pinned)
+            .then(b.live.cmp(&a.live))
+            .then(b.updated.cmp(&a.updated))
+    });
     out
 }
 
@@ -62,7 +100,6 @@ fn session_roots(cwd: &str) -> Vec<String> {
             roots.push(g);
         }
     }
-    // Prefer canonical forms so encode matches Grok's on-disk keys.
     roots
         .into_iter()
         .map(|r| {
@@ -90,13 +127,14 @@ fn find_git_root(start: &Path) -> Option<PathBuf> {
 }
 
 fn collect_group(
-    cwd: &str,
+    group_path: &Path,
+    group_cwd: &str,
     pins: &overlay::Overlay,
-    seen: &mut std::collections::HashSet<String>,
+    live: &HashSet<String>,
+    seen: &mut HashSet<String>,
     out: &mut Vec<SessionSummary>,
 ) {
-    let group = sessions_root().join(encode_cwd(cwd));
-    let entries = match fs::read_dir(&group) {
+    let entries = match fs::read_dir(group_path) {
         Ok(e) => e,
         Err(_) => return,
     };
@@ -113,34 +151,104 @@ fn collect_group(
             continue;
         }
         let summary_path = path.join("summary.json");
-        let (title, updated, cwd_s) = match read_summary(&summary_path) {
+        let (disk_title, summary_updated, cwd_s) = match read_summary(&summary_path) {
             Some(t) => t,
             None => continue,
         };
+        // Activity = last turn on disk, not "last opened" (Grok bumps
+        // summary.json on session/load, which made ages jump to "just now").
+        let updated = activity_secs(&path).unwrap_or(summary_updated);
         let pinned = pins.pinned.contains(&id);
-        let title = pins
-            .title_overrides
-            .get(&id)
-            .cloned()
-            .unwrap_or(title);
+        let title = resolve_title(&id, &disk_title, pins);
         let cwd_display = if cwd_s.is_empty() {
-            cwd.to_string()
+            group_cwd.to_string()
         } else {
             cwd_s
         };
         out.push(SessionSummary {
-            id,
+            id: id.clone(),
             title,
             cwd: cwd_display,
             updated,
             pinned,
+            live: live.contains(&id),
         });
     }
 }
 
+fn resolve_title(id: &str, disk_title: &str, pins: &overlay::Overlay) -> String {
+    if let Some(t) = pins.title_overrides.get(id) {
+        if !t.trim().is_empty() {
+            return t.clone();
+        }
+    }
+    if let Some(t) = pins.auto_titles.get(id) {
+        if !t.trim().is_empty() {
+            return t.clone();
+        }
+    }
+    let t = disk_title.trim();
+    if !t.is_empty() && t != "(untitled)" {
+        return t.to_string();
+    }
+    "(untitled)".into()
+}
+
+/// Last conversational activity: mtime of `updates.jsonl` (preferred) or
+/// `chat_history.jsonl`. Never uses `summary.json` mtime — Grok rewrites
+/// that on mere open/load.
+fn activity_secs(session_dir: &Path) -> Option<u64> {
+    let candidates = ["updates.jsonl", "chat_history.jsonl"];
+    let mut best: Option<u64> = None;
+    for name in candidates {
+        let p = session_dir.join(name);
+        if let Ok(meta) = fs::metadata(&p) {
+            if let Ok(modified) = meta.modified() {
+                if let Ok(d) = modified.duration_since(UNIX_EPOCH) {
+                    let secs = d.as_secs();
+                    best = Some(best.map_or(secs, |b| b.max(secs)));
+                }
+            }
+        }
+    }
+    best
+}
+
+/// Session ids currently held open by a live Grok TUI process.
+pub fn active_terminal_sessions() -> HashSet<String> {
+    let path = grok_home().join("active_sessions.json");
+    let raw = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => return HashSet::new(),
+    };
+    let entries: Vec<Value> = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return HashSet::new(),
+    };
+    let mut out = HashSet::new();
+    for e in entries {
+        let id = e
+            .get("session_id")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        if id.is_empty() {
+            continue;
+        }
+        let pid = e.get("pid").and_then(|p| p.as_u64()).unwrap_or(0);
+        if pid > 0 && process_alive(pid as u32) {
+            out.insert(id.to_string());
+        }
+    }
+    out
+}
+
+fn process_alive(pid: u32) -> bool {
+    Path::new(&format!("/proc/{pid}")).exists()
+}
+
 /// Recent project roots for the new-session picker.
 pub fn recent_project_cwds() -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let mut out = Vec::new();
     let o = overlay::load();
     for c in o.recent_cwds.iter().chain(o.last_cwd.iter()) {
@@ -148,7 +256,6 @@ pub fn recent_project_cwds() -> Vec<String> {
             out.push(c.clone());
         }
     }
-    // Also surface groups already on disk under ~/.grok/sessions.
     if let Ok(entries) = fs::read_dir(sessions_root()) {
         for e in entries.flatten() {
             let name = match e.file_name().into_string() {
@@ -190,13 +297,10 @@ fn read_summary(path: &Path) -> Option<(String, u64, String)> {
 
 fn parse_ts(s: Option<&str>) -> Option<u64> {
     let s = s?;
-    // RFC3339-ish: 2026-07-18T17:33:45.778327572Z — chrono optional; crude parse via file mtime fallback
-    // Prefer chrono if we added it
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|d| d.timestamp() as u64)
         .or_else(|| {
-            // truncate fractional to 6 digits for chrono
             let trimmed = if let Some(dot) = s.find('.') {
                 let (a, rest) = s.split_at(dot);
                 let frac: String = rest
@@ -217,14 +321,108 @@ fn parse_ts(s: Option<&str>) -> Option<u64> {
 }
 
 pub fn title_for(cwd: &str, id: &str) -> Option<String> {
-    if let Some(t) = overlay::title_override(id) {
-        return Some(t);
+    let pins = overlay::load();
+    if let Some(t) = pins.title_overrides.get(id) {
+        return Some(t.clone());
+    }
+    if let Some(t) = pins.auto_titles.get(id) {
+        return Some(t.clone());
     }
     let path = sessions_root()
         .join(encode_cwd(cwd))
         .join(id)
         .join("summary.json");
     read_summary(&path).map(|(t, _, _)| t)
+}
+
+/// Derive a short, human session title from **user + assistant** turns only.
+/// Ignores tools, thoughts, plans, and errors.
+pub fn derive_title_from_turns(turns: &[Turn]) -> Option<String> {
+    let mut users: Vec<&str> = Vec::new();
+    let mut assistants: Vec<&str> = Vec::new();
+    for t in turns {
+        match t {
+            Turn::User(s) => {
+                let s = s.trim();
+                if !s.is_empty() {
+                    users.push(s);
+                }
+            }
+            Turn::Assistant(s) => {
+                let s = s.trim();
+                if !s.is_empty() {
+                    assistants.push(s);
+                }
+            }
+            _ => {}
+        }
+    }
+    if users.is_empty() && assistants.is_empty() {
+        return None;
+    }
+
+    // Evolving title: early sessions use the first ask; longer ones prefer
+    // the latest user intent so the label tracks what the work became.
+    let seed = if users.len() >= 3 {
+        users.last().copied()
+    } else {
+        users.first().copied()
+    }
+    .or_else(|| assistants.first().copied())?;
+
+    let mut title = clean_title_seed(seed);
+    if title.is_empty() {
+        return None;
+    }
+
+    // If we only have a short user ask, optionally append a hint from the
+    // first assistant sentence (still user/assistant only).
+    if users.len() == 1 && title.chars().count() < 28 {
+        if let Some(a) = assistants.first() {
+            let hint = clean_title_seed(a);
+            if !hint.is_empty() && !title.eq_ignore_ascii_case(&hint) {
+                let combined = format!("{title} · {hint}");
+                title = ellipsize(&combined, 72);
+            }
+        }
+    }
+
+    Some(ellipsize(&title, 72))
+}
+
+fn clean_title_seed(s: &str) -> String {
+    // First non-empty line, strip markdown heading markers / list bullets.
+    let line = s
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .trim_start_matches('#')
+        .trim_start_matches(['-', '*', '>', ' '])
+        .trim();
+    // Collapse whitespace.
+    let collapsed: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed
+}
+
+fn ellipsize(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_string();
+    }
+    let take = max_chars.saturating_sub(1);
+    let t: String = s.chars().take(take).collect();
+    format!("{t}…")
+}
+
+/// If the user has not manually renamed this session, store a derived title.
+pub fn maybe_update_auto_title(id: &str, turns: &[Turn]) {
+    if overlay::title_override(id).is_some() {
+        return;
+    }
+    if let Some(title) = derive_title_from_turns(turns) {
+        overlay::set_auto_title(id, &title);
+    }
 }
 
 /// Result of a lazy history window over `updates.jsonl`.
@@ -237,7 +435,6 @@ pub struct HistorySlice {
 }
 
 /// Rebuild display turns from Grok `updates.jsonl` for a session (full file).
-/// Prefer [`history_tail`] / [`history_before`] for UI loads.
 pub fn turns_from_updates_jsonl(cwd: &str, id: &str) -> Vec<Turn> {
     history_tail(cwd, id).turns
 }
@@ -259,7 +456,6 @@ fn updates_path(cwd: &str, id: &str) -> PathBuf {
         .join("updates.jsonl")
 }
 
-/// Read up to `max_bytes` ending at `end_exclusive` (or EOF if `None`).
 fn history_window(
     cwd: &str,
     id: &str,
@@ -298,7 +494,6 @@ fn history_window(
     let n = file.read(&mut buf).unwrap_or(0);
     buf.truncate(n);
 
-    // If we started mid-file, skip the first partial line.
     let (start_byte, text) = if start_read > 0 {
         match buf.iter().position(|&b| b == b'\n') {
             Some(i) if i + 1 < buf.len() => {
@@ -306,7 +501,6 @@ fn history_window(
                 (start, String::from_utf8_lossy(&buf[i + 1..]).into_owned())
             }
             _ => {
-                // Only a partial line in this window — treat as empty older chunk.
                 return HistorySlice {
                     turns: Vec::new(),
                     start_byte: end,
@@ -315,10 +509,7 @@ fn history_window(
             }
         }
     } else {
-        (
-            0u64,
-            String::from_utf8_lossy(&buf).into_owned(),
-        )
+        (0u64, String::from_utf8_lossy(&buf).into_owned())
     };
 
     let turns = parse_updates_text(&text);
@@ -498,8 +689,6 @@ mod tests {
     #[test]
     fn list_and_turns_from_fake_tree() {
         let tmp = tempfile::tempdir().unwrap();
-        // point GROK_HOME at tmp
-        // SAFETY: test-only env mutation
         unsafe {
             std::env::set_var("GROK_HOME", tmp.path());
         }
@@ -535,11 +724,31 @@ mod tests {
         let turns = turns_from_updates_jsonl(cwd, "abc-123");
         assert!(matches!(&turns[0], Turn::User(s) if s == "hi"));
         assert!(matches!(&turns[1], Turn::Assistant(s) if s == "yo"));
-        let tail = history_tail(cwd, "abc-123");
-        assert!(!tail.has_older);
-        assert_eq!(tail.turns.len(), 2);
+        let all = list_all();
+        assert_eq!(all.len(), 1);
+        let title = derive_title_from_turns(&turns).unwrap();
+        assert!(title.to_lowercase().contains("hi") || title.contains("yo"));
         unsafe {
             std::env::remove_var("GROK_HOME");
         }
+    }
+
+    #[test]
+    fn derive_ignores_tools() {
+        let turns = vec![
+            Turn::User("Fix the login bug".into()),
+            Turn::Tool(ToolTurn {
+                call_id: "1".into(),
+                tool: "bash".into(),
+                args: Value::Null,
+                status: "ok".into(),
+                output: "lots of noise".into(),
+            }),
+            Turn::Assistant("Patched auth middleware.".into()),
+        ];
+        let t = derive_title_from_turns(&turns).unwrap();
+        assert!(!t.contains("bash"));
+        assert!(!t.contains("noise"));
+        assert!(t.to_lowercase().contains("login") || t.to_lowercase().contains("fix"));
     }
 }

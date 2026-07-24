@@ -182,8 +182,10 @@ fn connect_stdio(spec: &BackendSpec, label: ConnectionModeLabel) -> Option<AcpCl
     }
 }
 
-fn refresh_sessions(cwd: &str) {
-    let entries = sessions::list_for_cwd(cwd);
+fn refresh_sessions(_cwd: &str) {
+    // Always list every project group so the sidebar is not limited to
+    // the process cwd / last project.
+    let entries = sessions::list_all();
     bridge::emit(AgentEvent::SessionsListed { entries });
 }
 

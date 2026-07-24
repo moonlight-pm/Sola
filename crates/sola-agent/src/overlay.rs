@@ -18,10 +18,16 @@ pub struct Overlay {
     /// Recent project directories for the new-session picker (newest first).
     #[serde(default)]
     pub recent_cwds: Vec<String>,
-    /// Display title overrides keyed by session id (Sola-only; Grok TUI
-    /// still shows its own title until a native rename exists).
+    /// Manual display title overrides keyed by session id (Sola-only).
     #[serde(default)]
     pub title_overrides: HashMap<String, String>,
+    /// Auto-derived titles from user/assistant turns (never tools).
+    /// Manual `title_overrides` always win.
+    #[serde(default)]
+    pub auto_titles: HashMap<String, String>,
+    /// Last sidebar width in logical pixels (resizable split).
+    #[serde(default)]
+    pub sidebar_w: Option<f32>,
 }
 
 fn overlay_path() -> PathBuf {
@@ -92,4 +98,21 @@ pub fn set_title_override(id: &str, title: &str) {
 
 pub fn title_override(id: &str) -> Option<String> {
     load().title_overrides.get(id).cloned()
+}
+
+pub fn set_auto_title(id: &str, title: &str) {
+    let mut o = load();
+    let t = title.trim();
+    if t.is_empty() {
+        o.auto_titles.remove(id);
+    } else {
+        o.auto_titles.insert(id.to_string(), t.to_string());
+    }
+    save(&o);
+}
+
+pub fn set_sidebar_w(w: f32) {
+    let mut o = load();
+    o.sidebar_w = Some(w);
+    save(&o);
 }

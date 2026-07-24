@@ -6,11 +6,12 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use iced::widget::operation;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::Id as ScrollId;
-use iced::{Element, Subscription, Task, Theme};
+use iced::{event, mouse, Element, Event, Subscription, Task, Theme};
 
 use sola_bus::Message;
 use sola_bus::topics::TopicKind;
@@ -20,6 +21,10 @@ use sola_kit::app::{
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
+
+const SIDEBAR_W_DEFAULT: f32 = 280.0;
+const SIDEBAR_W_MIN: f32 = 180.0;
+const SIDEBAR_W_MAX: f32 = 480.0;
 
 mod acp;
 mod backend;
@@ -127,6 +132,12 @@ pub(crate) struct App {
     pub(crate) rename: Option<RenameState>,
     /// Request snap-to-bottom on next update return.
     pub(crate) scroll_bottom_pending: bool,
+    /// Resizable left session column width.
+    pub(crate) sidebar_w: f32,
+    pub(crate) dragging_divider: bool,
+    pub(crate) last_cursor_x: Option<f32>,
+    /// `(cursor_x_at_press, sidebar_w_at_press)`.
+    pub(crate) drag_anchor: Option<(f32, f32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,18 +166,28 @@ pub(crate) enum Msg {
     RenameDraft(String),
     RenameCommit,
     RenameCancel,
+    // Sidebar resize
+    DividerPress,
+    CursorMoved(f32),
+    CursorReleased,
+    /// Periodic list refresh (live TUI dots, ages).
+    RefreshSessionsTick,
 }
 
 impl App {
     fn new() -> Self {
         let project_root = PathBuf::from(project_cwd());
+        let sidebar_w = overlay::load()
+            .sidebar_w
+            .unwrap_or(SIDEBAR_W_DEFAULT)
+            .clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
         Self {
             theme: default_theme(),
             turns: Vec::new(),
             draft: String::new(),
             streaming: false,
             pending: None,
-            sessions: sessions::list_for_cwd(&project_root.to_string_lossy()),
+            sessions: sessions::list_all(),
             session_id: None,
             session_title: None,
             project_root,
@@ -183,6 +204,10 @@ impl App {
             project_picker: None,
             rename: None,
             scroll_bottom_pending: false,
+            sidebar_w,
+            dragging_divider: false,
+            last_cursor_x: None,
+            drag_anchor: None,
         }
     }
 
@@ -199,10 +224,22 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
-        Subscription::batch([
+        let mut subs = vec![
             bus_subscription().map(Msg::Bus),
             bridge::agent_subscription().map(Msg::Acp),
-        ])
+            iced::time::every(Duration::from_secs(8)).map(|_| Msg::RefreshSessionsTick),
+        ];
+        // Cursor tracking for divider drag (and continuous x for press anchor).
+        subs.push(event::listen_with(|event, _status, _id| match event {
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                Some(Msg::CursorMoved(position.x))
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                Some(Msg::CursorReleased)
+            }
+            _ => None,
+        }));
+        Subscription::batch(subs)
     }
 
     fn maybe_scroll_bottom(&mut self) -> Task<Msg> {
@@ -314,7 +351,7 @@ impl App {
             }
             Msg::TogglePin(id) => {
                 overlay::toggle_pin(&id);
-                self.sessions = sessions::list_for_cwd(&self.project_root.to_string_lossy());
+                self.sessions = sessions::list_all();
             }
             Msg::StartRename(id) => {
                 let draft = self
@@ -344,12 +381,38 @@ impl App {
                             Some(title.clone())
                         };
                     }
-                    self.sessions =
-                        sessions::list_for_cwd(&self.project_root.to_string_lossy());
+                    self.sessions = sessions::list_all();
                 }
             }
             Msg::RenameCancel => {
                 self.rename = None;
+            }
+            Msg::DividerPress => {
+                self.dragging_divider = true;
+                if let Some(x) = self.last_cursor_x {
+                    self.drag_anchor = Some((x, self.sidebar_w));
+                }
+            }
+            Msg::CursorMoved(x) => {
+                self.last_cursor_x = Some(x);
+                if self.dragging_divider {
+                    if let Some((anchor_x, anchor_w)) = self.drag_anchor {
+                        // Left sidebar grows when cursor moves right.
+                        let desired = anchor_w + (x - anchor_x);
+                        self.sidebar_w = desired.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX);
+                    }
+                }
+            }
+            Msg::CursorReleased => {
+                if self.dragging_divider {
+                    self.dragging_divider = false;
+                    self.drag_anchor = None;
+                    overlay::set_sidebar_w(self.sidebar_w);
+                }
+            }
+            Msg::RefreshSessionsTick => {
+                // Keep ages + TUI-live dots fresh without requiring a click.
+                self.sessions = sessions::list_all();
             }
             Msg::PermissionPick(option_id) => {
                 if let Some(p) = self.pending.take() {
@@ -440,9 +503,27 @@ impl App {
         self.history_start_byte = 0;
         self.has_older_history = false;
         self.stick_to_bottom = true;
-        self.sessions = sessions::list_for_cwd(&cwd);
+        self.sessions = sessions::list_all();
         bridge::agent_send(AgentCmd::NewSession { cwd: cwd.clone() });
         bridge::agent_send(AgentCmd::RefreshSessions { cwd });
+    }
+
+    fn refresh_title_from_turns(&mut self) {
+        let Some(id) = self.session_id.clone() else {
+            return;
+        };
+        sessions::maybe_update_auto_title(&id, &self.turns);
+        if overlay::title_override(&id).is_none() {
+            if let Some(t) = sessions::derive_title_from_turns(&self.turns) {
+                self.session_title = Some(t);
+            }
+        }
+        // Keep sidebar label in sync.
+        if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+            if let Some(t) = self.session_title.clone() {
+                s.title = t;
+            }
+        }
     }
 
     fn request_older_history(&mut self) -> Task<Msg> {
@@ -501,6 +582,9 @@ impl App {
                 self.pending = None;
                 self.stick_to_bottom = true;
                 self.scroll_bottom_pending = true;
+                self.refresh_title_from_turns();
+                // Do not re-sort ages from summary — list_all uses updates mtime.
+                self.sessions = sessions::list_all();
             }
             AgentEvent::HistoryOlder {
                 turns,
@@ -610,6 +694,8 @@ impl App {
             AgentEvent::TurnEnded { stop_reason } => {
                 self.streaming = false;
                 self.pending = None;
+                self.refresh_title_from_turns();
+                self.sessions = sessions::list_all();
                 if stop_reason != "end_turn" && stop_reason != "EndTurn" {
                     tracing::info!(%stop_reason, "turn ended");
                 }

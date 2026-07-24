@@ -7,9 +7,9 @@ pub(crate) mod footer;
 pub(crate) mod markdown;
 pub(crate) mod sidebar;
 
-use iced::widget::{button, column, container, row, scrollable, Space, Column};
+use iced::widget::{button, column, container, mouse_area, row, scrollable, stack, Space, Column};
 use iced::widget::scrollable::Viewport;
-use iced::{Alignment, Background, Border, Element, Length, Padding, Theme};
+use iced::{mouse, Alignment, Background, Border, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{
     hairline, RADIUS_LG, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
@@ -41,26 +41,50 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-    let body = row![
-        sidebar::view(app),
+    // Draggable vertical divider between sidebar and main (monitor pattern).
+    let divider = mouse_area(
+        container(Space::new().width(Length::Fill).height(Length::Fill))
+            .style(divider_style)
+            .width(Length::Fixed(6.0))
+            .height(Length::Fill),
+    )
+    .interaction(mouse::Interaction::ResizingHorizontally)
+    .on_press(Msg::DividerPress);
+
+    let body: Element<'_, Msg> = row![
+        container(sidebar::view(app))
+            .width(Length::Fixed(app.sidebar_w))
+            .height(Length::Fill),
+        divider,
         container(main)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(main_pane_style),
     ]
     .width(Length::Fill)
-    .height(Length::Fill);
+    .height(Length::Fill)
+    .into();
+
+    // While dragging, a full-window overlay keeps the resize cursor and
+    // prevents siblings from stealing hit-testing mid-drag.
+    let body: Element<'_, Msg> = if app.dragging_divider {
+        stack![
+            body,
+            mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                .interaction(mouse::Interaction::ResizingHorizontally),
+        ]
+        .into()
+    } else {
+        body
+    };
 
     if let Some(picker) = &app.project_picker {
         return stack_picker(body, picker);
     }
-    body.into()
+    body
 }
 
-fn stack_picker<'a>(
-    base: iced::widget::Row<'a, Msg>,
-    picker: &'a crate::ProjectPicker,
-) -> Element<'a, Msg> {
+fn stack_picker<'a>(base: Element<'a, Msg>, picker: &'a crate::ProjectPicker) -> Element<'a, Msg> {
     // Dimmed overlay with a centered card for project selection.
     let recent: Vec<Element<'a, Msg>> = picker
         .recent
@@ -120,13 +144,21 @@ fn stack_picker<'a>(
         .center_y(Length::Fill)
         .style(picker_scrim_style);
 
-    iced::widget::stack![base, overlay].into()
+    stack![base, overlay].into()
 }
 
 fn main_pane_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(Background::Color(p.background.base.color)),
+        ..container::Style::default()
+    }
+}
+
+fn divider_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.background.stronger.color)),
         ..container::Style::default()
     }
 }
@@ -275,6 +307,7 @@ fn composer(app: &App) -> Element<'_, Msg> {
             .width(Length::Fill)
     };
 
+    // No rounded shell — field sits flat in the band.
     let bar: Element<'_, Msg> = if app.streaming {
         row![
             field,
@@ -287,12 +320,7 @@ fn composer(app: &App) -> Element<'_, Msg> {
         field.into()
     };
 
-    let shell = container(bar)
-        .padding(Padding::from([SPACE_SM, SPACE_SM]))
-        .width(Length::Fill)
-        .style(composer_shell_style);
-
-    container(shell)
+    container(bar)
         .width(Length::Fill)
         .padding(Padding {
             top: SPACE_MD,
@@ -313,15 +341,6 @@ fn composer_band_style(theme: &Theme) -> container::Style {
             width: 1.0,
             radius: 0.0.into(),
         },
-        ..container::Style::default()
-    }
-}
-
-fn composer_shell_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(p.background.weaker.color)),
-        border: hairline(p, RADIUS_LG),
         ..container::Style::default()
     }
 }

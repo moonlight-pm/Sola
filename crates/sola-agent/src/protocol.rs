@@ -115,8 +115,12 @@ pub struct SessionSummary {
     pub id: String,
     pub title: String,
     pub cwd: String,
+    /// Unix secs of last **turn** activity (updates.jsonl mtime), not open time.
     pub updated: u64,
     pub pinned: bool,
+    /// True when a live Grok TUI process has this session open.
+    #[serde(default)]
+    pub live: bool,
 }
 
 #[derive(Debug, Clone)]
