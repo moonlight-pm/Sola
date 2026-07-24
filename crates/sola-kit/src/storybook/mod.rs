@@ -34,6 +34,7 @@ pub mod pages;
 /// doesn't track its own selection — see its module docs).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
+    Overview,
     Theme,
     Shell,
     Text,
@@ -56,8 +57,9 @@ pub enum Page {
 
 impl Page {
     /// Order rendered in the sidebar. Grouped by [`Page::section`]:
-    /// Theme → Layout → Components.
+    /// System → Layout → Components (matches sola-kit-ds).
     pub const ALL: &'static [Page] = &[
+        Page::Overview,
         Page::Theme,
         Page::Shell,
         Page::Divider,
@@ -80,6 +82,7 @@ impl Page {
 
     pub fn label(self) -> &'static str {
         match self {
+            Page::Overview => "Overview",
             Page::Theme => "Theme",
             Page::Shell => "Shell",
             Page::Text => "Text",
@@ -101,11 +104,11 @@ impl Page {
         }
     }
 
-    /// Section bucket for the sidebar. Mirrors the original kit's
-    /// Theme / Layout / Components grouping.
+    /// Section bucket for the sidebar. Mirrors sola-kit-ds:
+    /// System / Layout / Components.
     pub fn section(self) -> Option<&'static str> {
         match self {
-            Page::Theme | Page::Shell => Some("Theme"),
+            Page::Overview | Page::Theme | Page::Shell => Some("System"),
             Page::Divider | Page::Split | Page::Toolbar => Some("Layout"),
             Page::Text
             | Page::Button
@@ -126,15 +129,16 @@ impl Page {
     /// The palette atoms this page's component visibly uses, surfaced as
     /// an inline editor panel below its demo (see `page_view`). Curated,
     /// best-effort — tune freely. Empty for pages that carry their own
-    /// editors (Theme's full grid, Shell's token editor). Authored from
-    /// each component's actual `extended_palette()` slot usage.
+    /// editors (Overview foundation, Theme's full grid, Shell's token
+    /// editor). Authored from each component's actual `extended_palette()`
+    /// slot usage.
     pub fn atoms(self) -> &'static [AtomField] {
         use AtomField::{
             Accent, Bg, BgHover, BgRaised, Border, Danger, Fg, FgMuted, Selection, Success,
             Warning,
         };
         match self {
-            Page::Theme | Page::Shell => &[],
+            Page::Overview | Page::Theme | Page::Shell => &[],
             Page::Divider => &[Border, Bg],
             Page::Split => &[Bg, BgRaised, Border],
             Page::Titlebar => &[Bg, BgRaised, Border, Fg],
@@ -457,7 +461,7 @@ impl Storybook {
         // bus replay re-baselines it once a saved preset resolves.
         let checkpoint = default_preset.clone();
         Self {
-            page: Page::Theme,
+            page: Page::Overview,
             toolbar: pages::toolbar::State::default(),
             button: pages::button::State::default(),
             field: pages::field::State::default(),
@@ -1219,74 +1223,30 @@ impl Storybook {
             }
         };
 
-        // Material-ish header strip: raised fill + soft bottom hairline.
-        let chip = {
-            let live = row![
-                container(iced::widget::Space::new().width(6).height(6)).style(|_| {
-                    iced::widget::container::Style {
-                        background: Some(iced::Background::Color(iced::Color::from_rgb(
-                            0.243, 0.812, 0.557,
-                        ))), // success seed
-                        border: iced::Border {
-                            color: iced::Color::from_rgba(0.243, 0.812, 0.557, 0.22),
-                            width: 3.0,
-                            radius: 999.0.into(),
-                        },
-                        ..Default::default()
-                    }
-                }),
-                text("kit · live").size(11).style(|theme: &iced::Theme| {
-                    iced::widget::text::Style {
-                        color: Some(theme.extended_palette().secondary.base.text),
-                    }
-                }),
-            ]
-            .spacing(6)
-            .align_y(iced::Alignment::Center);
-            container(live)
-                .padding(Padding::from([4, 10]))
-                .style(|theme: &iced::Theme| {
-                    let p = theme.extended_palette();
-                    iced::widget::container::Style {
-                        background: Some(iced::Background::Color(iced::Color {
-                            a: 0.55,
-                            ..p.background.base.color
-                        })),
-                        border: iced::Border {
-                            color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.12),
-                            width: 1.0,
-                            radius: 999.0.into(),
-                        },
-                        ..Default::default()
-                    }
-                })
-        };
-
-        container(
-            row![body, iced::widget::Space::new().width(Length::Fill), chip]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
-        )
-        .padding(Padding::from([10, 24]))
-        .width(Length::Fill)
-        .style(|theme: &iced::Theme| {
-            let p = theme.extended_palette();
-            iced::widget::container::Style {
-                background: Some(iced::Background::Color(p.background.weaker.color)),
-                border: iced::Border {
-                    color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.07),
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            }
-        })
-        .into()
+        // Raised header strip with soft bottom hairline.
+        container(body)
+            .padding(Padding::from([10, 24]))
+            .width(Length::Fill)
+            .style(|theme: &iced::Theme| {
+                let p = theme.extended_palette();
+                iced::widget::container::Style {
+                    background: Some(iced::Background::Color(p.background.weaker.color)),
+                    border: iced::Border {
+                        color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.07),
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                }
+            })
+            .into()
     }
 
     fn page_view(&self) -> Element<'_, Msg> {
         let editable = !self.is_default_active();
         let content: Element<'_, Msg> = match self.page {
+            Page::Overview => pages::overview::view(&self.active().atoms, &self.button)
+                .map(Msg::Button),
             Page::Theme => pages::theme::view(
                 &self.active().atoms,
                 &self.active().fonts,
