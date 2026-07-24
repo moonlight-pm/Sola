@@ -126,6 +126,11 @@ pub(crate) struct App {
     pub(crate) history_start_byte: u64,
     pub(crate) has_older_history: bool,
     pub(crate) loading_older: bool,
+    /// Chunks auto-prepended after session open (stops at target item count).
+    pub(crate) history_auto_chunks: u32,
+    /// Last known relative scroll Y (0 = top). `None` until first scroll notify.
+    /// When content does not overflow, iced never fires `on_scroll`.
+    pub(crate) scroll_rel_y: Option<f32>,
     /// Auto-scroll transcript to bottom unless user scrolled away.
     pub(crate) stick_to_bottom: bool,
     pub(crate) project_picker: Option<ProjectPicker>,
@@ -154,8 +159,12 @@ pub(crate) enum Msg {
     PermissionAllowFirst,
     PermissionDeny,
     Restart,
-    /// Scrollable viewport changed.
+    /// Scrollable viewport changed (relative Y: 0 top … 1 bottom).
     TranscriptScrolled(f32),
+    /// Mouse wheel up over the app — used when content doesn't overflow.
+    TranscriptWheelUp,
+    /// Explicit "load earlier" control (always works without a scrollbar).
+    LoadOlderHistory,
     // Project picker
     PickerDraft(String),
     PickerUse,
@@ -197,6 +206,8 @@ impl App {
             usage_used: None,
             usage_size: None,
             need_setup: None,
+            history_auto_chunks: 0,
+            scroll_rel_y: None,
             history_start_byte: 0,
             has_older_history: false,
             loading_older: false,
@@ -229,13 +240,24 @@ impl App {
             bridge::agent_subscription().map(Msg::Acp),
             iced::time::every(Duration::from_secs(8)).map(|_| Msg::RefreshSessionsTick),
         ];
-        // Cursor tracking for divider drag (and continuous x for press anchor).
+        // Cursor tracking for divider drag; wheel-up for history when no scrollbar.
         subs.push(event::listen_with(|event, _status, _id| match event {
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 Some(Msg::CursorMoved(position.x))
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 Some(Msg::CursorReleased)
+            }
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let up = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => y > 0.0,
+                    mouse::ScrollDelta::Pixels { y, .. } => y > 0.0,
+                };
+                if up {
+                    Some(Msg::TranscriptWheelUp)
+                } else {
+                    None
+                }
             }
             _ => None,
         }));
@@ -271,11 +293,20 @@ impl App {
                         | AgentEvent::Plan { .. }
                         | AgentEvent::TurnEnded { .. }
                 );
+                let fill_history = matches!(
+                    ev,
+                    AgentEvent::Transcript { .. } | AgentEvent::HistoryOlder { .. }
+                );
                 self.on_event(ev);
+                let mut tasks = Vec::new();
+                if fill_history {
+                    tasks.push(self.maybe_auto_fill_history());
+                }
                 if need_scroll && self.stick_to_bottom {
                     self.scroll_bottom_pending = true;
-                    return self.maybe_scroll_bottom();
+                    tasks.push(self.maybe_scroll_bottom());
                 }
+                return Task::batch(tasks);
             }
             Msg::DraftChanged(s) => self.draft = s,
             Msg::Send => {
@@ -476,19 +507,32 @@ impl App {
                 });
             }
             Msg::TranscriptScrolled(relative_y) => {
-                // relative_y: 0.0 = top, 1.0 = bottom
-                if relative_y < 0.92 {
+                // relative_y: 0.0 = top, 1.0 = bottom (NaN when content fits viewport)
+                let y = if relative_y.is_finite() {
+                    relative_y
+                } else {
+                    0.0
+                };
+                self.scroll_rel_y = Some(y);
+                if y < 0.92 {
                     self.stick_to_bottom = false;
                 } else {
                     self.stick_to_bottom = true;
                 }
-                if relative_y < 0.08
-                    && self.has_older_history
-                    && !self.loading_older
-                    && self.session_id.is_some()
-                {
+                if y < 0.08 {
                     return self.request_older_history();
                 }
+            }
+            Msg::TranscriptWheelUp => {
+                // When content is shorter than the pane, iced never scrolls and
+                // never fires on_scroll — wheel-up still means "go older".
+                let near_top = self.scroll_rel_y.map(|y| y < 0.12).unwrap_or(true);
+                if near_top {
+                    return self.request_older_history();
+                }
+            }
+            Msg::LoadOlderHistory => {
+                return self.request_older_history();
             }
         }
         Task::none()
@@ -502,6 +546,8 @@ impl App {
         self.session_title = None;
         self.history_start_byte = 0;
         self.has_older_history = false;
+        self.history_auto_chunks = 0;
+        self.scroll_rel_y = None;
         self.stick_to_bottom = true;
         self.sessions = sessions::list_all();
         bridge::agent_send(AgentCmd::NewSession { cwd: cwd.clone() });
@@ -543,6 +589,27 @@ impl App {
         Task::none()
     }
 
+    /// After open / prepend, keep fetching older chunks until the pane has
+    /// enough display items (or we hit the auto-chunk cap). Does not depend on
+    /// a scrollbar existing.
+    fn maybe_auto_fill_history(&mut self) -> Task<Msg> {
+        if !self.has_older_history || self.loading_older || self.session_id.is_none() {
+            return Task::none();
+        }
+        if self.history_auto_chunks >= sessions::HISTORY_AUTO_CHUNKS_MAX {
+            return Task::none();
+        }
+        if sessions::display_item_count(&self.turns) >= sessions::HISTORY_INITIAL_ITEMS {
+            return Task::none();
+        }
+        self.history_auto_chunks += 1;
+        self.request_older_history()
+    }
+
+    fn finalize_open_tools(&mut self) {
+        sessions::finalize_tool_statuses(&mut self.turns);
+    }
+
     fn on_event(&mut self, ev: AgentEvent) {
         match ev {
             AgentEvent::Connected { backend, mode } => {
@@ -578,6 +645,8 @@ impl App {
                 self.history_start_byte = history_start_byte;
                 self.has_older_history = has_older;
                 self.loading_older = false;
+                self.history_auto_chunks = 0;
+                self.scroll_rel_y = None;
                 self.streaming = false;
                 self.pending = None;
                 self.stick_to_bottom = true;
@@ -678,6 +747,7 @@ impl App {
             AgentEvent::TurnEnded { stop_reason } => {
                 self.streaming = false;
                 self.pending = None;
+                self.finalize_open_tools();
                 self.refresh_title_from_turns();
                 self.sessions = sessions::list_all();
                 if stop_reason != "end_turn" && stop_reason != "EndTurn" {

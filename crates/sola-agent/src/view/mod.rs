@@ -9,7 +9,7 @@ pub(crate) mod sidebar;
 
 use iced::widget::{button, column, container, mouse_area, row, scrollable, stack, Space, Column};
 use iced::widget::scrollable::Viewport;
-use iced::{mouse, Alignment, Background, Border, Element, Length, Padding, Theme};
+use iced::{mouse, Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{
     hairline, RADIUS_LG, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
@@ -184,19 +184,43 @@ fn picker_card_style(theme: &Theme) -> container::Style {
 fn transcript(app: &App) -> Element<'_, Msg> {
     let mut bubbles: Vec<Element<'_, Msg>> = Vec::new();
 
+    // Explicit control — iced hides the scrollbar when content fits the pane,
+    // so scroll-near-top alone cannot load earlier history.
     if app.has_older_history {
-        let label = if app.loading_older {
-            "Loading older messages…"
-        } else {
-            "Scroll up for older messages"
-        };
-        bubbles.push(
-            container(kit_text::caption(label).style(kit_text::muted))
+        let older: Element<'_, Msg> = if app.loading_older {
+            container(kit_text::caption("Loading earlier messages…").style(kit_text::muted))
                 .width(Length::Fill)
                 .center_x(Length::Fill)
                 .padding(Padding::from([SPACE_SM, 0.0]))
-                .into(),
-        );
+                .into()
+        } else {
+            container(
+                button(kit_text::caption("Load earlier messages").style(kit_text::muted))
+                    .on_press(Msg::LoadOlderHistory)
+                    .padding(Padding::from([SPACE_SM, SPACE_MD]))
+                    .style(|theme: &Theme, status| {
+                        let p = theme.extended_palette();
+                        let bg = match status {
+                            button::Status::Hovered | button::Status::Pressed => p.background.weak.color,
+                            _ => Color::TRANSPARENT,
+                        };
+                        button::Style {
+                            background: Some(Background::Color(bg)),
+                            text_color: p.background.base.text,
+                            border: Border {
+                                radius: RADIUS_LG.into(),
+                                ..Default::default()
+                            },
+                            ..button::Style::default()
+                        }
+                    }),
+            )
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .padding(Padding::from([SPACE_SM, 0.0]))
+            .into()
+        };
+        bubbles.push(older);
     }
 
     let inner: Element<'_, Msg> = if app.turns.is_empty() && bubbles.is_empty() {

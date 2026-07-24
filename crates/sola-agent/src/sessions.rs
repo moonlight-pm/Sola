@@ -11,8 +11,16 @@ use serde_json::Value;
 use crate::overlay;
 use crate::protocol::{PlanEntry, SessionSummary, ToolTurn, Turn};
 
-/// Default tail window when loading a transcript for display (~384 KiB).
-pub const HISTORY_TAIL_BYTES: u64 = 384 * 1024;
+/// Default tail window when loading a transcript for display.
+/// Tool-heavy jsonl burns bytes fast; chain-load fills the pane (see App).
+pub const HISTORY_TAIL_BYTES: u64 = 512 * 1024;
+
+/// How many **display items** (after collapsing contiguous tools) we try to
+/// have on first open before stopping auto-prepend of older chunks.
+pub const HISTORY_INITIAL_ITEMS: usize = 48;
+
+/// Cap auto-chain loads so a huge session cannot flood the UI thread.
+pub const HISTORY_AUTO_CHUNKS_MAX: u32 = 6;
 
 fn grok_home() -> PathBuf {
     if let Ok(h) = std::env::var("GROK_HOME") {
@@ -512,12 +520,54 @@ fn history_window(
         (0u64, String::from_utf8_lossy(&buf).into_owned())
     };
 
-    let turns = parse_updates_text(&text);
+    let mut turns = parse_updates_text(&text);
+    // History is past: never leave tools stuck on pending/in_progress/running
+    // (window edges and backgrounded tasks often omit a terminal update).
+    finalize_tool_statuses(&mut turns);
     HistorySlice {
         turns,
         start_byte,
         has_older: start_byte > 0,
     }
+}
+
+/// Count UI rows after collapsing contiguous tool uses (matches bubble layout).
+pub fn display_item_count(turns: &[Turn]) -> usize {
+    let mut n = 0usize;
+    let mut i = 0;
+    while i < turns.len() {
+        if matches!(&turns[i], Turn::Tool(_)) {
+            while i < turns.len() && matches!(&turns[i], Turn::Tool(_)) {
+                i += 1;
+            }
+            n += 1;
+        } else {
+            n += 1;
+            i += 1;
+        }
+    }
+    n
+}
+
+/// Mark non-terminal tools as completed (history / end-of-turn).
+pub fn finalize_tool_statuses(turns: &mut [Turn]) {
+    for t in turns.iter_mut() {
+        if let Turn::Tool(tt) = t {
+            if !is_terminal_tool_status(&tt.status) {
+                tt.status = "completed".into();
+            }
+        }
+    }
+}
+
+pub fn is_terminal_tool_status(status: &str) -> bool {
+    let s = status.to_ascii_lowercase();
+    s.contains("complet")
+        || s == "success"
+        || s == "ok"
+        || s.contains("fail")
+        || s.contains("error")
+        || s.contains("cancel")
 }
 
 fn parse_updates_text(raw: &str) -> Vec<Turn> {
@@ -723,5 +773,58 @@ mod tests {
         assert!(!t.contains("bash"));
         assert!(!t.contains("noise"));
         assert!(t.to_lowercase().contains("login") || t.to_lowercase().contains("fix"));
+    }
+
+    #[test]
+    fn finalize_tools_marks_stuck_running_done() {
+        let mut turns = vec![
+            Turn::Tool(ToolTurn {
+                call_id: "a".into(),
+                tool: "read".into(),
+                status: "in_progress".into(),
+            }),
+            Turn::Tool(ToolTurn {
+                call_id: "b".into(),
+                tool: "bash".into(),
+                status: "Pending".into(),
+            }),
+            Turn::Tool(ToolTurn {
+                call_id: "c".into(),
+                tool: "x".into(),
+                status: "failed".into(),
+            }),
+        ];
+        finalize_tool_statuses(&mut turns);
+        assert_eq!(
+            matches!(&turns[0], Turn::Tool(t) if t.status == "completed"),
+            true
+        );
+        assert_eq!(
+            matches!(&turns[1], Turn::Tool(t) if t.status == "completed"),
+            true
+        );
+        assert_eq!(
+            matches!(&turns[2], Turn::Tool(t) if t.status == "failed"),
+            true
+        );
+    }
+
+    #[test]
+    fn display_items_collapse_tools() {
+        let turns = vec![
+            Turn::User("hi".into()),
+            Turn::Tool(ToolTurn {
+                call_id: "1".into(),
+                tool: "a".into(),
+                status: "completed".into(),
+            }),
+            Turn::Tool(ToolTurn {
+                call_id: "2".into(),
+                tool: "b".into(),
+                status: "completed".into(),
+            }),
+            Turn::Assistant("ok".into()),
+        ];
+        assert_eq!(display_item_count(&turns), 3);
     }
 }

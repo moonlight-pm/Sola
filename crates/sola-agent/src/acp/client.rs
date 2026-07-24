@@ -512,9 +512,8 @@ impl AcpClient {
                     .and_then(|s| s.as_str())
                     .map(|s| s.to_string());
                 // Skip tool content/output — not rendered.
-                let done = status
-                    .as_deref()
-                    .is_some_and(|s| matches!(s, "completed" | "failed" | "cancelled"));
+                // Grok emits both `completed` and `Completed` (and similar).
+                let done = status.as_deref().is_some_and(sessions::is_terminal_tool_status);
                 if done {
                     bridge::emit(AgentEvent::ToolEnd {
                         call_id,

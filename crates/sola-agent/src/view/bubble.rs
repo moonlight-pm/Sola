@@ -148,11 +148,13 @@ fn tool_group_line(n: usize, statuses: &[&str], theme: &Theme) -> Element<'stati
     let mut failed = 0usize;
     let mut cancelled = 0usize;
     for status in statuses {
-        let s = status.to_lowercase();
+        let s = status.to_ascii_lowercase();
         if s.contains("fail") || s.contains("error") {
             failed += 1;
         } else if s.contains("cancel") {
             cancelled += 1;
+        } else if s.contains("complet") || s == "success" || s == "ok" || s == "done" {
+            // terminal success — leave counters
         } else if s.is_empty()
             || s == "running"
             || s == "pending"
@@ -162,6 +164,7 @@ fn tool_group_line(n: usize, statuses: &[&str], theme: &Theme) -> Element<'stati
         {
             running += 1;
         }
+        // any other status → treat as done (fall through)
     }
 
     let (status_label, tone) = if running > 0 {
