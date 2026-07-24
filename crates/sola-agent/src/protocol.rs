@@ -40,18 +40,15 @@ pub enum AgentEvent {
     ToolStart {
         call_id: String,
         tool: String,
-        args: serde_json::Value,
     },
     ToolUpdate {
         call_id: String,
         status: Option<String>,
         title: Option<String>,
-        output: Option<String>,
     },
     ToolEnd {
         call_id: String,
         status: String,
-        output: Option<String>,
     },
     Plan {
         entries: Vec<PlanEntry>,
@@ -136,10 +133,9 @@ pub enum Turn {
 #[derive(Debug, Clone)]
 pub struct ToolTurn {
     pub call_id: String,
+    /// Tool title/kind (metadata only; not expanded in the transcript).
     pub tool: String,
-    pub args: serde_json::Value,
     pub status: String,
-    pub output: String,
 }
 
 #[derive(Debug, Clone)]

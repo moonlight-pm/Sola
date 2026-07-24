@@ -1,4 +1,4 @@
-//! Transcript turns — chat bubbles, tool cards, muted thought, errors.
+//! Transcript turns — chat bubbles, collapsed tool groups, muted thought, errors.
 
 use iced::widget::{column, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
@@ -15,12 +15,32 @@ use crate::Msg;
 const BUBBLE_MAX: f32 = 960.0;
 const BODY_PX: f32 = 15.0;
 
-pub(crate) fn turn_view<'a>(turn: &'a Turn, theme: &Theme) -> Element<'a, Msg> {
+/// Render turns, collapsing contiguous tool uses into a single summary line.
+pub(crate) fn turns_view<'a>(turns: &'a [Turn], theme: &Theme) -> Vec<Element<'a, Msg>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < turns.len() {
+        if matches!(&turns[i], Turn::Tool(_)) {
+            let start = i;
+            while i < turns.len() && matches!(&turns[i], Turn::Tool(_)) {
+                i += 1;
+            }
+            out.push(tool_group_summary(&turns[start..i], theme));
+        } else {
+            out.push(turn_view(&turns[i], theme));
+            i += 1;
+        }
+    }
+    out
+}
+
+fn turn_view<'a>(turn: &'a Turn, theme: &Theme) -> Element<'a, Msg> {
     match turn {
         Turn::User(s) => user_bubble(s, theme),
         Turn::Assistant(s) => agent_bubble(s, theme),
         Turn::Thought(s) => thought_block(s),
-        Turn::Tool(t) => tool_card(t, theme),
+        // Contiguous tools are handled in `turns_view`; this is a fallback only.
+        Turn::Tool(t) => tool_group_line(1, &[t.status.as_str()], theme),
         Turn::Plan(entries) => plan_card(entries, theme),
         Turn::Error(s) => error_block(s),
     }
@@ -104,56 +124,81 @@ fn thought_block(body: &str) -> Element<'static, Msg> {
     .into()
 }
 
-fn tool_card(t: &crate::protocol::ToolTurn, theme: &Theme) -> Element<'static, Msg> {
-    let status = t.status.to_lowercase();
-    let tone = if status.contains("fail") || status.contains("error") {
-        Tone::Danger
-    } else if status.contains("complet") || status == "success" {
-        Tone::Success
-    } else if status.contains("cancel") {
-        Tone::Neutral
+/// One compact line for N contiguous tool uses — no args/output body.
+/// Count updates live as more tool turns land in the contiguous run.
+fn tool_group_summary(slice: &[Turn], theme: &Theme) -> Element<'static, Msg> {
+    let statuses: Vec<&str> = slice
+        .iter()
+        .filter_map(|t| match t {
+            Turn::Tool(tt) => Some(tt.status.as_str()),
+            _ => None,
+        })
+        .collect();
+    tool_group_line(statuses.len(), &statuses, theme)
+}
+
+fn tool_group_line(n: usize, statuses: &[&str], theme: &Theme) -> Element<'static, Msg> {
+    let label = if n == 1 {
+        "1 tool use".to_string()
     } else {
-        Tone::Accent
+        format!("{n} tool uses")
     };
-    let status_label = if t.status.is_empty() {
-        "running".to_string()
+
+    let mut running = 0usize;
+    let mut failed = 0usize;
+    let mut cancelled = 0usize;
+    for status in statuses {
+        let s = status.to_lowercase();
+        if s.contains("fail") || s.contains("error") {
+            failed += 1;
+        } else if s.contains("cancel") {
+            cancelled += 1;
+        } else if s.is_empty()
+            || s == "running"
+            || s == "pending"
+            || s.contains("in_progress")
+            || s.contains("in-progress")
+            || s == "inprogress"
+        {
+            running += 1;
+        }
+    }
+
+    let (status_label, tone) = if running > 0 {
+        (
+            if running == n {
+                "running".to_string()
+            } else {
+                format!("{running} running")
+            },
+            Tone::Accent,
+        )
+    } else if failed > 0 {
+        (
+            if failed == n {
+                "failed".to_string()
+            } else {
+                format!("{failed} failed")
+            },
+            Tone::Danger,
+        )
+    } else if cancelled == n && n > 0 {
+        ("cancelled".to_string(), Tone::Neutral)
     } else {
-        t.status.clone()
+        ("done".to_string(), Tone::Success)
     };
 
     let header = row![
-        kit_text::caption("Tool").style(kit_text::muted),
+        kit_text::body(label).style(kit_text::muted),
         iced::widget::Space::new().width(Length::Fill),
         badge::badge(status_label, tone),
     ]
     .spacing(SPACE_SM)
     .align_y(Alignment::Center);
 
-    let mut body = column![header, kit_text::body(t.tool.clone())].spacing(SPACE_SM);
-
-    let args = pretty_args(&t.args);
-    if !args.is_empty() {
-        body = body.push(
-            text(args)
-                .font(fonts::mono())
-                .size(12)
-                .style(kit_text::muted)
-                .wrapping(iced::widget::text::Wrapping::Word),
-        );
-    }
-    if !t.output.is_empty() {
-        body = body.push(
-            text(truncate(&t.output, 1200))
-                .font(fonts::mono())
-                .size(12)
-                .style(kit_text::muted)
-                .wrapping(iced::widget::text::Wrapping::Word),
-        );
-    }
-
     let bg = theme.extended_palette().background.weaker.color;
     let border = theme.extended_palette().background.stronger.color;
-    container(body.padding(Padding::from([SPACE_MD, SPACE_LG])))
+    container(header.padding(Padding::from([SPACE_SM, SPACE_MD])))
         .width(Length::Fill)
         .max_width(BUBBLE_MAX)
         .style(move |_t: &Theme| container::Style {
@@ -209,21 +254,4 @@ fn error_block(msg: &str) -> Element<'static, Msg> {
     .into()
 }
 
-fn pretty_args(v: &serde_json::Value) -> String {
-    if v.is_null() {
-        return String::new();
-    }
-    match serde_json::to_string_pretty(v) {
-        Ok(s) => truncate(&s, 400),
-        Err(_) => truncate(&v.to_string(), 400),
-    }
-}
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max).collect();
-        format!("{t}…")
-    }
-}

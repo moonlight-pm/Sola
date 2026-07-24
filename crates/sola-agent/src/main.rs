@@ -617,25 +617,19 @@ impl App {
                     _ => self.turns.push(Turn::Thought(text)),
                 }
             }
-            AgentEvent::ToolStart {
-                call_id,
-                tool,
-                args,
-            } => {
+            AgentEvent::ToolStart { call_id, tool } => {
                 self.streaming = true;
+                // Metadata only — UI collapses contiguous tools to "N tool uses".
                 self.turns.push(Turn::Tool(ToolTurn {
                     call_id,
                     tool,
-                    args,
                     status: "running".into(),
-                    output: String::new(),
                 }));
             }
             AgentEvent::ToolUpdate {
                 call_id,
                 status,
                 title,
-                output,
             } => {
                 if let Some(Turn::Tool(t)) = self
                     .turns
@@ -649,16 +643,9 @@ impl App {
                     if let Some(title) = title {
                         t.tool = title;
                     }
-                    if let Some(out) = output {
-                        t.output = out;
-                    }
                 }
             }
-            AgentEvent::ToolEnd {
-                call_id,
-                status,
-                output,
-            } => {
+            AgentEvent::ToolEnd { call_id, status } => {
                 if let Some(Turn::Tool(t)) = self
                     .turns
                     .iter_mut()
@@ -666,9 +653,6 @@ impl App {
                     .find(|t| matches!(t, Turn::Tool(tt) if tt.call_id == call_id))
                 {
                     t.status = status;
-                    if let Some(out) = output {
-                        t.output = out;
-                    }
                 }
             }
             AgentEvent::Plan { entries } => {

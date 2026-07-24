@@ -207,8 +207,8 @@ fn transcript(app: &App) -> Element<'_, Msg> {
             .width(Length::Fill)
             .into()
     } else {
-        for t in &app.turns {
-            bubbles.push(bubble::turn_view(t, &app.theme));
+        for el in bubble::turns_view(&app.turns, &app.theme) {
+            bubbles.push(el);
         }
         Column::with_children(bubbles)
             .spacing(SPACE_LG)

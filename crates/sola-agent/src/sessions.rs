@@ -569,14 +569,12 @@ fn parse_updates_text(raw: &str) -> Vec<Turn> {
                     .and_then(|s| s.as_str())
                     .unwrap_or("tool")
                     .to_string();
-                let args = update.get("rawInput").cloned().unwrap_or(Value::Null);
+                // Metadata only — transcript collapses tools; skip rawInput/output.
                 let idx = turns.len();
                 turns.push(Turn::Tool(ToolTurn {
                     call_id: call_id.clone(),
                     tool,
-                    args,
                     status: "pending".into(),
-                    output: String::new(),
                 }));
                 tool_index.insert(call_id, idx);
             }
@@ -592,9 +590,6 @@ fn parse_updates_text(raw: &str) -> Vec<Turn> {
                         }
                         if let Some(t) = update.get("title").and_then(|s| s.as_str()) {
                             tt.tool = t.to_string();
-                        }
-                        if let Some(out) = tool_content(&update) {
-                            tt.output = out;
                         }
                     }
                 }
@@ -651,26 +646,6 @@ fn chunk_text(update: &Value) -> Option<String> {
         return Some(t.to_string());
     }
     content.as_str().map(|s| s.to_string())
-}
-
-fn tool_content(update: &Value) -> Option<String> {
-    let content = update.get("content")?;
-    if let Some(arr) = content.as_array() {
-        let mut parts = Vec::new();
-        for item in arr {
-            if let Some(t) = item
-                .pointer("/content/text")
-                .and_then(|t| t.as_str())
-                .or_else(|| item.get("text").and_then(|t| t.as_str()))
-            {
-                parts.push(t);
-            }
-        }
-        if !parts.is_empty() {
-            return Some(parts.join("\n"));
-        }
-    }
-    None
 }
 
 #[allow(dead_code)]
@@ -740,9 +715,7 @@ mod tests {
             Turn::Tool(ToolTurn {
                 call_id: "1".into(),
                 tool: "bash".into(),
-                args: Value::Null,
                 status: "ok".into(),
-                output: "lots of noise".into(),
             }),
             Turn::Assistant("Patched auth middleware.".into()),
         ];

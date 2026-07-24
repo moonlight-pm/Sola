@@ -491,15 +491,8 @@ impl AcpClient {
                     .or_else(|| update.get("kind").and_then(|s| s.as_str()))
                     .unwrap_or("tool")
                     .to_string();
-                let args = update
-                    .get("rawInput")
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                bridge::emit(AgentEvent::ToolStart {
-                    call_id,
-                    tool,
-                    args,
-                });
+                // Skip rawInput — UI only shows collapsed "N tool uses".
+                bridge::emit(AgentEvent::ToolStart { call_id, tool });
             }
             "tool_call_update" => {
                 if self.suppress_history_replay {
@@ -518,7 +511,7 @@ impl AcpClient {
                     .get("title")
                     .and_then(|s| s.as_str())
                     .map(|s| s.to_string());
-                let output = tool_output_text(&update);
+                // Skip tool content/output — not rendered.
                 let done = status
                     .as_deref()
                     .is_some_and(|s| matches!(s, "completed" | "failed" | "cancelled"));
@@ -526,14 +519,12 @@ impl AcpClient {
                     bridge::emit(AgentEvent::ToolEnd {
                         call_id,
                         status: status.unwrap_or_else(|| "completed".into()),
-                        output,
                     });
                 } else {
                     bridge::emit(AgentEvent::ToolUpdate {
                         call_id,
                         status,
                         title,
-                        output,
                     });
                 }
             }
@@ -619,26 +610,6 @@ fn content_text(update: &Value) -> Option<String> {
     None
 }
 
-fn tool_output_text(update: &Value) -> Option<String> {
-    let content = update.get("content")?;
-    if let Some(arr) = content.as_array() {
-        let mut parts = Vec::new();
-        for item in arr {
-            if let Some(t) = item
-                .pointer("/content/text")
-                .and_then(|t| t.as_str())
-                .or_else(|| item.get("text").and_then(|t| t.as_str()))
-            {
-                parts.push(t.to_string());
-            }
-        }
-        if !parts.is_empty() {
-            return Some(parts.join("\n"));
-        }
-    }
-    content.as_str().map(|s| s.to_string())
-}
-
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
@@ -653,9 +624,7 @@ pub fn empty_tool(call_id: String, tool: String) -> ToolTurn {
     ToolTurn {
         call_id,
         tool,
-        args: Value::Null,
         status: String::new(),
-        output: String::new(),
     }
 }
 
