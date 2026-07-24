@@ -186,11 +186,11 @@ If pins feel noise, later option: pin only via context menu / long-press.
 | Phase | Status |
 |---|---|
 | A Composer | done |
-| B Sidebar fill | pending |
-| C Row cwd | pending |
-| D Project picker | pending |
-| E Type + width | pending |
-| F Markdown | pending |
-| G Token format | pending |
-| H Rename | pending |
-| I Lazy load + scroll bottom | pending |
+| B Sidebar fill | done |
+| C Row cwd | done |
+| D Project picker | done |
+| E Type + width | done |
+| F Markdown | done |
+| G Token format | done |
+| H Rename | done |
+| I Lazy load + scroll bottom | done |

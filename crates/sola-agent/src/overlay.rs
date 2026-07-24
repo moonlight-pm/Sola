@@ -1,6 +1,7 @@
-//! Sola-only session metadata (pins, last-opened). Never stores transcripts.
+//! Sola-only session metadata (pins, last-opened, title overrides).
+//! Never stores transcripts.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -14,6 +15,13 @@ pub struct Overlay {
     pub last_opened: Vec<String>,
     #[serde(default)]
     pub last_cwd: Option<String>,
+    /// Recent project directories for the new-session picker (newest first).
+    #[serde(default)]
+    pub recent_cwds: Vec<String>,
+    /// Display title overrides keyed by session id (Sola-only; Grok TUI
+    /// still shows its own title until a native rename exists).
+    #[serde(default)]
+    pub title_overrides: HashMap<String, String>,
 }
 
 fn overlay_path() -> PathBuf {
@@ -51,8 +59,37 @@ pub fn toggle_pin(id: &str) {
 pub fn note_opened(id: &str, cwd: &str) {
     let mut o = load();
     o.last_cwd = Some(cwd.to_string());
+    note_cwd_inner(&mut o, cwd);
     o.last_opened.retain(|x| x != id);
     o.last_opened.insert(0, id.to_string());
     o.last_opened.truncate(50);
     save(&o);
+}
+
+pub fn note_cwd(cwd: &str) {
+    let mut o = load();
+    o.last_cwd = Some(cwd.to_string());
+    note_cwd_inner(&mut o, cwd);
+    save(&o);
+}
+
+fn note_cwd_inner(o: &mut Overlay, cwd: &str) {
+    o.recent_cwds.retain(|c| c != cwd);
+    o.recent_cwds.insert(0, cwd.to_string());
+    o.recent_cwds.truncate(20);
+}
+
+pub fn set_title_override(id: &str, title: &str) {
+    let mut o = load();
+    let t = title.trim();
+    if t.is_empty() {
+        o.title_overrides.remove(id);
+    } else {
+        o.title_overrides.insert(id.to_string(), t.to_string());
+    }
+    save(&o);
+}
+
+pub fn title_override(id: &str) -> Option<String> {
+    load().title_overrides.get(id).cloned()
 }

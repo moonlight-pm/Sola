@@ -7,6 +7,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use iced::widget::operation;
+use iced::widget::scrollable::RelativeOffset;
+use iced::widget::Id as ScrollId;
 use iced::{Element, Subscription, Task, Theme};
 
 use sola_bus::Message;
@@ -33,6 +36,8 @@ use protocol::{
 };
 
 const APP_ID: &str = "sola-agent";
+/// Default Grok context window when ACP omits `size`.
+const DEFAULT_CONTEXT_SIZE: u64 = 500_000;
 
 #[derive(Debug, Clone)]
 struct PendingApproval {
@@ -40,6 +45,20 @@ struct PendingApproval {
     tool: String,
     preview: String,
     options: Vec<PermissionChoice>,
+}
+
+/// New-session project directory picker.
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectPicker {
+    pub(crate) draft: String,
+    pub(crate) recent: Vec<String>,
+}
+
+/// Inline rename of a session title.
+#[derive(Debug, Clone)]
+pub(crate) struct RenameState {
+    pub(crate) id: String,
+    pub(crate) draft: String,
 }
 
 fn main() -> iced::Result {
@@ -78,26 +97,40 @@ fn project_cwd() -> String {
         .unwrap_or_else(|| ".".into())
 }
 
-struct App {
-    theme: Theme,
-    turns: Vec<Turn>,
-    draft: String,
-    streaming: bool,
-    pending: Option<PendingApproval>,
-    sessions: Vec<SessionSummary>,
-    session_id: Option<String>,
-    session_title: Option<String>,
-    project_root: PathBuf,
-    connected: bool,
-    backend_label: String,
-    connection_mode: ConnectionModeLabel,
-    usage_used: Option<u64>,
-    usage_size: Option<u64>,
-    need_setup: Option<String>,
+pub(crate) fn transcript_scroll_id() -> ScrollId {
+    ScrollId::new("agent-transcript")
+}
+
+pub(crate) struct App {
+    pub(crate) theme: Theme,
+    pub(crate) turns: Vec<Turn>,
+    pub(crate) draft: String,
+    pub(crate) streaming: bool,
+    pub(crate) pending: Option<PendingApproval>,
+    pub(crate) sessions: Vec<SessionSummary>,
+    pub(crate) session_id: Option<String>,
+    pub(crate) session_title: Option<String>,
+    pub(crate) project_root: PathBuf,
+    pub(crate) connected: bool,
+    pub(crate) backend_label: String,
+    pub(crate) connection_mode: ConnectionModeLabel,
+    pub(crate) usage_used: Option<u64>,
+    pub(crate) usage_size: Option<u64>,
+    pub(crate) need_setup: Option<String>,
+    /// Lazy history cursor — absolute byte into updates.jsonl.
+    pub(crate) history_start_byte: u64,
+    pub(crate) has_older_history: bool,
+    pub(crate) loading_older: bool,
+    /// Auto-scroll transcript to bottom unless user scrolled away.
+    pub(crate) stick_to_bottom: bool,
+    pub(crate) project_picker: Option<ProjectPicker>,
+    pub(crate) rename: Option<RenameState>,
+    /// Request snap-to-bottom on next update return.
+    pub(crate) scroll_bottom_pending: bool,
 }
 
 #[derive(Debug, Clone)]
-enum Msg {
+pub(crate) enum Msg {
     Bus(Arc<Message>),
     Acp(AgentEvent),
     DraftChanged(String),
@@ -110,6 +143,18 @@ enum Msg {
     PermissionAllowFirst,
     PermissionDeny,
     Restart,
+    /// Scrollable viewport changed.
+    TranscriptScrolled(f32),
+    // Project picker
+    PickerDraft(String),
+    PickerUse,
+    PickerPick(String),
+    PickerCancel,
+    // Rename
+    StartRename(String),
+    RenameDraft(String),
+    RenameCommit,
+    RenameCancel,
 }
 
 impl App {
@@ -131,6 +176,13 @@ impl App {
             usage_used: None,
             usage_size: None,
             need_setup: None,
+            history_start_byte: 0,
+            has_older_history: false,
+            loading_older: false,
+            stick_to_bottom: true,
+            project_picker: None,
+            rename: None,
+            scroll_bottom_pending: false,
         }
     }
 
@@ -153,6 +205,15 @@ impl App {
         ])
     }
 
+    fn maybe_scroll_bottom(&mut self) -> Task<Msg> {
+        if self.scroll_bottom_pending && self.stick_to_bottom {
+            self.scroll_bottom_pending = false;
+            return operation::snap_to(transcript_scroll_id(), RelativeOffset::END);
+        }
+        self.scroll_bottom_pending = false;
+        Task::none()
+    }
+
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(m) => {
@@ -162,7 +223,23 @@ impl App {
                 }
                 let _ = apply_theme_update(&m, &mut self.theme);
             }
-            Msg::Acp(ev) => self.on_event(ev),
+            Msg::Acp(ev) => {
+                let need_scroll = matches!(
+                    ev,
+                    AgentEvent::Transcript { .. }
+                        | AgentEvent::UserEcho { .. }
+                        | AgentEvent::AgentDelta { .. }
+                        | AgentEvent::ThoughtDelta { .. }
+                        | AgentEvent::ToolStart { .. }
+                        | AgentEvent::Plan { .. }
+                        | AgentEvent::TurnEnded { .. }
+                );
+                self.on_event(ev);
+                if need_scroll && self.stick_to_bottom {
+                    self.scroll_bottom_pending = true;
+                    return self.maybe_scroll_bottom();
+                }
+            }
             Msg::DraftChanged(s) => self.draft = s,
             Msg::Send => {
                 let text = self.draft.trim().to_string();
@@ -171,13 +248,15 @@ impl App {
                 }
                 self.draft.clear();
                 self.streaming = true;
-                // Ensure we have a session
+                self.stick_to_bottom = true;
                 if self.session_id.is_none() {
                     bridge::agent_send(AgentCmd::NewSession {
                         cwd: self.project_root.to_string_lossy().into_owned(),
                     });
                 }
                 bridge::agent_send(AgentCmd::Send { text });
+                self.scroll_bottom_pending = true;
+                return self.maybe_scroll_bottom();
             }
             Msg::Cancel => {
                 bridge::agent_send(AgentCmd::Cancel);
@@ -187,25 +266,90 @@ impl App {
                 if self.streaming || self.pending.is_some() {
                     return Task::none();
                 }
-                self.turns.clear();
-                self.session_id = None;
-                self.session_title = None;
-                bridge::agent_send(AgentCmd::NewSession {
-                    cwd: self.project_root.to_string_lossy().into_owned(),
+                let default = self.project_root.to_string_lossy().into_owned();
+                self.project_picker = Some(ProjectPicker {
+                    draft: default,
+                    recent: sessions::recent_project_cwds(),
                 });
+            }
+            Msg::PickerDraft(s) => {
+                if let Some(p) = &mut self.project_picker {
+                    p.draft = s;
+                }
+            }
+            Msg::PickerPick(cwd) => {
+                self.project_picker = None;
+                self.start_session_in(cwd);
+            }
+            Msg::PickerUse => {
+                let cwd = self
+                    .project_picker
+                    .as_ref()
+                    .map(|p| p.draft.trim().to_string())
+                    .unwrap_or_default();
+                self.project_picker = None;
+                if !cwd.is_empty() {
+                    self.start_session_in(cwd);
+                }
+            }
+            Msg::PickerCancel => {
+                self.project_picker = None;
             }
             Msg::SelectSession(id) => {
                 if self.streaming || self.pending.is_some() {
                     return Task::none();
                 }
-                bridge::agent_send(AgentCmd::LoadSession {
-                    id,
-                    cwd: self.project_root.to_string_lossy().into_owned(),
-                });
+                let cwd = self
+                    .sessions
+                    .iter()
+                    .find(|s| s.id == id)
+                    .map(|s| s.cwd.clone())
+                    .filter(|c| !c.is_empty())
+                    .unwrap_or_else(|| self.project_root.to_string_lossy().into_owned());
+                self.project_root = PathBuf::from(&cwd);
+                overlay::note_cwd(&cwd);
+                self.stick_to_bottom = true;
+                self.loading_older = false;
+                bridge::agent_send(AgentCmd::LoadSession { id, cwd });
             }
             Msg::TogglePin(id) => {
                 overlay::toggle_pin(&id);
                 self.sessions = sessions::list_for_cwd(&self.project_root.to_string_lossy());
+            }
+            Msg::StartRename(id) => {
+                let draft = self
+                    .sessions
+                    .iter()
+                    .find(|s| s.id == id)
+                    .map(|s| s.title.clone())
+                    .unwrap_or_default();
+                self.rename = Some(RenameState { id, draft });
+            }
+            Msg::RenameDraft(s) => {
+                if let Some(r) = &mut self.rename {
+                    r.draft = s;
+                }
+            }
+            Msg::RenameCommit => {
+                if let Some(r) = self.rename.take() {
+                    let title = r.draft.trim().to_string();
+                    overlay::set_title_override(&r.id, &title);
+                    if self.session_id.as_deref() == Some(r.id.as_str()) {
+                        self.session_title = if title.is_empty() {
+                            sessions::title_for(
+                                &self.project_root.to_string_lossy(),
+                                &r.id,
+                            )
+                        } else {
+                            Some(title.clone())
+                        };
+                    }
+                    self.sessions =
+                        sessions::list_for_cwd(&self.project_root.to_string_lossy());
+                }
+            }
+            Msg::RenameCancel => {
+                self.rename = None;
             }
             Msg::PermissionPick(option_id) => {
                 if let Some(p) = self.pending.take() {
@@ -268,7 +412,53 @@ impl App {
                     cwd: self.project_root.to_string_lossy().into_owned(),
                 });
             }
+            Msg::TranscriptScrolled(relative_y) => {
+                // relative_y: 0.0 = top, 1.0 = bottom
+                if relative_y < 0.92 {
+                    self.stick_to_bottom = false;
+                } else {
+                    self.stick_to_bottom = true;
+                }
+                if relative_y < 0.08
+                    && self.has_older_history
+                    && !self.loading_older
+                    && self.session_id.is_some()
+                {
+                    return self.request_older_history();
+                }
+            }
         }
+        Task::none()
+    }
+
+    fn start_session_in(&mut self, cwd: String) {
+        self.project_root = PathBuf::from(&cwd);
+        overlay::note_cwd(&cwd);
+        self.turns.clear();
+        self.session_id = None;
+        self.session_title = None;
+        self.history_start_byte = 0;
+        self.has_older_history = false;
+        self.stick_to_bottom = true;
+        self.sessions = sessions::list_for_cwd(&cwd);
+        bridge::agent_send(AgentCmd::NewSession { cwd: cwd.clone() });
+        bridge::agent_send(AgentCmd::RefreshSessions { cwd });
+    }
+
+    fn request_older_history(&mut self) -> Task<Msg> {
+        let Some(id) = self.session_id.clone() else {
+            return Task::none();
+        };
+        if !self.has_older_history || self.loading_older {
+            return Task::none();
+        }
+        self.loading_older = true;
+        let cwd = self.project_root.to_string_lossy().into_owned();
+        bridge::agent_send(AgentCmd::LoadOlderHistory {
+            id,
+            cwd,
+            before_byte: self.history_start_byte,
+        });
         Task::none()
     }
 
@@ -291,15 +481,40 @@ impl App {
                 self.need_setup = Some(message);
             }
             AgentEvent::SessionReady { id, title } => {
-                self.session_id = Some(id);
-                if title.is_some() {
+                self.session_id = Some(id.clone());
+                if let Some(t) = overlay::title_override(&id) {
+                    self.session_title = Some(t);
+                } else if title.is_some() {
                     self.session_title = title;
                 }
             }
-            AgentEvent::Transcript { turns } => {
+            AgentEvent::Transcript {
+                turns,
+                history_start_byte,
+                has_older,
+            } => {
                 self.turns = turns;
+                self.history_start_byte = history_start_byte;
+                self.has_older_history = has_older;
+                self.loading_older = false;
                 self.streaming = false;
                 self.pending = None;
+                self.stick_to_bottom = true;
+                self.scroll_bottom_pending = true;
+            }
+            AgentEvent::HistoryOlder {
+                turns,
+                history_start_byte,
+                has_older,
+            } => {
+                if !turns.is_empty() {
+                    let mut merged = turns;
+                    merged.append(&mut self.turns);
+                    self.turns = merged;
+                }
+                self.history_start_byte = history_start_byte;
+                self.has_older_history = has_older;
+                self.loading_older = false;
             }
             AgentEvent::UserEcho { text } => {
                 self.turns.push(Turn::User(text));
@@ -377,9 +592,7 @@ impl App {
             }
             AgentEvent::Usage { used, size } => {
                 self.usage_used = Some(used);
-                if size.is_some() {
-                    self.usage_size = size;
-                }
+                self.usage_size = size.or(Some(DEFAULT_CONTEXT_SIZE));
             }
             AgentEvent::PermissionRequired {
                 request_id,

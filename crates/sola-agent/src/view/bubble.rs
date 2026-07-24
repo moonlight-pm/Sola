@@ -8,7 +8,12 @@ use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
 
 use crate::protocol::Turn;
+use crate::view::markdown;
 use crate::Msg;
+
+/// Comfortable bubble max on wide panes (Phase E raised from ~560/620).
+const BUBBLE_MAX: f32 = 960.0;
+const BODY_PX: f32 = 15.0;
 
 pub(crate) fn turn_view<'a>(turn: &'a Turn, theme: &Theme) -> Element<'a, Msg> {
     match turn {
@@ -33,13 +38,13 @@ fn user_bubble(body: &str, theme: &Theme) -> Element<'static, Msg> {
             kit_text::caption("You").style(kit_text::muted),
             text(body.to_string())
                 .font(fonts::ui())
-                .size(13)
+                .size(BODY_PX)
                 .wrapping(iced::widget::text::Wrapping::Word),
         ]
         .spacing(SPACE_SM),
     )
     .padding(Padding::from([SPACE_MD, SPACE_LG]))
-    .max_width(560.0)
+    .max_width(BUBBLE_MAX)
     .style(move |_t: &Theme| container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
@@ -62,15 +67,13 @@ fn agent_bubble(body: &str, theme: &Theme) -> Element<'static, Msg> {
     let card = container(
         column![
             kit_text::caption("Grok").style(kit_text::muted),
-            text(body.to_string())
-                .font(fonts::ui())
-                .size(13)
-                .wrapping(iced::widget::text::Wrapping::Word),
+            markdown::render(body, theme),
         ]
         .spacing(SPACE_SM),
     )
     .padding(Padding::from([SPACE_MD, SPACE_LG]))
-    .max_width(620.0)
+    .width(Length::Fill)
+    .max_width(BUBBLE_MAX)
     .style(move |_t: &Theme| container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
@@ -97,7 +100,7 @@ fn thought_block(body: &str) -> Element<'static, Msg> {
         .padding(Padding::from([SPACE_SM, SPACE_MD])),
     )
     .width(Length::Fill)
-    .max_width(620.0)
+    .max_width(BUBBLE_MAX)
     .into()
 }
 
@@ -133,7 +136,7 @@ fn tool_card(t: &crate::protocol::ToolTurn, theme: &Theme) -> Element<'static, M
         body = body.push(
             text(args)
                 .font(fonts::mono())
-                .size(11)
+                .size(12)
                 .style(kit_text::muted)
                 .wrapping(iced::widget::text::Wrapping::Word),
         );
@@ -142,7 +145,7 @@ fn tool_card(t: &crate::protocol::ToolTurn, theme: &Theme) -> Element<'static, M
         body = body.push(
             text(truncate(&t.output, 1200))
                 .font(fonts::mono())
-                .size(11)
+                .size(12)
                 .style(kit_text::muted)
                 .wrapping(iced::widget::text::Wrapping::Word),
         );
@@ -152,7 +155,7 @@ fn tool_card(t: &crate::protocol::ToolTurn, theme: &Theme) -> Element<'static, M
     let border = theme.extended_palette().background.stronger.color;
     container(body.padding(Padding::from([SPACE_MD, SPACE_LG])))
         .width(Length::Fill)
-        .max_width(620.0)
+        .max_width(BUBBLE_MAX)
         .style(move |_t: &Theme| container::Style {
             background: Some(Background::Color(bg)),
             border: Border {
@@ -179,7 +182,7 @@ fn plan_card(entries: &[crate::protocol::PlanEntry], theme: &Theme) -> Element<'
     let border = theme.extended_palette().background.stronger.color;
     container(lines.padding(Padding::from([SPACE_MD, SPACE_LG])))
         .width(Length::Fill)
-        .max_width(620.0)
+        .max_width(BUBBLE_MAX)
         .style(move |_t: &Theme| container::Style {
             background: Some(Background::Color(bg)),
             border: Border {
@@ -202,7 +205,7 @@ fn error_block(msg: &str) -> Element<'static, Msg> {
         .padding(Padding::from([SPACE_MD, SPACE_LG])),
     )
     .width(Length::Fill)
-    .max_width(620.0)
+    .max_width(BUBBLE_MAX)
     .into()
 }
 

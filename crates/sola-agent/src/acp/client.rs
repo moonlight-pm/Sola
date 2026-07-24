@@ -26,6 +26,8 @@ pub struct AcpClient {
     prompt_rpc_id: Option<u64>,
     /// Accumulator while streaming a turn for tool pairing.
     open_tools: HashMap<String, usize>, // call_id → turn index
+    /// Drop message/tool deltas while `session/load` is replaying history.
+    suppress_history_replay: bool,
 }
 
 impl AcpClient {
@@ -39,6 +41,7 @@ impl AcpClient {
             prompt_inflight: false,
             prompt_rpc_id: None,
             open_tools: HashMap::new(),
+            suppress_history_replay: false,
         }
     }
 
@@ -85,15 +88,23 @@ impl AcpClient {
             .to_string();
         self.session_id = Some(id.clone());
         self.open_tools.clear();
+        self.suppress_history_replay = false;
         bridge::emit(AgentEvent::SessionReady {
             id: id.clone(),
             title: None,
         });
-        bridge::emit(AgentEvent::Transcript { turns: Vec::new() });
+        bridge::emit(AgentEvent::Transcript {
+            turns: Vec::new(),
+            history_start_byte: 0,
+            has_older: false,
+        });
         Ok(id)
     }
 
     pub fn load_session(&mut self, id: &str, cwd: &str) -> Result<(), String> {
+        // Suppress streamed history chunks during session/load; UI uses
+        // a lazy tail of updates.jsonl instead of replaying the full log.
+        self.suppress_history_replay = true;
         let _result = self.request(
             "session/load",
             json!({
@@ -101,18 +112,33 @@ impl AcpClient {
                 "cwd": cwd,
                 "mcpServers": [],
             }),
-        )?;
+        );
+        self.suppress_history_replay = false;
+        let _result = _result?;
         self.session_id = Some(id.to_string());
         self.open_tools.clear();
 
-        let turns = sessions::turns_from_updates_jsonl(cwd, id);
+        let slice = sessions::history_tail(cwd, id);
         let title = sessions::title_for(cwd, id);
         bridge::emit(AgentEvent::SessionReady {
             id: id.to_string(),
             title,
         });
-        bridge::emit(AgentEvent::Transcript { turns });
+        bridge::emit(AgentEvent::Transcript {
+            turns: slice.turns,
+            history_start_byte: slice.start_byte,
+            has_older: slice.has_older,
+        });
         Ok(())
+    }
+
+    pub fn load_older_history(&mut self, id: &str, cwd: &str, before_byte: u64) {
+        let slice = sessions::history_before(cwd, id, before_byte);
+        bridge::emit(AgentEvent::HistoryOlder {
+            turns: slice.turns,
+            history_start_byte: slice.start_byte,
+            has_older: slice.has_older,
+        });
     }
 
     /// Start a prompt without blocking; completion arrives via `poll`.
@@ -409,7 +435,7 @@ impl AcpClient {
             .and_then(|s| s.as_str())
             .unwrap_or("");
 
-        // Grok totalTokens fallback
+        // Grok totalTokens fallback — assume 500K context window when size absent.
         if let Some(tokens) = params
             .pointer("/_meta/totalTokens")
             .and_then(|t| t.as_u64())
@@ -417,22 +443,31 @@ impl AcpClient {
         {
             bridge::emit(AgentEvent::Usage {
                 used: tokens,
-                size: None,
+                size: Some(500_000),
             });
         }
 
         match kind {
             "agent_message_chunk" | "agent_message" => {
+                if self.suppress_history_replay {
+                    return;
+                }
                 if let Some(text) = content_text(&update) {
                     bridge::emit(AgentEvent::AgentDelta { text });
                 }
             }
             "agent_thought_chunk" | "agent_thought" => {
+                if self.suppress_history_replay {
+                    return;
+                }
                 if let Some(text) = content_text(&update) {
                     bridge::emit(AgentEvent::ThoughtDelta { text });
                 }
             }
             "user_message_chunk" => {
+                if self.suppress_history_replay {
+                    return;
+                }
                 // Already echoed from UI; ignore or show if history replay
                 if let Some(text) = content_text(&update) {
                     // Only emit if not our local echo during live turn — history loads use Transcript
@@ -442,6 +477,9 @@ impl AcpClient {
                 }
             }
             "tool_call" => {
+                if self.suppress_history_replay {
+                    return;
+                }
                 let call_id = update
                     .get("toolCallId")
                     .and_then(|s| s.as_str())
@@ -464,6 +502,9 @@ impl AcpClient {
                 });
             }
             "tool_call_update" => {
+                if self.suppress_history_replay {
+                    return;
+                }
                 let call_id = update
                     .get("toolCallId")
                     .and_then(|s| s.as_str())
@@ -497,6 +538,9 @@ impl AcpClient {
                 }
             }
             "plan" => {
+                if self.suppress_history_replay {
+                    return;
+                }
                 let entries = update
                     .get("entries")
                     .and_then(|e| e.as_array())
@@ -518,8 +562,16 @@ impl AcpClient {
                 bridge::emit(AgentEvent::Plan { entries });
             }
             "usage_update" => {
-                let used = update.get("used").and_then(|u| u.as_u64()).unwrap_or(0);
-                let size = update.get("size").and_then(|s| s.as_u64());
+                let used = update
+                    .get("used")
+                    .and_then(|u| u.as_u64())
+                    .or_else(|| update.get("totalTokens").and_then(|t| t.as_u64()))
+                    .unwrap_or(0);
+                let size = update
+                    .get("size")
+                    .and_then(|s| s.as_u64())
+                    .or_else(|| update.get("contextWindow").and_then(|s| s.as_u64()))
+                    .or(Some(500_000));
                 bridge::emit(AgentEvent::Usage { used, size });
             }
             "session_info_update" => {

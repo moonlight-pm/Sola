@@ -15,9 +15,18 @@ pub enum AgentEvent {
         id: String,
         title: Option<String>,
     },
-    /// Full transcript replace (after load or history rebuild).
+    /// Transcript replace (after load). May be a **tail** window only.
     Transcript {
         turns: Vec<Turn>,
+        /// Absolute byte offset of the first line included in `turns`.
+        history_start_byte: u64,
+        has_older: bool,
+    },
+    /// Older history chunk to **prepend** (scroll-up load).
+    HistoryOlder {
+        turns: Vec<Turn>,
+        history_start_byte: u64,
+        has_older: bool,
     },
     UserEcho {
         text: String,
@@ -139,6 +148,12 @@ pub enum AgentCmd {
     LoadSession {
         id: String,
         cwd: String,
+    },
+    /// Load an older window of `updates.jsonl` ending at `before_byte`.
+    LoadOlderHistory {
+        id: String,
+        cwd: String,
+        before_byte: u64,
     },
     Send {
         text: String,

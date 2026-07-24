@@ -65,6 +65,23 @@ fn run(mode: ConnectionMode) {
                         }
                     }
                 }
+                AgentCmd::LoadOlderHistory {
+                    id,
+                    cwd,
+                    before_byte,
+                } => {
+                    if let Some(c) = client.as_mut() {
+                        c.load_older_history(&id, &cwd, before_byte);
+                    } else {
+                        // File-only path — no live child required.
+                        let slice = sessions::history_before(&cwd, &id, before_byte);
+                        bridge::emit(AgentEvent::HistoryOlder {
+                            turns: slice.turns,
+                            history_start_byte: slice.start_byte,
+                            has_older: slice.has_older,
+                        });
+                    }
+                }
                 AgentCmd::Send { text } => {
                     if client.is_none() {
                         client = connect(&mode);

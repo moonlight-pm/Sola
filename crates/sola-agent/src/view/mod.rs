@@ -4,13 +4,15 @@ pub(crate) mod approval;
 pub(crate) mod bubble;
 pub(crate) mod firstrun;
 pub(crate) mod footer;
+pub(crate) mod markdown;
 pub(crate) mod sidebar;
 
-use iced::widget::{column, container, row, scrollable, Space, Column};
+use iced::widget::{button, column, container, row, scrollable, Space, Column};
+use iced::widget::scrollable::Viewport;
 use iced::{Alignment, Background, Border, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{
-    hairline, RADIUS_LG, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL,
+    hairline, RADIUS_LG, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input;
@@ -18,8 +20,8 @@ use sola_kit::components::text_input::text_input;
 
 use crate::{App, Msg};
 
-/// Comfortable chat column width on large displays.
-const CHAT_MAX: f32 = 720.0;
+/// Comfortable chat column width on large displays (Phase E raised from 720).
+const CHAT_MAX: f32 = 1100.0;
 
 pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     if app.need_setup.is_some() && app.session_id.is_none() && app.turns.is_empty() {
@@ -39,7 +41,7 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-    row![
+    let body = row![
         sidebar::view(app),
         container(main)
             .width(Length::Fill)
@@ -47,8 +49,78 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
             .style(main_pane_style),
     ]
     .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    .height(Length::Fill);
+
+    if let Some(picker) = &app.project_picker {
+        return stack_picker(body, picker);
+    }
+    body.into()
+}
+
+fn stack_picker<'a>(
+    base: iced::widget::Row<'a, Msg>,
+    picker: &'a crate::ProjectPicker,
+) -> Element<'a, Msg> {
+    // Dimmed overlay with a centered card for project selection.
+    let recent: Vec<Element<'a, Msg>> = picker
+        .recent
+        .iter()
+        .take(8)
+        .map(|cwd| {
+            let label = sidebar::short_path(cwd);
+            button(kit_text::body(label))
+                .style(kit_btn::ghost)
+                .width(Length::Fill)
+                .on_press(Msg::PickerPick(cwd.clone()))
+                .into()
+        })
+        .collect();
+
+    let field = text_input("Project directory…", &picker.draft)
+        .on_input(Msg::PickerDraft)
+        .on_submit(Msg::PickerUse)
+        .size(14)
+        .style(text_input::style)
+        .width(Length::Fill);
+
+    let actions = row![
+        kit_btn::labeled("Cancel", kit_btn::secondary).on_press(Msg::PickerCancel),
+        kit_btn::labeled("Use", kit_btn::primary).on_press(Msg::PickerUse),
+    ]
+    .spacing(SPACE_MD);
+
+    let card = container(
+        column![
+            kit_text::subheading("New session"),
+            kit_text::body("Choose a project directory for this conversation.")
+                .style(kit_text::muted),
+            field,
+            if recent.is_empty() {
+                Element::from(Space::new().height(0))
+            } else {
+                column![
+                    kit_text::caption("Recent").style(kit_text::muted),
+                    Column::with_children(recent).spacing(SPACE_XS),
+                ]
+                .spacing(SPACE_SM)
+                .into()
+            },
+            actions,
+        ]
+        .spacing(SPACE_LG)
+        .padding(Padding::from([SPACE_XL, SPACE_XL]))
+        .max_width(480.0),
+    )
+    .style(picker_card_style);
+
+    let overlay = container(card)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .style(picker_scrim_style);
+
+    iced::widget::stack![base, overlay].into()
 }
 
 fn main_pane_style(theme: &Theme) -> container::Style {
@@ -59,15 +131,53 @@ fn main_pane_style(theme: &Theme) -> container::Style {
     }
 }
 
+fn picker_scrim_style(theme: &Theme) -> container::Style {
+    let mut c = theme.extended_palette().background.base.color;
+    c.a = 0.72;
+    container::Style {
+        background: Some(Background::Color(c)),
+        ..container::Style::default()
+    }
+}
+
+fn picker_card_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.background.weaker.color)),
+        border: hairline(p, RADIUS_LG),
+        ..container::Style::default()
+    }
+}
+
 fn transcript(app: &App) -> Element<'_, Msg> {
-    let inner: Element<'_, Msg> = if app.turns.is_empty() {
+    let mut bubbles: Vec<Element<'_, Msg>> = Vec::new();
+
+    if app.has_older_history {
+        let label = if app.loading_older {
+            "Loading older messages…"
+        } else {
+            "Scroll up for older messages"
+        };
+        bubbles.push(
+            container(kit_text::caption(label).style(kit_text::muted))
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+                .padding(Padding::from([SPACE_SM, 0.0]))
+                .into(),
+        );
+    }
+
+    let inner: Element<'_, Msg> = if app.turns.is_empty() && bubbles.is_empty() {
         empty_transcript(app)
+    } else if app.turns.is_empty() {
+        Column::with_children(bubbles)
+            .spacing(SPACE_LG)
+            .width(Length::Fill)
+            .into()
     } else {
-        let bubbles: Vec<Element<'_, Msg>> = app
-            .turns
-            .iter()
-            .map(|t| bubble::turn_view(t, &app.theme))
-            .collect();
+        for t in &app.turns {
+            bubbles.push(bubble::turn_view(t, &app.theme));
+        }
         Column::with_children(bubbles)
             .spacing(SPACE_LG)
             .width(Length::Fill)
@@ -84,7 +194,12 @@ fn transcript(app: &App) -> Element<'_, Msg> {
             .width(Length::Fill)
             .center_x(Length::Fill),
     )
+    .id(crate::transcript_scroll_id())
     .height(Length::Fill)
+    .on_scroll(|vp: Viewport| {
+        let rel = vp.relative_offset();
+        Msg::TranscriptScrolled(rel.y)
+    })
     .into()
 }
 
@@ -112,7 +227,7 @@ fn empty_transcript(app: &App) -> Element<'_, Msg> {
             title_row,
             kit_text::body(hint).style(kit_text::muted),
             Space::new().height(SPACE_MD),
-            kit_text::caption(short_path(&app.project_root.to_string_lossy()))
+            kit_text::caption(sidebar::short_path(&app.project_root.to_string_lossy()))
                 .style(kit_text::muted),
         ]
         .spacing(SPACE_MD)
@@ -124,15 +239,6 @@ fn empty_transcript(app: &App) -> Element<'_, Msg> {
     .center_x(Length::Fill)
     .center_y(Length::Fill)
     .into()
-}
-
-fn short_path(p: &str) -> String {
-    if let Ok(home) = std::env::var("HOME") {
-        if let Some(rest) = p.strip_prefix(&home) {
-            return format!("~{rest}");
-        }
-    }
-    p.to_string()
 }
 
 /// Roomier single-line field padding — multi-line feel without a textarea.
@@ -153,7 +259,6 @@ fn composer(app: &App) -> Element<'_, Msg> {
             .style(text_input::style)
             .width(Length::Fill)
     } else if app.streaming {
-        // Draft stays editable while streaming; submit is disabled until Stop.
         text_input("Message Grok…", &app.draft)
             .on_input(Msg::DraftChanged)
             .size(15)
@@ -170,7 +275,6 @@ fn composer(app: &App) -> Element<'_, Msg> {
             .width(Length::Fill)
     };
 
-    // No Send button — Enter submits. Stop only while a turn is in flight.
     let bar: Element<'_, Msg> = if app.streaming {
         row![
             field,

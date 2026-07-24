@@ -10,7 +10,10 @@ use crate::App;
 
 pub(crate) fn view(app: &App) -> Element<'_, crate::Msg> {
     let conn = if app.connected {
-        badge::badge(format!("{} · {}", app.backend_label, app.connection_mode.as_str()), Tone::Success)
+        badge::badge(
+            format!("{} · {}", app.backend_label, app.connection_mode.as_str()),
+            Tone::Success,
+        )
     } else {
         badge::badge("disconnected", Tone::Warning)
     };
@@ -23,14 +26,7 @@ pub(crate) fn view(app: &App) -> Element<'_, crate::Msg> {
         badge::badge("idle", Tone::Neutral)
     };
 
-    let ctx = match (app.usage_used, app.usage_size) {
-        (Some(used), Some(size)) if size > 0 => {
-            let pct = (used as f64 / size as f64 * 100.0).clamp(0.0, 100.0).round() as u64;
-            format!("{pct}% context")
-        }
-        (Some(used), _) => format!("~{used} tokens"),
-        _ => String::new(),
-    };
+    let ctx = format_usage(app.usage_used, app.usage_size);
 
     let session = app
         .session_title
@@ -56,12 +52,40 @@ pub(crate) fn view(app: &App) -> Element<'_, crate::Msg> {
         status = status.push(kit_text::caption(ctx).style(kit_text::muted));
     }
 
-    container(
-        status.padding(Padding::from([SPACE_SM + 2.0, SPACE_XL])),
-    )
-    .width(Length::Fill)
-    .style(footer_style)
-    .into()
+    container(status.padding(Padding::from([SPACE_SM + 2.0, SPACE_XL])))
+        .width(Length::Fill)
+        .style(footer_style)
+        .into()
+}
+
+/// `{pct}% · {usedK}K/{sizeK}K` — e.g. `51% · 258K/500K`
+fn format_usage(used: Option<u64>, size: Option<u64>) -> String {
+    match (used, size) {
+        (Some(used), Some(size)) if size > 0 => {
+            let pct = (used as f64 / size as f64 * 100.0)
+                .clamp(0.0, 100.0)
+                .round() as u64;
+            format!(
+                "{pct}% · {}K/{}K",
+                tokens_k(used),
+                tokens_k(size)
+            )
+        }
+        (Some(used), None) => {
+            // Fallback: still show used against the typical 500K window.
+            let size = 500_000u64;
+            let pct = (used as f64 / size as f64 * 100.0)
+                .clamp(0.0, 100.0)
+                .round() as u64;
+            format!("{pct}% · {}K/{}K", tokens_k(used), tokens_k(size))
+        }
+        _ => String::new(),
+    }
+}
+
+fn tokens_k(n: u64) -> u64 {
+    // Round to nearest K for the meter (258432 → 258K).
+    (n + 500) / 1000
 }
 
 fn footer_style(theme: &Theme) -> container::Style {
@@ -74,5 +98,19 @@ fn footer_style(theme: &Theme) -> container::Style {
             radius: 0.0.into(),
         },
         ..container::Style::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_format() {
+        assert_eq!(
+            format_usage(Some(258_000), Some(500_000)),
+            "52% · 258K/500K"
+        );
+        assert_eq!(format_usage(None, None), "");
     }
 }

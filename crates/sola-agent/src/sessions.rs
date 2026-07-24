@@ -1,6 +1,7 @@
 //! List and rebuild Grok sessions from `~/.grok/sessions`.
 
-use std::fs;
+use std::fs::{self, File};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -8,6 +9,9 @@ use serde_json::Value;
 
 use crate::overlay;
 use crate::protocol::{PlanEntry, SessionSummary, ToolTurn, Turn};
+
+/// Default tail window when loading a transcript for display (~384 KiB).
+pub const HISTORY_TAIL_BYTES: u64 = 384 * 1024;
 
 fn grok_home() -> PathBuf {
     if let Ok(h) = std::env::var("GROK_HOME") {
@@ -114,14 +118,53 @@ fn collect_group(
             None => continue,
         };
         let pinned = pins.pinned.contains(&id);
+        let title = pins
+            .title_overrides
+            .get(&id)
+            .cloned()
+            .unwrap_or(title);
+        let cwd_display = if cwd_s.is_empty() {
+            cwd.to_string()
+        } else {
+            cwd_s
+        };
         out.push(SessionSummary {
             id,
             title,
-            cwd: cwd_s,
+            cwd: cwd_display,
             updated,
             pinned,
         });
     }
+}
+
+/// Recent project roots for the new-session picker.
+pub fn recent_project_cwds() -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let o = overlay::load();
+    for c in o.recent_cwds.iter().chain(o.last_cwd.iter()) {
+        if seen.insert(c.clone()) {
+            out.push(c.clone());
+        }
+    }
+    // Also surface groups already on disk under ~/.grok/sessions.
+    if let Ok(entries) = fs::read_dir(sessions_root()) {
+        for e in entries.flatten() {
+            let name = match e.file_name().into_string() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if let Ok(decoded) = urlencoding::decode(&name) {
+                let path = decoded.into_owned();
+                if !path.is_empty() && seen.insert(path.clone()) {
+                    out.push(path);
+                }
+            }
+        }
+    }
+    out.truncate(24);
+    out
 }
 
 fn read_summary(path: &Path) -> Option<(String, u64, String)> {
@@ -174,6 +217,9 @@ fn parse_ts(s: Option<&str>) -> Option<u64> {
 }
 
 pub fn title_for(cwd: &str, id: &str) -> Option<String> {
+    if let Some(t) = overlay::title_override(id) {
+        return Some(t);
+    }
     let path = sessions_root()
         .join(encode_cwd(cwd))
         .join(id)
@@ -181,16 +227,109 @@ pub fn title_for(cwd: &str, id: &str) -> Option<String> {
     read_summary(&path).map(|(t, _, _)| t)
 }
 
-/// Rebuild display turns from Grok `updates.jsonl` for a session.
+/// Result of a lazy history window over `updates.jsonl`.
+#[derive(Debug, Clone)]
+pub struct HistorySlice {
+    pub turns: Vec<Turn>,
+    /// Absolute file byte where the first complete line of this slice began.
+    pub start_byte: u64,
+    pub has_older: bool,
+}
+
+/// Rebuild display turns from Grok `updates.jsonl` for a session (full file).
+/// Prefer [`history_tail`] / [`history_before`] for UI loads.
 pub fn turns_from_updates_jsonl(cwd: &str, id: &str) -> Vec<Turn> {
-    let path = sessions_root()
+    history_tail(cwd, id).turns
+}
+
+/// Load the **tail** of a session transcript for first paint.
+pub fn history_tail(cwd: &str, id: &str) -> HistorySlice {
+    history_window(cwd, id, None, HISTORY_TAIL_BYTES)
+}
+
+/// Load a window of history ending at `before_byte` (exclusive).
+pub fn history_before(cwd: &str, id: &str, before_byte: u64) -> HistorySlice {
+    history_window(cwd, id, Some(before_byte), HISTORY_TAIL_BYTES)
+}
+
+fn updates_path(cwd: &str, id: &str) -> PathBuf {
+    sessions_root()
         .join(encode_cwd(cwd))
         .join(id)
-        .join("updates.jsonl");
-    let raw = match fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
+        .join("updates.jsonl")
+}
+
+/// Read up to `max_bytes` ending at `end_exclusive` (or EOF if `None`).
+fn history_window(
+    cwd: &str,
+    id: &str,
+    end_exclusive: Option<u64>,
+    max_bytes: u64,
+) -> HistorySlice {
+    let path = updates_path(cwd, id);
+    let mut file = match File::open(&path) {
+        Ok(f) => f,
+        Err(_) => {
+            return HistorySlice {
+                turns: Vec::new(),
+                start_byte: 0,
+                has_older: false,
+            };
+        }
     };
+    let file_len = file.seek(SeekFrom::End(0)).unwrap_or(0);
+    let end = end_exclusive.unwrap_or(file_len).min(file_len);
+    if end == 0 {
+        return HistorySlice {
+            turns: Vec::new(),
+            start_byte: 0,
+            has_older: false,
+        };
+    }
+    let start_read = end.saturating_sub(max_bytes);
+    if file.seek(SeekFrom::Start(start_read)).is_err() {
+        return HistorySlice {
+            turns: Vec::new(),
+            start_byte: 0,
+            has_older: false,
+        };
+    }
+    let mut buf = vec![0u8; (end - start_read) as usize];
+    let n = file.read(&mut buf).unwrap_or(0);
+    buf.truncate(n);
+
+    // If we started mid-file, skip the first partial line.
+    let (start_byte, text) = if start_read > 0 {
+        match buf.iter().position(|&b| b == b'\n') {
+            Some(i) if i + 1 < buf.len() => {
+                let start = start_read + i as u64 + 1;
+                (start, String::from_utf8_lossy(&buf[i + 1..]).into_owned())
+            }
+            _ => {
+                // Only a partial line in this window — treat as empty older chunk.
+                return HistorySlice {
+                    turns: Vec::new(),
+                    start_byte: end,
+                    has_older: start_read > 0,
+                };
+            }
+        }
+    } else {
+        (
+            0u64,
+            String::from_utf8_lossy(&buf).into_owned(),
+        )
+    };
+
+    let turns = parse_updates_text(&text);
+    HistorySlice {
+        turns,
+        start_byte,
+        has_older: start_byte > 0,
+    }
+}
+
+fn parse_updates_text(raw: &str) -> Vec<Turn> {
     let mut turns: Vec<Turn> = Vec::new();
     let mut tool_index: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();
@@ -396,6 +535,9 @@ mod tests {
         let turns = turns_from_updates_jsonl(cwd, "abc-123");
         assert!(matches!(&turns[0], Turn::User(s) if s == "hi"));
         assert!(matches!(&turns[1], Turn::Assistant(s) if s == "yo"));
+        let tail = history_tail(cwd, "abc-123");
+        assert!(!tail.has_older);
+        assert_eq!(tail.turns.len(), 2);
         unsafe {
             std::env::remove_var("GROK_HOME");
         }

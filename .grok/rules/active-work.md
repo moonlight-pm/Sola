@@ -22,7 +22,7 @@ Backlog: `docs/specs/2026-07-23-sola-agent-ui-backlog.md`
 
 ### Status
 
-Phase **A** done. Next: UI backlog phases **B → I**.
+Phases **A–I** implemented on `agent-acp-runner`. Awaiting user review / install.
 Do **not** merge to master until user approves.
 
 ### Star (pin)
@@ -30,34 +30,34 @@ Do **not** merge to master until user approves.
 ★ **pins** a session in Sola overlay (`~/.config/sola/agent/overlay.json`) so it
 sorts first. Not a Grok-native flag.
 
-### Backlog phases (on **go**, start at B unless named)
+### Backlog phases
 
 | Phase | Item |
 |---|---|
-| ~~A~~ | ~~Composer: roomier, full width, no Send (Enter sends); Stop while streaming~~ |
-| **B** | Sidebar fills full vertical height (header / scroll list / cwd footer) |
-| **C** | Each session row shows **project cwd** (short path) |
-| **D** | New session: **pick project dir** (not silent process cwd) |
-| **E** | Larger transcript fonts; content uses more width |
-| **F** | **Markdown** rendering for assistant content |
-| **G** | Token usage: **`pct% · nnnK/500K`** |
-| **H** | **Rename** session titles |
-| **I** | **Lazy** transcript (tail first, load older on scroll up) + **scroll to bottom** on select |
+| ~~A~~ | ~~Composer~~ |
+| ~~B~~ | ~~Sidebar fill~~ |
+| ~~C~~ | ~~Row cwd~~ |
+| ~~D~~ | ~~Project picker~~ |
+| ~~E~~ | ~~Type + width~~ |
+| ~~F~~ | ~~Markdown~~ |
+| ~~G~~ | ~~Token format~~ |
+| ~~H~~ | ~~Rename~~ |
+| ~~I~~ | ~~Lazy load + scroll bottom~~ |
 
 ### Future
 
 - Leader daemon (`ConnectionMode::Leader`)
 - Merge `agent-acp-runner` → master + delete stale `.worktrees/sola-agent`
+- Polish from user feedback after A–I smoke
 
 ### Last completed
 
-**Phase A — Composer** on `agent-acp-runner`: full-width roomier field, Enter
-sends (no Send button), Stop while streaming.
+**UI backlog A–I** on `agent-acp-runner`.
 
 ### Resume
 
 ```text
 cd .worktrees/agent-acp-runner   # branch agent-acp-runner
-# read docs/specs/2026-07-23-sola-agent-ui-backlog.md
-# on "go" → Phase B
+# install with user permission: cargo make install sola-agent
+# next: user feedback / merge when approved
 ```
