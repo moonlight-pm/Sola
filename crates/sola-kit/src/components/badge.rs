@@ -36,26 +36,37 @@ pub fn badge<'a, Message: 'a>(
 /// Style fn for the badge container. Exposed so callers building their
 /// own labeled chrome can pick up the same palette mapping.
 ///
-/// **Neutral** is quiet chrome: hover-grey fill + muted text — not a
-/// solid border-coloured slab. Status tones keep scanable fills.
+/// Soft tinted pills (graphite): ~12% tone fill + ~28% tone border +
+/// solid tone text — not solid filled slabs (except Neutral quiet grey).
 pub fn style(theme: &Theme, tone: Tone) -> container::Style {
     let p = theme.extended_palette();
-    let (bg, fg) = match tone {
-        // Quiet secondary surface — background.strong (hover grey) + muted
-        // text. Avoid secondary.base (bound to BORDER), which read as a
-        // solid border-coloured slab next to calm chrome.
-        Tone::Neutral => (p.background.strong.color, p.secondary.base.text),
-        Tone::Accent => (p.primary.base.color, p.primary.base.text),
-        Tone::Success => (p.success.base.color, p.success.base.text),
-        Tone::Warning => (p.warning.base.color, p.warning.base.text),
-        Tone::Danger => (p.danger.base.color, p.danger.base.text),
+    let (fg, base) = match tone {
+        Tone::Neutral => (p.secondary.base.text, p.background.strong.color),
+        Tone::Accent => (p.primary.base.color, p.primary.base.color),
+        Tone::Success => (p.success.base.color, p.success.base.color),
+        Tone::Warning => (p.warning.base.color, p.warning.base.color),
+        Tone::Danger => (p.danger.base.color, p.danger.base.color),
+    };
+    let (bg, border) = if matches!(tone, Tone::Neutral) {
+        (
+            Color {
+                a: 0.85,
+                ..base
+            },
+            p.background.stronger.color,
+        )
+    } else {
+        (
+            Color { a: 0.12, ..base },
+            Color { a: 0.28, ..base },
+        )
     };
     container::Style {
         background: Some(Background::Color(bg)),
         text_color: Some(fg),
         border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
+            color: border,
+            width: 1.0,
             radius: RADIUS_PILL.into(),
         },
         ..container::Style::default()

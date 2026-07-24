@@ -61,11 +61,19 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
 
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
+    // Graphite: soft hover-grey fill + strong hairline (not transparent outline).
+    let fill = Color {
+        a: 0.55,
+        ..p.background.strong.color
+    };
     let base = button::Style {
-        background: Some(Background::Color(Color::TRANSPARENT)),
+        background: Some(Background::Color(fill)),
         text_color: p.background.base.text,
         border: Border {
-            color: p.background.stronger.color,
+            color: Color {
+                a: 0.85,
+                ..p.background.stronger.color
+            },
             width: 1.0,
             radius: RADIUS_MD.into(),
         },
@@ -74,7 +82,10 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     };
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(p.background.strong.color)),
+            background: Some(Background::Color(Color {
+                a: 0.9,
+                ..p.background.strong.color
+            })),
             ..base
         },
         button::Status::Pressed => button::Style {
@@ -115,6 +126,39 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
 pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     style::filled(p.danger.base, p.danger.strong, p.danger.weak, status)
+}
+
+/// Soft danger — tinted fill + danger border/text (deny / cancel chrome).
+pub fn danger_soft(theme: &Theme, status: button::Status) -> button::Style {
+    let p = theme.extended_palette();
+    let danger = p.danger.base.color;
+    let base = button::Style {
+        background: Some(Background::Color(Color { a: 0.10, ..danger })),
+        text_color: Color {
+            a: 0.95,
+            ..Color {
+                r: (danger.r * 0.9 + 1.0 * 0.1).min(1.0),
+                g: (danger.g * 0.9 + 1.0 * 0.1).min(1.0),
+                b: (danger.b * 0.9 + 1.0 * 0.1).min(1.0),
+                a: 1.0,
+            }
+        },
+        border: Border {
+            color: Color { a: 0.40, ..danger },
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
+        shadow: Default::default(),
+        snap: false,
+    };
+    match status {
+        button::Status::Hovered | button::Status::Pressed => button::Style {
+            background: Some(Background::Color(Color { a: 0.18, ..danger })),
+            ..base
+        },
+        button::Status::Disabled => style::dim(base),
+        button::Status::Active => base,
+    }
 }
 
 /// Outlined danger — a restrained destructive affordance: transparent

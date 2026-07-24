@@ -1,4 +1,4 @@
-//! Agent UI composition — two-pane kit layout with chat column.
+//! Agent UI composition — graphite toolbar + sidebar + chat (sola-agent-ds).
 
 pub(crate) mod approval;
 pub(crate) mod bubble;
@@ -7,21 +7,22 @@ pub(crate) mod footer;
 pub(crate) mod markdown;
 pub(crate) mod sidebar;
 
-use iced::widget::{button, column, container, mouse_area, row, scrollable, stack, Space, Column};
+use iced::widget::{button, column, container, mouse_area, row, scrollable, stack, text, Space, Column};
 use iced::widget::scrollable::Viewport;
 use iced::{mouse, Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{
-    hairline, RADIUS_LG, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
+    hairline, RADIUS_LG, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input;
 use sola_kit::components::text_input::text_input;
+use sola_kit::fonts;
 
 use crate::{App, Msg};
 
-/// Comfortable chat column width on large displays (Phase E raised from 720).
 const CHAT_MAX: f32 = 1100.0;
+const SIDE_PAD: f32 = 28.0;
 
 pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     if app.need_setup.is_some() && app.session_id.is_none() && app.turns.is_empty() {
@@ -41,17 +42,16 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-    // Draggable vertical divider between sidebar and main (monitor pattern).
     let divider = mouse_area(
         container(Space::new().width(Length::Fill).height(Length::Fill))
             .style(divider_style)
-            .width(Length::Fixed(6.0))
+            .width(Length::Fixed(5.0))
             .height(Length::Fill),
     )
     .interaction(mouse::Interaction::ResizingHorizontally)
     .on_press(Msg::DividerPress);
 
-    let body: Element<'_, Msg> = row![
+    let body_row: Element<'_, Msg> = row![
         container(sidebar::view(app))
             .width(Length::Fixed(app.sidebar_w))
             .height(Length::Fill),
@@ -65,17 +65,19 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     .height(Length::Fill)
     .into();
 
-    // While dragging, a full-window overlay keeps the resize cursor and
-    // prevents siblings from stealing hit-testing mid-drag.
+    let shell = column![toolbar(app), body_row]
+        .width(Length::Fill)
+        .height(Length::Fill);
+
     let body: Element<'_, Msg> = if app.dragging_divider {
         stack![
-            body,
+            shell,
             mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
                 .interaction(mouse::Interaction::ResizingHorizontally),
         ]
         .into()
     } else {
-        body
+        shell.into()
     };
 
     if let Some(picker) = &app.project_picker {
@@ -84,8 +86,86 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     body
 }
 
+fn toolbar(app: &App) -> Element<'_, Msg> {
+    let busy = app.streaming || app.pending.is_some();
+    let mut new_btn = kit_btn::labeled_sm("+  New", kit_btn::secondary);
+    if !busy {
+        new_btn = new_btn.on_press(Msg::NewSession);
+    }
+
+    let leaf = sidebar::project_leaf(&app.project_root.to_string_lossy());
+    let path = sidebar::short_path(&app.project_root.to_string_lossy());
+    let connected = app.connected;
+    let chip = container(
+        row![
+            container(Space::new().width(6.0).height(6.0))
+                .width(Length::Fixed(6.0))
+                .height(Length::Fixed(6.0))
+                .style(move |_t: &Theme| container::Style {
+                    background: Some(Background::Color(if connected {
+                        Color {
+                            r: 0.24,
+                            g: 0.81,
+                            b: 0.56,
+                            a: 1.0,
+                        }
+                    } else {
+                        Color {
+                            r: 0.91,
+                            g: 0.72,
+                            b: 0.29,
+                            a: 1.0,
+                        }
+                    })),
+                    border: Border {
+                        radius: 999.0.into(),
+                        ..Default::default()
+                    },
+                    ..container::Style::default()
+                }),
+            text(leaf)
+                .font(fonts::ui_medium())
+                .size(12),
+            text("·").size(12).style(kit_text::muted),
+            text(path)
+                .font(fonts::mono())
+                .size(12)
+                .style(kit_text::muted),
+        ]
+        .spacing(7.0)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding::from([4.0, 10.0]))
+    .style(project_chip_style);
+
+    let model = kit_btn::labeled_sm(
+        format!(
+            "{} · {}",
+            app.backend_label,
+            app.connection_mode.as_str()
+        ),
+        kit_btn::ghost,
+    );
+
+    container(
+        row![
+            new_btn,
+            chip,
+            Space::new().width(Length::Fill),
+            model,
+        ]
+        .spacing(10.0)
+        .align_y(Alignment::Center)
+        .padding(Padding::from([0.0, 12.0])),
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(40.0))
+    .center_y(Length::Fill)
+    .style(toolbar_style)
+    .into()
+}
+
 fn stack_picker<'a>(base: Element<'a, Msg>, picker: &'a crate::ProjectPicker) -> Element<'a, Msg> {
-    // Dimmed overlay with a centered card for project selection.
     let recent: Vec<Element<'a, Msg>> = picker
         .recent
         .iter()
@@ -149,16 +229,66 @@ fn stack_picker<'a>(base: Element<'a, Msg>, picker: &'a crate::ProjectPicker) ->
 
 fn main_pane_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
+    // Slightly deeper than canvas — design mixes bg with black.
+    let c = Color {
+        r: p.background.base.color.r * 0.88,
+        g: p.background.base.color.g * 0.88,
+        b: p.background.base.color.b * 0.88,
+        a: 1.0,
+    };
     container::Style {
-        background: Some(Background::Color(p.background.base.color)),
+        background: Some(Background::Color(c)),
         ..container::Style::default()
     }
 }
 
+fn toolbar_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(Color {
+            a: 0.96,
+            ..p.background.weaker.color
+        })),
+        border: Border {
+            color: Color {
+                a: 0.45,
+                ..p.background.stronger.color
+            },
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn project_chip_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(Color {
+            a: 0.55,
+            ..p.background.base.color
+        })),
+        border: Border {
+            color: Color {
+                a: 0.55,
+                ..p.background.stronger.color
+            },
+            width: 1.0,
+            radius: RADIUS_PILL_CHIP.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+const RADIUS_PILL_CHIP: f32 = 999.0;
+
 fn divider_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
-        background: Some(Background::Color(p.background.stronger.color)),
+        background: Some(Background::Color(Color {
+            a: 0.35,
+            ..p.background.stronger.color
+        })),
         ..container::Style::default()
     }
 }
@@ -184,8 +314,6 @@ fn picker_card_style(theme: &Theme) -> container::Style {
 fn transcript(app: &App) -> Element<'_, Msg> {
     let mut bubbles: Vec<Element<'_, Msg>> = Vec::new();
 
-    // Explicit control — iced hides the scrollbar when content fits the pane,
-    // so scroll-near-top alone cannot load earlier history.
     if app.has_older_history {
         let older: Element<'_, Msg> = if app.loading_older {
             container(kit_text::caption("Loading earlier messages…").style(kit_text::muted))
@@ -201,14 +329,19 @@ fn transcript(app: &App) -> Element<'_, Msg> {
                     .style(|theme: &Theme, status| {
                         let p = theme.extended_palette();
                         let bg = match status {
-                            button::Status::Hovered | button::Status::Pressed => p.background.weak.color,
+                            button::Status::Hovered | button::Status::Pressed => {
+                                Color {
+                                    a: 0.65,
+                                    ..p.background.strong.color
+                                }
+                            }
                             _ => Color::TRANSPARENT,
                         };
                         button::Style {
                             background: Some(Background::Color(bg)),
-                            text_color: p.background.base.text,
+                            text_color: p.secondary.base.text,
                             border: Border {
-                                radius: RADIUS_LG.into(),
+                                radius: RADIUS_MD.into(),
                                 ..Default::default()
                             },
                             ..button::Style::default()
@@ -227,7 +360,7 @@ fn transcript(app: &App) -> Element<'_, Msg> {
         empty_transcript(app)
     } else if app.turns.is_empty() {
         Column::with_children(bubbles)
-            .spacing(SPACE_LG)
+            .spacing(14.0)
             .width(Length::Fill)
             .into()
     } else {
@@ -235,7 +368,7 @@ fn transcript(app: &App) -> Element<'_, Msg> {
             bubbles.push(el);
         }
         Column::with_children(bubbles)
-            .spacing(SPACE_LG)
+            .spacing(14.0)
             .width(Length::Fill)
             .into()
     };
@@ -243,7 +376,12 @@ fn transcript(app: &App) -> Element<'_, Msg> {
     let padded = container(inner)
         .width(Length::Fill)
         .max_width(CHAT_MAX)
-        .padding(Padding::from([SPACE_XL + SPACE_MD, SPACE_XL]));
+        .padding(Padding {
+            top: 18.0,
+            right: SIDE_PAD,
+            bottom: 8.0,
+            left: SIDE_PAD,
+        });
 
     scrollable(
         container(padded)
@@ -297,60 +435,68 @@ fn empty_transcript(app: &App) -> Element<'_, Msg> {
     .into()
 }
 
-/// Roomier single-line field padding — multi-line feel without a textarea.
 const COMPOSER_PAD: Padding = Padding {
-    top: 14.0,
-    right: 16.0,
-    bottom: 14.0,
-    left: 16.0,
+    top: 6.0,
+    right: 4.0,
+    bottom: 6.0,
+    left: 4.0,
 };
 
 fn composer(app: &App) -> Element<'_, Msg> {
     let gated = app.pending.is_some();
-    // Single-line kit text_input: Enter submits. No Shift+Enter newline support.
     let field = if gated {
         text_input("Resolve the pending approval to continue…", &app.draft)
-            .size(15)
+            .size(14)
             .padding(COMPOSER_PAD)
-            .style(text_input::style)
+            .style(composer_input_style)
             .width(Length::Fill)
     } else if app.streaming {
-        text_input("Message Grok…", &app.draft)
+        text_input("Ask Sola Agent…", &app.draft)
             .on_input(Msg::DraftChanged)
-            .size(15)
+            .size(14)
             .padding(COMPOSER_PAD)
-            .style(text_input::style)
+            .style(composer_input_style)
             .width(Length::Fill)
     } else {
-        text_input("Message Grok…", &app.draft)
+        text_input("Ask Sola Agent…", &app.draft)
             .on_input(Msg::DraftChanged)
             .on_submit(Msg::Send)
-            .size(15)
+            .size(14)
             .padding(COMPOSER_PAD)
-            .style(text_input::style)
+            .style(composer_input_style)
             .width(Length::Fill)
     };
 
-    // No rounded shell — field sits flat in the band.
-    let bar: Element<'_, Msg> = if app.streaming {
-        row![
-            field,
-            kit_btn::labeled("Stop", kit_btn::danger).on_press(Msg::Cancel),
-        ]
-        .spacing(SPACE_MD)
-        .align_y(Alignment::Center)
-        .into()
+    let actions: Element<'_, Msg> = if app.streaming {
+        kit_btn::labeled_sm("Stop", kit_btn::danger_soft)
+            .on_press(Msg::Cancel)
+            .into()
+    } else if gated {
+        Space::new().width(0).into()
     } else {
-        field.into()
+        let mut send = kit_btn::labeled_sm("Send", kit_btn::primary);
+        if !app.draft.trim().is_empty() {
+            send = send.on_press(Msg::Send);
+        }
+        send.into()
     };
 
-    container(bar)
+    let shell = container(
+        row![field, actions]
+            .spacing(10.0)
+            .align_y(Alignment::End)
+            .padding(Padding::from([10.0, 12.0])),
+    )
+    .width(Length::Fill)
+    .style(composer_shell_style);
+
+    container(shell)
         .width(Length::Fill)
         .padding(Padding {
-            top: SPACE_MD,
-            right: SPACE_XL,
-            bottom: SPACE_MD,
-            left: SPACE_XL,
+            top: 10.0,
+            right: SIDE_PAD,
+            bottom: 12.0,
+            left: SIDE_PAD,
         })
         .style(composer_band_style)
         .into()
@@ -361,7 +507,10 @@ fn composer_band_style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(p.background.base.color)),
         border: Border {
-            color: p.background.stronger.color,
+            color: Color {
+                a: 0.45,
+                ..p.background.stronger.color
+            },
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -369,3 +518,32 @@ fn composer_band_style(theme: &Theme) -> container::Style {
     }
 }
 
+fn composer_shell_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(Color {
+            a: 0.92,
+            ..p.background.weaker.color
+        })),
+        border: Border {
+            color: Color {
+                a: 0.85,
+                ..p.background.stronger.color
+            },
+            width: 1.0,
+            radius: 12.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn composer_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let mut s = text_input::style(theme, status);
+    s.background = Background::Color(Color::TRANSPARENT);
+    s.border = Border {
+        color: Color::TRANSPARENT,
+        width: 0.0,
+        radius: RADIUS_MD.into(),
+    };
+    s
+}

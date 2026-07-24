@@ -50,30 +50,29 @@ use sola_core::theme::Theme as BusTheme;
 pub const THEME_NAME: &str = "sola";
 
 pub mod hex {
-    // macOS Dark Mode–aligned greys (systemBackground / systemGray ladder).
-    // Keep in sync with `Palette::seed` in sola-core.
-    /// Window / canvas base (`secondarySystemBackground`-ish).
-    pub const BG: &str = "#1c1c1e";
-    /// Primary label — near-white for contrast on dark fills.
-    pub const FG: &str = "#f5f5f7";
-    /// Sparse accent (selection chrome, focus, key status) — keep cyan.
-    pub const ACCENT: &str = "#00d4ff";
-    pub const SUCCESS: &str = "#30d158";
-    pub const WARNING: &str = "#ffd60a";
-    pub const DANGER: &str = "#ff453a";
+    // Graphite dark palette — sola-kit-ds / sola-agent-ds pass.
+    // Cool blue-greys with cyan accent; denser contrast than mac greys.
+    /// Window / canvas base.
+    pub const BG: &str = "#0c0e12";
+    /// Primary label.
+    pub const FG: &str = "#e9ecf2";
+    /// Sparse accent (selection chrome, focus, key status).
+    pub const ACCENT: &str = "#3dd6f5";
+    pub const SUCCESS: &str = "#3ecf8e";
+    pub const WARNING: &str = "#e8b84a";
+    pub const DANGER: &str = "#f07178";
     /// Muted / secondary label.
-    pub const FG_MUTED: &str = "#98989d";
-    /// Raised panel / sidebar / card (`tertiarySystemBackground`-ish).
-    pub const BG_RAISED: &str = "#2c2c2e";
-    /// Hover lift (`systemGray4`-ish).
-    pub const BG_HOVER: &str = "#3a3a3c";
+    pub const FG_MUTED: &str = "#8b94a8";
+    /// Raised panel / sidebar / card.
+    pub const BG_RAISED: &str = "#151922";
+    /// Hover lift.
+    pub const BG_HOVER: &str = "#1e2533";
     /// Hairline separators.
-    pub const BORDER: &str = "#48484a";
-    /// Selected-row fill — quiet accent-tinted, not loud GitHub blue.
-    /// Distinct from `BG_HOVER` so selection still reads; sparse vs full
-    /// accent fills. iced has no selection slot — see
+    pub const BORDER: &str = "#2a3344";
+    /// Selected-row fill — quiet accent-tinted.
+    /// iced has no selection slot — see
     /// [`super::install_selection`] / [`super::selection`].
-    pub const SELECTION: &str = "#1a3a45";
+    pub const SELECTION: &str = "#163842";
 }
 
 /// Build the kit's iced theme from its compile-time default atoms.
@@ -713,9 +712,9 @@ mod tests {
     fn hover_atom_reads_bg_hover_not_bg_tertiary() {
         let atoms = atoms_from_bus_theme(&BusTheme::default());
         assert_eq!(atoms.bg_hover, parse(hex::BG_HOVER));
-        // Seed currently uses the same step for tertiary + hover; still
-        // must load via the `bg-hover` token binding, not hard-coded elsewhere.
-        assert_eq!(atoms.bg_hover, parse("#3a3a3c"));
+        // Seed uses the same step for tertiary + hover; still must load
+        // via the `bg-hover` token binding, not hard-coded elsewhere.
+        assert_eq!(atoms.bg_hover, parse("#1e2533"));
     }
 
     // Sub-decision (A4): the seed speaks the kit's font-role vocabulary,
@@ -868,13 +867,14 @@ mod tests {
     }
 
     #[test]
-    fn seed_surfaces_are_macos_greys_not_primer() {
+    fn seed_surfaces_are_graphite() {
         let atoms = Atoms::default();
-        assert_eq!(atoms.bg, parse("#1c1c1e"));
-        assert_eq!(atoms.bg_raised, parse("#2c2c2e"));
-        assert_eq!(atoms.accent, parse("#00d4ff"), "keep cyan accent");
-        assert_eq!(atoms.selection, parse("#1a3a45"), "quiet selection");
-        // Not the old Primer canvas
+        assert_eq!(atoms.bg, parse("#0c0e12"));
+        assert_eq!(atoms.bg_raised, parse("#151922"));
+        assert_eq!(atoms.accent, parse("#3dd6f5"), "graphite cyan accent");
+        assert_eq!(atoms.selection, parse("#163842"), "quiet selection");
+        // Not mac greys or Primer canvas
+        assert_ne!(atoms.bg, parse("#1c1c1e"));
         assert_ne!(atoms.bg, parse("#0d1117"));
     }
 

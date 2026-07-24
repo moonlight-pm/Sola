@@ -22,9 +22,9 @@ use sola_kit::app::{
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
-const SIDEBAR_W_DEFAULT: f32 = 280.0;
-const SIDEBAR_W_MIN: f32 = 180.0;
-const SIDEBAR_W_MAX: f32 = 480.0;
+const SIDEBAR_W_DEFAULT: f32 = 248.0;
+const SIDEBAR_W_MIN: f32 = 200.0;
+const SIDEBAR_W_MAX: f32 = 420.0;
 
 mod acp;
 mod backend;
@@ -139,6 +139,8 @@ pub(crate) struct App {
     pub(crate) scroll_bottom_pending: bool,
     /// Resizable left session column width.
     pub(crate) sidebar_w: f32,
+    /// Sidebar session filter (title / path substring).
+    pub(crate) session_filter: String,
     pub(crate) dragging_divider: bool,
     pub(crate) last_cursor_x: Option<f32>,
     /// `(cursor_x_at_press, sidebar_w_at_press)`.
@@ -165,6 +167,7 @@ pub(crate) enum Msg {
     TranscriptWheelUp,
     /// Explicit "load earlier" control (always works without a scrollbar).
     LoadOlderHistory,
+    SessionFilter(String),
     // Project picker
     PickerDraft(String),
     PickerUse,
@@ -216,6 +219,7 @@ impl App {
             rename: None,
             scroll_bottom_pending: false,
             sidebar_w,
+            session_filter: String::new(),
             dragging_divider: false,
             last_cursor_x: None,
             drag_anchor: None,
@@ -533,6 +537,9 @@ impl App {
             }
             Msg::LoadOlderHistory => {
                 return self.request_older_history();
+            }
+            Msg::SessionFilter(s) => {
+                self.session_filter = s;
             }
         }
         Task::none()

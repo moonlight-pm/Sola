@@ -17,9 +17,11 @@ use iced::{Background, Border, Color};
 /// Corner radii. `SM` = inputs / ghost chrome, `MD` = buttons /
 /// swatches, `LG` = cards / popovers, `XL` = large floating panels,
 /// `PILL` = fully-rounded badges.
-pub const RADIUS_SM: f32 = 4.0;
-pub const RADIUS_MD: f32 = 6.0;
-pub const RADIUS_LG: f32 = 8.0;
+///
+/// Graphite pass: 5 / 7 / 10 (was 4 / 6 / 8).
+pub const RADIUS_SM: f32 = 5.0;
+pub const RADIUS_MD: f32 = 7.0;
+pub const RADIUS_LG: f32 = 10.0;
 /// `XL` = large floating panels (modal launcher, accent switcher frame).
 pub const RADIUS_XL: f32 = 14.0;
 pub const RADIUS_PILL: f32 = 999.0;
@@ -32,12 +34,15 @@ pub const SPACE_SM: f32 = 4.0;
 pub const SPACE_MD: f32 = 8.0;
 pub const SPACE_LG: f32 = 12.0;
 pub const SPACE_XL: f32 = 16.0;
+/// Roomier outer padding used by agent-style chat panes.
+pub const SPACE_2XL: f32 = 20.0;
+pub const SPACE_3XL: f32 = 28.0;
 
 /// Regular control content padding `[vertical, horizontal]` — buttons,
 /// default actions. Prefer this over inventing pad literals in apps.
-pub const PAD_CONTROL: [u16; 2] = [5, 12];
+pub const PAD_CONTROL: [u16; 2] = [6, 12];
 /// Compact control padding — toolbar, steppers, dense chrome.
-pub const PAD_CONTROL_SM: [u16; 2] = [3, 10];
+pub const PAD_CONTROL_SM: [u16; 2] = [5, 10];
 
 pub fn hairline(palette: &Extended, radius: f32) -> Border {
     Border {
