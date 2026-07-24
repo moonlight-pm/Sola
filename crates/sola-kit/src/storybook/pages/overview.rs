@@ -1,8 +1,8 @@
 //! Overview — design-system north star, tokens, type, density, control stage.
 //!
 //! Mirrors Open Design `sola-kit-ds.html` system page. Stateless layout
-//! except the control-stage buttons, which reuse the Button page's
-//! confirm-armed state via [`pages::button::State`].
+//! except the control-stage confirm button, which reuses the Button page's
+//! armed state via [`pages::button::State`].
 
 use iced::widget::{column, container, row, text, Space};
 use iced::{Background, Border, Color, Element, Length, Padding};
@@ -12,10 +12,9 @@ use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
 use sola_kit::components::style::{RADIUS_MD, RADIUS_SM};
 use sola_kit::components::swatch::swatch_sized;
-use sola_kit::components::text::{
-    body, caption, code, heading, muted, subheading,
-};
+use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
 use sola_kit::components::text_input as kit_text_input;
+use sola_kit::fonts;
 use sola_kit::theme::{self, Atoms};
 
 use crate::storybook::pages::button::{self as button_page, Msg as ButtonMsg};
@@ -28,9 +27,8 @@ pub fn view<'a>(
     column![
         heading("Sola Design System"),
         body(
-            "A freer re-image of sola-kit for a Wayland shell — cool graphite \
-             tool UI, sparse cyan signal, quiet selection. Seed atoms remain \
-             editable on the Theme page; production greys no longer own the room."
+            "Cool graphite tool UI for a Wayland shell — sparse cyan signal, \
+             quiet selection. Edit seed atoms on the Theme page."
         )
         .style(muted),
         north_star(),
@@ -40,7 +38,7 @@ pub fn view<'a>(
         spacing_radius(),
         control_stage(button_state),
     ]
-    .spacing(22)
+    .spacing(20)
     .width(Length::Fill)
     .into()
 }
@@ -49,15 +47,14 @@ fn north_star() -> Element<'static, ButtonMsg> {
     let hero = column![
         caption("NORTH STAR").style(muted),
         text("Dense chrome.")
-            .font(sola_kit::fonts::display())
+            .font(fonts::display())
             .size(20),
         text("One decisive accent.")
-            .font(sola_kit::fonts::display())
+            .font(fonts::display())
             .size(20),
         body(
             "Elevation from background steps and soft materials. Selection is \
-             intent, not a grey slab. Controls live in product compositions — \
-             never as a dump of naked widgets."
+             intent, not a grey slab. Controls live in product compositions."
         )
         .style(muted),
     ]
@@ -65,15 +62,27 @@ fn north_star() -> Element<'static, ButtonMsg> {
     .width(Length::FillPortion(3));
 
     let rules = column![
-        rule_row("Tokens first", "All chrome resolves through kit / bus atoms. No snowflake hex in views."),
-        rule_row("Materials", "Sidebar and header use soft raised fills; depth without heavy chrome borders."),
-        rule_row("Density", "Quiet, compact chrome. Status over hierarchy theater."),
-        rule_row("One primary", "At most one filled accent control per group. Ghost = muted lift only."),
+        rule_row(
+            "Tokens first",
+            "All chrome resolves through kit / bus atoms. No snowflake hex in views.",
+        ),
+        rule_row(
+            "Materials",
+            "Sidebar and header use soft raised fills; depth without heavy chrome borders.",
+        ),
+        rule_row(
+            "Density",
+            "Quiet, compact chrome. Status over hierarchy theater.",
+        ),
+        rule_row(
+            "One primary",
+            "At most one filled accent control per group. Ghost = muted lift only.",
+        ),
     ]
-    .spacing(10)
+    .spacing(12)
     .width(Length::FillPortion(2));
 
-    card(row![hero, rules].spacing(20).width(Length::Fill))
+    card(row![hero, rules].spacing(24).width(Length::Fill))
         .padding(18)
         .width(Length::Fill)
         .into()
@@ -81,10 +90,10 @@ fn north_star() -> Element<'static, ButtonMsg> {
 
 fn rule_row(title: &'static str, body_text: &'static str) -> Element<'static, ButtonMsg> {
     column![
-        body(title),
+        text(title).font(fonts::ui_medium()).size(13),
         caption(body_text).style(muted),
     ]
-    .spacing(2)
+    .spacing(3)
     .into()
 }
 
@@ -172,11 +181,6 @@ fn compare_card(
                 a: 0.80,
                 ..p.background.weaker.color
             })),
-            border: Border {
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.07),
-                width: 0.0,
-                radius: 0.0.into(),
-            },
             ..Default::default()
         }
     });
@@ -226,16 +230,13 @@ fn color_foundation(atoms: &Atoms) -> Element<'_, ButtonMsg> {
         token_row("DANGER", theme::hex::DANGER, "Semantic danger", atoms.danger),
         token_row("SELECTION", theme::hex::SELECTION, "Selected row (quiet)", atoms.selection),
     ]
-    .spacing(6);
+    .spacing(0);
 
     card(
         column![
             subheading("Color foundation"),
-            body(
-                "Redesign baseline (editable on Theme). Live atoms above; seed \
-                 hex strings are the compile-time defaults."
-            )
-            .style(muted),
+            body("Live atoms · seed hex is the compile-time default. Edit on Theme.")
+                .style(muted),
             rows,
         ]
         .spacing(10),
@@ -251,14 +252,28 @@ fn token_row<'a>(
     role: &'static str,
     color: Color,
 ) -> Element<'a, ButtonMsg> {
-    row![
-        swatch_sized(color, 18.0),
-        code(name).width(Length::Fixed(100.0)),
-        code(seed_hex).style(muted).width(Length::Fixed(90.0)),
-        caption(role).style(muted),
+    column![
+        container(
+            row![
+                swatch_sized(color, 22.0),
+                code(name).width(Length::Fixed(100.0)),
+                code(seed_hex).style(muted).width(Length::Fixed(90.0)),
+                caption(role).style(muted),
+            ]
+            .spacing(12)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(Padding::from([8, 0]))
+        .width(Length::Fill),
+        container(Space::new().width(Length::Fill).height(1))
+            .width(Length::Fill)
+            .height(Length::Fixed(1.0))
+            .style(|_| iced::widget::container::Style {
+                background: Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05))),
+                ..Default::default()
+            }),
     ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center)
+    .width(Length::Fill)
     .into()
 }
 
@@ -329,35 +344,42 @@ fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
             caption("PRODUCT MOMENT").style(muted),
             subheading("Session identity"),
             body(
-                "How this kit host names itself to solactl and the switcher. \
-                 One primary action in the footer — everything else is secondary \
-                 or destructive."
+                "How this kit host names itself. One primary in the footer — \
+                 everything else is secondary or destructive."
             )
             .style(muted),
             stage_field("Username", "alice"),
             stage_field("Display", "Alice · kit"),
             row![
-                caption("Status").style(muted).width(Length::Fixed(92.0)),
+                caption("Status").style(muted).width(Length::Fixed(80.0)),
                 badge::badge("SEED", Tone::Accent),
                 badge::badge("BOUND", Tone::Success),
-                caption("Theme dirty only after atom edits").style(muted),
+                caption("Dirty only after atom edits").style(muted),
             ]
             .spacing(8)
             .align_y(iced::Alignment::Center),
-            row![
-                kit_btn::labeled_sm("Delete", kit_btn::danger_outline)
-                    .on_press(ButtonMsg::Noop),
-                Space::new().width(Length::Fill),
-                kit_btn::labeled_sm("Revert", kit_btn::ghost).on_press(ButtonMsg::Noop),
-                kit_btn::labeled_sm("Cancel", kit_btn::secondary).on_press(ButtonMsg::Noop),
-                kit_btn::labeled_sm("Save", kit_btn::primary).on_press(ButtonMsg::Noop),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
+            container(
+                row![
+                    kit_btn::labeled_sm("Delete", kit_btn::danger_outline)
+                        .on_press(ButtonMsg::Noop),
+                    Space::new().width(Length::Fill),
+                    kit_btn::labeled_sm("Revert", kit_btn::ghost).on_press(ButtonMsg::Noop),
+                    kit_btn::labeled_sm("Cancel", kit_btn::secondary).on_press(ButtonMsg::Noop),
+                    kit_btn::labeled_sm("Save", kit_btn::primary).on_press(ButtonMsg::Noop),
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::Center),
+            )
+            .padding(Padding {
+                top: 4.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 0.0,
+            }),
         ]
-        .spacing(12),
+        .spacing(10),
     )
-    .padding(18)
+    .padding(16)
     .width(Length::FillPortion(3));
 
     let style_key = card(
@@ -386,55 +408,44 @@ fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
                     .on_press(ButtonMsg::Noop)
                     .into(),
             ),
+            // Single confirm control: idle = outline Delete, armed = filled Confirm?
             style_row(
                 "Danger",
-                row![
-                    kit_btn::labeled("Delete", kit_btn::danger_outline).on_press(ButtonMsg::Noop),
-                    kit_btn::confirm_button(
-                        button_state.confirm_armed,
-                        "Delete",
-                        "Confirm?",
-                        ButtonMsg::ArmConfirm,
-                        ButtonMsg::Confirm,
-                    )
-                    .padding(sola_kit::components::style::PAD_CONTROL),
-                ]
-                .spacing(8)
+                kit_btn::confirm_button(
+                    button_state.confirm_armed,
+                    "Delete",
+                    "Confirm?",
+                    ButtonMsg::ArmConfirm,
+                    ButtonMsg::Confirm,
+                )
+                .padding(sola_kit::components::style::PAD_CONTROL)
                 .into(),
             ),
-            caption(
-                "Primary carries soft glow + dark label. Secondary is a quiet fill, \
-                 not a bare outline. Ghost stays muted until hover. Danger outline \
-                 never competes with the primary."
-            )
-            .style(muted),
+            caption("Glow primary · soft secondary · muted ghost · outline danger.")
+                .style(muted),
         ]
-        .spacing(12),
+        .spacing(10),
     )
-    .padding(18)
+    .padding(16)
     .width(Length::FillPortion(2));
 
     column![
         subheading("Control stage"),
-        body(
-            "How buttons and fields should actually appear — in a composed product \
-             surface, not a junk drawer of naked widgets."
-        )
-        .style(muted),
+        body("Composed product surface — not a junk drawer of naked widgets.").style(muted),
         row![product, style_key].spacing(12).width(Length::Fill),
     ]
-    .spacing(10)
+    .spacing(8)
     .into()
 }
 
 fn stage_field(label: &'static str, value: &'static str) -> Element<'static, ButtonMsg> {
     row![
-        caption(label).style(muted).width(Length::Fixed(92.0)),
+        caption(label).style(muted).width(Length::Fixed(80.0)),
         kit_text_input::text_input("", value)
             .style(kit_text_input::style)
             .width(Length::Fill),
     ]
-    .spacing(12)
+    .spacing(10)
     .align_y(iced::Alignment::Center)
     .into()
 }

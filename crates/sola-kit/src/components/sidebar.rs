@@ -126,7 +126,23 @@ pub fn sidebar<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    sidebar_with_header(None::<Element<'a, Message, Theme>>, sections)
+}
+
+/// Like [`sidebar`], with an optional leading header (brand, search, …)
+/// stacked above the section list. Used by the storybook brand block.
+pub fn sidebar_with_header<'a, Message>(
+    header: Option<Element<'a, Message, Theme>>,
+    sections: Vec<SidebarSection<Message>>,
+) -> Container<'a, Message, Theme>
+where
+    Message: Clone + 'a,
+{
     let mut col = column![].spacing(SPACE_XS).padding(Padding::from([12, 10]));
+    if let Some(header) = header {
+        col = col.push(header);
+        col = col.push(Space::new().height(Length::Fixed(8.0)));
+    }
     for (i, section) in sections.into_iter().enumerate() {
         if i > 0 {
             col = col.push(Space::new().height(Length::Fixed(10.0)));
@@ -136,9 +152,8 @@ where
         }
         for item in section.items {
             // `sidebar()` never enables reorder, so `render_item` takes
-            // the plain `button(..).on_press(item.message)` path — byte-
-            // for-byte the prior `sidebar_item` behaviour. `index`/`n` are
-            // only read on the reorder path, so the values are irrelevant.
+            // the plain `button(..).on_press(item.message)` path. `index`
+            // is only read on the reorder path.
             col = col.push(render_item(item, None, 0));
         }
     }
@@ -560,8 +575,11 @@ where
 
     // ── Plain path (no reorder) — preserves the exact prior look. ──
     let Some(reorder) = reorder else {
-        // Build the inner content: label + optional secondary + hint.
-        let content = item_content(&label, secondary.as_deref(), shortcut);
+        // Label + optional secondary/hint, with left accent bar when active.
+        let content = row_with_active_bar(
+            item_content(&label, secondary.as_deref(), shortcut),
+            active,
+        );
         let btn = button(content)
             .style(move |t, status| item_style(t, status, active))
             .padding(Padding::from([6, 10]))
@@ -586,7 +604,10 @@ where
     // order — used for press messages and for the grabbing cursor.
     let is_dragged = matches!(reorder.active, Some((from, _)) if from == index);
 
-    let content = item_content(&label, secondary.as_deref(), shortcut);
+    let content = row_with_active_bar(
+        item_content(&label, secondary.as_deref(), shortcut),
+        active,
+    );
     let pressable = mouse_area(
         container(content)
             .width(Length::Fill)
@@ -957,14 +978,10 @@ where
 pub fn style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
-        // Raised graphite panel (opaque stand-in for frosted material).
+        // Raised graphite panel — no full outline (avoids a boxed slab).
+        // Adjacent content / zoning carries separation.
         background: Some(Background::Color(p.background.weaker.color)),
-        // Soft right edge via full hairline — zoning dividers still fine.
-        border: Border {
-            color: Color::from_rgba(1.0, 1.0, 1.0, 0.07),
-            width: 1.0,
-            radius: 0.0.into(),
-        },
+        border: Border::default(),
         ..container::Style::default()
     }
 }
@@ -976,24 +993,15 @@ pub fn style(theme: &Theme) -> container::Style {
 /// by [`with_reorder_motion`], not here.
 fn row_container_style(theme: &Theme, active: bool) -> container::Style {
     let p = theme.extended_palette();
-    let border = if active {
-        Border {
-            color: alpha(p.primary.base.color, 0.18),
-            width: 1.0,
-            radius: RADIUS_MD.into(),
-        }
-    } else {
-        Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: RADIUS_MD.into(),
-        }
-    };
     let bg = active.then(|| Background::Color(crate::theme::selection()));
     container::Style {
         background: bg,
         text_color: Some(p.background.base.text),
-        border,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_MD.into(),
+        },
         ..container::Style::default()
     }
 }
@@ -1001,25 +1009,22 @@ fn row_container_style(theme: &Theme, active: bool) -> container::Style {
 /// Style fn for an individual sidebar row. Exposed so consumers
 /// building custom row widgets (e.g. with leading icons) can match the
 /// kit's visual language.
+///
+/// Active = quiet selection wash + rounded corners. The **left accent
+/// bar** is drawn in the row content ([`row_with_active_bar`]), not as a
+/// full focus-ring border.
 pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     let p = theme.extended_palette();
     if active {
-        // Selection wash + soft accent edge (stands in for OD left bar +
-        // gradient). Distinct from hover so selection still reads.
         return button::Style {
             background: Some(Background::Color(crate::theme::selection())),
             text_color: p.background.base.text,
             border: Border {
-                color: alpha(p.primary.base.color, 0.18),
-                width: 1.0,
+                color: Color::TRANSPARENT,
+                width: 0.0,
                 radius: RADIUS_MD.into(),
             },
-            // Fake inset accent bar: tight left-biased shadow using accent.
-            shadow: Shadow {
-                color: alpha(p.primary.base.color, 0.70),
-                offset: Vector::new(-2.0, 0.0),
-                blur_radius: 0.0,
-            },
+            shadow: Default::default(),
             snap: false,
         };
     }
@@ -1038,6 +1043,33 @@ pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button
         shadow: Default::default(),
         snap: false,
     }
+}
+
+/// Prefix `content` with a 2px accent bar when `active` (OD left inset).
+fn row_with_active_bar<'a, Message: 'a>(
+    content: Element<'a, Message, Theme>,
+    active: bool,
+) -> Element<'a, Message, Theme> {
+    if !active {
+        return content;
+    }
+    let bar = container(Space::new().width(Length::Fixed(2.0)).height(Length::Fixed(14.0)))
+        .style(|theme: &Theme| {
+            let accent = theme.extended_palette().primary.base.color;
+            container::Style {
+                background: Some(Background::Color(Color { a: 0.85, ..accent })),
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 1.0.into(),
+                },
+                ..container::Style::default()
+            }
+        });
+    row![bar, content]
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+        .into()
 }
 
 #[cfg(test)]

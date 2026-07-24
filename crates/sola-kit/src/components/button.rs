@@ -107,9 +107,16 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
     let muted = p.secondary.base.text;
     let fg = p.background.base.text;
+    // ~35% toward primary label so ghost isn't read as disabled.
+    let rest = Color {
+        r: muted.r * 0.65 + fg.r * 0.35,
+        g: muted.g * 0.65 + fg.g * 0.35,
+        b: muted.b * 0.65 + fg.b * 0.35,
+        a: 1.0,
+    };
     let base = button::Style {
         background: Some(Background::Color(Color::TRANSPARENT)),
-        text_color: muted,
+        text_color: rest,
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,

@@ -22,7 +22,7 @@ use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
 use sola_kit::components::{
-    ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar,
+    ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar_with_header,
     text_input as kit_text_input,
 };
 use sola_kit::theme;
@@ -1089,10 +1089,54 @@ impl Storybook {
             .width(Length::Fill)
             .height(Length::Fill);
 
+        // Brand header (storybook only) + section nav — matches OD sidebar.
+        let brand = {
+            let mark = container(iced::widget::Space::new().width(22).height(22)).style(|_| {
+                iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgb(
+                        0.239, 0.839, 0.961,
+                    ))), // accent seed
+                    border: iced::Border {
+                        color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.18),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                }
+            });
+            container(
+                row![
+                    mark,
+                    column![
+                        text("sola-kit").size(13).font(sola_kit::fonts::display()),
+                        text("DESIGN SYSTEM")
+                            .size(10)
+                            .style(|theme: &iced::Theme| iced::widget::text::Style {
+                                color: Some(theme.extended_palette().secondary.base.text),
+                            }),
+                    ]
+                    .spacing(2),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+            )
+            .padding(Padding {
+                top: 6.0,
+                right: 10.0,
+                bottom: 14.0,
+                left: 10.0,
+            })
+            .width(Length::Fill)
+            .style(|theme: &iced::Theme| iced::widget::container::Style {
+                text_color: Some(theme.extended_palette().background.base.text),
+                ..Default::default()
+            })
+        };
+
         // The atom colour picker is anchored to its swatch from inside
         // the Theme page (see `pages::theme` + `popover_anchored`), so
         // there's no window-level float to compose here.
-        row![sidebar(sections), right]
+        row![sidebar_with_header(Some(brand.into()), sections), right]
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -1223,23 +1267,31 @@ impl Storybook {
             }
         };
 
-        // Raised header strip with soft bottom hairline.
-        container(body)
-            .padding(Padding::from([10, 24]))
-            .width(Length::Fill)
-            .style(|theme: &iced::Theme| {
-                let p = theme.extended_palette();
-                iced::widget::container::Style {
-                    background: Some(iced::Background::Color(p.background.weaker.color)),
-                    border: iced::Border {
-                        color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.07),
-                        width: 1.0,
-                        radius: 0.0.into(),
-                    },
+        // Raised header strip + bottom hairline only (no full box border).
+        column![
+            container(body)
+                .padding(Padding::from([10, 24]))
+                .width(Length::Fill)
+                .style(|theme: &iced::Theme| {
+                    let p = theme.extended_palette();
+                    iced::widget::container::Style {
+                        background: Some(iced::Background::Color(p.background.weaker.color)),
+                        border: iced::Border::default(),
+                        ..Default::default()
+                    }
+                }),
+            container(iced::widget::Space::new().width(Length::Fill).height(1))
+                .width(Length::Fill)
+                .height(Length::Fixed(1.0))
+                .style(|_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        1.0, 1.0, 1.0, 0.07,
+                    ))),
                     ..Default::default()
-                }
-            })
-            .into()
+                }),
+        ]
+        .width(Length::Fill)
+        .into()
     }
 
     fn page_view(&self) -> Element<'_, Msg> {
