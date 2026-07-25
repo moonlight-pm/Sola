@@ -228,6 +228,18 @@ impl SectionScroll {
         self.clamped()
     }
 
+    /// Jump to the top of the list (`offset_y = 0`).
+    pub fn jump_top(mut self) -> Self {
+        self.offset_y = 0.0;
+        self
+    }
+
+    /// Jump to the bottom of the list (`offset_y = max`).
+    pub fn jump_bottom(mut self) -> Self {
+        self.offset_y = self.max_offset();
+        self
+    }
+
     /// Update measured viewport height and re-clamp.
     pub fn with_viewport_h(mut self, viewport_h: f32) -> Self {
         self.viewport_h = viewport_h.max(0.0);
@@ -266,7 +278,9 @@ pub fn section_content_height<Message>(items: &[SidebarItem<Message>]) -> f32 {
 /// equal item heights (`content_h / n_items`).
 ///
 /// Pure — unit-tested without an iced runtime. Returns `(above, below)`.
-/// Partially visible items count as neither.
+/// Partially visible items count as neither. At the true top/bottom of
+/// the scroll range both sides are forced to 0 so chips don't flash on
+/// float noise.
 pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize, usize) {
     if n_items == 0 || !scroll.overflows() {
         return (0, 0);
@@ -274,6 +288,20 @@ pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize,
     let avg = scroll.content_h / n_items as f32;
     if avg <= 0.0 {
         return (0, 0);
+    }
+    let max_off = scroll.max_offset();
+    // Treat the first/last few px as "parked" so chips hide at rest.
+    const EDGE: f32 = 2.0;
+    if scroll.offset_y <= EDGE {
+        // At top: nothing above; count only what's fully below.
+        let first_below =
+            ((scroll.offset_y + scroll.viewport_h) / avg).ceil().max(0.0) as usize;
+        let below = n_items.saturating_sub(first_below.min(n_items));
+        return (0, below);
+    }
+    if scroll.offset_y >= max_off - EDGE {
+        let above = (scroll.offset_y / avg).floor().max(0.0) as usize;
+        return (above.min(n_items), 0);
     }
     // Item i occupies [i*avg, (i+1)*avg). Fully above when end ≤ offset.
     let above = (scroll.offset_y / avg).floor().max(0.0) as usize;
@@ -1322,8 +1350,7 @@ fn hidden_scroll<'a, Message: 'a>(
     s
 }
 
-/// Reserved height for each overflow chip slot (always present so the
-/// list viewport does not resize when chips appear/disappear).
+/// Height of a visible overflow chip (`↑ N …` / `↓ N …`). Hidden when N=0.
 const OVERFLOW_CHIP_H: f32 = 22.0;
 
 /// Fill section: **app-owned** scroll (no iced `scrollable`).
@@ -1356,34 +1383,47 @@ fn fill_section_body<'a, Message: Clone + 'a>(
         offset_y: offset,
     };
 
-    let list: Element<'a, Message, Theme> = if let Some(cb) = on_scroll {
-        let cb: std::rc::Rc<dyn Fn(SectionScroll) -> Message + 'a> = std::rc::Rc::from(cb);
-        let base = scroll;
+    let (list, on_jump): (Element<'a, Message, Theme>, Option<std::rc::Rc<dyn Fn(SectionScroll) -> Message + 'a>>) =
+        if let Some(cb) = on_scroll {
+            let cb: std::rc::Rc<dyn Fn(SectionScroll) -> Message + 'a> = std::rc::Rc::from(cb);
+            let base = scroll;
 
-        let cb_wheel = std::rc::Rc::clone(&cb);
-        let area = mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| {
-            cb_wheel(base.wheel(delta))
-        });
+            let cb_wheel = std::rc::Rc::clone(&cb);
+            let area = mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| {
+                cb_wheel(base.wheel(delta))
+            });
 
-        let cb_show = std::rc::Rc::clone(&cb);
-        let cb_resize = std::rc::Rc::clone(&cb);
-        sensor(area)
-            .on_show(move |size: iced::Size| cb_show(base.with_viewport_h(size.height)))
-            .on_resize(move |size: iced::Size| cb_resize(base.with_viewport_h(size.height)))
-            .into()
-    } else {
-        clipped.into()
-    };
+            let cb_show = std::rc::Rc::clone(&cb);
+            let cb_resize = std::rc::Rc::clone(&cb);
+            let list = sensor(area)
+                .on_show(move |size: iced::Size| cb_show(base.with_viewport_h(size.height)))
+                .on_resize(move |size: iced::Size| {
+                    cb_resize(base.with_viewport_h(size.height))
+                })
+                .into();
+            (list, Some(cb))
+        } else {
+            (clipped.into(), None)
+        };
 
-    column![
-        overflow_slot(OverflowDir::Up, above),
-        list,
-        overflow_slot(OverflowDir::Down, below),
-    ]
-    .spacing(0.0)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+    // Chips only take space when there is overflow on that side — no
+    // permanent gap under the section title at rest. Click jumps to end.
+    let top_chip = overflow_slot(
+        OverflowDir::Up,
+        above,
+        on_jump.as_ref().map(|cb| cb(scroll.jump_top())),
+    );
+    let bottom_chip = overflow_slot(
+        OverflowDir::Down,
+        below,
+        on_jump.as_ref().map(|cb| cb(scroll.jump_bottom())),
+    );
+
+    column![top_chip, list, bottom_chip]
+        .spacing(0.0)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 // ──────────────────────────── ClipScroll widget ─────────────────────────────
@@ -1573,36 +1613,49 @@ enum OverflowDir {
     Down,
 }
 
-/// Fixed-height chip slot so list viewport height is independent of scroll.
-/// When `n == 0` the slot is empty but still occupies [`OVERFLOW_CHIP_H`].
+/// Overflow chip. When `n == 0` collapses to zero height (no gap under the
+/// section title at rest). When present, click emits `on_jump` (scroll to
+/// top/bottom via the same [`SectionScroll`] callback as the wheel).
 ///
 /// Note: do **not** use `center_y(Length::Fill)` — that sets height to Fill
 /// and the three-row column (chip / list / chip) splits ⅓ each.
-fn overflow_slot<'a, Message: 'a>(dir: OverflowDir, n: usize) -> Element<'a, Message, Theme> {
-    let body: Element<'a, Message, Theme> = if n == 0 {
-        Space::new().into()
-    } else {
-        let glyph = match dir {
-            OverflowDir::Up => "↑",
-            OverflowDir::Down => "↓",
-        };
-        text(format!("{glyph}  {n} …"))
-            .font(fonts::ui())
-            .size(11)
-            .style(|theme: &Theme| {
-                let c = theme.extended_palette().background.base.text;
-                iced::widget::text::Style {
-                    color: Some(Color { a: 0.55, ..c }),
-                }
-            })
-            .into()
+fn overflow_slot<'a, Message: Clone + 'a>(
+    dir: OverflowDir,
+    n: usize,
+    on_jump: Option<Message>,
+) -> Element<'a, Message, Theme> {
+    if n == 0 {
+        return Space::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(0.0))
+            .into();
+    }
+    let glyph = match dir {
+        OverflowDir::Up => "↑",
+        OverflowDir::Down => "↓",
     };
-    container(body)
+    let label = text(format!("{glyph}  {n} …"))
+        .font(fonts::ui())
+        .size(11)
+        .style(|theme: &Theme| {
+            let c = theme.extended_palette().background.base.text;
+            iced::widget::text::Style {
+                color: Some(Color { a: 0.55, ..c }),
+            }
+        });
+    let chip = container(label)
         .width(Length::Fill)
         .height(Length::Fixed(OVERFLOW_CHIP_H))
         .align_x(iced::alignment::Horizontal::Center)
-        .align_y(iced::alignment::Vertical::Center)
-        .into()
+        .align_y(iced::alignment::Vertical::Center);
+
+    match on_jump {
+        Some(msg) => mouse_area(chip)
+            .interaction(mouse::Interaction::Pointer)
+            .on_press(msg)
+            .into(),
+        None => chip.into(),
+    }
 }
 
 /// Collapsed (icon-only) row: shows just the shortcut number (or
