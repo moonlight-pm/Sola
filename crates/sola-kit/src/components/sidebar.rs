@@ -748,6 +748,11 @@ fn item_content<'a, Message: 'a>(
         );
     }
 
+    // Clip so long titles cannot paint over the trailing time/count column.
+    let text_box = container(text_col)
+        .width(Length::Fill)
+        .clip(true);
+
     let mut trailing = column![].spacing(2.0).align_x(iced::Alignment::End);
     let mut has_trail = false;
     if let Some(sec) = secondary {
@@ -759,12 +764,12 @@ fn item_content<'a, Message: 'a>(
         has_trail = true;
     }
 
-    let mut r = row![text_col]
+    let mut r = row![text_box]
         .spacing(SPACE_MD)
         .align_y(iced::Alignment::Start)
         .width(Length::Fill);
     if has_trail {
-        // Fixed-ish trailing column: no Fill so it can't steal title space.
+        // Shrink trailing column — never takes Fill, so title keeps the rest.
         r = r.push(
             container(trailing)
                 .width(Length::Shrink)
@@ -772,7 +777,7 @@ fn item_content<'a, Message: 'a>(
                     top: 1.0,
                     right: 0.0,
                     bottom: 0.0,
-                    left: 4.0,
+                    left: 6.0,
                 }),
         );
     }
