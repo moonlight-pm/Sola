@@ -164,12 +164,29 @@ fn sidebar_header(app: &App) -> Element<'_, Msg> {
 
 fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<Msg> {
     let selected = app.session_id.as_deref() == Some(summary.id.as_str());
-    // Budget title/path for list width so clip + ellipsis both read clean.
-    let max_title = ((app.sidebar_w - 72.0) / 7.0).clamp(12.0, 48.0) as usize;
-    let max_path = ((app.sidebar_w - 72.0) / 6.2).clamp(10.0, 42.0) as usize;
+    // Budget for list width so clip + ellipsis both read clean.
+    let max_dir = ((app.sidebar_w - 88.0) / 7.2).clamp(10.0, 40.0) as usize;
+    let max_title = ((app.sidebar_w - 72.0) / 6.5).clamp(10.0, 48.0) as usize;
+    // Directory is the primary identity; generated titles are secondary.
+    let dir = ellipsize(&project_leaf(&summary.cwd), max_dir);
     let title = ellipsize(&summary.title, max_title);
-    let project = ellipsize(&short_path(&summary.cwd), max_path);
     let when = relative_time(summary.updated);
+
+    // Prefer live ACP usage for the open tab; otherwise disk-scanned values
+    // so unloaded rows still show last known context size.
+    let (used, size) = if selected {
+        (
+            app.usage_used.or(summary.usage_used),
+            app.usage_size.or(summary.usage_size),
+        )
+    } else {
+        (summary.usage_used, summary.usage_size)
+    };
+    let secondary = match format_context_kb(used, size) {
+        Some(kb) if !when.is_empty() => format!("{kb}\n{when}"),
+        Some(kb) => kb,
+        None => when,
+    };
 
     // Activity dot: recent disk activity, or the selected session streaming.
     // Always show a dot (green/grey) so the title never shifts when busy flips.
@@ -186,16 +203,28 @@ fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<
     // keeps hover chrome.
     let _ = busy;
     let armed = app.delete_armed.as_deref() == Some(summary.id.as_str());
-    SidebarItem::new(title, Msg::SelectSession(summary.id.clone()))
+    SidebarItem::new(dir, Msg::SelectSession(summary.id.clone()))
         .id(summary.id.clone())
         .active(selected)
-        .subtitle(project)
-        .secondary(when)
+        .subtitle(title)
+        .secondary(secondary)
         .indicator(indicator)
         .hover_action(SidebarHoverAction {
             message: Msg::SessionDeleteClick(summary.id.clone()),
             armed,
         })
+}
+
+/// Compact context badge for a session row (`42k` or `42k/500k`).
+fn format_context_kb(used: Option<u64>, size: Option<u64>) -> Option<String> {
+    let used = used?;
+    let used_k = (used + 500) / 1000;
+    if let Some(size) = size.filter(|s| *s > 0) {
+        let size_k = (size + 500) / 1000;
+        Some(format!("{used_k}k/{size_k}k"))
+    } else {
+        Some(format!("{used_k}k"))
+    }
 }
 
 fn ellipsize(s: &str, max_chars: usize) -> String {

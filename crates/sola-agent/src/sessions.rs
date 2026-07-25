@@ -215,6 +215,8 @@ fn collect_group(
         };
         let now = now_secs();
         let busy = updated > 0 && now.saturating_sub(updated) <= ACTIVITY_RECENT_SECS;
+        // Last usage_update in the transcript tail — available without ACP load.
+        let (usage_used, usage_size) = read_usage_from_updates(&path);
         out.push(SessionSummary {
             id: id.clone(),
             title,
@@ -222,8 +224,86 @@ fn collect_group(
             updated,
             pinned,
             busy,
+            usage_used,
+            usage_size,
         });
     }
+}
+
+/// Scan the end of `updates.jsonl` for the latest `usage_update` (used/size tokens).
+///
+/// Cheap enough for sidebar refresh: only the last ~96 KiB is read.
+fn read_usage_from_updates(session_dir: &Path) -> (Option<u64>, Option<u64>) {
+    let path = session_dir.join("updates.jsonl");
+    let mut file = match File::open(&path) {
+        Ok(f) => f,
+        Err(_) => return (None, None),
+    };
+    let len = file.seek(SeekFrom::End(0)).unwrap_or(0);
+    const TAIL: u64 = 96 * 1024;
+    let start = len.saturating_sub(TAIL);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return (None, None);
+    }
+    let mut buf = String::new();
+    if file.read_to_string(&mut buf).is_err() {
+        return (None, None);
+    }
+    // If we started mid-line, drop the partial first line.
+    let text = if start > 0 {
+        buf.split_once('\n').map(|(_, rest)| rest).unwrap_or(&buf)
+    } else {
+        buf.as_str()
+    };
+
+    let mut used = None;
+    let mut size = None;
+    for line in text.lines() {
+        if !line.contains("usage_update") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let update = v
+            .pointer("/params/update")
+            .cloned()
+            .or_else(|| v.get("update").cloned())
+            .unwrap_or(Value::Null);
+        let kind = update
+            .get("sessionUpdate")
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        if kind != "usage_update" {
+            // Some writers nest differently — also accept top-level match.
+            if !line.contains("\"sessionUpdate\":\"usage_update\"")
+                && !line.contains("\"sessionUpdate\": \"usage_update\"")
+            {
+                continue;
+            }
+        }
+        let u = update
+            .get("used")
+            .and_then(|x| x.as_u64())
+            .or_else(|| update.get("totalTokens").and_then(|x| x.as_u64()))
+            .or_else(|| {
+                v.pointer("/params/update/used")
+                    .and_then(|x| x.as_u64())
+            });
+        let s = update
+            .get("size")
+            .and_then(|x| x.as_u64())
+            .or_else(|| update.get("contextWindow").and_then(|x| x.as_u64()))
+            .or_else(|| {
+                v.pointer("/params/update/size")
+                    .and_then(|x| x.as_u64())
+            });
+        if let Some(u) = u {
+            used = Some(u);
+            size = s.or(size);
+        }
+    }
+    (used, size)
 }
 
 fn resolve_title(id: &str, disk_title: &str, pins: &overlay::Overlay) -> String {

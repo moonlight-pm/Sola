@@ -1588,8 +1588,16 @@ impl App {
                 self.turns.push(Turn::Plan(entries));
             }
             AgentEvent::Usage { used, size } => {
+                let size = size.or(Some(DEFAULT_CONTEXT_SIZE));
                 self.usage_used = Some(used);
-                self.usage_size = size.or(Some(DEFAULT_CONTEXT_SIZE));
+                self.usage_size = size;
+                // Keep the sidebar tab badge in sync without reloading disk.
+                if let Some(id) = self.session_id.as_deref() {
+                    if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                        s.usage_used = Some(used);
+                        s.usage_size = size;
+                    }
+                }
             }
             AgentEvent::PermissionRequired {
                 request_id,

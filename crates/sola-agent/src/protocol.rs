@@ -214,6 +214,12 @@ pub struct SessionSummary {
     /// True when the session is actively working (recent transcript writes).
     #[serde(default)]
     pub busy: bool,
+    /// Last known context tokens used (from `usage_update` on disk or live ACP).
+    #[serde(default)]
+    pub usage_used: Option<u64>,
+    /// Context window size when known.
+    #[serde(default)]
+    pub usage_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

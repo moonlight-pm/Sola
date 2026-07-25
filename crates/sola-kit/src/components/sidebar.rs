@@ -308,11 +308,17 @@ impl SectionScroll {
 /// Intrinsic height of one sidebar row (padding + text), excluding column gap.
 fn item_row_height<Message>(item: &SidebarItem<Message>) -> f32 {
     let text_h = if item.subtitle.is_some() {
-        13.0 + TITLE_SUB_GAP + 11.0
+        14.0 + TITLE_SUB_GAP + 11.0
     } else {
-        13.0
+        14.0
     };
-    ITEM_PAD_V * 2.0 + text_h
+    // Multi-line secondary (e.g. context KB + age) needs room in scroll math.
+    let trail_h = item
+        .secondary
+        .as_ref()
+        .map(|s| s.lines().filter(|l| !l.is_empty()).count().max(1) as f32 * 12.0)
+        .unwrap_or(0.0);
+    ITEM_PAD_V * 2.0 + text_h.max(trail_h)
 }
 
 /// Full scroll content height for a section body (padding + rows + gaps).
@@ -1019,6 +1025,9 @@ where
 }
 
 /// Title + optional subtitle (+ leading indicator). Takes `Fill` width.
+///
+/// Primary line is the identity row (ui, slightly larger). Subtitle is quieter
+/// secondary caption (ui, not mono — session titles / paths both read better).
 fn item_text_block<'a, Message: 'a>(
     label: &str,
     subtitle: Option<&str>,
@@ -1026,7 +1035,7 @@ fn item_text_block<'a, Message: 'a>(
 ) -> Element<'a, Message> {
     let title = text(label.to_string())
         .font(fonts::ui())
-        .size(13)
+        .size(14)
         .wrapping(Wrapping::None)
         .width(Length::Fill);
 
@@ -1045,12 +1054,12 @@ fn item_text_block<'a, Message: 'a>(
         text_col = text_col.push(
             container(
                 text(sub.to_string())
-                    .font(fonts::mono())
+                    .font(fonts::ui())
                     .size(11)
                     .style(|theme: &Theme| {
                         let c = theme.extended_palette().background.base.text;
                         iced::widget::text::Style {
-                            color: Some(Color { a: 0.48, ..c }),
+                            color: Some(Color { a: 0.42, ..c }),
                         }
                     })
                     .wrapping(Wrapping::None)
@@ -1069,7 +1078,7 @@ fn item_text_block<'a, Message: 'a>(
     container(text_col).width(Length::Fill).clip(true).into()
 }
 
-/// Shrink trailing column: age/shortcut, then optional hover action under it.
+/// Shrink trailing column: age/shortcut (multi-line ok), then optional hover action.
 fn item_trailing<'a, Message: Clone + 'a>(
     secondary: Option<&str>,
     shortcut: Option<u8>,
@@ -1077,7 +1086,10 @@ fn item_trailing<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     let mut trailing = column![].spacing(2.0).align_x(iced::Alignment::End);
     if let Some(sec) = secondary {
-        trailing = trailing.push(dim_label(sec));
+        // Allow "42k/500k\\n12m" style badges (context + age).
+        for line in sec.lines().filter(|l| !l.is_empty()) {
+            trailing = trailing.push(dim_label(line));
+        }
     }
     if let Some(n) = shortcut {
         trailing = trailing.push(dim_label(&n.to_string()));
