@@ -452,9 +452,9 @@ impl App {
                 self.streaming = false;
             }
             Msg::NewSession => {
-                if self.streaming || self.pending.is_some() {
-                    return Task::none();
-                }
+                // Always allow opening the picker — busy/console-watch
+                // `streaming` must not trap chrome. In-flight work is
+                // abandoned only when the user actually starts a session.
                 let default = self.project_root.to_string_lossy().into_owned();
                 self.project_picker = Some(ProjectPicker {
                     draft: default,
@@ -502,13 +502,15 @@ impl App {
                 }
                 self.last_session_click = Some((id.clone(), now));
 
-                if self.streaming || self.pending.is_some() {
-                    return Task::none();
-                }
                 // Already open — don't reload on the first click of a double.
                 if self.session_id.as_deref() == Some(id.as_str()) {
                     return Task::none();
                 }
+                // Never block session switches on `streaming` / pending.
+                // Console watches set `streaming` from open tools (activity
+                // only) — a silent no-op here made every subsequent click
+                // dead after opening a busy "In console" session.
+                self.abandon_turn_for_switch();
                 let summary = self.sessions.iter().find(|s| s.id == id);
                 let cwd = summary
                     .map(|s| s.cwd.clone())
@@ -520,7 +522,6 @@ impl App {
                 self.stick_to_bottom = true;
                 self.loading_older = false;
                 self.draft.clear();
-                self.pending = None;
                 if console_open {
                     // External Grok TUI owns this session — view only.
                     self.session_readonly = true;
@@ -855,6 +856,7 @@ impl App {
     }
 
     fn start_session_in(&mut self, cwd: String) {
+        self.abandon_turn_for_switch();
         self.project_root = PathBuf::from(&cwd);
         overlay::note_cwd(&cwd);
         self.turns.clear();
@@ -870,6 +872,25 @@ impl App {
         self.sessions = sessions::list_all();
         bridge::agent_send(AgentCmd::NewSession { cwd: cwd.clone() });
         bridge::agent_send(AgentCmd::RefreshSessions { cwd });
+    }
+
+    /// Drop local turn/approval state so the user can switch sessions or
+    /// start a new one. Cancels ACP child work only when we were the
+    /// writable owner (not a console file watch).
+    fn abandon_turn_for_switch(&mut self) {
+        if !self.session_readonly {
+            if self.streaming {
+                bridge::agent_send(AgentCmd::Cancel);
+            }
+            if let Some(p) = self.pending.take() {
+                bridge::agent_send(AgentCmd::PermissionCancel {
+                    request_id: p.request_id,
+                });
+            }
+        } else {
+            self.pending = None;
+        }
+        self.streaming = false;
     }
 
     /// If the open session is no longer held by a console (or became one),
