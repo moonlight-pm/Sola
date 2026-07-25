@@ -19,13 +19,7 @@ pub(crate) fn view(app: &App) -> Element<'_, crate::Msg> {
     ));
     let mode = pill(format!("{}  {}", "mode", app.connection_mode.as_str()));
 
-    let turn = if app.session_readonly {
-        if app.streaming {
-            pill("console · live".into())
-        } else {
-            pill("console · read-only".into())
-        }
-    } else if app.pending.is_some() {
+    let turn = if app.pending.is_some() {
         pill("awaiting approval".into())
     } else if app.streaming {
         pill("streaming".into())

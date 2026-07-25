@@ -94,15 +94,13 @@ pub enum AgentEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionModeLabel {
-    Local,
-    /// Reserved for leader daemon attach.
+    /// Attached to shared `grok agent leader` (only supported mode).
     Leader,
 }
 
 impl ConnectionModeLabel {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Local => "local",
             Self::Leader => "leader",
         }
     }
@@ -129,12 +127,7 @@ pub struct SessionSummary {
     /// Unix secs of last **turn** activity (updates.jsonl mtime), not open time.
     pub updated: u64,
     pub pinned: bool,
-    /// True when a live Grok TUI process has this session open in a console.
-    /// (Grouping only — activity uses [`Self::busy`].)
-    #[serde(default)]
-    pub live: bool,
     /// True when the session is actively working (recent transcript writes).
-    /// Independent of whether a console has it open.
     #[serde(default)]
     pub busy: bool,
 }
@@ -168,13 +161,7 @@ pub enum AgentCmd {
         id: String,
         cwd: String,
     },
-    /// File-only open for a session held by an external Grok TUI.
-    /// Does **not** call ACP `session/load` (read-only viewer).
-    OpenReadonly {
-        id: String,
-        cwd: String,
-    },
-    /// Re-read the transcript tail for a watched (typically console) session.
+    /// Re-read the transcript tail from disk (optional live watch).
     SyncTranscript {
         id: String,
         cwd: String,

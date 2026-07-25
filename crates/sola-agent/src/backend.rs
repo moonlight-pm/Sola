@@ -1,9 +1,10 @@
 //! Backend identity and connection mode.
 //!
-//! v1 wires only Grok over `StdioChild`. `Leader` is reserved for the future
-//! daemon attach path documented in the design.
+//! sola-agent always attaches to a **shared Grok leader** (user systemd unit
+//! `grok-leader.service`, socket `~/.grok/leader.sock`). It never spawns a
+//! private agent process for the turn loop.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct BackendSpec {
@@ -14,13 +15,21 @@ pub struct BackendSpec {
 }
 
 impl BackendSpec {
-    /// Default Grok Build ACP stdio backend.
-    pub fn grok() -> Self {
+    /// ACP stdio **client** that attaches to the shared leader.
+    ///
+    /// Requires a reachable leader (`grok agent leader` / `grok-leader.service`).
+    /// Does not start a private agent when the leader is already up.
+    pub fn grok_leader_bridge() -> Self {
+        let mut args = vec!["agent".into(), "--leader".into(), "stdio".into()];
+        if let Some(sock) = leader_socket_override() {
+            args.push("--leader-socket".into());
+            args.push(sock.display().to_string());
+        }
         Self {
             id: "grok",
             label: "Grok",
             command: resolve_grok_binary(),
-            args: vec!["agent".into(), "stdio".into()],
+            args,
         }
     }
 }
@@ -28,33 +37,72 @@ impl BackendSpec {
 /// How we attach to the agent process.
 #[derive(Debug, Clone)]
 pub enum ConnectionMode {
-    /// v1: private child for the app lifetime. Quit stops the agent.
-    StdioChild { spec: BackendSpec },
-    /// Future: attach to `grok agent leader` at this socket.
-    #[allow(dead_code)]
-    Leader { socket: PathBuf },
+    /// Attach to `grok agent leader` via the stdio bridge (`grok agent --leader stdio`).
+    Leader {
+        socket: PathBuf,
+        /// Thin `grok agent --leader stdio` child — ACP NDJSON on its stdio;
+        /// the shared leader owns tools/sessions and outlives this process.
+        bridge: BackendSpec,
+    },
 }
 
 impl ConnectionMode {
-    pub fn v1_default() -> Self {
-        Self::StdioChild {
-            spec: BackendSpec::grok(),
+    pub fn default_mode() -> Self {
+        Self::Leader {
+            socket: default_leader_socket(),
+            bridge: BackendSpec::grok_leader_bridge(),
         }
     }
 
     pub fn label(&self) -> crate::protocol::ConnectionModeLabel {
         match self {
-            Self::StdioChild { .. } => crate::protocol::ConnectionModeLabel::Local,
             Self::Leader { .. } => crate::protocol::ConnectionModeLabel::Leader,
         }
     }
 
     pub fn backend_label(&self) -> &str {
         match self {
-            Self::StdioChild { spec } => spec.label,
-            Self::Leader { .. } => "Grok (leader)",
+            Self::Leader { bridge, .. } => bridge.label,
         }
     }
+
+    pub fn socket(&self) -> &Path {
+        match self {
+            Self::Leader { socket, .. } => socket,
+        }
+    }
+}
+
+/// Default leader socket (`~/.grok/leader.sock`), honouring `GROK_LEADER_SOCKET`.
+pub fn default_leader_socket() -> PathBuf {
+    if let Some(p) = leader_socket_override() {
+        return p;
+    }
+    grok_home().join("leader.sock")
+}
+
+fn leader_socket_override() -> Option<PathBuf> {
+    std::env::var_os("GROK_LEADER_SOCKET")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+}
+
+pub fn grok_home() -> PathBuf {
+    if let Ok(h) = std::env::var("GROK_HOME") {
+        return PathBuf::from(h);
+    }
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join(".grok"))
+        .unwrap_or_else(|| PathBuf::from(".grok"))
+}
+
+/// True when something is accepting connections on the leader socket.
+///
+/// Used as a preflight so we do **not** spawn `grok agent --leader stdio`
+/// when the leader is down (that path auto-spawns a non-systemd leader).
+pub fn leader_reachable(socket: &Path) -> bool {
+    use std::os::unix::net::UnixStream;
+    UnixStream::connect(socket).is_ok()
 }
 
 fn resolve_grok_binary() -> PathBuf {
@@ -78,6 +126,11 @@ fn resolve_grok_binary() -> PathBuf {
         let grok_home = home.join(".grok/bin/grok");
         if grok_home.is_file() {
             return grok_home;
+        }
+        // Managed download path used by the internal installer.
+        let dl = home.join(".grok/downloads/grok-linux-x86_64");
+        if dl.is_file() {
+            return dl;
         }
     }
     PathBuf::from("grok")

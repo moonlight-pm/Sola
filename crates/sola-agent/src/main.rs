@@ -1,8 +1,10 @@
-//! sola-agent — kit-native desktop ACP client (default backend: Grok Build).
+//! sola-agent — kit-native desktop ACP client for Grok Build.
 //!
-//! Resume-only in v1: quitting stops the child process; sessions live under
-//! `~/.grok/sessions` and can be resumed from Sola or the Grok TUI.
-//! Leader-daemon multi-client attach is a future connection mode.
+//! Always attaches to a shared **Grok leader** (`grok agent --leader stdio`
+//! bridge → `~/.grok/leader.sock`). The leader is owned outside Sola
+//! (user systemd unit `grok-leader.service`); quitting this app does not
+//! stop the agent. Sessions live under `~/.grok/sessions` and are shared
+//! live with the Grok TUI when both use the same leader.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -121,7 +123,7 @@ fn main() -> iced::Result {
         .install();
 
     bridge::init_channels();
-    worker::start(ConnectionMode::v1_default());
+    worker::start(ConnectionMode::default_mode());
 
     // Kick connection + session list after iced is up.
     bridge::agent_send(AgentCmd::EnsureConnected);
@@ -146,24 +148,6 @@ fn project_cwd() -> String {
                 .map(|p| p.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| ".".into())
-}
-
-/// Events allowed while `session_readonly` (file-backed console watch).
-fn watch_safe_event(ev: &AgentEvent) -> bool {
-    matches!(
-        ev,
-        AgentEvent::Transcript { .. }
-            | AgentEvent::HistoryOlder { .. }
-            | AgentEvent::SessionReady { .. }
-            | AgentEvent::SessionsListed { .. }
-            | AgentEvent::Connected { .. }
-            | AgentEvent::Disconnected { .. }
-            | AgentEvent::NeedSetup { .. }
-            | AgentEvent::BulkDeleteProgress { .. }
-            | AgentEvent::BulkDeleteFinished { .. }
-            // Surface worker errors; do not apply stream/tool deltas.
-            | AgentEvent::Error { .. }
-    )
 }
 
 pub(crate) fn transcript_scroll_id() -> ScrollId {
@@ -214,11 +198,6 @@ pub(crate) struct App {
     pub(crate) last_session_click: Option<(String, Instant)>,
     /// Sessions section scroll viewport (overflow chips: ↑ N … / ↓ N …).
     pub(crate) session_section_scroll: sola_kit::components::SectionScroll,
-    /// Viewing a session held open by an external Grok TUI — file-only, no
-    /// composer. Transcript is polled from disk while this is set.
-    pub(crate) session_readonly: bool,
-    /// Last observed `updates.jsonl` length while watching a readonly session.
-    pub(crate) watch_file_len: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -255,10 +234,8 @@ pub(crate) enum Msg {
     DividerPress,
     CursorMoved(f32),
     CursorReleased,
-    /// Periodic list refresh (activity dots, ages, console group).
+    /// Periodic list refresh (activity dots, ages).
     RefreshSessionsTick,
-    /// Poll transcript for a console / readonly session while it is open.
-    WatchTranscriptTick,
     /// Sessions fill-section scroll viewport (for overflow chips).
     SessionSectionScroll(sola_kit::components::SectionScroll),
     // Bulk delete panel (opened via Agent menu → Bulk Delete…)
@@ -292,7 +269,7 @@ impl App {
             project_root,
             connected: false,
             backend_label: "Grok".into(),
-            connection_mode: ConnectionModeLabel::Local,
+            connection_mode: ConnectionModeLabel::Leader,
             usage_used: None,
             usage_size: None,
             need_setup: None,
@@ -313,8 +290,6 @@ impl App {
             drag_anchor: None,
             last_session_click: None,
             session_section_scroll: sola_kit::components::SectionScroll::default(),
-            session_readonly: false,
-            watch_file_len: None,
         }
     }
 
@@ -331,40 +306,32 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
-        let mut subs = vec![
+        let subs = [
             bus_subscription().map(Msg::Bus),
             bridge::agent_subscription().map(Msg::Acp),
             iced::time::every(Duration::from_secs(8)).map(|_| Msg::RefreshSessionsTick),
-        ];
-        // Console / external sessions: re-read transcript often so new
-        // messages and tool status appear without leaving the session.
-        if self.session_readonly {
-            subs.push(
-                iced::time::every(Duration::from_millis(1200))
-                    .map(|_| Msg::WatchTranscriptTick),
-            );
-        }
-        // Cursor tracking for divider drag; wheel-up for history when no scrollbar.
-        subs.push(event::listen_with(|event, _status, _id| match event {
-            Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                Some(Msg::CursorMoved(position.x))
-            }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                Some(Msg::CursorReleased)
-            }
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                let up = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => y > 0.0,
-                    mouse::ScrollDelta::Pixels { y, .. } => y > 0.0,
-                };
-                if up {
-                    Some(Msg::TranscriptWheelUp)
-                } else {
-                    None
+            // Cursor tracking for divider drag; wheel-up for history when no scrollbar.
+            event::listen_with(|event, _status, _id| match event {
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    Some(Msg::CursorMoved(position.x))
                 }
-            }
-            _ => None,
-        }));
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                    Some(Msg::CursorReleased)
+                }
+                Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                    let up = match delta {
+                        mouse::ScrollDelta::Lines { y, .. } => y > 0.0,
+                        mouse::ScrollDelta::Pixels { y, .. } => y > 0.0,
+                    };
+                    if up {
+                        Some(Msg::TranscriptWheelUp)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }),
+        ];
         Subscription::batch(subs)
     }
 
@@ -392,11 +359,6 @@ impl App {
                 }
             }
             Msg::Acp(ev) => {
-                // While viewing a console-owned session, ignore ACP stream
-                // events from a previously attached local child session.
-                if self.session_readonly && !watch_safe_event(&ev) {
-                    return Task::none();
-                }
                 let need_scroll = matches!(
                     ev,
                     AgentEvent::Transcript { .. }
@@ -428,11 +390,7 @@ impl App {
             Msg::DraftChanged(s) => self.draft = s,
             Msg::Send => {
                 let text = self.draft.trim().to_string();
-                if text.is_empty()
-                    || self.pending.is_some()
-                    || self.streaming
-                    || self.session_readonly
-                {
+                if text.is_empty() || self.pending.is_some() || self.streaming {
                     return Task::none();
                 }
                 self.draft.clear();
@@ -507,31 +465,20 @@ impl App {
                     return Task::none();
                 }
                 // Never block session switches on `streaming` / pending.
-                // Console watches set `streaming` from open tools (activity
-                // only) — a silent no-op here made every subsequent click
-                // dead after opening a busy "In console" session.
                 self.abandon_turn_for_switch();
                 let summary = self.sessions.iter().find(|s| s.id == id);
                 let cwd = summary
                     .map(|s| s.cwd.clone())
                     .filter(|c| !c.is_empty())
                     .unwrap_or_else(|| self.project_root.to_string_lossy().into_owned());
-                let console_open = summary.map(|s| s.live).unwrap_or(false);
                 self.project_root = PathBuf::from(&cwd);
                 overlay::note_cwd(&cwd);
                 self.stick_to_bottom = true;
                 self.loading_older = false;
                 self.draft.clear();
-                if console_open {
-                    // External Grok TUI owns this session — view only.
-                    self.session_readonly = true;
-                    self.watch_file_len = Some(sessions::updates_file_len(&cwd, &id));
-                    bridge::agent_send(AgentCmd::OpenReadonly { id, cwd });
-                } else {
-                    self.session_readonly = false;
-                    self.watch_file_len = None;
-                    bridge::agent_send(AgentCmd::LoadSession { id, cwd });
-                }
+                // Always ACP session/load via the shared leader (multi-client
+                // with TUI — no read-only console branch).
+                bridge::agent_send(AgentCmd::LoadSession { id, cwd });
             }
             Msg::StartRename(id) => {
                 let draft = self
@@ -593,28 +540,14 @@ impl App {
             Msg::RefreshSessionsTick => {
                 // Metadata only — do not re-sort by activity (rows thrash mid-turn).
                 self.sessions = sessions::merge_list(&self.sessions);
-                // If the open session entered/left the console set, flip mode.
-                self.reconcile_console_mode();
-            }
-            Msg::WatchTranscriptTick => {
-                if !self.session_readonly {
-                    return Task::none();
+                // Keep busy dots consistent for the open ACP session.
+                if let Some(id) = self.session_id.as_deref() {
+                    if self.streaming {
+                        if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                            s.busy = true;
+                        }
+                    }
                 }
-                let Some(id) = self.session_id.clone() else {
-                    return Task::none();
-                };
-                let cwd = self.project_root.to_string_lossy().into_owned();
-                let len = sessions::updates_file_len(&cwd, &id);
-                if self.watch_file_len == Some(len) {
-                    // Length unchanged — still refresh list ages/busy lightly.
-                    return Task::none();
-                }
-                self.watch_file_len = Some(len);
-                bridge::agent_send(AgentCmd::SyncTranscript {
-                    id,
-                    cwd,
-                    live: true,
-                });
             }
             Msg::PermissionPick(option_id) => {
                 if let Some(p) = self.pending.take() {
@@ -862,8 +795,6 @@ impl App {
         self.turns.clear();
         self.session_id = None;
         self.session_title = None;
-        self.session_readonly = false;
-        self.watch_file_len = None;
         self.history_start_byte = 0;
         self.has_older_history = false;
         self.history_auto_chunks = 0;
@@ -875,50 +806,17 @@ impl App {
     }
 
     /// Drop local turn/approval state so the user can switch sessions or
-    /// start a new one. Cancels ACP child work only when we were the
-    /// writable owner (not a console file watch).
+    /// start a new one. Cancels in-flight ACP work on the shared leader.
     fn abandon_turn_for_switch(&mut self) {
-        if !self.session_readonly {
-            if self.streaming {
-                bridge::agent_send(AgentCmd::Cancel);
-            }
-            if let Some(p) = self.pending.take() {
-                bridge::agent_send(AgentCmd::PermissionCancel {
-                    request_id: p.request_id,
-                });
-            }
-        } else {
-            self.pending = None;
+        if self.streaming {
+            bridge::agent_send(AgentCmd::Cancel);
+        }
+        if let Some(p) = self.pending.take() {
+            bridge::agent_send(AgentCmd::PermissionCancel {
+                request_id: p.request_id,
+            });
         }
         self.streaming = false;
-    }
-
-    /// If the open session is no longer held by a console (or became one),
-    /// drop / enter readonly accordingly. Entering console mid-view stays
-    /// writable until reselect; leaving console keeps the file view.
-    fn reconcile_console_mode(&mut self) {
-        let Some(id) = self.session_id.as_deref() else {
-            return;
-        };
-        let still_live = self
-            .sessions
-            .iter()
-            .find(|s| s.id == id)
-            .map(|s| s.live)
-            .unwrap_or(false);
-        if self.session_readonly && !still_live {
-            // Console closed — stay read-only until the user re-selects
-            // (ACP load would attach a second process to the same id).
-            // Keep watching so the final transcript settles.
-        }
-        // Keep busy dots consistent for the open ACP session.
-        if !self.session_readonly {
-            if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
-                if self.streaming {
-                    s.busy = true;
-                }
-            }
-        }
     }
 
     fn refresh_title_from_turns(&mut self) {
@@ -1027,15 +925,6 @@ impl App {
                     self.scroll_bottom_pending = true;
                 } else if changed && self.stick_to_bottom {
                     self.scroll_bottom_pending = true;
-                }
-                // Reflect in-flight tools on console watches in the footer.
-                if self.session_readonly {
-                    self.streaming = self.turns.iter().any(|t| {
-                        matches!(
-                            t,
-                            Turn::Tool(tt) if !sessions::is_terminal_tool_status(&tt.status)
-                        )
-                    });
                 }
                 if changed {
                     self.refresh_title_from_turns();
@@ -1174,8 +1063,6 @@ impl App {
                     if !still_there {
                         self.session_id = None;
                         self.session_title = None;
-                        self.session_readonly = false;
-                        self.watch_file_len = None;
                         self.turns.clear();
                         self.history_start_byte = 0;
                         self.has_older_history = false;

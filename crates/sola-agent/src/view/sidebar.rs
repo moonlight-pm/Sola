@@ -100,38 +100,11 @@ fn build_sections(
         return Vec::new();
     }
 
-    let console: Vec<&SessionSummary> = filtered.iter().copied().filter(|s| s.live).collect();
-    let rest: Vec<&SessionSummary> = filtered.iter().copied().filter(|s| !s.live).collect();
-
-    let mut sections = Vec::new();
-
-    if !console.is_empty() {
-        let items: Vec<SidebarItem<Msg>> = console
-            .iter()
-            .map(|s| session_item(s, app, busy))
-            .collect();
-        // Natural height — usually few rows. Main list keeps the fill slot.
-        sections.push(SidebarSection::new("In console", items));
-    }
-
-    if !rest.is_empty() {
-        let items: Vec<SidebarItem<Msg>> =
-            rest.iter().map(|s| session_item(s, app, busy)).collect();
-        let label = if console.is_empty() {
-            "Sessions"
-        } else {
-            "Recent"
-        };
-        sections.push(SidebarSection::new(label, items).fill());
-    } else if !console.is_empty() {
-        // Only console sessions — let that section fill so the list
-        // still uses the full sidebar height.
-        if let Some(sec) = sections.last_mut() {
-            sec.fill = true;
-        }
-    }
-
-    sections
+    let items: Vec<SidebarItem<Msg>> = filtered
+        .iter()
+        .map(|s| session_item(s, app, busy))
+        .collect();
+    vec![SidebarSection::new("Sessions", items).fill()]
 }
 
 fn sidebar_header(app: &App) -> Element<'_, Msg> {
@@ -194,11 +167,10 @@ fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<
     let project = ellipsize(&short_path(&summary.cwd), max_path);
     let when = relative_time(summary.updated);
 
-    // Activity dot = what is happening, not "open in console".
+    // Activity dot: recent disk activity, or the selected session streaming.
     // Always show a dot (green/grey) so the title never shifts when busy flips.
-    // Selected ACP stream counts as busy even if disk mtime hasn't caught up.
-    let working = summary.busy
-        || (selected && !app.session_readonly && (app.streaming || app.pending.is_some()));
+    let working =
+        summary.busy || (selected && (app.streaming || app.pending.is_some()));
     let indicator = if working {
         SidebarIndicator::Active
     } else {

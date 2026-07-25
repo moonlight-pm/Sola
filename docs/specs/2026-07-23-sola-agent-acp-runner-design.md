@@ -22,9 +22,9 @@ permissions, MCP, memory, or model routing.
 | Default backend | `grok agent stdio` |
 | Multi-agent v1 | Grok-only wiring; `BackendSpec` is the extension point |
 | Sessions | Hybrid: agent owns transcripts on disk; Sola owns thin overlay (pins, recents) |
-| Quit behaviour (v1) | **Resume-only** — quitting stops the child; reopen loads session from disk |
-| TUI interoperability | List/resume sessions started in the Grok TUI (shared `~/.grok/sessions`) |
-| Live multi-client | **Future** — leader daemon (see below) |
+| Quit behaviour | **Leader outlives UI** — sola-agent attaches via `grok agent --leader stdio`; quitting kills only the thin bridge |
+| TUI interoperability | Same shared leader + `~/.grok/sessions` (multi-client when TUI uses leader) |
+| Live multi-client | **Required** — `ConnectionMode::Leader`; host runs sticky `grok-leader.service` |
 
 ## Non-goals (v1)
 
@@ -237,20 +237,23 @@ to keep the worker-thread model simple and tolerate Grok extensions.
 - Overlay path is new; empty by default
 - Process manager / desktop entry keep `sola-agent` name if present
 
-## Future: Agent leader daemon
+## Agent leader daemon (required)
 
-**Desired direction** (not v1):
+Leader is **not** a Sola-managed process. Ownership is host-side:
+
+| Piece | Owner |
+|---|---|
+| `grok agent leader --no-exit-on-disconnect` | User systemd unit `grok-leader.service` (enable at login) |
+| Default client policy | `[cli] use_leader = true` in `~/.grok/config.toml` (TUI + agent clients) |
+| Socket | `~/.grok/leader.sock` (`GROK_LEADER_SOCKET` override) |
+| sola-agent | Attach only — `ConnectionMode::Leader` + preflight; **no** private `stdio` agent |
 
 | Desire | Behaviour |
 |---|---|
-| Survives UI quit | `grok agent leader --no-exit-on-disconnect` (or equivalent) stays up |
-| Reconnect | Sola attaches via `~/.grok/leader.sock` and can resume **live** in-flight work |
-| Multi-client | TUI and Sola share one backend; desktop is a viewport onto live sessions |
-| Lifecycle | Clear ownership (auto-start vs user unit); status “connected to leader” vs “local child” |
-| Architecture | New `ConnectionMode::Leader` only — same UI events and `BackendSpec` |
-
-Until leader lands, the product promise is: **shared session library with the
-TUI + reliable resume**, not “background agent while Sola is closed.”
+| Survives UI quit | Sticky leader (`--no-exit-on-disconnect`) |
+| Reconnect | sola-agent bridges via `grok agent --leader stdio` after socket preflight |
+| Multi-client | TUI and Sola share one backend |
+| Missing leader | `NeedSetup` — instruct `systemctl --user start grok-leader.service` (do not auto-spawn) |
 
 ## Supersedes
 

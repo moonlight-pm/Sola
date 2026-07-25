@@ -1,9 +1,9 @@
-//! ACP worker thread: owns the child connection and applies UI commands.
+//! ACP worker thread: owns the leader-bridge connection and applies UI commands.
 
 use std::time::Duration;
 
 use crate::acp::{AcpClient, ChildTransport};
-use crate::backend::{BackendSpec, ConnectionMode};
+use crate::backend::{self, BackendSpec, ConnectionMode};
 use crate::bridge;
 use crate::protocol::{AgentCmd, AgentEvent, ConnectionModeLabel};
 use crate::sessions;
@@ -17,7 +17,9 @@ pub fn start(mode: ConnectionMode) {
 
 fn run(mode: ConnectionMode) {
     let cmd_rx = bridge::take_cmd_rx();
-    let mut client: Option<AcpClient> = None;
+    // Connect eagerly so the status bar shows leader state without waiting
+    // for the first user action.
+    let mut client: Option<AcpClient> = connect(&mode);
 
     loop {
         // Drain commands with a short wait so we can poll the child.
@@ -34,7 +36,6 @@ fn run(mode: ConnectionMode) {
                     break;
                 }
                 AgentCmd::Restart | AgentCmd::EnsureConnected => {
-                    client = None;
                     client = connect(&mode);
                 }
                 AgentCmd::NewSession { cwd } => {
@@ -65,24 +66,6 @@ fn run(mode: ConnectionMode) {
                         }
                     }
                 }
-                AgentCmd::OpenReadonly { id, cwd } => {
-                    // External Grok TUI owns the session — file-only viewer.
-                    // Do not call ACP session/load (would fight the console).
-                    crate::overlay::note_opened(&id, &cwd);
-                    let slice = sessions::history_tail_live(&cwd, &id);
-                    let title = sessions::title_for(&cwd, &id);
-                    bridge::emit(AgentEvent::SessionReady {
-                        id: id.clone(),
-                        title,
-                    });
-                    bridge::emit(AgentEvent::Transcript {
-                        turns: slice.turns,
-                        history_start_byte: slice.start_byte,
-                        has_older: slice.has_older,
-                        from_watch: false,
-                    });
-                    refresh_sessions(&cwd);
-                }
                 AgentCmd::SyncTranscript { id, cwd, live } => {
                     let slice = if live {
                         sessions::history_tail_live(&cwd, &id)
@@ -104,7 +87,7 @@ fn run(mode: ConnectionMode) {
                     if let Some(c) = client.as_mut() {
                         c.load_older_history(&id, &cwd, before_byte);
                     } else {
-                        // File-only path — no live child required.
+                        // File-only path when disconnected — still allow scrollback.
                         let slice = sessions::history_before(&cwd, &id, before_byte);
                         bridge::emit(AgentEvent::HistoryOlder {
                             turns: slice.turns,
@@ -191,7 +174,7 @@ fn run(mode: ConnectionMode) {
             }
         }
 
-        // Poll child for unsolicited notifications when idle.
+        // Poll bridge for unsolicited notifications when idle.
         if let Some(c) = client.as_mut() {
             if let Err(e) = c.poll(Duration::from_millis(5)) {
                 bridge::emit(AgentEvent::Disconnected { reason: e });
@@ -203,41 +186,63 @@ fn run(mode: ConnectionMode) {
 
 fn connect(mode: &ConnectionMode) -> Option<AcpClient> {
     match mode {
-        ConnectionMode::StdioChild { spec } => connect_stdio(spec, mode.label()),
-        ConnectionMode::Leader { socket } => {
-            bridge::emit(AgentEvent::Error {
-                message: format!(
-                    "leader mode not implemented yet (socket {}); using local child is required",
-                    socket.display()
-                ),
-            });
-            None
+        ConnectionMode::Leader { socket, bridge } => {
+            connect_leader(socket, bridge, mode.label())
         }
     }
 }
 
-fn connect_stdio(spec: &BackendSpec, label: ConnectionModeLabel) -> Option<AcpClient> {
-    match ChildTransport::spawn(spec) {
+fn connect_leader(
+    socket: &std::path::Path,
+    bridge_spec: &BackendSpec,
+    label: ConnectionModeLabel,
+) -> Option<AcpClient> {
+    // Preflight: refuse to spawn the bridge when the leader is down.
+    // `grok agent --leader stdio` auto-spawns a leader otherwise, which
+    // fights the systemd-managed sticky unit.
+    if !backend::leader_reachable(socket) {
+        bridge::emit(AgentEvent::NeedSetup {
+            message: format!(
+                "Grok leader is not running (nothing accepting on {}). \
+                 Start it with: systemctl --user start grok-leader.service \
+                 (or enable at login: systemctl --user enable --now grok-leader.service).",
+                socket.display()
+            ),
+        });
+        bridge::emit(AgentEvent::Disconnected {
+            reason: "leader not reachable".into(),
+        });
+        return None;
+    }
+
+    match ChildTransport::spawn(bridge_spec) {
         Ok(transport) => {
             let mut client = AcpClient::new(transport);
             match client.initialize() {
                 Ok(()) => {
                     bridge::emit(AgentEvent::Connected {
-                        backend: spec.label.to_string(),
+                        backend: bridge_spec.label.to_string(),
                         mode: label,
                     });
                     Some(client)
                 }
                 Err(e) => {
                     bridge::emit(AgentEvent::NeedSetup {
-                        message: format!("ACP initialize failed: {e}"),
+                        message: format!(
+                            "Leader is up but ACP initialize failed: {e}. \
+                             Check auth (`grok login`) and: systemctl --user status grok-leader"
+                        ),
                     });
                     None
                 }
             }
         }
         Err(e) => {
-            bridge::emit(AgentEvent::NeedSetup { message: e });
+            bridge::emit(AgentEvent::NeedSetup {
+                message: format!(
+                    "Failed to start leader bridge (`grok agent --leader stdio`): {e}"
+                ),
+            });
             None
         }
     }
@@ -248,10 +253,4 @@ fn refresh_sessions(_cwd: &str) {
     // the process cwd / last project.
     let entries = sessions::list_all();
     bridge::emit(AgentEvent::SessionsListed { entries });
-}
-
-// silence unused import if any
-#[allow(dead_code)]
-fn _mode_default() -> ConnectionMode {
-    ConnectionMode::v1_default()
 }

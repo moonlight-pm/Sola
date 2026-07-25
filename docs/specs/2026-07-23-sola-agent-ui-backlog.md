@@ -174,10 +174,11 @@ If pins feel noise, later option: pin only via context menu / long-press.
 
 ## Out of scope for this backlog
 
-- Leader daemon / multi-client live attach  
 - Multi-agent picker  
 - Full TUI slash parity  
 - Fugu/Sakana revival  
+
+(Leader multi-client attach is product default — see ACP runner design.)
 
 ---
 

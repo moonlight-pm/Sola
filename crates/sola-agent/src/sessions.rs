@@ -52,18 +52,17 @@ fn encode_cwd(cwd: &str) -> String {
 
 /// All sessions across every project group under `~/.grok/sessions`.
 ///
-/// Sorted: console (live) first, then most recent activity.
-/// Prefer [`merge_list`] for periodic UI refresh so rows don't thrash
-/// while a session is mid-turn (mtime bumps every few seconds).
+/// Sorted by most recent activity. Prefer [`merge_list`] for periodic UI
+/// refresh so rows don't thrash while a session is mid-turn (mtime bumps
+/// every few seconds).
 pub fn list_all() -> Vec<SessionSummary> {
     let mut out = list_all_unsorted();
-    out.sort_by(|a, b| b.live.cmp(&a.live).then(b.updated.cmp(&a.updated)));
+    out.sort_by(|a, b| b.updated.cmp(&a.updated));
     out
 }
 
 fn list_all_unsorted() -> Vec<SessionSummary> {
     let pins = overlay::load();
-    let live = active_terminal_sessions();
     let mut seen = HashSet::new();
     let mut out = Vec::new();
 
@@ -82,17 +81,17 @@ fn list_all_unsorted() -> Vec<SessionSummary> {
             .and_then(|n| urlencoding::decode(n).ok())
             .map(|s| s.into_owned())
             .unwrap_or_default();
-        collect_group(&group_path, &group_cwd, &pins, &live, &mut seen, &mut out);
+        collect_group(&group_path, &group_cwd, &pins, &mut seen, &mut out);
     }
     out
 }
 
 /// Refresh session metadata **without reordering** by activity time.
 ///
-/// Keeps the user's mental map of the list: titles, ages, busy/live flags
-/// update in place; rows only move when they enter/leave the console set
-/// (stable partition) or when a **new** session appears (prepended).
-/// Use [`list_all`] after structural changes (new session, bulk delete).
+/// Keeps the user's mental map of the list: titles, ages, busy flags
+/// update in place; rows only move when a **new** session appears
+/// (prepended). Use [`list_all`] after structural changes (new session,
+/// bulk delete).
 pub fn merge_list(current: &[SessionSummary]) -> Vec<SessionSummary> {
     merge_with(current, list_all_unsorted())
 }
@@ -117,33 +116,25 @@ pub fn merge_with(
 
     // Brand-new sessions: recency among newcomers only, then in front.
     let mut newcomers: Vec<SessionSummary> = fresh.into_values().collect();
-    newcomers.sort_by(|a, b| b.live.cmp(&a.live).then(b.updated.cmp(&a.updated)));
+    newcomers.sort_by(|a, b| b.updated.cmp(&a.updated));
 
     let mut out = newcomers;
     out.append(&mut preserved);
-
-    // Stable partition: console sessions first, relative order preserved
-    // within each group (Rust `partition` keeps encounter order).
-    let (live, rest): (Vec<_>, Vec<_>) = out.into_iter().partition(|s| s.live);
-    let mut out = live;
-    out.extend(rest);
     out
 }
 
 /// Back-compat: list for a cwd (+ git root). Prefer [`list_all`] in the UI.
 pub fn list_for_cwd(cwd: &str) -> Vec<SessionSummary> {
     let pins = overlay::load();
-    let live = active_terminal_sessions();
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for root in session_roots(cwd) {
         let group = sessions_root().join(encode_cwd(&root));
-        collect_group(&group, &root, &pins, &live, &mut seen, &mut out);
+        collect_group(&group, &root, &pins, &mut seen, &mut out);
     }
     out.sort_by(|a, b| {
         b.pinned
             .cmp(&a.pinned)
-            .then(b.live.cmp(&a.live))
             .then(b.busy.cmp(&a.busy))
             .then(b.updated.cmp(&a.updated))
     });
@@ -188,7 +179,6 @@ fn collect_group(
     group_path: &Path,
     group_cwd: &str,
     pins: &overlay::Overlay,
-    live: &HashSet<String>,
     seen: &mut HashSet<String>,
     out: &mut Vec<SessionSummary>,
 ) {
@@ -231,7 +221,6 @@ fn collect_group(
             cwd: cwd_display,
             updated,
             pinned,
-            live: live.contains(&id),
             busy,
         });
     }
@@ -276,6 +265,9 @@ fn activity_secs(session_dir: &Path) -> Option<u64> {
 }
 
 /// Session ids currently held open by a live Grok TUI process.
+///
+/// Used only for bulk-delete “keep live” so we do not trash a session
+/// someone still has open in a terminal. Sidebar no longer groups by this.
 pub fn active_terminal_sessions() -> HashSet<String> {
     let path = grok_home().join("active_sessions.json");
     let raw = match fs::read_to_string(&path) {

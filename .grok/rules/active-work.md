@@ -13,26 +13,34 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**agent-leader** (worktree `.worktrees/agent-leader`)
 
-### Last completed
+sola-agent requires shared Grok leader; remove console group; host
+`grok-leader.service` + `[cli] use_leader = true`.
 
-**agent-console-sessions → master**: console **In console** group, read-only
-file viewer + transcript watch for TUI sessions; activity dots (green/grey,
-always present); stable sidebar merge (no thrash-sort); mono transcript at
-terminal density.
+### Next
+
+- User smoke: install agent, open sessions with TUI + sola-agent multi-client
+- Merge when approved
+
+### Last completed (prior)
+
+**agent-console-sessions → master**: console group (now superseded by leader multi-client).
 
 ### Future / follow-ups
 
-- Leader daemon (`ConnectionMode::Leader`)
+- Permission fan-out UX when TUI + sola-agent both attached
 - Further Grok TUI presentation parity
-- Storybook page parity for non-Overview tabs (on demand when touching components;
-  see `.grok/rules/kit-storybook-pages.md`)
+- Storybook page parity for non-Overview tabs (on demand)
 - Remaining worktree: `libei-portal` (unrelated)
 
 ### Resume
 
 ```text
-# master is current; install when needed:
-# cargo make install sola-agent
+# worktree:
+cd .worktrees/agent-leader
+# cargo make build agent
+# (install only with user permission)
+# host:
+# systemctl --user status grok-leader.service
 ```

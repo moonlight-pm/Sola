@@ -18,8 +18,10 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
         kit_text::heading("Set up Grok"),
         kit_text::body(msg.to_string()),
         kit_text::body(
-            "Install Grok Build (x.ai/cli), run `grok login`, or set XAI_API_KEY — \
-             then Retry."
+            "sola-agent needs a shared Grok leader. \
+             Ensure `grok-leader.service` is running \
+             (`systemctl --user enable --now grok-leader.service`), \
+             install Grok Build if needed, and run `grok login` — then Retry."
         )
         .style(kit_text::muted),
         kit_btn::labeled("Retry", kit_btn::primary).on_press(Msg::Restart),
