@@ -357,6 +357,10 @@ fn code_block(code: &str, theme: &Theme) -> Element<'static, Msg> {
 }
 
 /// GFM pipe table as a mono grid (terminal-adjacent, not spreadsheet chrome).
+///
+/// Column **weights** bias layout toward wider content, but cell text is never
+/// truncated — long cells wrap inside their portion (Grok's bordered table
+/// face; raw pipe ASCII is a different path).
 fn table_block(
     headers: &[String],
     rows: &[Vec<String>],
@@ -380,21 +384,22 @@ fn table_block(
         .max(rows.iter().map(|r| r.len()).max().unwrap_or(0))
         .max(1);
 
-    // Column widths by max grapheme count (mono alignment).
-    let mut widths = vec![0usize; ncols];
+    // Layout weights from max cell length (not a display crop).
+    let mut weights = vec![0usize; ncols];
     for (i, h) in headers.iter().enumerate() {
-        widths[i] = widths[i].max(h.chars().count());
+        weights[i] = weights[i].max(h.chars().count());
     }
     for row in rows {
         for (i, cell) in row.iter().enumerate() {
             if i < ncols {
-                widths[i] = widths[i].max(cell.chars().count());
+                weights[i] = weights[i].max(cell.chars().count());
             }
         }
     }
-    // Cap runaway cells so the bubble stays readable.
-    for w in &mut widths {
-        *w = (*w).clamp(3, 36);
+    // Soft-cap portion weights so one huge cell does not starve siblings;
+    // full text still wraps inside the portion.
+    for w in &mut weights {
+        *w = (*w).clamp(4, 48);
     }
 
     let cell = |s: &str, bold: bool, color: Color| -> Element<'static, Msg> {
@@ -404,20 +409,13 @@ fn table_block(
             .size(CODE_PX)
             .line_height(mono_lh(CODE_PX))
             .shaping(Shaping::Basic)
-            .wrapping(Wrapping::Word)
+            // WordOrGlyph: long tokens (paths, ids) wrap instead of clipping.
+            .wrapping(Wrapping::WordOrGlyph)
+            .width(Length::Fill)
             .style(move |_t: &Theme| iced::widget::text::Style {
                 color: Some(color),
             })
             .into()
-    };
-
-    let pad_cell = |s: &str, w: usize| -> String {
-        let n = s.chars().count();
-        if n >= w {
-            s.chars().take(w).collect()
-        } else {
-            format!("{s}{}", " ".repeat(w - n))
-        }
     };
 
     let mut body = Column::new().spacing(0.0).width(Length::Fill);
@@ -426,10 +424,9 @@ fn table_block(
     let mut head_row = Row::new().spacing(12.0).align_y(Alignment::Start);
     for i in 0..ncols {
         let raw = headers.get(i).map(|s| s.as_str()).unwrap_or("");
-        let padded = pad_cell(raw, widths[i]);
         head_row = head_row.push(
-            container(cell(&padded, true, muted))
-                .width(Length::FillPortion(widths[i].max(1) as u16)),
+            container(cell(raw, true, muted))
+                .width(Length::FillPortion(weights[i].max(1) as u16)),
         );
     }
     body = body.push(head_row.padding(Padding {
@@ -451,10 +448,9 @@ fn table_block(
         let mut data_row = Row::new().spacing(12.0).align_y(Alignment::Start);
         for i in 0..ncols {
             let raw = r.get(i).map(|s| s.as_str()).unwrap_or("");
-            let padded = pad_cell(raw, widths[i]);
             data_row = data_row.push(
-                container(cell(&padded, false, fg))
-                    .width(Length::FillPortion(widths[i].max(1) as u16)),
+                container(cell(raw, false, fg))
+                    .width(Length::FillPortion(weights[i].max(1) as u16)),
             );
         }
         let top = if ri == 0 { 6.0 } else { 4.0 };
