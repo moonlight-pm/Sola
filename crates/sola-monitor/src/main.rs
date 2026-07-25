@@ -231,6 +231,8 @@ enum Msg {
     WindowReady(Option<iced::window::Id>),
     /// Titlebar drag started — begin an interactive move.
     TitleDrag,
+    /// Floating-frame edge/corner resize grip pressed.
+    TitleResize(iced::window::Direction),
     /// Titlebar close button.
     TitleClose,
 }
@@ -378,6 +380,12 @@ impl App {
                 }
                 return Task::none();
             }
+            Msg::TitleResize(direction) => {
+                if let Some(id) = self.window_id {
+                    return iced::window::drag_resize(id, direction);
+                }
+                return Task::none();
+            }
             Msg::TitleClose => {
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     let _ = bus.emit(Topic::CloseApp(APP_ID.into()));
@@ -455,6 +463,7 @@ impl App {
                 "Monitor",
                 Msg::TitleDrag,
                 Msg::TitleClose,
+                Msg::TitleResize,
                 content,
             )
         } else {

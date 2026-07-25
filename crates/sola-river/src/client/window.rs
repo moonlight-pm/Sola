@@ -222,8 +222,8 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 // CSD resize (edge/corner drag). `edges` is a bitfield enum arg
                 // (`WEnum<Edges>`); resolve it, defaulting an unknown value to a
                 // pointer-position-derived corner (None).
-                let corner = edges.into_result().ok().map(op::edges_to_corner);
-                op::begin_for(state, op::OpKind::Resize, window_id, corner);
+                let handle = edges.into_result().ok().map(op::edges_to_handle);
+                op::begin_for(state, op::OpKind::Resize, window_id, handle);
             }
             _ => {}
         }

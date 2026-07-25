@@ -307,23 +307,23 @@ pub fn menu_item(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Style for a menubar label button. `active` = its menu is open.
+/// Style for a menubar label button. `active` = its menu is open (or flash).
 ///
-/// Transparent at rest; a translucent fg-tinted highlight on hover or while
-/// active. Deriving the highlight from `background.base.text` keeps it legible
-/// on the permanently-black menubar (light fg → light highlight) and adapts if
-/// the bar colour ever changes.
+/// macOS-style: **no hover chrome while idle**. Highlight only when `active`
+/// (menu open / shortcut flash). Hover-to-switch while a menu is already open
+/// is driven by the shell making the hovered label `active`, not by button
+/// Hovered status. Deriving the fill from `background.base.text` keeps it
+/// legible on the permanently-black menubar.
 pub fn menubar(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |theme, status| {
+    move |theme, _status| {
         let p = theme.extended_palette();
         let fg = p.background.base.text;
+        // Square corners so a full-height active fill meets the top of the
+        // bar cleanly (no radius dead band at y=0).
         let bg = if active {
             Color { a: 0.18, ..fg }
         } else {
-            match status {
-                button::Status::Hovered | button::Status::Pressed => Color { a: 0.12, ..fg },
-                _ => Color::TRANSPARENT,
-            }
+            Color::TRANSPARENT
         };
         button::Style {
             background: Some(Background::Color(bg)),
@@ -331,7 +331,7 @@ pub fn menubar(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style
             border: Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
-                radius: 4.0.into(),
+                radius: 0.0.into(),
             },
             shadow: Default::default(),
             snap: false,

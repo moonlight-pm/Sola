@@ -17,6 +17,7 @@ pub fn view() -> Element<'static, Msg> {
         "Floating Window",
         Msg::Noop,
         Msg::Noop,
+        |_| Msg::Noop,
         container(text("Content area").size(13))
             .width(Length::Fill)
             .height(Length::Fixed(160.0))

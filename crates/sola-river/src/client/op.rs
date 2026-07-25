@@ -4,8 +4,8 @@
 //! op during a manage sequence, receives `op_delta` events giving the total
 //! cumulative pointer motion since the start, sets the window's position /
 //! proposes its dimensions from those deltas, and ends the op with `op_end`
-//! once `op_release` arrives. Move follows the pointer; resize drags the corner
-//! nearest where the grab started, pinning the opposite corner.
+//! once `op_release` arrives. Move follows the pointer; resize drags the
+//! grabbed edge or corner, pinning the opposite side(s).
 //!
 //! Only floating windows participate — `on_pressed` ignores a press over a
 //! non-floating window (or empty space). The geometry math
@@ -34,14 +34,18 @@ pub struct Rect {
     pub h: i32,
 }
 
-/// Which corner an interactive resize is dragging. The opposite corner is
-/// pinned.
+/// Edge or corner an interactive resize is dragging. The opposite side(s)
+/// stay pinned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Corner {
-    TopLeft,
-    TopRight,
-    BottomLeft,
-    BottomRight,
+pub enum ResizeHandle {
+    North,
+    South,
+    East,
+    West,
+    NorthEast,
+    NorthWest,
+    SouthEast,
+    SouthWest,
 }
 
 /// An in-flight interactive move/resize.
@@ -52,8 +56,8 @@ pub struct OpState {
     /// The window's rectangle at the moment the grab started. All deltas are
     /// applied against this (op_delta is cumulative-from-start).
     pub start: Rect,
-    /// The grabbed corner, for a resize. `None` for a move.
-    pub corner: Option<Corner>,
+    /// The grabbed edge/corner, for a resize. `None` for a move.
+    pub handle: Option<ResizeHandle>,
     /// `op_start_pointer` has been issued (in a manage sequence).
     pub started: bool,
     /// `op_release` received; `op_end` is pending on the next manage sequence.
@@ -64,42 +68,51 @@ pub struct OpState {
 /// collapse it to nothing.
 pub const MIN_DIM: i32 = 100;
 
+/// Top of the usable float area = bottom of the shell menubar.
+/// Keep in sync with `sola_shell::zoning::MENUBAR_HEIGHT` (28).
+pub const MENUBAR_HEIGHT: i32 = 28;
+
 // --- Pure geometry -------------------------------------------------------
 
 /// New top-left position for a move: the start position shifted by the
-/// cumulative pointer delta.
+/// cumulative pointer delta, clamped so the titlebar cannot cover the menubar.
 pub fn moved(start: Rect, dx: i32, dy: i32) -> (i32, i32) {
-    (start.x + dx, start.y + dy)
+    (start.x + dx, (start.y + dy).max(MENUBAR_HEIGHT))
 }
 
 /// Pick the corner nearest the grab point: which horizontal and vertical half
 /// of the window the pointer sits in. Defaults to the bottom-right when the
-/// pointer position is unknown.
-pub fn pick_corner(start: Rect, pointer: Option<(i32, i32)>) -> Corner {
+/// pointer position is unknown. Used by Meta+RightDrag (corner-only).
+pub fn pick_corner(start: Rect, pointer: Option<(i32, i32)>) -> ResizeHandle {
     let Some((px, py)) = pointer else {
-        return Corner::BottomRight;
+        return ResizeHandle::SouthEast;
     };
     let left = px < start.x + start.w / 2;
     let top = py < start.y + start.h / 2;
     match (top, left) {
-        (true, true) => Corner::TopLeft,
-        (true, false) => Corner::TopRight,
-        (false, true) => Corner::BottomLeft,
-        (false, false) => Corner::BottomRight,
+        (true, true) => ResizeHandle::NorthWest,
+        (true, false) => ResizeHandle::NorthEast,
+        (false, true) => ResizeHandle::SouthWest,
+        (false, false) => ResizeHandle::SouthEast,
     }
 }
 
-/// New rectangle for a resize: the grabbed corner moves by the cumulative
-/// delta, the opposite corner stays pinned, and each axis is clamped to
-/// `MIN_DIM` (clamping freezes the pinned edge so it doesn't drift).
-pub fn resized(start: Rect, corner: Corner, dx: i32, dy: i32) -> Rect {
-    let (left, top) = match corner {
-        Corner::TopLeft => (true, true),
-        Corner::TopRight => (false, true),
-        Corner::BottomLeft => (true, false),
-        Corner::BottomRight => (false, false),
+/// New rectangle for a resize: the grabbed edge/corner moves by the cumulative
+/// delta, the opposite side(s) stay pinned, each axis is clamped to `MIN_DIM`,
+/// and the top edge cannot climb above the menubar.
+pub fn resized(start: Rect, handle: ResizeHandle, dx: i32, dy: i32) -> Rect {
+    let (move_left, move_right, move_top, move_bottom) = match handle {
+        ResizeHandle::North => (false, false, true, false),
+        ResizeHandle::South => (false, false, false, true),
+        ResizeHandle::East => (false, true, false, false),
+        ResizeHandle::West => (true, false, false, false),
+        ResizeHandle::NorthEast => (false, true, true, false),
+        ResizeHandle::NorthWest => (true, false, true, false),
+        ResizeHandle::SouthEast => (false, true, false, true),
+        ResizeHandle::SouthWest => (true, false, false, true),
     };
-    let (x, w) = if left {
+
+    let (x, w) = if move_left {
         let right = start.x + start.w; // pinned
         let nx = start.x + dx;
         let nw = right - nx;
@@ -108,10 +121,13 @@ pub fn resized(start: Rect, corner: Corner, dx: i32, dy: i32) -> Rect {
         } else {
             (nx, nw)
         }
-    } else {
+    } else if move_right {
         (start.x, (start.w + dx).max(MIN_DIM))
+    } else {
+        (start.x, start.w)
     };
-    let (y, h) = if top {
+
+    let (y, h) = if move_top {
         let bottom = start.y + start.h; // pinned
         let ny = start.y + dy;
         let nh = bottom - ny;
@@ -120,9 +136,23 @@ pub fn resized(start: Rect, corner: Corner, dx: i32, dy: i32) -> Rect {
         } else {
             (ny, nh)
         }
-    } else {
+    } else if move_bottom {
         (start.y, (start.h + dy).max(MIN_DIM))
+    } else {
+        (start.y, start.h)
     };
+
+    // Keep the window below the menubar (move-up clamp for top-edge resize
+    // and for windows that somehow started above the bar).
+    let (y, h) = if y < MENUBAR_HEIGHT {
+        let bottom = y + h;
+        let y2 = MENUBAR_HEIGHT;
+        let h2 = (bottom - y2).max(MIN_DIM);
+        (y2, h2)
+    } else {
+        (y, h)
+    };
+
     Rect { x, y, w, h }
 }
 
@@ -144,20 +174,29 @@ pub fn on_pressed(state: &mut AppData, kind: OpKind) {
         tracing::debug!("Meta-drag ignored: no window under pointer");
         return;
     };
-    // corner=None → begin_for picks it from pointer_pos for a resize.
+    // handle=None → begin_for picks a corner from pointer_pos for a resize.
     begin_for(state, kind, wid, None);
 }
 
-/// Map an xdg-shell resize `edges` bitfield to the corner our resize op grabs.
+/// Map an xdg-shell resize `edges` bitfield to our resize handle.
 /// The protocol guarantees `edges` never sets both top+bottom or both
-/// left+right; a single-edge request collapses to the corner on that edge
-/// (free axis defaults to right/bottom). `none` → BottomRight.
-pub fn edges_to_corner(edges: Edges) -> Corner {
-    match (edges.contains(Edges::Top), edges.contains(Edges::Left)) {
-        (true, true) => Corner::TopLeft,
-        (true, false) => Corner::TopRight,
-        (false, true) => Corner::BottomLeft,
-        (false, false) => Corner::BottomRight,
+/// left+right; a single edge maps to that edge alone.
+pub fn edges_to_handle(edges: Edges) -> ResizeHandle {
+    let top = edges.contains(Edges::Top);
+    let bottom = edges.contains(Edges::Bottom);
+    let left = edges.contains(Edges::Left);
+    let right = edges.contains(Edges::Right);
+    match (top, bottom, left, right) {
+        (true, false, true, false) => ResizeHandle::NorthWest,
+        (true, false, false, true) => ResizeHandle::NorthEast,
+        (false, true, true, false) => ResizeHandle::SouthWest,
+        (false, true, false, true) => ResizeHandle::SouthEast,
+        (true, false, false, false) => ResizeHandle::North,
+        (false, true, false, false) => ResizeHandle::South,
+        (false, false, true, false) => ResizeHandle::West,
+        (false, false, false, true) => ResizeHandle::East,
+        // empty / unexpected → south-east default
+        _ => ResizeHandle::SouthEast,
     }
 }
 
@@ -165,10 +204,10 @@ pub fn edges_to_corner(edges: Edges) -> Corner {
 /// pointer-binding path (`on_pressed`) and the CSD-request path
 /// (`pointer_move_requested` / `pointer_resize_requested`). Floating-gated.
 ///
-/// `corner`: `Some(c)` uses that corner (resize from requested edges);
+/// `handle`: `Some(h)` uses that edge/corner (resize from requested edges);
 /// `None` on a resize falls back to `pick_corner` from the pointer position;
 /// ignored for a move.
-pub fn begin_for(state: &mut AppData, kind: OpKind, window_id: u32, corner: Option<Corner>) {
+pub fn begin_for(state: &mut AppData, kind: OpKind, window_id: u32, handle: Option<ResizeHandle>) {
     if state.op.is_some() {
         return;
     }
@@ -180,17 +219,22 @@ pub fn begin_for(state: &mut AppData, kind: OpKind, window_id: u32, corner: Opti
         tracing::debug!(window_id, "interactive op ignored: geometry unknown");
         return;
     };
-    let start = Rect { x: g.x, y: g.y, w: g.width, h: g.height };
-    let corner = match kind {
-        OpKind::Resize => corner.or_else(|| Some(pick_corner(start, state.pointer_pos))),
+    let start = Rect {
+        x: g.x,
+        y: g.y,
+        w: g.width,
+        h: g.height,
+    };
+    let handle = match kind {
+        OpKind::Resize => handle.or_else(|| Some(pick_corner(start, state.pointer_pos))),
         OpKind::Move => None,
     };
-    tracing::info!(window_id, ?kind, ?corner, ?start, "begin interactive op");
+    tracing::info!(window_id, ?kind, ?handle, ?start, "begin interactive op");
     state.op = Some(OpState {
         kind,
         window_id,
         start,
-        corner,
+        handle,
         started: false,
         released: false,
     });
@@ -221,8 +265,8 @@ pub fn on_delta(state: &mut AppData, dx: i32, dy: i32) {
             state.pending.render_dirty = true;
         }
         OpKind::Resize => {
-            let corner = op.corner.unwrap_or(Corner::BottomRight);
-            let r = resized(op.start, corner, dx, dy);
+            let handle = op.handle.unwrap_or(ResizeHandle::SouthEast);
+            let r = resized(op.start, handle, dx, dy);
             // frame() sets both the proposed size and the position (the latter
             // moves when a left/top edge is dragged).
             state.pending.frame(wid, r.x, r.y, r.w, r.h);
@@ -237,8 +281,8 @@ pub fn drive(state: &mut AppData) {
     let Some(seat) = state.seat.clone() else {
         return;
     };
-    let (released, started, kind, corner, wid) = match state.op.as_ref() {
-        Some(op) => (op.released, op.started, op.kind, op.corner, op.window_id),
+    let (released, started, kind, handle, wid) = match state.op.as_ref() {
+        Some(op) => (op.released, op.started, op.kind, op.handle, op.window_id),
         None => return,
     };
     if released {
@@ -254,7 +298,7 @@ pub fn drive(state: &mut AppData) {
             op.started = true;
         }
         seat.op_start_pointer();
-        set_cursor(state, kind, corner);
+        set_cursor(state, kind, handle);
         tracing::debug!(window_id = wid, ?kind, "op_start_pointer");
     }
 }
@@ -310,23 +354,25 @@ fn ensure_cursor_device(state: &mut AppData) {
     tracing::info!("created cursor-shape device for move/resize feedback");
 }
 
-/// The cursor shape for an op: a move cursor for a move, or the diagonal resize
-/// cursor matching the grabbed corner.
-fn shape_for(kind: OpKind, corner: Option<Corner>) -> Shape {
+/// The cursor shape for an op: a move cursor for a move, or the resize cursor
+/// matching the grabbed edge/corner.
+fn shape_for(kind: OpKind, handle: Option<ResizeHandle>) -> Shape {
     match kind {
         OpKind::Move => Shape::Move,
-        OpKind::Resize => match corner.unwrap_or(Corner::BottomRight) {
-            Corner::TopLeft | Corner::BottomRight => Shape::NwseResize,
-            Corner::TopRight | Corner::BottomLeft => Shape::NeswResize,
+        OpKind::Resize => match handle.unwrap_or(ResizeHandle::SouthEast) {
+            ResizeHandle::North | ResizeHandle::South => Shape::NsResize,
+            ResizeHandle::East | ResizeHandle::West => Shape::EwResize,
+            ResizeHandle::NorthWest | ResizeHandle::SouthEast => Shape::NwseResize,
+            ResizeHandle::NorthEast | ResizeHandle::SouthWest => Shape::NeswResize,
         },
     }
 }
 
 /// Show the move/resize cursor for the duration of the op. River ignores the
 /// `set_shape` serial for the WM during an op (seat v4), so 0 is fine.
-fn set_cursor(state: &mut AppData, kind: OpKind, corner: Option<Corner>) {
+fn set_cursor(state: &mut AppData, kind: OpKind, handle: Option<ResizeHandle>) {
     if let Some(dev) = state.cursor_device.as_ref() {
-        dev.set_shape(0, shape_for(kind, corner));
+        dev.set_shape(0, shape_for(kind, handle));
     }
 }
 
@@ -351,26 +397,39 @@ mod tests {
     }
 
     #[test]
+    fn move_clamps_y_to_menubar() {
+        assert_eq!(
+            moved(rect(100, 50, 800, 600), 0, -100),
+            (100, MENUBAR_HEIGHT)
+        );
+        // Already at the floor — further up stays put.
+        assert_eq!(
+            moved(rect(0, MENUBAR_HEIGHT, 400, 300), 0, -50),
+            (0, MENUBAR_HEIGHT)
+        );
+    }
+
+    #[test]
     fn pick_corner_by_quadrant() {
         let r = rect(0, 0, 100, 100); // center (50, 50)
-        assert_eq!(pick_corner(r, Some((10, 10))), Corner::TopLeft);
-        assert_eq!(pick_corner(r, Some((90, 10))), Corner::TopRight);
-        assert_eq!(pick_corner(r, Some((10, 90))), Corner::BottomLeft);
-        assert_eq!(pick_corner(r, Some((90, 90))), Corner::BottomRight);
+        assert_eq!(pick_corner(r, Some((10, 10))), ResizeHandle::NorthWest);
+        assert_eq!(pick_corner(r, Some((90, 10))), ResizeHandle::NorthEast);
+        assert_eq!(pick_corner(r, Some((10, 90))), ResizeHandle::SouthWest);
+        assert_eq!(pick_corner(r, Some((90, 90))), ResizeHandle::SouthEast);
         // Unknown pointer position → bottom-right default.
-        assert_eq!(pick_corner(r, None), Corner::BottomRight);
+        assert_eq!(pick_corner(r, None), ResizeHandle::SouthEast);
     }
 
     #[test]
     fn resize_bottom_right_grows_from_pinned_top_left() {
-        let r = resized(rect(100, 100, 400, 300), Corner::BottomRight, 50, -20);
+        let r = resized(rect(100, 100, 400, 300), ResizeHandle::SouthEast, 50, -20);
         assert_eq!(r, rect(100, 100, 450, 280));
     }
 
     #[test]
     fn resize_top_left_moves_and_pins_bottom_right() {
         // start (100,100,400,300): bottom-right pinned at (500,400).
-        let r = resized(rect(100, 100, 400, 300), Corner::TopLeft, 30, 40);
+        let r = resized(rect(100, 100, 400, 300), ResizeHandle::NorthWest, 30, 40);
         assert_eq!(r, rect(130, 140, 370, 260));
         assert_eq!((r.x + r.w, r.y + r.h), (500, 400));
     }
@@ -378,20 +437,55 @@ mod tests {
     #[test]
     fn resize_clamps_to_min_and_keeps_pinned_corner() {
         // Drag the top-left far past the minimum: the bottom-right pin holds.
-        let r = resized(rect(100, 100, 400, 300), Corner::TopLeft, 1000, 1000);
+        let r = resized(rect(100, 100, 400, 300), ResizeHandle::NorthWest, 1000, 1000);
         assert_eq!((r.w, r.h), (MIN_DIM, MIN_DIM));
         assert_eq!((r.x + r.w, r.y + r.h), (500, 400));
     }
 
     #[test]
-    fn edges_map_to_corners() {
-        assert_eq!(edges_to_corner(Edges::Top | Edges::Left), Corner::TopLeft);
-        assert_eq!(edges_to_corner(Edges::Top | Edges::Right), Corner::TopRight);
-        assert_eq!(edges_to_corner(Edges::Bottom | Edges::Left), Corner::BottomLeft);
-        assert_eq!(edges_to_corner(Edges::Bottom | Edges::Right), Corner::BottomRight);
-        // single-edge requests collapse to a corner on that edge
-        assert_eq!(edges_to_corner(Edges::Top), Corner::TopRight);
-        assert_eq!(edges_to_corner(Edges::Left), Corner::BottomLeft);
-        assert_eq!(edges_to_corner(Edges::empty()), Corner::BottomRight);
+    fn resize_north_edge_only_moves_top() {
+        let r = resized(rect(100, 100, 400, 300), ResizeHandle::North, 999, 40);
+        // dx ignored; top moves down by 40, width unchanged.
+        assert_eq!(r, rect(100, 140, 400, 260));
+    }
+
+    #[test]
+    fn resize_east_edge_only_moves_right() {
+        let r = resized(rect(100, 100, 400, 300), ResizeHandle::East, 50, 999);
+        assert_eq!(r, rect(100, 100, 450, 300));
+    }
+
+    #[test]
+    fn resize_top_clamps_to_menubar() {
+        // Drag top edge up past y=0 → clamp at menubar, bottom stays pinned.
+        let r = resized(rect(100, 50, 400, 300), ResizeHandle::North, 0, -100);
+        assert_eq!(r.y, MENUBAR_HEIGHT);
+        assert_eq!(r.y + r.h, 350); // bottom pinned at 50+300
+    }
+
+    #[test]
+    fn edges_map_to_handles() {
+        assert_eq!(
+            edges_to_handle(Edges::Top | Edges::Left),
+            ResizeHandle::NorthWest
+        );
+        assert_eq!(
+            edges_to_handle(Edges::Top | Edges::Right),
+            ResizeHandle::NorthEast
+        );
+        assert_eq!(
+            edges_to_handle(Edges::Bottom | Edges::Left),
+            ResizeHandle::SouthWest
+        );
+        assert_eq!(
+            edges_to_handle(Edges::Bottom | Edges::Right),
+            ResizeHandle::SouthEast
+        );
+        // single-edge requests keep a pure edge handle
+        assert_eq!(edges_to_handle(Edges::Top), ResizeHandle::North);
+        assert_eq!(edges_to_handle(Edges::Bottom), ResizeHandle::South);
+        assert_eq!(edges_to_handle(Edges::Left), ResizeHandle::West);
+        assert_eq!(edges_to_handle(Edges::Right), ResizeHandle::East);
+        assert_eq!(edges_to_handle(Edges::empty()), ResizeHandle::SouthEast);
     }
 }

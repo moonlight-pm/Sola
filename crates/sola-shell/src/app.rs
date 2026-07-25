@@ -84,7 +84,8 @@ pub enum Msg {
     SwitcherConfirm,
     /// Cancel without focus change: deactivate.
     SwitcherCancel,
-    /// Focus-hover timer fired: raise `window_id` if `generation` still matches.
+    /// Focus-follows-mouse delay fired: focus `window_id` (no raise) if
+    /// `generation` still matches.
     FocusHoverFire { window_id: u32, generation: u64 },
     /// Cycle to the next window of the currently focused app (Meta+`).
     CycleAppWindows,
@@ -114,6 +115,15 @@ pub struct Shell {
     // Focus
     pub focused_app_id: Option<String>,
     pub focused_window_id: Option<u32>,
+    /// Window currently under the pointer (`Topic::MouseEntered` /
+    /// `MouseLeft`). Used to re-apply focus-follows-mouse after programmatic
+    /// focus steals (new map, close fallback) — River does not re-send
+    /// `pointer_enter` if the cursor never left the old surface.
+    pub pointer_window_id: Option<u32>,
+    /// Generation counter for the focus-follows-mouse dwell timer. Bumped on
+    /// every enter/leave so a superseded `FocusHoverFire` is a no-op — gives
+    /// a short grace period when mousing across apps toward the menubar.
+    pub pending_focus_generation: u64,
 
     // MRU (most-recently-used)
     pub mru_apps: Vec<String>,
@@ -164,11 +174,6 @@ pub struct Shell {
     pub net_down_hist: crate::stats::History,
     pub net_up_hist: crate::stats::History,
     pub gpu_hist: crate::stats::History,
-
-    // Focus-hover generation counter (replaces legacy AppRuntimeHandle pattern).
-    // Incremented on every schedule_focus_from_pointer call so stale timer
-    // callbacks can detect they've been superseded.
-    pub pending_focus_generation: u64,
 }
 
 impl Shell {
@@ -219,6 +224,8 @@ impl Shell {
             switcher_window_id: Some(switcher_id),
             focused_app_id: None,
             focused_window_id: None,
+            pointer_window_id: None,
+            pending_focus_generation: 0,
             mru_apps: Vec::new(),
             mru_window_by_app: HashMap::new(),
             known_windows: Vec::new(),
@@ -242,7 +249,6 @@ impl Shell {
             net_down_hist: crate::stats::History::new(60),
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
-            pending_focus_generation: 0,
         };
 
         (state, task)
@@ -268,8 +274,13 @@ impl Shell {
     ///
     /// Stack order (bottom → top):
     ///   1. Shell menubar — always at bottom.
-    ///   2. App windows ordered by MRU (least recent first), per-app MRU window on top.
-    ///   3. Shell overlays when active (menu, switcher, launcher — launcher on top).
+    ///   2. App windows not yet in MRU (never raised) — under everything raised,
+    ///      so focus-follows-mouse without a raise cannot leave an external app
+    ///      permanently stuck on top of activated windows.
+    ///   3. App windows ordered by MRU (least recent first), per-app MRU window
+    ///      on top of its siblings. Only click / switcher / map activation bumps
+    ///      MRU (raise).
+    ///   4. Shell overlays when active (menu, switcher, launcher — launcher on top).
     pub fn emit_composition(&self) {
         let mut entries: Vec<CompositionEntry> = Vec::new();
 
@@ -278,14 +289,22 @@ impl Shell {
             entries.push(CompositionEntry { window_id: wid });
         }
 
-        // 2. App windows ordered by MRU (least recent first = bottom of stack).
+        let mru_set: HashSet<&str> = self.mru_apps.iter().map(String::as_str).collect();
+
+        // 2. Apps not yet in MRU — bottom of the app stack (never auto-raised).
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID || mru_set.contains(w.app_id.as_str()) {
+                continue;
+            }
+            entries.push(CompositionEntry { window_id: w.window_id });
+        }
+
+        // 3. App windows ordered by MRU (least recent first = bottom of raised stack).
         // Within each app, the per-app MRU window sits on top of its siblings.
-        let mut seen_app_ids: HashSet<&str> = HashSet::new();
         for app_id in self.mru_apps.iter().rev() {
             if app_id.as_str() == Self::APP_ID {
                 continue;
             }
-            seen_app_ids.insert(app_id.as_str());
             let top_wid = self.mru_window_by_app.get(app_id).copied();
             for w in &self.known_windows {
                 if w.app_id == *app_id && Some(w.window_id) != top_wid {
@@ -302,15 +321,8 @@ impl Shell {
                 }
             }
         }
-        // Apps not yet in MRU.
-        for w in &self.known_windows {
-            if w.app_id == Self::APP_ID || seen_app_ids.contains(w.app_id.as_str()) {
-                continue;
-            }
-            entries.push(CompositionEntry { window_id: w.window_id });
-        }
 
-        // 3. Shell overlays on top when active.
+        // 4. Shell overlays on top when active.
         if self.menu_open {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
                 entries.push(CompositionEntry { window_id: wid });
@@ -974,28 +986,15 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::FocusHoverFire { window_id, generation } => {
-                // Only act if the generation matches — any mouse-enter or
-                // mouse-left bump cancels the pending fire.
+                // Superseded by a later enter/leave (e.g. crossed toward menubar).
                 if generation != self.pending_focus_generation {
                     return iced::Task::none();
                 }
-                // Look up app_id from known_windows; skip shell surfaces.
-                let app_id = self
-                    .known_windows
-                    .iter()
-                    .find(|w| w.window_id == window_id && w.app_id != Self::APP_ID)
-                    .map(|w| w.app_id.clone());
-                if let Some(ref id) = app_id {
-                    self.bus_set_focus(id);
-                    self.focused_window_id = Some(window_id);
-                    self.mru_window_by_app.insert(id.clone(), window_id);
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(sola_bus::topics::Topic::Focus(
-                            sola_bus::topics::FocusTarget { window_id },
-                        ));
-                    }
-                    self.emit_composition();
+                // Pointer may have moved on without a leave we care about.
+                if self.pointer_window_id != Some(window_id) {
+                    return iced::Task::none();
                 }
+                self.focus_window_from_pointer(window_id);
                 iced::Task::none()
             }
             Msg::CycleAppWindows => {
