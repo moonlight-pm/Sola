@@ -208,6 +208,10 @@ pub(crate) struct App {
     pub(crate) sessions: Vec<SessionSummary>,
     pub(crate) session_id: Option<String>,
     pub(crate) session_title: Option<String>,
+    /// True once ACP `session/load` (or new) finished for `session_id`.
+    /// Live stream events are ignored until then so a prior session cannot
+    /// paint into an optimistically selected transcript.
+    pub(crate) acp_attached: bool,
     pub(crate) project_root: PathBuf,
     pub(crate) connected: bool,
     pub(crate) backend_label: String,
@@ -340,6 +344,7 @@ impl App {
             sessions: sessions::list_all(),
             session_id: None,
             session_title: None,
+            acp_attached: false,
             project_root,
             connected: false,
             backend_label: "Grok".into(),
@@ -654,18 +659,40 @@ impl App {
                 // Never block session switches on `streaming` / pending.
                 self.abandon_turn_for_switch();
                 let summary = self.sessions.iter().find(|s| s.id == id);
+                let title = summary.map(|s| s.title.clone());
                 let cwd = summary
                     .map(|s| s.cwd.clone())
                     .filter(|c| !c.is_empty())
                     .unwrap_or_else(|| self.project_root.to_string_lossy().into_owned());
                 self.project_root = PathBuf::from(&cwd);
                 overlay::note_cwd(&cwd);
-                self.stick_to_bottom = true;
-                self.loading_older = false;
                 self.draft = text_editor::Content::new();
-                // Always ACP session/load via the shared leader (multi-client
-                // with TUI — no read-only console branch).
-                bridge::agent_send(AgentCmd::LoadSession { id, cwd });
+
+                // Instant chrome + transcript: paint from disk on this frame.
+                // ACP session/load attaches the leader in the background for
+                // prompt ownership — it must not gate selection or content.
+                self.session_id = Some(id.clone());
+                self.acp_attached = false;
+                self.session_title = overlay::title_override(&id).or(title);
+                let slice = sessions::history_tail(&cwd, &id);
+                self.turns = slice.turns;
+                self.history_start_byte = slice.start_byte;
+                self.has_older_history = slice.has_older;
+                self.history_auto_chunks = 0;
+                self.loading_older = false;
+                self.scroll_rel_y = None;
+                self.stick_to_bottom = true;
+                self.scroll_bottom_pending = true;
+                self.refresh_title_from_turns();
+
+                bridge::agent_send(AgentCmd::LoadSession {
+                    id,
+                    cwd,
+                });
+
+                let mut tasks = vec![self.maybe_auto_fill_history()];
+                tasks.push(self.maybe_scroll_bottom());
+                return Task::batch(tasks);
             }
             Msg::StartRename(id) => {
                 let draft = self
@@ -962,6 +989,7 @@ impl App {
                     if was_open {
                         self.session_id = None;
                         self.session_title = None;
+                        self.acp_attached = false;
                         self.turns.clear();
                         self.history_start_byte = 0;
                         self.has_older_history = false;
@@ -1020,6 +1048,7 @@ impl App {
         self.turns.clear();
         self.session_id = None;
         self.session_title = None;
+        self.acp_attached = false;
         self.history_start_byte = 0;
         self.has_older_history = false;
         self.history_auto_chunks = 0;
@@ -1069,31 +1098,37 @@ impl App {
         if !self.has_older_history || self.loading_older {
             return Task::none();
         }
-        self.loading_older = true;
+        // Disk-only — do not wait on the ACP worker (which may be blocked on
+        // session/load). Same parse path as the worker's LoadOlderHistory.
         let cwd = self.project_root.to_string_lossy().into_owned();
-        bridge::agent_send(AgentCmd::LoadOlderHistory {
-            id,
-            cwd,
-            before_byte: self.history_start_byte,
-        });
+        let before = self.history_start_byte;
+        let slice = sessions::history_before(&cwd, &id, before);
+        if !slice.turns.is_empty() {
+            let mut merged = slice.turns;
+            merged.append(&mut self.turns);
+            self.turns = merged;
+        }
+        self.history_start_byte = slice.start_byte;
+        self.has_older_history = slice.has_older;
+        self.loading_older = false;
         Task::none()
     }
 
     /// After open / prepend, keep fetching older chunks until the pane has
-    /// enough display items (or we hit the auto-chunk cap). Does not depend on
-    /// a scrollbar existing.
+    /// enough display items (or we hit the auto-chunk cap). Disk-only and
+    /// synchronous so it is not stalled behind ACP `session/load`.
     fn maybe_auto_fill_history(&mut self) -> Task<Msg> {
-        if !self.has_older_history || self.loading_older || self.session_id.is_none() {
+        if self.session_id.is_none() {
             return Task::none();
         }
-        if self.history_auto_chunks >= sessions::HISTORY_AUTO_CHUNKS_MAX {
-            return Task::none();
+        while self.has_older_history
+            && self.history_auto_chunks < sessions::HISTORY_AUTO_CHUNKS_MAX
+            && sessions::display_item_count(&self.turns) < sessions::HISTORY_INITIAL_ITEMS
+        {
+            self.history_auto_chunks += 1;
+            let _ = self.request_older_history();
         }
-        if sessions::display_item_count(&self.turns) >= sessions::HISTORY_INITIAL_ITEMS {
-            return Task::none();
-        }
-        self.history_auto_chunks += 1;
-        self.request_older_history()
+        Task::none()
     }
 
     fn finalize_open_tools(&mut self) {
@@ -1165,7 +1200,13 @@ impl App {
                 self.need_setup = Some(message);
             }
             AgentEvent::SessionReady { id, title } => {
+                // Fast sidebar switches paint optimistically; ignore attach
+                // completions for a session the user already left.
+                if self.session_id.as_deref().is_some_and(|s| s != id.as_str()) {
+                    return;
+                }
                 self.session_id = Some(id.clone());
+                self.acp_attached = true;
                 if let Some(t) = overlay::title_override(&id) {
                     self.session_title = Some(t);
                 } else if title.is_some() {
@@ -1184,11 +1225,15 @@ impl App {
                 });
             }
             AgentEvent::Transcript {
+                session_id,
                 turns,
                 history_start_byte,
                 has_older,
                 from_watch,
             } => {
+                if self.session_id.as_deref().is_some_and(|s| s != session_id.as_str()) {
+                    return;
+                }
                 // Detect real change so watch ticks that re-read the same
                 // tail do not thrash scroll / auto-title.
                 let changed = self.turns != turns
@@ -1211,14 +1256,18 @@ impl App {
                 if changed {
                     self.refresh_title_from_turns();
                 }
-                // Update ages/busy without reshuffling the sidebar.
-                self.sessions = sessions::merge_list(&self.sessions);
+                // Sidebar ages/busy refresh on the periodic tick — avoid a
+                // full sessions dir walk on every transcript paint.
             }
             AgentEvent::HistoryOlder {
+                session_id,
                 turns,
                 history_start_byte,
                 has_older,
             } => {
+                if self.session_id.as_deref().is_some_and(|s| s != session_id.as_str()) {
+                    return;
+                }
                 if !turns.is_empty() {
                     let mut merged = turns;
                     merged.append(&mut self.turns);
@@ -1229,9 +1278,15 @@ impl App {
                 self.loading_older = false;
             }
             AgentEvent::UserEcho { text } => {
+                if !self.acp_attached {
+                    return;
+                }
                 self.turns.push(Turn::User(text));
             }
             AgentEvent::AgentDelta { text } => {
+                if !self.acp_attached {
+                    return;
+                }
                 self.streaming = true;
                 match self.turns.last_mut() {
                     Some(Turn::Assistant(s)) => s.push_str(&text),
@@ -1239,6 +1294,9 @@ impl App {
                 }
             }
             AgentEvent::ThoughtDelta { text } => {
+                if !self.acp_attached {
+                    return;
+                }
                 self.streaming = true;
                 match self.turns.last_mut() {
                     Some(Turn::Thought(s)) => s.push_str(&text),
@@ -1246,6 +1304,9 @@ impl App {
                 }
             }
             AgentEvent::ToolStart { call_id, tool } => {
+                if !self.acp_attached {
+                    return;
+                }
                 self.streaming = true;
                 // Metadata only — UI collapses contiguous tools to "N tool uses".
                 self.turns.push(Turn::Tool(ToolTurn {
@@ -1259,6 +1320,9 @@ impl App {
                 status,
                 title,
             } => {
+                if !self.acp_attached {
+                    return;
+                }
                 if let Some(Turn::Tool(t)) = self
                     .turns
                     .iter_mut()
@@ -1274,6 +1338,9 @@ impl App {
                 }
             }
             AgentEvent::ToolEnd { call_id, status } => {
+                if !self.acp_attached {
+                    return;
+                }
                 if let Some(Turn::Tool(t)) = self
                     .turns
                     .iter_mut()
@@ -1284,6 +1351,9 @@ impl App {
                 }
             }
             AgentEvent::Plan { entries } => {
+                if !self.acp_attached {
+                    return;
+                }
                 self.turns.push(Turn::Plan(entries));
             }
             AgentEvent::Usage { used, size } => {
@@ -1296,6 +1366,19 @@ impl App {
                 preview,
                 options,
             } => {
+                if !self.acp_attached {
+                    // Still answer always-approve so the leader does not hang
+                    // on a permission for a session we already left.
+                    if self.permission_mode.auto_answers_permissions() {
+                        if let Some(option_id) = pick_allow_option(&options) {
+                            bridge::agent_send(AgentCmd::Permission {
+                                request_id,
+                                option_id,
+                            });
+                        }
+                    }
+                    return;
+                }
                 // always-approve: answer in-process so the strip never flashes
                 // even if the leader still emits request_permission (hooks,
                 // shell ask rules, mode not yet applied, effort clobber race).
@@ -1320,16 +1403,20 @@ impl App {
                 });
             }
             AgentEvent::TurnEnded { stop_reason } => {
+                if !self.acp_attached {
+                    return;
+                }
                 self.streaming = false;
                 self.pending = None;
                 self.finalize_open_tools();
                 self.refresh_title_from_turns();
-                self.sessions = sessions::merge_list(&self.sessions);
                 if stop_reason != "end_turn" && stop_reason != "EndTurn" {
                     tracing::info!(%stop_reason, "turn ended");
                 }
             }
             AgentEvent::Error { message } => {
+                // Errors can be attach failures for the selected session —
+                // always surface them (tagged paths use session_id elsewhere).
                 self.streaming = false;
                 self.turns.push(Turn::Error(message));
             }
@@ -1361,6 +1448,7 @@ impl App {
                     if !still_there {
                         self.session_id = None;
                         self.session_title = None;
+                        self.acp_attached = false;
                         self.turns.clear();
                         self.history_start_byte = 0;
                         self.has_older_history = false;

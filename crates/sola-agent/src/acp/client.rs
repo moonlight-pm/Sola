@@ -96,6 +96,7 @@ impl AcpClient {
             title: None,
         });
         bridge::emit(AgentEvent::Transcript {
+            session_id: id.clone(),
             turns: Vec::new(),
             history_start_byte: 0,
             has_older: false,
@@ -105,8 +106,9 @@ impl AcpClient {
     }
 
     pub fn load_session(&mut self, id: &str, cwd: &str) -> Result<(), String> {
-        // Suppress streamed history chunks during session/load; UI uses
-        // a lazy tail of updates.jsonl instead of replaying the full log.
+        // UI already painted from disk on click. This call only attaches the
+        // shared leader for prompt/permission ownership — do not gate the
+        // transcript on it (session/load can take hundreds of ms+).
         self.suppress_history_replay = true;
         let _result = self.request(
             "session/load",
@@ -122,17 +124,20 @@ impl AcpClient {
         self.open_tools.clear();
         emit_session_config_from_result(&result);
 
-        let slice = sessions::history_tail(cwd, id);
         let title = sessions::title_for(cwd, id);
         bridge::emit(AgentEvent::SessionReady {
             id: id.to_string(),
             title,
         });
+        // Soft re-sync from disk (live tool statuses, late writes) without
+        // resetting scroll / auto-fill the way a cold replace does.
+        let slice = sessions::history_tail_live(cwd, id);
         bridge::emit(AgentEvent::Transcript {
+            session_id: id.to_string(),
             turns: slice.turns,
             history_start_byte: slice.start_byte,
             has_older: slice.has_older,
-            from_watch: false,
+            from_watch: true,
         });
         Ok(())
     }
@@ -156,6 +161,7 @@ impl AcpClient {
     pub fn load_older_history(&mut self, id: &str, cwd: &str, before_byte: u64) {
         let slice = sessions::history_before(cwd, id, before_byte);
         bridge::emit(AgentEvent::HistoryOlder {
+            session_id: id.to_string(),
             turns: slice.turns,
             history_start_byte: slice.start_byte,
             has_older: slice.has_older,

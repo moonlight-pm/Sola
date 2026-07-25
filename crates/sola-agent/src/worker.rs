@@ -1,5 +1,6 @@
 //! ACP worker thread: owns the leader-bridge connection and applies UI commands.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use crate::acp::{AcpClient, ChildTransport};
@@ -20,180 +21,213 @@ fn run(mode: ConnectionMode) {
     // Connect eagerly so the status bar shows leader state without waiting
     // for the first user action.
     let mut client: Option<AcpClient> = connect(&mode);
+    // Local buffer so we can coalesce session switches without dropping
+    // other commands that arrived while a slow `session/load` was in flight.
+    let mut inbox: VecDeque<AgentCmd> = VecDeque::new();
 
     loop {
-        // Drain commands with a short wait so we can poll the child.
-        let cmd = match cmd_rx.recv_timeout(Duration::from_millis(50)) {
-            Ok(c) => Some(c),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        // Fill inbox: block briefly when empty so we can poll the child.
+        if inbox.is_empty() {
+            match cmd_rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(c) => inbox.push_back(c),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        while let Ok(c) = cmd_rx.try_recv() {
+            inbox.push_back(c);
+        }
+        // Drop superseded LoadSession/NewSession so rapid sidebar clicks
+        // never queue multi-second attach storms.
+        coalesce_session_cmds(&mut inbox);
+
+        let Some(cmd) = inbox.pop_front() else {
+            if let Some(c) = client.as_mut() {
+                if let Err(e) = c.poll(Duration::from_millis(5)) {
+                    bridge::emit(AgentEvent::Disconnected { reason: e });
+                    client = None;
+                }
+            }
+            continue;
         };
 
-        if let Some(cmd) = cmd {
-            match cmd {
-                AgentCmd::Shutdown => {
-                    client = None;
-                    break;
-                }
-                AgentCmd::Restart | AgentCmd::EnsureConnected => {
+        match cmd {
+            AgentCmd::Shutdown => {
+                client = None;
+                break;
+            }
+            AgentCmd::Restart | AgentCmd::EnsureConnected => {
+                client = connect(&mode);
+            }
+            AgentCmd::NewSession { cwd } => {
+                if client.is_none() {
                     client = connect(&mode);
                 }
-                AgentCmd::NewSession { cwd } => {
-                    if client.is_none() {
-                        client = connect(&mode);
+                if let Some(c) = client.as_mut() {
+                    match c.new_session(&cwd) {
+                        Ok(id) => {
+                            crate::overlay::note_opened(&id, &cwd);
+                            refresh_sessions(&cwd);
+                        }
+                        Err(e) => bridge::emit(AgentEvent::Error { message: e }),
                     }
-                    if let Some(c) = client.as_mut() {
-                        match c.new_session(&cwd) {
-                            Ok(id) => {
-                                crate::overlay::note_opened(&id, &cwd);
-                                refresh_sessions(&cwd);
-                            }
-                            Err(e) => bridge::emit(AgentEvent::Error { message: e }),
+                }
+            }
+            AgentCmd::LoadSession { id, cwd } => {
+                // Re-coalesce: more LoadSessions may have arrived while we
+                // were blocked on a previous attach.
+                while let Ok(c) = cmd_rx.try_recv() {
+                    inbox.push_back(c);
+                }
+                coalesce_session_cmds(&mut inbox);
+                // If a newer switch is already queued (maybe behind a Cancel),
+                // drop this attach — only the latest target matters.
+                if inbox.iter().any(|c| {
+                    matches!(
+                        c,
+                        AgentCmd::LoadSession { .. } | AgentCmd::NewSession { .. }
+                    )
+                }) {
+                    continue;
+                }
+                if client.is_none() {
+                    client = connect(&mode);
+                }
+                if let Some(c) = client.as_mut() {
+                    match c.load_session(&id, &cwd) {
+                        Ok(()) => {
+                            crate::overlay::note_opened(&id, &cwd);
+                            refresh_sessions(&cwd);
+                        }
+                        Err(e) => bridge::emit(AgentEvent::Error { message: e }),
+                    }
+                }
+            }
+            AgentCmd::SyncTranscript { id, cwd, live } => {
+                let slice = if live {
+                    sessions::history_tail_live(&cwd, &id)
+                } else {
+                    sessions::history_tail(&cwd, &id)
+                };
+                bridge::emit(AgentEvent::Transcript {
+                    session_id: id,
+                    turns: slice.turns,
+                    history_start_byte: slice.start_byte,
+                    has_older: slice.has_older,
+                    from_watch: true,
+                });
+            }
+            AgentCmd::LoadOlderHistory {
+                id,
+                cwd,
+                before_byte,
+            } => {
+                // File-only — never wait on ACP client presence.
+                let slice = sessions::history_before(&cwd, &id, before_byte);
+                bridge::emit(AgentEvent::HistoryOlder {
+                    session_id: id,
+                    turns: slice.turns,
+                    history_start_byte: slice.start_byte,
+                    has_older: slice.has_older,
+                });
+            }
+            AgentCmd::Send { text } => {
+                if client.is_none() {
+                    client = connect(&mode);
+                }
+                if let Some(c) = client.as_mut() {
+                    if c.session_id().is_none() {
+                        // auto new session in cwd of process
+                        let cwd = std::env::current_dir()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_else(|_| ".".into());
+                        if let Err(e) = c.new_session(&cwd) {
+                            bridge::emit(AgentEvent::Error { message: e });
+                            continue;
                         }
                     }
-                }
-                AgentCmd::LoadSession { id, cwd } => {
-                    if client.is_none() {
-                        client = connect(&mode);
-                    }
-                    if let Some(c) = client.as_mut() {
-                        match c.load_session(&id, &cwd) {
-                            Ok(()) => {
-                                crate::overlay::note_opened(&id, &cwd);
-                                refresh_sessions(&cwd);
-                            }
-                            Err(e) => bridge::emit(AgentEvent::Error { message: e }),
-                        }
+                    if let Err(e) = c.send_prompt(&text) {
+                        bridge::emit(AgentEvent::Error { message: e });
                     }
                 }
-                AgentCmd::SyncTranscript { id, cwd, live } => {
-                    let slice = if live {
-                        sessions::history_tail_live(&cwd, &id)
-                    } else {
-                        sessions::history_tail(&cwd, &id)
-                    };
-                    bridge::emit(AgentEvent::Transcript {
-                        turns: slice.turns,
-                        history_start_byte: slice.start_byte,
-                        has_older: slice.has_older,
-                        from_watch: true,
-                    });
-                }
-                AgentCmd::LoadOlderHistory {
-                    id,
-                    cwd,
-                    before_byte,
-                } => {
-                    if let Some(c) = client.as_mut() {
-                        c.load_older_history(&id, &cwd, before_byte);
-                    } else {
-                        // File-only path when disconnected — still allow scrollback.
-                        let slice = sessions::history_before(&cwd, &id, before_byte);
-                        bridge::emit(AgentEvent::HistoryOlder {
-                            turns: slice.turns,
-                            history_start_byte: slice.start_byte,
-                            has_older: slice.has_older,
+            }
+            AgentCmd::SetPermissionMode { mode_id } => {
+                if let Some(c) = client.as_mut() {
+                    if let Err(e) = c.set_mode(&mode_id) {
+                        bridge::emit(AgentEvent::Error {
+                            message: format!("set permission mode: {e}"),
                         });
                     }
                 }
-                AgentCmd::Send { text } => {
-                    if client.is_none() {
-                        client = connect(&mode);
-                    }
-                    if let Some(c) = client.as_mut() {
-                        if c.session_id().is_none() {
-                            // auto new session in cwd of process
-                            let cwd = std::env::current_dir()
-                                .map(|p| p.to_string_lossy().into_owned())
-                                .unwrap_or_else(|_| ".".into());
-                            if let Err(e) = c.new_session(&cwd) {
-                                bridge::emit(AgentEvent::Error { message: e });
-                                continue;
-                            }
-                        }
-                        if let Err(e) = c.send_prompt(&text) {
-                            bridge::emit(AgentEvent::Error { message: e });
-                        }
-                    }
-                }
-                AgentCmd::SetPermissionMode { mode_id } => {
-                    if let Some(c) = client.as_mut() {
-                        if let Err(e) = c.set_mode(&mode_id) {
-                            bridge::emit(AgentEvent::Error {
-                                message: format!("set permission mode: {e}"),
-                            });
-                        }
-                    }
-                }
-                AgentCmd::SetEffort { effort_id } => {
-                    if let Some(c) = client.as_mut() {
-                        // Grok maps effort ids through session/set_mode.
-                        if let Err(e) = c.set_mode(&effort_id) {
-                            bridge::emit(AgentEvent::Error {
-                                message: format!("set effort: {e}"),
-                            });
-                        }
-                    }
-                }
-                AgentCmd::Cancel => {
-                    if let Some(c) = client.as_mut() {
-                        if let Err(e) = c.cancel() {
-                            bridge::emit(AgentEvent::Error { message: e });
-                        }
-                    }
-                }
-                AgentCmd::Permission {
-                    request_id,
-                    option_id,
-                } => {
-                    if let Some(c) = client.as_mut() {
-                        if let Err(e) = c.respond_permission(request_id, &option_id) {
-                            bridge::emit(AgentEvent::Error { message: e });
-                        }
-                    }
-                }
-                AgentCmd::PermissionCancel { request_id } => {
-                    if let Some(c) = client.as_mut() {
-                        if let Err(e) = c.cancel_permission(request_id) {
-                            bridge::emit(AgentEvent::Error { message: e });
-                        }
-                    }
-                }
-                AgentCmd::RefreshSessions { cwd } => refresh_sessions(&cwd),
-                AgentCmd::BulkDelete { ids } => {
-                    let total = ids.len() as u32;
-                    let mut deleted = 0u32;
-                    let mut failed = 0u32;
-                    let mut errors = Vec::new();
-                    for (i, id) in ids.into_iter().enumerate() {
-                        match sessions::delete_session(&id) {
-                            Ok(()) => deleted += 1,
-                            Err(e) => {
-                                failed += 1;
-                                if errors.len() < 8 {
-                                    errors.push(e);
-                                }
-                            }
-                        }
-                        bridge::emit(AgentEvent::BulkDeleteProgress {
-                            done: (i as u32) + 1,
-                            total,
-                            last_id: id,
+            }
+            AgentCmd::SetEffort { effort_id } => {
+                if let Some(c) = client.as_mut() {
+                    // Grok maps effort ids through session/set_mode.
+                    if let Err(e) = c.set_mode(&effort_id) {
+                        bridge::emit(AgentEvent::Error {
+                            message: format!("set effort: {e}"),
                         });
                     }
-                    bridge::emit(AgentEvent::BulkDeleteFinished {
-                        deleted,
-                        failed,
-                        errors,
-                    });
-                    // Refresh sidebar after disk changes.
-                    let entries = sessions::list_all();
-                    bridge::emit(AgentEvent::SessionsListed { entries });
                 }
+            }
+            AgentCmd::Cancel => {
+                if let Some(c) = client.as_mut() {
+                    if let Err(e) = c.cancel() {
+                        bridge::emit(AgentEvent::Error { message: e });
+                    }
+                }
+            }
+            AgentCmd::Permission {
+                request_id,
+                option_id,
+            } => {
+                if let Some(c) = client.as_mut() {
+                    if let Err(e) = c.respond_permission(request_id, &option_id) {
+                        bridge::emit(AgentEvent::Error { message: e });
+                    }
+                }
+            }
+            AgentCmd::PermissionCancel { request_id } => {
+                if let Some(c) = client.as_mut() {
+                    if let Err(e) = c.cancel_permission(request_id) {
+                        bridge::emit(AgentEvent::Error { message: e });
+                    }
+                }
+            }
+            AgentCmd::RefreshSessions { cwd } => refresh_sessions(&cwd),
+            AgentCmd::BulkDelete { ids } => {
+                let total = ids.len() as u32;
+                let mut deleted = 0u32;
+                let mut failed = 0u32;
+                let mut errors = Vec::new();
+                for (i, id) in ids.into_iter().enumerate() {
+                    match sessions::delete_session(&id) {
+                        Ok(()) => deleted += 1,
+                        Err(e) => {
+                            failed += 1;
+                            if errors.len() < 8 {
+                                errors.push(e);
+                            }
+                        }
+                    }
+                    bridge::emit(AgentEvent::BulkDeleteProgress {
+                        done: (i as u32) + 1,
+                        total,
+                        last_id: id,
+                    });
+                }
+                bridge::emit(AgentEvent::BulkDeleteFinished {
+                    deleted,
+                    failed,
+                    errors,
+                });
+                // Refresh sidebar after disk changes.
+                let entries = sessions::list_all();
+                bridge::emit(AgentEvent::SessionsListed { entries });
             }
         }
 
-        // Poll bridge for unsolicited notifications when idle.
+        // Poll bridge for unsolicited notifications between commands.
         if let Some(c) = client.as_mut() {
             if let Err(e) = c.poll(Duration::from_millis(5)) {
                 bridge::emit(AgentEvent::Disconnected { reason: e });
@@ -201,6 +235,32 @@ fn run(mode: ConnectionMode) {
             }
         }
     }
+}
+
+/// Keep only the **latest** `LoadSession` / `NewSession` in the inbox.
+/// Other commands keep relative order; the surviving session op sits where
+/// the first session op was (so a Cancel enqueued before a switch still
+/// runs first).
+fn coalesce_session_cmds(inbox: &mut VecDeque<AgentCmd>) {
+    let mut last_session: Option<AgentCmd> = None;
+    let mut first_session_slot: Option<usize> = None;
+    let mut out: VecDeque<AgentCmd> = VecDeque::new();
+    for c in inbox.drain(..) {
+        match c {
+            AgentCmd::LoadSession { .. } | AgentCmd::NewSession { .. } => {
+                if first_session_slot.is_none() {
+                    first_session_slot = Some(out.len());
+                }
+                last_session = Some(c);
+            }
+            other => out.push_back(other),
+        }
+    }
+    if let Some(sess) = last_session {
+        let at = first_session_slot.unwrap_or(out.len()).min(out.len());
+        out.insert(at, sess);
+    }
+    *inbox = out;
 }
 
 fn connect(mode: &ConnectionMode) -> Option<AcpClient> {
