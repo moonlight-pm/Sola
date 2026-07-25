@@ -349,7 +349,9 @@ fn transcript(app: &App) -> Element<'_, Msg> {
         bubbles.push(older);
     }
 
-    let inner: Element<'_, Msg> = if app.turns.is_empty() && bubbles.is_empty() {
+    let inner: Element<'_, Msg> = if app.content_loading && app.turns.is_empty() {
+        loading_transcript(app)
+    } else if app.turns.is_empty() && bubbles.is_empty() {
         empty_transcript(app)
     } else if app.turns.is_empty() {
         // Gaps are applied per-block in bubble::turns_view (kind-aware).
@@ -388,6 +390,32 @@ fn transcript(app: &App) -> Element<'_, Msg> {
         let rel = vp.relative_offset();
         Msg::TranscriptScrolled(rel.y)
     })
+    .into()
+}
+
+fn loading_transcript(app: &App) -> Element<'_, Msg> {
+    let title = app
+        .session_title
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|t| kit_text::subheading(t.to_string()))
+        .unwrap_or_else(|| kit_text::heading("Loading session"));
+    container(
+        column![
+            title,
+            kit_text::body("Loading messages…").style(kit_text::muted),
+            Space::new().height(SPACE_MD),
+            kit_text::caption(sidebar::short_path(&app.project_root.to_string_lossy()))
+                .style(kit_text::muted),
+        ]
+        .spacing(SPACE_MD)
+        .align_x(Alignment::Center)
+        .max_width(420.0),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
     .into()
 }
 

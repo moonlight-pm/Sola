@@ -509,6 +509,29 @@ pub fn history_before(cwd: &str, id: &str, before_byte: u64) -> HistorySlice {
     history_window(cwd, id, Some(before_byte), HISTORY_TAIL_BYTES, true)
 }
 
+/// Tail + auto-prepend older chunks until we have enough display items.
+/// Safe to call off the UI thread (pure disk + parse).
+pub fn load_for_display(cwd: &str, id: &str) -> HistorySlice {
+    let mut slice = history_tail(cwd, id);
+    let mut chunks = 0u32;
+    while slice.has_older
+        && chunks < HISTORY_AUTO_CHUNKS_MAX
+        && display_item_count(&slice.turns) < HISTORY_INITIAL_ITEMS
+    {
+        chunks += 1;
+        let older = history_before(cwd, id, slice.start_byte);
+        if older.turns.is_empty() && !older.has_older {
+            break;
+        }
+        let mut merged = older.turns;
+        merged.append(&mut slice.turns);
+        slice.turns = merged;
+        slice.start_byte = older.start_byte;
+        slice.has_older = older.has_older;
+    }
+    slice
+}
+
 fn updates_path(cwd: &str, id: &str) -> PathBuf {
     // Prefer cwd-encoded path; fall back to a scan if the session moved.
     let candidate = sessions_root()
