@@ -264,18 +264,34 @@ pub fn bus_tick(state: &mut AppData) {
                     fullscreen = f.fullscreen,
                     "got Frame"
                 );
-                state
-                    .pending
-                    .frame(f.window_id, f.x, f.y, f.width, f.height);
-                if f.fullscreen {
-                    // Shell-initiated fullscreen (Cinema zone). Same
-                    // path as a client-initiated request — manage_finish
-                    // enters the surface into true xdg-shell fullscreen.
-                    state.pending.queue_fullscreen(f.window_id);
+                // Ignore non-positive frames (Float zone sentinel / poisoned
+                // FloatGeometry restore). Applying them would stick a 0×0
+                // rect on the registry and break window-region screenshots
+                // even when the surface later self-sizes correctly.
+                if f.width <= 0 || f.height <= 0 {
+                    tracing::warn!(
+                        window_id = f.window_id,
+                        app_id,
+                        x = f.x,
+                        y = f.y,
+                        w = f.width,
+                        h = f.height,
+                        "ignoring non-positive Frame"
+                    );
+                } else {
+                    state
+                        .pending
+                        .frame(f.window_id, f.x, f.y, f.width, f.height);
+                    if f.fullscreen {
+                        // Shell-initiated fullscreen (Cinema zone). Same
+                        // path as a client-initiated request — manage_finish
+                        // enters the surface into true xdg-shell fullscreen.
+                        state.pending.queue_fullscreen(f.window_id);
+                    }
+                    state
+                        .registry
+                        .set_frame(f.window_id, f.x, f.y, f.width, f.height);
                 }
-                state
-                    .registry
-                    .set_frame(f.window_id, f.x, f.y, f.width, f.height);
             }
             sola_bus::topics::Topic::Focus(t) => {
                 // If focus is moving AWAY from a window we put in

@@ -166,6 +166,13 @@ impl ZoningState {
         if self.window_zones.get(&window_id) != Some(&Zone::Float) {
             return false;
         }
+        // Never persist a 0×0 (or otherwise non-positive) rect — that is the
+        // Zone::Float zone math sentinel / a pre-init dimensions blip, and
+        // restoring it on relaunch emits Frame(0,0,0,0) which breaks
+        // screenshots and forces a self-size loop.
+        if width <= 0 || height <= 0 {
+            return false;
+        }
         let next = FloatGeometry {
             app_id: app_id.to_string(),
             x,
@@ -205,15 +212,19 @@ impl ZoningState {
             // The restored size rides sola-river's first-`dimensions` gate
             // (deferred until the surface initializes); position applies
             // immediately. So restore can't reproduce the resize-before-init crash.
+            // Skip non-positive saved rects (poisoned FloatGeometry) and fall
+            // through to the default centered inset.
             if let Some(g) = self.float_geometry.get(app_id) {
-                return Some(FrameUpdate {
-                    window_id,
-                    x: g.x,
-                    y: g.y,
-                    width: g.width,
-                    height: g.height,
-                    fullscreen: false,
-                });
+                if g.width > 0 && g.height > 0 {
+                    return Some(FrameUpdate {
+                        window_id,
+                        x: g.x,
+                        y: g.y,
+                        width: g.width,
+                        height: g.height,
+                        fullscreen: false,
+                    });
+                }
             }
             // No remembered geometry: emit the default inset frame so the
             // window is visibly floating. Needs output geometry; if it hasn't
@@ -723,6 +734,48 @@ mod tests {
         z.window_zones.insert(8, Zone::Left);
         assert!(!z.note_window_geometry("Helium", 8, 0, 0, 100, 100));
         assert!(z.float_geometry.get("Helium").is_none());
+    }
+
+    #[test]
+    fn note_window_geometry_rejects_non_positive_size() {
+        let mut z = ZoningState::new();
+        z.window_zones.insert(7, Zone::Float);
+        z.float_geometry.insert(
+            "sola-monitor".into(),
+            FloatGeometry {
+                app_id: "sola-monitor".into(),
+                x: 50,
+                y: 78,
+                width: 1334,
+                height: 2032,
+            },
+        );
+        // A 0×0 dimensions blip must not clobber the good saved rect.
+        assert!(!z.note_window_geometry("sola-monitor", 7, 0, 0, 0, 0));
+        let g = z.float_geometry.get("sola-monitor").expect("kept");
+        assert_eq!((g.width, g.height), (1334, 2032));
+    }
+
+    #[test]
+    fn apply_config_zone_float_skips_poisoned_saved_geometry() {
+        let mut s = state_with_output(1920, 1080);
+        let mut zones = std::collections::HashMap::new();
+        zones.insert("UnrealEditor".to_string(), Zone::Float);
+        s.set_zones(zones);
+        s.float_geometry.insert(
+            "UnrealEditor".into(),
+            FloatGeometry {
+                app_id: "UnrealEditor".into(),
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+        );
+        let frame = s
+            .apply_config_zone("UnrealEditor", 7)
+            .expect("poisoned save falls back to inset frame");
+        assert_eq!((frame.x, frame.y, frame.width, frame.height), (50, 78, 1820, 952));
     }
 
     #[test]

@@ -49,6 +49,7 @@ use wayland_client::protocol::{wl_buffer, wl_output, wl_shm, wl_shm_pool};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 
 use crate::client::AppData;
+use crate::registry::Entry;
 use crate::protocol::wlr_screencopy_unstable_v1::{
     zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1},
     zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
@@ -168,14 +169,18 @@ pub fn handle(state: &mut AppData, req: CaptureScreenPayload) {
                 );
                 return;
             };
-            let Some((x, y, w, h)) = entry.frame else {
-                emit_err(state, "window has no frame yet");
+            // Prefer live size+position (what River actually placed) over the
+            // shell's last `Topic::Frame`. Floating windows are intentionally
+            // not re-framed after move/resize, and a poisoned 0×0 Frame
+            // (Float zone rect / bad FloatGeometry restore) would otherwise
+            // make region capture fail while the window is still visible.
+            let Some((x, y, w, h)) = capture_rect(entry) else {
+                emit_err(
+                    state,
+                    "window has no usable geometry yet (no live size/position and no frame)",
+                );
                 return;
             };
-            if w <= 0 || h <= 0 {
-                emit_err(state, format!("window frame has non-positive size {w}x{h}"));
-                return;
-            }
             // Region is screen content at that rect, including overlaps.
             info!(
                 path = %path.display(),
@@ -185,6 +190,9 @@ pub fn handle(state: &mut AppData, req: CaptureScreenPayload) {
                 y,
                 w,
                 h,
+                frame = ?entry.frame,
+                size = ?entry.size,
+                position = ?entry.position,
                 "screenshot: window region (screen content at rect)"
             );
             manager.capture_output_region(0, &output, x, y, w, h, &qh, ())
@@ -211,6 +219,25 @@ pub fn handle(state: &mut AppData, req: CaptureScreenPayload) {
         if let Err(e) = conn.flush() {
             warn!(%e, "wayland flush after screencopy start failed");
         }
+    }
+}
+
+/// Pick a capture rectangle for a window.
+///
+/// Live River placement (`position` + `size`) wins when both are known and
+/// positive — that is what the compositor actually drew. The shell's last
+/// `Topic::Frame` is a fallback for windows that have been framed but not
+/// yet reported dimensions (first paint). A non-positive frame is ignored so
+/// a poisoned 0×0 float restore cannot block capture of a live window.
+fn capture_rect(entry: &Entry) -> Option<(i32, i32, i32, i32)> {
+    if let (Some((x, y)), Some((w, h))) = (entry.position, entry.size) {
+        if w > 0 && h > 0 {
+            return Some((x, y, w, h));
+        }
+    }
+    match entry.frame {
+        Some((x, y, w, h)) if w > 0 && h > 0 => Some((x, y, w, h)),
+        _ => None,
     }
 }
 
@@ -706,6 +733,46 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for AppData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(
+        frame: Option<(i32, i32, i32, i32)>,
+        size: Option<(i32, i32)>,
+        position: Option<(i32, i32)>,
+    ) -> Entry {
+        Entry {
+            app_id: Some("app".into()),
+            title: Some("t".into()),
+            max_size: (0, 0),
+            pid: None,
+            frame,
+            size,
+            position,
+        }
+    }
+
+    #[test]
+    fn capture_rect_prefers_live_geometry_over_frame() {
+        let e = entry(Some((1, 2, 3, 4)), Some((800, 600)), Some((50, 60)));
+        assert_eq!(capture_rect(&e), Some((50, 60, 800, 600)));
+    }
+
+    #[test]
+    fn capture_rect_falls_back_to_positive_frame() {
+        let e = entry(Some((10, 20, 300, 400)), None, None);
+        assert_eq!(capture_rect(&e), Some((10, 20, 300, 400)));
+    }
+
+    #[test]
+    fn capture_rect_ignores_zero_frame_when_live_present() {
+        let e = entry(Some((0, 0, 0, 0)), Some((1334, 2032)), Some((50, 78)));
+        assert_eq!(capture_rect(&e), Some((50, 78, 1334, 2032)));
+    }
+
+    #[test]
+    fn capture_rect_none_when_only_zero_frame() {
+        let e = entry(Some((0, 0, 0, 0)), None, None);
+        assert_eq!(capture_rect(&e), None);
+    }
 
     #[test]
     fn bgr888_converts_to_rgba() {
