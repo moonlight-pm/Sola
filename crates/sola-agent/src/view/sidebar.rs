@@ -151,21 +151,31 @@ fn sidebar_header(app: &App) -> Element<'_, Msg> {
 
 fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<Msg> {
     let selected = app.session_id.as_deref() == Some(summary.id.as_str());
-    let title = summary.title.clone();
-    let project = short_path(&summary.cwd);
+    // Budget title/path for list width so clip + ellipsis both read clean.
+    let max_title = ((app.sidebar_w - 72.0) / 7.0).clamp(12.0, 48.0) as usize;
+    let max_path = ((app.sidebar_w - 72.0) / 6.2).clamp(10.0, 42.0) as usize;
+    let title = ellipsize(&summary.title, max_title);
+    let project = ellipsize(&short_path(&summary.cwd), max_path);
     let when = relative_time(summary.updated);
 
-    // Select still works when busy for browsing history; only disable
-    // if we want hard lock — keep selectable.
     // Single click selects; double-click rename is handled in App
     // (two SelectSession within a short window) so the kit button path
-    // keeps hover chrome. Kit `on_double_click` is available for later
-    // reorder/mouse_area rows.
+    // keeps hover chrome.
     let _ = busy;
     SidebarItem::new(title, Msg::SelectSession(summary.id.clone()))
         .active(selected)
         .subtitle(project)
         .secondary(when)
+}
+
+fn ellipsize(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        return s.to_string();
+    }
+    let take = max_chars.saturating_sub(1).max(1);
+    let t: String = s.chars().take(take).collect();
+    format!("{t}…")
 }
 
 fn filter_shell_style(theme: &Theme) -> container::Style {
