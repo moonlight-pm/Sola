@@ -564,9 +564,12 @@ impl App {
             }
             Msg::SessionFilter(s) => {
                 self.session_filter = s;
+                // List length may change — keep offset in range.
+                self.session_section_scroll = self.session_section_scroll.clamped();
             }
             Msg::SessionSectionScroll(scroll) => {
                 // Skip no-op updates so chip math doesn't thrash redraws.
+                let scroll = scroll.clamped();
                 if self.session_section_scroll != scroll {
                     self.session_section_scroll = scroll;
                 }

@@ -32,7 +32,8 @@ use std::collections::HashMap;
 use iced::widget::scrollable::{Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Container, Space, button, column, container, float, mouse_area, row, scrollable, stack, text,
+    Container, Space, button, column, container, float, mouse_area, row, scrollable, sensor, stack,
+    text,
 };
 use iced::{
     Animation, Background, Border, Color, Element, Length, Padding, Shadow, Theme, Vector,
@@ -186,7 +187,7 @@ pub struct SectionScroll {
 }
 
 impl SectionScroll {
-    /// Capture geometry from an iced [`Viewport`].
+    /// Capture geometry from an iced [`Viewport`] (legacy scrollable path).
     pub fn from_viewport(vp: &Viewport) -> Self {
         Self {
             offset_y: vp.absolute_offset().y,
@@ -199,6 +200,61 @@ impl SectionScroll {
     pub fn overflows(&self) -> bool {
         self.viewport_h > 0.0 && self.content_h > self.viewport_h + 1.0
     }
+
+    /// Maximum scroll offset (0 when content fits).
+    pub fn max_offset(&self) -> f32 {
+        (self.content_h - self.viewport_h).max(0.0)
+    }
+
+    /// Clamp [`Self::offset_y`] into the valid range.
+    pub fn clamped(mut self) -> Self {
+        let max = self.max_offset();
+        self.offset_y = self.offset_y.clamp(0.0, max);
+        self
+    }
+
+    /// Apply a mouse-wheel delta (same sign convention as iced's scrollable).
+    pub fn wheel(mut self, delta: mouse::ScrollDelta) -> Self {
+        let dy = match delta {
+            mouse::ScrollDelta::Lines { y, .. } => -y * 60.0,
+            mouse::ScrollDelta::Pixels { y, .. } => -y,
+        };
+        self.offset_y += dy;
+        self.clamped()
+    }
+
+    /// Update measured viewport height and re-clamp.
+    pub fn with_viewport_h(mut self, viewport_h: f32) -> Self {
+        self.viewport_h = viewport_h.max(0.0);
+        self.clamped()
+    }
+
+    /// Update content height and re-clamp.
+    pub fn with_content_h(mut self, content_h: f32) -> Self {
+        self.content_h = content_h.max(0.0);
+        self.clamped()
+    }
+}
+
+/// Intrinsic height of one sidebar row (padding + text), excluding column gap.
+fn item_row_height<Message>(item: &SidebarItem<Message>) -> f32 {
+    let text_h = if item.subtitle.is_some() {
+        13.0 + TITLE_SUB_GAP + 11.0
+    } else {
+        13.0
+    };
+    ITEM_PAD_V * 2.0 + text_h
+}
+
+/// Full scroll content height for a section body (padding + rows + gaps).
+pub fn section_content_height<Message>(items: &[SidebarItem<Message>]) -> f32 {
+    let pad_v = 8.0; // matches body column padding [4, 8]
+    if items.is_empty() {
+        return pad_v;
+    }
+    let rows: f32 = items.iter().map(item_row_height).sum();
+    let gaps = SPACE_SM * items.len().saturating_sub(1) as f32;
+    pad_v + rows + gaps
 }
 
 /// Count items fully above / fully below the viewport, assuming roughly
@@ -1122,6 +1178,7 @@ where
                 }
 
                 let n_in_section = section.items.len();
+                let content_h = section_content_height(&section.items);
                 let wants_fill = !collapsed
                     && (section.fill || auto_fill_single)
                     && !assigned_fill;
@@ -1150,10 +1207,15 @@ where
                 }
 
                 if wants_fill {
-                    // First fill section owns the scroll callback + chips.
+                    // First fill section owns app-driven scroll + chips.
                     let scroll_cb = on_section_scroll.take();
-                    let body =
-                        fill_section_body(body_items, n_in_section, scroll_snap, scroll_cb);
+                    let body = fill_section_body(
+                        body_items,
+                        n_in_section,
+                        content_h,
+                        scroll_snap,
+                        scroll_cb,
+                    );
                     sections_col = sections_col.push(body);
                 } else {
                     sections_col = sections_col.push(body_items);
@@ -1235,15 +1297,8 @@ where
     }
 }
 
-/// Stable id for the fill-section item list. Without this, any parent
-/// rebuild (chip overlay, filter, session refresh) can remount the
-/// scrollable and snap the offset back to 0.
-fn fill_section_scroll_id() -> iced::widget::Id {
-    iced::widget::Id::new("sola-kit-sidebar-fill-section")
-}
-
-/// Scrollable with a zero-width vertical rail — still wheel/trackpad
-/// scrollable, no visible thumb.
+/// Scrollable with a zero-width vertical rail — used only for reorder
+/// preview / multi-section fallback (not the fill-section path).
 fn hidden_scroll<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
     on_scroll: Option<Box<dyn Fn(SectionScroll) -> Message + 'a>>,
@@ -1262,21 +1317,63 @@ fn hidden_scroll<'a, Message: 'a>(
     s
 }
 
-/// Fill section: bar-less item list with overflow chips.
+/// Fill section: **app-owned** scroll (no iced `scrollable`).
 ///
-/// **Tree shape is fixed** — always `[top_slot, scrollable, bottom_slot]`.
-/// Inserting/removing chip siblings remounts the scrollable (iced stores
-/// state by child index/tag) and snaps offset to 0. Empty slots stay
-/// present as zero-height containers so the scrollable is always child
-/// index 1 with a stable tag.
-fn fill_section_body<'a, Message: 'a>(
+/// Wheel/trackpad updates [`SectionScroll`] via `on_scroll`. Content is
+/// shifted with negative top padding inside a clipped viewport so position
+/// lives entirely in app state — rebuilds cannot snap offset back to 0.
+/// Overflow chips sit in fixed slots around the list.
+fn fill_section_body<'a, Message: Clone + 'a>(
     items: iced::widget::Column<'a, Message, Theme>,
     n_items: usize,
+    content_h: f32,
     scroll: SectionScroll,
     on_scroll: Option<Box<dyn Fn(SectionScroll) -> Message + 'a>>,
 ) -> Element<'a, Message, Theme> {
+    // Prefer measured content_h; keep any larger viewport hint from sensor.
+    let mut scroll = scroll.with_content_h(content_h);
+    // Until sensor reports a real viewport, assume a tall pane so chips can
+    // still show "below" when the list is long.
+    if scroll.viewport_h <= 1.0 {
+        scroll.viewport_h = 480.0;
+    }
+    scroll = scroll.clamped();
+
     let (above, below) = section_overflow_counts(scroll, n_items);
-    let list = hidden_scroll(items, on_scroll, Some(fill_section_scroll_id()));
+    let offset = scroll.offset_y;
+
+    // Shift content up by `offset` inside a clipped viewport.
+    let clipped = container(items)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .clip(true)
+        .padding(Padding {
+            top: -offset,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+        });
+
+    let list: Element<'a, Message, Theme> = if let Some(cb) = on_scroll {
+        // Share the callback across wheel + viewport sensors.
+        let cb: std::rc::Rc<dyn Fn(SectionScroll) -> Message + 'a> = std::rc::Rc::from(cb);
+        let base = scroll;
+
+        let cb_wheel = std::rc::Rc::clone(&cb);
+        let area = mouse_area(clipped).on_scroll(move |delta: mouse::ScrollDelta| {
+            cb_wheel(base.wheel(delta))
+        });
+
+        let cb_show = std::rc::Rc::clone(&cb);
+        let cb_resize = std::rc::Rc::clone(&cb);
+        sensor(area)
+            .on_show(move |size: iced::Size| cb_show(base.with_viewport_h(size.height)))
+            .on_resize(move |size: iced::Size| cb_resize(base.with_viewport_h(size.height)))
+            .into()
+    } else {
+        // No scroll wiring — static clip (still no iced scrollable).
+        clipped.into()
+    };
 
     column![
         overflow_slot(OverflowDir::Up, above),
