@@ -21,9 +21,9 @@ use iced::widget::{button, column, container, pick_list, row, scrollable, text};
 use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
-use sola_kit::components::style::{linear_bg, mix, mix_white, PAD_CONTROL_SM, HAIRLINE_A};
+use sola_kit::components::style::{mix_white, PAD_CONTROL_SM, HAIRLINE_A};
 use sola_kit::components::{
-    ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar_with_header,
+    ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar,
     text_input as kit_text_input,
 };
 use sola_kit::theme;
@@ -1086,12 +1086,9 @@ impl Storybook {
         .width(Length::Fill)
         .height(Length::Fill);
 
-        // Main column: solid seed canvas (`#0c0e12`). OD’s dual radials are
-        // ~6% accent / ~45% selection *fading to transparent* — our linear
-        // `canvas_ambient` baked that wash across the whole pane and read as
-        // a grey/teal gradient. Flat near-black matches the design base.
-        let right = container(
-            column![self.header(), content, self.font_prewarm()]
+        // Content column: solid seed canvas (`#0c0e12`).
+        let content_col = container(
+            column![content, self.font_prewarm()]
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
@@ -1105,77 +1102,7 @@ impl Storybook {
             }
         });
 
-        // Brand header (storybook only) + section nav — matches OD sidebar.
-        let brand = {
-            let mark = container(iced::widget::Space::new().width(22).height(22)).style(
-                |theme: &iced::Theme| {
-                    let accent = theme.extended_palette().primary.base.color;
-                    let selection = theme::selection();
-                    // OD brand-mark: linear-gradient(145deg, accent+white, accent, selection+black)
-                    let top = mix_white(accent, 0.18);
-                    let bot = mix(selection, iced::Color::BLACK, 0.70);
-                    iced::widget::container::Style {
-                        background: Some(linear_bg(
-                            145.0,
-                            &[(0.0, top), (0.40, accent), (1.0, bot)],
-                        )),
-                        border: iced::Border {
-                            color: mix_white(accent, 0.18),
-                            width: 1.0,
-                            radius: 6.0.into(),
-                        },
-                        ..Default::default()
-                    }
-                },
-            );
-            let brand_row = container(
-                row![
-                    mark,
-                    column![
-                        text("sola-kit").size(13).font(sola_kit::fonts::display()),
-                        text("DESIGN SYSTEM")
-                            .size(10)
-                            .style(|theme: &iced::Theme| iced::widget::text::Style {
-                                color: Some(theme.extended_palette().secondary.base.text),
-                            }),
-                    ]
-                    .spacing(2),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-            )
-            .padding(Padding {
-                top: 6.0,
-                right: 10.0,
-                bottom: 14.0,
-                left: 10.0,
-            })
-            .width(Length::Fill)
-            .style(|theme: &iced::Theme| iced::widget::container::Style {
-                text_color: Some(theme.extended_palette().background.base.text),
-                ..Default::default()
-            });
-            // OD brand has a bottom hairline under the mark/name block.
-            column![
-                brand_row,
-                container(iced::widget::Space::new().width(Length::Fill).height(1))
-                    .width(Length::Fill)
-                    .height(Length::Fixed(1.0))
-                    .style(|theme: &iced::Theme| {
-                        let raised = theme.extended_palette().background.weaker.color;
-                        iced::widget::container::Style {
-                            background: Some(iced::Background::Color(mix_white(
-                                raised, HAIRLINE_A,
-                            ))),
-                            ..Default::default()
-                        }
-                    }),
-            ]
-            .width(Length::Fill)
-        };
-
-        // OD: sidebar `border-right: 1px solid hairline` — iced borders are
-        // all-sides, so a 1px column is the clean separator.
+        // Sidebar right hairline (iced borders are all-sides).
         let rail = container(iced::widget::Space::new().width(1).height(Length::Fill))
             .width(Length::Fixed(1.0))
             .height(Length::Fill)
@@ -1187,13 +1114,13 @@ impl Storybook {
                 }
             });
 
-        // The atom colour picker is anchored to its swatch from inside
-        // the Theme page (see `pages::theme` + `popover_anchored`), so
-        // there's no window-level float to compose here.
-        row![
-            sidebar_with_header(Some(brand.into()), sections),
-            rail,
-            right,
+        // Full-width theme bar across the window; nav + content below.
+        // (No sidebar brand block — that lived only in the OD comp.)
+        column![
+            self.header(),
+            row![sidebar(sections), rail, content_col]
+                .width(Length::Fill)
+                .height(Length::Fill),
         ]
         .width(Length::Fill)
         .height(Length::Fill)
