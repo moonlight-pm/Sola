@@ -23,12 +23,11 @@ pub const HEIGHT: f32 = 38.0;
 /// Corner radius for a floating window frame (matches kit `RADIUS_XL`).
 pub const WINDOW_RADIUS: f32 = RADIUS_XL;
 
-/// Inward edge resize grip thickness (logical px). Confined inside the
-/// window bounds — never expands the hit box outside the frame.
-const EDGE_GRIP: f32 = 12.0;
-/// Inward corner grip size. Larger than the edge strip for easy diagonal
-/// grabs; still entirely inside the window.
-const CORNER_GRIP: f32 = 16.0;
+/// Inward edge/corner resize grip thickness (logical px). One size for both
+/// so the eight regions tile the perimeter without gaps or overlaps — a
+/// hairline-thick mismatch was letting the default cursor flash on the
+/// border, and taller corner layers were stealing mid-edge hits.
+const GRIP: f32 = 14.0;
 
 /// Outer border width. Face content is inset by this so children never
 /// paint over the hairline (same trick as kit `card`).
@@ -112,12 +111,14 @@ where
     with_resize_grips(framed.into(), on_resize)
 }
 
-/// Overlay edge/corner mouse areas on the *inside* of `inner`'s bounds.
+/// Overlay eight non-overlapping resize regions on the *inside* of `inner`.
 ///
-/// Layout is a full-size stack layer whose only interactive widgets are the
-/// perimeter strips; the centre is empty `Space` so events fall through to
-/// the titlebar/content. Corners are separate layers above the edges so a
-/// mid-edge hover never picks up a diagonal cursor from a mis-sized corner.
+/// Each region is a full-window transparent container with a small grip
+/// child aligned to one edge/corner. Containers only forward hits to that
+/// child, so the centre falls through to titlebar/content and mid-edge
+/// never collides with a corner layer (the previous full-window `Space`
+/// fillers were winning the stack's interaction probe and showing the
+/// wrong cursor).
 fn with_resize_grips<'a, Message>(
     inner: Element<'a, Message, Theme>,
     on_resize: impl Fn(Direction) -> Message + 'a,
@@ -125,131 +126,140 @@ fn with_resize_grips<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let e = EDGE_GRIP;
-    let c = CORNER_GRIP;
+    let g = GRIP;
 
-    let grip = |dir: Direction,
-                interaction: mouse::Interaction,
-                w: Length,
-                h: Length|
-     -> Element<'a, Message, Theme> {
-        mouse_area(Space::new().width(w).height(h))
-            .interaction(interaction)
-            .on_press(on_resize(dir))
-            .into()
+    let cell = |dir: Direction, interaction: mouse::Interaction| -> Element<'a, Message, Theme> {
+        mouse_area(
+            Space::new()
+                .width(Length::Fixed(g))
+                .height(Length::Fixed(g)),
+        )
+        .interaction(interaction)
+        .on_press(on_resize(dir))
+        .into()
     };
 
-    // Edge strips leave corner squares empty so corners own those cells.
-    let edges: Element<'a, Message, Theme> = iced::widget::column![
-        // North — between the two top corners
-        row![
-            Space::new().width(Length::Fixed(c)).height(Length::Fixed(e)),
-            grip(
-                Direction::North,
-                mouse::Interaction::ResizingVertically,
-                Length::Fill,
-                Length::Fixed(e),
-            ),
-            Space::new().width(Length::Fixed(c)).height(Length::Fixed(e)),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fixed(e)),
-        // Middle — west | pass-through | east
-        row![
-            grip(
-                Direction::West,
-                mouse::Interaction::ResizingHorizontally,
-                Length::Fixed(e),
-                Length::Fill,
-            ),
-            Space::new().width(Length::Fill).height(Length::Fill),
-            grip(
-                Direction::East,
-                mouse::Interaction::ResizingHorizontally,
-                Length::Fixed(e),
-                Length::Fill,
-            ),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill),
-        // South — between the two bottom corners
-        row![
-            Space::new().width(Length::Fixed(c)).height(Length::Fixed(e)),
-            grip(
-                Direction::South,
-                mouse::Interaction::ResizingVertically,
-                Length::Fill,
-                Length::Fixed(e),
-            ),
-            Space::new().width(Length::Fixed(c)).height(Length::Fixed(e)),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fixed(e)),
-    ]
+    // Edge strips: one axis Fixed(g), the other Fill, inset by g at both
+    // ends so they stop where the corner cells begin (no overlap, no gap).
+    let north = container(
+        mouse_area(
+            Space::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(g)),
+        )
+        .interaction(mouse::Interaction::ResizingVertically)
+        .on_press(on_resize(Direction::North)),
+    )
     .width(Length::Fill)
     .height(Length::Fill)
-    .into();
+    .padding(Padding {
+        top: 0.0,
+        right: g,
+        bottom: 0.0,
+        left: g,
+    })
+    .align_top(Length::Fill);
 
-    // Corner squares — full-size layers with only the corner cell interactive
-    // so they sit above edges and stay inside the window.
-    let corner = |dir: Direction,
-                  interaction: mouse::Interaction,
-                  left: bool,
-                  top: bool|
-     -> Element<'a, Message, Theme> {
-        let cell = grip(dir, interaction, Length::Fixed(c), Length::Fixed(c));
-        let h_bar = if left {
-            row![cell, Space::new().width(Length::Fill).height(Length::Fixed(c))]
-        } else {
-            row![Space::new().width(Length::Fill).height(Length::Fixed(c)), cell]
-        }
-        .width(Length::Fill)
-        .height(Length::Fixed(c));
-
-        if top {
-            iced::widget::column![h_bar, Space::new().width(Length::Fill).height(Length::Fill)]
+    let south = container(
+        mouse_area(
+            Space::new()
                 .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else {
-            iced::widget::column![Space::new().width(Length::Fill).height(Length::Fill), h_bar]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        }
-    };
-
-    stack![
-        inner,
-        edges,
-        corner(
-            Direction::NorthWest,
-            mouse::Interaction::ResizingDiagonallyDown,
-            true,
-            true,
-        ),
-        corner(
-            Direction::NorthEast,
-            mouse::Interaction::ResizingDiagonallyUp,
-            false,
-            true,
-        ),
-        corner(
-            Direction::SouthWest,
-            mouse::Interaction::ResizingDiagonallyUp,
-            true,
-            false,
-        ),
-        corner(
-            Direction::SouthEast,
-            mouse::Interaction::ResizingDiagonallyDown,
-            false,
-            false,
-        ),
-    ]
+                .height(Length::Fixed(g)),
+        )
+        .interaction(mouse::Interaction::ResizingVertically)
+        .on_press(on_resize(Direction::South)),
+    )
     .width(Length::Fill)
     .height(Length::Fill)
-    .into()
+    .padding(Padding {
+        top: 0.0,
+        right: g,
+        bottom: 0.0,
+        left: g,
+    })
+    .align_bottom(Length::Fill);
+
+    let west = container(
+        mouse_area(
+            Space::new()
+                .width(Length::Fixed(g))
+                .height(Length::Fill),
+        )
+        .interaction(mouse::Interaction::ResizingHorizontally)
+        .on_press(on_resize(Direction::West)),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(Padding {
+        top: g,
+        right: 0.0,
+        bottom: g,
+        left: 0.0,
+    })
+    .align_left(Length::Fill);
+
+    let east = container(
+        mouse_area(
+            Space::new()
+                .width(Length::Fixed(g))
+                .height(Length::Fill),
+        )
+        .interaction(mouse::Interaction::ResizingHorizontally)
+        .on_press(on_resize(Direction::East)),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(Padding {
+        top: g,
+        right: 0.0,
+        bottom: g,
+        left: 0.0,
+    })
+    .align_right(Length::Fill);
+
+    // Corners: g×g cells parked in each corner of a full-size container.
+    let nw = container(cell(
+        Direction::NorthWest,
+        mouse::Interaction::ResizingDiagonallyDown,
+    ))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_left(Length::Fill)
+    .align_top(Length::Fill);
+
+    let ne = container(cell(
+        Direction::NorthEast,
+        mouse::Interaction::ResizingDiagonallyUp,
+    ))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_right(Length::Fill)
+    .align_top(Length::Fill);
+
+    let sw = container(cell(
+        Direction::SouthWest,
+        mouse::Interaction::ResizingDiagonallyUp,
+    ))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_left(Length::Fill)
+    .align_bottom(Length::Fill);
+
+    let se = container(cell(
+        Direction::SouthEast,
+        mouse::Interaction::ResizingDiagonallyDown,
+    ))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_right(Length::Fill)
+    .align_bottom(Length::Fill);
+
+    // Edges first, corners on top so the g×g corner cells win in their
+    // squares; mid-edge is only covered by the edge strip.
+    stack![inner, north, south, west, east, nw, ne, sw, se]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 fn titlebar_inner<'a, Message>(
