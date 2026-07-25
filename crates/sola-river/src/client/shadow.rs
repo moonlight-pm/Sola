@@ -36,7 +36,7 @@ const BLUR: f32 = 11.0;
 const OFFSET_Y: f32 = 3.0;
 
 /// Peak opacity of the shadow (premultiplied black).
-const PEAK_ALPHA: f32 = 0.42;
+const PEAK_ALPHA: f32 = 0.28;
 
 /// Corner radius matching kit `RADIUS_XL` / floating_frame.
 const CORNER_RADIUS: f32 = 14.0;
