@@ -24,7 +24,7 @@
 use iced::widget::button;
 use iced::widget::text;
 use iced::widget::text::IntoFragment;
-use iced::{Background, Border, Color, Theme};
+use iced::{Background, Border, Color, Shadow, Theme};
 
 use crate::components::style::{
     self, HAIRLINE_A, HAIRLINE_STRONG_A, ON_FILL_DARK, PAD_CONTROL, PAD_CONTROL_SM, RADIUS_MD,
@@ -140,17 +140,21 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Filled danger — dark label, same density language as primary.
+/// Filled danger — dark label + vertical gradient (same language as primary).
 pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
-    style::filled_with(
+    // Reuse the glow path for gradient fill; shadow stays off (OD danger
+    // has inset highlight only, no outer glow).
+    let mut s = style::filled_with(
         p.danger.base,
         p.danger.strong,
         p.danger.weak,
         status,
         Color::from_rgb(0.102, 0.024, 0.031), // #1a0608
-        None,
-    )
+        Some(Shadow::default()),
+    );
+    s.shadow = Default::default();
+    s
 }
 
 /// Soft danger outline — tinted fill + danger border (restrained destructive).

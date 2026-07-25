@@ -43,19 +43,30 @@ Craft rules distilled from HIG density + the sola-kit design system pass.
 ### 2.1 Appearance and depth
 
 - **Dark graphite for all chrome** — menu bar, menus, launcher, switcher, popovers, kit apps. Content areas may stay dark or follow the app; shell chrome is always dark-first.
-- **Elevation through background steps**, not heavy borders. Base → raised → hover/selected. Soft hairlines (white@~7%) separate layers when needed.
+- **Elevation through background steps *and soft materials***, not heavy borders. Base → raised → hover/selected. Soft hairlines (opaque sRGB white-mix ~7% on the surface) separate layers when needed.
+- **Cards and primary fills are not flat slabs.** Kit chrome uses iced **linear gradients** (`style::card_fill`, `primary_fill`, `hero_fill`, `stage_fill`, `canvas_ambient`) so panels read as lit graphite, matching Open Design.
 - **Foreground content must stay readable.** Prefer cool off-white primary text over dim-on-dim.
 - **Accent is for selection, focus, and live status** — not large filled regions of shell chrome. One filled primary per control group.
 
-### 2.2 Materials and translucency
+### 2.2 Materials and what iced can do
 
-Materials (menu bar, menus, sidebars, HUD-style overlays) aim for **blur + translucent fills** so chrome sits *over* the desktop rather than as flat opaque slabs. Where the stack can’t blur, use **opaque graphite raised greys** that match the value hierarchy.
+Open Design uses CSS tools iced only partially has. Map intentionally:
 
-Sola goals (implement as the stack allows):
+| OD technique | Iced 0.14 | Kit approach |
+|--------------|-----------|--------------|
+| `linear-gradient(...)` | **Yes** — `Background::Gradient(Linear)` | `style::linear_bg` / `card_fill` / `primary_fill` / … |
+| Soft top highlight on cards / primaries | Yes (vertical linear) | bake into card / primary styles |
+| Dual **radial** ambient wash on canvas | **No** (radial TBD upstream) | multi-stop **linear** approx (`canvas_ambient`) |
+| `backdrop-filter: blur` materials | **No** | opaque raised greys / soft mixes on base |
+| Layered multi-background on one node | One fill per container | stack containers or bake into one gradient |
+| Inset box-shadow (rim light) | Shadow is outer only | slightly lighter gradient start stop |
+| `color-mix(... transparent)` edges | Alpha inflates on borders | **opaque** `mix_white(surface, t)` / `mix(a, b, t)` |
 
-- Menu bar, menus, launcher, switcher: **translucent / vibrancy-like** fills when compositor and kit support them; opaque fallbacks use graphite raised steps (not pure black everywhere unless matching a specific control).
-- Prefer **behind-window** blend for floating shell chrome (launcher, switcher, menus) so the desktop or windows show through softly.
-- Avoid fake glass: no multi-stop purple gradients, no decorative specular highlights. Translucency is structural, not ornament.
+Materials (menu bar, menus, sidebars, HUD-style overlays) still *aim* for blur + translucent fills when the compositor supports them. Until then:
+
+- Prefer **gradient lift + graphite steps** over flat `#151922` everywhere.
+- Prefer **behind-window** blend for floating shell chrome when possible; opaque fallbacks stay graphite, not pure black.
+- Avoid decorative multi-hue marketing gradients. Soft accent/selection washes only.
 
 Shell-specific alpha already lives in bus tokens (`shell-menubar-bg`, `shell-backdrop-dim`, `shell-switcher-bg`, …). Prefer those over hard-coded RGBA in views.
 

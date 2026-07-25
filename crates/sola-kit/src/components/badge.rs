@@ -21,8 +21,11 @@ pub enum Tone {
     Danger,
 }
 
-/// Compact pill — medium-weight 10px label, letterspaced uppercase feel,
-/// soft tone fill + matching border (OD soft badges, not solid slabs).
+/// Compact pill — medium-weight 10px uppercase label, soft tone fill +
+/// matching border (OD soft badges, not solid slabs).
+///
+/// Iced has no letter-spacing API; OD uses `letter-spacing: 0.08em` —
+/// medium weight + 10px + uppercase labels is the closest native match.
 pub fn badge<'a, Message: 'a>(
     label: impl text::IntoFragment<'a>,
     tone: Tone,

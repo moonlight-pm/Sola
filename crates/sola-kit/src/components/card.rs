@@ -9,7 +9,7 @@
 use iced::widget::{Container, container};
 use iced::{Background, Color, Element, Shadow, Theme, Vector};
 
-use crate::components::style::{hairline, RADIUS_LG, RADIUS_XL, SPACE_XL};
+use crate::components::style::{card_fill, hairline, RADIUS_LG, RADIUS_XL, SPACE_XL};
 
 /// Wrap `content` in a card-styled container. Default padding is 16px;
 /// override with `.padding(...)` on the returned container if needed.
@@ -21,8 +21,10 @@ pub fn card<'a, Message: 'a>(
 
 pub fn style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
+    let raised = p.background.weaker.color;
     container::Style {
-        background: Some(Background::Color(p.background.weaker.color)),
+        // Soft vertical lift — flat raised slabs read dull vs OD.
+        background: Some(card_fill(raised)),
         border: hairline(p, RADIUS_XL),
         // Tight soft lift — heavy blur + high alpha reads as a thick frame.
         shadow: Shadow {
@@ -40,7 +42,7 @@ pub fn style(theme: &Theme) -> container::Style {
 pub fn style_plain(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
-        background: Some(Background::Color(p.background.weaker.color)),
+        background: Some(card_fill(p.background.weaker.color)),
         border: iced::Border {
             color: Color::TRANSPARENT,
             width: 0.0,
@@ -71,7 +73,7 @@ pub fn plain<'a, Message: 'a>(
 pub fn modal_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
-        background: Some(Background::Color(p.background.weaker.color)),
+        background: Some(card_fill(p.background.weaker.color)),
         border: hairline(p, RADIUS_XL),
         shadow: Shadow {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.38),

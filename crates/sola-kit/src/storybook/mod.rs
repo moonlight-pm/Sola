@@ -21,6 +21,7 @@ use iced::widget::{button, column, container, pick_list, row, scrollable, text};
 use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
+use sola_kit::components::style::{canvas_ambient, linear_bg, mix, mix_white};
 use sola_kit::components::{
     ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar_with_header,
     text_input as kit_text_input,
@@ -1085,25 +1086,49 @@ impl Storybook {
         .width(Length::Fill)
         .height(Length::Fill);
 
-        let right = column![self.header(), content, self.font_prewarm()]
-            .width(Length::Fill)
-            .height(Length::Fill);
+        // Main column rides a soft ambient wash (OD dual radials → linear approx).
+        let right = container(
+            column![self.header(), content, self.font_prewarm()]
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|theme: &iced::Theme| {
+            let p = theme.extended_palette();
+            iced::widget::container::Style {
+                background: Some(canvas_ambient(
+                    p.background.base.color,
+                    p.primary.base.color,
+                    theme::selection(),
+                )),
+                ..Default::default()
+            }
+        });
 
         // Brand header (storybook only) + section nav — matches OD sidebar.
         let brand = {
-            let mark = container(iced::widget::Space::new().width(22).height(22)).style(|_| {
-                iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgb(
-                        0.239, 0.839, 0.961,
-                    ))), // accent seed
-                    border: iced::Border {
-                        color: iced::Color::from_rgba(1.0, 1.0, 1.0, 0.18),
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..Default::default()
-                }
-            });
+            let mark = container(iced::widget::Space::new().width(22).height(22)).style(
+                |theme: &iced::Theme| {
+                    let accent = theme.extended_palette().primary.base.color;
+                    let selection = theme::selection();
+                    // OD brand-mark: linear-gradient(145deg, accent+white, accent, selection+black)
+                    let top = mix_white(accent, 0.18);
+                    let bot = mix(selection, iced::Color::BLACK, 0.70);
+                    iced::widget::container::Style {
+                        background: Some(linear_bg(
+                            145.0,
+                            &[(0.0, top), (0.40, accent), (1.0, bot)],
+                        )),
+                        border: iced::Border {
+                            color: mix_white(accent, 0.18),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        ..Default::default()
+                    }
+                },
+            );
             container(
                 row![
                     mark,

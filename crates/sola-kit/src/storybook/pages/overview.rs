@@ -10,7 +10,10 @@ use iced::{Background, Border, Color, Element, Length, Padding};
 use sola_kit::components::badge::{self, Tone};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
-use sola_kit::components::style::{RADIUS_MD, RADIUS_SM, mix_white};
+use sola_kit::components::style::{
+    hairline, hairline_on, hero_fill, mix, mix_white, stage_fill, HAIRLINE_A, HAIRLINE_STRONG_A,
+    RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL,
+};
 use sola_kit::components::swatch::swatch_sized;
 use sola_kit::components::text::{body, caption, code, heading, muted, subheading};
 use sola_kit::components::text_input as kit_text_input;
@@ -43,57 +46,96 @@ pub fn view<'a>(
     .into()
 }
 
+/// OD `.ds-banner`: hero panel left + four stacked rule cards right
+/// (not a single combined card).
 fn north_star() -> Element<'static, ButtonMsg> {
-    let hero = column![
-        caption("NORTH STAR").style(muted),
-        text("Dense chrome.")
-            .font(fonts::display())
-            .size(20),
-        text("One decisive accent.")
-            .font(fonts::display())
-            .size(20),
-        body(
-            "Elevation from background steps and soft materials. Selection is \
-             intent, not a grey slab. Controls live in product compositions."
-        )
-        .style(muted),
-    ]
-    .spacing(6)
-    .width(Length::FillPortion(3));
+    let hero = container(
+        column![
+            text("NORTH STAR")
+                .font(fonts::ui_medium())
+                .size(10)
+                .style(|theme: &iced::Theme| {
+                    let p = theme.extended_palette();
+                    // OD: color-mix(accent 80%, fg)
+                    iced::widget::text::Style {
+                        color: Some(mix(p.primary.base.color, p.background.base.text, 0.80)),
+                    }
+                }),
+            text("Dense chrome.")
+                .font(fonts::display())
+                .size(20),
+            text("One decisive accent.")
+                .font(fonts::display())
+                .size(20),
+            body(
+                "Elevation from background steps and soft materials. Selection is \
+                 intent, not a grey slab. Controls live in product compositions."
+            )
+            .style(muted),
+        ]
+        .spacing(6),
+    )
+    .padding(Padding::from([22, 22]))
+    .width(Length::FillPortion(6))
+    .height(Length::Fill)
+    .style(|theme: &iced::Theme| {
+        let p = theme.extended_palette();
+        let bg = p.background.base.color;
+        let raised = p.background.weaker.color;
+        let selection = sola_kit::theme::selection();
+        iced::widget::container::Style {
+            background: Some(hero_fill(bg, raised, selection)),
+            border: hairline_on(raised, HAIRLINE_STRONG_A, RADIUS_XL),
+            ..Default::default()
+        }
+    });
 
     let rules = column![
-        rule_row(
+        rule_card(
             "Tokens first",
             "All chrome resolves through kit / bus atoms. No snowflake hex in views.",
         ),
-        rule_row(
+        rule_card(
             "Materials",
             "Sidebar and header use soft raised fills; depth without heavy chrome borders.",
         ),
-        rule_row(
+        rule_card(
             "Density",
             "Quiet, compact chrome. Status over hierarchy theater.",
         ),
-        rule_row(
+        rule_card(
             "One primary",
             "At most one filled accent control per group. Ghost = muted lift only.",
         ),
     ]
-    .spacing(12)
-    .width(Length::FillPortion(2));
+    .spacing(8)
+    .width(Length::FillPortion(5));
 
-    card(row![hero, rules].spacing(24).width(Length::Fill))
-        .padding(18)
-        .width(Length::Fill)
-        .into()
+    row![hero, rules].spacing(16).width(Length::Fill).into()
 }
 
-fn rule_row(title: &'static str, body_text: &'static str) -> Element<'static, ButtonMsg> {
-    column![
-        text(title).font(fonts::ui_medium()).size(13),
-        caption(body_text).style(muted),
-    ]
-    .spacing(3)
+fn rule_card(title: &'static str, body_text: &'static str) -> Element<'static, ButtonMsg> {
+    container(
+        column![
+            text(title).font(fonts::ui_medium()).size(12),
+            caption(body_text).style(muted),
+        ]
+        .spacing(3),
+    )
+    .padding(Padding::from([12, 14]))
+    .width(Length::Fill)
+    .style(|theme: &iced::Theme| {
+        let p = theme.extended_palette();
+        let raised = p.background.weaker.color;
+        let bg = p.background.base.color;
+        // OD: color-mix(raised 75%, transparent) over canvas → mix with base.
+        let fill = mix(raised, bg, 0.75);
+        iced::widget::container::Style {
+            background: Some(Background::Color(fill)),
+            border: hairline_on(fill, HAIRLINE_A, RADIUS_LG),
+            ..Default::default()
+        }
+    })
     .into()
 }
 
@@ -102,14 +144,14 @@ fn selection_compare(selection: Color) -> Element<'static, ButtonMsg> {
 
     row![
         compare_card(
-            "Flat grey · low structure",
+            "Live custom · SELECTION",
             "drift",
             false,
             flat_grey,
             "#4b4b4b — flat grey, low structure",
         ),
         compare_card(
-            "Seed selection · quiet intent",
+            "Seed system · SELECTION",
             "bound",
             true,
             selection,
@@ -128,25 +170,33 @@ fn compare_card(
     active_fill: Color,
     caption_text: &'static str,
 ) -> Element<'static, ButtonMsg> {
-    let tag_el = container(caption(tag).style(if bound {
-        sola_kit::components::text::accent
-    } else {
-        muted
-    }))
+    // OD `.tag` — compact uppercase pill. Bound gets soft accent wash;
+    // drift is outline-only muted. Opaque mixes so iced doesn't inflate alpha.
+    let tag_el = container(
+        text(tag)
+            .font(fonts::ui_medium())
+            .size(10)
+            .style(move |theme: &iced::Theme| {
+                let p = theme.extended_palette();
+                iced::widget::text::Style {
+                    color: Some(if bound {
+                        p.primary.base.color
+                    } else {
+                        p.secondary.base.text
+                    }),
+                }
+            }),
+    )
     .padding(Padding::from([2, 7]))
     .style(move |theme: &iced::Theme| {
         let p = theme.extended_palette();
+        let raised = p.background.weaker.color;
         if bound {
+            let accent = p.primary.base.color;
             iced::widget::container::Style {
-                background: Some(Background::Color(Color {
-                    a: 0.10,
-                    ..p.primary.base.color
-                })),
+                background: Some(Background::Color(mix(accent, raised, 0.10))),
                 border: Border {
-                    color: Color {
-                        a: 0.35,
-                        ..p.primary.base.color
-                    },
+                    color: mix(accent, raised, 0.35),
                     width: 1.0,
                     radius: 999.0.into(),
                 },
@@ -154,11 +204,8 @@ fn compare_card(
             }
         } else {
             iced::widget::container::Style {
-                border: Border {
-                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.07),
-                    width: 1.0,
-                    radius: 999.0.into(),
-                },
+                background: None,
+                border: hairline_on(raised, HAIRLINE_A, 999.0),
                 ..Default::default()
             }
         }
@@ -166,7 +213,10 @@ fn compare_card(
 
     let hdr = container(
         row![
-            caption(header).style(muted),
+            text(header)
+                .font(fonts::ui_medium())
+                .size(11)
+                .style(muted),
             Space::new().width(Length::Fill),
             tag_el,
         ]
@@ -176,26 +226,66 @@ fn compare_card(
     .width(Length::Fill)
     .style(|theme: &iced::Theme| {
         let p = theme.extended_palette();
+        let raised = p.background.weaker.color;
+        let bg = p.background.base.color;
         iced::widget::container::Style {
-            background: Some(Background::Color(Color {
-                a: 0.80,
-                ..p.background.weaker.color
-            })),
+            // OD: color-mix(raised 80%, transparent) over canvas.
+            background: Some(Background::Color(mix(raised, bg, 0.80))),
+            border: Border {
+                color: mix_white(raised, HAIRLINE_A),
+                width: 0.0,
+                radius: 0.0.into(),
+            },
             ..Default::default()
         }
     });
 
-    let rows = column![
-        sel_row("Theme", false, active_fill),
-        sel_row("Field", true, active_fill),
-        sel_row("Button", false, active_fill),
-        caption(caption_text).style(muted),
-    ]
-    .spacing(4)
-    .padding(14);
+    let body_block = container(
+        column![
+            sel_row("Theme", false, active_fill),
+            sel_row("Field", true, active_fill),
+            sel_row("Button", false, active_fill),
+            container(caption(caption_text).style(muted)).padding(Padding {
+                top: 8.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 0.0,
+            }),
+        ]
+        .spacing(4),
+    )
+    .padding(14)
+    .width(Length::Fill)
+    .style(|theme: &iced::Theme| {
+        let p = theme.extended_palette();
+        iced::widget::container::Style {
+            // OD `.compare-card .body { background: var(--bg) }`
+            background: Some(Background::Color(p.background.base.color)),
+            ..Default::default()
+        }
+    });
 
-    container(column![hdr, rows])
-        .style(card::style)
+    // Hairline under header between the two sections.
+    let rule = container(Space::new().width(Length::Fill).height(1))
+        .width(Length::Fill)
+        .height(Length::Fixed(1.0))
+        .style(|theme: &iced::Theme| {
+            let raised = theme.extended_palette().background.weaker.color;
+            iced::widget::container::Style {
+                background: Some(Background::Color(mix_white(raised, HAIRLINE_A))),
+                ..Default::default()
+            }
+        });
+
+    container(column![hdr, rule, body_block])
+        .style(|theme: &iced::Theme| {
+            let p = theme.extended_palette();
+            iced::widget::container::Style {
+                background: None,
+                border: hairline(p, RADIUS_LG),
+                ..Default::default()
+            }
+        })
         .width(Length::Fill)
         .into()
 }
@@ -344,7 +434,7 @@ fn scale_chip(name: &'static str, value: &'static str) -> Element<'static, Butto
 }
 
 fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
-    let product = card(
+    let product = container(
         column![
             caption("PRODUCT MOMENT").style(muted),
             subheading("Session identity"),
@@ -376,7 +466,7 @@ fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
                 .align_y(iced::Alignment::Center),
             )
             .padding(Padding {
-                top: 4.0,
+                top: 14.0,
                 right: 0.0,
                 bottom: 0.0,
                 left: 0.0,
@@ -384,8 +474,19 @@ fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
         ]
         .spacing(10),
     )
-    .padding(16)
-    .width(Length::FillPortion(3));
+    .padding(18)
+    .width(Length::FillPortion(3))
+    .style(|theme: &iced::Theme| {
+        let p = theme.extended_palette();
+        let bg = p.background.base.color;
+        let raised = p.background.weaker.color;
+        let accent = p.primary.base.color;
+        iced::widget::container::Style {
+            background: Some(stage_fill(bg, raised, accent)),
+            border: hairline_on(raised, HAIRLINE_STRONG_A, RADIUS_XL),
+            ..Default::default()
+        }
+    });
 
     let style_key = card(
         column![

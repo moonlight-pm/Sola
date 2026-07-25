@@ -3,6 +3,10 @@
 //!
 //! - [`filled`] builds the four-state `button::Style` shared by the
 //!   `primary` and `danger` buttons (they differ only by palette tier).
+//! - [`card_fill`] / [`primary_fill`] / [`hero_fill`] / [`stage_fill`] /
+//!   [`canvas_ambient`] are **linear** material fills — iced has no
+//!   radial gradients yet, so dual-radial OD ambients become multi-stop
+//!   linear approximations.
 //! - [`hairline`] / [`hairline_strong`] build **thin** edges (card /
 //!   popover / swatch / text_input). See the hairline note below.
 //! - [`dim`] is the shared disabled treatment (halve every alpha).
@@ -21,9 +25,10 @@
 //! So we bake the CSS mix as an **opaque** colour on the intended
 //! surface: `mix_white(surface, 0.07)`. Same intent, correct weight.
 
+use iced::gradient::Linear;
 use iced::theme::palette::{Extended, Pair};
 use iced::widget::button;
-use iced::{Background, Border, Color, Shadow, Vector};
+use iced::{Background, Border, Color, Degrees, Shadow, Vector};
 
 /// Corner radii (sola-kit-ds graphite pass). `SM` = inputs / ghost chrome,
 /// `MD` = buttons / swatches, `LG` = cards / popovers, `XL` = large
@@ -66,6 +71,73 @@ pub fn mix_white(surface: Color, amount: f32) -> Color {
         b: surface.b * k + t,
         a: 1.0,
     }
+}
+
+/// CSS `color-mix(in srgb, a amount, b)` — opaque sRGB lerp, `amount` of `a`.
+pub fn mix(a: Color, b: Color, amount: f32) -> Color {
+    let t = amount.clamp(0.0, 1.0);
+    let u = 1.0 - t;
+    Color {
+        r: a.r * t + b.r * u,
+        g: a.g * t + b.g * u,
+        b: a.b * t + b.b * u,
+        a: a.a * t + b.a * u,
+    }
+}
+
+/// Linear gradient background. Angle is CSS-like degrees via iced
+/// (`0°` = up, clockwise). Stops are `(offset 0..=1, color)`; max 8.
+///
+/// Iced ships **linear only** (radial/conic TBD). Use this for card lift,
+/// hero washes, primary fills, and ambient canvas approximations.
+pub fn linear_bg(angle_deg: f32, stops: &[(f32, Color)]) -> Background {
+    let mut g = Linear::new(Degrees(angle_deg));
+    for &(offset, color) in stops {
+        g = g.add_stop(offset, color);
+    }
+    Background::Gradient(g.into())
+}
+
+/// OD `.card` fill — soft top highlight into raised graphite
+/// (`linear-gradient(180deg, raised+white4%, raised)`).
+pub fn card_fill(raised: Color) -> Background {
+    linear_bg(180.0, &[(0.0, mix_white(raised, 0.04)), (1.0, raised)])
+}
+
+/// OD primary / filled accent — top highlight into solid
+/// (`linear-gradient(180deg, accent+white8%, accent)`).
+pub fn primary_fill(accent: Color) -> Background {
+    linear_bg(180.0, &[(0.0, mix_white(accent, 0.08)), (1.0, accent)])
+}
+
+/// North-star hero panel — selection-tinted diagonal into canvas
+/// (`linear-gradient(160deg, selection@55%+raised, raised 55%, bg)`).
+pub fn hero_fill(bg: Color, raised: Color, selection: Color) -> Background {
+    let top = mix(selection, raised, 0.55);
+    linear_bg(160.0, &[(0.0, top), (0.55, raised), (1.0, bg)])
+}
+
+/// Control-stage product panel — cool raised → canvas with a slight
+/// cool lift at the top (radial glow approximated by a lighter start).
+pub fn stage_fill(bg: Color, raised: Color, accent: Color) -> Background {
+    let cool = mix(Color::from_rgb(0.102, 0.133, 0.188), raised, 0.20); // #1a2230-ish into raised
+    let top = mix(cool, raised, 0.80);
+    let glow_start = mix(accent, top, 0.12);
+    linear_bg(
+        165.0,
+        &[(0.0, glow_start), (0.45, raised), (1.0, bg)],
+    )
+}
+
+/// Storybook / app canvas ambient — approximates OD dual radials with
+/// a soft multi-stop linear (selection wash → base → faint accent).
+pub fn canvas_ambient(bg: Color, accent: Color, selection: Color) -> Background {
+    let sel_wash = mix(selection, bg, 0.28);
+    let accent_wash = mix(accent, bg, 0.05);
+    linear_bg(
+        118.0,
+        &[(0.0, sel_wash), (0.42, bg), (0.78, bg), (1.0, accent_wash)],
+    )
 }
 
 /// Soft hairline on the raised surface (cards, popovers, swatches).
@@ -146,6 +218,9 @@ pub fn filled(
 }
 
 /// Like [`filled`], with explicit label colour and optional resting glow.
+///
+/// When `glow` is set (primary actions), the fill is a vertical accent
+/// gradient matching OD `.btn-primary` rather than a flat slab.
 pub fn filled_with(
     base: Pair,
     strong: Pair,
@@ -154,8 +229,15 @@ pub fn filled_with(
     text: Color,
     glow: Option<Shadow>,
 ) -> button::Style {
+    let fill = |c: Color| {
+        if glow.is_some() {
+            primary_fill(c)
+        } else {
+            Background::Color(c)
+        }
+    };
     let resting = button::Style {
-        background: Some(Background::Color(base.color)),
+        background: Some(fill(base.color)),
         text_color: text,
         border: Border {
             color: Color::TRANSPARENT,
@@ -167,7 +249,12 @@ pub fn filled_with(
     };
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(strong.color)),
+            // OD primary: brightness(1.05) — only lift the gradient path.
+            background: Some(fill(if glow.is_some() {
+                mix_white(strong.color, 0.06)
+            } else {
+                strong.color
+            })),
             shadow: glow.unwrap_or_default(),
             ..resting
         },
@@ -188,7 +275,7 @@ pub fn dim(base: button::Style) -> button::Style {
     button::Style {
         background: base.background.map(|bg| match bg {
             Background::Color(c) => Background::Color(Color { a: c.a * 0.5, ..c }),
-            other => other,
+            Background::Gradient(g) => Background::Gradient(g.scale_alpha(0.5)),
         }),
         text_color: Color {
             a: base.text_color.a * 0.5,
@@ -216,10 +303,29 @@ mod tests {
     }
 
     #[test]
+    fn filled_with_glow_uses_gradient_fill() {
+        let base = pair(0.1, 0.9);
+        let s = filled_with(
+            base,
+            pair(0.2, 0.9),
+            pair(0.05, 0.9),
+            button::Status::Active,
+            ON_FILL_DARK,
+            Some(accent_glow(base.color)),
+        );
+        assert!(
+            matches!(s.background, Some(Background::Gradient(_))),
+            "primary path must use a gradient fill"
+        );
+        assert_eq!(s.text_color, ON_FILL_DARK);
+    }
+
+    #[test]
     fn filled_hover_uses_strong_bg_but_keeps_base_text() {
         let base = pair(0.1, 0.9);
         let strong = pair(0.2, 0.3);
         let s = filled(base, strong, pair(0.05, 0.9), button::Status::Hovered);
+        // No glow → flat strong colour (with slight white lift only when glowed).
         assert_eq!(s.background, Some(Background::Color(strong.color)));
         // Text stays the base pair's text — hover only lifts the fill.
         assert_eq!(s.text_color, base.text);
