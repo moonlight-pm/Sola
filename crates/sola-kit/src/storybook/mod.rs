@@ -21,6 +21,7 @@ use iced::widget::{button, column, container, pick_list, row, scrollable, text};
 use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
+use sola_kit::components::style::{mix_white, PAD_CONTROL_SM, HAIRLINE_A};
 use sola_kit::components::{
     ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar,
     text_input as kit_text_input,
@@ -34,6 +35,7 @@ pub mod pages;
 /// doesn't track its own selection — see its module docs).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
+    Overview,
     Theme,
     Shell,
     Text,
@@ -56,8 +58,9 @@ pub enum Page {
 
 impl Page {
     /// Order rendered in the sidebar. Grouped by [`Page::section`]:
-    /// Theme → Layout → Components.
+    /// System → Layout → Components (matches sola-kit-ds).
     pub const ALL: &'static [Page] = &[
+        Page::Overview,
         Page::Theme,
         Page::Shell,
         Page::Divider,
@@ -80,6 +83,7 @@ impl Page {
 
     pub fn label(self) -> &'static str {
         match self {
+            Page::Overview => "Overview",
             Page::Theme => "Theme",
             Page::Shell => "Shell",
             Page::Text => "Text",
@@ -101,11 +105,11 @@ impl Page {
         }
     }
 
-    /// Section bucket for the sidebar. Mirrors the original kit's
-    /// Theme / Layout / Components grouping.
+    /// Section bucket for the sidebar. Mirrors sola-kit-ds:
+    /// System / Layout / Components.
     pub fn section(self) -> Option<&'static str> {
         match self {
-            Page::Theme | Page::Shell => Some("Theme"),
+            Page::Overview | Page::Theme | Page::Shell => Some("System"),
             Page::Divider | Page::Split | Page::Toolbar => Some("Layout"),
             Page::Text
             | Page::Button
@@ -126,15 +130,16 @@ impl Page {
     /// The palette atoms this page's component visibly uses, surfaced as
     /// an inline editor panel below its demo (see `page_view`). Curated,
     /// best-effort — tune freely. Empty for pages that carry their own
-    /// editors (Theme's full grid, Shell's token editor). Authored from
-    /// each component's actual `extended_palette()` slot usage.
+    /// editors (Overview foundation, Theme's full grid, Shell's token
+    /// editor). Authored from each component's actual `extended_palette()`
+    /// slot usage.
     pub fn atoms(self) -> &'static [AtomField] {
         use AtomField::{
             Accent, Bg, BgHover, BgRaised, Border, Danger, Fg, FgMuted, Selection, Success,
             Warning,
         };
         match self {
-            Page::Theme | Page::Shell => &[],
+            Page::Overview | Page::Theme | Page::Shell => &[],
             Page::Divider => &[Border, Bg],
             Page::Split => &[Bg, BgRaised, Border],
             Page::Titlebar => &[Bg, BgRaised, Border, Fg],
@@ -457,7 +462,7 @@ impl Storybook {
         // bus replay re-baselines it once a saved preset resolves.
         let checkpoint = default_preset.clone();
         Self {
-            page: Page::Theme,
+            page: Page::Overview,
             toolbar: pages::toolbar::State::default(),
             button: pages::button::State::default(),
             field: pages::field::State::default(),
@@ -535,6 +540,12 @@ impl Storybook {
                 }
                 _ => None,
             }));
+        }
+        if self.sidebar.reorder_dragging {
+            subs.push(
+                iced::time::every(std::time::Duration::from_millis(16))
+                    .map(|_| Msg::Sidebar(pages::sidebar::Msg::ReorderTick)),
+            );
         }
 
         // Split dogfood: live divider drag on the Split page.
@@ -1069,23 +1080,51 @@ impl Storybook {
 
         let content = scrollable(
             container(self.page_view())
-                .padding(Padding::from([20, 28]))
+                .padding(Padding::from([24, 32]))
                 .width(Length::Fill),
         )
         .width(Length::Fill)
         .height(Length::Fill);
 
-        let right = column![self.header(), content, self.font_prewarm()]
-            .width(Length::Fill)
-            .height(Length::Fill);
+        // Content column: solid seed canvas (`#0c0e12`).
+        let content_col = container(
+            column![content, self.font_prewarm()]
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|theme: &iced::Theme| {
+            let p = theme.extended_palette();
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(p.background.base.color)),
+                ..Default::default()
+            }
+        });
 
-        // The atom colour picker is anchored to its swatch from inside
-        // the Theme page (see `pages::theme` + `popover_anchored`), so
-        // there's no window-level float to compose here.
-        row![sidebar(sections), right]
-            .width(Length::Fill)
+        // Sidebar right hairline (iced borders are all-sides).
+        let rail = container(iced::widget::Space::new().width(1).height(Length::Fill))
+            .width(Length::Fixed(1.0))
             .height(Length::Fill)
-            .into()
+            .style(|theme: &iced::Theme| {
+                let raised = theme.extended_palette().background.weaker.color;
+                iced::widget::container::Style {
+                    background: Some(iced::Background::Color(mix_white(raised, HAIRLINE_A))),
+                    ..Default::default()
+                }
+            });
+
+        // Full-width theme bar across the window; nav + content below.
+        // (No sidebar brand block — that lived only in the OD comp.)
+        column![
+            self.header(),
+            row![sidebar(sections), rail, content_col]
+                .width(Length::Fill)
+                .height(Length::Fill),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     /// Zero-height transparent strip that lays out every family name
@@ -1115,6 +1154,9 @@ impl Storybook {
     }
 
     /// Global theme management bar shown above the content panel.
+    ///
+    /// Density matches OD header: ~30px controls (`btn-sm` / theme-select),
+    /// not full-size kit buttons.
     fn header(&self) -> Element<'_, Msg> {
         let body: Element<'_, Msg> = match &self.naming {
             Some(buffer) => {
@@ -1125,16 +1167,13 @@ impl Storybook {
                     .on_input(Msg::NewThemeInput)
                     .on_submit(Msg::NewThemeCommit)
                     .style(kit_text_input::style)
-                    .width(Length::Fixed(240.0));
-                let mut save = button(text("Save"))
-                    .style(kit_button::primary)
-                    .padding(Padding::from([6, 14]));
+                    .padding(Padding::from([5, 11]))
+                    .width(Length::Fixed(220.0));
+                let mut save = kit_button::labeled_sm("Save", kit_button::primary);
                 if name_ok {
                     save = save.on_press(Msg::NewThemeCommit);
                 }
-                let cancel = button(text("Cancel"))
-                    .style(kit_button::ghost)
-                    .padding(Padding::from([6, 14]))
+                let cancel = kit_button::labeled_sm("Cancel", kit_button::ghost)
                     .on_press(Msg::NewThemeCancel);
                 let hint = text(if trimmed.is_empty() {
                     "lowercase letters and hyphens (e.g. solar-flare)"
@@ -1161,19 +1200,20 @@ impl Storybook {
             None => {
                 let names: Vec<String> =
                     self.themes.iter().map(|t| t.name.clone()).collect();
+                // OD `.theme-select`: 220×30, compact pad.
                 let picker = pick_list(names, Some(self.active().name.clone()), Msg::SelectTheme)
-                    .width(Length::Fixed(240.0));
-                let new_btn = button(text("New Theme"))
-                    .style(kit_button::secondary)
-                    .padding(Padding::from([6, 14]))
+                    .width(Length::Fixed(220.0))
+                    .padding(Padding::from([5, 11]))
+                    .text_size(13.0);
+                let new_btn = kit_button::labeled_sm("New Theme", kit_button::secondary)
                     .on_press(Msg::NewThemeStart);
                 // Two-stage delete: outline "Delete" arms the confirm,
                 // a second click ("Confirm?") commits. Default is
                 // undeletable, so it renders disabled (no on_press).
                 let del_btn: Element<'_, Msg> = if self.is_default_active() {
-                    button(text("Delete"))
+                    button(text("Delete").size(12))
                         .style(kit_button::danger_outline)
-                        .padding(Padding::from([6, 14]))
+                        .padding(PAD_CONTROL_SM)
                         .into()
                 } else {
                     kit_button::confirm_button(
@@ -1183,7 +1223,7 @@ impl Storybook {
                         Msg::ArmDelete,
                         Msg::DeleteActiveTheme,
                     )
-                    .padding(Padding::from([6, 14]))
+                    .padding(PAD_CONTROL_SM)
                     .into()
                 };
                 let mut controls = row![picker, new_btn, del_btn]
@@ -1199,13 +1239,9 @@ impl Storybook {
                                 color: Some(theme.extended_palette().warning.base.color),
                             }
                         });
-                    let save = button(text("Save"))
-                        .style(kit_button::primary)
-                        .padding(Padding::from([6, 14]))
+                    let save = kit_button::labeled_sm("Save", kit_button::primary)
                         .on_press(Msg::SaveTheme);
-                    let revert = button(text("Revert"))
-                        .style(kit_button::ghost)
-                        .padding(Padding::from([6, 14]))
+                    let revert = kit_button::labeled_sm("Revert", kit_button::ghost)
                         .on_press(Msg::RevertTheme);
                     controls = controls.push(indicator).push(save).push(revert);
                 }
@@ -1213,27 +1249,40 @@ impl Storybook {
             }
         };
 
-        container(body)
-            .padding(Padding::from([10, 28]))
-            .width(Length::Fill)
-            .style(|theme: &iced::Theme| {
-                let p = theme.extended_palette();
-                iced::widget::container::Style {
-                    background: Some(iced::Background::Color(p.background.weaker.color)),
-                    border: iced::Border {
-                        color: p.background.strong.color,
-                        width: 0.0,
-                        radius: 0.0.into(),
-                    },
-                    ..Default::default()
-                }
-            })
-            .into()
+        // Raised header strip + bottom hairline only (no full box border).
+        // OD: padding 10×24, min-height ~48 — compact controls keep it tight.
+        column![
+            container(body)
+                .padding(Padding::from([8, 24]))
+                .width(Length::Fill)
+                .style(|theme: &iced::Theme| {
+                    let p = theme.extended_palette();
+                    iced::widget::container::Style {
+                        background: Some(iced::Background::Color(p.background.weaker.color)),
+                        border: iced::Border::default(),
+                        ..Default::default()
+                    }
+                }),
+            container(iced::widget::Space::new().width(Length::Fill).height(1))
+                .width(Length::Fill)
+                .height(Length::Fixed(1.0))
+                .style(|theme: &iced::Theme| {
+                    let raised = theme.extended_palette().background.weaker.color;
+                    iced::widget::container::Style {
+                        background: Some(iced::Background::Color(mix_white(raised, HAIRLINE_A))),
+                        ..Default::default()
+                    }
+                }),
+        ]
+        .width(Length::Fill)
+        .into()
     }
 
     fn page_view(&self) -> Element<'_, Msg> {
         let editable = !self.is_default_active();
         let content: Element<'_, Msg> = match self.page {
+            Page::Overview => pages::overview::view(&self.active().atoms, &self.button)
+                .map(Msg::Button),
             Page::Theme => pages::theme::view(
                 &self.active().atoms,
                 &self.active().fonts,

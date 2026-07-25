@@ -17,7 +17,7 @@ pub(crate) fn strip(pending: &PendingApproval) -> Element<'_, Msg> {
         let is_deny = kind.contains("reject") || kind.contains("deny");
         let style = if is_deny {
             has_deny = true;
-            kit_btn::danger_soft
+            kit_btn::danger_outline
         } else if kind.contains("allow_always") || kind.contains("always") {
             kit_btn::secondary
         } else {

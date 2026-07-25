@@ -1,7 +1,7 @@
 use iced::{Element, Theme};
 use sola_bus::topics::TerminalConfig;
 use sola_kit::components::{
-    DividerColors, ReorderCfg, SidebarItem, SidebarPanel, SidebarSection,
+    DividerColors, ReorderAnim, ReorderCfg, SidebarItem, SidebarPanel, SidebarSection,
 };
 
 use crate::state::Tabs;
@@ -27,6 +27,8 @@ pub struct SidebarState {
     /// Gates live-reorder so a plain click never shuffles the strip;
     /// also distinguishes click (select) from drag (reorder) on release.
     pub reorder_dragging: bool,
+    /// Sibling glide offsets while a reorder drag is live.
+    pub reorder_anim: ReorderAnim,
 }
 
 /// cwd basename → tab label, falling back to "shell".
@@ -112,6 +114,7 @@ pub fn view<'a>(
                 None
             },
             cursor_y: state.reorder_cursor_y,
+            anim: state.reorder_dragging.then_some(&state.reorder_anim),
         })
         .build()
 }

@@ -1,4 +1,4 @@
-//! Badge — status pill with a colored background and a short label.
+//! Badge — status pill with a soft tinted background and a short label.
 //!
 //! `badge(label, tone)` returns an `Element` ready to drop into a row
 //! or inline run. Tones map to kit palette tiers so a `Success` badge
@@ -8,7 +8,7 @@
 use iced::widget::{container, text};
 use iced::{Background, Border, Color, Element, Padding, Theme};
 
-use crate::components::style::RADIUS_PILL;
+use crate::components::style::{RADIUS_PILL, mix_white};
 use crate::fonts;
 
 /// Visual flavors of badge. Each maps to a palette tier in [`style`].
@@ -21,14 +21,17 @@ pub enum Tone {
     Danger,
 }
 
-/// Compact pill — medium-weight 10px label, 2×8 padding, fully
-/// rounded corners. Pass a [`Tone`] for the color story.
+/// Compact pill — medium-weight 10px uppercase label, soft tone fill +
+/// matching border (OD soft badges, not solid slabs).
+///
+/// Iced has no letter-spacing API; OD uses `letter-spacing: 0.08em` —
+/// medium weight + 10px + uppercase labels is the closest native match.
 pub fn badge<'a, Message: 'a>(
     label: impl text::IntoFragment<'a>,
     tone: Tone,
 ) -> Element<'a, Message, Theme> {
     container(text(label).font(fonts::ui_medium()).size(10))
-        .padding(Padding::from([2, 8]))
+        .padding(Padding::from([3, 8]))
         .style(move |t| style(t, tone))
         .into()
 }
@@ -36,30 +39,41 @@ pub fn badge<'a, Message: 'a>(
 /// Style fn for the badge container. Exposed so callers building their
 /// own labeled chrome can pick up the same palette mapping.
 ///
-/// Soft tinted pills (graphite): ~12% tone fill + ~28% tone border +
-/// solid tone text — not solid filled slabs (except Neutral quiet grey).
+/// Status tones use ~14% tone fill + ~28% tone border + tone-coloured
+/// text. Neutral is quiet hover-grey + hairline.
 pub fn style(theme: &Theme, tone: Tone) -> container::Style {
     let p = theme.extended_palette();
-    let (fg, base) = match tone {
-        Tone::Neutral => (p.secondary.base.text, p.background.strong.color),
-        Tone::Accent => (p.primary.base.color, p.primary.base.color),
-        Tone::Success => (p.success.base.color, p.success.base.color),
-        Tone::Warning => (p.warning.base.color, p.warning.base.color),
-        Tone::Danger => (p.danger.base.color, p.danger.base.color),
+    // Soft fills + borders: bake tone into the raised surface (opaque)
+    // so iced's linear border path doesn't inflate alpha edges.
+    let raised = p.background.weaker.color;
+    let soft = |c: Color, amt: f32| Color {
+        r: raised.r * (1.0 - amt) + c.r * amt,
+        g: raised.g * (1.0 - amt) + c.g * amt,
+        b: raised.b * (1.0 - amt) + c.b * amt,
+        a: 1.0,
     };
-    let (bg, border) = if matches!(tone, Tone::Neutral) {
-        (
-            Color {
-                a: 0.85,
-                ..base
-            },
-            p.background.stronger.color,
-        )
-    } else {
-        (
-            Color { a: 0.12, ..base },
-            Color { a: 0.28, ..base },
-        )
+    let (bg, fg, border) = match tone {
+        Tone::Neutral => (
+            mix_white(raised, 0.06),
+            p.secondary.base.text,
+            mix_white(raised, 0.08),
+        ),
+        Tone::Accent => {
+            let c = p.primary.base.color;
+            (soft(c, 0.14), c, soft(c, 0.28))
+        }
+        Tone::Success => {
+            let c = p.success.base.color;
+            (soft(c, 0.14), c, soft(c, 0.28))
+        }
+        Tone::Warning => {
+            let c = p.warning.base.color;
+            (soft(c, 0.14), c, soft(c, 0.28))
+        }
+        Tone::Danger => {
+            let c = p.danger.base.color;
+            (soft(c, 0.14), c, soft(c, 0.28))
+        }
     };
     container::Style {
         background: Some(Background::Color(bg)),

@@ -8,44 +8,65 @@
 
 ## 1. North star
 
-**Sola should look and feel like macOS in Dark Mode**, tuned for this workflow, and further tunable as it is used.
+**Sola is a cool graphite tool UI** — dense chrome, sparse cyan signal, quiet
+selection — with **macOS Dark Mode density and hierarchy** as craft reference,
+not a pixel-perfect HIG clone.
 
-We are **not inventing a novel desktop aesthetic**. We borrow Apple’s dark-mode visual system — materials, hierarchy, menu bar chrome, controls, density, type roles — and only diverge where Sola’s windowing model requires it.
+Open Design source of truth for kit visuals: project **Sola** → `sola-kit-ds.html`.
+Seed atoms live in `sola-kit::theme::hex::*` and `sola-core` `Palette::seed`
+(must stay in sync).
+
+We borrow Apple’s *structural* ideas — materials, elevation steps, menu bar
+roles, control density, type roles — and diverge where Sola’s windowing model
+or the graphite brand requires it.
 
 ### Explicit departures (for now)
 
 | Area | macOS default | Sola |
 |------|---------------|------|
+| Palette | System greys | **Cool graphite** (`#0c0e12` / `#151922` / …) |
 | Window layout | Freeform windows with title bars | **Tiling / zoning** is primary |
 | Zoned (tiled) windows | Title bar + traffic lights | **No title bars** on zoned windows |
-| Everything else | HIG dark mode | Follow macOS closely |
+| Primary controls | Flat system blue | Soft accent fill, **dark label**, optional glow |
+| Hairlines | Solid system separator | Soft **white@α** edges |
+| Everything else | HIG dark mode density | Follow density; prefer graphite tokens |
 
-If a visual decision is not listed as a departure, **prefer the macOS answer**.
-
-Further departures may be added later as real usage demands them. Do not invent stylistic uniqueness for its own sake.
+Further departures may be added later as real usage demands them. Do not invent
+stylistic uniqueness for its own sake beyond the graphite brand.
 
 ---
 
-## 2. What “macOS Dark Mode” means here
+## 2. What “graphite tool UI” means here
 
-Distilled from Apple’s HIG (Dark Mode, Color, Materials, Layout, Menus, Windows) and applied as product rules for Sola.
+Craft rules distilled from HIG density + the sola-kit design system pass.
 
 ### 2.1 Appearance and depth
 
-- **Dark palette for all chrome** — menu bar, menus, launcher, switcher, popovers, kit apps. Content areas may stay dark or follow the app; shell chrome is always dark-first.
-- **Elevation through background steps**, not heavy borders or shadows. Base surface → raised panel → hover/selected. Apple’s dark mode uses elevated backgrounds so layers read as depth without loud outlines.
-- **Foreground content must stay readable.** Dark Mode often uses *greater perceptual contrast* for text and icons against dark fills. Prefer slightly brighter primary text over dim-on-dim.
-- **Accent is for selection, focus, and live status** — not large filled regions of shell chrome. macOS treats system accent as a sparse signal; Sola’s cyan accent should behave the same way unless a control is intentionally “primary.”
+- **Dark graphite for all chrome** — menu bar, menus, launcher, switcher, popovers, kit apps. Content areas may stay dark or follow the app; shell chrome is always dark-first.
+- **Elevation through background steps *and soft materials***, not heavy borders. Base → raised → hover/selected. Soft hairlines (opaque sRGB white-mix ~7% on the surface) separate layers when needed.
+- **Cards and primary fills are not flat slabs.** Kit chrome uses iced **linear gradients** (`style::card_fill`, `primary_fill`, `hero_fill`, `stage_fill`, `canvas_ambient`) so panels read as lit graphite, matching Open Design.
+- **Foreground content must stay readable.** Prefer cool off-white primary text over dim-on-dim.
+- **Accent is for selection, focus, and live status** — not large filled regions of shell chrome. One filled primary per control group.
 
-### 2.2 Materials and translucency
+### 2.2 Materials and what iced can do
 
-Apple’s materials (menu bar, menus, sidebars, HUD-style overlays) use **blur + translucent fills** so chrome sits *over* the desktop rather than as flat opaque slabs.
+Open Design uses CSS tools iced only partially has. Map intentionally:
 
-Sola goals (implement as the stack allows):
+| OD technique | Iced 0.14 | Kit approach |
+|--------------|-----------|--------------|
+| `linear-gradient(...)` | **Yes** — `Background::Gradient(Linear)` | `style::linear_bg` / `card_fill` / `primary_fill` / … |
+| Soft top highlight on cards / primaries | Yes (vertical linear) | bake into card / primary styles |
+| Dual **radial** ambient wash on canvas | **No** (radial TBD upstream) | multi-stop **linear** approx (`canvas_ambient`) |
+| `backdrop-filter: blur` materials | **No** | opaque raised greys / soft mixes on base |
+| Layered multi-background on one node | One fill per container | stack containers or bake into one gradient |
+| Inset box-shadow (rim light) | Shadow is outer only | slightly lighter gradient start stop |
+| `color-mix(... transparent)` edges | Alpha inflates on borders | **opaque** `mix_white(surface, t)` / `mix(a, b, t)` |
 
-- Menu bar, menus, launcher, switcher: **translucent / vibrancy-like** fills when compositor and kit support them; opaque fallbacks must still match macOS *value hierarchy* (dark greys, not pure black everywhere unless matching a specific macOS control).
-- Prefer **behind-window** blend for floating shell chrome (launcher, switcher, menus) so the desktop or windows show through softly.
-- Avoid fake glass: no multi-stop purple gradients, no decorative specular highlights. Translucency is structural, not ornament.
+Materials (menu bar, menus, sidebars, HUD-style overlays) still *aim* for blur + translucent fills when the compositor supports them. Until then:
+
+- Prefer **gradient lift + graphite steps** over flat `#151922` everywhere.
+- Prefer **behind-window** blend for floating shell chrome when possible; opaque fallbacks stay graphite, not pure black.
+- Avoid decorative multi-hue marketing gradients. Soft accent/selection washes only.
 
 Shell-specific alpha already lives in bus tokens (`shell-menubar-bg`, `shell-backdrop-dim`, `shell-switcher-bg`, …). Prefer those over hard-coded RGBA in views.
 
@@ -71,9 +92,9 @@ Follow a **role system**, not ad-hoc sizes:
 | Caption | Help, secondary labels | `text::caption` **11** |
 | Mono / data | Code, terminal, detail-panel numbers | `fonts::mono()` — `text::code` 12 |
 
-Control pads: `PAD_CONTROL` `[5, 12]`, `PAD_CONTROL_SM` `[3, 10]`; field
-inputs default to padding `[4, 8]`. Prefer `button::labeled` /
-`labeled_sm` over inventing pads.
+Control pads: `PAD_CONTROL` `[7, 14]`, `PAD_CONTROL_SM` `[5, 11]`; field
+inputs default to padding `[7, 12]`. Radii: SM **5** / MD **7** / LG **10**.
+Prefer `button::labeled` / `labeled_sm` over inventing pads.
 
 macOS uses SF Pro for UI and SF Mono for data. **Menubar is all chrome** —
 status values and the clock match menu titles (regular weight); only the
@@ -85,16 +106,17 @@ shell chrome. Max two UI faces + mono.
 
 All UI color should resolve through the kit / bus theme:
 
-| Intent | Behavior (macOS-like) | Kit / bus direction |
-|--------|----------------------|---------------------|
-| Window / canvas | Darkest base | `bg` / `bg-primary` |
-| Raised (sidebar, card, menu) | One step up | `bg_raised` / `bg-secondary` |
-| Hover / selected row | Further lift or accent-tinted selection | `bg_hover`, selection atom |
-| Hairlines | Low-contrast separators | `border` |
-| Primary label | High contrast light grey-white | `fg` / `text-primary` |
-| Secondary label | Muted | `fg_muted` / `text-tertiary` |
-| Accent | Sparse: focus rings, active, key status | `accent` |
-| Success / warning / danger | Semantic only | matching atoms |
+| Intent | Behavior | Kit / bus direction (seed) |
+|--------|----------|----------------------------|
+| Window / canvas | Darkest graphite | `bg` / `bg-primary` `#0c0e12` |
+| Raised (sidebar, card, menu) | One step up | `bg_raised` / `bg-secondary` `#151922` |
+| Hover / selected row | Further lift or accent-tinted selection | `bg_hover` `#1e2533`, selection `#163842` |
+| Soft hairlines | White@α separators | kit `hairline` / `hairline_strong` |
+| Hard edges | Stronger chrome | `border` `#2a3344` |
+| Primary label | Cool off-white | `fg` / `text-primary` `#e9ecf2` |
+| Secondary label | Muted blue-grey | `fg_muted` `#8b94a8` |
+| Accent | Sparse: focus, primary, key status | `accent` `#3dd6f5` |
+| Success / warning / danger | Soft semantic | `#3ecf8e` / `#e8b84a` / `#f07178` |
 
 **Do not invent new hex literals in shell views** when a token exists or should exist. If a color is shell-specific (alpha materials), add a `shell-*` token rather than a one-off.
 
@@ -108,17 +130,17 @@ For Sola:
   `popover`, `toolbar`, `text`, `card`, …) over one-off widgets.
 - Use **`button::labeled` / `labeled_sm`** and named pads (`PAD_CONTROL`,
   `PAD_CONTROL_SM`) rather than ad-hoc padding.
-- Ghost buttons: hover/press = grey lift only; text stays base fg (no cyan
-  wash). One primary (filled accent) per control group.
+- Ghost buttons: muted text at rest; hover = grey lift + full fg (no cyan
+  wash). One primary (filled accent, dark label) per control group.
+- Secondary: soft fill + strong hairline — not a bare outline.
 - Text selection uses the quiet `selection` atom (teal-grey), not
   `primary.weak`.
-- Cards: default may keep a hairline; use `card::plain` when elevation is
+- Cards: soft hairline + light shadow; use `card::plain` when elevation is
   enough without a border.
-- Neutral badges stay quiet; strong fills reserved for Accent / Success /
-  Warning / Danger.
+- Badges: soft tone@α fills + matching borders (not solid slabs).
 - States to always consider: **default, hover, active/selected, disabled, empty, error**.
 - Popovers and menus: **tools, not hero cards** — compact padding, no oversized titles.
-- Radius: small and consistent (think macOS control radii, not “web card” 16–24px everywhere).
+- Radius: SM/MD/LG at 5/7/10 — consistent, not “web card” 16–24px everywhere.
 
 ### 2.7 Motion
 

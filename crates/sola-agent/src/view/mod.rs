@@ -147,6 +147,8 @@ fn toolbar(app: &App) -> Element<'_, Msg> {
         kit_btn::ghost,
     );
 
+    // Fixed height only — never center_y(Length::Fill), which overrides
+    // height to Fill and steals half the window in a Fill column.
     container(
         row![
             new_btn,
@@ -156,11 +158,12 @@ fn toolbar(app: &App) -> Element<'_, Msg> {
         ]
         .spacing(10.0)
         .align_y(Alignment::Center)
+        .height(Length::Fill)
         .padding(Padding::from([0.0, 12.0])),
     )
     .width(Length::Fill)
     .height(Length::Fixed(40.0))
-    .center_y(Length::Fill)
+    .align_y(Alignment::Center)
     .style(toolbar_style)
     .into()
 }
@@ -468,7 +471,7 @@ fn composer(app: &App) -> Element<'_, Msg> {
     };
 
     let actions: Element<'_, Msg> = if app.streaming {
-        kit_btn::labeled_sm("Stop", kit_btn::danger_soft)
+        kit_btn::labeled_sm("Stop", kit_btn::danger_outline)
             .on_press(Msg::Cancel)
             .into()
     } else if gated {

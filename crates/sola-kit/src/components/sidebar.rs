@@ -22,11 +22,14 @@ use std::collections::HashMap;
 
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Container, Space, button, column, container, mouse_area, row, stack, text,
+    Container, Space, button, column, container, float, mouse_area, row, stack, text,
 };
-use iced::{Background, Border, Color, Element, Length, Padding, Theme, mouse};
+use iced::{
+    Animation, Background, Border, Color, Element, Length, Padding, Shadow, Theme, Vector,
+    animation::Easing, mouse, time::Instant, widget::float as float_widget,
+};
 
-use crate::components::style::{RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::components::style::{RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha};
 use crate::fonts;
 
 /// One row in the sidebar. `active` flips on the visual state; `message`
@@ -111,7 +114,7 @@ impl<Message> SidebarSection<Message> {
 
 /// Default sidebar width — matches the storybook's nav column. Public
 /// so consumers can lay out alongside it (`width = Fill - SIDEBAR_WIDTH`).
-pub const SIDEBAR_WIDTH: f32 = 200.0;
+pub const SIDEBAR_WIDTH: f32 = 220.0;
 
 /// Build the sidebar panel from its sections. Returns a `Container` so
 /// callers can override the kit defaults (a fixed [`SIDEBAR_WIDTH`] wide,
@@ -123,19 +126,34 @@ pub fn sidebar<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let mut col = column![].spacing(SPACE_XS).padding(Padding::from([8, 6]));
+    sidebar_with_header(None::<Element<'a, Message, Theme>>, sections)
+}
+
+/// Like [`sidebar`], with an optional leading header (brand, search, …)
+/// stacked above the section list. Used by the storybook brand block.
+pub fn sidebar_with_header<'a, Message>(
+    header: Option<Element<'a, Message, Theme>>,
+    sections: Vec<SidebarSection<Message>>,
+) -> Container<'a, Message, Theme>
+where
+    Message: Clone + 'a,
+{
+    let mut col = column![].spacing(SPACE_XS).padding(Padding::from([12, 10]));
+    if let Some(header) = header {
+        col = col.push(header);
+        col = col.push(Space::new().height(Length::Fixed(8.0)));
+    }
     for (i, section) in sections.into_iter().enumerate() {
         if i > 0 {
-            col = col.push(Space::new().height(Length::Fixed(12.0)));
+            col = col.push(Space::new().height(Length::Fixed(10.0)));
         }
         if let Some(label) = section.label {
             col = col.push(section_header(label));
         }
         for item in section.items {
             // `sidebar()` never enables reorder, so `render_item` takes
-            // the plain `button(..).on_press(item.message)` path — byte-
-            // for-byte the prior `sidebar_item` behaviour. `index`/`n` are
-            // only read on the reorder path, so the values are irrelevant.
+            // the plain `button(..).on_press(item.message)` path. `index`
+            // is only read on the reorder path.
             col = col.push(render_item(item, None, 0));
         }
     }
@@ -276,21 +294,22 @@ where
 }
 
 fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
-    // Title case as authored (not forced uppercase) — closer to macOS
-    // sidebar group labels. chrome + muted, 11px.
+    // Uppercase tracked section labels — graphite tool UI (sola-kit-ds).
     container(
-        text(label)
-            .font(fonts::chrome())
-            .size(11)
+        text(label.to_uppercase())
+            .font(fonts::ui_medium())
+            .size(10)
             .style(|theme: &Theme| {
                 let p = theme.extended_palette();
-                iced::widget::text::Style { color: Some(p.secondary.base.text) }
+                iced::widget::text::Style {
+                    color: Some(p.secondary.base.text),
+                }
             }),
     )
     .padding(Padding {
-        top: SPACE_SM + 2.0,    // 6 — between SPACE_SM and SPACE_MD
-        bottom: SPACE_SM + 2.0,
-        left: SPACE_MD + 2.0,   // 10 — between SPACE_MD and SPACE_LG
+        top: SPACE_SM + 2.0,  // 6
+        bottom: SPACE_SM + 1.0,
+        left: SPACE_MD + 2.0, // 10
         right: SPACE_MD + 2.0,
     })
     .into()
@@ -317,6 +336,13 @@ pub const PANEL_HEADER_H: f32 = 32.0;
 /// Movement threshold (px) below which a press-then-release is a click,
 /// not a completed reorder drag.
 pub const PANEL_REORDER_THRESHOLD: f32 = 5.0;
+/// Sibling glide duration while a row is mid-reorder.
+pub const PANEL_REORDER_ANIM_MS: u64 = 180;
+/// Subtle lift scale applied to the row under the cursor during reorder.
+pub const PANEL_REORDER_LIFT_SCALE: f32 = 1.02;
+/// Vertical pitch of one panel row including the column gap — used when
+/// siblings slide to open a drop slot.
+pub const PANEL_ROW_STRIDE: f32 = PANEL_ROW_H + SPACE_XS;
 
 /// Compute the new panel width from a drag gesture.
 ///
@@ -373,6 +399,90 @@ pub fn panel_drop_index_relative(
     let delta = ((cursor_y - start_y) / row_h).round() as i64;
     let to = from as i64 + delta;
     to.clamp(0, n as i64 - 1) as usize
+}
+
+/// Target vertical offset (px) for the row at `index` while the item at
+/// `from` is provisionally over drop slot `to`.
+///
+/// The dragged row itself always returns `0.0` (it follows the pointer
+/// via a separate translate). Other rows between `from` and `to` shift by
+/// one [`PANEL_ROW_STRIDE`] so a gap opens at the drop slot.
+///
+/// Pure — unit-tested without an iced runtime.
+pub fn panel_sibling_offset(from: usize, to: usize, index: usize) -> f32 {
+    if index == from || from == to {
+        return 0.0;
+    }
+    if from < to {
+        // Dragging down: rows in (from, to] slide up into the vacated slot.
+        if index > from && index <= to {
+            -PANEL_ROW_STRIDE
+        } else {
+            0.0
+        }
+    } else {
+        // Dragging up: rows in [to, from) slide down.
+        if index >= to && index < from {
+            PANEL_ROW_STRIDE
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Live per-row offset animations for a sidebar reorder gesture.
+///
+/// Owned by the app (terminal / storybook). Call [`Self::sync`] on each
+/// cursor move and animation tick while a drag is live; [`Self::clear`]
+/// on release. [`SidebarPanel`] samples offsets at view time.
+#[derive(Debug, Clone, Default)]
+pub struct ReorderAnim {
+    rows: Vec<Animation<f32>>,
+}
+
+impl ReorderAnim {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Drop all row animations (gesture ended).
+    pub fn clear(&mut self) {
+        self.rows.clear();
+    }
+
+    /// True while any sibling offset is still in flight.
+    pub fn is_animating(&self, at: Instant) -> bool {
+        self.rows.iter().any(|a| a.is_animating(at))
+    }
+
+    /// Ensure `n` row animations and retarget each non-dragged row toward
+    /// the offset for provisional drop slot `to`.
+    pub fn sync(&mut self, from: usize, to: usize, n: usize, at: Instant) {
+        while self.rows.len() < n {
+            self.rows.push(
+                Animation::new(0.0)
+                    .duration(std::time::Duration::from_millis(PANEL_REORDER_ANIM_MS))
+                    .easing(Easing::EaseOut),
+            );
+        }
+        if self.rows.len() > n {
+            self.rows.truncate(n);
+        }
+        for i in 0..n {
+            let target = panel_sibling_offset(from, to, i);
+            if self.rows[i].value() != target {
+                self.rows[i].go_mut(target, at);
+            }
+        }
+    }
+
+    /// Interpolated Y offset for `index` at `at` (0 when unknown).
+    pub fn offset(&self, index: usize, at: Instant) -> f32 {
+        self.rows
+            .get(index)
+            .map(|a| a.interpolate_with(|v| v, at))
+            .unwrap_or(0.0)
+    }
 }
 
 /// Move the item at `from` to `to` in `order`, returning the new order.
@@ -434,6 +544,10 @@ pub struct ReorderCfg<'a, Message> {
     /// [`panel_drop_index_relative`] to place the dragged row in the
     /// live-reorder preview).
     pub cursor_y: f32,
+    /// Sibling glide animations. When `None`, offsets snap instantly.
+    /// Consumers that want the glide keep a [`ReorderAnim`] and pass it
+    /// here after calling [`ReorderAnim::sync`].
+    pub anim: Option<&'a ReorderAnim>,
 }
 
 // ──────────────────────────── Shared item render ────────────────────────────
@@ -461,8 +575,11 @@ where
 
     // ── Plain path (no reorder) — preserves the exact prior look. ──
     let Some(reorder) = reorder else {
-        // Build the inner content: label + optional secondary + hint.
-        let content = item_content(&label, secondary.as_deref(), shortcut);
+        // Label + optional secondary/hint, with left accent bar when active.
+        let content = row_with_active_bar(
+            item_content(&label, secondary.as_deref(), shortcut),
+            active,
+        );
         let btn = button(content)
             .style(move |t, status| item_style(t, status, active))
             .padding(Padding::from([6, 10]))
@@ -481,14 +598,16 @@ where
     // ── Reorder-enabled path. ──
     // Live-reorder chrome is active only while `reorder.active` is `Some` —
     // consumers populate that after the movement threshold so a plain press
-    // leaves the strip alone. While active, [`SidebarPanel::build`] moves
-    // the grabbed row with the cursor. No special fill/ring — the row keeps
-    // its resting selected/flat style; only the cursor changes.
+    // leaves the strip alone. While active, [`SidebarPanel::build`] lifts
+    // the grabbed row under the cursor and glides siblings into the gap.
     // `index` is the item's *stable* (pre-drag) index in the consumer's
     // order — used for press messages and for the grabbing cursor.
     let is_dragged = matches!(reorder.active, Some((from, _)) if from == index);
 
-    let content = item_content(&label, secondary.as_deref(), shortcut);
+    let content = row_with_active_bar(
+        item_content(&label, secondary.as_deref(), shortcut),
+        active,
+    );
     let pressable = mouse_area(
         container(content)
             .width(Length::Fill)
@@ -503,14 +622,44 @@ where
     })
     .on_press((reorder.on_press)(index));
 
-    if let Some(close_msg) = on_close {
+    let row_el: Element<'a, Message> = if let Some(close_msg) = on_close {
         row![pressable, close_button(close_msg)]
             .spacing(SPACE_XS)
             .align_y(iced::Alignment::Center)
             .into()
     } else {
         pressable.into()
+    };
+
+    // Motion is applied by the caller via [`with_reorder_motion`] so the
+    // drag path can pass pointer-relative dy for the lifted row.
+    row_el
+}
+
+/// Apply vertical motion (and optional lift chrome) for a reorder row.
+fn with_reorder_motion<'a, Message>(
+    el: Element<'a, Message>,
+    dy: f32,
+    lifted: bool,
+) -> Element<'a, Message>
+where
+    Message: 'a,
+{
+    if dy == 0.0 && !lifted {
+        return el;
     }
+    let mut f = float(el).translate(move |_, _| Vector::new(0.0, dy));
+    if lifted {
+        f = f.scale(PANEL_REORDER_LIFT_SCALE).style(|_| float_widget::Style {
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.35),
+                offset: Vector::new(0.0, 2.0),
+                blur_radius: 8.0,
+            },
+            shadow_border_radius: RADIUS_SM.into(),
+        });
+    }
+    f.into()
 }
 
 /// The label + optional secondary + optional shortcut hint, laid out in
@@ -672,11 +821,10 @@ where
         let dragging = reorder_ref.and_then(|r| r.active);
 
         if let Some((from, start_y)) = dragging {
-            // Live preview: flatten every section into one strip, move the
-            // grabbed row to its provisional slot, and render without
-            // section headers (they would fight a mid-drag shuffle). Each
-            // entry keeps its *stable* pre-drag index so press messages
-            // and the lifted-row mark still point at the consumer's order.
+            // Live preview: keep the *original* order for layout so the
+            // grabbed row can float with the pointer while siblings glide
+            // into a gap at the provisional drop slot. Section headers are
+            // omitted (they fight a mid-drag shuffle).
             let cursor_y = reorder_ref.map(|r| r.cursor_y).unwrap_or(0.0);
             let to = panel_drop_index_relative(
                 from,
@@ -685,6 +833,8 @@ where
                 PANEL_ROW_H,
                 total_items,
             );
+            let now = Instant::now();
+            let anim = reorder_ref.and_then(|r| r.anim);
             let mut flat: Vec<(usize, SidebarItem<Message>)> = Vec::with_capacity(total_items);
             let mut row_index = 0usize;
             for section in sections {
@@ -693,18 +843,21 @@ where
                     row_index += 1;
                 }
             }
-            if from != to && !flat.is_empty() {
-                let from = from.min(flat.len() - 1);
-                let to = to.min(flat.len() - 1);
-                let entry = flat.remove(from);
-                flat.insert(to, entry);
-            }
             for (stable_index, item) in flat {
-                if collapsed {
-                    col = col.push(collapsed_row(&item, stable_index, reorder_ref));
+                let is_dragged = stable_index == from;
+                let dy = if is_dragged {
+                    cursor_y - start_y
+                } else if let Some(anim) = anim {
+                    anim.offset(stable_index, now)
                 } else {
-                    col = col.push(render_item(item, reorder_ref, stable_index));
-                }
+                    panel_sibling_offset(from, to, stable_index)
+                };
+                let row_el = if collapsed {
+                    collapsed_row(&item, stable_index, reorder_ref)
+                } else {
+                    render_item(item, reorder_ref, stable_index)
+                };
+                col = col.push(with_reorder_motion(row_el, dy, is_dragged));
             }
         } else {
             // At rest: original sectioned layout (headers + gaps).
@@ -823,11 +976,13 @@ where
 }
 
 pub fn style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
+    let _p = theme.extended_palette();
+    // OD `--material-sidebar`: cool #121722 (slightly off pure raised).
+    // Full outline is intentionally off — the storybook / shell draws a
+    // single right hairline separator against the content column.
+    let material = Color::from_rgb(0.071, 0.090, 0.133); // #121722
     container::Style {
-        background: Some(Background::Color(p.background.weaker.color)),
-        // No border — the sidebar track is a flat raised panel; the
-        // divider/zoning chrome around it carries any separating line.
+        background: Some(Background::Color(material)),
         border: Border::default(),
         ..container::Style::default()
     }
@@ -836,20 +991,19 @@ pub fn style(theme: &Theme) -> container::Style {
 /// Background style for a row rendered as a non-pressable `container`
 /// (the reorder path). Selected rows use the dedicated
 /// [`crate::theme::selection`] highlight (matching [`item_style`]);
-/// everything else is flat. Drag reorder keeps this same look — no
-/// accent lift (the grabbing cursor is the only drag affordance).
+/// everything else is flat. Mid-drag lift (scale + shadow) is applied
+/// by [`with_reorder_motion`], not here.
 fn row_container_style(theme: &Theme, active: bool) -> container::Style {
     let p = theme.extended_palette();
-    let flat_border = Border {
-        color: Color::TRANSPARENT,
-        width: 0.0,
-        radius: RADIUS_SM.into(),
-    };
     let bg = active.then(|| Background::Color(crate::theme::selection()));
     container::Style {
         background: bg,
         text_color: Some(p.background.base.text),
-        border: flat_border,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_MD.into(),
+        },
         ..container::Style::default()
     }
 }
@@ -857,34 +1011,67 @@ fn row_container_style(theme: &Theme, active: bool) -> container::Style {
 /// Style fn for an individual sidebar row. Exposed so consumers
 /// building custom row widgets (e.g. with leading icons) can match the
 /// kit's visual language.
+///
+/// Active = quiet selection wash + rounded corners. The **left accent
+/// bar** is drawn in the row content ([`row_with_active_bar`]), not as a
+/// full focus-ring border.
 pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     let p = theme.extended_palette();
-    let bg = if active {
-        // Dedicated, independently-tunable selection highlight. It has no
-        // iced palette slot, so it's delivered process-wide — see
-        // `sola_kit::theme::selection`. Distinct from (and stronger than)
-        // the hover fill so a selection reads louder than a hover.
-        crate::theme::selection()
-    } else {
-        match status {
-            button::Status::Hovered => p.background.strong.color,
-            _ => Color::TRANSPARENT,
-        }
+    if active {
+        return button::Style {
+            background: Some(Background::Color(crate::theme::selection())),
+            text_color: p.background.base.text,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_MD.into(),
+            },
+            shadow: Default::default(),
+            snap: false,
+        };
+    }
+    let bg = match status {
+        button::Status::Hovered => alpha(p.background.strong.color, 0.70),
+        _ => Color::TRANSPARENT,
     };
-    // White-ish foreground reads cleaner on the saturated selection fill
-    // than the accent text the active row used before.
-    let text_color = p.background.base.text;
     button::Style {
         background: Some(Background::Color(bg)),
-        text_color,
+        text_color: p.background.base.text,
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: RADIUS_SM.into(),
+            radius: RADIUS_MD.into(),
         },
         shadow: Default::default(),
         snap: false,
     }
+}
+
+/// Prefix `content` with a 2px accent bar when `active` (OD left inset).
+fn row_with_active_bar<'a, Message: 'a>(
+    content: Element<'a, Message, Theme>,
+    active: bool,
+) -> Element<'a, Message, Theme> {
+    if !active {
+        return content;
+    }
+    let bar = container(Space::new().width(Length::Fixed(2.0)).height(Length::Fixed(14.0)))
+        .style(|theme: &Theme| {
+            let accent = theme.extended_palette().primary.base.color;
+            container::Style {
+                background: Some(Background::Color(Color { a: 0.85, ..accent })),
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 1.0.into(),
+                },
+                ..container::Style::default()
+            }
+        });
+    row![bar, content]
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+        .into()
 }
 
 #[cfg(test)]
@@ -938,6 +1125,33 @@ mod tests {
     fn dragged_width_no_movement() {
         let w = panel_dragged_width(200.0, 160.0, 200.0);
         assert_eq!(w, 160.0);
+    }
+
+    // --- panel_sibling_offset ---
+
+    #[test]
+    fn sibling_offset_drag_down_shifts_intervening_rows_up() {
+        // from 0 → to 2: rows 1 and 2 slide up
+        assert_eq!(panel_sibling_offset(0, 2, 0), 0.0);
+        assert_eq!(panel_sibling_offset(0, 2, 1), -PANEL_ROW_STRIDE);
+        assert_eq!(panel_sibling_offset(0, 2, 2), -PANEL_ROW_STRIDE);
+        assert_eq!(panel_sibling_offset(0, 2, 3), 0.0);
+    }
+
+    #[test]
+    fn sibling_offset_drag_up_shifts_intervening_rows_down() {
+        // from 2 → to 0: rows 0 and 1 slide down
+        assert_eq!(panel_sibling_offset(2, 0, 0), PANEL_ROW_STRIDE);
+        assert_eq!(panel_sibling_offset(2, 0, 1), PANEL_ROW_STRIDE);
+        assert_eq!(panel_sibling_offset(2, 0, 2), 0.0);
+        assert_eq!(panel_sibling_offset(2, 0, 3), 0.0);
+    }
+
+    #[test]
+    fn sibling_offset_same_slot_is_zero() {
+        assert_eq!(panel_sibling_offset(1, 1, 0), 0.0);
+        assert_eq!(panel_sibling_offset(1, 1, 1), 0.0);
+        assert_eq!(panel_sibling_offset(1, 1, 2), 0.0);
     }
 
     // --- panel_reordered ---

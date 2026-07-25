@@ -22,8 +22,9 @@ Backlog: `docs/specs/2026-07-23-sola-agent-ui-backlog.md`
 
 ### Status
 
-Phases **A–I** implemented on `agent-acp-runner`. Awaiting user review / install.
-Do **not** merge to master until user approves.
+Phases **A–I** + graphite agent DS pass + history/tool collapse on
+`agent-acp-runner`. Awaiting user review. Do **not** merge to master until
+user approves.
 
 ### Star (pin)
 
@@ -49,10 +50,13 @@ sorts first. Not a Grok-native flag.
 - Leader daemon (`ConnectionMode::Leader`)
 - Merge `agent-acp-runner` → master + delete stale `.worktrees/sola-agent`
 - Polish from user feedback after A–I smoke
+- Storybook page parity for non-Overview tabs (on demand when touching components;
+  see `.grok/rules/kit-storybook-pages.md`)
 
 ### Last completed
 
-**UI backlog A–I** on `agent-acp-runner`.
+**sola-kit graphite DS** on `master`; agent UI design approach + tool collapse
++ history load fixes on `agent-acp-runner`.
 
 ### Resume
 

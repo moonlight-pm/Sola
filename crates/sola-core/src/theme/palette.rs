@@ -12,7 +12,7 @@ impl Palette {
     /// grows.
     pub fn seed() -> Self {
         let mut palette = Palette::default();
-        // Colors — graphite surfaces (sola-kit-ds / sola-agent-ds).
+        // Colors — cool graphite tool UI (not GitHub Primer, not macOS sludge).
         // Keep in sync with `sola_kit::theme::hex::*`.
         palette
             .tokens
@@ -32,7 +32,7 @@ impl Palette {
             .insert("border".into(), Token::new(TokenKind::Color, "#2a3344", &["border"]));
         palette
             .tokens
-            .insert("border-subtle".into(), Token::new(TokenKind::Color, "#232a38", &["border"]));
+            .insert("border-subtle".into(), Token::new(TokenKind::Color, "#1e2533", &["border"]));
         // Colors — text
         palette
             .tokens
@@ -42,7 +42,7 @@ impl Palette {
             .insert("text-secondary".into(), Token::new(TokenKind::Color, "#8b94a8", &["text"]));
         palette
             .tokens
-            .insert("text-tertiary".into(), Token::new(TokenKind::Color, "#8b94a8", &["text"]));
+            .insert("text-tertiary".into(), Token::new(TokenKind::Color, "#6b7385", &["text"]));
         // text-muted doubles as a strong border (e.g. scrollbar thumb on
         // hover) which is why it's eligible for both `text` and `border`.
         palette
@@ -55,7 +55,7 @@ impl Palette {
             "text-accent".into(),
             Token::new(TokenKind::Color, "#3dd6f5", &["text", "accent"]),
         );
-        // Colors — accent + status
+        // Colors — accent + status (soft cyan, used sparsely)
         palette
             .tokens
             .insert("accent".into(), Token::new(TokenKind::Color, "#3dd6f5", &["accent"]));
@@ -63,7 +63,7 @@ impl Palette {
             "accent-dim".into(),
             Token::new(TokenKind::Color, "rgba(61, 214, 245, 0.10)", &["accent-tint"]),
         );
-        // Quiet selection fill (kit `hex::SELECTION`).
+        // Quiet selection fill (kit `hex::SELECTION`); not a loud blue slab.
         palette.tokens.insert(
             "selection".into(),
             Token::new(TokenKind::Color, "#163842", &["surface", "accent-tint"]),
@@ -129,30 +129,30 @@ impl Palette {
         palette
             .tokens
             .insert("space-xxl".into(), Token::new(TokenKind::Space, "24px", &["space"]));
-        // Radius
+        // Radius — kit control scale (sola-kit-ds)
         palette
             .tokens
-            .insert("radius-sm".into(), Token::new(TokenKind::Radius, "3px", &["radius"]));
+            .insert("radius-sm".into(), Token::new(TokenKind::Radius, "5px", &["radius"]));
         palette
             .tokens
-            .insert("radius-md".into(), Token::new(TokenKind::Radius, "4px", &["radius"]));
+            .insert("radius-md".into(), Token::new(TokenKind::Radius, "7px", &["radius"]));
         palette
             .tokens
-            .insert("radius-lg".into(), Token::new(TokenKind::Radius, "6px", &["radius"]));
+            .insert("radius-lg".into(), Token::new(TokenKind::Radius, "10px", &["radius"]));
         // Shell — sola-shell's customizable chrome. Colors carry alpha
         // (#rrggbbaa). Cmd+Tab HUD materials (not cyan glass); see
         // docs/specs/2026-06-06-shell-customization-design.md and
         // docs/specs/2026-07-20-macos-look-and-feel-roadmap.md P6.
         palette
             .tokens
-            .insert("shell-menubar-bg".into(), Token::new(TokenKind::Color, "#000000", &["shell"]));
+            .insert("shell-menubar-bg".into(), Token::new(TokenKind::Color, "#050608", &["shell"]));
         palette.tokens.insert(
             "shell-backdrop-dim".into(),
             Token::new(TokenKind::Color, "#00000099", &["shell"]),
         );
         palette.tokens.insert(
             "shell-switcher-bg".into(),
-            Token::new(TokenKind::Color, "#1c1c1ee6", &["shell"]),
+            Token::new(TokenKind::Color, "#151922e6", &["shell"]),
         );
         palette.tokens.insert(
             "shell-switcher-border".into(),
