@@ -362,7 +362,7 @@ fn transcript(app: &App) -> Element<'_, Msg> {
             .width(Length::Fill)
             .into()
     } else {
-        for el in bubble::turns_view(&app.turns, &app.theme) {
+        for el in bubble::turns_view(&app.turns, &app.theme, app.streaming) {
             bubbles.push(el);
         }
         Column::with_children(bubbles)

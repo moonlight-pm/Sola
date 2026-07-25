@@ -220,10 +220,20 @@ pub struct SessionSummary {
 pub enum Turn {
     User(String),
     Assistant(String),
-    Thought(String),
+    Thought(ThoughtTurn),
     Tool(ToolTurn),
     Plan(Vec<PlanEntry>),
     Error(String),
+}
+
+/// Reasoning / thinking block. Live turns stream `text`; once the phase ends
+/// the UI collapses to "Thought for N sec" using [`Self::elapsed_secs`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThoughtTurn {
+    pub text: String,
+    /// Set when the thinking phase ends (live session). History loads leave
+    /// this `None` → collapsed "Thought" without a duration.
+    pub elapsed_secs: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -775,10 +775,16 @@ fn append_text(turns: &mut Vec<Turn>, kind: TurnKind, text: &str) {
     match (turns.last_mut(), kind) {
         (Some(Turn::User(s)), TurnKind::User) => s.push_str(text),
         (Some(Turn::Assistant(s)), TurnKind::Assistant) => s.push_str(text),
-        (Some(Turn::Thought(s)), TurnKind::Thought) => s.push_str(text),
+        (Some(Turn::Thought(th)), TurnKind::Thought) if th.elapsed_secs.is_none() => {
+            th.text.push_str(text);
+        }
         (_, TurnKind::User) => turns.push(Turn::User(text.to_string())),
         (_, TurnKind::Assistant) => turns.push(Turn::Assistant(text.to_string())),
-        (_, TurnKind::Thought) => turns.push(Turn::Thought(text.to_string())),
+        (_, TurnKind::Thought) => turns.push(Turn::Thought(crate::protocol::ThoughtTurn {
+            text: text.to_string(),
+            // Disk history has no wall-clock for the phase.
+            elapsed_secs: None,
+        })),
     }
 }
 

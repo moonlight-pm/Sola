@@ -4,19 +4,20 @@
 //! The Grok TUI is terminal-native (monospace grid). We mirror that with the
 //! system mono face for all scrollback text — user, agent, tools, thoughts.
 //!
-//! User: ❯ + soft band. Agent: bare markdown. Thought: collapsed header.
+//! User: ❯ + soft band. Agent: bare markdown.
+//! Thought: live body while streaming; collapsed "Thought for N sec" when done.
 //! Tools: verb + short target; consecutive groupable kinds fold ("Read 3 files").
 //! Spacing is kind-aware: tight action clusters, air around prose turns.
 
 use iced::font::Weight;
-use iced::widget::text::{LineHeight, Shaping};
+use iced::widget::text::{LineHeight, Shaping, Wrapping};
 use iced::widget::{column, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Font, Length, Padding, Theme};
 use sola_kit::components::style::RADIUS_MD;
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
 
-use crate::protocol::{ToolTurn, Turn};
+use crate::protocol::{ThoughtTurn, ToolTurn, Turn};
 use crate::view::markdown;
 use crate::Msg;
 
@@ -130,10 +131,18 @@ impl ToolKind {
 }
 
 /// Render turns as a Grok-like action stream with kind-aware vertical rhythm.
-pub(crate) fn turns_view<'a>(turns: &'a [Turn], theme: &Theme) -> Vec<Element<'a, Msg>> {
+///
+/// `streaming` marks the open turn: a trailing [`Turn::Thought`] shows its
+/// body live; once streaming ends (or another turn follows) it collapses.
+pub(crate) fn turns_view<'a>(
+    turns: &'a [Turn],
+    theme: &Theme,
+    streaming: bool,
+) -> Vec<Element<'a, Msg>> {
     let mut out = Vec::new();
     let mut i = 0;
     let mut prev_kind: Option<StreamKind> = None;
+    let last = turns.len().saturating_sub(1);
 
     while i < turns.len() {
         let (el, kind, advance) = match &turns[i] {
@@ -170,6 +179,11 @@ pub(crate) fn turns_view<'a>(turns: &'a [Turn], theme: &Theme) -> Vec<Element<'a
                     (tool_row(t, theme), StreamKind::Tool, 1)
                 }
             }
+            Turn::Thought(th) => {
+                // Live only for the open trailing thought while the turn streams.
+                let live = streaming && i == last && th.elapsed_secs.is_none();
+                (thought_block(th, live), StreamKind::Meta, 1)
+            }
             other => (turn_view(other, theme), stream_kind(other), 1),
         };
 
@@ -195,7 +209,7 @@ fn turn_view<'a>(turn: &'a Turn, theme: &Theme) -> Element<'a, Msg> {
     match turn {
         Turn::User(s) => user_prompt(s, theme),
         Turn::Assistant(s) => agent_message(s, theme),
-        Turn::Thought(s) => thought_line(s),
+        Turn::Thought(th) => thought_block(th, false),
         Turn::Tool(t) => tool_row(t, theme),
         Turn::Plan(entries) => plan_block(entries, theme),
         Turn::Error(s) => error_block(s),
@@ -263,22 +277,53 @@ fn agent_message(body: &str, theme: &Theme) -> Element<'static, Msg> {
         .into()
 }
 
-// ── Thought (collapsed: "Thought" / "Thinking…") ────────────────────────────
+// ── Thought (live body → collapsed "Thought for N sec") ─────────────────────
 
-fn thought_line(body: &str) -> Element<'static, Msg> {
-    let label = if body.trim().is_empty() {
-        "Thinking…"
-    } else {
-        // We don't persist elapsed_ms on Turn::Thought yet — match Grok's
-        // collapsed header without dumping the reasoning body.
-        "Thought"
-    };
+fn thought_block(th: &ThoughtTurn, live: bool) -> Element<'static, Msg> {
     let bullet = text("·")
         .font(mono())
         .size(TOOL_PX)
         .line_height(mono_lh(TOOL_PX))
         .shaping(Shaping::Basic)
         .style(kit_text::muted);
+
+    if live {
+        let header = text("Thinking…")
+            .font(mono_medium())
+            .size(TOOL_PX)
+            .line_height(mono_lh(TOOL_PX))
+            .shaping(Shaping::Basic)
+            .style(kit_text::muted);
+        let head = row![bullet, header]
+            .spacing(10.0)
+            .align_y(Alignment::Center)
+            .width(Length::Fill);
+
+        let body_txt = th.text.trim_end();
+        let mut col = column![head].spacing(6.0).width(Length::Fill);
+        if !body_txt.is_empty() {
+            col = col.push(
+                text(body_txt.to_string())
+                    .font(mono())
+                    .size(TOOL_PX)
+                    .line_height(mono_lh(TOOL_PX))
+                    .shaping(Shaping::Basic)
+                    .wrapping(Wrapping::WordOrGlyph)
+                    .style(kit_text::muted)
+                    .width(Length::Fill),
+            );
+        }
+        return container(col)
+            .padding(Padding::from([3.0, 0.0]))
+            .width(Length::Fill)
+            .max_width(STREAM_MAX)
+            .into();
+    }
+
+    let label = match th.elapsed_secs {
+        Some(secs) => format!("Thought for {secs} sec"),
+        None => "Thought".into(),
+    };
     let title = text(label)
         .font(mono_medium())
         .size(TOOL_PX)

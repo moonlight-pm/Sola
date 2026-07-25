@@ -49,7 +49,7 @@ use transcript_cache::{CachedTranscript, TranscriptCache};
 use backend::ConnectionMode;
 use protocol::{
     AgentCmd, AgentEvent, ConnectionModeLabel, EffortOption, PermissionChoice, PermissionMode,
-    SessionSummary, ToolTurn, Turn,
+    SessionSummary, ThoughtTurn, ToolTurn, Turn,
 };
 
 const APP_ID: &str = "sola-agent";
@@ -207,6 +207,8 @@ pub(crate) struct App {
     /// Multi-line composer buffer (Enter sends, Shift+Enter newline).
     pub(crate) draft: text_editor::Content,
     pub(crate) streaming: bool,
+    /// Wall clock when the open [`Turn::Thought`] started (for "Thought for N sec").
+    thought_started: Option<Instant>,
     pub(crate) pending: Option<PendingApproval>,
     pub(crate) sessions: Vec<SessionSummary>,
     pub(crate) session_id: Option<String>,
@@ -365,6 +367,7 @@ impl App {
             turns: Vec::new(),
             draft: text_editor::Content::new(),
             streaming: false,
+            thought_started: None,
             pending: None,
             sessions: sessions::list_all(),
             session_id: None,
@@ -628,6 +631,7 @@ impl App {
             Msg::Cancel => {
                 bridge::agent_send(AgentCmd::Cancel);
                 self.streaming = false;
+                self.finalize_open_thought();
             }
             Msg::NewSession => {
                 // Always allow opening the picker — busy/console-watch
@@ -1252,6 +1256,7 @@ impl App {
             });
         }
         self.streaming = false;
+        self.finalize_open_thought();
     }
 
     fn refresh_title_from_turns(&mut self) {
@@ -1314,6 +1319,23 @@ impl App {
 
     fn finalize_open_tools(&mut self) {
         sessions::finalize_tool_statuses(&mut self.turns);
+    }
+
+    /// Collapse a live thought into "Thought for N sec" once the phase ends
+    /// (assistant text, tools, turn end, cancel, …).
+    fn finalize_open_thought(&mut self) {
+        let secs = self
+            .thought_started
+            .take()
+            .map(|t| t.elapsed().as_secs().max(1) as u32);
+        if let Some(Turn::Thought(th)) = self
+            .turns
+            .iter_mut()
+            .rev()
+            .find(|t| matches!(t, Turn::Thought(th) if th.elapsed_secs.is_none()))
+        {
+            th.elapsed_secs = secs;
+        }
     }
 
     fn on_event(&mut self, ev: AgentEvent) {
@@ -1478,12 +1500,14 @@ impl App {
                 if !self.acp_attached {
                     return;
                 }
+                self.finalize_open_thought();
                 self.turns.push(Turn::User(text));
             }
             AgentEvent::AgentDelta { text } => {
                 if !self.acp_attached {
                     return;
                 }
+                self.finalize_open_thought();
                 self.streaming = true;
                 match self.turns.last_mut() {
                     Some(Turn::Assistant(s)) => s.push_str(&text),
@@ -1496,14 +1520,23 @@ impl App {
                 }
                 self.streaming = true;
                 match self.turns.last_mut() {
-                    Some(Turn::Thought(s)) => s.push_str(&text),
-                    _ => self.turns.push(Turn::Thought(text)),
+                    Some(Turn::Thought(th)) if th.elapsed_secs.is_none() => {
+                        th.text.push_str(&text);
+                    }
+                    _ => {
+                        self.thought_started = Some(Instant::now());
+                        self.turns.push(Turn::Thought(ThoughtTurn {
+                            text,
+                            elapsed_secs: None,
+                        }));
+                    }
                 }
             }
             AgentEvent::ToolStart { call_id, tool } => {
                 if !self.acp_attached {
                     return;
                 }
+                self.finalize_open_thought();
                 self.streaming = true;
                 // Metadata only — UI collapses contiguous tools to "N tool uses".
                 self.turns.push(Turn::Tool(ToolTurn {
@@ -1551,6 +1584,7 @@ impl App {
                 if !self.acp_attached {
                     return;
                 }
+                self.finalize_open_thought();
                 self.turns.push(Turn::Plan(entries));
             }
             AgentEvent::Usage { used, size } => {
@@ -1605,6 +1639,7 @@ impl App {
                 }
                 self.streaming = false;
                 self.pending = None;
+                self.finalize_open_thought();
                 self.finalize_open_tools();
                 self.refresh_title_from_turns();
                 if let Some(id) = self.session_id.clone() {
@@ -1620,6 +1655,7 @@ impl App {
                 // Errors can be attach failures for the selected session —
                 // always surface them (tagged paths use session_id elsewhere).
                 self.streaming = false;
+                self.finalize_open_thought();
                 self.turns.push(Turn::Error(message));
             }
             AgentEvent::SessionsListed { entries } => {
