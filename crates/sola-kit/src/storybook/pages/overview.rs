@@ -4,7 +4,7 @@
 //! except the control-stage confirm button, which reuses the Button page's
 //! armed state via [`pages::button::State`].
 
-use iced::widget::{column, container, row, text, Space};
+use iced::widget::{column, container, row, stack, text, Space};
 use iced::{Background, Border, Color, Element, Length, Padding};
 
 use sola_kit::components::badge::{self, Tone};
@@ -49,8 +49,10 @@ pub fn view<'a>(
 /// OD `.ds-banner`: hero panel left + four stacked rule cards right
 /// (not a single combined card).
 fn north_star() -> Element<'static, ButtonMsg> {
-    // Do **not** use Length::Fill height here — unconstrained Fill in a row
-    // collapses to zero and the hero vanishes (rules still show via intrinsic size).
+    // Equal-height layout without an explicit row height: iced `Fill` height
+    // collapses when the parent row is shrink-height. Use a `stack` whose
+    // base layer is the rules column (intrinsic height); the hero layer then
+    // receives that height as its limit and can `Fill` to match.
     let hero = container(
         column![
             text("NORTH STAR")
@@ -78,7 +80,8 @@ fn north_star() -> Element<'static, ButtonMsg> {
         .spacing(8),
     )
     .padding(Padding::from([22, 22]))
-    .width(Length::FillPortion(6))
+    .width(Length::Fill)
+    .height(Length::Fill)
     .style(|theme: &iced::Theme| {
         let p = theme.extended_palette();
         let bg = p.background.base.color;
@@ -110,13 +113,27 @@ fn north_star() -> Element<'static, ButtonMsg> {
         ),
     ]
     .spacing(8)
-    .width(Length::FillPortion(5));
+    .width(Length::Fill);
 
-    row![hero, rules]
+    // Base layer: left spacer + rules → defines stack height.
+    // Overlay: hero (fills height) + right spacer — doesn't cover rules.
+    stack![
+        row![
+            Space::new().width(Length::FillPortion(6)),
+            rules.width(Length::FillPortion(5)),
+        ]
+        .spacing(16)
+        .width(Length::Fill),
+        row![
+            hero.width(Length::FillPortion(6)),
+            Space::new().width(Length::FillPortion(5)),
+        ]
         .spacing(16)
         .width(Length::Fill)
-        .align_y(iced::Alignment::Start)
-        .into()
+        .height(Length::Fill),
+    ]
+    .width(Length::Fill)
+    .into()
 }
 
 fn rule_card(title: &'static str, body_text: &'static str) -> Element<'static, ButtonMsg> {
@@ -225,6 +242,21 @@ fn compare_card(
         }
     });
 
+    // Per-corner radii so opaque section fills don't square-off the outer
+    // rounded border (iced children paint over parent borders with padding=0).
+    let top_r = iced::border::Radius {
+        top_left: RADIUS_LG,
+        top_right: RADIUS_LG,
+        bottom_right: 0.0,
+        bottom_left: 0.0,
+    };
+    let bot_r = iced::border::Radius {
+        top_left: 0.0,
+        top_right: 0.0,
+        bottom_right: RADIUS_LG,
+        bottom_left: RADIUS_LG,
+    };
+
     let hdr = container(
         row![
             text(header)
@@ -238,13 +270,18 @@ fn compare_card(
     )
     .padding(Padding::from([8, 12]))
     .width(Length::Fill)
-    .style(|theme: &iced::Theme| {
+    .style(move |theme: &iced::Theme| {
         let p = theme.extended_palette();
         let raised = p.background.weaker.color;
         let bg = p.background.base.color;
         iced::widget::container::Style {
             // OD: color-mix(raised 80%, transparent) over canvas.
             background: Some(Background::Color(mix(raised, bg, 0.80))),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: top_r,
+            },
             ..Default::default()
         }
     });
@@ -265,11 +302,16 @@ fn compare_card(
     )
     .padding(14)
     .width(Length::Fill)
-    .style(|theme: &iced::Theme| {
+    .style(move |theme: &iced::Theme| {
         let p = theme.extended_palette();
         iced::widget::container::Style {
             // OD `.compare-card .body { background: var(--bg) }`
             background: Some(Background::Color(p.background.base.color)),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: bot_r,
+            },
             ..Default::default()
         }
     });
@@ -286,11 +328,16 @@ fn compare_card(
             }
         });
 
+    // Outer shell: border only. `padding(1)` keeps opaque children from
+    // painting over the 1px hairline; matching corner radii on hdr/body
+    // keep the top/bottom arcs clean.
     container(column![hdr, rule, body_block])
+        .padding(1)
+        .clip(true)
         .style(|theme: &iced::Theme| {
             let p = theme.extended_palette();
             iced::widget::container::Style {
-                background: None,
+                background: Some(Background::Color(p.background.base.color)),
                 border: hairline(p, RADIUS_LG),
                 ..Default::default()
             }

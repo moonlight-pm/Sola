@@ -976,11 +976,13 @@ where
 }
 
 pub fn style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
+    let _p = theme.extended_palette();
+    // OD `--material-sidebar`: cool #121722 (slightly off pure raised).
+    // Full outline is intentionally off — the storybook / shell draws a
+    // single right hairline separator against the content column.
+    let material = Color::from_rgb(0.071, 0.090, 0.133); // #121722
     container::Style {
-        // Raised graphite panel — no full outline (avoids a boxed slab).
-        // Adjacent content / zoning carries separation.
-        background: Some(Background::Color(p.background.weaker.color)),
+        background: Some(Background::Color(material)),
         border: Border::default(),
         ..container::Style::default()
     }

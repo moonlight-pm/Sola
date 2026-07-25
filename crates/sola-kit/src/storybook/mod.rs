@@ -21,7 +21,9 @@ use iced::widget::{button, column, container, pick_list, row, scrollable, text};
 use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
-use sola_kit::components::style::{canvas_ambient, linear_bg, mix, mix_white};
+use sola_kit::components::style::{
+    canvas_ambient, linear_bg, mix, mix_white, PAD_CONTROL_SM, HAIRLINE_A,
+};
 use sola_kit::components::{
     ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar_with_header,
     text_input as kit_text_input,
@@ -1129,7 +1131,7 @@ impl Storybook {
                     }
                 },
             );
-            container(
+            let brand_row = container(
                 row![
                     mark,
                     column![
@@ -1155,16 +1157,50 @@ impl Storybook {
             .style(|theme: &iced::Theme| iced::widget::container::Style {
                 text_color: Some(theme.extended_palette().background.base.text),
                 ..Default::default()
-            })
+            });
+            // OD brand has a bottom hairline under the mark/name block.
+            column![
+                brand_row,
+                container(iced::widget::Space::new().width(Length::Fill).height(1))
+                    .width(Length::Fill)
+                    .height(Length::Fixed(1.0))
+                    .style(|theme: &iced::Theme| {
+                        let raised = theme.extended_palette().background.weaker.color;
+                        iced::widget::container::Style {
+                            background: Some(iced::Background::Color(mix_white(
+                                raised, HAIRLINE_A,
+                            ))),
+                            ..Default::default()
+                        }
+                    }),
+            ]
+            .width(Length::Fill)
         };
+
+        // OD: sidebar `border-right: 1px solid hairline` — iced borders are
+        // all-sides, so a 1px column is the clean separator.
+        let rail = container(iced::widget::Space::new().width(1).height(Length::Fill))
+            .width(Length::Fixed(1.0))
+            .height(Length::Fill)
+            .style(|theme: &iced::Theme| {
+                let raised = theme.extended_palette().background.weaker.color;
+                iced::widget::container::Style {
+                    background: Some(iced::Background::Color(mix_white(raised, HAIRLINE_A))),
+                    ..Default::default()
+                }
+            });
 
         // The atom colour picker is anchored to its swatch from inside
         // the Theme page (see `pages::theme` + `popover_anchored`), so
         // there's no window-level float to compose here.
-        row![sidebar_with_header(Some(brand.into()), sections), right]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        row![
+            sidebar_with_header(Some(brand.into()), sections),
+            rail,
+            right,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     /// Zero-height transparent strip that lays out every family name
@@ -1194,6 +1230,9 @@ impl Storybook {
     }
 
     /// Global theme management bar shown above the content panel.
+    ///
+    /// Density matches OD header: ~30px controls (`btn-sm` / theme-select),
+    /// not full-size kit buttons.
     fn header(&self) -> Element<'_, Msg> {
         let body: Element<'_, Msg> = match &self.naming {
             Some(buffer) => {
@@ -1204,16 +1243,13 @@ impl Storybook {
                     .on_input(Msg::NewThemeInput)
                     .on_submit(Msg::NewThemeCommit)
                     .style(kit_text_input::style)
-                    .width(Length::Fixed(240.0));
-                let mut save = button(text("Save"))
-                    .style(kit_button::primary)
-                    .padding(Padding::from([6, 14]));
+                    .padding(Padding::from([5, 11]))
+                    .width(Length::Fixed(220.0));
+                let mut save = kit_button::labeled_sm("Save", kit_button::primary);
                 if name_ok {
                     save = save.on_press(Msg::NewThemeCommit);
                 }
-                let cancel = button(text("Cancel"))
-                    .style(kit_button::ghost)
-                    .padding(Padding::from([6, 14]))
+                let cancel = kit_button::labeled_sm("Cancel", kit_button::ghost)
                     .on_press(Msg::NewThemeCancel);
                 let hint = text(if trimmed.is_empty() {
                     "lowercase letters and hyphens (e.g. solar-flare)"
@@ -1240,19 +1276,20 @@ impl Storybook {
             None => {
                 let names: Vec<String> =
                     self.themes.iter().map(|t| t.name.clone()).collect();
+                // OD `.theme-select`: 220×30, compact pad.
                 let picker = pick_list(names, Some(self.active().name.clone()), Msg::SelectTheme)
-                    .width(Length::Fixed(240.0));
-                let new_btn = button(text("New Theme"))
-                    .style(kit_button::secondary)
-                    .padding(Padding::from([6, 14]))
+                    .width(Length::Fixed(220.0))
+                    .padding(Padding::from([5, 11]))
+                    .text_size(13.0);
+                let new_btn = kit_button::labeled_sm("New Theme", kit_button::secondary)
                     .on_press(Msg::NewThemeStart);
                 // Two-stage delete: outline "Delete" arms the confirm,
                 // a second click ("Confirm?") commits. Default is
                 // undeletable, so it renders disabled (no on_press).
                 let del_btn: Element<'_, Msg> = if self.is_default_active() {
-                    button(text("Delete"))
+                    button(text("Delete").size(12))
                         .style(kit_button::danger_outline)
-                        .padding(Padding::from([6, 14]))
+                        .padding(PAD_CONTROL_SM)
                         .into()
                 } else {
                     kit_button::confirm_button(
@@ -1262,7 +1299,7 @@ impl Storybook {
                         Msg::ArmDelete,
                         Msg::DeleteActiveTheme,
                     )
-                    .padding(Padding::from([6, 14]))
+                    .padding(PAD_CONTROL_SM)
                     .into()
                 };
                 let mut controls = row![picker, new_btn, del_btn]
@@ -1278,13 +1315,9 @@ impl Storybook {
                                 color: Some(theme.extended_palette().warning.base.color),
                             }
                         });
-                    let save = button(text("Save"))
-                        .style(kit_button::primary)
-                        .padding(Padding::from([6, 14]))
+                    let save = kit_button::labeled_sm("Save", kit_button::primary)
                         .on_press(Msg::SaveTheme);
-                    let revert = button(text("Revert"))
-                        .style(kit_button::ghost)
-                        .padding(Padding::from([6, 14]))
+                    let revert = kit_button::labeled_sm("Revert", kit_button::ghost)
                         .on_press(Msg::RevertTheme);
                     controls = controls.push(indicator).push(save).push(revert);
                 }
@@ -1293,9 +1326,10 @@ impl Storybook {
         };
 
         // Raised header strip + bottom hairline only (no full box border).
+        // OD: padding 10×24, min-height ~48 — compact controls keep it tight.
         column![
             container(body)
-                .padding(Padding::from([10, 24]))
+                .padding(Padding::from([8, 24]))
                 .width(Length::Fill)
                 .style(|theme: &iced::Theme| {
                     let p = theme.extended_palette();
@@ -1311,9 +1345,7 @@ impl Storybook {
                 .style(|theme: &iced::Theme| {
                     let raised = theme.extended_palette().background.weaker.color;
                     iced::widget::container::Style {
-                        background: Some(iced::Background::Color(
-                            sola_kit::components::style::mix_white(raised, 0.07),
-                        )),
+                        background: Some(iced::Background::Color(mix_white(raised, HAIRLINE_A))),
                         ..Default::default()
                     }
                 }),
