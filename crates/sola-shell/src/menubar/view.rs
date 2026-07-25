@@ -8,9 +8,12 @@
 //! clock). Focused-app name is bold (macOS application menu title). Colours
 //! come from the live theme palette (no view-local hex). Mono is for
 //! code/detail panels, not menubar status values.
+//!
+//! Hit targets are full bar height ([`BAR_H`] = window height) so a pointer
+//! at y=0 on the screen still activates a menu title.
 
 use iced::widget::{container, mouse_area, row, text};
-use iced::{Color, Element, Length, Padding, Theme};
+use iced::{Alignment, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon_colored;
 use sola_kit::fonts;
@@ -19,7 +22,7 @@ use crate::app::Msg;
 use crate::components::clock::clock_widget;
 use crate::components::toast::toast_widget;
 use crate::menu::state::synthesized_menu;
-use crate::menubar::FlashTarget;
+use crate::menubar::{FlashTarget, WINDOW_HEIGHT};
 
 // ── Density (logical px) ────────────────────────────────────────────────
 // macOS menu bar ~13pt system chrome, regular weight; app name bold.
@@ -27,10 +30,11 @@ use crate::menubar::FlashTarget;
 // Bar height stays at `WINDOW_HEIGHT` (28) for zoning.
 const CHROME_SIZE: f32 = 13.0;
 const ICON_SIZE: u16 = 14;
+/// Full window height — every interactive label uses this so the hit box
+/// reaches the top edge of the screen (y=0), not a short centred chip.
+const BAR_H: f32 = WINDOW_HEIGHT as f32;
 /// Horizontal pad inside each menubar hit target.
 /// ~9px ≈ macOS menu-title breathing room at 13pt.
-/// Vertical pad is 0 — buttons stretch to full bar height so the hit
-/// target reaches y=0 (top of the screen) without a dead band above labels.
 const ITEM_PAD_H: f32 = 9.0;
 const ITEM_PAD: Padding = Padding {
     top: 0.0,
@@ -60,6 +64,34 @@ fn app_title_font() -> iced::Font {
     }
 }
 
+/// Full-height menubar control: button is exactly [`BAR_H`] tall so layout
+/// (and hit testing) spans y=0…BAR_H of the window.
+fn bar_button<'a>(
+    content: impl Into<Element<'a, Msg>>,
+    active: bool,
+    on_press: Msg,
+) -> iced::widget::Button<'a, Msg> {
+    iced::widget::button(content)
+        .style(kit_btn::menubar(active))
+        .padding(ITEM_PAD)
+        .height(Length::Fixed(BAR_H))
+        .on_press(on_press)
+}
+
+/// Full-height hit target with optional hover-to-switch while a menu is open.
+fn bar_item<'a>(
+    content: impl Into<Element<'a, Msg>>,
+    active: bool,
+    on_press: Msg,
+    on_enter: Option<Msg>,
+) -> Element<'a, Msg> {
+    let btn = bar_button(content, active, on_press);
+    match on_enter {
+        Some(enter) => mouse_area(btn).on_enter(enter).into(),
+        None => btn.into(),
+    }
+}
+
 /// Render the menubar for `shell`.
 pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mb = &shell.menubar;
@@ -72,28 +104,25 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let system_active =
         (shell.menu_open && shell.current_open_is_system) || flashing(shell, true, 0);
     // Extra bottom pad optically lifts the flower into the text baseline
-    // band without changing the outer hit target height much.
+    // band without changing the outer hit target height.
     let flower = container(icon_colored("sola/flower", ICON_SIZE, fg)).padding(Padding {
         top: 0.0,
         right: 0.0,
         bottom: FLOWER_NUDGE_UP,
         left: 0.0,
     });
-    let system_btn: Element<'_, Msg> = mouse_area(
-        iced::widget::button(flower)
-            .style(kit_btn::menubar(system_active))
-            .padding(ITEM_PAD)
-            .height(Length::Fill)
-            .on_press(Msg::OpenMenu {
-                index: 0,
-                is_system: true,
-            }),
-    )
-    .on_enter(Msg::HoverMenu {
-        index: 0,
-        is_system: true,
-    })
-    .into();
+    let system_btn: Element<'_, Msg> = bar_item(
+        flower,
+        system_active,
+        Msg::OpenMenu {
+            index: 0,
+            is_system: true,
+        },
+        Some(Msg::HoverMenu {
+            index: 0,
+            is_system: true,
+        }),
+    );
 
     // ── Focused-app title ─────────────────────────────────────────────
     // Bold — matches macOS application menu title vs regular menu labels.
@@ -104,25 +133,20 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         && shell.current_open_index == Some(0))
         || flashing(shell, false, 0);
     let app_title: Element<'_, Msg> = if clickable {
-        mouse_area(
-            iced::widget::button(
-                text(app_title_str)
-                    .font(app_title_font())
-                    .size(CHROME_SIZE),
-            )
-            .style(kit_btn::menubar(title_active))
-            .padding(ITEM_PAD)
-            .height(Length::Fill)
-            .on_press(Msg::OpenMenu {
+        bar_item(
+            text(app_title_str)
+                .font(app_title_font())
+                .size(CHROME_SIZE),
+            title_active,
+            Msg::OpenMenu {
+                index: 0,
+                is_system: false,
+            },
+            Some(Msg::HoverMenu {
                 index: 0,
                 is_system: false,
             }),
         )
-        .on_enter(Msg::HoverMenu {
-            index: 0,
-            is_system: false,
-        })
-        .into()
     } else {
         container(
             text(app_title_str)
@@ -130,8 +154,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
                 .size(CHROME_SIZE),
         )
         .padding(ITEM_PAD)
-        .height(Length::Fill)
-        .center_y(Length::Fill)
+        .height(Length::Fixed(BAR_H))
+        .align_y(Alignment::Center)
         .into()
     };
 
@@ -141,81 +165,63 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // ── Right cluster: toast + clock ─────────────────────────────────
     let toast = toast_widget(mb.toast.as_deref());
     let clock_active = shell.menu_open && shell.open_panel == Some(crate::app::Panel::Calendar);
-    let clock: Element<'_, Msg> = iced::widget::button(clock_widget(&mb.clock_now))
-        .style(kit_btn::menubar(clock_active))
-        .padding(ITEM_PAD)
-        .height(Length::Fill)
-        .on_press(Msg::ToggleCalendar)
-        .into();
+    let clock: Element<'_, Msg> = bar_button(
+        clock_widget(&mb.clock_now),
+        clock_active,
+        Msg::ToggleCalendar,
+    )
+    .into();
 
     // ── System-stat indicators (left of clock) ───────────────────────
     let neutral = fg;
     let first_tick = shell.cpu_hist.is_empty();
     let cpu_pct = shell.stats.cpu_pct;
-    let cpu_btn: Element<'_, Msg> = iced::widget::button(stat_indicator(
-        "CPU",
-        if first_tick {
-            "\u{2014}".to_string()
-        } else {
-            format!("{:.0}%", cpu_pct)
-        },
-        crate::stats::level_color(cpu_pct, neutral),
-        muted,
-        STAT_VALUE_W,
-    ))
-    .style(kit_btn::menubar(
+    let cpu_btn: Element<'_, Msg> = bar_button(
+        stat_indicator(
+            "CPU",
+            if first_tick {
+                "\u{2014}".to_string()
+            } else {
+                format!("{:.0}%", cpu_pct)
+            },
+            crate::stats::level_color(cpu_pct, neutral),
+            muted,
+            STAT_VALUE_W,
+        ),
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Cpu)),
-    ))
-    .padding(ITEM_PAD)
-    .height(Length::Fill)
-    .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Cpu))
+        Msg::ToggleStatPanel(crate::stats::Metric::Cpu),
+    )
     .into();
 
     let mem_pct = shell.stats.mem_pct;
-    let mem_btn: Element<'_, Msg> = iced::widget::button(stat_indicator(
-        "MEM",
-        if first_tick {
-            "\u{2014}".to_string()
-        } else {
-            format!("{:.0}%", mem_pct)
-        },
-        crate::stats::level_color(mem_pct, neutral),
-        muted,
-        STAT_VALUE_W,
-    ))
-    .style(kit_btn::menubar(
+    let mem_btn: Element<'_, Msg> = bar_button(
+        stat_indicator(
+            "MEM",
+            if first_tick {
+                "\u{2014}".to_string()
+            } else {
+                format!("{:.0}%", mem_pct)
+            },
+            crate::stats::level_color(mem_pct, neutral),
+            muted,
+            STAT_VALUE_W,
+        ),
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Mem)),
-    ))
-    .padding(ITEM_PAD)
-    .height(Length::Fill)
-    .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Mem))
+        Msg::ToggleStatPanel(crate::stats::Metric::Mem),
+    )
     .into();
 
-    let rx_btn: Element<'_, Msg> = iced::widget::button(rate_indicator(
-        "RX",
-        shell.stats.net_down,
-        neutral,
-        muted,
-    ))
-    .style(kit_btn::menubar(
+    let rx_btn: Element<'_, Msg> = bar_button(
+        rate_indicator("RX", shell.stats.net_down, neutral, muted),
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Rx)),
-    ))
-    .padding(ITEM_PAD)
-    .height(Length::Fill)
-    .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Rx))
+        Msg::ToggleStatPanel(crate::stats::Metric::Rx),
+    )
     .into();
-    let tx_btn: Element<'_, Msg> = iced::widget::button(rate_indicator(
-        "TX",
-        shell.stats.net_up,
-        neutral,
-        muted,
-    ))
-    .style(kit_btn::menubar(
+    let tx_btn: Element<'_, Msg> = bar_button(
+        rate_indicator("TX", shell.stats.net_up, neutral, muted),
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Tx)),
-    ))
-    .padding(ITEM_PAD)
-    .height(Length::Fill)
-    .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Tx))
+        Msg::ToggleStatPanel(crate::stats::Metric::Tx),
+    )
     .into();
 
     // ── Assemble ──────────────────────────────────────────────────────
@@ -224,19 +230,17 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 
     let mut cluster: Vec<Element<'_, Msg>> = vec![cpu_btn];
     if let Some(g) = shell.stats.gpu {
-        let gpu_btn: Element<'_, Msg> = iced::widget::button(stat_indicator(
-            "GPU",
-            format!("{:.0}%", g.util),
-            crate::stats::level_color(g.util, neutral),
-            muted,
-            STAT_VALUE_W,
-        ))
-        .style(kit_btn::menubar(
+        let gpu_btn: Element<'_, Msg> = bar_button(
+            stat_indicator(
+                "GPU",
+                format!("{:.0}%", g.util),
+                crate::stats::level_color(g.util, neutral),
+                muted,
+                STAT_VALUE_W,
+            ),
             shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Gpu)),
-        ))
-        .padding(ITEM_PAD)
-        .height(Length::Fill)
-        .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Gpu))
+            Msg::ToggleStatPanel(crate::stats::Metric::Gpu),
+        )
         .into();
         cluster.push(gpu_btn);
     }
@@ -245,21 +249,22 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     cluster.push(tx_btn);
     cluster.push(clock);
 
-    // Full-height left/right rows so menu labels' hit targets reach y=0.
-    // Buttons use height Fill + horizontal-only pad; iced centres the label.
-    row![
-        row(left)
-            .align_y(iced::alignment::Vertical::Center)
-            .height(Length::Fill),
-        iced::widget::Space::new().width(iced::Length::Fill),
-        toast,
-        iced::widget::row(cluster)
-            .spacing(CLUSTER_SPACING)
-            .align_y(iced::alignment::Vertical::Center)
-            .height(Length::Fill),
-    ]
-    .height(Length::Fill)
-    .align_y(iced::alignment::Vertical::Center)
+    // Fixed BAR_H root — matches the window size so children with Fixed(BAR_H)
+    // are not shrink-wrapped / vertically centred with a dead band at y=0.
+    container(
+        row![
+            row(left).height(Length::Fixed(BAR_H)),
+            iced::widget::Space::new().width(Length::Fill),
+            toast,
+            iced::widget::row(cluster)
+                .spacing(CLUSTER_SPACING)
+                .height(Length::Fixed(BAR_H)),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fixed(BAR_H)),
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(BAR_H))
     .into()
 }
 
@@ -318,25 +323,20 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
                 && !shell.current_open_is_system
                 && shell.current_open_index == Some(index))
                 || flashing(shell, false, index);
-            mouse_area(
-                iced::widget::button(
-                    text(menu.label.clone())
-                        .font(fonts::chrome())
-                        .size(CHROME_SIZE),
-                )
-                .style(kit_btn::menubar(active))
-                .padding(ITEM_PAD)
-                .height(Length::Fill)
-                .on_press(Msg::OpenMenu {
+            bar_item(
+                text(menu.label.clone())
+                    .font(fonts::chrome())
+                    .size(CHROME_SIZE),
+                active,
+                Msg::OpenMenu {
+                    index,
+                    is_system: false,
+                },
+                Some(Msg::HoverMenu {
                     index,
                     is_system: false,
                 }),
             )
-            .on_enter(Msg::HoverMenu {
-                index,
-                is_system: false,
-            })
-            .into()
         })
         .collect()
 }
