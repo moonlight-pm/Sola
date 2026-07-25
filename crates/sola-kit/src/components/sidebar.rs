@@ -1575,6 +1575,9 @@ enum OverflowDir {
 
 /// Fixed-height chip slot so list viewport height is independent of scroll.
 /// When `n == 0` the slot is empty but still occupies [`OVERFLOW_CHIP_H`].
+///
+/// Note: do **not** use `center_y(Length::Fill)` — that sets height to Fill
+/// and the three-row column (chip / list / chip) splits ⅓ each.
 fn overflow_slot<'a, Message: 'a>(dir: OverflowDir, n: usize) -> Element<'a, Message, Theme> {
     let body: Element<'a, Message, Theme> = if n == 0 {
         Space::new().into()
@@ -1597,8 +1600,8 @@ fn overflow_slot<'a, Message: 'a>(dir: OverflowDir, n: usize) -> Element<'a, Mes
     container(body)
         .width(Length::Fill)
         .height(Length::Fixed(OVERFLOW_CHIP_H))
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Center)
         .into()
 }
 
