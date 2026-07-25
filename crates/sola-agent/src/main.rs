@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iced::widget::operation;
 use iced::widget::scrollable::RelativeOffset;
@@ -145,6 +145,8 @@ pub(crate) struct App {
     pub(crate) last_cursor_x: Option<f32>,
     /// `(cursor_x_at_press, sidebar_w_at_press)`.
     pub(crate) drag_anchor: Option<(f32, f32)>,
+    /// Double-click rename: last session row click (id, instant).
+    pub(crate) last_session_click: Option<(String, Instant)>,
 }
 
 #[derive(Debug, Clone)]
@@ -156,7 +158,6 @@ pub(crate) enum Msg {
     Cancel,
     NewSession,
     SelectSession(String),
-    TogglePin(String),
     PermissionPick(String),
     PermissionAllowFirst,
     PermissionDeny,
@@ -223,6 +224,7 @@ impl App {
             dragging_divider: false,
             last_cursor_x: None,
             drag_anchor: None,
+            last_session_click: None,
         }
     }
 
@@ -368,7 +370,28 @@ impl App {
                 self.project_picker = None;
             }
             Msg::SelectSession(id) => {
+                // Double-click same row → rename (no pin/edit chrome).
+                let now = Instant::now();
+                if let Some((ref last_id, t)) = self.last_session_click {
+                    if last_id == &id && now.duration_since(t) < Duration::from_millis(450) {
+                        self.last_session_click = None;
+                        let draft = self
+                            .sessions
+                            .iter()
+                            .find(|s| s.id == id)
+                            .map(|s| s.title.clone())
+                            .unwrap_or_default();
+                        self.rename = Some(RenameState { id, draft });
+                        return Task::none();
+                    }
+                }
+                self.last_session_click = Some((id.clone(), now));
+
                 if self.streaming || self.pending.is_some() {
+                    return Task::none();
+                }
+                // Already open — don't reload on the first click of a double.
+                if self.session_id.as_deref() == Some(id.as_str()) {
                     return Task::none();
                 }
                 let cwd = self
@@ -383,10 +406,6 @@ impl App {
                 self.stick_to_bottom = true;
                 self.loading_older = false;
                 bridge::agent_send(AgentCmd::LoadSession { id, cwd });
-            }
-            Msg::TogglePin(id) => {
-                overlay::toggle_pin(&id);
-                self.sessions = sessions::list_all();
             }
             Msg::StartRename(id) => {
                 let draft = self

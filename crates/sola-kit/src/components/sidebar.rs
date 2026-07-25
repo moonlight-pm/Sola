@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Container, Space, button, column, container, float, mouse_area, row, stack, text,
+    Container, Space, button, column, container, float, mouse_area, row, scrollable, stack, text,
 };
 use iced::{
     Animation, Background, Border, Color, Element, Length, Padding, Shadow, Theme, Vector,
@@ -32,26 +32,39 @@ use iced::{
 use crate::components::style::{RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha};
 use crate::fonts;
 
+/// Vertical padding for a standard sidebar row (top+bottom each).
+const ITEM_PAD_V: f32 = 10.0;
+/// Horizontal padding for a standard sidebar row.
+const ITEM_PAD_H: f32 = 12.0;
+/// Gap between title and subtitle lines.
+const TITLE_SUB_GAP: f32 = 5.0;
+
 /// One row in the sidebar. `active` flips on the visual state; `message`
 /// is what the parent receives when the row is clicked.
 ///
-/// The `shortcut` / `on_close` / `secondary` fields are opt-in extras
-/// consumed by [`SidebarPanel`]; plain [`sidebar`] ignores them (they
-/// default to `None`, so existing `::new().active()` callers behave
-/// exactly as before).
+/// The `shortcut` / `on_close` / `secondary` / `subtitle` /
+/// `on_double_click` fields are opt-in extras consumed by
+/// [`SidebarPanel`] (and the shared row renderer used by plain
+/// [`sidebar`]). They default to `None`, so existing `::new().active()`
+/// callers behave exactly as before.
 pub struct SidebarItem<Message> {
     pub label: String,
     pub active: bool,
     pub message: Message,
     /// Right-aligned dim shortcut hint (e.g. the `1`..=`9` access key).
-    /// Rendered by [`SidebarPanel`]; ignored by plain [`sidebar`].
     pub shortcut: Option<u8>,
     /// When set, [`SidebarPanel`] renders a trailing `×` button that
-    /// emits this message. Ignored by plain [`sidebar`].
+    /// emits this message.
     pub on_close: Option<Message>,
-    /// Dim trailing label (e.g. an unread count). Rendered by
-    /// [`SidebarPanel`]; ignored by plain [`sidebar`].
+    /// Dim trailing label (e.g. relative time `19m`, unread count).
+    /// Laid out in a fixed trailing column so it cannot crush the title.
     pub secondary: Option<String>,
+    /// Optional second line under the title (e.g. project path). Muted,
+    /// mono-friendly size; wraps/clips independently of the title.
+    pub subtitle: Option<String>,
+    /// Double-click on the row (e.g. rename). Single click still emits
+    /// [`Self::message`].
+    pub on_double_click: Option<Message>,
 }
 
 impl<Message> SidebarItem<Message> {
@@ -63,6 +76,8 @@ impl<Message> SidebarItem<Message> {
             shortcut: None,
             on_close: None,
             secondary: None,
+            subtitle: None,
+            on_double_click: None,
         }
     }
 
@@ -71,24 +86,33 @@ impl<Message> SidebarItem<Message> {
         self
     }
 
-    /// Attach a right-aligned dim shortcut hint (consumed by
-    /// [`SidebarPanel`]).
+    /// Attach a right-aligned dim shortcut hint.
     pub fn shortcut(mut self, n: u8) -> Self {
         self.shortcut = Some(n);
         self
     }
 
-    /// Attach a trailing `×` close button emitting `msg` (consumed by
-    /// [`SidebarPanel`]).
+    /// Attach a trailing `×` close button emitting `msg`.
     pub fn on_close(mut self, msg: Message) -> Self {
         self.on_close = Some(msg);
         self
     }
 
-    /// Attach a dim trailing secondary label (consumed by
-    /// [`SidebarPanel`]).
+    /// Attach a dim trailing secondary label (time, count, …).
     pub fn secondary(mut self, label: impl Into<String>) -> Self {
         self.secondary = Some(label.into());
+        self
+    }
+
+    /// Second line under the title (path, caption, …).
+    pub fn subtitle(mut self, label: impl Into<String>) -> Self {
+        self.subtitle = Some(label.into());
+        self
+    }
+
+    /// Message emitted on double-click (rename, open properties, …).
+    pub fn on_double_click(mut self, msg: Message) -> Self {
+        self.on_double_click = Some(msg);
         self
     }
 }
@@ -571,28 +595,53 @@ fn render_item<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let SidebarItem { label, active, message, shortcut, on_close, secondary } = item;
+    let SidebarItem {
+        label,
+        active,
+        message,
+        shortcut,
+        on_close,
+        secondary,
+        subtitle,
+        on_double_click,
+    } = item;
 
-    // ── Plain path (no reorder) — preserves the exact prior look. ──
+    let content = row_with_active_bar(
+        item_content(&label, subtitle.as_deref(), secondary.as_deref(), shortcut),
+        active,
+    );
+    let pad = Padding::from([ITEM_PAD_V, ITEM_PAD_H]);
+
+    // ── Plain path (no reorder). ──
     let Some(reorder) = reorder else {
-        // Label + optional secondary/hint, with left accent bar when active.
-        let content = row_with_active_bar(
-            item_content(&label, secondary.as_deref(), shortcut),
-            active,
-        );
-        let btn = button(content)
-            .style(move |t, status| item_style(t, status, active))
-            .padding(Padding::from([6, 10]))
-            .width(Length::Fill)
-            .on_press(message);
-        // A close button, if requested, sits beside the row button.
+        // mouse_area when double-click is wired (buttons don't emit it);
+        // otherwise keep the pressable button for familiar hover chrome.
+        let row_el: Element<'a, Message> = if let Some(dbl) = on_double_click {
+            mouse_area(
+                container(content)
+                    .width(Length::Fill)
+                    .padding(pad)
+                    .style(move |theme: &Theme| row_container_style(theme, active)),
+            )
+            .interaction(mouse::Interaction::Pointer)
+            .on_press(message)
+            .on_double_click(dbl)
+            .into()
+        } else {
+            button(content)
+                .style(move |t, status| item_style(t, status, active))
+                .padding(pad)
+                .width(Length::Fill)
+                .on_press(message)
+                .into()
+        };
         if let Some(close_msg) = on_close {
-            return row![btn, close_button(close_msg)]
+            return row![row_el, close_button(close_msg)]
                 .spacing(SPACE_XS)
                 .align_y(iced::Alignment::Center)
                 .into();
         }
-        return btn.into();
+        return row_el;
     };
 
     // ── Reorder-enabled path. ──
@@ -604,14 +653,10 @@ where
     // order — used for press messages and for the grabbing cursor.
     let is_dragged = matches!(reorder.active, Some((from, _)) if from == index);
 
-    let content = row_with_active_bar(
-        item_content(&label, secondary.as_deref(), shortcut),
-        active,
-    );
-    let pressable = mouse_area(
+    let mut pressable = mouse_area(
         container(content)
             .width(Length::Fill)
-            .padding(Padding::from([6, 10]))
+            .padding(pad)
             .style(move |theme: &Theme| row_container_style(theme, active)),
     )
     // Pointer at rest; grabbing while this row is the one in flight.
@@ -621,6 +666,9 @@ where
         mouse::Interaction::Pointer
     })
     .on_press((reorder.on_press)(index));
+    if let Some(dbl) = on_double_click {
+        pressable = pressable.on_double_click(dbl);
+    }
 
     let row_el: Element<'a, Message> = if let Some(close_msg) = on_close {
         row![pressable, close_button(close_msg)]
@@ -662,25 +710,73 @@ where
     f.into()
 }
 
-/// The label + optional secondary + optional shortcut hint, laid out in
-/// a row. `collapsed_number` callers use [`collapsed_content`] instead.
+/// Title (+ optional subtitle) with trailing secondary / shortcut.
+///
+/// Layout:
+/// ```text
+/// [ title …………………  19m ]
+/// [ subtitle ……………      ]
+/// ```
+/// Title/subtitle take `Fill` and clip; secondary sits in a shrink column
+/// so times never overlap the title.
 fn item_content<'a, Message: 'a>(
     label: &str,
+    subtitle: Option<&str>,
     secondary: Option<&str>,
     shortcut: Option<u8>,
 ) -> Element<'a, Message> {
-    let mut r = row![text(label.to_string()).font(fonts::ui()).size(13)]
-        .spacing(SPACE_XS)
-        .align_y(iced::Alignment::Center);
-    // Spacer pushes secondary/hint to the right.
-    r = r.push(Space::new().width(Length::Fill));
+    let title = text(label.to_string())
+        .font(fonts::ui())
+        .size(13)
+        .wrapping(Wrapping::None)
+        .width(Length::Fill);
+
+    let mut text_col = column![title].spacing(TITLE_SUB_GAP).width(Length::Fill);
+    if let Some(sub) = subtitle {
+        text_col = text_col.push(
+            text(sub.to_string())
+                .font(fonts::mono())
+                .size(11)
+                .style(|theme: &Theme| {
+                    let c = theme.extended_palette().background.base.text;
+                    iced::widget::text::Style {
+                        color: Some(Color { a: 0.48, ..c }),
+                    }
+                })
+                .wrapping(Wrapping::None)
+                .width(Length::Fill),
+        );
+    }
+
+    let mut trailing = column![].spacing(2.0).align_x(iced::Alignment::End);
+    let mut has_trail = false;
     if let Some(sec) = secondary {
-        r = r.push(dim_label(sec));
+        trailing = trailing.push(dim_label(sec));
+        has_trail = true;
     }
     if let Some(n) = shortcut {
-        r = r.push(dim_label(&n.to_string()));
+        trailing = trailing.push(dim_label(&n.to_string()));
+        has_trail = true;
     }
-    r.width(Length::Fill).into()
+
+    let mut r = row![text_col]
+        .spacing(SPACE_MD)
+        .align_y(iced::Alignment::Start)
+        .width(Length::Fill);
+    if has_trail {
+        // Fixed-ish trailing column: no Fill so it can't steal title space.
+        r = r.push(
+            container(trailing)
+                .width(Length::Shrink)
+                .padding(Padding {
+                    top: 1.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 4.0,
+                }),
+        );
+    }
+    r.into()
 }
 
 /// Collapsed-row content: just the shortcut number (or index+1), centred.
@@ -736,6 +832,9 @@ pub struct SidebarPanel<'a, Message> {
     /// theme-default divider chrome.
     resize: Option<(f32, bool, Message, Option<crate::components::DividerColors>)>,
     reorder: Option<ReorderCfg<'a, Message>>,
+    /// Optional leading content (search field, brand, rename bar).
+    /// Stacked above the scrollable section list; not reordered.
+    header: Option<Element<'a, Message, Theme>>,
     footer: Option<Element<'a, Message, Theme>>,
 }
 
@@ -749,8 +848,15 @@ where
             collapse: None,
             resize: None,
             reorder: None,
+            header: None,
             footer: None,
         }
+    }
+
+    /// Leading chrome above the section list (filter, brand, …).
+    pub fn header(mut self, el: Element<'a, Message, Theme>) -> Self {
+        self.header = Some(el);
+        self
     }
 
     /// Render a toggle header (»/«) emitting `on_toggle`. `collapsed`
@@ -797,17 +903,26 @@ where
     }
 
     pub fn build(self) -> Element<'a, Message, Theme> {
-        let SidebarPanel { sections, collapse, resize, reorder, footer } = self;
+        let SidebarPanel {
+            sections,
+            collapse,
+            resize,
+            reorder,
+            header,
+            footer,
+        } = self;
 
         let collapsed = collapse.as_ref().map(|(c, _)| *c).unwrap_or(false);
         let reorder_ref = reorder.as_ref();
 
-        let mut col = column![].spacing(SPACE_XS).padding(Padding::from([8, 6]));
+        // Fixed chrome (collapse toggle + optional header) above a scrollable
+        // item list so long session/project lists stay usable.
+        let mut chrome = column![].spacing(0.0).width(Length::Fill);
 
         // Toggle header.
         if let Some((_, on_toggle)) = &collapse {
             let glyph = if collapsed { "»" } else { "«" };
-            col = col.push(
+            chrome = chrome.push(
                 button(text(glyph).font(fonts::ui()).size(13))
                     .style(|t, status| item_style(t, status, false))
                     .padding(Padding::from([6, 10]))
@@ -816,9 +931,24 @@ where
             );
         }
 
+        if let Some(header) = header {
+            if !collapsed {
+                chrome = chrome.push(
+                    container(header).padding(Padding {
+                        top: 10.0,
+                        right: 10.0,
+                        bottom: 8.0,
+                        left: 10.0,
+                    }),
+                );
+            }
+        }
+
         // Total item count across all sections — clamps the drop slot.
         let total_items: usize = sections.iter().map(|s| s.items.len()).sum();
         let dragging = reorder_ref.and_then(|r| r.active);
+
+        let mut items = column![].spacing(SPACE_SM).padding(Padding::from([4.0, 8.0]));
 
         if let Some((from, start_y)) = dragging {
             // Live preview: keep the *original* order for layout so the
@@ -857,36 +987,44 @@ where
                 } else {
                     render_item(item, reorder_ref, stable_index)
                 };
-                col = col.push(with_reorder_motion(row_el, dy, is_dragged));
+                items = items.push(with_reorder_motion(row_el, dy, is_dragged));
             }
         } else {
             // At rest: original sectioned layout (headers + gaps).
             let mut row_index = 0usize;
             for (si, section) in sections.into_iter().enumerate() {
                 if si > 0 && !collapsed {
-                    col = col.push(Space::new().height(Length::Fixed(12.0)));
+                    items = items.push(Space::new().height(Length::Fixed(12.0)));
                 }
                 if let Some(label) = section.label {
                     if !collapsed {
-                        col = col.push(section_header(label));
+                        items = items.push(section_header(label));
                     }
                 }
                 for item in section.items {
                     if collapsed {
-                        col = col.push(collapsed_row(&item, row_index, reorder_ref));
+                        items = items.push(collapsed_row(&item, row_index, reorder_ref));
                     } else {
-                        col = col.push(render_item(item, reorder_ref, row_index));
+                        items = items.push(render_item(item, reorder_ref, row_index));
                     }
                     row_index += 1;
                 }
             }
         }
 
+        let list: Element<'a, Message, Theme> = scrollable(items)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into();
+
+        chrome = chrome.push(list);
+
         // Footer (hidden when collapsed).
         if let Some(footer) = footer {
             if !collapsed {
-                col = col.push(Space::new().height(Length::Fill));
-                col = col.push(footer);
+                chrome = chrome.push(
+                    container(footer).padding(Padding::from([8.0, 10.0])),
+                );
             }
         }
 
@@ -896,7 +1034,7 @@ where
             _ => SIDEBAR_WIDTH,
         };
 
-        let panel = container(col)
+        let panel = container(chrome)
             .style(style)
             .width(Length::Fixed(width))
             .height(Length::Fill);
@@ -1055,7 +1193,10 @@ fn row_with_active_bar<'a, Message: 'a>(
     if !active {
         return content;
     }
-    let bar = container(Space::new().width(Length::Fixed(2.0)).height(Length::Fixed(14.0)))
+    // Stretch with multi-line rows (title + subtitle).
+    let bar = container(Space::new().width(Length::Fixed(2.0)).height(Length::Fill))
+        .width(Length::Fixed(2.0))
+        .height(Length::Fill)
         .style(|theme: &Theme| {
             let accent = theme.extended_palette().primary.base.color;
             container::Style {
@@ -1071,6 +1212,7 @@ fn row_with_active_bar<'a, Message: 'a>(
     row![bar, content]
         .spacing(8)
         .align_y(iced::Alignment::Center)
+        .width(Length::Fill)
         .into()
 }
 

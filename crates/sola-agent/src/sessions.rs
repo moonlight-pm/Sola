@@ -47,7 +47,8 @@ fn encode_cwd(cwd: &str) -> String {
 
 /// All sessions across every project group under `~/.grok/sessions`.
 ///
-/// Sorted: pinned first, then live TUI sessions, then most recent activity.
+/// Sorted: live TUI sessions first, then most recent activity.
+/// (Pin stars removed from the UI; order will be drag-reorder later.)
 pub fn list_all() -> Vec<SessionSummary> {
     let pins = overlay::load();
     let live = active_terminal_sessions();
@@ -72,12 +73,7 @@ pub fn list_all() -> Vec<SessionSummary> {
         collect_group(&group_path, &group_cwd, &pins, &live, &mut seen, &mut out);
     }
 
-    out.sort_by(|a, b| {
-        b.pinned
-            .cmp(&a.pinned)
-            .then(b.live.cmp(&a.live))
-            .then(b.updated.cmp(&a.updated))
-    });
+    out.sort_by(|a, b| b.live.cmp(&a.live).then(b.updated.cmp(&a.updated)));
     out
 }
 

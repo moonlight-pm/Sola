@@ -7,9 +7,9 @@ pub(crate) mod footer;
 pub(crate) mod markdown;
 pub(crate) mod sidebar;
 
-use iced::widget::{button, column, container, mouse_area, row, scrollable, stack, text, Space, Column};
+use iced::widget::{button, column, container, row, scrollable, stack, text, Space, Column};
 use iced::widget::scrollable::Viewport;
-use iced::{mouse, Alignment, Background, Border, Color, Element, Length, Padding, Theme};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{
     hairline, RADIUS_LG, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
@@ -42,20 +42,9 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-    let divider = mouse_area(
-        container(Space::new().width(Length::Fill).height(Length::Fill))
-            .style(divider_style)
-            .width(Length::Fixed(5.0))
-            .height(Length::Fill),
-    )
-    .interaction(mouse::Interaction::ResizingHorizontally)
-    .on_press(Msg::DividerPress);
-
+    // SidebarPanel owns the kit vertical divider + resize chrome.
     let body_row: Element<'_, Msg> = row![
-        container(sidebar::view(app))
-            .width(Length::Fixed(app.sidebar_w))
-            .height(Length::Fill),
-        divider,
+        sidebar::view(app),
         container(main)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -69,16 +58,9 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let body: Element<'_, Msg> = if app.dragging_divider {
-        stack![
-            shell,
-            mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                .interaction(mouse::Interaction::ResizingHorizontally),
-        ]
-        .into()
-    } else {
-        shell.into()
-    };
+    // Full-window resize overlay is already composed inside SidebarPanel
+    // when `dragging_divider` is set; keep shell plain.
+    let body: Element<'_, Msg> = shell.into();
 
     if let Some(picker) = &app.project_picker {
         return stack_picker(body, picker);
@@ -284,17 +266,6 @@ fn project_chip_style(theme: &Theme) -> container::Style {
 }
 
 const RADIUS_PILL_CHIP: f32 = 999.0;
-
-fn divider_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(Color {
-            a: 0.35,
-            ..p.background.stronger.color
-        })),
-        ..container::Style::default()
-    }
-}
 
 fn picker_scrim_style(theme: &Theme) -> container::Style {
     let mut c = theme.extended_palette().background.base.color;
