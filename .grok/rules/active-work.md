@@ -13,55 +13,29 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**sola-agent UI backlog** — branch `agent-acp-runner` in
-`.worktrees/agent-acp-runner`
-
-Design: `docs/specs/2026-07-23-sola-agent-acp-runner-design.md`  
-Backlog: `docs/specs/2026-07-23-sola-agent-ui-backlog.md`  
-(paths relative to the worktree until merged)
-
-### Status
-
-Phases **A–I** + graphite agent DS pass + history/tool collapse on
-`agent-acp-runner`. Awaiting user review. Do **not** merge to master until
-user approves.
-
-### Star (pin)
-
-★ **pins** a session in Sola overlay (`~/.config/sola/agent/overlay.json`) so it
-sorts first. Not a Grok-native flag.
-
-### Backlog phases
-
-| Phase | Item |
-|---|---|
-| ~~A~~ | ~~Composer~~ |
-| ~~B~~ | ~~Sidebar fill~~ |
-| ~~C~~ | ~~Row cwd~~ |
-| ~~D~~ | ~~Project picker~~ |
-| ~~E~~ | ~~Type + width~~ |
-| ~~F~~ | ~~Markdown~~ |
-| ~~G~~ | ~~Token format~~ |
-| ~~H~~ | ~~Rename~~ |
-| ~~I~~ | ~~Lazy load + scroll bottom~~ |
-
-### Future
-
-- Leader daemon (`ConnectionMode::Leader`)
-- Merge `agent-acp-runner` → master + delete stale `.worktrees/sola-agent`
-- Polish from user feedback after A–I smoke
-- Storybook page parity for non-Overview tabs (on demand when touching components;
-  see `.grok/rules/kit-storybook-pages.md`)
+**none**
 
 ### Last completed
 
-**sola-kit graphite DS** on `master`; agent UI design approach + tool collapse
-+ history load fixes on `agent-acp-runner`.
+**agent-acp-runner → master** (fast-forward to `11abd5c`): sola-agent ACP runner
+UI, Grok-style transcript, kit SidebarPanel sessions, section-scoped app-owned
+scroll with overflow chips. Worktrees `agent-acp-runner` and `sola-agent`
+removed; branches deleted.
+
+Design: `docs/specs/2026-07-23-sola-agent-acp-runner-design.md`  
+Backlog: `docs/specs/2026-07-23-sola-agent-ui-backlog.md`
+
+### Future / follow-ups
+
+- Leader daemon (`ConnectionMode::Leader`)
+- Polish from further agent UI feedback
+- Storybook page parity for non-Overview tabs (on demand when touching components;
+  see `.grok/rules/kit-storybook-pages.md`)
+- Remaining worktree: `libei-portal` (unrelated)
 
 ### Resume
 
 ```text
-cd .worktrees/agent-acp-runner   # branch agent-acp-runner
-# install with user permission: cargo make install sola-agent
-# next: user feedback / merge when approved
+# master is current; install when needed:
+# cargo make install sola-agent
 ```
