@@ -786,6 +786,7 @@ where
     let content = row_with_active_bar(
         item_content(&label, subtitle.as_deref(), secondary.as_deref(), shortcut),
         active,
+        subtitle.is_some(),
     );
     let pad = Padding::from([ITEM_PAD_V, ITEM_PAD_H]);
 
@@ -1765,26 +1766,39 @@ pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button
 fn row_with_active_bar<'a, Message: 'a>(
     content: Element<'a, Message, Theme>,
     active: bool,
+    has_subtitle: bool,
 ) -> Element<'a, Message, Theme> {
     if !active {
         return content;
     }
-    // Stretch with multi-line rows (title + subtitle).
-    let bar = container(Space::new().width(Length::Fixed(2.0)).height(Length::Fill))
-        .width(Length::Fixed(2.0))
-        .height(Length::Fill)
-        .style(|theme: &Theme| {
-            let accent = theme.extended_palette().primary.base.color;
-            container::Style {
-                background: Some(Background::Color(Color { a: 0.85, ..accent })),
-                border: Border {
-                    color: Color::TRANSPARENT,
-                    width: 0.0,
-                    radius: 1.0.into(),
-                },
-                ..container::Style::default()
-            }
-        });
+    // Fixed height matching the text column — never Length::Fill.
+    // ClipScroll lays out the list with unbounded max height; a Fill-height
+    // bar makes the whole row report Fill, which then expands to infinity and
+    // the session list vanishes after a selection.
+    let bar_h = if has_subtitle {
+        13.0 + TITLE_SUB_GAP + 11.0
+    } else {
+        13.0
+    };
+    let bar = container(
+        Space::new()
+            .width(Length::Fixed(2.0))
+            .height(Length::Fixed(bar_h)),
+    )
+    .width(Length::Fixed(2.0))
+    .height(Length::Fixed(bar_h))
+    .style(|theme: &Theme| {
+        let accent = theme.extended_palette().primary.base.color;
+        container::Style {
+            background: Some(Background::Color(Color { a: 0.85, ..accent })),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 1.0.into(),
+            },
+            ..container::Style::default()
+        }
+    });
     row![bar, content]
         .spacing(8)
         .align_y(iced::Alignment::Center)
