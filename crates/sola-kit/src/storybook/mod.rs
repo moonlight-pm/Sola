@@ -21,9 +21,7 @@ use iced::widget::{button, column, container, pick_list, row, scrollable, text};
 use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
-use sola_kit::components::style::{
-    canvas_ambient, linear_bg, mix, mix_white, PAD_CONTROL_SM, HAIRLINE_A,
-};
+use sola_kit::components::style::{linear_bg, mix, mix_white, PAD_CONTROL_SM, HAIRLINE_A};
 use sola_kit::components::{
     ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar_with_header,
     text_input as kit_text_input,
@@ -1088,7 +1086,10 @@ impl Storybook {
         .width(Length::Fill)
         .height(Length::Fill);
 
-        // Main column rides a soft ambient wash (OD dual radials → linear approx).
+        // Main column: solid seed canvas (`#0c0e12`). OD’s dual radials are
+        // ~6% accent / ~45% selection *fading to transparent* — our linear
+        // `canvas_ambient` baked that wash across the whole pane and read as
+        // a grey/teal gradient. Flat near-black matches the design base.
         let right = container(
             column![self.header(), content, self.font_prewarm()]
                 .width(Length::Fill)
@@ -1099,11 +1100,7 @@ impl Storybook {
         .style(|theme: &iced::Theme| {
             let p = theme.extended_palette();
             iced::widget::container::Style {
-                background: Some(canvas_ambient(
-                    p.background.base.color,
-                    p.primary.base.color,
-                    theme::selection(),
-                )),
+                background: Some(iced::Background::Color(p.background.base.color)),
                 ..Default::default()
             }
         });

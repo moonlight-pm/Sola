@@ -129,14 +129,19 @@ pub fn stage_fill(bg: Color, raised: Color, accent: Color) -> Background {
     )
 }
 
-/// Storybook / app canvas ambient — approximates OD dual radials with
-/// a soft multi-stop linear (selection wash → base → faint accent).
+/// Optional soft canvas wash — **not** used as the storybook page fill.
+///
+/// OD layers dual *radials* that fade to transparent over solid `--bg`
+/// (`#0c0e12`). A full-pane linear with a strong selection stop reads as a
+/// grey/teal gradient. Prefer solid `background.base` for app canvas; keep
+/// this helper only for deliberate accent panels (hero / stage).
 pub fn canvas_ambient(bg: Color, accent: Color, selection: Color) -> Background {
-    let sel_wash = mix(selection, bg, 0.28);
-    let accent_wash = mix(accent, bg, 0.05);
+    // Very light edge tints only — safe if someone layers this under chrome.
+    let sel_wash = mix(selection, bg, 0.08);
+    let accent_wash = mix(accent, bg, 0.03);
     linear_bg(
         118.0,
-        &[(0.0, sel_wash), (0.42, bg), (0.78, bg), (1.0, accent_wash)],
+        &[(0.0, sel_wash), (0.35, bg), (0.75, bg), (1.0, accent_wash)],
     )
 }
 
