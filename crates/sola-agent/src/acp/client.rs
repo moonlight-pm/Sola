@@ -19,15 +19,23 @@ pub struct AcpClient {
     pending_permissions: HashMap<u64, u64>,
     /// Map our synthetic request_id → option list for UI.
     permission_options: HashMap<u64, Vec<PermissionChoice>>,
+    /// Currently attached ACP session (for prompts / set_mode). Not a
+    /// display title — Grok session UUID only.
     session_id: Option<String>,
     /// Whether a prompt is in flight (waiting for result).
     prompt_inflight: bool,
     /// JSON-RPC id of the in-flight `session/prompt` request.
     prompt_rpc_id: Option<u64>,
+    /// Session UUID the in-flight prompt belongs to (survives a later switch
+    /// that reassigns [`Self::session_id`]).
+    prompt_session_id: Option<String>,
     /// Accumulator while streaming a turn for tool pairing.
     open_tools: HashMap<String, usize>, // call_id → turn index
     /// Drop message/tool deltas while `session/load` is replaying history.
     suppress_history_replay: bool,
+    /// Session being loaded while [`Self::suppress_history_replay`] is set
+    /// (only that session's history replay is suppressed).
+    suppress_session_id: Option<String>,
 }
 
 impl AcpClient {
@@ -40,8 +48,10 @@ impl AcpClient {
             session_id: None,
             prompt_inflight: false,
             prompt_rpc_id: None,
+            prompt_session_id: None,
             open_tools: HashMap::new(),
             suppress_history_replay: false,
+            suppress_session_id: None,
         }
     }
 
@@ -90,6 +100,7 @@ impl AcpClient {
         self.session_id = Some(id.clone());
         self.open_tools.clear();
         self.suppress_history_replay = false;
+        self.suppress_session_id = None;
         emit_session_config_from_result(&result);
         bridge::emit(AgentEvent::SessionReady {
             id: id.clone(),
@@ -110,6 +121,7 @@ impl AcpClient {
         // shared leader for prompt/permission ownership — do not gate the
         // transcript on it (session/load can take hundreds of ms+).
         self.suppress_history_replay = true;
+        self.suppress_session_id = Some(id.to_string());
         let _result = self.request(
             "session/load",
             json!({
@@ -119,6 +131,7 @@ impl AcpClient {
             }),
         );
         self.suppress_history_replay = false;
+        self.suppress_session_id = None;
         let result = _result?;
         self.session_id = Some(id.to_string());
         self.open_tools.clear();
@@ -178,6 +191,7 @@ impl AcpClient {
             return Err("turn already in progress".into());
         }
         bridge::emit(AgentEvent::UserEcho {
+            session_id: sid.clone(),
             text: text.to_string(),
         });
         let id = self.next_id;
@@ -194,6 +208,7 @@ impl AcpClient {
         self.transport.write_line(&msg.to_string()).map_err(|e| e)?;
         self.prompt_inflight = true;
         self.prompt_rpc_id = Some(id);
+        self.prompt_session_id = Some(sid);
         Ok(())
     }
 
@@ -324,14 +339,25 @@ impl AcpClient {
                 if self.prompt_rpc_id == Some(id) {
                     self.prompt_rpc_id = None;
                     self.prompt_inflight = false;
+                    // Tag with the session that owned the prompt — not the
+                    // attach target after a mid-turn sidebar switch.
+                    let sid = self
+                        .prompt_session_id
+                        .take()
+                        .or_else(|| self.session_id.clone())
+                        .unwrap_or_default();
                     if let Some(err) = v.get("error") {
                         let msg = err
                             .get("message")
                             .and_then(|m| m.as_str())
                             .unwrap_or("prompt error")
                             .to_string();
-                        bridge::emit(AgentEvent::Error { message: msg });
+                        bridge::emit(AgentEvent::Error {
+                            session_id: Some(sid.clone()),
+                            message: msg,
+                        });
                         bridge::emit(AgentEvent::TurnEnded {
+                            session_id: sid,
                             stop_reason: "error".into(),
                         });
                     } else {
@@ -341,6 +367,7 @@ impl AcpClient {
                             .unwrap_or("end_turn")
                             .to_string();
                         bridge::emit(AgentEvent::TurnEnded {
+                            session_id: sid,
                             stop_reason: stop,
                         });
                     }
@@ -405,6 +432,7 @@ impl AcpClient {
 
     fn handle_permission_request(&mut self, rpc_id: u64, params: Value) {
         let request_id = rpc_id; // reuse
+        let session_id = params_session_id(&params).or_else(|| self.session_id.clone());
         let tool = params
             .pointer("/toolCall/title")
             .and_then(|t| t.as_str())
@@ -448,6 +476,7 @@ impl AcpClient {
         self.permission_options
             .insert(request_id, options.clone());
         bridge::emit(AgentEvent::PermissionRequired {
+            session_id,
             request_id,
             tool,
             preview,
@@ -461,6 +490,13 @@ impl AcpClient {
             .get("sessionUpdate")
             .and_then(|s| s.as_str())
             .unwrap_or("");
+        // Wire `sessionId` is the only safe identity — shared leader fans out
+        // updates for every attached session; display titles collide.
+        let session_id = params_session_id(&params).or_else(|| self.session_id.clone());
+        let Some(sid) = session_id.clone() else {
+            tracing::warn!(%kind, "session/update missing sessionId; dropping");
+            return;
+        };
 
         // Grok totalTokens fallback — assume 500K context window when size absent.
         if let Some(tokens) = params
@@ -469,42 +505,63 @@ impl AcpClient {
             .or_else(|| update.pointer("/_meta/totalTokens").and_then(|t| t.as_u64()))
         {
             bridge::emit(AgentEvent::Usage {
+                session_id: Some(sid.clone()),
                 used: tokens,
                 size: Some(500_000),
             });
         }
 
+        // Only suppress history-replay noise for the session being loaded.
+        // Other sessions may still stream on the shared leader.
+        let suppress_this = self.suppress_history_replay
+            && self
+                .suppress_session_id
+                .as_deref()
+                .map(|s| s == sid.as_str())
+                .unwrap_or(true);
+
         match kind {
             "agent_message_chunk" | "agent_message" => {
-                if self.suppress_history_replay {
+                if suppress_this {
                     return;
                 }
                 if let Some(text) = content_text(&update) {
-                    bridge::emit(AgentEvent::AgentDelta { text });
+                    bridge::emit(AgentEvent::AgentDelta {
+                        session_id: sid,
+                        text,
+                    });
                 }
             }
             "agent_thought_chunk" | "agent_thought" => {
-                if self.suppress_history_replay {
+                if suppress_this {
                     return;
                 }
                 if let Some(text) = content_text(&update) {
-                    bridge::emit(AgentEvent::ThoughtDelta { text });
+                    bridge::emit(AgentEvent::ThoughtDelta {
+                        session_id: sid,
+                        text,
+                    });
                 }
             }
             "user_message_chunk" => {
-                if self.suppress_history_replay {
+                if suppress_this {
                     return;
                 }
                 // Already echoed from UI; ignore or show if history replay
                 if let Some(text) = content_text(&update) {
                     // Only emit if not our local echo during live turn — history loads use Transcript
-                    if !self.prompt_inflight {
-                        bridge::emit(AgentEvent::UserEcho { text });
+                    let ours = self.prompt_inflight
+                        && self.prompt_session_id.as_deref() == Some(sid.as_str());
+                    if !ours {
+                        bridge::emit(AgentEvent::UserEcho {
+                            session_id: sid,
+                            text,
+                        });
                     }
                 }
             }
             "tool_call" => {
-                if self.suppress_history_replay {
+                if suppress_this {
                     return;
                 }
                 let call_id = update
@@ -519,10 +576,14 @@ impl AcpClient {
                     .unwrap_or("tool")
                     .to_string();
                 // Skip rawInput — UI only shows collapsed "N tool uses".
-                bridge::emit(AgentEvent::ToolStart { call_id, tool });
+                bridge::emit(AgentEvent::ToolStart {
+                    session_id: sid,
+                    call_id,
+                    tool,
+                });
             }
             "tool_call_update" => {
-                if self.suppress_history_replay {
+                if suppress_this {
                     return;
                 }
                 let call_id = update
@@ -543,11 +604,13 @@ impl AcpClient {
                 let done = status.as_deref().is_some_and(sessions::is_terminal_tool_status);
                 if done {
                     bridge::emit(AgentEvent::ToolEnd {
+                        session_id: sid,
                         call_id,
                         status: status.unwrap_or_else(|| "completed".into()),
                     });
                 } else {
                     bridge::emit(AgentEvent::ToolUpdate {
+                        session_id: sid,
                         call_id,
                         status,
                         title,
@@ -555,7 +618,7 @@ impl AcpClient {
                 }
             }
             "plan" => {
-                if self.suppress_history_replay {
+                if suppress_this {
                     return;
                 }
                 let entries = update
@@ -576,7 +639,10 @@ impl AcpClient {
                             .collect()
                     })
                     .unwrap_or_default();
-                bridge::emit(AgentEvent::Plan { entries });
+                bridge::emit(AgentEvent::Plan {
+                    session_id: sid,
+                    entries,
+                });
             }
             "usage_update" => {
                 let used = update
@@ -589,7 +655,11 @@ impl AcpClient {
                     .and_then(|s| s.as_u64())
                     .or_else(|| update.get("contextWindow").and_then(|s| s.as_u64()))
                     .or(Some(500_000));
-                bridge::emit(AgentEvent::Usage { used, size });
+                bridge::emit(AgentEvent::Usage {
+                    session_id: Some(sid),
+                    used,
+                    size,
+                });
             }
             "session_info_update" => {
                 if let Some(title) = update
@@ -597,12 +667,10 @@ impl AcpClient {
                     .and_then(|t| t.as_str())
                     .map(|s| s.to_string())
                 {
-                    if let Some(id) = self.session_id.clone() {
-                        bridge::emit(AgentEvent::SessionReady {
-                            id,
-                            title: Some(title),
-                        });
-                    }
+                    bridge::emit(AgentEvent::SessionReady {
+                        id: sid,
+                        title: Some(title),
+                    });
                 }
             }
             _ => {
@@ -610,6 +678,16 @@ impl AcpClient {
             }
         }
     }
+}
+
+/// Extract Grok session UUID from ACP params (`sessionId` / `session_id`).
+fn params_session_id(params: &Value) -> Option<String> {
+    params
+        .get("sessionId")
+        .or_else(|| params.get("session_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn content_text(update: &Value) -> Option<String> {

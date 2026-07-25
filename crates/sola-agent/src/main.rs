@@ -1338,6 +1338,17 @@ impl App {
         }
     }
 
+    /// Live stream / attach events must match the **open session UUID**, not
+    /// a display title (directory leaf titles collide across sessions).
+    fn is_open_session(&self, session_id: &str) -> bool {
+        self.session_id.as_deref() == Some(session_id)
+    }
+
+    /// Apply stream chrome only after ACP attach finished for that same id.
+    fn accepts_live_stream(&self, session_id: &str) -> bool {
+        self.acp_attached && self.is_open_session(session_id)
+    }
+
     fn on_event(&mut self, ev: AgentEvent) {
         match ev {
             AgentEvent::Connected { backend, mode } => {
@@ -1405,15 +1416,28 @@ impl App {
             AgentEvent::SessionReady { id, title } => {
                 // Fast sidebar switches paint optimistically; ignore attach
                 // completions for a session the user already left.
-                if self.session_id.as_deref().is_some_and(|s| s != id.as_str()) {
+                // Also ignore title-only `session_info_update` for other UUIDs
+                // (shared leader fans those out by sessionId).
+                if !self.is_open_session(&id) {
+                    // Still refresh sidebar subtitle if we know the row.
+                    if let Some(t) = title {
+                        if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                            if overlay::title_override(&id).is_none() {
+                                s.title = t;
+                            }
+                        }
+                    }
                     return;
                 }
                 self.session_id = Some(id.clone());
                 self.acp_attached = true;
                 if let Some(t) = overlay::title_override(&id) {
                     self.session_title = Some(t);
-                } else if title.is_some() {
-                    self.session_title = title;
+                } else if let Some(t) = title {
+                    self.session_title = Some(t.clone());
+                    if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                        s.title = t;
+                    }
                 }
                 // Apply preferred permission mode on every session attach.
                 // Order: effort first (also uses set_mode on Grok), then
@@ -1434,7 +1458,7 @@ impl App {
                 has_older,
                 from_watch,
             } => {
-                if self.session_id.as_deref().is_some_and(|s| s != session_id.as_str()) {
+                if !self.is_open_session(&session_id) {
                     return;
                 }
                 // Prefer the async disk paint / cache restore when still loading.
@@ -1484,7 +1508,7 @@ impl App {
                 history_start_byte,
                 has_older,
             } => {
-                if self.session_id.as_deref().is_some_and(|s| s != session_id.as_str()) {
+                if !self.is_open_session(&session_id) {
                     return;
                 }
                 if !turns.is_empty() {
@@ -1496,15 +1520,15 @@ impl App {
                 self.has_older_history = has_older;
                 self.loading_older = false;
             }
-            AgentEvent::UserEcho { text } => {
-                if !self.acp_attached {
+            AgentEvent::UserEcho { session_id, text } => {
+                if !self.accepts_live_stream(&session_id) {
                     return;
                 }
                 self.finalize_open_thought();
                 self.turns.push(Turn::User(text));
             }
-            AgentEvent::AgentDelta { text } => {
-                if !self.acp_attached {
+            AgentEvent::AgentDelta { session_id, text } => {
+                if !self.accepts_live_stream(&session_id) {
                     return;
                 }
                 self.finalize_open_thought();
@@ -1514,8 +1538,8 @@ impl App {
                     _ => self.turns.push(Turn::Assistant(text)),
                 }
             }
-            AgentEvent::ThoughtDelta { text } => {
-                if !self.acp_attached {
+            AgentEvent::ThoughtDelta { session_id, text } => {
+                if !self.accepts_live_stream(&session_id) {
                     return;
                 }
                 self.streaming = true;
@@ -1532,8 +1556,12 @@ impl App {
                     }
                 }
             }
-            AgentEvent::ToolStart { call_id, tool } => {
-                if !self.acp_attached {
+            AgentEvent::ToolStart {
+                session_id,
+                call_id,
+                tool,
+            } => {
+                if !self.accepts_live_stream(&session_id) {
                     return;
                 }
                 self.finalize_open_thought();
@@ -1546,11 +1574,12 @@ impl App {
                 }));
             }
             AgentEvent::ToolUpdate {
+                session_id,
                 call_id,
                 status,
                 title,
             } => {
-                if !self.acp_attached {
+                if !self.accepts_live_stream(&session_id) {
                     return;
                 }
                 if let Some(Turn::Tool(t)) = self
@@ -1567,8 +1596,12 @@ impl App {
                     }
                 }
             }
-            AgentEvent::ToolEnd { call_id, status } => {
-                if !self.acp_attached {
+            AgentEvent::ToolEnd {
+                session_id,
+                call_id,
+                status,
+            } => {
+                if !self.accepts_live_stream(&session_id) {
                     return;
                 }
                 if let Some(Turn::Tool(t)) = self
@@ -1580,34 +1613,59 @@ impl App {
                     t.status = status;
                 }
             }
-            AgentEvent::Plan { entries } => {
-                if !self.acp_attached {
+            AgentEvent::Plan {
+                session_id,
+                entries,
+            } => {
+                if !self.accepts_live_stream(&session_id) {
                     return;
                 }
                 self.finalize_open_thought();
                 self.turns.push(Turn::Plan(entries));
             }
-            AgentEvent::Usage { used, size } => {
+            AgentEvent::Usage {
+                session_id,
+                used,
+                size,
+            } => {
                 let size = size.or(Some(DEFAULT_CONTEXT_SIZE));
-                self.usage_used = Some(used);
-                self.usage_size = size;
-                // Keep the sidebar tab badge in sync without reloading disk.
-                if let Some(id) = self.session_id.as_deref() {
-                    if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                // Always update the matching sidebar row by UUID (not title).
+                if let Some(ref id) = session_id {
+                    if let Some(s) = self.sessions.iter_mut().find(|s| s.id == *id) {
                         s.usage_used = Some(used);
                         s.usage_size = size;
+                    }
+                    // Live footer only for the open session.
+                    if self.is_open_session(id) {
+                        self.usage_used = Some(used);
+                        self.usage_size = size;
+                    }
+                } else if self.acp_attached {
+                    // Untagged usage (should be rare) — open session only.
+                    self.usage_used = Some(used);
+                    self.usage_size = size;
+                    if let Some(id) = self.session_id.as_deref() {
+                        if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                            s.usage_used = Some(used);
+                            s.usage_size = size;
+                        }
                     }
                 }
             }
             AgentEvent::PermissionRequired {
+                session_id,
                 request_id,
                 tool,
                 preview,
                 options,
             } => {
-                if !self.acp_attached {
+                let for_open = session_id
+                    .as_deref()
+                    .map(|id| self.accepts_live_stream(id))
+                    .unwrap_or(self.acp_attached);
+                if !for_open {
                     // Still answer always-approve so the leader does not hang
-                    // on a permission for a session we already left.
+                    // on a permission for a session we already left / other tab.
                     if self.permission_mode.auto_answers_permissions() {
                         if let Some(option_id) = pick_allow_option(&options) {
                             bridge::agent_send(AgentCmd::Permission {
@@ -1641,8 +1699,15 @@ impl App {
                     options,
                 });
             }
-            AgentEvent::TurnEnded { stop_reason } => {
-                if !self.acp_attached {
+            AgentEvent::TurnEnded {
+                session_id,
+                stop_reason,
+            } => {
+                if !self.accepts_live_stream(&session_id) {
+                    // Keep busy badge honest for the row that finished.
+                    if let Some(s) = self.sessions.iter_mut().find(|s| s.id == session_id) {
+                        s.busy = false;
+                    }
                     return;
                 }
                 self.streaming = false;
@@ -1659,9 +1724,18 @@ impl App {
                     tracing::info!(%stop_reason, "turn ended");
                 }
             }
-            AgentEvent::Error { message } => {
-                // Errors can be attach failures for the selected session —
-                // always surface them (tagged paths use session_id elsewhere).
+            AgentEvent::Error {
+                session_id,
+                message,
+            } => {
+                // Tagged errors only paint on the matching open session.
+                // Untagged (connect/setup) always surface.
+                if let Some(ref id) = session_id {
+                    if !self.is_open_session(id) {
+                        tracing::warn!(%id, %message, "error for non-open session");
+                        return;
+                    }
+                }
                 self.streaming = false;
                 self.finalize_open_thought();
                 self.turns.push(Turn::Error(message));

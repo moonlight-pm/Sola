@@ -69,7 +69,10 @@ fn run(mode: ConnectionMode) {
                             crate::overlay::note_opened(&id, &cwd);
                             refresh_sessions(&cwd);
                         }
-                        Err(e) => bridge::emit(AgentEvent::Error { message: e }),
+                        Err(e) => bridge::emit(AgentEvent::Error {
+                            session_id: None,
+                            message: e,
+                        }),
                     }
                 }
             }
@@ -99,7 +102,10 @@ fn run(mode: ConnectionMode) {
                             crate::overlay::note_opened(&id, &cwd);
                             refresh_sessions(&cwd);
                         }
-                        Err(e) => bridge::emit(AgentEvent::Error { message: e }),
+                        Err(e) => bridge::emit(AgentEvent::Error {
+                            session_id: Some(id),
+                            message: e,
+                        }),
                     }
                 }
             }
@@ -142,12 +148,18 @@ fn run(mode: ConnectionMode) {
                             .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|_| ".".into());
                         if let Err(e) = c.new_session(&cwd) {
-                            bridge::emit(AgentEvent::Error { message: e });
+                            bridge::emit(AgentEvent::Error {
+                                session_id: None,
+                                message: e,
+                            });
                             continue;
                         }
                     }
                     if let Err(e) = c.send_prompt(&text) {
-                        bridge::emit(AgentEvent::Error { message: e });
+                        bridge::emit(AgentEvent::Error {
+                            session_id: c.session_id().map(|s| s.to_string()),
+                            message: e,
+                        });
                     }
                 }
             }
@@ -155,6 +167,7 @@ fn run(mode: ConnectionMode) {
                 if let Some(c) = client.as_mut() {
                     if let Err(e) = c.set_mode(&mode_id) {
                         bridge::emit(AgentEvent::Error {
+                            session_id: c.session_id().map(|s| s.to_string()),
                             message: format!("set permission mode: {e}"),
                         });
                     }
@@ -165,6 +178,7 @@ fn run(mode: ConnectionMode) {
                     // Grok maps effort ids through session/set_mode.
                     if let Err(e) = c.set_mode(&effort_id) {
                         bridge::emit(AgentEvent::Error {
+                            session_id: c.session_id().map(|s| s.to_string()),
                             message: format!("set effort: {e}"),
                         });
                     }
@@ -173,7 +187,10 @@ fn run(mode: ConnectionMode) {
             AgentCmd::Cancel => {
                 if let Some(c) = client.as_mut() {
                     if let Err(e) = c.cancel() {
-                        bridge::emit(AgentEvent::Error { message: e });
+                        bridge::emit(AgentEvent::Error {
+                            session_id: c.session_id().map(|s| s.to_string()),
+                            message: e,
+                        });
                     }
                 }
             }
@@ -183,14 +200,20 @@ fn run(mode: ConnectionMode) {
             } => {
                 if let Some(c) = client.as_mut() {
                     if let Err(e) = c.respond_permission(request_id, &option_id) {
-                        bridge::emit(AgentEvent::Error { message: e });
+                        bridge::emit(AgentEvent::Error {
+                            session_id: c.session_id().map(|s| s.to_string()),
+                            message: e,
+                        });
                     }
                 }
             }
             AgentCmd::PermissionCancel { request_id } => {
                 if let Some(c) = client.as_mut() {
                     if let Err(e) = c.cancel_permission(request_id) {
-                        bridge::emit(AgentEvent::Error { message: e });
+                        bridge::emit(AgentEvent::Error {
+                            session_id: c.session_id().map(|s| s.to_string()),
+                            message: e,
+                        });
                     }
                 }
             }
