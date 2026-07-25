@@ -13,32 +13,25 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**agent-ui-fixes** (worktree `.worktrees/agent-ui-fixes`, branch `fix/agent-ui-fixes`)
-
-sola-agent UX: markdown tables, Shift+Enter multiline composer, always-approve
-auto-answers permissions, permission strip redesign.
-
-### Next
-
-- User smoke: install agent, verify tables / Shift+Enter / YOLO / approval chrome
-- Merge when approved
+**none**
 
 ### Last completed (prior)
+
+**agent-ui-fixes → master**: markdown tables; Enter submit / Shift+Enter
+newline + growing composer; always-approve auto-answer + effort/mode
+order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 
 **agent-leader → master**: leader-only attach; console group removed.
 
 ### Future / follow-ups
 
-- Permission fan-out UX when TUI + sola-agent both attached
+- Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Further Grok TUI presentation parity
 - Storybook page parity for non-Overview tabs (on demand)
-- Remaining worktree: `libei-portal` (unrelated)
+- Remaining worktrees: `focus-follows-mouse`, `libei-portal`
 
 ### Resume
 
 ```text
-# worktree:
-cd .worktrees/agent-ui-fixes
-# cargo make build agent
-# (install only with user permission)
+# no active feature worktree
 ```
