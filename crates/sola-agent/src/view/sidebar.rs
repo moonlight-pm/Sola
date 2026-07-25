@@ -1,7 +1,7 @@
 //! Session sidebar — sola-kit [`SidebarPanel`] with filter header.
 //!
-//! Console-held sessions (external Grok TUI) sit in their own section;
-//! the activity dot means "working", not "open in terminal".
+//! Activity dots mean "working". Hover a row for a trash control under the
+//! age label: first click arms, second click deletes (no dialog).
 
 use iced::widget::{button, column, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
@@ -11,7 +11,7 @@ use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::{
-    DividerColors, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection,
+    DividerColors, SidebarHoverAction, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection,
 };
 use sola_kit::fonts;
 
@@ -58,6 +58,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
     let mut panel = SidebarPanel::new(sections)
         .header(header)
         .section_scroll(app.session_section_scroll, Msg::SessionSectionScroll)
+        .item_hover(app.session_hover.clone(), Msg::SessionHover)
         .resizable_with(
             app.sidebar_w,
             app.dragging_divider,
@@ -181,11 +182,17 @@ fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<
     // (two SelectSession within a short window) so the kit button path
     // keeps hover chrome.
     let _ = busy;
+    let armed = app.delete_armed.as_deref() == Some(summary.id.as_str());
     SidebarItem::new(title, Msg::SelectSession(summary.id.clone()))
+        .id(summary.id.clone())
         .active(selected)
         .subtitle(project)
         .secondary(when)
         .indicator(indicator)
+        .hover_action(SidebarHoverAction {
+            message: Msg::SessionDeleteClick(summary.id.clone()),
+            armed,
+        })
 }
 
 fn ellipsize(s: &str, max_chars: usize) -> String {

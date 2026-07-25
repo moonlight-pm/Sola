@@ -45,6 +45,7 @@ use iced::{
     Theme, Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
 };
 
+use crate::components::icon::{icon_handle, icon_svg_colored};
 use crate::components::style::{RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha};
 use crate::fonts;
 
@@ -68,14 +69,23 @@ pub enum SidebarIndicator {
     Idle,
 }
 
+/// Trailing control under [`SidebarItem::secondary`], shown only while the
+/// row is hovered (requires [`SidebarPanel::item_hover`] + [`SidebarItem::id`]).
+#[derive(Debug, Clone)]
+pub struct SidebarHoverAction<Message> {
+    pub message: Message,
+    /// Second-step / armed styling (e.g. two-click delete confirm).
+    pub armed: bool,
+}
+
 /// One row in the sidebar. `active` flips on the visual state; `message`
 /// is what the parent receives when the row is clicked.
 ///
 /// The `shortcut` / `on_close` / `secondary` / `subtitle` /
-/// `on_double_click` / `indicator` fields are opt-in extras consumed by
-/// [`SidebarPanel`] (and the shared row renderer used by plain
-/// [`sidebar`]). They default to `None`, so existing `::new().active()`
-/// callers behave exactly as before.
+/// `on_double_click` / `indicator` / `hover_action` fields are opt-in
+/// extras consumed by [`SidebarPanel`] (and the shared row renderer used
+/// by plain [`sidebar`]). They default to `None`, so existing
+/// `::new().active()` callers behave exactly as before.
 pub struct SidebarItem<Message> {
     pub label: String,
     pub active: bool,
@@ -96,6 +106,11 @@ pub struct SidebarItem<Message> {
     pub on_double_click: Option<Message>,
     /// Optional leading status dot (activity), independent of selection.
     pub indicator: Option<SidebarIndicator>,
+    /// Stable id for [`SidebarPanel::item_hover`] matching.
+    pub id: Option<String>,
+    /// Control under the secondary label; visible only while this row is
+    /// the hovered item (see [`SidebarPanel::item_hover`]).
+    pub hover_action: Option<SidebarHoverAction<Message>>,
 }
 
 impl<Message> SidebarItem<Message> {
@@ -110,6 +125,8 @@ impl<Message> SidebarItem<Message> {
             subtitle: None,
             on_double_click: None,
             indicator: None,
+            id: None,
+            hover_action: None,
         }
     }
 
@@ -151,6 +168,19 @@ impl<Message> SidebarItem<Message> {
     /// Leading status dot (e.g. session actively working).
     pub fn indicator(mut self, indicator: SidebarIndicator) -> Self {
         self.indicator = Some(indicator);
+        self
+    }
+
+    /// Stable id for hover tracking ([`SidebarPanel::item_hover`]).
+    pub fn id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// Trailing control under the secondary label (hover-only when the
+    /// panel has item hover wired).
+    pub fn hover_action(mut self, action: SidebarHoverAction<Message>) -> Self {
+        self.hover_action = Some(action);
         self
     }
 }
@@ -377,7 +407,7 @@ where
             // `sidebar()` never enables reorder, so `render_item` takes
             // the plain `button(..).on_press(item.message)` path. `index`
             // is only read on the reorder path.
-            col = col.push(render_item(item, None, 0));
+            col = col.push(render_item(item, None, 0, false));
         }
     }
     container(col)
@@ -790,6 +820,7 @@ fn render_item<'a, Message>(
     item: SidebarItem<Message>,
     reorder: Option<&ReorderCfg<'a, Message>>,
     index: usize,
+    show_hover_action: bool,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -804,41 +835,71 @@ where
         subtitle,
         on_double_click,
         indicator,
+        id: _,
+        hover_action,
     } = item;
 
     // Selection is background-only (see `item_style`) — no left accent bar,
     // so title/subtitle stay aligned with idle rows.
-    let content = item_content(
-        &label,
-        subtitle.as_deref(),
-        secondary.as_deref(),
-        shortcut,
-        indicator,
-    );
     let pad = Padding::from([ITEM_PAD_V, ITEM_PAD_H]);
 
     // ── Plain path (no reorder). ──
     let Some(reorder) = reorder else {
-        // mouse_area when double-click is wired (buttons don't emit it);
-        // otherwise keep the pressable button for familiar hover chrome.
-        let row_el: Element<'a, Message> = if let Some(dbl) = on_double_click {
-            mouse_area(
-                container(content)
-                    .width(Length::Fill)
-                    .padding(pad)
-                    .style(move |theme: &Theme| row_container_style(theme, active)),
+        // Hover-action rows split press targets: left (title/path) selects;
+        // trailing column (age + trash) is a sibling so trash never also
+        // fires select.
+        let row_el: Element<'a, Message> = if hover_action.is_some() {
+            let action = if show_hover_action {
+                hover_action
+            } else {
+                None
+            };
+            let left = item_text_block(&label, subtitle.as_deref(), indicator);
+            let trail = item_trailing(secondary.as_deref(), shortcut, action);
+            let mut left_area = mouse_area(left)
+                .interaction(mouse::Interaction::Pointer)
+                .on_press(message);
+            if let Some(dbl) = on_double_click {
+                left_area = left_area.on_double_click(dbl);
+            }
+            container(
+                row![left_area, trail]
+                    .spacing(SPACE_MD)
+                    .align_y(iced::Alignment::Start)
+                    .width(Length::Fill),
             )
-            .interaction(mouse::Interaction::Pointer)
-            .on_press(message)
-            .on_double_click(dbl)
+            .width(Length::Fill)
+            .padding(pad)
+            .style(move |theme: &Theme| row_container_style(theme, active))
             .into()
         } else {
-            button(content)
-                .style(move |t, status| item_style(t, status, active))
-                .padding(pad)
-                .width(Length::Fill)
+            let content = item_content(
+                &label,
+                subtitle.as_deref(),
+                secondary.as_deref(),
+                shortcut,
+                indicator,
+                None,
+            );
+            if let Some(dbl) = on_double_click {
+                mouse_area(
+                    container(content)
+                        .width(Length::Fill)
+                        .padding(pad)
+                        .style(move |theme: &Theme| row_container_style(theme, active)),
+                )
+                .interaction(mouse::Interaction::Pointer)
                 .on_press(message)
+                .on_double_click(dbl)
                 .into()
+            } else {
+                button(content)
+                    .style(move |t, status| item_style(t, status, active))
+                    .padding(pad)
+                    .width(Length::Fill)
+                    .on_press(message)
+                    .into()
+            }
         };
         if let Some(close_msg) = on_close {
             return row![row_el, close_button(close_msg)]
@@ -848,6 +909,19 @@ where
         }
         return row_el;
     };
+
+    let content = item_content(
+        &label,
+        subtitle.as_deref(),
+        secondary.as_deref(),
+        shortcut,
+        indicator,
+        if show_hover_action {
+            hover_action
+        } else {
+            None
+        },
+    );
 
     // ── Reorder-enabled path. ──
     // Live-reorder chrome is active only while `reorder.active` is `Some` —
@@ -915,20 +989,10 @@ where
     f.into()
 }
 
-/// Title (+ optional subtitle) with trailing secondary / shortcut.
-///
-/// Layout:
-/// ```text
-/// [ ● title …………………  19m ]
-/// [   subtitle ……………      ]
-/// ```
-/// Title/subtitle take `Fill` and clip; secondary sits in a shrink column
-/// so times never overlap the title. Leading indicator is activity status.
-fn item_content<'a, Message: 'a>(
+/// Title + optional subtitle (+ leading indicator). Takes `Fill` width.
+fn item_text_block<'a, Message: 'a>(
     label: &str,
     subtitle: Option<&str>,
-    secondary: Option<&str>,
-    shortcut: Option<u8>,
     indicator: Option<SidebarIndicator>,
 ) -> Element<'a, Message> {
     let title = text(label.to_string())
@@ -973,40 +1037,122 @@ fn item_content<'a, Message: 'a>(
         );
     }
 
-    // Clip so long titles cannot paint over the trailing time/count column.
-    let text_box = container(text_col)
-        .width(Length::Fill)
-        .clip(true);
+    container(text_col).width(Length::Fill).clip(true).into()
+}
 
+/// Shrink trailing column: age/shortcut, then optional hover action under it.
+fn item_trailing<'a, Message: Clone + 'a>(
+    secondary: Option<&str>,
+    shortcut: Option<u8>,
+    hover_action: Option<SidebarHoverAction<Message>>,
+) -> Element<'a, Message> {
     let mut trailing = column![].spacing(2.0).align_x(iced::Alignment::End);
-    let mut has_trail = false;
     if let Some(sec) = secondary {
         trailing = trailing.push(dim_label(sec));
-        has_trail = true;
     }
     if let Some(n) = shortcut {
         trailing = trailing.push(dim_label(&n.to_string()));
-        has_trail = true;
     }
+    if let Some(action) = hover_action {
+        trailing = trailing.push(hover_action_button(action));
+    }
+    container(trailing)
+        .width(Length::Shrink)
+        .padding(Padding {
+            top: 1.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 6.0,
+        })
+        .into()
+}
 
+/// Title (+ optional subtitle) with trailing secondary / shortcut /
+/// hover action.
+///
+/// Layout:
+/// ```text
+/// [ ● title …………………  19m ]
+/// [   subtitle ……………  🗑  ]   ← hover action under age when shown
+/// ```
+fn item_content<'a, Message: Clone + 'a>(
+    label: &str,
+    subtitle: Option<&str>,
+    secondary: Option<&str>,
+    shortcut: Option<u8>,
+    indicator: Option<SidebarIndicator>,
+    hover_action: Option<SidebarHoverAction<Message>>,
+) -> Element<'a, Message> {
+    let text_box = item_text_block(label, subtitle, indicator);
+    let has_trail =
+        secondary.is_some() || shortcut.is_some() || hover_action.is_some();
     let mut r = row![text_box]
         .spacing(SPACE_MD)
         .align_y(iced::Alignment::Start)
         .width(Length::Fill);
     if has_trail {
-        // Shrink trailing column — never takes Fill, so title keeps the rest.
-        r = r.push(
-            container(trailing)
-                .width(Length::Shrink)
-                .padding(Padding {
-                    top: 1.0,
-                    right: 0.0,
-                    bottom: 0.0,
-                    left: 6.0,
-                }),
-        );
+        r = r.push(item_trailing(secondary, shortcut, hover_action));
     }
     r.into()
+}
+
+/// Trash (or armed delete) control under the secondary time label.
+fn hover_action_button<'a, Message: Clone + 'a>(
+    action: SidebarHoverAction<Message>,
+) -> Element<'a, Message> {
+    let armed = action.armed;
+    let handle = icon_handle("lucide/trash-2");
+    let color = if armed {
+        Color {
+            r: 0.92,
+            g: 0.32,
+            b: 0.32,
+            a: 1.0,
+        }
+    } else {
+        Color {
+            r: 0.55,
+            g: 0.58,
+            b: 0.64,
+            a: 0.90,
+        }
+    };
+    let glyph = icon_svg_colored(handle, 12, color);
+    button(glyph)
+        .padding(Padding::from([2, 4]))
+        .style(move |theme: &Theme, status| {
+            let p = theme.extended_palette();
+            let bg = match status {
+                button::Status::Hovered if armed => Color {
+                    a: 0.22,
+                    ..p.danger.base.color
+                },
+                button::Status::Hovered => Color {
+                    a: 0.14,
+                    ..p.background.stronger.color
+                },
+                button::Status::Pressed => Color {
+                    a: 0.28,
+                    ..if armed {
+                        p.danger.base.color
+                    } else {
+                        p.background.stronger.color
+                    }
+                },
+                _ => Color::TRANSPARENT,
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                border: Border {
+                    radius: RADIUS_SM.into(),
+                    ..Default::default()
+                },
+                text_color: color,
+                ..button::Style::default()
+            }
+        })
+        .on_press(action.message)
+        .into()
 }
 
 fn status_dot<'a, Message: 'a>(indicator: SidebarIndicator) -> Element<'a, Message> {
@@ -1099,6 +1245,8 @@ pub struct SidebarPanel<'a, Message> {
     /// Viewport snapshot + callback for the fill section's scroll body.
     /// When set, fill sections show `↑ N …` / `↓ N …` overflow chips.
     section_scroll: Option<(SectionScroll, Box<dyn Fn(SectionScroll) -> Message + 'a>)>,
+    /// Per-row hover id + callback (for hover-only trailing actions).
+    item_hover: Option<(Option<String>, Box<dyn Fn(Option<String>) -> Message + 'a>)>,
 }
 
 impl<'a, Message> SidebarPanel<'a, Message>
@@ -1114,6 +1262,7 @@ where
             header: None,
             footer: None,
             section_scroll: None,
+            item_hover: None,
         }
     }
 
@@ -1180,6 +1329,18 @@ where
         self
     }
 
+    /// Track which item id is hovered so [`SidebarItem::hover_action`] can
+    /// appear only on that row. `hovered` is the app-owned id (or `None`);
+    /// `on_hover` receives `Some(id)` on enter and `None` on exit.
+    pub fn item_hover(
+        mut self,
+        hovered: Option<String>,
+        on_hover: impl Fn(Option<String>) -> Message + 'a,
+    ) -> Self {
+        self.item_hover = Some((hovered, Box::new(on_hover)));
+        self
+    }
+
     pub fn build(self) -> Element<'a, Message, Theme> {
         let SidebarPanel {
             sections,
@@ -1189,6 +1350,7 @@ where
             header,
             footer,
             section_scroll,
+            item_hover,
         } = self;
 
         let collapsed = collapse.as_ref().map(|(c, _)| *c).unwrap_or(false);
@@ -1196,6 +1358,10 @@ where
         let (scroll_snap, mut on_section_scroll) = match section_scroll {
             Some((snap, cb)) => (snap, Some(cb)),
             None => (SectionScroll::default(), None),
+        };
+        let (hovered_id, mut on_item_hover) = match item_hover {
+            Some((id, cb)) => (id, Some(cb)),
+            None => (None, None),
         };
 
         // Fixed chrome (collapse + header + footer). Section *labels* also
@@ -1268,10 +1434,14 @@ where
                 } else {
                     panel_sibling_offset(from, to, stable_index)
                 };
+                let show_action = item
+                    .id
+                    .as_ref()
+                    .is_some_and(|id| hovered_id.as_ref() == Some(id));
                 let row_el = if collapsed {
                     collapsed_row(&item, stable_index, reorder_ref)
                 } else {
-                    render_item(item, reorder_ref, stable_index)
+                    render_item(item, reorder_ref, stable_index, show_action)
                 };
                 items = items.push(with_reorder_motion(row_el, dy, is_dragged));
             }
@@ -1311,8 +1481,21 @@ where
                         body_items =
                             body_items.push(collapsed_row(&item, row_index, reorder_ref));
                     } else {
-                        body_items =
-                            body_items.push(render_item(item, reorder_ref, row_index));
+                        let item_id = item.id.clone();
+                        let show_action = item_id
+                            .as_ref()
+                            .is_some_and(|id| hovered_id.as_ref() == Some(id));
+                        let mut row_el =
+                            render_item(item, reorder_ref, row_index, show_action);
+                        if let (Some(id), Some(ref mut on_hover)) =
+                            (item_id, on_item_hover.as_mut())
+                        {
+                            row_el = mouse_area(row_el)
+                                .on_enter(on_hover(Some(id)))
+                                .on_exit(on_hover(None))
+                                .into();
+                        }
+                        body_items = body_items.push(row_el);
                     }
                     row_index += 1;
                 }

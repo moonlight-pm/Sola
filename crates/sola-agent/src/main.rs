@@ -201,6 +201,10 @@ pub(crate) struct App {
     pub(crate) last_session_click: Option<(String, Instant)>,
     /// Sessions section scroll viewport (overflow chips: ↑ N … / ↓ N …).
     pub(crate) session_section_scroll: sola_kit::components::SectionScroll,
+    /// Hovered session row id (hover-only trash control).
+    pub(crate) session_hover: Option<String>,
+    /// Two-click delete: first trash click arms this id; second deletes.
+    pub(crate) delete_armed: Option<String>,
     /// Permission mode (default always-approve).
     pub(crate) permission_mode: PermissionMode,
     /// Reasoning effort options from the active model.
@@ -265,6 +269,10 @@ pub(crate) enum Msg {
     SetPermissionMode(PermissionMode),
     /// Footer: pick reasoning effort id.
     SetEffort(String),
+    /// Sidebar row hover (for trash visibility).
+    SessionHover(Option<String>),
+    /// Trash control: arm on first click, delete on second (same id).
+    SessionDeleteClick(String),
 }
 
 impl App {
@@ -307,6 +315,8 @@ impl App {
             drag_anchor: None,
             last_session_click: None,
             session_section_scroll: sola_kit::components::SectionScroll::default(),
+            session_hover: None,
+            delete_armed: None,
             permission_mode: PermissionMode::default_mode(),
             efforts: Vec::new(),
             effort_id: None,
@@ -783,6 +793,35 @@ impl App {
                 self.effort_id = Some(id.clone());
                 if self.session_id.is_some() {
                     bridge::agent_send(AgentCmd::SetEffort { effort_id: id });
+                }
+            }
+            Msg::SessionHover(id) => {
+                self.session_hover = id.clone();
+                // Leaving the row (or switching rows) clears arm — two
+                // clicks must be on the same visible trash control.
+                if let Some(armed) = self.delete_armed.as_ref() {
+                    if id.as_ref() != Some(armed) {
+                        self.delete_armed = None;
+                    }
+                }
+            }
+            Msg::SessionDeleteClick(id) => {
+                if self.delete_armed.as_deref() == Some(id.as_str()) {
+                    self.delete_armed = None;
+                    let was_open = self.session_id.as_deref() == Some(id.as_str());
+                    // Sync delete on worker; refresh list after.
+                    bridge::agent_send(AgentCmd::BulkDelete { ids: vec![id.clone()] });
+                    if was_open {
+                        self.session_id = None;
+                        self.session_title = None;
+                        self.turns.clear();
+                        self.history_start_byte = 0;
+                        self.has_older_history = false;
+                        self.streaming = false;
+                        self.pending = None;
+                    }
+                } else {
+                    self.delete_armed = Some(id);
                 }
             }
         }
