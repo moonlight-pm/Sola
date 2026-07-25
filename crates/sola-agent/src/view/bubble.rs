@@ -3,10 +3,12 @@
 //! Reference: xai-org/grok-build `scrollback/blocks/{user,agent,thinking,tool}`.
 //! User: ❯ + soft band. Agent: bare markdown. Thought: collapsed header.
 //! Tools: verb + short target; consecutive groupable kinds fold ("Read 3 files").
+//! Spacing is kind-aware: tight action clusters, air around prose turns.
 
+use iced::widget::text::LineHeight;
 use iced::widget::{column, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
-use sola_kit::components::style::{RADIUS_MD, SPACE_XS};
+use sola_kit::components::style::RADIUS_MD;
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
 
@@ -17,7 +19,48 @@ use crate::Msg;
 const STREAM_MAX: f32 = 960.0;
 const USER_BODY_PX: f32 = 14.0;
 const TOOL_PX: f32 = 12.5;
+const TOOL_LH: f32 = 1.45;
+const USER_LH: f32 = 1.5;
 const CMD_MAX: usize = 72;
+
+/// Coarse class for inter-turn rhythm (not the same as ToolKind).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StreamKind {
+    User,
+    Agent,
+    /// Thought / plan / error — meta chrome.
+    Meta,
+    Tool,
+}
+
+fn stream_kind(turn: &Turn) -> StreamKind {
+    match turn {
+        Turn::User(_) => StreamKind::User,
+        Turn::Assistant(_) => StreamKind::Agent,
+        Turn::Tool(_) => StreamKind::Tool,
+        Turn::Thought(_) | Turn::Plan(_) | Turn::Error(_) => StreamKind::Meta,
+    }
+}
+
+/// Top padding before a block given what came before.
+fn gap_before(prev: Option<StreamKind>, cur: StreamKind) -> f32 {
+    match (prev, cur) {
+        (None, _) => 0.0,
+        // Tight action stream (tools + thoughts).
+        (Some(StreamKind::Tool), StreamKind::Tool) => 3.0,
+        (Some(StreamKind::Meta), StreamKind::Tool)
+        | (Some(StreamKind::Tool), StreamKind::Meta)
+        | (Some(StreamKind::Meta), StreamKind::Meta) => 4.0,
+        // Prose needs room to breathe.
+        (_, StreamKind::User) => 18.0,
+        (Some(StreamKind::User), StreamKind::Agent) => 14.0,
+        (Some(StreamKind::User), _) => 12.0,
+        (Some(StreamKind::Tool) | Some(StreamKind::Meta), StreamKind::Agent) => 16.0,
+        (Some(StreamKind::Agent), StreamKind::Agent) => 14.0,
+        (Some(StreamKind::Agent), StreamKind::Tool | StreamKind::Meta) => 12.0,
+        _ => 10.0,
+    }
+}
 
 /// Semantic class for verb-group labels (mirrors Grok `VerbGroupKind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,48 +109,64 @@ impl ToolKind {
     }
 }
 
-/// Render turns as a Grok-like action stream.
+/// Render turns as a Grok-like action stream with kind-aware vertical rhythm.
 pub(crate) fn turns_view<'a>(turns: &'a [Turn], theme: &Theme) -> Vec<Element<'a, Msg>> {
     let mut out = Vec::new();
     let mut i = 0;
+    let mut prev_kind: Option<StreamKind> = None;
+
     while i < turns.len() {
-        match &turns[i] {
+        let (el, kind, advance) = match &turns[i] {
             Turn::Tool(t) => {
-                let kind = classify_tool(&t.tool);
-                if kind.groupable() {
+                let tool_kind = classify_tool(&t.tool);
+                if tool_kind.groupable() {
                     let start = i;
-                    i += 1;
-                    while i < turns.len() {
-                        if let Turn::Tool(next) = &turns[i] {
-                            if classify_tool(&next.tool) == kind {
-                                i += 1;
+                    let mut j = i + 1;
+                    while j < turns.len() {
+                        if let Turn::Tool(next) = &turns[j] {
+                            if classify_tool(&next.tool) == tool_kind {
+                                j += 1;
                                 continue;
                             }
                         }
                         break;
                     }
-                    let tools: Vec<&ToolTurn> = turns[start..i]
+                    let tools: Vec<&ToolTurn> = turns[start..j]
                         .iter()
                         .filter_map(|t| match t {
                             Turn::Tool(tt) => Some(tt),
                             _ => None,
                         })
                         .collect();
-                    if tools.len() >= 2 {
-                        out.push(verb_group_row(kind, &tools, theme));
+                    let el = if tools.len() >= 2 {
+                        verb_group_row(tool_kind, &tools, theme)
                     } else if let Some(one) = tools.first() {
-                        out.push(tool_row(one, theme));
-                    }
+                        tool_row(one, theme)
+                    } else {
+                        tool_row(t, theme)
+                    };
+                    (el, StreamKind::Tool, j - i)
                 } else {
-                    out.push(tool_row(t, theme));
-                    i += 1;
+                    (tool_row(t, theme), StreamKind::Tool, 1)
                 }
             }
-            other => {
-                out.push(turn_view(other, theme));
-                i += 1;
-            }
-        }
+            other => (turn_view(other, theme), stream_kind(other), 1),
+        };
+
+        let top = gap_before(prev_kind, kind);
+        out.push(
+            container(el)
+                .width(Length::Fill)
+                .padding(Padding {
+                    top,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                })
+                .into(),
+        );
+        prev_kind = Some(kind);
+        i += advance;
     }
     out
 }
@@ -127,29 +186,33 @@ fn turn_view<'a>(turn: &'a Turn, theme: &Theme) -> Element<'a, Msg> {
 
 fn user_prompt(body: &str, theme: &Theme) -> Element<'static, Msg> {
     let p = theme.extended_palette();
+    // Soft cyan-tinted band from selection + raised surface (system theme).
+    let sel = sola_kit::theme::selection();
     let band = Color {
-        r: p.background.weaker.color.r * 0.55 + p.background.strong.color.r * 0.45,
-        g: p.background.weaker.color.g * 0.55 + p.background.strong.color.g * 0.45,
-        b: p.background.weaker.color.b * 0.55 + p.background.strong.color.b * 0.45,
+        r: sel.r * 0.55 + p.background.weaker.color.r * 0.45,
+        g: sel.g * 0.55 + p.background.weaker.color.g * 0.45,
+        b: sel.b * 0.55 + p.background.weaker.color.b * 0.45,
         a: 1.0,
     };
     let arrow = text("❯")
         .font(fonts::ui_medium())
         .size(USER_BODY_PX)
+        .line_height(LineHeight::Relative(USER_LH))
         .style(kit_text::accent);
     let body = text(body.to_string())
         .font(fonts::ui())
         .size(USER_BODY_PX)
+        .line_height(LineHeight::Relative(USER_LH))
         .wrapping(iced::widget::text::Wrapping::Word)
         .width(Length::Fill);
 
     container(
         row![arrow, body]
-            .spacing(10.0)
+            .spacing(12.0)
             .align_y(Alignment::Start)
             .width(Length::Fill),
     )
-    .padding(Padding::from([8.0, 12.0]))
+    .padding(Padding::from([10.0, 14.0]))
     .width(Length::Fill)
     .max_width(STREAM_MAX)
     .style(move |_t: &Theme| container::Style {
@@ -170,9 +233,9 @@ fn agent_message(body: &str, theme: &Theme) -> Element<'static, Msg> {
         .width(Length::Fill)
         .max_width(STREAM_MAX)
         .padding(Padding {
-            top: 2.0,
-            right: 0.0,
-            bottom: 2.0,
+            top: 4.0,
+            right: 4.0,
+            bottom: 6.0,
             left: 2.0,
         })
         .into()
@@ -191,18 +254,24 @@ fn thought_line(body: &str) -> Element<'static, Msg> {
     let bullet = text("·")
         .font(fonts::ui())
         .size(TOOL_PX)
+        .line_height(LineHeight::Relative(TOOL_LH))
         .style(kit_text::muted);
     let title = text(label)
         .font(fonts::ui_medium())
         .size(TOOL_PX)
+        .line_height(LineHeight::Relative(TOOL_LH))
         .style(kit_text::muted);
 
-    row![bullet, title]
-        .spacing(8.0)
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .padding(Padding::from([2.0, 0.0]))
-        .into()
+    container(
+        row![bullet, title]
+            .spacing(10.0)
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
+    )
+    .padding(Padding::from([3.0, 0.0]))
+    .width(Length::Fill)
+    .max_width(STREAM_MAX)
+    .into()
 }
 
 // ── Tools ───────────────────────────────────────────────────────────────────
@@ -223,12 +292,16 @@ fn tool_row(t: &ToolTurn, _theme: &Theme) -> Element<'static, Msg> {
         (kit_text::muted, kit_text::muted)
     };
 
-    let bullet = text("·").font(fonts::ui()).size(TOOL_PX).style(bullet_style);
+    let bullet = text("·")
+        .font(fonts::ui())
+        .size(TOOL_PX)
+        .line_height(LineHeight::Relative(TOOL_LH))
+        .style(bullet_style);
 
-    // Verb is medium; target/path stays mono-ish for paths/commands.
     let title = text(label)
         .font(fonts::ui())
         .size(TOOL_PX)
+        .line_height(LineHeight::Relative(TOOL_LH))
         .style(title_style)
         .wrapping(iced::widget::text::Wrapping::Word)
         .width(Length::Fill);
@@ -242,18 +315,24 @@ fn tool_row(t: &ToolTurn, _theme: &Theme) -> Element<'static, Msg> {
     };
 
     let mut line = row![bullet, title]
-        .spacing(8.0)
+        .spacing(10.0)
         .align_y(Alignment::Center)
         .width(Length::Fill);
 
     if let Some((s, style)) = status {
-        line = line.push(text(s).font(fonts::ui()).size(11.0).style(style));
+        line = line.push(
+            text(s)
+                .font(fonts::ui())
+                .size(11.0)
+                .line_height(LineHeight::Relative(TOOL_LH))
+                .style(style),
+        );
     }
 
     container(line)
         .width(Length::Fill)
         .max_width(STREAM_MAX)
-        .padding(Padding::from([1.0, 0.0]))
+        .padding(Padding::from([2.5, 0.0]))
         .into()
 }
 
@@ -271,18 +350,27 @@ fn verb_group_row(kind: ToolKind, tools: &[&ToolTurn], _theme: &Theme) -> Elemen
         kit_text::muted
     };
 
-    let bullet = text("·").font(fonts::ui()).size(TOOL_PX).style(style);
+    let bullet = text("·")
+        .font(fonts::ui())
+        .size(TOOL_PX)
+        .line_height(LineHeight::Relative(TOOL_LH))
+        .style(style);
     let title = text(label)
         .font(fonts::ui_medium())
         .size(TOOL_PX)
+        .line_height(LineHeight::Relative(TOOL_LH))
         .style(style);
 
-    row![bullet, title]
-        .spacing(8.0)
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .padding(Padding::from([1.0, 0.0]))
-        .into()
+    container(
+        row![bullet, title]
+            .spacing(10.0)
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
+    )
+    .padding(Padding::from([2.5, 0.0]))
+    .width(Length::Fill)
+    .max_width(STREAM_MAX)
+    .into()
 }
 
 fn classify_tool(title: &str) -> ToolKind {
@@ -511,18 +599,20 @@ fn is_failed(status: &str) -> bool {
 
 fn plan_block(entries: &[crate::protocol::PlanEntry], theme: &Theme) -> Element<'static, Msg> {
     let accent = theme.extended_palette().primary.base.color;
+    let heading = Color {
+        r: (accent.r * 0.72 + 0.92 * 0.28).min(1.0),
+        g: (accent.g * 0.72 + 0.94 * 0.28).min(1.0),
+        b: (accent.b * 0.72 + 0.98 * 0.28).min(1.0),
+        a: 1.0,
+    };
     let mut lines = column![text("Next")
         .font(fonts::ui_medium())
-        .size(12.5)
+        .size(13.0)
+        .line_height(LineHeight::Relative(1.4))
         .style(move |_t: &Theme| iced::widget::text::Style {
-            color: Some(Color {
-                r: (accent.r * 0.75 + 1.0 * 0.25).min(1.0),
-                g: (accent.g * 0.75 + 1.0 * 0.25).min(1.0),
-                b: (accent.b * 0.75 + 1.0 * 0.25).min(1.0),
-                a: 1.0,
-            }),
+            color: Some(heading),
         })]
-    .spacing(SPACE_XS);
+    .spacing(6.0);
 
     for e in entries {
         let mark = match e.status.as_str() {
@@ -534,6 +624,7 @@ fn plan_block(entries: &[crate::protocol::PlanEntry], theme: &Theme) -> Element<
             text(format!("{mark}  {}", e.content))
                 .font(fonts::ui())
                 .size(13.0)
+                .line_height(LineHeight::Relative(1.45))
                 .style(kit_text::muted)
                 .wrapping(iced::widget::text::Wrapping::Word),
         );
@@ -542,7 +633,7 @@ fn plan_block(entries: &[crate::protocol::PlanEntry], theme: &Theme) -> Element<
     container(lines)
         .width(Length::Fill)
         .max_width(STREAM_MAX)
-        .padding(Padding::from([4.0, 2.0]))
+        .padding(Padding::from([6.0, 2.0]))
         .into()
 }
 
@@ -551,19 +642,21 @@ fn error_block(msg: &str) -> Element<'static, Msg> {
         column![
             text("Error")
                 .font(fonts::ui_medium())
-                .size(12.0)
+                .size(12.5)
+                .line_height(LineHeight::Relative(1.4))
                 .style(kit_text::danger),
             text(msg.to_string())
                 .font(fonts::ui())
-                .size(13.0)
+                .size(13.5)
+                .line_height(LineHeight::Relative(1.5))
                 .style(kit_text::danger)
                 .wrapping(iced::widget::text::Wrapping::Word),
         ]
-        .spacing(SPACE_XS),
+        .spacing(6.0),
     )
     .width(Length::Fill)
     .max_width(STREAM_MAX)
-    .padding(Padding::from([4.0, 2.0]))
+    .padding(Padding::from([6.0, 2.0]))
     .into()
 }
 

@@ -362,8 +362,9 @@ fn transcript(app: &App) -> Element<'_, Msg> {
     let inner: Element<'_, Msg> = if app.turns.is_empty() && bubbles.is_empty() {
         empty_transcript(app)
     } else if app.turns.is_empty() {
+        // Gaps are applied per-block in bubble::turns_view (kind-aware).
         Column::with_children(bubbles)
-            .spacing(8.0)
+            .spacing(0.0)
             .width(Length::Fill)
             .into()
     } else {
@@ -371,7 +372,7 @@ fn transcript(app: &App) -> Element<'_, Msg> {
             bubbles.push(el);
         }
         Column::with_children(bubbles)
-            .spacing(8.0)
+            .spacing(0.0)
             .width(Length::Fill)
             .into()
     };
@@ -380,9 +381,9 @@ fn transcript(app: &App) -> Element<'_, Msg> {
         .width(Length::Fill)
         .max_width(CHAT_MAX)
         .padding(Padding {
-            top: 18.0,
+            top: 20.0,
             right: SIDE_PAD,
-            bottom: 8.0,
+            bottom: 12.0,
             left: SIDE_PAD,
         });
 

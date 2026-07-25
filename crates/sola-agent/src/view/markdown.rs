@@ -4,37 +4,100 @@
 //! inline ``code``, fenced code blocks, links as accent text.
 //!
 //! Inline markup uses iced `rich_text` + `span` so bold/code stay on one
-//! wrapping line (a vertical `column` of fragments was the word-per-line bug).
+//! wrapping line. Spacing is kind-aware so the stream doesn’t feel scrunched.
 
 use iced::font::Weight;
-use iced::widget::text::{Rich, Wrapping};
+use iced::widget::text::{LineHeight, Rich, Wrapping};
 use iced::widget::{container, rich_text, span, text, Column};
 use iced::{Background, Border, Color, Element, Font, Length, Never, Padding, Theme};
-use sola_kit::components::style::{RADIUS_MD, SPACE_MD, SPACE_SM, SPACE_XS};
+use sola_kit::components::style::{RADIUS_MD, SPACE_MD, SPACE_SM};
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
 
 use crate::Msg;
 
+/// Body size — slightly larger than chrome for reading comfort.
 const BODY_PX: f32 = 14.5;
 const CODE_PX: f32 = 12.5;
-const HEADING_ACCENT: Color = Color {
-    r: 0.72,
-    g: 0.58,
-    b: 0.95,
-    a: 1.0,
-};
+/// Comfortable reading measure (default iced is 1.3 → feels tight).
+const BODY_LH: f32 = 1.55;
+const HEADING_LH: f32 = 1.35;
 
 pub(crate) fn render(md: &str, theme: &Theme) -> Element<'static, Msg> {
     let blocks = parse_blocks(md);
     if blocks.is_empty() {
         return plain(md, BODY_PX, false, false, None);
     }
-    let mut col = Column::new().spacing(SPACE_SM).width(Length::Fill);
+
+    let mut col = Column::new().spacing(0.0).width(Length::Fill);
+    let mut prev: Option<BlockKind> = None;
     for b in blocks {
-        col = col.push(block_view(b, theme));
+        let kind = BlockKind::of(&b);
+        let top = gap_before(prev, kind);
+        let bottom = gap_after(kind);
+        let view = block_view(b, theme);
+        col = col.push(
+            container(view)
+                .width(Length::Fill)
+                .padding(Padding {
+                    top,
+                    right: 0.0,
+                    bottom,
+                    left: 0.0,
+                }),
+        );
+        prev = Some(kind);
     }
     col.into()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlockKind {
+    Heading,
+    Paragraph,
+    ListItem,
+    Code,
+    Rule,
+}
+
+impl BlockKind {
+    fn of(b: &Block) -> Self {
+        match b {
+            Block::Heading { .. } => Self::Heading,
+            Block::Paragraph(_) => Self::Paragraph,
+            Block::ListItem { .. } => Self::ListItem,
+            Block::Code(_) => Self::Code,
+            Block::Rule => Self::Rule,
+        }
+    }
+}
+
+fn gap_before(prev: Option<BlockKind>, cur: BlockKind) -> f32 {
+    match (prev, cur) {
+        (None, _) => 0.0,
+        // Extra air above section titles.
+        (_, BlockKind::Heading) => 14.0,
+        // List stack stays tight.
+        (Some(BlockKind::ListItem), BlockKind::ListItem) => 3.0,
+        (Some(BlockKind::Heading), BlockKind::ListItem) => 6.0,
+        (Some(BlockKind::Heading), BlockKind::Paragraph) => 6.0,
+        (Some(BlockKind::Paragraph), BlockKind::Paragraph) => 10.0,
+        (Some(BlockKind::Paragraph), BlockKind::ListItem) => 8.0,
+        (Some(BlockKind::ListItem), BlockKind::Paragraph) => 10.0,
+        (_, BlockKind::Code) => 10.0,
+        (Some(BlockKind::Code), _) => 10.0,
+        (_, BlockKind::Rule) => 12.0,
+        _ => 8.0,
+    }
+}
+
+fn gap_after(kind: BlockKind) -> f32 {
+    match kind {
+        BlockKind::Heading => 2.0,
+        BlockKind::ListItem => 0.0,
+        BlockKind::Code => 2.0,
+        _ => 0.0,
+    }
 }
 
 enum Block {
@@ -49,23 +112,54 @@ fn block_view(block: Block, theme: &Theme) -> Element<'static, Msg> {
     match block {
         Block::Heading { level, text: t } => {
             let size = match level {
-                1 => 18.0,
-                2 => 16.0,
+                1 => 17.5,
+                2 => 15.5,
                 _ => 14.5,
             };
-            // Grok uses accent/medium for section titles — soft purple.
-            plain(&t, size, true, false, Some(HEADING_ACCENT))
+            // Soft system cyan (#3dd6f5 family), not purple — blend with white
+            // so long titles stay readable on graphite.
+            let accent = theme.extended_palette().primary.base.color;
+            let color = Color {
+                r: (accent.r * 0.72 + 0.92 * 0.28).min(1.0),
+                g: (accent.g * 0.72 + 0.94 * 0.28).min(1.0),
+                b: (accent.b * 0.72 + 0.98 * 0.28).min(1.0),
+                a: 1.0,
+            };
+            plain_lh(&t, size, true, false, Some(color), HEADING_LH)
         }
         Block::Paragraph(t) => inline_rich(&t, BODY_PX, theme),
         Block::ListItem { depth, text: t } => {
-            let indent = "  ".repeat(depth);
-            let line = format!("{indent}· {t}");
-            inline_rich(&line, BODY_PX, theme)
+            let indent = 14.0 + depth as f32 * 14.0;
+            let bullet = text("·")
+                .font(fonts::ui())
+                .size(BODY_PX)
+                .line_height(LineHeight::Relative(BODY_LH))
+                .style(kit_text::muted);
+            let body = inline_rich(&t, BODY_PX, theme);
+            container(
+                iced::widget::row![bullet, body]
+                    .spacing(10.0)
+                    .align_y(iced::Alignment::Start)
+                    .width(Length::Fill),
+            )
+            .padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: indent,
+            })
+            .width(Length::Fill)
+            .into()
         }
         Block::Code(code) => code_block(&code, theme),
-        Block::Rule => container(kit_text::caption("—").style(kit_text::muted))
-            .padding(Padding::from([SPACE_XS, 0.0]))
-            .into(),
+        Block::Rule => container(
+            text("—")
+                .size(12.0)
+                .style(kit_text::muted)
+                .width(Length::Fill),
+        )
+        .padding(Padding::from([4.0, 0.0]))
+        .into(),
     }
 }
 
@@ -76,6 +170,17 @@ fn plain(
     muted: bool,
     color: Option<Color>,
 ) -> Element<'static, Msg> {
+    plain_lh(s, size, bold, muted, color, BODY_LH)
+}
+
+fn plain_lh(
+    s: &str,
+    size: f32,
+    bold: bool,
+    muted: bool,
+    color: Option<Color>,
+    lh: f32,
+) -> Element<'static, Msg> {
     let font = if bold {
         fonts::ui_medium()
     } else {
@@ -84,6 +189,7 @@ fn plain(
     let mut t = text(s.to_string())
         .font(font)
         .size(size)
+        .line_height(LineHeight::Relative(lh))
         .wrapping(Wrapping::Word)
         .width(Length::Fill);
     if let Some(c) = color {
@@ -104,6 +210,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
     let muted = p.secondary.base.text;
     let accent = p.primary.base.color;
     let fg = p.background.base.text;
+    let lh = LineHeight::Relative(BODY_LH);
 
     let mut spans: Vec<iced::widget::text::Span<'static, Never>> = Vec::new();
     let mut rest = s;
@@ -115,6 +222,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
                     span(inner.to_string())
                         .font(medium_font())
                         .size(size)
+                        .line_height(lh)
                         .color(fg),
                 );
                 rest = &tail[2..];
@@ -128,6 +236,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
                     span(inner.to_string())
                         .font(fonts::ui())
                         .size(size)
+                        .line_height(lh)
                         .color(muted),
                 );
                 rest = &tail[1..];
@@ -141,6 +250,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
                     span(inner.to_string())
                         .font(fonts::mono())
                         .size(CODE_PX)
+                        .line_height(lh)
                         .color(fg),
                 );
                 rest = &tail[1..];
@@ -156,6 +266,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
                         span(label.to_string())
                             .font(fonts::ui())
                             .size(size)
+                            .line_height(lh)
                             .color(accent)
                             .underline(true),
                     );
@@ -178,6 +289,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
             span(chunk.to_string())
                 .font(fonts::ui())
                 .size(size)
+                .line_height(lh)
                 .color(fg),
         );
         rest = tail;
@@ -189,6 +301,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
 
     let rich: Rich<'_, Never, Msg> = rich_text(spans)
         .size(size)
+        .line_height(LineHeight::Relative(BODY_LH))
         .wrapping(Wrapping::Word)
         .width(Length::Fill)
         .on_link_click(iced::never);
@@ -206,17 +319,18 @@ fn medium_font() -> Font {
 fn code_block(code: &str, theme: &Theme) -> Element<'static, Msg> {
     let bg = theme.extended_palette().background.strong.color;
     let border = Color {
-        a: 0.45,
+        a: 0.40,
         ..theme.extended_palette().background.stronger.color
     };
     container(
         text(code.trim_end().to_string())
             .font(fonts::mono())
             .size(CODE_PX)
+            .line_height(LineHeight::Relative(1.45))
             .wrapping(Wrapping::Word)
             .width(Length::Fill),
     )
-    .padding(Padding::from([SPACE_SM, SPACE_MD]))
+    .padding(Padding::from([10.0, 12.0]))
     .width(Length::Fill)
     .style(move |_t: &Theme| container::Style {
         background: Some(Background::Color(bg)),
