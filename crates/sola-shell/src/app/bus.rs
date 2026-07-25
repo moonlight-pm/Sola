@@ -337,8 +337,9 @@ impl Shell {
         }
     }
 
-    /// Instant pointer focus (no raise, no stack change).
-    fn focus_window_from_pointer(&mut self, window_id: u32) {
+    /// Pointer focus (no raise, no stack change). Used after the FFM dwell
+    /// timer and by map/close resync.
+    pub(crate) fn focus_window_from_pointer(&mut self, window_id: u32) {
         if self.focused_window_id == Some(window_id) {
             return;
         }
@@ -382,6 +383,8 @@ impl Shell {
         let Some(app_id) = self.app_id_for_window(window_id) else {
             return;
         };
+        // Cancel any dwell timer — click is authoritative for focus.
+        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
         self.bus_set_focus(&app_id);
         self.focused_window_id = Some(window_id);
         self.mru_window_by_app.insert(app_id, window_id);
@@ -764,18 +767,28 @@ impl Shell {
     // Mouse handlers
     // -------------------------------------------------------------------------
 
+    /// Focus-follows-mouse dwell before keyboard focus moves (no raise).
+    /// Long enough to cross a background app toward the menubar; short enough
+    /// that intentional hover still feels responsive.
+    const FOCUS_HOVER_DELAY: Duration = Duration::from_millis(200);
+
     /// Cursor entered a window surface.
     ///
-    /// Focus-follows-mouse: keyboard/pointer input target updates **instantly**,
-    /// but the window is **not** raised. Raising is click-only (see
-    /// [`Self::on_mouse_clicked`]) so floating foreground windows stay on top
-    /// while the pointer moves over a large background app.
+    /// Focus-follows-mouse: after [`Self::FOCUS_HOVER_DELAY`], keyboard focus
+    /// moves to the window under the pointer — **without** raising. Raising is
+    /// click-only (see [`Self::on_mouse_clicked`]). The delay is a grace period
+    /// for the path from a floating app up to the menubar across another window.
     fn on_mouse_entered(&mut self, e: MouseEnteredPayload) -> Task<Msg> {
         // Always remember hover (including shell) so map/close resync knows
         // whether the pointer is on an app vs chrome vs nowhere.
         self.pointer_window_id = Some(e.window_id);
 
-        // Skip shell surfaces — hovering the menubar must not steal focus.
+        // Cancel any in-flight dwell (new target or shell chrome).
+        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+
+        // Shell surfaces never take FFM focus — and entering the menubar
+        // cancels a pending steal from an intermediate window, so the floater
+        // you left keeps its menus.
         let is_shell = self
             .known_windows
             .iter()
@@ -784,8 +797,20 @@ impl Shell {
             return Task::none();
         }
 
-        self.focus_window_from_pointer(e.window_id);
-        Task::none()
+        // Already focused here — nothing to schedule.
+        if self.focused_window_id == Some(e.window_id) {
+            return Task::none();
+        }
+
+        let focus_gen = self.pending_focus_generation;
+        let wid = e.window_id;
+        Task::perform(
+            tokio::time::sleep(Self::FOCUS_HOVER_DELAY),
+            move |_| Msg::FocusHoverFire {
+                window_id: wid,
+                generation: focus_gen,
+            },
+        )
     }
 
     /// Mouse button pressed on a window surface.
@@ -834,9 +859,11 @@ impl Shell {
     }
 
     /// Cursor left all tracked surfaces.
-    /// Leave keyboard focus where it is (classic sloppy-focus leave policy).
+    /// Leave keyboard focus where it is (classic sloppy-focus leave policy)
+    /// and cancel any pending dwell so a transit gap does not fire late.
     fn on_mouse_left(&mut self) -> Task<Msg> {
         self.pointer_window_id = None;
+        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
         Task::none()
     }
 

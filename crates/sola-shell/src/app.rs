@@ -84,6 +84,9 @@ pub enum Msg {
     SwitcherConfirm,
     /// Cancel without focus change: deactivate.
     SwitcherCancel,
+    /// Focus-follows-mouse delay fired: focus `window_id` (no raise) if
+    /// `generation` still matches.
+    FocusHoverFire { window_id: u32, generation: u64 },
     /// Cycle to the next window of the currently focused app (Meta+`).
     CycleAppWindows,
     Noop,
@@ -117,6 +120,10 @@ pub struct Shell {
     /// focus steals (new map, close fallback) — River does not re-send
     /// `pointer_enter` if the cursor never left the old surface.
     pub pointer_window_id: Option<u32>,
+    /// Generation counter for the focus-follows-mouse dwell timer. Bumped on
+    /// every enter/leave so a superseded `FocusHoverFire` is a no-op — gives
+    /// a short grace period when mousing across apps toward the menubar.
+    pub pending_focus_generation: u64,
 
     // MRU (most-recently-used)
     pub mru_apps: Vec<String>,
@@ -218,6 +225,7 @@ impl Shell {
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
+            pending_focus_generation: 0,
             mru_apps: Vec::new(),
             mru_window_by_app: HashMap::new(),
             known_windows: Vec::new(),
@@ -975,6 +983,18 @@ impl Shell {
                 self.switcher.active = false;
                 self.emit_composition();
                 self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::FocusHoverFire { window_id, generation } => {
+                // Superseded by a later enter/leave (e.g. crossed toward menubar).
+                if generation != self.pending_focus_generation {
+                    return iced::Task::none();
+                }
+                // Pointer may have moved on without a leave we care about.
+                if self.pointer_window_id != Some(window_id) {
+                    return iced::Task::none();
+                }
+                self.focus_window_from_pointer(window_id);
                 iced::Task::none()
             }
             Msg::CycleAppWindows => {
