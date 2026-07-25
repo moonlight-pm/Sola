@@ -105,9 +105,29 @@ pub fn leader_reachable(socket: &Path) -> bool {
     UnixStream::connect(socket).is_ok()
 }
 
-fn resolve_grok_binary() -> PathBuf {
+/// Resolve the Grok CLI binary.
+///
+/// Prefer the **managed install symlink** `~/.grok/bin/grok` — Grok’s
+/// auto-updater rewrites its target on each release. Avoid pinning a
+/// versioned download path or a stale `~/.local/bin` copy.
+pub fn resolve_grok_binary() -> PathBuf {
     if let Ok(p) = std::env::var("SOLA_GROK_BIN") {
         return PathBuf::from(p);
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    if let Some(home) = home {
+        let managed = home.join(".grok/bin/grok");
+        if managed.is_file() || managed.is_symlink() {
+            return managed;
+        }
+        let local = home.join(".local/bin/grok");
+        if local.is_file() || local.is_symlink() {
+            return local;
+        }
+        let dl = home.join(".grok/downloads/grok-linux-x86_64");
+        if dl.is_file() {
+            return dl;
+        }
     }
     if let Ok(path) = std::env::var("PATH") {
         for dir in path.split(':') {
@@ -115,22 +135,6 @@ fn resolve_grok_binary() -> PathBuf {
             if candidate.is_file() {
                 return candidate;
             }
-        }
-    }
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    if let Some(home) = home {
-        let local = home.join(".local/bin/grok");
-        if local.is_file() {
-            return local;
-        }
-        let grok_home = home.join(".grok/bin/grok");
-        if grok_home.is_file() {
-            return grok_home;
-        }
-        // Managed download path used by the internal installer.
-        let dl = home.join(".grok/downloads/grok-linux-x86_64");
-        if dl.is_file() {
-            return dl;
         }
     }
     PathBuf::from("grok")

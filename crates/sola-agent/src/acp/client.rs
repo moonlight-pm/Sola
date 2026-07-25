@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::transport::ChildTransport;
 use crate::bridge;
 use crate::protocol::{
-    AgentEvent, PermissionChoice, PlanEntry, ToolTurn, Turn,
+    AgentEvent, EffortOption, PermissionChoice, PlanEntry, ToolTurn, Turn,
 };
 use crate::sessions;
 
@@ -68,6 +68,7 @@ impl AcpClient {
             }),
         )?;
         tracing::info!(?result, "ACP initialize ok");
+        emit_agent_info_from_initialize(&result);
         // Some agents require an authenticated notification — ignore failures.
         let _ = self.notify("authenticated", json!({}));
         Ok(())
@@ -89,6 +90,7 @@ impl AcpClient {
         self.session_id = Some(id.clone());
         self.open_tools.clear();
         self.suppress_history_replay = false;
+        emit_session_config_from_result(&result);
         bridge::emit(AgentEvent::SessionReady {
             id: id.clone(),
             title: None,
@@ -115,9 +117,10 @@ impl AcpClient {
             }),
         );
         self.suppress_history_replay = false;
-        let _result = _result?;
+        let result = _result?;
         self.session_id = Some(id.to_string());
         self.open_tools.clear();
+        emit_session_config_from_result(&result);
 
         let slice = sessions::history_tail(cwd, id);
         let title = sessions::title_for(cwd, id);
@@ -131,6 +134,22 @@ impl AcpClient {
             has_older: slice.has_older,
             from_watch: false,
         });
+        Ok(())
+    }
+
+    /// ACP `session/set_mode` — permission modes and (on Grok) effort ids.
+    pub fn set_mode(&mut self, mode_id: &str) -> Result<(), String> {
+        let sid = self
+            .session_id
+            .clone()
+            .ok_or_else(|| "no active session".to_string())?;
+        let _ = self.request(
+            "session/set_mode",
+            json!({
+                "sessionId": sid,
+                "modeId": mode_id,
+            }),
+        )?;
         Ok(())
     }
 
@@ -617,6 +636,123 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..max])
     }
+}
+
+fn emit_agent_info_from_initialize(result: &Value) {
+    let meta = result.get("_meta");
+    let agent_version = meta
+        .and_then(|m| m.get("agentVersion"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let model_state = meta.and_then(|m| m.get("modelState"));
+    let model_id = model_state
+        .and_then(|m| m.get("currentModelId"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let (efforts, current_effort) = efforts_from_models(
+        model_state.and_then(|m| m.get("availableModels")),
+        model_id.as_deref(),
+    );
+    bridge::emit(AgentEvent::AgentInfo {
+        agent_version,
+        model_id,
+        efforts,
+        current_effort,
+    });
+}
+
+fn emit_session_config_from_result(result: &Value) {
+    // Prefer models block; fall back to x.ai/sessionConfig options.
+    let models = result.get("models");
+    let model_id = models
+        .and_then(|m| m.get("currentModelId"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let (mut efforts, mut current_effort) = efforts_from_models(
+        models.and_then(|m| m.get("availableModels")),
+        model_id.as_deref(),
+    );
+    if efforts.is_empty() {
+        if let Some(opts) = result
+            .pointer("/_meta/x.ai/sessionConfig/options")
+            .and_then(|v| v.as_array())
+        {
+            for o in opts {
+                let cat = o.get("category").and_then(|c| c.as_str()).unwrap_or("");
+                if cat != "mode" {
+                    continue;
+                }
+                let id = o
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if id.is_empty() {
+                    continue;
+                }
+                let label = o
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&id)
+                    .to_string();
+                if o.get("selected").and_then(|s| s.as_bool()) == Some(true) {
+                    current_effort = Some(id.clone());
+                }
+                efforts.push(EffortOption { id, label });
+            }
+        }
+    }
+    if !efforts.is_empty() || model_id.is_some() {
+        bridge::emit(AgentEvent::SessionConfig {
+            efforts,
+            current_effort,
+            model_id,
+        });
+    }
+}
+
+fn efforts_from_models(
+    available: Option<&Value>,
+    prefer_model: Option<&str>,
+) -> (Vec<EffortOption>, Option<String>) {
+    let Some(arr) = available.and_then(|v| v.as_array()) else {
+        return (Vec::new(), None);
+    };
+    let model = arr
+        .iter()
+        .find(|m| {
+            prefer_model.is_some_and(|id| m.get("modelId").and_then(|v| v.as_str()) == Some(id))
+        })
+        .or_else(|| arr.first());
+    let Some(model) = model else {
+        return (Vec::new(), None);
+    };
+    let meta = model.get("_meta");
+    let current = meta
+        .and_then(|m| m.get("reasoningEffort"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let mut efforts = Vec::new();
+    if let Some(list) = meta.and_then(|m| m.get("reasoningEfforts")).and_then(|v| v.as_array()) {
+        for e in list {
+            let id = e
+                .get("id")
+                .or_else(|| e.get("value"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if id.is_empty() {
+                continue;
+            }
+            let label = e
+                .get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&id)
+                .to_string();
+            efforts.push(EffortOption { id, label });
+        }
+    }
+    (efforts, current)
 }
 
 /// Helpers used when mapping history — re-export turn builders.

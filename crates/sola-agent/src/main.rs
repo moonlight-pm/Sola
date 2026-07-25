@@ -34,12 +34,14 @@ mod bridge;
 mod overlay;
 mod protocol;
 mod sessions;
+mod version;
 mod view;
 mod worker;
 
 use backend::ConnectionMode;
 use protocol::{
-    AgentCmd, AgentEvent, ConnectionModeLabel, PermissionChoice, SessionSummary, ToolTurn, Turn,
+    AgentCmd, AgentEvent, ConnectionModeLabel, EffortOption, PermissionChoice, PermissionMode,
+    SessionSummary, ToolTurn, Turn,
 };
 
 const APP_ID: &str = "sola-agent";
@@ -124,6 +126,7 @@ fn main() -> iced::Result {
 
     bridge::init_channels();
     worker::start(ConnectionMode::default_mode());
+    version::start_update_watcher();
 
     // Kick connection + session list after iced is up.
     bridge::agent_send(AgentCmd::EnsureConnected);
@@ -198,6 +201,16 @@ pub(crate) struct App {
     pub(crate) last_session_click: Option<(String, Instant)>,
     /// Sessions section scroll viewport (overflow chips: ↑ N … / ↓ N …).
     pub(crate) session_section_scroll: sola_kit::components::SectionScroll,
+    /// Permission mode (default always-approve).
+    pub(crate) permission_mode: PermissionMode,
+    /// Reasoning effort options from the active model.
+    pub(crate) efforts: Vec<EffortOption>,
+    pub(crate) effort_id: Option<String>,
+    pub(crate) model_id: Option<String>,
+    /// Leader / bridge agent version (`initialize` or update check).
+    pub(crate) grok_version: Option<String>,
+    pub(crate) grok_latest: Option<String>,
+    pub(crate) grok_update_available: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -248,6 +261,10 @@ pub(crate) enum Msg {
     BulkBack,
     BulkConfirmDelete,
     BulkCancel,
+    /// Footer: cycle / pick permission mode.
+    SetPermissionMode(PermissionMode),
+    /// Footer: pick reasoning effort id.
+    SetEffort(String),
 }
 
 impl App {
@@ -290,6 +307,13 @@ impl App {
             drag_anchor: None,
             last_session_click: None,
             session_section_scroll: sola_kit::components::SectionScroll::default(),
+            permission_mode: PermissionMode::default_mode(),
+            efforts: Vec::new(),
+            effort_id: None,
+            model_id: None,
+            grok_version: None,
+            grok_latest: None,
+            grok_update_available: false,
         }
     }
 
@@ -747,6 +771,20 @@ impl App {
                 }
                 self.bulk_delete = None;
             }
+            Msg::SetPermissionMode(mode) => {
+                self.permission_mode = mode;
+                if self.session_id.is_some() {
+                    bridge::agent_send(AgentCmd::SetPermissionMode {
+                        mode_id: mode.as_mode_id().to_string(),
+                    });
+                }
+            }
+            Msg::SetEffort(id) => {
+                self.effort_id = Some(id.clone());
+                if self.session_id.is_some() {
+                    bridge::agent_send(AgentCmd::SetEffort { effort_id: id });
+                }
+            }
         }
         Task::none()
     }
@@ -883,6 +921,52 @@ impl App {
                 self.connection_mode = mode;
                 self.need_setup = None;
             }
+            AgentEvent::AgentInfo {
+                agent_version,
+                model_id,
+                efforts,
+                current_effort,
+            } => {
+                if let Some(v) = agent_version {
+                    self.grok_version = Some(v);
+                }
+                if model_id.is_some() {
+                    self.model_id = model_id;
+                }
+                if !efforts.is_empty() {
+                    self.efforts = efforts;
+                }
+                if current_effort.is_some() {
+                    self.effort_id = current_effort;
+                }
+            }
+            AgentEvent::GrokVersion {
+                current,
+                latest,
+                update_available,
+                channel: _,
+            } => {
+                if let Some(v) = current {
+                    self.grok_version = Some(v);
+                }
+                self.grok_latest = latest;
+                self.grok_update_available = update_available;
+            }
+            AgentEvent::SessionConfig {
+                efforts,
+                current_effort,
+                model_id,
+            } => {
+                if !efforts.is_empty() {
+                    self.efforts = efforts;
+                }
+                if current_effort.is_some() {
+                    self.effort_id = current_effort;
+                }
+                if model_id.is_some() {
+                    self.model_id = model_id;
+                }
+            }
             AgentEvent::Disconnected { reason } => {
                 self.connected = false;
                 self.streaming = false;
@@ -899,6 +983,15 @@ impl App {
                     self.session_title = Some(t);
                 } else if title.is_some() {
                     self.session_title = title;
+                }
+                // Apply preferred permission mode on every session attach.
+                bridge::agent_send(AgentCmd::SetPermissionMode {
+                    mode_id: self.permission_mode.as_mode_id().to_string(),
+                });
+                if let Some(effort) = self.effort_id.clone() {
+                    bridge::agent_send(AgentCmd::SetEffort {
+                        effort_id: effort,
+                    });
                 }
             }
             AgentEvent::Transcript {

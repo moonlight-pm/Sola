@@ -116,6 +116,25 @@ fn run(mode: ConnectionMode) {
                         }
                     }
                 }
+                AgentCmd::SetPermissionMode { mode_id } => {
+                    if let Some(c) = client.as_mut() {
+                        if let Err(e) = c.set_mode(&mode_id) {
+                            bridge::emit(AgentEvent::Error {
+                                message: format!("set permission mode: {e}"),
+                            });
+                        }
+                    }
+                }
+                AgentCmd::SetEffort { effort_id } => {
+                    if let Some(c) = client.as_mut() {
+                        // Grok maps effort ids through session/set_mode.
+                        if let Err(e) = c.set_mode(&effort_id) {
+                            bridge::emit(AgentEvent::Error {
+                                message: format!("set effort: {e}"),
+                            });
+                        }
+                    }
+                }
                 AgentCmd::Cancel => {
                     if let Some(c) = client.as_mut() {
                         if let Err(e) = c.cancel() {
@@ -224,6 +243,8 @@ fn connect_leader(
                         backend: bridge_spec.label.to_string(),
                         mode: label,
                     });
+                    // Apply default permission mode on the next session; no
+                    // session yet. Version watcher is independent.
                     Some(client)
                 }
                 Err(e) => {

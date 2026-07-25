@@ -11,9 +11,29 @@ pub enum AgentEvent {
     Disconnected {
         reason: String,
     },
+    /// Agent / leader identity from ACP `initialize` `_meta`.
+    AgentInfo {
+        agent_version: Option<String>,
+        model_id: Option<String>,
+        efforts: Vec<EffortOption>,
+        current_effort: Option<String>,
+    },
+    /// Periodic `grok update --check` result.
+    GrokVersion {
+        current: Option<String>,
+        latest: Option<String>,
+        update_available: bool,
+        channel: Option<String>,
+    },
     SessionReady {
         id: String,
         title: Option<String>,
+    },
+    /// Session config options refreshed after new/load (effort list etc.).
+    SessionConfig {
+        efforts: Vec<EffortOption>,
+        current_effort: Option<String>,
+        model_id: Option<String>,
     },
     /// Transcript replace (after load or watch sync). May be a **tail** window only.
     Transcript {
@@ -98,6 +118,60 @@ pub enum ConnectionModeLabel {
     Leader,
 }
 
+/// Selectable reasoning-effort option from model `_meta.reasoningEfforts`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffortOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// Permission mode shown in the footer. Wire value is ACP `session/set_mode` id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionMode {
+    /// Skip all tool prompts (`bypassPermissions` / always-approve).
+    AlwaysApprove,
+    /// Prompt for tools (normal).
+    Default,
+    /// Auto-approve safe edits where the agent supports it.
+    Auto,
+    /// Plan mode — explore/plan, limited writes.
+    Plan,
+}
+
+impl PermissionMode {
+    pub fn default_mode() -> Self {
+        Self::AlwaysApprove
+    }
+
+    pub fn as_mode_id(self) -> &'static str {
+        match self {
+            // Grok accepts both; prefer ACP-standard bypass id.
+            Self::AlwaysApprove => "bypassPermissions",
+            Self::Default => "default",
+            Self::Auto => "auto",
+            Self::Plan => "plan",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AlwaysApprove => "always-approve",
+            Self::Default => "default",
+            Self::Auto => "auto",
+            Self::Plan => "plan",
+        }
+    }
+
+    pub fn all() -> &'static [PermissionMode] {
+        &[
+            Self::AlwaysApprove,
+            Self::Default,
+            Self::Auto,
+            Self::Plan,
+        ]
+    }
+}
+
 impl ConnectionModeLabel {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -176,6 +250,14 @@ pub enum AgentCmd {
     },
     Send {
         text: String,
+    },
+    /// `session/set_mode` — permission mode id (e.g. `bypassPermissions`).
+    SetPermissionMode {
+        mode_id: String,
+    },
+    /// Reasoning effort (`low` / `medium` / `high` …) via `session/set_mode`.
+    SetEffort {
+        effort_id: String,
     },
     Cancel,
     /// Respond to `session/request_permission` with the given option id.
