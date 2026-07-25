@@ -322,8 +322,9 @@ pub fn section_content_height<Message>(items: &[SidebarItem<Message>]) -> f32 {
         return pad_v;
     }
     let rows: f32 = items.iter().map(item_row_height).sum();
-    let gaps = SPACE_SM * items.len().saturating_sub(1) as f32;
-    pad_v + rows + gaps
+    // Rows are packed with zero column spacing so the full height is clickable
+    // (no dead band between sessions).
+    pad_v + rows
 }
 
 /// Count items fully above / fully below the viewport, assuming roughly
@@ -593,9 +594,9 @@ pub const PANEL_REORDER_THRESHOLD: f32 = 5.0;
 pub const PANEL_REORDER_ANIM_MS: u64 = 180;
 /// Subtle lift scale applied to the row under the cursor during reorder.
 pub const PANEL_REORDER_LIFT_SCALE: f32 = 1.02;
-/// Vertical pitch of one panel row including the column gap — used when
-/// siblings slide to open a drop slot.
-pub const PANEL_ROW_STRIDE: f32 = PANEL_ROW_H + SPACE_XS;
+/// Vertical pitch of one panel row — used when siblings slide to open a
+/// drop slot. Matches packed item spacing (no inter-row gap).
+pub const PANEL_ROW_STRIDE: f32 = PANEL_ROW_H;
 
 /// Compute the new panel width from a drag gesture.
 ///
@@ -1424,7 +1425,7 @@ where
                     row_index += 1;
                 }
             }
-            let mut items = column![].spacing(SPACE_SM).padding(Padding::from([4.0, 8.0]));
+            let mut items = column![].spacing(0.0).padding(Padding::from([4.0, 8.0]));
             for (stable_index, item) in flat {
                 let is_dragged = stable_index == from;
                 let dy = if is_dragged {
@@ -1474,8 +1475,10 @@ where
                     }
                 }
 
+                // Zero spacing: the full vertical band of each row is a hit
+                // target — no dead gap between sessions/tabs.
                 let mut body_items =
-                    column![].spacing(SPACE_SM).padding(Padding::from([4.0, 8.0]));
+                    column![].spacing(0.0).padding(Padding::from([4.0, 8.0]));
                 for item in section.items {
                     if collapsed {
                         body_items =

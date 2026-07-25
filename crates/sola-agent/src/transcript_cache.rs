@@ -3,8 +3,13 @@
 //! Entries live for up to [`TTL`] and are capped at [`MAX_ENTRIES`]
 //! (LRU by last access). Stale relative to `updates.jsonl` length are
 //! treated as a miss so live TUI writes still show up.
+//!
+//! Turns are stored behind [`Arc`] so a cache hit is a pointer bump, not
+//! a deep clone — the expensive restore (markdown layout) is deferred to
+//! the next iced message so sidebar selection paints first.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::protocol::Turn;
@@ -17,7 +22,7 @@ pub const MAX_ENTRIES: usize = 32;
 
 #[derive(Debug, Clone)]
 pub struct CachedTranscript {
-    pub turns: Vec<Turn>,
+    pub turns: Arc<Vec<Turn>>,
     pub history_start_byte: u64,
     pub has_older_history: bool,
     pub session_title: Option<String>,
@@ -44,7 +49,7 @@ impl CachedTranscript {
     ) -> Self {
         let now = Instant::now();
         Self {
-            turns,
+            turns: Arc::new(turns),
             history_start_byte,
             has_older_history,
             session_title,

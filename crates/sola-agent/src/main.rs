@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use std::sync::Arc as StdArc;
+use std::sync::Arc as StdArc; // text_editor paste payload
 
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
@@ -306,6 +306,13 @@ pub(crate) enum Msg {
         cwd: String,
         slice: sessions::HistorySlice,
         file_len: u64,
+    },
+    /// Next-frame apply of a cache hit (keeps SelectSession light so the
+    /// sidebar selection paints before markdown layout runs).
+    ApplyCachedTranscript {
+        load_gen: u64,
+        id: String,
+        cached: CachedTranscript,
     },
     SessionFilter(String),
     // Project picker
@@ -703,6 +710,22 @@ impl App {
                 self.refresh_title_from_turns();
                 self.cache_current_session(file_len);
                 return self.maybe_scroll_bottom();
+            }
+            Msg::ApplyCachedTranscript {
+                load_gen,
+                id,
+                cached,
+            } => {
+                if load_gen != self.content_load_gen
+                    || self.session_id.as_deref() != Some(id.as_str())
+                {
+                    return Task::none();
+                }
+                self.apply_cached(cached);
+                if self.stick_to_bottom {
+                    return self.maybe_scroll_bottom();
+                }
+                return Task::none();
             }
             Msg::StartRename(id) => {
                 let draft = self
@@ -1113,27 +1136,8 @@ impl App {
             cwd: cwd.clone(),
         });
 
-        let file_len = sessions::updates_file_len(&cwd, &id);
-        if let Some(cached) = self.transcript_cache.get_fresh(&id, file_len) {
-            self.turns = cached.turns;
-            self.history_start_byte = cached.history_start_byte;
-            self.has_older_history = cached.has_older_history;
-            if cached.session_title.is_some() {
-                self.session_title = cached.session_title;
-            }
-            self.draft = text_editor::Content::with_text(&cached.draft);
-            self.scroll_rel_y = cached.scroll_rel_y;
-            self.stick_to_bottom = cached.stick_to_bottom;
-            self.history_auto_chunks = sessions::HISTORY_AUTO_CHUNKS_MAX;
-            self.content_loading = false;
-            self.scroll_bottom_pending = cached.stick_to_bottom;
-            if cached.stick_to_bottom {
-                return self.maybe_scroll_bottom();
-            }
-            return Task::none();
-        }
-
-        // Cache miss: empty pane + loading label this frame; fill off-thread.
+        // Always blank the pane this frame so selection chrome is the only
+        // work before paint. Cache restore / disk load land on a later msg.
         self.turns.clear();
         self.history_start_byte = 0;
         self.has_older_history = false;
@@ -1142,6 +1146,17 @@ impl App {
         self.scroll_rel_y = None;
         self.stick_to_bottom = true;
         self.content_loading = true;
+
+        let file_len = sessions::updates_file_len(&cwd, &id);
+        if let Some(cached) = self.transcript_cache.get_fresh(&id, file_len) {
+            // Next frame only — never rebuild markdown in the same update as
+            // the sidebar selection flip.
+            return Task::done(Msg::ApplyCachedTranscript {
+                load_gen,
+                id,
+                cached,
+            });
+        }
 
         let load_id = id.clone();
         let load_cwd = cwd;
@@ -1177,6 +1192,22 @@ impl App {
                 file_len,
             },
         )
+    }
+
+    fn apply_cached(&mut self, cached: CachedTranscript) {
+        self.turns = Arc::try_unwrap(cached.turns).unwrap_or_else(|a| (*a).clone());
+        self.history_start_byte = cached.history_start_byte;
+        self.has_older_history = cached.has_older_history;
+        if cached.session_title.is_some() {
+            self.session_title = cached.session_title;
+        }
+        self.draft = text_editor::Content::with_text(&cached.draft);
+        self.scroll_rel_y = cached.scroll_rel_y;
+        self.stick_to_bottom = cached.stick_to_bottom;
+        self.history_auto_chunks = sessions::HISTORY_AUTO_CHUNKS_MAX;
+        self.content_loading = false;
+        self.scroll_bottom_pending = cached.stick_to_bottom;
+        self.loading_older = false;
     }
 
     fn cache_current_session(&mut self, file_len: u64) {
