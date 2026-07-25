@@ -3,8 +3,8 @@
 //! sticky-topics sidebar. Click a row to expand its full
 //! pretty-printed payload.
 //!
-//! Window chrome is off — sola-shell frames + decorates every app
-//! itself via its menubar; the app surface is just content.
+//! Zoned windows are content-only (shell menubar for chrome). When
+//! floated, the kit draws an in-window titlebar + rounded frame.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ use iced::{event, mouse};
 use sola_bus::topics::{Topic, TopicKind};
 use sola_bus::Message;
 use sola_core::KeyCode;
-use sola_kit::app::{BusSetup, apply_theme_update, startup, window_settings};
+use sola_kit::app::{BusSetup, apply_theme_update, startup, window_settings_transparent};
 use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar_button;
@@ -67,7 +67,7 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::ui())
-        .window(window_settings(APP_ID));
+        .window(window_settings_transparent(APP_ID));
     app.run()
 }
 
@@ -241,7 +241,13 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        self.theme.clone()
+        // While floating the window surface is transparent so rounded
+        // corners show the desktop; kit overlay clears background.base.
+        if self.float.is_floating_any() {
+            sola_kit::theme::overlay(&self.theme)
+        } else {
+            self.theme.clone()
+        }
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
@@ -445,11 +451,12 @@ impl App {
         };
 
         if self.float.is_floating_any() {
-            iced::widget::column![
-                sola_kit::components::titlebar::titlebar("Monitor", Msg::TitleDrag, Msg::TitleClose),
+            sola_kit::components::titlebar::floating_frame(
+                "Monitor",
+                Msg::TitleDrag,
+                Msg::TitleClose,
                 content,
-            ]
-            .into()
+            )
         } else {
             content
         }

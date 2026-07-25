@@ -179,6 +179,19 @@ pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
     }
 }
 
+/// Like [`window_settings`], but with an alpha surface so a floating kit
+/// app can draw rounded corners ([`crate::components::titlebar::floating_frame`])
+/// without square opaque corners from the window fill.
+///
+/// While floating, pair with [`crate::theme::overlay`] so `background.base`
+/// is clear and only the rounded frame paints. While zoned/tiled, keep the
+/// normal theme — iced fills the rectangular surface opaquely.
+pub fn window_settings_transparent(app_id: &'static str) -> iced::window::Settings {
+    let mut settings = window_settings(app_id);
+    settings.transparent = true;
+    settings
+}
+
 /// Convenience: kick off the standard sola startup flow up to (but
 /// not including) the iced builder.
 ///

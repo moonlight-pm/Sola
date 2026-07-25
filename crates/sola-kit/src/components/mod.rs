@@ -80,5 +80,5 @@ pub use sidebar::{
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::{split, split_with};
 pub use swatch::{swatch, swatch_sized};
-pub use titlebar::titlebar;
+pub use titlebar::{floating_frame, titlebar};
 pub use toolbar::{toolbar_button, toolbar_button_msg};
