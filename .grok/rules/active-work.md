@@ -13,7 +13,34 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**agent-session-perf** (branch `fix/agent-session-perf`)
+
+### Goal
+
+Instant sidebar session switch: selection + content on click, not after
+ACP `session/load`.
+
+### Done
+
+- Optimistic `session_id` + `history_tail` paint on `SelectSession`
+- Older history / auto-fill on UI thread (not blocked by worker attach)
+- Worker coalesces rapid `LoadSession` / `NewSession`
+- Transcript/HistoryOlder carry `session_id`; stale events dropped
+- `acp_attached` gate so prior-session stream events cannot paint into
+  the optimistic transcript
+
+### Next
+
+- Smoke in UI (`cargo make install sola-agent` from worktree when ready)
+- Merge when approved
+
+### Resume
+
+```text
+cd /home/joshua/Workspace/Sola/.worktrees/agent-session-perf
+# install only with user permission:
+# cargo make install sola-agent
+```
 
 ### Last completed (prior)
 
@@ -26,8 +53,6 @@ full-height menubar hits (macOS idle chrome); edge/corner float resize
 newline + growing composer; always-approve auto-answer + effort/mode
 order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 
-**agent-leader → master**: leader-only attach; console group removed.
-
 ### Future / follow-ups
 
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
@@ -35,10 +60,3 @@ order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 - Storybook page parity for non-Overview tabs (on demand)
 - Opt other kit apps into titlebar / floating_frame + resize
 - Remaining worktrees: `libei-portal`
-
-### Resume
-
-```text
-# master is current; reinstall if needed after this merge:
-# cargo make install sola-shell sola-river sola-monitor
-```
