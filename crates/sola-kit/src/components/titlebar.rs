@@ -20,6 +20,10 @@ pub const HEIGHT: f32 = 38.0;
 /// Corner radius for a floating window frame (matches kit `RADIUS_XL`).
 pub const WINDOW_RADIUS: f32 = RADIUS_XL;
 
+/// Outer border width. Face content is inset by this so children never
+/// paint over the hairline (same trick as kit `card`).
+const FRAME_BORDER: f32 = 1.0;
+
 /// Traffic-light close disc diameter.
 const CLOSE_DOT: f32 = 12.0;
 
@@ -51,6 +55,10 @@ where
 
 /// Floating window chrome: rounded outer frame, titlebar on top, content below.
 ///
+/// Structure mirrors kit [`crate::components::card`]: a 1px outer pad keeps
+/// the hairline border outside the content layout box so the full-bleed
+/// titlebar cannot paint over the top/side edges.
+///
 /// The host window should be `transparent: true` and (while floating) use
 /// [`crate::theme::overlay`] so the corners outside this frame stay see-through.
 pub fn floating_frame<'a, Message>(
@@ -69,11 +77,20 @@ where
     .width(Length::Fill)
     .height(Length::Fill);
 
-    container(body)
+    // Inner face: solid fill + rounded corners. No border — the outer
+    // frame owns the continuous hairline.
+    let face = container(body)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(face_style)
+        .clip(true);
+
+    // Outer frame: 1px pad = border ring that children cannot cover.
+    container(face)
+        .padding(FRAME_BORDER)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(frame_style)
-        .clip(true)
         .into()
 }
 
@@ -193,10 +210,13 @@ fn close_style(_theme: &Theme, status: button::Status) -> button::Style {
 fn bar_style(theme: &Theme, round_top: bool) -> container::Style {
     let p = theme.extended_palette();
     let fill = p.background.weaker.color;
+    // Face sits inside a 1px pad — shave the top radius so the bar meets
+    // the outer rounded border cleanly.
+    let r = (WINDOW_RADIUS - FRAME_BORDER).max(0.0);
     let radius = if round_top {
         Radius {
-            top_left: WINDOW_RADIUS,
-            top_right: WINDOW_RADIUS,
+            top_left: r,
+            top_right: r,
             bottom_right: 0.0,
             bottom_left: 0.0,
         }
@@ -214,12 +234,33 @@ fn bar_style(theme: &Theme, round_top: bool) -> container::Style {
     }
 }
 
-/// Outer rounded frame for a floating kit window.
+/// Inner face fill (no border). Radius matches the outer frame minus the
+/// 1px pad so corners nest under the hairline.
+fn face_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    let fill = p.background.base.color;
+    let fill = if fill.a < 0.01 {
+        p.background.weaker.color
+    } else {
+        fill
+    };
+    let r = (WINDOW_RADIUS - FRAME_BORDER).max(0.0);
+    container::Style {
+        background: Some(fill.into()),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: r.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Outer rounded hairline. Background matches the face so the 1px pad
+/// ring is continuous graphite (not a transparent gap).
 fn frame_style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     let fill = p.background.base.color;
-    // Prefer opaque base; if the theme is overlay-transparent, fall back to
-    // the raised tier so the frame is still solid graphite.
     let fill = if fill.a < 0.01 {
         p.background.weaker.color
     } else {
@@ -229,7 +270,7 @@ fn frame_style(theme: &Theme) -> container::Style {
         background: Some(fill.into()),
         border: Border {
             color: mix_white(fill, HAIRLINE_A),
-            width: 1.0,
+            width: FRAME_BORDER,
             radius: WINDOW_RADIUS.into(),
         },
         ..container::Style::default()
