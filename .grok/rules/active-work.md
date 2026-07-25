@@ -17,22 +17,23 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ### Last completed
 
-**agent-bulk-delete → master**: sola-agent **Bulk Delete…** panel (Agent menu).
-Age filters, safety toggles, preview with size, two-step confirm, worker-thread
-`grok sessions delete` + overlay scrub. List padding + title ellipsis so
-trailing sizes stay visible.
+**titlebar-macos → master**: macOS-style floating titlebar (38px, left traffic-light
+close, centered title, rounded `floating_frame`). Monitor dogfoods via transparent
+window + overlay theme. Fixed float region screenshots (prefer live geometry;
+reject 0×0 Frame / FloatGeometry poison).
 
 ### Future / follow-ups
 
+- Opt other kit apps into titlebar / floating_frame (agent, settings, terminal, …)
 - Leader daemon (`ConnectionMode::Leader`)
 - Polish from further agent UI feedback
 - Storybook page parity for non-Overview tabs (on demand when touching components;
   see `.grok/rules/kit-storybook-pages.md`)
-- Remaining worktree: `libei-portal` (unrelated)
+- Remaining worktrees: `libei-portal`, `agent-console-sessions` (unrelated)
 
 ### Resume
 
 ```text
-# master is current; install when needed:
-# cargo make install sola-agent
+# master is current; already installed river/shell/monitor from this work.
+# cargo make install sola-kit sola-monitor sola-river sola-shell
 ```
