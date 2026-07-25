@@ -566,7 +566,10 @@ impl App {
                 self.session_filter = s;
             }
             Msg::SessionSectionScroll(scroll) => {
-                self.session_section_scroll = scroll;
+                // Skip no-op updates so chip math doesn't thrash redraws.
+                if self.session_section_scroll != scroll {
+                    self.session_section_scroll = scroll;
+                }
             }
         }
         Task::none()

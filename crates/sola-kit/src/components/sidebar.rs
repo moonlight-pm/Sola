@@ -1108,7 +1108,7 @@ where
                 };
                 items = items.push(with_reorder_motion(row_el, dy, is_dragged));
             }
-            hidden_scroll(items, None).into()
+            hidden_scroll(items, None, None).into()
         } else {
             // At rest: section labels sticky; item bodies scroll per-fill.
             let mut sections_col = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
@@ -1164,7 +1164,7 @@ where
                 // No fill section: keep the whole stack scrollable (hidden
                 // bar) so multi-section panels still work when content is
                 // tall — labels scroll with items (legacy fallback).
-                hidden_scroll(sections_col, None).into()
+                hidden_scroll(sections_col, None, None).into()
             } else {
                 sections_col.into()
             }
@@ -1235,23 +1235,40 @@ where
     }
 }
 
+/// Stable id for the fill-section item list. Without this, any parent
+/// rebuild (chip overlay, filter, session refresh) can remount the
+/// scrollable and snap the offset back to 0.
+fn fill_section_scroll_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-kit-sidebar-fill-section")
+}
+
 /// Scrollable with a zero-width vertical rail — still wheel/trackpad
 /// scrollable, no visible thumb.
 fn hidden_scroll<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
     on_scroll: Option<Box<dyn Fn(SectionScroll) -> Message + 'a>>,
+    id: Option<iced::widget::Id>,
 ) -> scrollable::Scrollable<'a, Message, Theme> {
     let mut s = scrollable(content.into())
         .direction(Direction::Vertical(Scrollbar::hidden()))
         .height(Length::Fill)
         .width(Length::Fill);
+    if let Some(id) = id {
+        s = s.id(id);
+    }
     if let Some(cb) = on_scroll {
         s = s.on_scroll(move |vp| cb(SectionScroll::from_viewport(&vp)));
     }
     s
 }
 
-/// Fill section: sticky overflow chips around a bar-less item list.
+/// Fill section: bar-less item list with overflow chips.
+///
+/// **Tree shape is fixed** — always `[top_slot, scrollable, bottom_slot]`.
+/// Inserting/removing chip siblings remounts the scrollable (iced stores
+/// state by child index/tag) and snaps offset to 0. Empty slots stay
+/// present as zero-height containers so the scrollable is always child
+/// index 1 with a stable tag.
 fn fill_section_body<'a, Message: 'a>(
     items: iced::widget::Column<'a, Message, Theme>,
     n_items: usize,
@@ -1259,15 +1276,17 @@ fn fill_section_body<'a, Message: 'a>(
     on_scroll: Option<Box<dyn Fn(SectionScroll) -> Message + 'a>>,
 ) -> Element<'a, Message, Theme> {
     let (above, below) = section_overflow_counts(scroll, n_items);
-    let mut col = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
-    if above > 0 {
-        col = col.push(overflow_chip(OverflowDir::Up, above));
-    }
-    col = col.push(hidden_scroll(items, on_scroll));
-    if below > 0 {
-        col = col.push(overflow_chip(OverflowDir::Down, below));
-    }
-    col.into()
+    let list = hidden_scroll(items, on_scroll, Some(fill_section_scroll_id()));
+
+    column![
+        overflow_slot(OverflowDir::Up, above),
+        list,
+        overflow_slot(OverflowDir::Down, below),
+    ]
+    .spacing(0.0)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 enum OverflowDir {
@@ -1275,8 +1294,15 @@ enum OverflowDir {
     Down,
 }
 
-/// Compact wayfinding chip: `↑  3 …` / `↓  12 …`.
-fn overflow_chip<'a, Message: 'a>(dir: OverflowDir, n: usize) -> Element<'a, Message, Theme> {
+/// Always a `container` (same widget tag) so the slot never swaps Space↔chip
+/// at the tree level. Height is 0 when `n == 0`.
+fn overflow_slot<'a, Message: 'a>(dir: OverflowDir, n: usize) -> Element<'a, Message, Theme> {
+    if n == 0 {
+        return container(Space::new())
+            .width(Length::Fill)
+            .height(Length::Fixed(0.0))
+            .into();
+    }
     let glyph = match dir {
         OverflowDir::Up => "↑",
         OverflowDir::Down => "↓",
@@ -1288,15 +1314,15 @@ fn overflow_chip<'a, Message: 'a>(dir: OverflowDir, n: usize) -> Element<'a, Mes
             .style(|theme: &Theme| {
                 let c = theme.extended_palette().background.base.text;
                 iced::widget::text::Style {
-                    color: Some(Color { a: 0.50, ..c }),
+                    color: Some(Color { a: 0.55, ..c }),
                 }
             }),
     )
     .width(Length::Fill)
     .center_x(Length::Fill)
     .padding(Padding {
-        top: 4.0,
-        bottom: 4.0,
+        top: 5.0,
+        bottom: 5.0,
         left: 10.0,
         right: 10.0,
     })
