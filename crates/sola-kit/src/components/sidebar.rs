@@ -35,9 +35,14 @@ use iced::widget::{
     Container, Space, button, column, container, float, mouse_area, row, scrollable, sensor, stack,
     text,
 };
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::renderer;
+use iced::advanced::widget::{Operation, Tree};
+use iced::advanced::{Clipboard, Shell, Widget};
+use iced::advanced::Renderer as _;
 use iced::{
-    Animation, Background, Border, Color, Element, Length, Padding, Shadow, Theme, Vector,
-    animation::Easing, mouse, time::Instant, widget::float as float_widget,
+    Animation, Background, Border, Color, Element, Event, Length, Padding, Rectangle, Shadow, Size,
+    Theme, Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
 };
 
 use crate::components::style::{RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha};
@@ -1317,12 +1322,15 @@ fn hidden_scroll<'a, Message: 'a>(
     s
 }
 
+/// Reserved height for each overflow chip slot (always present so the
+/// list viewport does not resize when chips appear/disappear).
+const OVERFLOW_CHIP_H: f32 = 22.0;
+
 /// Fill section: **app-owned** scroll (no iced `scrollable`).
 ///
-/// Wheel/trackpad updates [`SectionScroll`] via `on_scroll`. Content is
-/// shifted with negative top padding inside a clipped viewport so position
-/// lives entirely in app state — rebuilds cannot snap offset back to 0.
-/// Overflow chips sit in fixed slots around the list.
+/// Wheel updates [`SectionScroll`]; [`ClipScroll`] lays out *all* rows with
+/// an unbounded height (stock containers clamp to the viewport, so only a
+/// screenful of rows existed and the visible set changed as you scrolled).
 fn fill_section_body<'a, Message: Clone + 'a>(
     items: iced::widget::Column<'a, Message, Theme>,
     n_items: usize,
@@ -1342,20 +1350,13 @@ fn fill_section_body<'a, Message: Clone + 'a>(
     let (above, below) = section_overflow_counts(scroll, n_items);
     let offset = scroll.offset_y;
 
-    // Shift content up by `offset` inside a clipped viewport.
-    let clipped = container(items)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .clip(true)
-        .padding(Padding {
-            top: -offset,
-            right: 0.0,
-            bottom: 0.0,
-            left: 0.0,
-        });
+    // Unbounded content layout + clip + translate (see [`ClipScroll`]).
+    let clipped = ClipScroll {
+        content: items.into(),
+        offset_y: offset,
+    };
 
     let list: Element<'a, Message, Theme> = if let Some(cb) = on_scroll {
-        // Share the callback across wheel + viewport sensors.
         let cb: std::rc::Rc<dyn Fn(SectionScroll) -> Message + 'a> = std::rc::Rc::from(cb);
         let base = scroll;
 
@@ -1371,7 +1372,6 @@ fn fill_section_body<'a, Message: Clone + 'a>(
             .on_resize(move |size: iced::Size| cb_resize(base.with_viewport_h(size.height)))
             .into()
     } else {
-        // No scroll wiring — static clip (still no iced scrollable).
         clipped.into()
     };
 
@@ -1386,25 +1386,203 @@ fn fill_section_body<'a, Message: Clone + 'a>(
     .into()
 }
 
+// ──────────────────────────── ClipScroll widget ─────────────────────────────
+//
+// Viewport-sized host that lays out its child with **infinite max height**
+// (so every row gets a layout node), then draws with a Y translation and a
+// scissor clip. Offset is controlled by the parent — no internal scroll
+// state, so app rebuilds cannot remount/reset it.
+
+struct ClipScroll<'a, Message> {
+    content: Element<'a, Message, Theme>,
+    offset_y: f32,
+}
+
+impl<'a, Message> ClipScroll<'a, Message> {
+    fn offset(&self) -> Vector {
+        Vector::new(0.0, self.offset_y)
+    }
+}
+
+impl<Message> Widget<Message, Theme, iced::Renderer> for ClipScroll<'_, Message> {
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn size(&self) -> Size<Length> {
+        Size {
+            width: Length::Fill,
+            height: Length::Fill,
+        }
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        let limits = limits.width(Length::Fill).height(Length::Fill);
+        let size = limits.resolve(Length::Fill, Length::Fill, Size::ZERO);
+
+        // Infinite max height — same trick iced's scrollable uses so the
+        // full item column lays out, not just a viewport-sized slice.
+        let child_limits =
+            layout::Limits::new(Size::new(0.0, 0.0), Size::new(size.width, f32::INFINITY));
+
+        let content =
+            self.content
+                .as_widget_mut()
+                .layout(&mut tree.children[0], renderer, &child_limits);
+
+        layout::Node::with_children(size, vec![content])
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _viewport: &Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        let content_layout = layout.children().next().expect("clip-scroll content");
+        let translation = self.offset();
+
+        let cursor = match cursor.position_over(bounds) {
+            Some(pos) => mouse::Cursor::Available(pos + translation),
+            None => cursor,
+        };
+
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            content_layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            &Rectangle {
+                y: bounds.y + translation.y,
+                x: bounds.x + translation.x,
+                ..bounds
+            },
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        let bounds = layout.bounds();
+        let content_layout = layout.children().next().expect("clip-scroll content");
+        let translation = self.offset();
+
+        let cursor = match cursor.position_over(bounds) {
+            Some(pos) => mouse::Cursor::Available(pos + translation),
+            None => cursor,
+        };
+
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            content_layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        let Some(visible) = bounds.intersection(viewport) else {
+            return;
+        };
+        let content_layout = layout.children().next().expect("clip-scroll content");
+        let translation = self.offset();
+
+        let cursor = match cursor.position_over(bounds) {
+            Some(pos) => mouse::Cursor::Available(pos + translation),
+            None => mouse::Cursor::Unavailable,
+        };
+
+        renderer.with_layer(visible, |renderer| {
+            renderer.with_translation(Vector::new(0.0, -translation.y), |renderer| {
+                self.content.as_widget().draw(
+                    &tree.children[0],
+                    renderer,
+                    theme,
+                    style,
+                    content_layout,
+                    cursor,
+                    &Rectangle {
+                        y: visible.y + translation.y,
+                        x: visible.x + translation.x,
+                        ..visible
+                    },
+                );
+            });
+        });
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        let content_layout = layout.children().next().expect("clip-scroll content");
+        self.content.as_widget_mut().operate(
+            &mut tree.children[0],
+            content_layout,
+            renderer,
+            operation,
+        );
+    }
+}
+
+impl<'a, Message: 'a> From<ClipScroll<'a, Message>> for Element<'a, Message, Theme> {
+    fn from(value: ClipScroll<'a, Message>) -> Self {
+        Element::new(value)
+    }
+}
+
 enum OverflowDir {
     Up,
     Down,
 }
 
-/// Always a `container` (same widget tag) so the slot never swaps Space↔chip
-/// at the tree level. Height is 0 when `n == 0`.
+/// Fixed-height chip slot so list viewport height is independent of scroll.
+/// When `n == 0` the slot is empty but still occupies [`OVERFLOW_CHIP_H`].
 fn overflow_slot<'a, Message: 'a>(dir: OverflowDir, n: usize) -> Element<'a, Message, Theme> {
-    if n == 0 {
-        return container(Space::new())
-            .width(Length::Fill)
-            .height(Length::Fixed(0.0))
-            .into();
-    }
-    let glyph = match dir {
-        OverflowDir::Up => "↑",
-        OverflowDir::Down => "↓",
-    };
-    container(
+    let body: Element<'a, Message, Theme> = if n == 0 {
+        Space::new().into()
+    } else {
+        let glyph = match dir {
+            OverflowDir::Up => "↑",
+            OverflowDir::Down => "↓",
+        };
         text(format!("{glyph}  {n} …"))
             .font(fonts::ui())
             .size(11)
@@ -1413,17 +1591,15 @@ fn overflow_slot<'a, Message: 'a>(dir: OverflowDir, n: usize) -> Element<'a, Mes
                 iced::widget::text::Style {
                     color: Some(Color { a: 0.55, ..c }),
                 }
-            }),
-    )
-    .width(Length::Fill)
-    .center_x(Length::Fill)
-    .padding(Padding {
-        top: 5.0,
-        bottom: 5.0,
-        left: 10.0,
-        right: 10.0,
-    })
-    .into()
+            })
+            .into()
+    };
+    container(body)
+        .width(Length::Fill)
+        .height(Length::Fixed(OVERFLOW_CHIP_H))
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into()
 }
 
 /// Collapsed (icon-only) row: shows just the shortcut number (or
