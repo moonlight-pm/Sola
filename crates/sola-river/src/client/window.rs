@@ -144,6 +144,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 state.last_proposed.remove(&window_id);
                 state.last_position.remove(&window_id);
                 state.floating.remove(&window_id);
+                crate::client::shadow::destroy_for(state, window_id);
                 if state.pointer_window == Some(window_id) {
                     state.pointer_window = None;
                 }
@@ -208,6 +209,11 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 }
                 if state.registry.set_size(window_id, width, height) {
                     crate::translator::emit_geometry(state, window_id);
+                    // Floating shadows are sized to content; a resize needs a
+                    // render pass to rebuild the decoration-below buffer.
+                    if state.floating.contains(&window_id) {
+                        state.pending.manage_dirty = true;
+                    }
                 }
                 tracing::debug!(window_id, width, height, newly_initialized, "window dimensions");
             }

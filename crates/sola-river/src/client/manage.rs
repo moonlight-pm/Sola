@@ -276,6 +276,12 @@ pub fn handle_render_start(state: &mut AppData) {
 
     apply_default_placement(state);
 
+    // Floating drop shadows: decoration-below surfaces, offset outside the
+    // content rect. Must run in the render sequence (set_offset /
+    // sync_next_commit are render-state). Before render_finish so River
+    // can apply the decoration commit atomically with this frame.
+    crate::client::shadow::sync_on_render(state);
+
     state.pending.render_dirty = false;
     wm.render_finish();
     debug!(composition_len, positions_len, "render_finish sent");

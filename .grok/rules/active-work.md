@@ -13,7 +13,23 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**float-shadows** (worktree `.worktrees/float-shadows`, branch
+`feature/float-shadows`) — compositor/WM drop shadows for floating
+windows via River `get_decoration_below`.
+
+### Status
+
+Implemented in `sola-river`:
+- `client/shadow.rs` — SHM soft rounded-rect silhouette, empty input region
+- attach/rebuild on float + size change; tear-down on unfloat/fullscreen/close
+- `render_start` path: `set_offset` + `sync_next_commit` when buffer is new
+- binds `wl_compositor`; reuses existing `wl_shm`
+
+### Next
+
+- User smoke: float Monitor / foreign app; confirm soft shadow, no click steal
+- Tune MARGIN / BLUR / PEAK_ALPHA / OFFSET_Y if needed
+- `cargo make install sola-river` when ready (ask first)
 
 ### Last completed (prior)
 
@@ -39,6 +55,7 @@ order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 ### Resume
 
 ```text
-# master is current; reinstall if needed after this merge:
-# cargo make install sola-shell sola-river sola-monitor
+cd .worktrees/float-shadows
+# after approval + install permission:
+# cargo make install sola-river
 ```

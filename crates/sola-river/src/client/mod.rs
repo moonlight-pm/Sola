@@ -39,6 +39,7 @@ pub mod op;
 pub mod output_config;
 pub mod screenshot;
 pub mod seat;
+pub mod shadow;
 pub mod virtual_keyboard;
 pub mod virtual_pointer;
 pub mod window;
@@ -150,6 +151,8 @@ pub struct AppData {
     pub cursor_device: Option<WpCursorShapeDeviceV1>,
     /// `wlr-screencopy` + `wl_shm` + `wl_output` state for screenshots.
     pub screenshot: screenshot::ScreenshotState,
+    /// Floating-window drop shadows (`get_decoration_below` + SHM silhouette).
+    pub shadow: shadow::ShadowState,
 }
 
 impl AppData {
@@ -191,6 +194,7 @@ impl AppData {
             wl_pointer: None,
             cursor_device: None,
             screenshot: screenshot::ScreenshotState::default(),
+            shadow: shadow::ShadowState::default(),
         }
     }
 }
@@ -251,6 +255,9 @@ pub fn bus_tick(state: &mut AppData) {
                 } else {
                     state.floating.remove(&wf.window_id);
                 }
+                // Kick a manage/render cycle so decoration-below shadows
+                // attach or tear down promptly (not only on the next frame).
+                state.pending.manage_dirty = true;
             }
             sola_bus::topics::Topic::Frame(f) => {
                 let app_id = state.registry.app_id_for(f.window_id).unwrap_or("?");
@@ -448,6 +455,14 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let shm: wl_shm::WlShm = proxy.bind(name, version.min(1), qh, ());
                     info!(%version, "bound wl_shm");
                     state.screenshot.shm = Some(shm);
+                }
+                "wl_compositor" => {
+                    // Needed for float-shadow decoration surfaces
+                    // (`get_decoration_below`).
+                    let comp: wayland_client::protocol::wl_compositor::WlCompositor =
+                        proxy.bind(name, version.min(4), qh, ());
+                    info!(%version, "bound wl_compositor");
+                    state.shadow.compositor = Some(comp);
                 }
                 "wl_output" => {
                     // Screencopy needs a real wl_output (river_output_v1 is a
