@@ -17,6 +17,11 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ### Last completed (prior)
 
+**sidebar-hover-trash → master**: stable hover trash (stack overlay +
+enter-only hover); no hard-crop GFM table cells; live thinking stream
+→ "Thought for N sec"; directory-first session tabs with context KB
+from disk `usage_update`.
+
 **float-shadows → master**: WM drop shadows via `get_decoration_below`;
 filled soft silhouette (no bottom bleed); half-size cast; PEAK_ALPHA 0.28.
 
@@ -46,5 +51,5 @@ order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 ### Resume
 
 ```text
-# master is current; sola-river already installed from float-shadows
+# no active feature worktree
 ```
