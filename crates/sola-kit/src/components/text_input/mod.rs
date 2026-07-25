@@ -1790,7 +1790,9 @@ impl Catalog for Theme {
     type Class<'a> = StyleFn<'a, Self>;
 
     fn default<'a>() -> Self::Class<'a> {
-        Box::new(default)
+        // Kit default is the inset well — not iced's flat base fill.
+        // Explicit `.style(default)` still reaches the stock path if needed.
+        Box::new(style)
     }
 
     fn style(&self, class: &Self::Class<'_>, status: Status) -> Style {
@@ -1856,6 +1858,10 @@ where
 /// Kit text-input style — inset well, strong hairline, accent focus
 /// (sola-kit-ds field chrome). Pass it to [`TextInput::style`].
 ///
+/// Well is OD `--inset` (`color-mix(#000 55%, bg)` → near-black `#050608`),
+/// **including Disabled** — demo/read-only fields without `on_input` must
+/// still read as punched-in wells, not raised grey slabs.
+///
 /// Text selection uses [`crate::theme::selection`] (quiet teal-grey), not
 /// primary accent. Focused border stays `primary.base` — correct sparse
 /// accent use for focus.
@@ -1863,7 +1869,17 @@ pub fn style(theme: &Theme, status: Status) -> Style {
     use crate::components::style::{HAIRLINE_STRONG_A, RADIUS_MD, hairline_on, inset_surface};
 
     let p = theme.extended_palette();
-    let well = inset_surface(p.background.base.color, 0.55);
+    // Prefer base canvas; if overlay made base transparent, fall back to
+    // weakest opaque canvas so the well never collapses to see-through.
+    let canvas = {
+        let base = p.background.base.color;
+        if base.a < 0.5 {
+            p.background.weakest.color
+        } else {
+            base
+        }
+    };
+    let well = inset_surface(canvas, 0.55);
     let active = Style {
         background: Background::Color(well),
         // Opaque mix over the well — translucent white looks chonky in iced.
@@ -1901,8 +1917,9 @@ pub fn style(theme: &Theme, status: Status) -> Style {
                 ..active
             }
         }
+        // Keep the near-black well — only mute the value. Raised weak fill
+        // made disabled/demo fields look like flat grey bars on stage panels.
         Status::Disabled => Style {
-            background: Background::Color(p.background.weak.color),
             value: active.placeholder,
             ..active
         },
