@@ -27,13 +27,13 @@ use crate::protocol::river_window_management_v1::river_window_v1::RiverWindowV1;
 
 /// Extra logical pixels of shadow buffer outside each edge of the content rect.
 /// Must cover blur radius + vertical offset with a little headroom.
-const MARGIN: i32 = 28;
+const MARGIN: i32 = 14;
 
 /// Soft falloff radius (logical px) for the shadow edge.
-const BLUR: f32 = 22.0;
+const BLUR: f32 = 11.0;
 
 /// Downward cast of the silhouette before blur (macOS-ish).
-const OFFSET_Y: f32 = 6.0;
+const OFFSET_Y: f32 = 3.0;
 
 /// Peak opacity of the shadow (premultiplied black).
 const PEAK_ALPHA: f32 = 0.42;
