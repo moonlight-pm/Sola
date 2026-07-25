@@ -13,8 +13,8 @@ use iced::{Element, Length, Theme};
 use sola_kit::components::card::style as card_style;
 use sola_kit::components::text::{body, code, heading, muted};
 use sola_kit::components::{
-    DividerColors, ReorderAnim, ReorderCfg, SidebarItem, SidebarPanel, SidebarSection,
-    TabDescriptor, TabSize, panel_dragged_width, vertical_tabs_sized,
+    DividerColors, ReorderAnim, ReorderCfg, SectionScroll, SidebarItem, SidebarPanel,
+    SidebarSection, TabDescriptor, TabSize, panel_dragged_width, vertical_tabs_sized,
 };
 
 /// The demo item labels, in their current (reorderable) order.
@@ -38,6 +38,8 @@ pub enum Msg {
     ReorderEnd,
     /// Animation tick while a reorder drag is live (sibling glides).
     ReorderTick,
+    /// Fill-section scroll viewport (overflow chips).
+    SectionScroll(SectionScroll),
     /// A plain row click (collapsed buttons use this).
     ItemPress(usize),
     /// Demo placeholder (e.g. a close button) with no modelled effect.
@@ -64,6 +66,8 @@ pub struct State {
     pub order: Vec<usize>,
     /// Selected row (by item index), for the active highlight.
     pub selected: usize,
+    /// Fill-section scroll snapshot for overflow chips.
+    pub section_scroll: SectionScroll,
 }
 
 impl Default for State {
@@ -79,6 +83,7 @@ impl Default for State {
             reorder_anim: ReorderAnim::new(),
             order: (0..ITEMS.len()).collect(),
             selected: 0,
+            section_scroll: SectionScroll::default(),
         }
     }
 }
@@ -184,6 +189,9 @@ impl State {
                     self.selected = item;
                 }
             }
+            Msg::SectionScroll(s) => {
+                self.section_scroll = s;
+            }
             Msg::Noop => {}
         }
     }
@@ -245,7 +253,8 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
     let secondary: Vec<_> = secondary.into_iter().map(|(_, it)| it).collect();
     let sections = vec![
         SidebarSection::new("Mailboxes", primary),
-        SidebarSection::new("Smart folders", secondary),
+        // Fill + section_scroll → sticky label, bar-less list, overflow chips.
+        SidebarSection::new("Smart folders", secondary).fill(),
     ];
 
     let cfg = ReorderCfg {
@@ -266,6 +275,7 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         .collapsible(state.collapsed, Msg::Toggle)
         .resizable_with(state.width, state.dragging, Msg::DividerPress, divider)
         .reorderable(cfg)
+        .section_scroll(state.section_scroll, Msg::SectionScroll)
         .footer(footer())
         .build();
 
@@ -282,12 +292,15 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         heading("Sidebar"),
         body(
             "SidebarPanel: collapse (»/«), resize, reorder. Section headers are \
-             title case + muted chrome (macOS group labels). Drafts has a \
+             sticky (title case + muted chrome). Fill sections scroll without a \
+             scrollbar and show ↑ N … / ↓ N … when items overflow. Drafts has a \
              secondary count; Spam a × close."
         )
         .style(muted),
         demo,
-        code("SidebarSection::new(\"Mailboxes\", items) · title-case headers")
+        code("SidebarSection::new(\"Sessions\", items).fill() · sticky label + bar-less scroll")
+            .style(muted),
+        code("SidebarPanel::new(sections).section_scroll(snap, Msg::Scroll) · overflow chips")
             .style(muted),
         code("SidebarPanel::new(sections).collapsible(..).resizable(..).reorderable(..).build()")
             .style(muted),

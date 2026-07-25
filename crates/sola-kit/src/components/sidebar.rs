@@ -8,10 +8,19 @@
 //! of truth for which item is active.
 //!
 //! For richer panels — collapse/expand, drag-to-resize, drag-reorder,
-//! per-item shortcut hints / close buttons / secondary labels — use the
-//! opt-in [`SidebarPanel`] builder. It is strictly additive: `sidebar()`
-//! and the `SidebarItem`/`SidebarSection` constructors keep their exact
+//! per-item shortcut hints / close buttons / secondary labels, and
+//! **section-scoped scroll with overflow chips** — use the opt-in
+//! [`SidebarPanel`] builder. It is strictly additive: `sidebar()` and
+//! the `SidebarItem`/`SidebarSection` constructors keep their exact
 //! prior behaviour, so existing consumers compile and render unchanged.
+//!
+//! ## Section scroll (no scrollbar)
+//!
+//! Panel chrome (collapse, [`SidebarPanel::header`], footer) and section
+//! labels stay fixed. A section marked [`SidebarSection::fill`] owns the
+//! remaining height; its **items** scroll with a hidden scrollbar.
+//! Optional [`SidebarPanel::section_scroll`] drives top/bottom chips
+//! (`↑ N …` / `↓ N …`) for items fully outside the viewport.
 //!
 //! Style fns read from `theme.extended_palette()` only — the kit's
 //! atom→slot bindings live in [`crate::theme::build_theme`]. To
@@ -20,6 +29,7 @@
 
 use std::collections::HashMap;
 
+use iced::widget::scrollable::{Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
 use iced::widget::{
     Container, Space, button, column, container, float, mouse_area, row, scrollable, stack, text,
@@ -121,19 +131,97 @@ impl<Message> SidebarItem<Message> {
 /// Labels render in title case as provided (macOS sidebar group style —
 /// not forced uppercase). Unlabeled sections render as a plain item
 /// group (useful for a top "Welcome" entry above the first headed section).
+///
+/// Mark [`Self::fill`] so the section's **item body** (not the label)
+/// takes remaining panel height and scrolls without a scrollbar. Wire
+/// [`SidebarPanel::section_scroll`] for `↑ N …` / `↓ N …` overflow chips.
 pub struct SidebarSection<Message> {
     pub label: Option<String>,
     pub items: Vec<SidebarItem<Message>>,
+    /// When true, this section's item list fills remaining height and
+    /// scrolls (hidden bar). At most one fill section is useful; if
+    /// several are marked, the first wins the `Fill` slot and others
+    /// still get a bounded scroll body.
+    pub fill: bool,
 }
 
 impl<Message> SidebarSection<Message> {
     pub fn new(label: impl Into<String>, items: Vec<SidebarItem<Message>>) -> Self {
-        Self { label: Some(label.into()), items }
+        Self {
+            label: Some(label.into()),
+            items,
+            fill: false,
+        }
     }
 
     pub fn unlabeled(items: Vec<SidebarItem<Message>>) -> Self {
-        Self { label: None, items }
+        Self {
+            label: None,
+            items,
+            fill: false,
+        }
     }
+
+    /// This section's item body fills remaining panel height and scrolls
+    /// without a visible scrollbar. Pair with
+    /// [`SidebarPanel::section_scroll`] for overflow chips.
+    pub fn fill(mut self) -> Self {
+        self.fill = true;
+        self
+    }
+}
+
+/// Live viewport snapshot for a fill section's scroll body.
+///
+/// Owned by the app; updated via [`SidebarPanel::section_scroll`]'s
+/// `on_scroll` callback (fed from iced's `scrollable::on_scroll`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SectionScroll {
+    /// Absolute Y content offset (px scrolled down from top).
+    pub offset_y: f32,
+    /// Visible viewport height (px).
+    pub viewport_h: f32,
+    /// Full content height (px).
+    pub content_h: f32,
+}
+
+impl SectionScroll {
+    /// Capture geometry from an iced [`Viewport`].
+    pub fn from_viewport(vp: &Viewport) -> Self {
+        Self {
+            offset_y: vp.absolute_offset().y,
+            viewport_h: vp.bounds().height,
+            content_h: vp.content_bounds().height,
+        }
+    }
+
+    /// True when content is taller than the viewport (with a 1px slack).
+    pub fn overflows(&self) -> bool {
+        self.viewport_h > 0.0 && self.content_h > self.viewport_h + 1.0
+    }
+}
+
+/// Count items fully above / fully below the viewport, assuming roughly
+/// equal item heights (`content_h / n_items`).
+///
+/// Pure — unit-tested without an iced runtime. Returns `(above, below)`.
+/// Partially visible items count as neither.
+pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize, usize) {
+    if n_items == 0 || !scroll.overflows() {
+        return (0, 0);
+    }
+    let avg = scroll.content_h / n_items as f32;
+    if avg <= 0.0 {
+        return (0, 0);
+    }
+    // Item i occupies [i*avg, (i+1)*avg). Fully above when end ≤ offset.
+    let above = (scroll.offset_y / avg).floor().max(0.0) as usize;
+    // Fully below when start ≥ offset + viewport.
+    let first_below =
+        ((scroll.offset_y + scroll.viewport_h) / avg).ceil().max(0.0) as usize;
+    let above = above.min(n_items);
+    let below = n_items.saturating_sub(first_below.min(n_items));
+    (above, below)
 }
 
 /// Default sidebar width — matches the storybook's nav column. Public
@@ -822,8 +910,8 @@ fn close_button<'a, Message: Clone + 'a>(msg: Message) -> Element<'a, Message> {
 // ─────────────────────────────── SidebarPanel ───────────────────────────────
 
 /// Opt-in richer sidebar: collapse/expand, drag-to-resize, drag-reorder,
-/// per-item shortcut hints / close buttons / secondary labels, plus an
-/// optional footer.
+/// per-item shortcut hints / close buttons / secondary labels, section-
+/// scoped scroll with overflow chips, plus an optional footer.
 ///
 /// The APP owns the cursor-move/release subscription (mirroring
 /// sola-monitor's `DividerPress` + global listener pattern); this builder
@@ -838,9 +926,12 @@ pub struct SidebarPanel<'a, Message> {
     resize: Option<(f32, bool, Message, Option<crate::components::DividerColors>)>,
     reorder: Option<ReorderCfg<'a, Message>>,
     /// Optional leading content (search field, brand, rename bar).
-    /// Stacked above the scrollable section list; not reordered.
+    /// Stacked above the section list; never scrolls with items.
     header: Option<Element<'a, Message, Theme>>,
     footer: Option<Element<'a, Message, Theme>>,
+    /// Viewport snapshot + callback for the fill section's scroll body.
+    /// When set, fill sections show `↑ N …` / `↓ N …` overflow chips.
+    section_scroll: Option<(SectionScroll, Box<dyn Fn(SectionScroll) -> Message + 'a>)>,
 }
 
 impl<'a, Message> SidebarPanel<'a, Message>
@@ -855,6 +946,7 @@ where
             reorder: None,
             header: None,
             footer: None,
+            section_scroll: None,
         }
     }
 
@@ -907,6 +999,20 @@ where
         self
     }
 
+    /// Drive overflow chips on the fill section's scroll body.
+    ///
+    /// `scroll` is the latest [`SectionScroll`] snapshot (app-owned);
+    /// `on_scroll` updates it from iced's viewport callback. Without this,
+    /// fill sections still scroll with a hidden bar but never show chips.
+    pub fn section_scroll(
+        mut self,
+        scroll: SectionScroll,
+        on_scroll: impl Fn(SectionScroll) -> Message + 'a,
+    ) -> Self {
+        self.section_scroll = Some((scroll, Box::new(on_scroll)));
+        self
+    }
+
     pub fn build(self) -> Element<'a, Message, Theme> {
         let SidebarPanel {
             sections,
@@ -915,14 +1021,19 @@ where
             reorder,
             header,
             footer,
+            section_scroll,
         } = self;
 
         let collapsed = collapse.as_ref().map(|(c, _)| *c).unwrap_or(false);
         let reorder_ref = reorder.as_ref();
+        let (scroll_snap, mut on_section_scroll) = match section_scroll {
+            Some((snap, cb)) => (snap, Some(cb)),
+            None => (SectionScroll::default(), None),
+        };
 
-        // Fixed chrome (collapse toggle + optional header) above a scrollable
-        // item list so long session/project lists stay usable.
-        let mut chrome = column![].spacing(0.0).width(Length::Fill);
+        // Fixed chrome (collapse + header + footer). Section *labels* also
+        // stay outside the scroll body; only item lists scroll.
+        let mut chrome = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
 
         // Toggle header.
         if let Some((_, on_toggle)) = &collapse {
@@ -951,15 +1062,17 @@ where
 
         // Total item count across all sections — clamps the drop slot.
         let total_items: usize = sections.iter().map(|s| s.items.len()).sum();
+        let n_sections = sections.len();
+        let any_explicit_fill = sections.iter().any(|s| s.fill);
+        // Auto-fill a lone section so a single long list scrolls without
+        // the caller remembering `.fill()`. Multiple sections require an
+        // explicit mark so short groups don't steal the Fill slot.
+        let auto_fill_single = !any_explicit_fill && n_sections == 1;
         let dragging = reorder_ref.and_then(|r| r.active);
 
-        let mut items = column![].spacing(SPACE_SM).padding(Padding::from([4.0, 8.0]));
-
-        if let Some((from, start_y)) = dragging {
-            // Live preview: keep the *original* order for layout so the
-            // grabbed row can float with the pointer while siblings glide
-            // into a gap at the provisional drop slot. Section headers are
-            // omitted (they fight a mid-drag shuffle).
+        let sections_el: Element<'a, Message, Theme> = if let Some((from, start_y)) = dragging {
+            // Live reorder preview: flatten rows (headers omitted). Scroll
+            // body is still bar-less so the gesture matches the rest state.
             let cursor_y = reorder_ref.map(|r| r.cursor_y).unwrap_or(0.0);
             let to = panel_drop_index_relative(
                 from,
@@ -978,6 +1091,7 @@ where
                     row_index += 1;
                 }
             }
+            let mut items = column![].spacing(SPACE_SM).padding(Padding::from([4.0, 8.0]));
             for (stable_index, item) in flat {
                 let is_dragged = stable_index == from;
                 let dy = if is_dragged {
@@ -994,35 +1108,69 @@ where
                 };
                 items = items.push(with_reorder_motion(row_el, dy, is_dragged));
             }
+            hidden_scroll(items, None).into()
         } else {
-            // At rest: original sectioned layout (headers + gaps).
+            // At rest: section labels sticky; item bodies scroll per-fill.
+            let mut sections_col = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
             let mut row_index = 0usize;
+            let mut assigned_fill = false;
+
             for (si, section) in sections.into_iter().enumerate() {
                 if si > 0 && !collapsed {
-                    items = items.push(Space::new().height(Length::Fixed(12.0)));
+                    sections_col =
+                        sections_col.push(Space::new().height(Length::Fixed(12.0)));
                 }
+
+                let n_in_section = section.items.len();
+                let wants_fill = !collapsed
+                    && (section.fill || auto_fill_single)
+                    && !assigned_fill;
+                if wants_fill {
+                    assigned_fill = true;
+                }
+
                 if let Some(label) = section.label {
                     if !collapsed {
-                        items = items.push(section_header(label));
+                        // Sticky: outside the section's scroll body.
+                        sections_col = sections_col.push(section_header(label));
                     }
                 }
+
+                let mut body_items =
+                    column![].spacing(SPACE_SM).padding(Padding::from([4.0, 8.0]));
                 for item in section.items {
                     if collapsed {
-                        items = items.push(collapsed_row(&item, row_index, reorder_ref));
+                        body_items =
+                            body_items.push(collapsed_row(&item, row_index, reorder_ref));
                     } else {
-                        items = items.push(render_item(item, reorder_ref, row_index));
+                        body_items =
+                            body_items.push(render_item(item, reorder_ref, row_index));
                     }
                     row_index += 1;
                 }
+
+                if wants_fill {
+                    // First fill section owns the scroll callback + chips.
+                    let scroll_cb = on_section_scroll.take();
+                    let body =
+                        fill_section_body(body_items, n_in_section, scroll_snap, scroll_cb);
+                    sections_col = sections_col.push(body);
+                } else {
+                    sections_col = sections_col.push(body_items);
+                }
             }
-        }
 
-        let list: Element<'a, Message, Theme> = scrollable(items)
-            .height(Length::Fill)
-            .width(Length::Fill)
-            .into();
+            if !assigned_fill && !collapsed {
+                // No fill section: keep the whole stack scrollable (hidden
+                // bar) so multi-section panels still work when content is
+                // tall — labels scroll with items (legacy fallback).
+                hidden_scroll(sections_col, None).into()
+            } else {
+                sections_col.into()
+            }
+        };
 
-        chrome = chrome.push(list);
+        chrome = chrome.push(sections_el);
 
         // Footer (hidden when collapsed).
         if let Some(footer) = footer {
@@ -1085,6 +1233,74 @@ where
             body
         }
     }
+}
+
+/// Scrollable with a zero-width vertical rail — still wheel/trackpad
+/// scrollable, no visible thumb.
+fn hidden_scroll<'a, Message: 'a>(
+    content: impl Into<Element<'a, Message, Theme>>,
+    on_scroll: Option<Box<dyn Fn(SectionScroll) -> Message + 'a>>,
+) -> scrollable::Scrollable<'a, Message, Theme> {
+    let mut s = scrollable(content.into())
+        .direction(Direction::Vertical(Scrollbar::hidden()))
+        .height(Length::Fill)
+        .width(Length::Fill);
+    if let Some(cb) = on_scroll {
+        s = s.on_scroll(move |vp| cb(SectionScroll::from_viewport(&vp)));
+    }
+    s
+}
+
+/// Fill section: sticky overflow chips around a bar-less item list.
+fn fill_section_body<'a, Message: 'a>(
+    items: iced::widget::Column<'a, Message, Theme>,
+    n_items: usize,
+    scroll: SectionScroll,
+    on_scroll: Option<Box<dyn Fn(SectionScroll) -> Message + 'a>>,
+) -> Element<'a, Message, Theme> {
+    let (above, below) = section_overflow_counts(scroll, n_items);
+    let mut col = column![].spacing(0.0).width(Length::Fill).height(Length::Fill);
+    if above > 0 {
+        col = col.push(overflow_chip(OverflowDir::Up, above));
+    }
+    col = col.push(hidden_scroll(items, on_scroll));
+    if below > 0 {
+        col = col.push(overflow_chip(OverflowDir::Down, below));
+    }
+    col.into()
+}
+
+enum OverflowDir {
+    Up,
+    Down,
+}
+
+/// Compact wayfinding chip: `↑  3 …` / `↓  12 …`.
+fn overflow_chip<'a, Message: 'a>(dir: OverflowDir, n: usize) -> Element<'a, Message, Theme> {
+    let glyph = match dir {
+        OverflowDir::Up => "↑",
+        OverflowDir::Down => "↓",
+    };
+    container(
+        text(format!("{glyph}  {n} …"))
+            .font(fonts::ui())
+            .size(11)
+            .style(|theme: &Theme| {
+                let c = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(Color { a: 0.50, ..c }),
+                }
+            }),
+    )
+    .width(Length::Fill)
+    .center_x(Length::Fill)
+    .padding(Padding {
+        top: 4.0,
+        bottom: 4.0,
+        left: 10.0,
+        right: 10.0,
+    })
+    .into()
 }
 
 /// Collapsed (icon-only) row: shows just the shortcut number (or
@@ -1337,6 +1553,53 @@ mod tests {
     fn reordered_empty_slice() {
         let result = panel_reordered(&[], 0, 0);
         assert!(result.is_empty());
+    }
+
+    // --- section_overflow_counts ---
+
+    #[test]
+    fn overflow_counts_none_when_fits() {
+        let s = SectionScroll {
+            offset_y: 0.0,
+            viewport_h: 200.0,
+            content_h: 150.0,
+        };
+        assert_eq!(section_overflow_counts(s, 5), (0, 0));
+    }
+
+    #[test]
+    fn overflow_counts_at_top() {
+        // 10 items, 40px each → content 400; viewport 120 → 3 visible-ish
+        let s = SectionScroll {
+            offset_y: 0.0,
+            viewport_h: 120.0,
+            content_h: 400.0,
+        };
+        let (above, below) = section_overflow_counts(s, 10);
+        assert_eq!(above, 0);
+        assert!(below >= 6, "below={below}");
+    }
+
+    #[test]
+    fn overflow_counts_scrolled_mid() {
+        let s = SectionScroll {
+            offset_y: 160.0, // 4 full rows of 40
+            viewport_h: 120.0,
+            content_h: 400.0,
+        };
+        let (above, below) = section_overflow_counts(s, 10);
+        assert_eq!(above, 4);
+        assert!(below >= 2, "below={below}");
+    }
+
+    #[test]
+    fn overflow_counts_empty_list() {
+        let s = SectionScroll {
+            offset_y: 0.0,
+            viewport_h: 100.0,
+            content_h: 200.0,
+        };
+        assert_eq!(section_overflow_counts(s, 0), (0, 0));
     }
 
     // --- panel_drop_index ---

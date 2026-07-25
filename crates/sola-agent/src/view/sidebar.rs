@@ -32,18 +32,15 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
         .collect();
 
     let sections = if filtered.is_empty() {
-        // Empty state as an unlabeled section with a single inert-looking row
-        // is awkward; use a caption-only header-less section via one disabled-
-        // style item that no-ops when busy is true we still need a message —
-        // use SelectSession with empty id handled as no-op, or keep a custom
-        // empty section with no items and put empty copy in the header.
         Vec::new()
     } else {
         let items: Vec<SidebarItem<Msg>> = filtered
             .iter()
             .map(|s| session_item(s, app, busy))
             .collect();
-        vec![SidebarSection::new("Sessions", items)]
+        // Fill section: sticky "Sessions" label + bar-less item scroll with
+        // ↑ N … / ↓ N … chips (see SidebarPanel::section_scroll).
+        vec![SidebarSection::new("Sessions", items).fill()]
     };
 
     // Divider bands: raised sidebar | hairline | deeper main pane.
@@ -65,6 +62,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
 
     let mut panel = SidebarPanel::new(sections)
         .header(header)
+        .section_scroll(app.session_section_scroll, Msg::SessionSectionScroll)
         .resizable_with(
             app.sidebar_w,
             app.dragging_divider,

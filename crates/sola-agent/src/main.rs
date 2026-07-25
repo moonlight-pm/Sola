@@ -147,6 +147,8 @@ pub(crate) struct App {
     pub(crate) drag_anchor: Option<(f32, f32)>,
     /// Double-click rename: last session row click (id, instant).
     pub(crate) last_session_click: Option<(String, Instant)>,
+    /// Sessions section scroll viewport (overflow chips: ↑ N … / ↓ N …).
+    pub(crate) session_section_scroll: sola_kit::components::SectionScroll,
 }
 
 #[derive(Debug, Clone)]
@@ -185,6 +187,8 @@ pub(crate) enum Msg {
     CursorReleased,
     /// Periodic list refresh (live TUI dots, ages).
     RefreshSessionsTick,
+    /// Sessions fill-section scroll viewport (for overflow chips).
+    SessionSectionScroll(sola_kit::components::SectionScroll),
 }
 
 impl App {
@@ -225,6 +229,7 @@ impl App {
             last_cursor_x: None,
             drag_anchor: None,
             last_session_click: None,
+            session_section_scroll: sola_kit::components::SectionScroll::default(),
         }
     }
 
@@ -559,6 +564,9 @@ impl App {
             }
             Msg::SessionFilter(s) => {
                 self.session_filter = s;
+            }
+            Msg::SessionSectionScroll(scroll) => {
+                self.session_section_scroll = scroll;
             }
         }
         Task::none()
