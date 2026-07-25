@@ -9,7 +9,7 @@
 
 use iced::border::Radius;
 use iced::mouse;
-use iced::widget::{Space, button, container, mouse_area, row, text};
+use iced::widget::{Space, button, container, mouse_area, row, stack, text};
 use iced::window::Direction;
 use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
 
@@ -23,11 +23,12 @@ pub const HEIGHT: f32 = 38.0;
 /// Corner radius for a floating window frame (matches kit `RADIUS_XL`).
 pub const WINDOW_RADIUS: f32 = RADIUS_XL;
 
-/// Edge resize grip thickness (logical px). Thin enough not to steal much
-/// content, thick enough to grab without hunting.
-const EDGE_GRIP: f32 = 10.0;
-/// Corner grip size — larger than the edge strip so diagonal grabs are easy.
-const CORNER_GRIP: f32 = 20.0;
+/// Inward edge resize grip thickness (logical px). Confined inside the
+/// window bounds — never expands the hit box outside the frame.
+const EDGE_GRIP: f32 = 12.0;
+/// Inward corner grip size. Larger than the edge strip for easy diagonal
+/// grabs; still entirely inside the window.
+const CORNER_GRIP: f32 = 16.0;
 
 /// Outer border width. Face content is inset by this so children never
 /// paint over the hairline (same trick as kit `card`).
@@ -106,15 +107,17 @@ where
         .height(Length::Fill)
         .style(frame_style);
 
-    // Resize grips take real layout space around the frame (not a stack
-    // overlay). Overlay side strips were too easy to miss / lose to the
-    // content layer; a 3×3 chrome with fat corners is reliably hittable.
+    // Inward resize grips overlaid on the frame — entirely inside the
+    // window bounds so they never steal hits from apps behind the float.
     with_resize_grips(framed.into(), on_resize)
 }
 
-/// 3×3 resize chrome: large corner squares + edge strips around `inner`.
-/// Corners use [`CORNER_GRIP`]; edges use [`EDGE_GRIP`] thickness (top/bottom
-/// strips are corner-tall so the whole top/bottom band is easy to grab).
+/// Overlay edge/corner mouse areas on the *inside* of `inner`'s bounds.
+///
+/// Layout is a full-size stack layer whose only interactive widgets are the
+/// perimeter strips; the centre is empty `Space` so events fall through to
+/// the titlebar/content. Corners are separate layers above the edges so a
+/// mid-edge hover never picks up a diagonal cursor from a mis-sized corner.
 fn with_resize_grips<'a, Message>(
     inner: Element<'a, Message, Theme>,
     on_resize: impl Fn(Direction) -> Message + 'a,
@@ -125,87 +128,128 @@ where
     let e = EDGE_GRIP;
     let c = CORNER_GRIP;
 
-    let grip = |dir: Direction, interaction: mouse::Interaction| -> Element<'a, Message, Theme> {
-        mouse_area(
-            Space::new()
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .interaction(interaction)
-        .on_press(on_resize(dir))
-        .into()
+    let grip = |dir: Direction,
+                interaction: mouse::Interaction,
+                w: Length,
+                h: Length|
+     -> Element<'a, Message, Theme> {
+        mouse_area(Space::new().width(w).height(h))
+            .interaction(interaction)
+            .on_press(on_resize(dir))
+            .into()
     };
 
-    let top = row![
-        container(grip(
+    // Edge strips leave corner squares empty so corners own those cells.
+    let edges: Element<'a, Message, Theme> = iced::widget::column![
+        // North — between the two top corners
+        row![
+            Space::new().width(Length::Fixed(c)).height(Length::Fixed(e)),
+            grip(
+                Direction::North,
+                mouse::Interaction::ResizingVertically,
+                Length::Fill,
+                Length::Fixed(e),
+            ),
+            Space::new().width(Length::Fixed(c)).height(Length::Fixed(e)),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fixed(e)),
+        // Middle — west | pass-through | east
+        row![
+            grip(
+                Direction::West,
+                mouse::Interaction::ResizingHorizontally,
+                Length::Fixed(e),
+                Length::Fill,
+            ),
+            Space::new().width(Length::Fill).height(Length::Fill),
+            grip(
+                Direction::East,
+                mouse::Interaction::ResizingHorizontally,
+                Length::Fixed(e),
+                Length::Fill,
+            ),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill),
+        // South — between the two bottom corners
+        row![
+            Space::new().width(Length::Fixed(c)).height(Length::Fixed(e)),
+            grip(
+                Direction::South,
+                mouse::Interaction::ResizingVertically,
+                Length::Fill,
+                Length::Fixed(e),
+            ),
+            Space::new().width(Length::Fixed(c)).height(Length::Fixed(e)),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fixed(e)),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+
+    // Corner squares — full-size layers with only the corner cell interactive
+    // so they sit above edges and stay inside the window.
+    let corner = |dir: Direction,
+                  interaction: mouse::Interaction,
+                  left: bool,
+                  top: bool|
+     -> Element<'a, Message, Theme> {
+        let cell = grip(dir, interaction, Length::Fixed(c), Length::Fixed(c));
+        let h_bar = if left {
+            row![cell, Space::new().width(Length::Fill).height(Length::Fixed(c))]
+        } else {
+            row![Space::new().width(Length::Fill).height(Length::Fixed(c)), cell]
+        }
+        .width(Length::Fill)
+        .height(Length::Fixed(c));
+
+        if top {
+            iced::widget::column![h_bar, Space::new().width(Length::Fill).height(Length::Fill)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            iced::widget::column![Space::new().width(Length::Fill).height(Length::Fill), h_bar]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        }
+    };
+
+    stack![
+        inner,
+        edges,
+        corner(
             Direction::NorthWest,
             mouse::Interaction::ResizingDiagonallyDown,
-        ))
-        .width(Length::Fixed(c))
-        .height(Length::Fixed(c)),
-        container(grip(
-            Direction::North,
-            mouse::Interaction::ResizingVertically,
-        ))
-        .width(Length::Fill)
-        .height(Length::Fixed(c)),
-        container(grip(
+            true,
+            true,
+        ),
+        corner(
             Direction::NorthEast,
             mouse::Interaction::ResizingDiagonallyUp,
-        ))
-        .width(Length::Fixed(c))
-        .height(Length::Fixed(c)),
-    ]
-    .width(Length::Fill)
-    .height(Length::Fixed(c));
-
-    let middle = row![
-        container(grip(
-            Direction::West,
-            mouse::Interaction::ResizingHorizontally,
-        ))
-        .width(Length::Fixed(e))
-        .height(Length::Fill),
-        container(inner)
-            .width(Length::Fill)
-            .height(Length::Fill),
-        container(grip(
-            Direction::East,
-            mouse::Interaction::ResizingHorizontally,
-        ))
-        .width(Length::Fixed(e))
-        .height(Length::Fill),
-    ]
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    let bottom = row![
-        container(grip(
+            false,
+            true,
+        ),
+        corner(
             Direction::SouthWest,
             mouse::Interaction::ResizingDiagonallyUp,
-        ))
-        .width(Length::Fixed(c))
-        .height(Length::Fixed(c)),
-        container(grip(
-            Direction::South,
-            mouse::Interaction::ResizingVertically,
-        ))
-        .width(Length::Fill)
-        .height(Length::Fixed(c)),
-        container(grip(
+            true,
+            false,
+        ),
+        corner(
             Direction::SouthEast,
             mouse::Interaction::ResizingDiagonallyDown,
-        ))
-        .width(Length::Fixed(c))
-        .height(Length::Fixed(c)),
+            false,
+            false,
+        ),
     ]
     .width(Length::Fill)
-    .height(Length::Fixed(c));
-
-    iced::widget::column![top, middle, bottom]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    .height(Length::Fill)
+    .into()
 }
 
 fn titlebar_inner<'a, Message>(

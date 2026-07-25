@@ -66,12 +66,20 @@ fn app_title_font() -> iced::Font {
 
 /// Full-height menubar control: button is exactly [`BAR_H`] tall so layout
 /// (and hit testing) spans y=0…BAR_H of the window.
+///
+/// Iced buttons pin their child at the top of the padded area — wrap the
+/// label in a Fill-height container so the text is vertically centred while
+/// the hit box stays full-height.
 fn bar_button<'a>(
     content: impl Into<Element<'a, Msg>>,
     active: bool,
     on_press: Msg,
 ) -> iced::widget::Button<'a, Msg> {
-    iced::widget::button(content)
+    let centered = container(content.into())
+        .width(Length::Shrink)
+        .height(Length::Fill)
+        .align_y(Alignment::Center);
+    iced::widget::button(centered)
         .style(kit_btn::menubar(active))
         .padding(ITEM_PAD)
         .height(Length::Fixed(BAR_H))
