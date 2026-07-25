@@ -35,7 +35,7 @@ pub(crate) fn strip(pending: &PendingApproval) -> Element<'_, Msg> {
                     .on_press(Msg::PermissionAllowFirst),
             )
             .push(
-                kit_btn::labeled_sm("Deny", kit_btn::danger_soft).on_press(Msg::PermissionDeny),
+                kit_btn::labeled_sm("Deny", kit_btn::danger_outline).on_press(Msg::PermissionDeny),
             );
         has_deny = true;
     }
