@@ -112,6 +112,11 @@ pub struct Shell {
     // Focus
     pub focused_app_id: Option<String>,
     pub focused_window_id: Option<u32>,
+    /// Window currently under the pointer (`Topic::MouseEntered` /
+    /// `MouseLeft`). Used to re-apply focus-follows-mouse after programmatic
+    /// focus steals (new map, close fallback) — River does not re-send
+    /// `pointer_enter` if the cursor never left the old surface.
+    pub pointer_window_id: Option<u32>,
 
     // MRU (most-recently-used)
     pub mru_apps: Vec<String>,
@@ -212,6 +217,7 @@ impl Shell {
             switcher_window_id: Some(switcher_id),
             focused_app_id: None,
             focused_window_id: None,
+            pointer_window_id: None,
             mru_apps: Vec::new(),
             mru_window_by_app: HashMap::new(),
             known_windows: Vec::new(),

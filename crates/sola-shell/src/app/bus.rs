@@ -198,9 +198,15 @@ impl Shell {
             }
         }
 
-        // Focus the newest app so the user can start using it immediately.
+        // Raise + provisionally focus the newest app so it appears on top and
+        // is usable when the pointer is already over it (or nowhere). Then
+        // re-sync keyboard focus to the window under the pointer — if the
+        // cursor is still over another app, FFM wins and the new map keeps
+        // its raise without stealing input.
+        //
         // If no new app appeared but the focused app was just closed, fall
-        // back to the next MRU app — or clear the menubar if none remain.
+        // back to the next MRU app — or clear the menubar if none remain —
+        // then the same pointer resync applies.
         let prev_focused = self.focused_window_id;
         if let Some(id) = added.first() {
             self.bus_set_focus(id);
@@ -230,6 +236,17 @@ impl Shell {
                 // No apps left — no focused app, re-emit chords without per-app bindings.
                 self.emit_registered_chords();
             }
+        }
+
+        // Drop hover if that window closed; then re-apply FFM over any
+        // programmatic focus steal above.
+        if let Some(wid) = self.pointer_window_id {
+            if !self.known_windows.iter().any(|w| w.window_id == wid) {
+                self.pointer_window_id = None;
+            }
+        }
+        if added.first().is_some() || focused_app_was_removed {
+            self.sync_keyboard_focus_to_pointer();
         }
 
         // Dismiss open menu if the focused window changed.
@@ -331,6 +348,33 @@ impl Shell {
         self.set_pointer_focus(&app_id);
         self.focused_window_id = Some(window_id);
         self.emit_focus(window_id);
+    }
+
+    /// Re-apply keyboard focus to whatever is under the pointer.
+    ///
+    /// General fix for focus-follows-mouse after any non-pointer focus change:
+    /// a newly mapped window (or MRU fallback after close) steals focus, but
+    /// if the cursor never left another app, River will not re-fire
+    /// `MouseEntered`. Restore input focus to the hovered window without
+    /// undoing the raise (stack order stays).
+    fn sync_keyboard_focus_to_pointer(&mut self) {
+        let Some(wid) = self.pointer_window_id else {
+            return;
+        };
+        // Drop stale hover if the window vanished.
+        if !self.known_windows.iter().any(|w| w.window_id == wid) {
+            self.pointer_window_id = None;
+            return;
+        }
+        // Menubar / shell overlays never take keyboard focus via FFM.
+        if self
+            .known_windows
+            .iter()
+            .any(|w| w.window_id == wid && w.app_id == Self::APP_ID)
+        {
+            return;
+        }
+        self.focus_window_from_pointer(wid);
     }
 
     /// Click activation: focus + raise to front of the composition stack.
@@ -727,6 +771,10 @@ impl Shell {
     /// [`Self::on_mouse_clicked`]) so floating foreground windows stay on top
     /// while the pointer moves over a large background app.
     fn on_mouse_entered(&mut self, e: MouseEnteredPayload) -> Task<Msg> {
+        // Always remember hover (including shell) so map/close resync knows
+        // whether the pointer is on an app vs chrome vs nowhere.
+        self.pointer_window_id = Some(e.window_id);
+
         // Skip shell surfaces — hovering the menubar must not steal focus.
         let is_shell = self
             .known_windows
@@ -788,6 +836,7 @@ impl Shell {
     /// Cursor left all tracked surfaces.
     /// Leave keyboard focus where it is (classic sloppy-focus leave policy).
     fn on_mouse_left(&mut self) -> Task<Msg> {
+        self.pointer_window_id = None;
         Task::none()
     }
 
