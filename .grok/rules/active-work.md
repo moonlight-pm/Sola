@@ -17,6 +17,11 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ### Last completed (prior)
 
+**focus-follows-mouse → master**: focus without raise (raise on click);
+200ms dwell; pointer resync after map; float drag clamps under menubar;
+full-height menubar hits (macOS idle chrome); edge/corner float resize
+(geometry rim, col/row cursors, square corner pads).
+
 **agent-ui-fixes → master**: markdown tables; Enter submit / Shift+Enter
 newline + growing composer; always-approve auto-answer + effort/mode
 order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
@@ -28,10 +33,12 @@ order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Further Grok TUI presentation parity
 - Storybook page parity for non-Overview tabs (on demand)
-- Remaining worktrees: `focus-follows-mouse`, `libei-portal`
+- Opt other kit apps into titlebar / floating_frame + resize
+- Remaining worktrees: `libei-portal`
 
 ### Resume
 
 ```text
-# no active feature worktree
+# master is current; reinstall if needed after this merge:
+# cargo make install sola-shell sola-river sola-monitor
 ```
