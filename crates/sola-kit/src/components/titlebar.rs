@@ -7,11 +7,15 @@
 //!
 //! Borders/fills only — no drop shadow (they render hard here).
 
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::widget::{Tree, Widget};
+use iced::advanced::{Clipboard, Shell, mouse, renderer};
 use iced::border::Radius;
-use iced::mouse;
 use iced::widget::{Space, button, container, mouse_area, row, stack, text};
 use iced::window::Direction;
-use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
+use iced::{
+    Alignment, Border, Color, Element, Event, Length, Padding, Point, Rectangle, Size, Theme,
+};
 
 use crate::components::style::{HAIRLINE_A, RADIUS_XL, SPACE_LG, mix_white};
 use crate::fonts;
@@ -111,14 +115,9 @@ where
     with_resize_grips(framed.into(), on_resize)
 }
 
-/// Overlay eight non-overlapping resize regions on the *inside* of `inner`.
-///
-/// Each region is a full-window transparent container with a small grip
-/// child aligned to one edge/corner. Containers only forward hits to that
-/// child, so the centre falls through to titlebar/content and mid-edge
-/// never collides with a corner layer (the previous full-window `Space`
-/// fillers were winning the stack's interaction probe and showing the
-/// wrong cursor).
+/// Overlay a pure-geometry resize rim on `inner`. Hit testing uses window
+/// bounds math (not nested layout strips), so mid-edge / corner / hairline
+/// regions stay correct and confined inside the surface.
 fn with_resize_grips<'a, Message>(
     inner: Element<'a, Message, Theme>,
     on_resize: impl Fn(Direction) -> Message + 'a,
@@ -126,140 +125,197 @@ fn with_resize_grips<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let g = GRIP;
-
-    let cell = |dir: Direction, interaction: mouse::Interaction| -> Element<'a, Message, Theme> {
-        mouse_area(
-            Space::new()
-                .width(Length::Fixed(g))
-                .height(Length::Fixed(g)),
-        )
-        .interaction(interaction)
-        .on_press(on_resize(dir))
-        .into()
-    };
-
-    // Edge strips: one axis Fixed(g), the other Fill, inset by g at both
-    // ends so they stop where the corner cells begin (no overlap, no gap).
-    let north = container(
-        mouse_area(
-            Space::new()
-                .width(Length::Fill)
-                .height(Length::Fixed(g)),
-        )
-        .interaction(mouse::Interaction::ResizingVertically)
-        .on_press(on_resize(Direction::North)),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(Padding {
-        top: 0.0,
-        right: g,
-        bottom: 0.0,
-        left: g,
-    })
-    .align_top(Length::Fill);
-
-    let south = container(
-        mouse_area(
-            Space::new()
-                .width(Length::Fill)
-                .height(Length::Fixed(g)),
-        )
-        .interaction(mouse::Interaction::ResizingVertically)
-        .on_press(on_resize(Direction::South)),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(Padding {
-        top: 0.0,
-        right: g,
-        bottom: 0.0,
-        left: g,
-    })
-    .align_bottom(Length::Fill);
-
-    let west = container(
-        mouse_area(
-            Space::new()
-                .width(Length::Fixed(g))
-                .height(Length::Fill),
-        )
-        .interaction(mouse::Interaction::ResizingHorizontally)
-        .on_press(on_resize(Direction::West)),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(Padding {
-        top: g,
-        right: 0.0,
-        bottom: g,
-        left: 0.0,
-    })
-    .align_left(Length::Fill);
-
-    let east = container(
-        mouse_area(
-            Space::new()
-                .width(Length::Fixed(g))
-                .height(Length::Fill),
-        )
-        .interaction(mouse::Interaction::ResizingHorizontally)
-        .on_press(on_resize(Direction::East)),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(Padding {
-        top: g,
-        right: 0.0,
-        bottom: g,
-        left: 0.0,
-    })
-    .align_right(Length::Fill);
-
-    // Corners: g×g cells parked in each corner of a full-size container.
-    let nw = container(cell(
-        Direction::NorthWest,
-        mouse::Interaction::ResizingDiagonallyDown,
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_left(Length::Fill)
-    .align_top(Length::Fill);
-
-    let ne = container(cell(
-        Direction::NorthEast,
-        mouse::Interaction::ResizingDiagonallyUp,
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_right(Length::Fill)
-    .align_top(Length::Fill);
-
-    let sw = container(cell(
-        Direction::SouthWest,
-        mouse::Interaction::ResizingDiagonallyUp,
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_left(Length::Fill)
-    .align_bottom(Length::Fill);
-
-    let se = container(cell(
-        Direction::SouthEast,
-        mouse::Interaction::ResizingDiagonallyDown,
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_right(Length::Fill)
-    .align_bottom(Length::Fill);
-
-    // Edges first, corners on top so the g×g corner cells win in their
-    // squares; mid-edge is only covered by the edge strip.
-    stack![inner, north, south, west, east, nw, ne, sw, se]
+    stack![inner, ResizeRim::new(on_resize)]
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+/// Invisible full-window rim that maps the pointer to one of eight resize
+/// directions when it sits within [`GRIP`] px of the edge (corners win on
+/// the g×g squares). Outside the rim, interaction is `None` so the stack
+/// falls through to titlebar/content.
+struct ResizeRim<'a, Message> {
+    on_resize: Box<dyn Fn(Direction) -> Message + 'a>,
+    grip: f32,
+}
+
+impl<'a, Message> ResizeRim<'a, Message> {
+    fn new(on_resize: impl Fn(Direction) -> Message + 'a) -> Self {
+        Self {
+            on_resize: Box::new(on_resize),
+            grip: GRIP,
+        }
+    }
+}
+
+/// Which resize direction contains `p` inside `bounds`, if any.
+/// Corners take priority over pure edges when the pointer is in a g×g square.
+fn resize_zone(bounds: Rectangle, p: Point, grip: f32) -> Option<Direction> {
+    let x0 = bounds.x;
+    let y0 = bounds.y;
+    let x1 = bounds.x + bounds.width;
+    let y1 = bounds.y + bounds.height;
+    // Inclusive outer edge, exclusive inner — covers the hairline border
+    // pixel and the inward grip band with no gap.
+    let left = p.x >= x0 && p.x < x0 + grip;
+    let right = p.x < x1 && p.x >= x1 - grip;
+    let top = p.y >= y0 && p.y < y0 + grip;
+    let bottom = p.y < y1 && p.y >= y1 - grip;
+
+    match (top, bottom, left, right) {
+        (true, _, true, _) => Some(Direction::NorthWest),
+        (true, _, _, true) => Some(Direction::NorthEast),
+        (_, true, true, _) => Some(Direction::SouthWest),
+        (_, true, _, true) => Some(Direction::SouthEast),
+        (true, _, _, _) => Some(Direction::North),
+        (_, true, _, _) => Some(Direction::South),
+        (_, _, true, _) => Some(Direction::West),
+        (_, _, _, true) => Some(Direction::East),
+        _ => None,
+    }
+}
+
+fn interaction_for(dir: Direction) -> mouse::Interaction {
+    match dir {
+        Direction::North | Direction::South => mouse::Interaction::ResizingVertically,
+        Direction::East | Direction::West => mouse::Interaction::ResizingHorizontally,
+        Direction::NorthWest | Direction::SouthEast => mouse::Interaction::ResizingDiagonallyDown,
+        Direction::NorthEast | Direction::SouthWest => mouse::Interaction::ResizingDiagonallyUp,
+    }
+}
+
+impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> for ResizeRim<'a, Message>
+where
+    Renderer: renderer::Renderer,
+{
+    fn size(&self) -> Size<Length> {
+        Size {
+            width: Length::Fill,
+            height: Length::Fill,
+        }
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut Tree,
+        _renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::atomic(limits, Length::Fill, Length::Fill)
+    }
+
+    fn update(
+        &mut self,
+        _tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _renderer: &Renderer,
+        _clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        _viewport: &Rectangle,
+    ) {
+        let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event else {
+            return;
+        };
+        let Some(p) = cursor.position() else {
+            return;
+        };
+        let Some(dir) = resize_zone(layout.bounds(), p, self.grip) else {
+            return;
+        };
+        shell.publish((self.on_resize)(dir));
+        shell.capture_event();
+    }
+
+    fn mouse_interaction(
+        &self,
+        _tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &Renderer,
+    ) -> mouse::Interaction {
+        let Some(p) = cursor.position() else {
+            return mouse::Interaction::None;
+        };
+        match resize_zone(layout.bounds(), p, self.grip) {
+            Some(dir) => interaction_for(dir),
+            None => mouse::Interaction::None,
+        }
+    }
+
+    fn draw(
+        &self,
+        _tree: &Tree,
+        _renderer: &mut Renderer,
+        _theme: &Theme,
+        _style: &renderer::Style,
+        _layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+    ) {
+        // Invisible — hit-test only.
+    }
+}
+
+impl<'a, Message, Theme, Renderer> From<ResizeRim<'a, Message>>
+    for Element<'a, Message, Theme, Renderer>
+where
+    Message: 'a,
+    Theme: 'a,
+    Renderer: renderer::Renderer + 'a,
+{
+    fn from(rim: ResizeRim<'a, Message>) -> Self {
+        Element::new(rim)
+    }
+}
+
+#[cfg(test)]
+mod resize_zone_tests {
+    use super::*;
+
+    fn bounds() -> Rectangle {
+        Rectangle {
+            x: 100.0,
+            y: 50.0,
+            width: 400.0,
+            height: 300.0,
+        }
+    }
+
+    #[test]
+    fn mid_edges_and_corners() {
+        let b = bounds();
+        let g = 14.0;
+        // Mid-right → East (not a corner). Direction has no PartialEq.
+        assert!(matches!(
+            resize_zone(b, Point::new(b.x + b.width - 2.0, b.y + b.height / 2.0), g),
+            Some(Direction::East)
+        ));
+        assert!(matches!(
+            resize_zone(b, Point::new(b.x + 2.0, b.y + b.height / 2.0), g),
+            Some(Direction::West)
+        ));
+        assert!(matches!(
+            resize_zone(b, Point::new(b.x + b.width - 2.0, b.y + b.height - 2.0), g),
+            Some(Direction::SouthEast)
+        ));
+        // Hairline on the right edge (outermost pixel) → East.
+        assert!(matches!(
+            resize_zone(
+                b,
+                Point::new(b.x + b.width - 0.5, b.y + b.height / 2.0),
+                g
+            ),
+            Some(Direction::East)
+        ));
+        // Centre → None (pass through).
+        assert!(
+            resize_zone(b, Point::new(b.x + b.width / 2.0, b.y + b.height / 2.0), g).is_none()
+        );
+    }
 }
 
 fn titlebar_inner<'a, Message>(
