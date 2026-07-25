@@ -266,8 +266,15 @@ fn create_float_shadow(
     })
 }
 
-/// Paint a soft black rounded-rect silhouette. Premultiplied ARGB8888
+/// Paint a soft black rounded-rect cast shadow. Premultiplied ARGB8888
 /// little-endian byte order is B, G, R, A.
+///
+/// The silhouette is a **filled** soft shape (peak alpha inside, falloff
+/// outside), shifted down by [`OFFSET_Y`]. The window content is drawn
+/// above this decoration and covers the centre. We deliberately do **not**
+/// punch a transparent hole for the content rect: with a downward offset
+/// that hole would extend past the window's bottom edge and leave a clear
+/// strip where the desktop/browser bleeds through the "shadow".
 fn paint_shadow(buf: &mut [u8], buf_w: u32, buf_h: u32, content_w: u32, content_h: u32) {
     let margin = MARGIN as f32;
     let half_w = content_w as f32 * 0.5;
@@ -282,10 +289,10 @@ fn paint_shadow(buf: &mut [u8], buf_w: u32, buf_h: u32, content_w: u32, content_
             let px = x as f32 + 0.5;
             let py = y as f32 + 0.5;
             let d = rounded_box_sdf(px - cx, py - cy, half_w, half_h, radius);
-            // Soft falloff only outside the silhouette. Fully transparent
-            // inside so opaque window content is untouched; transparent
-            // rounded corners of kit floats still pick up the exterior rim.
-            let a = if d <= 0.0 || d >= BLUR {
+            // Filled silhouette: full peak inside, smooth falloff outside.
+            let a = if d <= 0.0 {
+                PEAK_ALPHA
+            } else if d >= BLUR {
                 0.0
             } else {
                 let t = 1.0 - (d / BLUR);
@@ -389,6 +396,28 @@ mod tests {
             buf[i + 3] > 0,
             "expected shadow alpha under content, got {}",
             buf[i + 3]
+        );
+    }
+
+    #[test]
+    fn paint_fills_offset_gap_below_window() {
+        // Regression: with a downward OFFSET_Y, a "ring only" paint left a
+        // transparent strip under the window bottom. The filled silhouette
+        // must keep peak alpha in that band so the desktop can't bleed.
+        let cw = 100u32;
+        let ch = 80u32;
+        let bw = cw + 2 * MARGIN as u32;
+        let bh = ch + 2 * MARGIN as u32;
+        let mut buf = vec![0u8; (bw * bh * 4) as usize];
+        paint_shadow(&mut buf, bw, bh, cw, ch);
+        let x = MARGIN as u32 + cw / 2;
+        // Just below the content bottom, still inside the offset silhouette.
+        let y = MARGIN as u32 + ch + 1;
+        let i = ((y * bw + x) * 4) as usize;
+        let peak = (PEAK_ALPHA * 255.0).round() as u8;
+        assert_eq!(
+            buf[i + 3], peak,
+            "expected filled peak alpha in OFFSET_Y gap under window"
         );
     }
 }
