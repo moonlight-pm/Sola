@@ -145,10 +145,11 @@ impl PermissionMode {
 
     pub fn as_mode_id(self) -> &'static str {
         match self {
-            // Grok accepts both; prefer ACP-standard bypass id.
+            // Grok: bypassPermissions / --always-approve / YOLO.
             Self::AlwaysApprove => "bypassPermissions",
             Self::Default => "default",
-            Self::Auto => "auto",
+            // Grok's acceptEdits (auto-approve safe edits); not the string "auto".
+            Self::Auto => "acceptEdits",
             Self::Plan => "plan",
         }
     }
@@ -160,6 +161,11 @@ impl PermissionMode {
             Self::Auto => "auto",
             Self::Plan => "plan",
         }
+    }
+
+    /// Client should auto-answer `session/request_permission` without a strip.
+    pub fn auto_answers_permissions(self) -> bool {
+        matches!(self, Self::AlwaysApprove)
     }
 
     pub fn all() -> &'static [PermissionMode] {

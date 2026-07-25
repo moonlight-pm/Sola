@@ -8,8 +8,9 @@ pub(crate) mod footer;
 pub(crate) mod markdown;
 pub(crate) mod sidebar;
 
-use iced::widget::{button, column, container, row, scrollable, stack, text, Space, Column};
 use iced::widget::scrollable::Viewport;
+use iced::widget::text_editor::{self, Binding, KeyPress};
+use iced::widget::{button, column, container, row, scrollable, stack, text, Space, Column};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{
@@ -428,37 +429,40 @@ fn empty_transcript(app: &App) -> Element<'_, Msg> {
     .into()
 }
 
-const COMPOSER_PAD: Padding = Padding {
-    top: 6.0,
-    right: 4.0,
-    bottom: 6.0,
-    left: 4.0,
-};
+/// Composer line metrics (match DS: min ~44px, grow to ~160px).
+const COMPOSER_LINE_PX: f32 = 20.0;
+const COMPOSER_MIN_H: f32 = 44.0;
+const COMPOSER_MAX_H: f32 = 160.0;
+const COMPOSER_V_PAD: f32 = 12.0;
 
 fn composer(app: &App) -> Element<'_, Msg> {
     let gated = app.pending.is_some();
-    let field = if gated {
-        text_input("Resolve the pending approval to continue…", &app.draft)
-            .size(14)
-            .padding(COMPOSER_PAD)
-            .style(composer_input_style)
-            .width(Length::Fill)
-    } else if app.streaming {
-        text_input("Ask Sola Agent…", &app.draft)
-            .on_input(Msg::DraftChanged)
-            .size(14)
-            .padding(COMPOSER_PAD)
-            .style(composer_input_style)
-            .width(Length::Fill)
+    let lines = app.draft.line_count().max(1);
+    let height = ((lines as f32) * COMPOSER_LINE_PX + COMPOSER_V_PAD)
+        .clamp(COMPOSER_MIN_H, COMPOSER_MAX_H);
+
+    let placeholder = if gated {
+        "Resolve the pending approval to continue…"
     } else {
-        text_input("Ask Sola Agent…", &app.draft)
-            .on_input(Msg::DraftChanged)
-            .on_submit(Msg::Send)
-            .size(14)
-            .padding(COMPOSER_PAD)
-            .style(composer_input_style)
-            .width(Length::Fill)
+        "Ask Sola Agent…"
     };
+
+    // Multi-line editor. Enter → submit is decided in `DraftAction` using
+    // `shift_held` (Wayland often omits SHIFT on the Enter event itself).
+    // Shift+Enter still produces Edit::Enter with shift_held=true → newline.
+    let mut editor = text_editor::TextEditor::new(&app.draft)
+        .placeholder(placeholder)
+        .size(14.0)
+        .padding(Padding::from([6.0, 4.0]))
+        .height(Length::Fixed(height))
+        .style(composer_editor_style)
+        .key_binding(|key_press| composer_key_binding(key_press, app.shift_held));
+
+    if !gated {
+        editor = editor.on_action(Msg::DraftAction);
+    }
+
+    let field: Element<'_, Msg> = editor.into();
 
     let actions: Element<'_, Msg> = if app.streaming {
         kit_btn::labeled_sm("Stop", kit_btn::danger_outline)
@@ -468,7 +472,7 @@ fn composer(app: &App) -> Element<'_, Msg> {
         Space::new().width(0).into()
     } else {
         let mut send = kit_btn::labeled_sm("Send", kit_btn::primary);
-        if !app.draft.trim().is_empty() {
+        if !app.draft.text().trim().is_empty() {
             send = send.on_press(Msg::Send);
         }
         send.into()
@@ -493,6 +497,30 @@ fn composer(app: &App) -> Element<'_, Msg> {
         })
         .style(composer_band_style)
         .into()
+}
+
+/// Map Enter → Edit::Enter always; App turns plain Enter into submit.
+/// Shift detection prefers tracked `shift_held` over the (often empty) mask.
+fn composer_key_binding(key_press: KeyPress, shift_held: bool) -> Option<Binding<Msg>> {
+    use iced::keyboard;
+    use iced::keyboard::key::Named;
+
+    let is_enter = matches!(
+        key_press.key.as_ref(),
+        keyboard::Key::Named(Named::Enter)
+    ) || matches!(
+        key_press.modified_key.as_ref(),
+        keyboard::Key::Named(Named::Enter)
+    );
+
+    if is_enter {
+        // Always produce Edit::Enter via the default binding path semantics.
+        // App::update intercepts when !shift_held and submits instead.
+        let _ = shift_held; // documented for readers; intercept is in update
+        return Some(Binding::Enter);
+    }
+
+    Binding::from_key_press(key_press)
 }
 
 fn composer_band_style(theme: &Theme) -> container::Style {
@@ -530,13 +558,21 @@ fn composer_shell_style(theme: &Theme) -> container::Style {
     }
 }
 
-fn composer_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let mut s = text_input::style(theme, status);
-    s.background = Background::Color(Color::TRANSPARENT);
-    s.border = Border {
-        color: Color::TRANSPARENT,
-        width: 0.0,
-        radius: RADIUS_MD.into(),
-    };
-    s
+fn composer_editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
+    let p = theme.extended_palette();
+    let _ = status;
+    text_editor::Style {
+        background: Background::Color(Color::TRANSPARENT),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_MD.into(),
+        },
+        placeholder: Color {
+            a: 0.75,
+            ..p.secondary.base.color
+        },
+        value: p.background.base.text,
+        selection: p.primary.weak.color,
+    }
 }

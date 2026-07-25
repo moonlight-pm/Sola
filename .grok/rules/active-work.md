@@ -13,19 +13,19 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**agent-leader** (worktree `.worktrees/agent-leader`)
+**agent-ui-fixes** (worktree `.worktrees/agent-ui-fixes`, branch `fix/agent-ui-fixes`)
 
-sola-agent requires shared Grok leader; remove console group; host
-`grok-leader.service` + `[cli] use_leader = true`.
+sola-agent UX: markdown tables, Shift+Enter multiline composer, always-approve
+auto-answers permissions, permission strip redesign.
 
 ### Next
 
-- User smoke: install agent, open sessions with TUI + sola-agent multi-client
+- User smoke: install agent, verify tables / Shift+Enter / YOLO / approval chrome
 - Merge when approved
 
 ### Last completed (prior)
 
-**agent-console-sessions → master**: console group (now superseded by leader multi-client).
+**agent-leader → master**: leader-only attach; console group removed.
 
 ### Future / follow-ups
 
@@ -38,9 +38,7 @@ sola-agent requires shared Grok leader; remove console group; host
 
 ```text
 # worktree:
-cd .worktrees/agent-leader
+cd .worktrees/agent-ui-fixes
 # cargo make build agent
 # (install only with user permission)
-# host:
-# systemctl --user status grok-leader.service
 ```

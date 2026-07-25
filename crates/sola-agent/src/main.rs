@@ -10,8 +10,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use std::sync::Arc as StdArc;
+
+use iced::keyboard;
+use iced::keyboard::key::Named as NamedKey;
 use iced::widget::operation;
 use iced::widget::scrollable::RelativeOffset;
+use iced::widget::text_editor;
 use iced::widget::Id as ScrollId;
 use iced::{event, mouse, Element, Event, Subscription, Task, Theme};
 
@@ -102,6 +107,7 @@ fn main() -> iced::Result {
 
     BusSetup::new(APP_ID)
         .subscribe(&[TopicKind::Theme, TopicKind::MenuAction, TopicKind::CloseApp])
+        // Agent app menu (product actions).
         .app_menu_definition(MenuDefinition {
             label: "Agent".into(),
             items: vec![
@@ -117,6 +123,41 @@ fn main() -> iced::Result {
                     id: "quit".into(),
                     label: "Quit Agent".into(),
                     shortcut: Some(KeyCode::Q.meta()),
+                    disabled: false,
+                    checked: false,
+                },
+            ],
+        })
+        // Edit menu — same contract as sola-terminal (shell routes chords here).
+        .app_menu_definition(MenuDefinition {
+            label: "Edit".into(),
+            items: vec![
+                MenuItem::Action {
+                    id: "cut".into(),
+                    label: "Cut".into(),
+                    shortcut: Some(KeyCode::X.meta()),
+                    disabled: false,
+                    checked: false,
+                },
+                MenuItem::Action {
+                    id: "copy".into(),
+                    label: "Copy".into(),
+                    shortcut: Some(KeyCode::C.meta()),
+                    disabled: false,
+                    checked: false,
+                },
+                MenuItem::Action {
+                    id: "paste".into(),
+                    label: "Paste".into(),
+                    shortcut: Some(KeyCode::V.meta()),
+                    disabled: false,
+                    checked: false,
+                },
+                MenuItem::Divider,
+                MenuItem::Action {
+                    id: "select_all".into(),
+                    label: "Select All".into(),
+                    shortcut: Some(KeyCode::A.meta()),
                     disabled: false,
                     checked: false,
                 },
@@ -160,7 +201,8 @@ pub(crate) fn transcript_scroll_id() -> ScrollId {
 pub(crate) struct App {
     pub(crate) theme: Theme,
     pub(crate) turns: Vec<Turn>,
-    pub(crate) draft: String,
+    /// Multi-line composer buffer (Enter sends, Shift+Enter newline).
+    pub(crate) draft: text_editor::Content,
     pub(crate) streaming: bool,
     pub(crate) pending: Option<PendingApproval>,
     pub(crate) sessions: Vec<SessionSummary>,
@@ -215,14 +257,21 @@ pub(crate) struct App {
     pub(crate) grok_version: Option<String>,
     pub(crate) grok_latest: Option<String>,
     pub(crate) grok_update_available: bool,
+    /// Wayland often omits SHIFT on the Enter event itself (see sola-terminal).
+    /// Track Shift key down/up so Shift+Enter = newline is reliable.
+    pub(crate) shift_held: bool,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum Msg {
     Bus(Arc<Message>),
     Acp(AgentEvent),
-    DraftChanged(String),
+    DraftAction(text_editor::Action),
     Send,
+    /// Clipboard paste result (Edit → Paste / ⌘V).
+    ClipboardPasted(Option<String>),
+    /// Shift key down/up (Wayland Enter often lacks SHIFT in modifiers).
+    ShiftHeld(bool),
     Cancel,
     NewSession,
     SelectSession(String),
@@ -285,7 +334,7 @@ impl App {
         Self {
             theme: default_theme(),
             turns: Vec::new(),
-            draft: String::new(),
+            draft: text_editor::Content::new(),
             streaming: false,
             pending: None,
             sessions: sessions::list_all(),
@@ -324,6 +373,7 @@ impl App {
             grok_version: None,
             grok_latest: None,
             grok_update_available: false,
+            shift_held: false,
         }
     }
 
@@ -345,6 +395,7 @@ impl App {
             bridge::agent_subscription().map(Msg::Acp),
             iced::time::every(Duration::from_secs(8)).map(|_| Msg::RefreshSessionsTick),
             // Cursor tracking for divider drag; wheel-up for history when no scrollbar.
+            // Also track Shift held — Wayland Enter events often omit the SHIFT mask.
             event::listen_with(|event, _status, _id| match event {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     Some(Msg::CursorMoved(position.x))
@@ -359,6 +410,20 @@ impl App {
                     };
                     if up {
                         Some(Msg::TranscriptWheelUp)
+                    } else {
+                        None
+                    }
+                }
+                Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, .. }) => {
+                    if is_shift_key(&key, physical_key) {
+                        Some(Msg::ShiftHeld(true))
+                    } else {
+                        None
+                    }
+                }
+                Event::Keyboard(keyboard::Event::KeyReleased { key, physical_key, .. }) => {
+                    if is_shift_key(&key, physical_key) {
+                        Some(Msg::ShiftHeld(false))
                     } else {
                         None
                     }
@@ -378,6 +443,82 @@ impl App {
         Task::none()
     }
 
+    /// Submit the composer (Enter / Send button / menu).
+    fn submit_draft(&mut self) -> Task<Msg> {
+        let text = self.draft.text();
+        let text = text.trim().to_string();
+        if text.is_empty() || self.pending.is_some() || self.streaming {
+            return Task::none();
+        }
+        self.draft = text_editor::Content::new();
+        self.streaming = true;
+        self.stick_to_bottom = true;
+        if self.session_id.is_none() {
+            bridge::agent_send(AgentCmd::NewSession {
+                cwd: self.project_root.to_string_lossy().into_owned(),
+            });
+        }
+        bridge::agent_send(AgentCmd::Send { text });
+        self.scroll_bottom_pending = true;
+        self.maybe_scroll_bottom()
+    }
+
+    /// Menubar / shortcut actions (shell delivers MenuAction for chords).
+    fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
+        match action {
+            "bulk_delete" => {
+                self.open_bulk_delete();
+                Task::none()
+            }
+            "cut" => self.edit_cut(),
+            "copy" => self.edit_copy(),
+            "paste" => self.edit_paste(),
+            "select_all" => {
+                if self.pending.is_none() {
+                    self.draft.perform(text_editor::Action::SelectAll);
+                }
+                Task::none()
+            }
+            "quit" => {
+                // Shell also emits CloseApp; handle explicit menu quit.
+                bridge::agent_send(AgentCmd::Shutdown);
+                iced::exit()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    fn edit_copy(&self) -> Task<Msg> {
+        if let Some(sel) = self.draft.selection() {
+            if !sel.is_empty() {
+                return iced::clipboard::write(sel);
+            }
+        }
+        Task::none()
+    }
+
+    fn edit_cut(&mut self) -> Task<Msg> {
+        if self.pending.is_some() {
+            return Task::none();
+        }
+        let Some(sel) = self.draft.selection() else {
+            return Task::none();
+        };
+        if sel.is_empty() {
+            return Task::none();
+        }
+        self.draft
+            .perform(text_editor::Action::Edit(text_editor::Edit::Delete));
+        iced::clipboard::write(sel)
+    }
+
+    fn edit_paste(&self) -> Task<Msg> {
+        if self.pending.is_some() {
+            return Task::none();
+        }
+        iced::clipboard::read().map(Msg::ClipboardPasted)
+    }
+
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(m) => {
@@ -387,8 +528,8 @@ impl App {
                 }
                 let _ = apply_theme_update(&m, &mut self.theme);
                 if let Some(Topic::MenuAction(p)) = Topic::parse(&m) {
-                    if p.app_id == APP_ID && p.action_id == "bulk_delete" {
-                        self.open_bulk_delete();
+                    if p.app_id == APP_ID {
+                        return self.on_menu_action(&p.action_id);
                     }
                 }
             }
@@ -421,23 +562,35 @@ impl App {
                 }
                 return Task::batch(tasks);
             }
-            Msg::DraftChanged(s) => self.draft = s,
+            Msg::DraftAction(action) => {
+                // Plain Enter submits; Shift+Enter inserts a newline.
+                // Intercept here (not key_binding Custom) so submit rides the
+                // same proven Action path that typing uses.
+                if matches!(
+                    action,
+                    text_editor::Action::Edit(text_editor::Edit::Enter)
+                ) && !self.shift_held
+                {
+                    return self.submit_draft();
+                }
+                self.draft.perform(action);
+            }
             Msg::Send => {
-                let text = self.draft.trim().to_string();
-                if text.is_empty() || self.pending.is_some() || self.streaming {
+                return self.submit_draft();
+            }
+            Msg::ClipboardPasted(text) => {
+                let Some(text) = text else {
+                    return Task::none();
+                };
+                if self.pending.is_some() {
                     return Task::none();
                 }
-                self.draft.clear();
-                self.streaming = true;
-                self.stick_to_bottom = true;
-                if self.session_id.is_none() {
-                    bridge::agent_send(AgentCmd::NewSession {
-                        cwd: self.project_root.to_string_lossy().into_owned(),
-                    });
-                }
-                bridge::agent_send(AgentCmd::Send { text });
-                self.scroll_bottom_pending = true;
-                return self.maybe_scroll_bottom();
+                self.draft.perform(text_editor::Action::Edit(
+                    text_editor::Edit::Paste(StdArc::new(text)),
+                ));
+            }
+            Msg::ShiftHeld(held) => {
+                self.shift_held = held;
             }
             Msg::Cancel => {
                 bridge::agent_send(AgentCmd::Cancel);
@@ -509,7 +662,7 @@ impl App {
                 overlay::note_cwd(&cwd);
                 self.stick_to_bottom = true;
                 self.loading_older = false;
-                self.draft.clear();
+                self.draft = text_editor::Content::new();
                 // Always ACP session/load via the shared leader (multi-client
                 // with TUI — no read-only console branch).
                 bridge::agent_send(AgentCmd::LoadSession { id, cwd });
@@ -593,24 +746,14 @@ impl App {
             }
             Msg::PermissionAllowFirst => {
                 if let Some(p) = self.pending.take() {
-                    let option_id = p
-                        .options
-                        .iter()
-                        .find(|o| {
-                            let k = o.kind.to_lowercase();
-                            k.contains("allow") && !k.contains("always")
-                        })
-                        .or_else(|| p.options.first())
-                        .map(|o| o.option_id.clone())
-                        .unwrap_or_default();
-                    if option_id.is_empty() {
-                        bridge::agent_send(AgentCmd::PermissionCancel {
-                            request_id: p.request_id,
-                        });
-                    } else {
+                    if let Some(option_id) = pick_allow_option(&p.options) {
                         bridge::agent_send(AgentCmd::Permission {
                             request_id: p.request_id,
                             option_id,
+                        });
+                    } else {
+                        bridge::agent_send(AgentCmd::PermissionCancel {
+                            request_id: p.request_id,
                         });
                     }
                 }
@@ -792,7 +935,12 @@ impl App {
             Msg::SetEffort(id) => {
                 self.effort_id = Some(id.clone());
                 if self.session_id.is_some() {
+                    // Effort also rides `session/set_mode` on Grok — re-apply
+                    // permission mode after so effort does not clobber YOLO.
                     bridge::agent_send(AgentCmd::SetEffort { effort_id: id });
+                    bridge::agent_send(AgentCmd::SetPermissionMode {
+                        mode_id: self.permission_mode.as_mode_id().to_string(),
+                    });
                 }
             }
             Msg::SessionHover(id) => {
@@ -1024,14 +1172,16 @@ impl App {
                     self.session_title = title;
                 }
                 // Apply preferred permission mode on every session attach.
-                bridge::agent_send(AgentCmd::SetPermissionMode {
-                    mode_id: self.permission_mode.as_mode_id().to_string(),
-                });
+                // Order: effort first (also uses set_mode on Grok), then
+                // permission so YOLO is the last modeId applied.
                 if let Some(effort) = self.effort_id.clone() {
                     bridge::agent_send(AgentCmd::SetEffort {
                         effort_id: effort,
                     });
                 }
+                bridge::agent_send(AgentCmd::SetPermissionMode {
+                    mode_id: self.permission_mode.as_mode_id().to_string(),
+                });
             }
             AgentEvent::Transcript {
                 turns,
@@ -1146,6 +1296,22 @@ impl App {
                 preview,
                 options,
             } => {
+                // always-approve: answer in-process so the strip never flashes
+                // even if the leader still emits request_permission (hooks,
+                // shell ask rules, mode not yet applied, effort clobber race).
+                if self.permission_mode.auto_answers_permissions() {
+                    if let Some(option_id) = pick_allow_option(&options) {
+                        bridge::agent_send(AgentCmd::Permission {
+                            request_id,
+                            option_id,
+                        });
+                        return;
+                    }
+                    tracing::warn!(
+                        %tool,
+                        "always-approve but no allow option; showing strip"
+                    );
+                }
                 self.pending = Some(PendingApproval {
                     request_id,
                     tool,
@@ -1217,4 +1383,36 @@ impl App {
     fn view(&self) -> Element<'_, Msg> {
         view::screen(self)
     }
+}
+
+/// Pick the best allow option for auto-approve / default Approve.
+/// Prefers `allow_always`, then `allow_once`, then any non-reject option.
+fn pick_allow_option(options: &[PermissionChoice]) -> Option<String> {
+    let score = |o: &PermissionChoice| -> i32 {
+        let k = o.kind.to_lowercase();
+        if k.contains("reject") || k.contains("deny") {
+            return -1;
+        }
+        if k.contains("allow_always") || (k.contains("always") && k.contains("allow")) {
+            return 3;
+        }
+        if k.contains("allow_once") || k.contains("allow") {
+            return 2;
+        }
+        1
+    };
+    options
+        .iter()
+        .filter(|o| score(o) > 0)
+        .max_by_key(|o| score(o))
+        .map(|o| o.option_id.clone())
+}
+
+fn is_shift_key(key: &keyboard::Key, physical: keyboard::key::Physical) -> bool {
+    matches!(key, keyboard::Key::Named(NamedKey::Shift))
+        || matches!(
+            physical,
+            keyboard::key::Physical::Code(keyboard::key::Code::ShiftLeft)
+                | keyboard::key::Physical::Code(keyboard::key::Code::ShiftRight)
+        )
 }

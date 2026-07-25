@@ -9,8 +9,8 @@
 
 use iced::font::Weight;
 use iced::widget::text::{LineHeight, Rich, Shaping, Wrapping};
-use iced::widget::{container, rich_text, span, text, Column};
-use iced::{Background, Border, Color, Element, Font, Length, Never, Padding, Theme};
+use iced::widget::{container, rich_text, span, text, Column, Row, Space};
+use iced::{Alignment, Background, Border, Color, Element, Font, Length, Never, Padding, Theme};
 use sola_kit::components::style::RADIUS_MD;
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
@@ -73,6 +73,7 @@ enum BlockKind {
     ListItem,
     Code,
     Rule,
+    Table,
 }
 
 impl BlockKind {
@@ -83,6 +84,7 @@ impl BlockKind {
             Block::ListItem { .. } => Self::ListItem,
             Block::Code(_) => Self::Code,
             Block::Rule => Self::Rule,
+            Block::Table { .. } => Self::Table,
         }
     }
 }
@@ -95,7 +97,10 @@ fn gap_before(prev: Option<BlockKind>, cur: BlockKind) -> f32 {
         // List stack stays tight.
         (Some(BlockKind::ListItem), BlockKind::ListItem) => 2.0,
         (Some(BlockKind::Paragraph), BlockKind::Paragraph) => 10.0,
-        (Some(BlockKind::Code), _) | (_, BlockKind::Code) => 10.0,
+        (Some(BlockKind::Code), _)
+        | (_, BlockKind::Code)
+        | (Some(BlockKind::Table), _)
+        | (_, BlockKind::Table) => 10.0,
         _ => 8.0,
     }
 }
@@ -103,7 +108,7 @@ fn gap_before(prev: Option<BlockKind>, cur: BlockKind) -> f32 {
 fn gap_after(kind: BlockKind) -> f32 {
     match kind {
         BlockKind::Heading => 4.0,
-        BlockKind::Code => 2.0,
+        BlockKind::Code | BlockKind::Table => 2.0,
         _ => 0.0,
     }
 }
@@ -114,6 +119,11 @@ enum Block {
     ListItem { depth: usize, text: String },
     Code(String),
     Rule,
+    /// GFM pipe table: header row + body rows (cells already trimmed).
+    Table {
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
 }
 
 fn block_view(block: Block, theme: &Theme) -> Element<'static, Msg> {
@@ -162,6 +172,7 @@ fn block_view(block: Block, theme: &Theme) -> Element<'static, Msg> {
             .into()
         }
         Block::Code(code) => code_block(&code, theme),
+        Block::Table { headers, rows } => table_block(&headers, &rows, theme),
         Block::Rule => container(
             text("—")
                 .size(12.0)
@@ -345,6 +356,165 @@ fn code_block(code: &str, theme: &Theme) -> Element<'static, Msg> {
     .into()
 }
 
+/// GFM pipe table as a mono grid (terminal-adjacent, not spreadsheet chrome).
+fn table_block(
+    headers: &[String],
+    rows: &[Vec<String>],
+    theme: &Theme,
+) -> Element<'static, Msg> {
+    let p = theme.extended_palette();
+    let bg = p.background.strong.color;
+    let border = Color {
+        a: 0.40,
+        ..p.background.stronger.color
+    };
+    let hair = Color {
+        a: 0.22,
+        ..p.background.stronger.color
+    };
+    let muted = p.secondary.base.text;
+    let fg = p.background.base.text;
+
+    let ncols = headers
+        .len()
+        .max(rows.iter().map(|r| r.len()).max().unwrap_or(0))
+        .max(1);
+
+    // Column widths by max grapheme count (mono alignment).
+    let mut widths = vec![0usize; ncols];
+    for (i, h) in headers.iter().enumerate() {
+        widths[i] = widths[i].max(h.chars().count());
+    }
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i < ncols {
+                widths[i] = widths[i].max(cell.chars().count());
+            }
+        }
+    }
+    // Cap runaway cells so the bubble stays readable.
+    for w in &mut widths {
+        *w = (*w).clamp(3, 36);
+    }
+
+    let cell = |s: &str, bold: bool, color: Color| -> Element<'static, Msg> {
+        let font = if bold { mono_medium() } else { mono() };
+        text(s.to_string())
+            .font(font)
+            .size(CODE_PX)
+            .line_height(mono_lh(CODE_PX))
+            .shaping(Shaping::Basic)
+            .wrapping(Wrapping::Word)
+            .style(move |_t: &Theme| iced::widget::text::Style {
+                color: Some(color),
+            })
+            .into()
+    };
+
+    let pad_cell = |s: &str, w: usize| -> String {
+        let n = s.chars().count();
+        if n >= w {
+            s.chars().take(w).collect()
+        } else {
+            format!("{s}{}", " ".repeat(w - n))
+        }
+    };
+
+    let mut body = Column::new().spacing(0.0).width(Length::Fill);
+
+    // Header row.
+    let mut head_row = Row::new().spacing(12.0).align_y(Alignment::Start);
+    for i in 0..ncols {
+        let raw = headers.get(i).map(|s| s.as_str()).unwrap_or("");
+        let padded = pad_cell(raw, widths[i]);
+        head_row = head_row.push(
+            container(cell(&padded, true, muted))
+                .width(Length::FillPortion(widths[i].max(1) as u16)),
+        );
+    }
+    body = body.push(head_row.padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: 6.0,
+        left: 0.0,
+    }));
+    body = body.push(
+        container(Space::new().width(Length::Fill).height(1.0)).style(move |_t: &Theme| {
+            container::Style {
+                background: Some(Background::Color(hair)),
+                ..container::Style::default()
+            }
+        }),
+    );
+
+    for (ri, r) in rows.iter().enumerate() {
+        let mut data_row = Row::new().spacing(12.0).align_y(Alignment::Start);
+        for i in 0..ncols {
+            let raw = r.get(i).map(|s| s.as_str()).unwrap_or("");
+            let padded = pad_cell(raw, widths[i]);
+            data_row = data_row.push(
+                container(cell(&padded, false, fg))
+                    .width(Length::FillPortion(widths[i].max(1) as u16)),
+            );
+        }
+        let top = if ri == 0 { 6.0 } else { 4.0 };
+        body = body.push(data_row.padding(Padding {
+            top,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+        }));
+    }
+
+    container(body)
+        .padding(Padding::from([10.0, 12.0]))
+        .width(Length::Fill)
+        .style(move |_t: &Theme| container::Style {
+            background: Some(Background::Color(bg)),
+            border: Border {
+                color: border,
+                width: 1.0,
+                radius: RADIUS_MD.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// Split a GFM table row `| a | b |` into cells.
+fn split_table_row(line: &str) -> Vec<String> {
+    let t = line.trim();
+    let t = t.strip_prefix('|').unwrap_or(t);
+    let t = t.strip_suffix('|').unwrap_or(t);
+    t.split('|')
+        .map(|c| c.trim().to_string())
+        .collect()
+}
+
+/// True when a line is a GFM table separator (`|---|:---:|`).
+fn is_table_sep(line: &str) -> bool {
+    let t = line.trim();
+    if !t.contains('-') {
+        return false;
+    }
+    // Every cell must be dashes/colons/spaces only (optionally piped).
+    let cells = split_table_row(t);
+    if cells.is_empty() {
+        return false;
+    }
+    cells.iter().all(|c| {
+        let c = c.trim();
+        !c.is_empty()
+            && c.chars()
+                .all(|ch| ch == '-' || ch == ':' || ch == ' ')
+    })
+}
+
+fn looks_like_table_row(line: &str) -> bool {
+    let t = line.trim();
+    t.contains('|') && !t.starts_with("```")
+}
+
 fn parse_blocks(md: &str) -> Vec<Block> {
     let mut out = Vec::new();
     let mut lines = md.lines().peekable();
@@ -378,6 +548,30 @@ fn parse_blocks(md: &str) -> Vec<Block> {
             in_code = true;
             code.clear();
             continue;
+        }
+        // GFM table: header + separator, then body rows.
+        if looks_like_table_row(line) {
+            if let Some(next) = lines.peek().copied() {
+                if is_table_sep(next) {
+                    flush_para(&mut para, &mut out);
+                    let headers = split_table_row(line);
+                    let _ = lines.next(); // consume separator
+                    let mut rows = Vec::new();
+                    while let Some(&body) = lines.peek() {
+                        if !looks_like_table_row(body) || is_table_sep(body) {
+                            break;
+                        }
+                        // Blank lines end the table.
+                        if body.trim().is_empty() {
+                            break;
+                        }
+                        rows.push(split_table_row(body));
+                        let _ = lines.next();
+                    }
+                    out.push(Block::Table { headers, rows });
+                    continue;
+                }
+            }
         }
         if line.trim() == "---" || line.trim() == "***" {
             flush_para(&mut para, &mut out);
@@ -425,4 +619,42 @@ fn parse_blocks(md: &str) -> Vec<Block> {
     }
     flush_para(&mut para, &mut out);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_gfm_table() {
+        let md = "\
+| Name | Role |
+|------|------|
+| Ada  | eng  |
+| Lin  | ops  |
+";
+        let blocks = parse_blocks(md);
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            Block::Table { headers, rows } => {
+                assert_eq!(
+                    headers.as_slice(),
+                    ["Name".to_string(), "Role".to_string()].as_slice()
+                );
+                assert_eq!(rows.len(), 2);
+                assert_eq!(
+                    rows[0].as_slice(),
+                    ["Ada".to_string(), "eng".to_string()].as_slice()
+                );
+            }
+            _ => panic!("expected table"),
+        }
+    }
+
+    #[test]
+    fn table_sep_detection() {
+        assert!(is_table_sep("|---|---|"));
+        assert!(is_table_sep("| :--- | ---: |"));
+        assert!(!is_table_sep("| a | b |"));
+    }
 }
