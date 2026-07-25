@@ -1234,12 +1234,18 @@ impl App {
         );
     }
 
-    /// Drop local turn/approval state so the user can switch sessions or
-    /// start a new one. Cancels in-flight ACP work on the shared leader.
+    /// Drop local turn/approval chrome so the user can switch sessions or
+    /// start a new one.
+    ///
+    /// **Do not** send `session/cancel` here. sola-agent shares the Grok
+    /// leader with the TUI (and other attaches); cancel is global to the
+    /// session. Leaving a tab must not kill a turn still running in another
+    /// client — only the explicit Cancel control may do that.
+    ///
+    /// Pending permission strips are ours to resolve (we received the RPC).
+    /// Cancel the request so the leader is not stuck if no other client will
+    /// answer; that is narrower than aborting the whole turn.
     fn abandon_turn_for_switch(&mut self) {
-        if self.streaming {
-            bridge::agent_send(AgentCmd::Cancel);
-        }
         if let Some(p) = self.pending.take() {
             bridge::agent_send(AgentCmd::PermissionCancel {
                 request_id: p.request_id,
