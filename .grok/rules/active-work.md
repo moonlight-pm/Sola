@@ -17,13 +17,10 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ### Last completed
 
-**agent-acp-runner → master** (fast-forward to `11abd5c`): sola-agent ACP runner
-UI, Grok-style transcript, kit SidebarPanel sessions, section-scoped app-owned
-scroll with overflow chips. Worktrees `agent-acp-runner` and `sola-agent`
-removed; branches deleted.
-
-Design: `docs/specs/2026-07-23-sola-agent-acp-runner-design.md`  
-Backlog: `docs/specs/2026-07-23-sola-agent-ui-backlog.md`
+**agent-bulk-delete → master**: sola-agent **Bulk Delete…** panel (Agent menu).
+Age filters, safety toggles, preview with size, two-step confirm, worker-thread
+`grok sessions delete` + overlay scrub. List padding + title ellipsis so
+trailing sizes stay visible.
 
 ### Future / follow-ups
 

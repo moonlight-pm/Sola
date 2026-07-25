@@ -702,13 +702,292 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+// ── Bulk delete ──────────────────────────────────────────────────────────
+
+/// How far back “older than” reaches, measured from last transcript activity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BulkAge {
+    /// Last activity more than 24 hours ago.
+    #[default]
+    Hours24,
+    Days7,
+    Days30,
+    /// All sessions that pass the other filters (no age floor).
+    Any,
+}
+
+impl BulkAge {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hours24 => "24 hours",
+            Self::Days7 => "7 days",
+            Self::Days30 => "30 days",
+            Self::Any => "Any age",
+        }
+    }
+
+    pub fn max_activity_secs(self, now: u64) -> Option<u64> {
+        let hours = match self {
+            Self::Hours24 => 24u64,
+            Self::Days7 => 24 * 7,
+            Self::Days30 => 24 * 30,
+            Self::Any => return None,
+        };
+        Some(now.saturating_sub(hours * 3600))
+    }
+}
+
+/// Criteria for selecting sessions to permanently delete.
+#[derive(Debug, Clone)]
+pub struct BulkDeleteCriteria {
+    pub age: BulkAge,
+    /// Keep sessions pinned in the Sola overlay.
+    pub keep_pinned: bool,
+    /// Keep sessions held open by a live Grok TUI process.
+    pub keep_live: bool,
+    /// Session id currently open in sola-agent (always keep when set).
+    pub keep_open_id: Option<String>,
+    /// When true, only match worktree / subagent / OD project paths.
+    pub only_noise_paths: bool,
+}
+
+impl Default for BulkDeleteCriteria {
+    fn default() -> Self {
+        Self {
+            age: BulkAge::Hours24,
+            keep_pinned: true,
+            keep_live: true,
+            keep_open_id: None,
+            only_noise_paths: false,
+        }
+    }
+}
+
+/// One session that would be deleted under the current criteria.
+#[derive(Debug, Clone)]
+pub struct BulkDeleteCandidate {
+    pub id: String,
+    pub title: String,
+    pub cwd: String,
+    pub updated: u64,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BulkDeletePreview {
+    pub candidates: Vec<BulkDeleteCandidate>,
+    pub total_bytes: u64,
+}
+
+/// Worktree / subagent / Open Design cwd noise (not necessarily junk, but
+/// often short-lived). Used as an optional bulk-delete scope.
+pub fn is_noise_cwd(cwd: &str) -> bool {
+    cwd.contains("/.worktrees/")
+        || cwd.contains("/.grok/worktrees/")
+        || cwd.contains("/subagent-")
+        || cwd.contains("/.od/projects/")
+}
+
+/// Sessions matching `criteria`, sorted oldest activity first.
+pub fn bulk_delete_preview(criteria: &BulkDeleteCriteria) -> BulkDeletePreview {
+    let now = now_secs();
+    let max_activity = criteria.age.max_activity_secs(now);
+    let live = if criteria.keep_live {
+        active_terminal_sessions()
+    } else {
+        HashSet::new()
+    };
+    let pins = overlay::load();
+    let mut candidates = Vec::new();
+    let mut total_bytes = 0u64;
+
+    let groups = match fs::read_dir(sessions_root()) {
+        Ok(e) => e,
+        Err(_) => return BulkDeletePreview::default(),
+    };
+    for group in groups.flatten() {
+        let group_path = group.path();
+        if !group_path.is_dir() {
+            continue;
+        }
+        let group_cwd = group
+            .file_name()
+            .to_str()
+            .and_then(|n| urlencoding::decode(n).ok())
+            .map(|s| s.into_owned())
+            .unwrap_or_default();
+        let entries = match fs::read_dir(&group_path) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let id = match path.file_name().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let summary_path = path.join("summary.json");
+            let (disk_title, summary_updated, cwd_s) = match read_summary(&summary_path) {
+                Some(t) => t,
+                None => continue,
+            };
+            let updated = activity_secs(&path).unwrap_or(summary_updated);
+            if let Some(max) = max_activity {
+                if updated >= max {
+                    continue;
+                }
+            }
+            if criteria.keep_pinned && pins.pinned.contains(&id) {
+                continue;
+            }
+            if criteria.keep_live && live.contains(&id) {
+                continue;
+            }
+            if criteria
+                .keep_open_id
+                .as_ref()
+                .is_some_and(|open| open == &id)
+            {
+                continue;
+            }
+            let cwd_display = if cwd_s.is_empty() {
+                group_cwd.clone()
+            } else {
+                cwd_s
+            };
+            if criteria.only_noise_paths && !is_noise_cwd(&cwd_display) {
+                continue;
+            }
+            let bytes = dir_size(&path);
+            total_bytes = total_bytes.saturating_add(bytes);
+            let title = resolve_title(&id, &disk_title, &pins);
+            candidates.push(BulkDeleteCandidate {
+                id,
+                title,
+                cwd: cwd_display,
+                updated,
+                bytes,
+            });
+        }
+    }
+
+    candidates.sort_by(|a, b| a.updated.cmp(&b.updated).then(a.id.cmp(&b.id)));
+    BulkDeletePreview {
+        candidates,
+        total_bytes,
+    }
+}
+
+fn dir_size(path: &Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = fs::read_dir(path) else {
+        return 0;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            total = total.saturating_add(dir_size(&p));
+        } else if let Ok(meta) = e.metadata() {
+            total = total.saturating_add(meta.len());
+        }
+    }
+    total
+}
+
+/// Locate `~/.grok/sessions/*/<id>` if present.
+pub fn find_session_dir(id: &str) -> Option<PathBuf> {
+    let groups = fs::read_dir(sessions_root()).ok()?;
+    for group in groups.flatten() {
+        let path = group.path().join(id);
+        if path.is_dir() && path.join("summary.json").is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Permanently delete one session. Prefers `grok sessions delete`; falls back
+/// to removing the session directory. Scrubs Sola overlay metadata on success.
+pub fn delete_session(id: &str) -> Result<(), String> {
+    let last_err = match std::process::Command::new("grok")
+        .args(["sessions", "delete", id])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            overlay::forget_sessions(&[id.to_string()]);
+            // Ensure directory is gone even if CLI only dropped the index entry.
+            if let Some(dir) = find_session_dir(id) {
+                let _ = fs::remove_dir_all(dir);
+            }
+            return Ok(());
+        }
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            if err.is_empty() {
+                format!("grok sessions delete exited {}", out.status)
+            } else {
+                err
+            }
+        }
+        Err(e) => format!("spawn grok: {e}"),
+    };
+
+    // Fallback: direct filesystem remove (keeps working if grok is missing).
+    if let Some(dir) = find_session_dir(id) {
+        fs::remove_dir_all(&dir).map_err(|e| {
+            format!("delete {id}: grok failed ({last_err}); rm also failed: {e}")
+        })?;
+        overlay::forget_sessions(&[id.to_string()]);
+        return Ok(());
+    }
+
+    // Already gone — treat as success so bulk jobs can scrub overlay.
+    if last_err.contains("not found") || last_err.contains("No such") {
+        overlay::forget_sessions(&[id.to_string()]);
+        return Ok(());
+    }
+    // If the dir is gone, success; else report CLI error.
+    if find_session_dir(id).is_none() {
+        overlay::forget_sessions(&[id.to_string()]);
+        return Ok(());
+    }
+    Err(format!("delete {id}: {last_err}"))
+}
+
+/// Human-readable byte size for the bulk-delete preview.
+pub fn format_bytes(n: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let n = n as f64;
+    if n >= GB {
+        format!("{:.1} GB", n / GB)
+    } else if n >= MB {
+        format!("{:.1} MB", n / MB)
+    } else if n >= KB {
+        format!("{:.0} KB", n / KB)
+    } else {
+        format!("{n:.0} B")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::Mutex;
+
+    /// `GROK_HOME` is process-global — serialize tests that mutate it.
+    static GROK_HOME_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn list_and_turns_from_fake_tree() {
+        let _guard = GROK_HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         unsafe {
             std::env::set_var("GROK_HOME", tmp.path());
@@ -822,5 +1101,98 @@ mod tests {
             Turn::Assistant("ok".into()),
         ];
         assert_eq!(display_item_count(&turns), 3);
+    }
+
+    #[test]
+    fn bulk_preview_age_and_noise() {
+        let _guard = GROK_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("GROK_HOME", tmp.path());
+        }
+        // No updates.jsonl → activity falls back to summary updated_at.
+        let cwd = "/home/u/Workspace/Sola";
+        let enc = urlencoding::encode(cwd);
+        let old = tmp
+            .path()
+            .join("sessions")
+            .join(enc.as_ref())
+            .join("old-1");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(
+            old.join("summary.json"),
+            r#"{"info":{"id":"old-1","cwd":"/home/u/Workspace/Sola"},"generated_title":"Old","updated_at":"2020-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+
+        // Fresh: summary "now" (far future so always within 24h of wall clock).
+        let fresh = tmp
+            .path()
+            .join("sessions")
+            .join(enc.as_ref())
+            .join("fresh-1");
+        fs::create_dir_all(&fresh).unwrap();
+        let future = chrono::Utc::now() + chrono::Duration::hours(1);
+        fs::write(
+            fresh.join("summary.json"),
+            format!(
+                r#"{{"info":{{"id":"fresh-1","cwd":"/home/u/Workspace/Sola"}},"generated_title":"Fresh","updated_at":"{}"}}"#,
+                future.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+            ),
+        )
+        .unwrap();
+
+        let noise_cwd = "/home/u/Workspace/Sola/.worktrees/feat";
+        let nenc = urlencoding::encode(noise_cwd);
+        let noise = tmp
+            .path()
+            .join("sessions")
+            .join(nenc.as_ref())
+            .join("noise-1");
+        fs::create_dir_all(&noise).unwrap();
+        fs::write(
+            noise.join("summary.json"),
+            r#"{"info":{"id":"noise-1","cwd":"/home/u/Workspace/Sola/.worktrees/feat"},"generated_title":"Noise","updated_at":"2020-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+
+        assert!(is_noise_cwd(noise_cwd));
+        assert!(!is_noise_cwd(cwd));
+
+        let mut crit = BulkDeleteCriteria {
+            age: BulkAge::Hours24,
+            keep_pinned: true,
+            keep_live: false,
+            keep_open_id: None,
+            only_noise_paths: false,
+        };
+        let prev = bulk_delete_preview(&crit);
+        let ids: HashSet<_> = prev.candidates.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains("old-1"), "old session should match: {ids:?}");
+        assert!(ids.contains("noise-1"), "old noise should match: {ids:?}");
+        assert!(!ids.contains("fresh-1"), "fresh should be excluded: {ids:?}");
+
+        crit.only_noise_paths = true;
+        let prev = bulk_delete_preview(&crit);
+        let ids: HashSet<_> = prev.candidates.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, HashSet::from(["noise-1"]));
+
+        crit.only_noise_paths = false;
+        crit.keep_open_id = Some("old-1".into());
+        let prev = bulk_delete_preview(&crit);
+        let ids: HashSet<_> = prev.candidates.iter().map(|c| c.id.as_str()).collect();
+        assert!(!ids.contains("old-1"));
+        assert!(ids.contains("noise-1"));
+
+        unsafe {
+            std::env::remove_var("GROK_HOME");
+        }
+    }
+
+    #[test]
+    fn format_bytes_units() {
+        assert_eq!(format_bytes(500), "500 B");
+        assert!(format_bytes(2048).contains("KB"));
+        assert!(format_bytes(3 * 1024 * 1024).contains("MB"));
     }
 }

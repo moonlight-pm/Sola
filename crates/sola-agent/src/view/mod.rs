@@ -2,6 +2,7 @@
 
 pub(crate) mod approval;
 pub(crate) mod bubble;
+pub(crate) mod bulk_delete;
 pub(crate) mod firstrun;
 pub(crate) mod footer;
 pub(crate) mod markdown;
@@ -62,6 +63,9 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     // when `dragging_divider` is set; keep shell plain.
     let body: Element<'_, Msg> = shell.into();
 
+    if let Some(panel) = &app.bulk_delete {
+        return bulk_delete::overlay(body, panel);
+    }
     if let Some(picker) = &app.project_picker {
         return stack_picker(body, picker);
     }

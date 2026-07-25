@@ -14,7 +14,7 @@ use iced::widget::Id as ScrollId;
 use iced::{event, mouse, Element, Event, Subscription, Task, Theme};
 
 use sola_bus::Message;
-use sola_bus::topics::TopicKind;
+use sola_bus::topics::{MenuDefinition, MenuItem, Topic, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup, window_settings,
@@ -66,12 +66,58 @@ pub(crate) struct RenameState {
     pub(crate) draft: String,
 }
 
+/// Bulk-delete modal phase.
+#[derive(Debug, Clone)]
+pub(crate) enum BulkDeletePhase {
+    Idle,
+    Confirm,
+    Deleting {
+        done: u32,
+        total: u32,
+        last_id: String,
+    },
+    Done {
+        deleted: u32,
+        failed: u32,
+        errors: Vec<String>,
+    },
+}
+
+/// Bulk-delete panel state (Agent → Bulk Delete…).
+#[derive(Debug, Clone)]
+pub(crate) struct BulkDeletePanel {
+    pub(crate) criteria: sessions::BulkDeleteCriteria,
+    /// UI toggle for “keep open session” (criteria.keep_open_id mirrors it).
+    pub(crate) keep_open: bool,
+    pub(crate) preview: sessions::BulkDeletePreview,
+    pub(crate) phase: BulkDeletePhase,
+}
+
 fn main() -> iced::Result {
     startup(APP_ID);
 
     BusSetup::new(APP_ID)
         .subscribe(&[TopicKind::Theme, TopicKind::MenuAction, TopicKind::CloseApp])
-        .app_menu("Agent", [("quit", "Quit Agent", KeyCode::Q.meta())])
+        .app_menu_definition(MenuDefinition {
+            label: "Agent".into(),
+            items: vec![
+                MenuItem::Action {
+                    id: "bulk_delete".into(),
+                    label: "Bulk Delete…".into(),
+                    shortcut: None,
+                    disabled: false,
+                    checked: false,
+                },
+                MenuItem::Divider,
+                MenuItem::Action {
+                    id: "quit".into(),
+                    label: "Quit Agent".into(),
+                    shortcut: Some(KeyCode::Q.meta()),
+                    disabled: false,
+                    checked: false,
+                },
+            ],
+        })
         .install();
 
     bridge::init_channels();
@@ -135,6 +181,7 @@ pub(crate) struct App {
     pub(crate) stick_to_bottom: bool,
     pub(crate) project_picker: Option<ProjectPicker>,
     pub(crate) rename: Option<RenameState>,
+    pub(crate) bulk_delete: Option<BulkDeletePanel>,
     /// Request snap-to-bottom on next update return.
     pub(crate) scroll_bottom_pending: bool,
     /// Resizable left session column width.
@@ -189,6 +236,16 @@ pub(crate) enum Msg {
     RefreshSessionsTick,
     /// Sessions fill-section scroll viewport (for overflow chips).
     SessionSectionScroll(sola_kit::components::SectionScroll),
+    // Bulk delete panel (opened via Agent menu → Bulk Delete…)
+    BulkAge(sessions::BulkAge),
+    BulkKeepPinned(bool),
+    BulkKeepLive(bool),
+    BulkKeepOpen(bool),
+    BulkOnlyNoise(bool),
+    BulkAskConfirm,
+    BulkBack,
+    BulkConfirmDelete,
+    BulkCancel,
 }
 
 impl App {
@@ -222,6 +279,7 @@ impl App {
             stick_to_bottom: true,
             project_picker: None,
             rename: None,
+            bulk_delete: None,
             scroll_bottom_pending: false,
             sidebar_w,
             session_filter: String::new(),
@@ -292,6 +350,11 @@ impl App {
                     return iced::exit();
                 }
                 let _ = apply_theme_update(&m, &mut self.theme);
+                if let Some(Topic::MenuAction(p)) = Topic::parse(&m) {
+                    if p.app_id == APP_ID && p.action_id == "bulk_delete" {
+                        self.open_bulk_delete();
+                    }
+                }
             }
             Msg::Acp(ev) => {
                 let need_scroll = matches!(
@@ -574,8 +637,142 @@ impl App {
                     self.session_section_scroll = scroll;
                 }
             }
+            Msg::BulkAge(age) => {
+                if let Some(p) = &mut self.bulk_delete {
+                    if matches!(p.phase, BulkDeletePhase::Deleting { .. }) {
+                        return Task::none();
+                    }
+                    p.criteria.age = age;
+                    p.phase = BulkDeletePhase::Idle;
+                    self.refresh_bulk_preview();
+                }
+            }
+            Msg::BulkKeepPinned(v) => {
+                if let Some(p) = &mut self.bulk_delete {
+                    if matches!(p.phase, BulkDeletePhase::Deleting { .. }) {
+                        return Task::none();
+                    }
+                    p.criteria.keep_pinned = v;
+                    p.phase = BulkDeletePhase::Idle;
+                    self.refresh_bulk_preview();
+                }
+            }
+            Msg::BulkKeepLive(v) => {
+                if let Some(p) = &mut self.bulk_delete {
+                    if matches!(p.phase, BulkDeletePhase::Deleting { .. }) {
+                        return Task::none();
+                    }
+                    p.criteria.keep_live = v;
+                    p.phase = BulkDeletePhase::Idle;
+                    self.refresh_bulk_preview();
+                }
+            }
+            Msg::BulkKeepOpen(v) => {
+                if let Some(p) = &mut self.bulk_delete {
+                    if matches!(p.phase, BulkDeletePhase::Deleting { .. }) {
+                        return Task::none();
+                    }
+                    p.keep_open = v;
+                    p.criteria.keep_open_id = if v {
+                        self.session_id.clone()
+                    } else {
+                        None
+                    };
+                    p.phase = BulkDeletePhase::Idle;
+                    self.refresh_bulk_preview();
+                }
+            }
+            Msg::BulkOnlyNoise(v) => {
+                if let Some(p) = &mut self.bulk_delete {
+                    if matches!(p.phase, BulkDeletePhase::Deleting { .. }) {
+                        return Task::none();
+                    }
+                    p.criteria.only_noise_paths = v;
+                    p.phase = BulkDeletePhase::Idle;
+                    self.refresh_bulk_preview();
+                }
+            }
+            Msg::BulkAskConfirm => {
+                if let Some(p) = &mut self.bulk_delete {
+                    if !p.preview.candidates.is_empty() {
+                        p.phase = BulkDeletePhase::Confirm;
+                    }
+                }
+            }
+            Msg::BulkBack => {
+                if let Some(p) = &mut self.bulk_delete {
+                    if matches!(p.phase, BulkDeletePhase::Confirm) {
+                        p.phase = BulkDeletePhase::Idle;
+                    }
+                }
+            }
+            Msg::BulkConfirmDelete => {
+                let Some(p) = self.bulk_delete.as_mut() else {
+                    return Task::none();
+                };
+                if !matches!(p.phase, BulkDeletePhase::Confirm) {
+                    return Task::none();
+                }
+                let ids: Vec<String> = p.preview.candidates.iter().map(|c| c.id.clone()).collect();
+                if ids.is_empty() {
+                    return Task::none();
+                }
+                let total = ids.len() as u32;
+                p.phase = BulkDeletePhase::Deleting {
+                    done: 0,
+                    total,
+                    last_id: String::new(),
+                };
+                bridge::agent_send(AgentCmd::BulkDelete { ids });
+            }
+            Msg::BulkCancel => {
+                // Allow close after done; block only while deleting.
+                if let Some(p) = &self.bulk_delete {
+                    if matches!(p.phase, BulkDeletePhase::Deleting { .. }) {
+                        return Task::none();
+                    }
+                }
+                self.bulk_delete = None;
+            }
         }
         Task::none()
+    }
+
+    fn open_bulk_delete(&mut self) {
+        // Don't stack over a mid-delete; allow reopening otherwise.
+        if let Some(p) = &self.bulk_delete {
+            if matches!(p.phase, BulkDeletePhase::Deleting { .. }) {
+                return;
+            }
+        }
+        let keep_open = true;
+        let mut criteria = sessions::BulkDeleteCriteria::default();
+        criteria.keep_open_id = if keep_open {
+            self.session_id.clone()
+        } else {
+            None
+        };
+        let preview = sessions::bulk_delete_preview(&criteria);
+        self.project_picker = None;
+        self.rename = None;
+        self.bulk_delete = Some(BulkDeletePanel {
+            criteria,
+            keep_open,
+            preview,
+            phase: BulkDeletePhase::Idle,
+        });
+    }
+
+    fn refresh_bulk_preview(&mut self) {
+        let Some(p) = self.bulk_delete.as_mut() else {
+            return;
+        };
+        p.criteria.keep_open_id = if p.keep_open {
+            self.session_id.clone()
+        } else {
+            None
+        };
+        p.preview = sessions::bulk_delete_preview(&p.criteria);
     }
 
     fn start_session_in(&mut self, cwd: String) {
@@ -800,6 +997,46 @@ impl App {
             }
             AgentEvent::SessionsListed { entries } => {
                 self.sessions = entries;
+            }
+            AgentEvent::BulkDeleteProgress {
+                done,
+                total,
+                last_id,
+            } => {
+                if let Some(p) = &mut self.bulk_delete {
+                    p.phase = BulkDeletePhase::Deleting {
+                        done,
+                        total,
+                        last_id,
+                    };
+                }
+            }
+            AgentEvent::BulkDeleteFinished {
+                deleted,
+                failed,
+                errors,
+            } => {
+                // If we deleted the open session (keep_open off), clear transcript.
+                if let Some(open) = self.session_id.clone() {
+                    let still_there = sessions::find_session_dir(&open).is_some();
+                    if !still_there {
+                        self.session_id = None;
+                        self.session_title = None;
+                        self.turns.clear();
+                        self.history_start_byte = 0;
+                        self.has_older_history = false;
+                    }
+                }
+                self.sessions = sessions::list_all();
+                if let Some(p) = &mut self.bulk_delete {
+                    p.phase = BulkDeletePhase::Done {
+                        deleted,
+                        failed,
+                        errors,
+                    };
+                    // Refresh preview so remaining sessions show correctly.
+                    p.preview = sessions::bulk_delete_preview(&p.criteria);
+                }
             }
         }
     }

@@ -116,3 +116,18 @@ pub fn set_sidebar_w(w: f32) {
     o.sidebar_w = Some(w);
     save(&o);
 }
+
+/// Drop Sola-only metadata for deleted Grok sessions.
+pub fn forget_sessions(ids: &[String]) {
+    if ids.is_empty() {
+        return;
+    }
+    let mut o = load();
+    for id in ids {
+        o.pinned.remove(id);
+        o.title_overrides.remove(id);
+        o.auto_titles.remove(id);
+        o.last_opened.retain(|x| x != id);
+    }
+    save(&o);
+}

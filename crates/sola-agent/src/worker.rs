@@ -127,6 +127,36 @@ fn run(mode: ConnectionMode) {
                     }
                 }
                 AgentCmd::RefreshSessions { cwd } => refresh_sessions(&cwd),
+                AgentCmd::BulkDelete { ids } => {
+                    let total = ids.len() as u32;
+                    let mut deleted = 0u32;
+                    let mut failed = 0u32;
+                    let mut errors = Vec::new();
+                    for (i, id) in ids.into_iter().enumerate() {
+                        match sessions::delete_session(&id) {
+                            Ok(()) => deleted += 1,
+                            Err(e) => {
+                                failed += 1;
+                                if errors.len() < 8 {
+                                    errors.push(e);
+                                }
+                            }
+                        }
+                        bridge::emit(AgentEvent::BulkDeleteProgress {
+                            done: (i as u32) + 1,
+                            total,
+                            last_id: id,
+                        });
+                    }
+                    bridge::emit(AgentEvent::BulkDeleteFinished {
+                        deleted,
+                        failed,
+                        errors,
+                    });
+                    // Refresh sidebar after disk changes.
+                    let entries = sessions::list_all();
+                    bridge::emit(AgentEvent::SessionsListed { entries });
+                }
             }
         }
 

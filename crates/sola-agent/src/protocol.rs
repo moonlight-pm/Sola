@@ -72,6 +72,18 @@ pub enum AgentEvent {
     SessionsListed {
         entries: Vec<SessionSummary>,
     },
+    /// Progress while permanently deleting sessions.
+    BulkDeleteProgress {
+        done: u32,
+        total: u32,
+        last_id: String,
+    },
+    /// Bulk delete finished (partial failures possible).
+    BulkDeleteFinished {
+        deleted: u32,
+        failed: u32,
+        errors: Vec<String>,
+    },
     /// Child / binary missing — show first-run guidance.
     NeedSetup {
         message: String,
@@ -170,6 +182,10 @@ pub enum AgentCmd {
     },
     RefreshSessions {
         cwd: String,
+    },
+    /// Permanently delete Grok sessions by id (`grok sessions delete`, then overlay scrub).
+    BulkDelete {
+        ids: Vec<String>,
     },
     Restart,
     Shutdown,
