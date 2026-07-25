@@ -1,27 +1,42 @@
 //! Assistant markdown rendered as owned iced widgets (no borrow of parse tree).
 //!
-//! Subset: paragraphs, headings, lists, bold/italic (as medium weight / muted),
-//! inline ``code``, fenced code blocks, links as accent text.
+//! Grok TUI paints agent markdown in a monospace terminal grid
+//! (`xai-grok-pager` + `md_style`). Match that face with the system mono font
+//! for body, headings, and inline code so the scrollback reads like the CLI.
 //!
-//! Inline markup uses iced `rich_text` + `span` so bold/code stay on one
-//! wrapping line. Spacing is kind-aware so the stream doesn’t feel scrunched.
+//! Clarity: match sola-terminal — integer 15px size, Basic shaping, absolute
+//! line height from mono metrics (fractional sizes rasterize soft).
 
 use iced::font::Weight;
-use iced::widget::text::{LineHeight, Rich, Wrapping};
+use iced::widget::text::{LineHeight, Rich, Shaping, Wrapping};
 use iced::widget::{container, rich_text, span, text, Column};
 use iced::{Background, Border, Color, Element, Font, Length, Never, Padding, Theme};
-use sola_kit::components::style::{RADIUS_MD, SPACE_MD, SPACE_SM};
+use sola_kit::components::style::RADIUS_MD;
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
 
 use crate::Msg;
 
-/// Body size — slightly larger than chrome for reading comfort.
-const BODY_PX: f32 = 14.5;
-const CODE_PX: f32 = 12.5;
-/// Comfortable reading measure (default iced is 1.3 → feels tight).
-const BODY_LH: f32 = 1.55;
-const HEADING_LH: f32 = 1.35;
+/// Match sola-terminal default cell glyph size (15px integer).
+const BODY_PX: f32 = 15.0;
+const CODE_PX: f32 = 14.0;
+
+fn mono() -> Font {
+    fonts::mono()
+}
+
+fn mono_medium() -> Font {
+    Font {
+        weight: Weight::Medium,
+        ..fonts::mono()
+    }
+}
+
+/// Absolute line box from real mono metrics (same approach as term cells).
+fn mono_lh(px: f32) -> LineHeight {
+    let m = fonts::mono_metrics();
+    LineHeight::Absolute((m.line_per_em * px).ceil().into())
+}
 
 pub(crate) fn render(md: &str, theme: &Theme) -> Element<'static, Msg> {
     let blocks = parse_blocks(md);
@@ -78,23 +93,16 @@ fn gap_before(prev: Option<BlockKind>, cur: BlockKind) -> f32 {
         // Extra air above section titles.
         (_, BlockKind::Heading) => 14.0,
         // List stack stays tight.
-        (Some(BlockKind::ListItem), BlockKind::ListItem) => 3.0,
-        (Some(BlockKind::Heading), BlockKind::ListItem) => 6.0,
-        (Some(BlockKind::Heading), BlockKind::Paragraph) => 6.0,
+        (Some(BlockKind::ListItem), BlockKind::ListItem) => 2.0,
         (Some(BlockKind::Paragraph), BlockKind::Paragraph) => 10.0,
-        (Some(BlockKind::Paragraph), BlockKind::ListItem) => 8.0,
-        (Some(BlockKind::ListItem), BlockKind::Paragraph) => 10.0,
-        (_, BlockKind::Code) => 10.0,
-        (Some(BlockKind::Code), _) => 10.0,
-        (_, BlockKind::Rule) => 12.0,
+        (Some(BlockKind::Code), _) | (_, BlockKind::Code) => 10.0,
         _ => 8.0,
     }
 }
 
 fn gap_after(kind: BlockKind) -> f32 {
     match kind {
-        BlockKind::Heading => 2.0,
-        BlockKind::ListItem => 0.0,
+        BlockKind::Heading => 4.0,
         BlockKind::Code => 2.0,
         _ => 0.0,
     }
@@ -111,10 +119,11 @@ enum Block {
 fn block_view(block: Block, theme: &Theme) -> Element<'static, Msg> {
     match block {
         Block::Heading { level, text: t } => {
+            // Terminal markdown: modest size steps (not display-type scale).
             let size = match level {
-                1 => 17.5,
-                2 => 15.5,
-                _ => 14.5,
+                1 => 16.0,
+                2 => 15.0,
+                _ => BODY_PX,
             };
             // Soft system cyan (#3dd6f5 family), not purple — blend with white
             // so long titles stay readable on graphite.
@@ -125,15 +134,16 @@ fn block_view(block: Block, theme: &Theme) -> Element<'static, Msg> {
                 b: (accent.b * 0.72 + 0.98 * 0.28).min(1.0),
                 a: 1.0,
             };
-            plain_lh(&t, size, true, false, Some(color), HEADING_LH)
+            plain_lh(&t, size, true, false, Some(color))
         }
         Block::Paragraph(t) => inline_rich(&t, BODY_PX, theme),
         Block::ListItem { depth, text: t } => {
             let indent = 14.0 + depth as f32 * 14.0;
             let bullet = text("·")
-                .font(fonts::ui())
+                .font(mono())
                 .size(BODY_PX)
-                .line_height(LineHeight::Relative(BODY_LH))
+                .line_height(mono_lh(BODY_PX))
+                .shaping(Shaping::Basic)
                 .style(kit_text::muted);
             let body = inline_rich(&t, BODY_PX, theme);
             container(
@@ -155,6 +165,8 @@ fn block_view(block: Block, theme: &Theme) -> Element<'static, Msg> {
         Block::Rule => container(
             text("—")
                 .size(12.0)
+                .font(mono())
+                .shaping(Shaping::Basic)
                 .style(kit_text::muted)
                 .width(Length::Fill),
         )
@@ -170,7 +182,7 @@ fn plain(
     muted: bool,
     color: Option<Color>,
 ) -> Element<'static, Msg> {
-    plain_lh(s, size, bold, muted, color, BODY_LH)
+    plain_lh(s, size, bold, muted, color)
 }
 
 fn plain_lh(
@@ -179,17 +191,13 @@ fn plain_lh(
     bold: bool,
     muted: bool,
     color: Option<Color>,
-    lh: f32,
 ) -> Element<'static, Msg> {
-    let font = if bold {
-        fonts::ui_medium()
-    } else {
-        fonts::ui()
-    };
+    let font = if bold { mono_medium() } else { mono() };
     let mut t = text(s.to_string())
         .font(font)
         .size(size)
-        .line_height(LineHeight::Relative(lh))
+        .line_height(mono_lh(size))
+        .shaping(Shaping::Basic)
         .wrapping(Wrapping::Word)
         .width(Length::Fill);
     if let Some(c) = color {
@@ -210,7 +218,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
     let muted = p.secondary.base.text;
     let accent = p.primary.base.color;
     let fg = p.background.base.text;
-    let lh = LineHeight::Relative(BODY_LH);
+    let lh = mono_lh(size);
 
     let mut spans: Vec<iced::widget::text::Span<'static, Never>> = Vec::new();
     let mut rest = s;
@@ -220,7 +228,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
                 let (inner, tail) = after.split_at(end);
                 spans.push(
                     span(inner.to_string())
-                        .font(medium_font())
+                        .font(mono_medium())
                         .size(size)
                         .line_height(lh)
                         .color(fg),
@@ -234,7 +242,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
                 let (inner, tail) = after.split_at(end);
                 spans.push(
                     span(inner.to_string())
-                        .font(fonts::ui())
+                        .font(mono())
                         .size(size)
                         .line_height(lh)
                         .color(muted),
@@ -248,7 +256,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
                 let (inner, tail) = after.split_at(end);
                 spans.push(
                     span(inner.to_string())
-                        .font(fonts::mono())
+                        .font(mono())
                         .size(CODE_PX)
                         .line_height(lh)
                         .color(fg),
@@ -264,7 +272,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
                 if let Some(url_end) = url_part.find(')') {
                     spans.push(
                         span(label.to_string())
-                            .font(fonts::ui())
+                            .font(mono())
                             .size(size)
                             .line_height(lh)
                             .color(accent)
@@ -287,7 +295,7 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
         };
         spans.push(
             span(chunk.to_string())
-                .font(fonts::ui())
+                .font(mono())
                 .size(size)
                 .line_height(lh)
                 .color(fg),
@@ -301,19 +309,11 @@ fn inline_rich(s: &str, size: f32, theme: &Theme) -> Element<'static, Msg> {
 
     let rich: Rich<'_, Never, Msg> = rich_text(spans)
         .size(size)
-        .line_height(LineHeight::Relative(BODY_LH))
+        .line_height(mono_lh(size))
         .wrapping(Wrapping::Word)
         .width(Length::Fill)
         .on_link_click(iced::never);
     rich.into()
-}
-
-fn medium_font() -> Font {
-    let base = fonts::ui_medium();
-    Font {
-        weight: Weight::Medium,
-        ..base
-    }
 }
 
 fn code_block(code: &str, theme: &Theme) -> Element<'static, Msg> {
@@ -324,9 +324,10 @@ fn code_block(code: &str, theme: &Theme) -> Element<'static, Msg> {
     };
     container(
         text(code.trim_end().to_string())
-            .font(fonts::mono())
+            .font(mono())
             .size(CODE_PX)
-            .line_height(LineHeight::Relative(1.45))
+            .line_height(mono_lh(CODE_PX))
+            .shaping(Shaping::Basic)
             .wrapping(Wrapping::Word)
             .width(Length::Fill),
     )

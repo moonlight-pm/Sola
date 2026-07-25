@@ -22,6 +22,11 @@ pub const HISTORY_INITIAL_ITEMS: usize = 48;
 /// Cap auto-chain loads so a huge session cannot flood the UI thread.
 pub const HISTORY_AUTO_CHUNKS_MAX: u32 = 6;
 
+/// A session is considered "busy" (activity dot) when its transcript was
+/// written within this many seconds. Covers both sola-agent ACP turns and
+/// external Grok TUI work without needing a process attach.
+pub const ACTIVITY_RECENT_SECS: u64 = 20;
+
 fn grok_home() -> PathBuf {
     if let Ok(h) = std::env::var("GROK_HOME") {
         return PathBuf::from(h);
@@ -47,9 +52,16 @@ fn encode_cwd(cwd: &str) -> String {
 
 /// All sessions across every project group under `~/.grok/sessions`.
 ///
-/// Sorted: live TUI sessions first, then most recent activity.
-/// (Pin stars removed from the UI; order will be drag-reorder later.)
+/// Sorted: console (live) first, then most recent activity.
+/// Prefer [`merge_list`] for periodic UI refresh so rows don't thrash
+/// while a session is mid-turn (mtime bumps every few seconds).
 pub fn list_all() -> Vec<SessionSummary> {
+    let mut out = list_all_unsorted();
+    out.sort_by(|a, b| b.live.cmp(&a.live).then(b.updated.cmp(&a.updated)));
+    out
+}
+
+fn list_all_unsorted() -> Vec<SessionSummary> {
     let pins = overlay::load();
     let live = active_terminal_sessions();
     let mut seen = HashSet::new();
@@ -72,8 +84,49 @@ pub fn list_all() -> Vec<SessionSummary> {
             .unwrap_or_default();
         collect_group(&group_path, &group_cwd, &pins, &live, &mut seen, &mut out);
     }
+    out
+}
 
-    out.sort_by(|a, b| b.live.cmp(&a.live).then(b.updated.cmp(&a.updated)));
+/// Refresh session metadata **without reordering** by activity time.
+///
+/// Keeps the user's mental map of the list: titles, ages, busy/live flags
+/// update in place; rows only move when they enter/leave the console set
+/// (stable partition) or when a **new** session appears (prepended).
+/// Use [`list_all`] after structural changes (new session, bulk delete).
+pub fn merge_list(current: &[SessionSummary]) -> Vec<SessionSummary> {
+    merge_with(current, list_all_unsorted())
+}
+
+/// Like [`merge_list`], but with a pre-fetched fresh snapshot (e.g. from
+/// the worker's `SessionsListed` event).
+pub fn merge_with(
+    current: &[SessionSummary],
+    fresh: Vec<SessionSummary>,
+) -> Vec<SessionSummary> {
+    use std::collections::HashMap;
+
+    let mut fresh: HashMap<String, SessionSummary> =
+        fresh.into_iter().map(|s| (s.id.clone(), s)).collect();
+
+    let mut preserved = Vec::with_capacity(fresh.len());
+    for old in current {
+        if let Some(s) = fresh.remove(&old.id) {
+            preserved.push(s);
+        }
+    }
+
+    // Brand-new sessions: recency among newcomers only, then in front.
+    let mut newcomers: Vec<SessionSummary> = fresh.into_values().collect();
+    newcomers.sort_by(|a, b| b.live.cmp(&a.live).then(b.updated.cmp(&a.updated)));
+
+    let mut out = newcomers;
+    out.append(&mut preserved);
+
+    // Stable partition: console sessions first, relative order preserved
+    // within each group (Rust `partition` keeps encounter order).
+    let (live, rest): (Vec<_>, Vec<_>) = out.into_iter().partition(|s| s.live);
+    let mut out = live;
+    out.extend(rest);
     out
 }
 
@@ -91,6 +144,7 @@ pub fn list_for_cwd(cwd: &str) -> Vec<SessionSummary> {
         b.pinned
             .cmp(&a.pinned)
             .then(b.live.cmp(&a.live))
+            .then(b.busy.cmp(&a.busy))
             .then(b.updated.cmp(&a.updated))
     });
     out
@@ -169,6 +223,8 @@ fn collect_group(
         } else {
             cwd_s
         };
+        let now = now_secs();
+        let busy = updated > 0 && now.saturating_sub(updated) <= ACTIVITY_RECENT_SECS;
         out.push(SessionSummary {
             id: id.clone(),
             title,
@@ -176,6 +232,7 @@ fn collect_group(
             updated,
             pinned,
             live: live.contains(&id),
+            busy,
         });
     }
 }
@@ -445,19 +502,39 @@ pub fn turns_from_updates_jsonl(cwd: &str, id: &str) -> Vec<Turn> {
 
 /// Load the **tail** of a session transcript for first paint.
 pub fn history_tail(cwd: &str, id: &str) -> HistorySlice {
-    history_window(cwd, id, None, HISTORY_TAIL_BYTES)
+    history_window(cwd, id, None, HISTORY_TAIL_BYTES, true)
+}
+
+/// Live / console watch: same tail window but **does not** force tool
+/// statuses to completed — in-progress tools stay visible while the
+/// external process is still writing.
+pub fn history_tail_live(cwd: &str, id: &str) -> HistorySlice {
+    history_window(cwd, id, None, HISTORY_TAIL_BYTES, false)
 }
 
 /// Load a window of history ending at `before_byte` (exclusive).
 pub fn history_before(cwd: &str, id: &str, before_byte: u64) -> HistorySlice {
-    history_window(cwd, id, Some(before_byte), HISTORY_TAIL_BYTES)
+    history_window(cwd, id, Some(before_byte), HISTORY_TAIL_BYTES, true)
 }
 
 fn updates_path(cwd: &str, id: &str) -> PathBuf {
-    sessions_root()
+    // Prefer cwd-encoded path; fall back to a scan if the session moved.
+    let candidate = sessions_root()
         .join(encode_cwd(cwd))
         .join(id)
-        .join("updates.jsonl")
+        .join("updates.jsonl");
+    if candidate.is_file() {
+        return candidate;
+    }
+    find_session_dir(id)
+        .map(|d| d.join("updates.jsonl"))
+        .unwrap_or(candidate)
+}
+
+/// Byte length of `updates.jsonl` for change detection while watching.
+pub fn updates_file_len(cwd: &str, id: &str) -> u64 {
+    let path = updates_path(cwd, id);
+    fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
 }
 
 fn history_window(
@@ -465,6 +542,7 @@ fn history_window(
     id: &str,
     end_exclusive: Option<u64>,
     max_bytes: u64,
+    finalize_tools: bool,
 ) -> HistorySlice {
     let path = updates_path(cwd, id);
     let mut file = match File::open(&path) {
@@ -517,9 +595,12 @@ fn history_window(
     };
 
     let mut turns = parse_updates_text(&text);
-    // History is past: never leave tools stuck on pending/in_progress/running
+    // Past history: never leave tools stuck on pending/in_progress/running
     // (window edges and backgrounded tasks often omit a terminal update).
-    finalize_tool_statuses(&mut turns);
+    // Live watch keeps real statuses so the viewer shows work in flight.
+    if finalize_tools {
+        finalize_tool_statuses(&mut turns);
+    }
     HistorySlice {
         turns,
         start_byte,
@@ -694,7 +775,6 @@ fn chunk_text(update: &Value) -> Option<String> {
     content.as_str().map(|s| s.to_string())
 }
 
-#[allow(dead_code)]
 pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

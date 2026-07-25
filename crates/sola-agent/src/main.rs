@@ -148,6 +148,24 @@ fn project_cwd() -> String {
         .unwrap_or_else(|| ".".into())
 }
 
+/// Events allowed while `session_readonly` (file-backed console watch).
+fn watch_safe_event(ev: &AgentEvent) -> bool {
+    matches!(
+        ev,
+        AgentEvent::Transcript { .. }
+            | AgentEvent::HistoryOlder { .. }
+            | AgentEvent::SessionReady { .. }
+            | AgentEvent::SessionsListed { .. }
+            | AgentEvent::Connected { .. }
+            | AgentEvent::Disconnected { .. }
+            | AgentEvent::NeedSetup { .. }
+            | AgentEvent::BulkDeleteProgress { .. }
+            | AgentEvent::BulkDeleteFinished { .. }
+            // Surface worker errors; do not apply stream/tool deltas.
+            | AgentEvent::Error { .. }
+    )
+}
+
 pub(crate) fn transcript_scroll_id() -> ScrollId {
     ScrollId::new("agent-transcript")
 }
@@ -196,6 +214,11 @@ pub(crate) struct App {
     pub(crate) last_session_click: Option<(String, Instant)>,
     /// Sessions section scroll viewport (overflow chips: ↑ N … / ↓ N …).
     pub(crate) session_section_scroll: sola_kit::components::SectionScroll,
+    /// Viewing a session held open by an external Grok TUI — file-only, no
+    /// composer. Transcript is polled from disk while this is set.
+    pub(crate) session_readonly: bool,
+    /// Last observed `updates.jsonl` length while watching a readonly session.
+    pub(crate) watch_file_len: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -232,8 +255,10 @@ pub(crate) enum Msg {
     DividerPress,
     CursorMoved(f32),
     CursorReleased,
-    /// Periodic list refresh (live TUI dots, ages).
+    /// Periodic list refresh (activity dots, ages, console group).
     RefreshSessionsTick,
+    /// Poll transcript for a console / readonly session while it is open.
+    WatchTranscriptTick,
     /// Sessions fill-section scroll viewport (for overflow chips).
     SessionSectionScroll(sola_kit::components::SectionScroll),
     // Bulk delete panel (opened via Agent menu → Bulk Delete…)
@@ -288,6 +313,8 @@ impl App {
             drag_anchor: None,
             last_session_click: None,
             session_section_scroll: sola_kit::components::SectionScroll::default(),
+            session_readonly: false,
+            watch_file_len: None,
         }
     }
 
@@ -309,6 +336,14 @@ impl App {
             bridge::agent_subscription().map(Msg::Acp),
             iced::time::every(Duration::from_secs(8)).map(|_| Msg::RefreshSessionsTick),
         ];
+        // Console / external sessions: re-read transcript often so new
+        // messages and tool status appear without leaving the session.
+        if self.session_readonly {
+            subs.push(
+                iced::time::every(Duration::from_millis(1200))
+                    .map(|_| Msg::WatchTranscriptTick),
+            );
+        }
         // Cursor tracking for divider drag; wheel-up for history when no scrollbar.
         subs.push(event::listen_with(|event, _status, _id| match event {
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
@@ -357,6 +392,11 @@ impl App {
                 }
             }
             Msg::Acp(ev) => {
+                // While viewing a console-owned session, ignore ACP stream
+                // events from a previously attached local child session.
+                if self.session_readonly && !watch_safe_event(&ev) {
+                    return Task::none();
+                }
                 let need_scroll = matches!(
                     ev,
                     AgentEvent::Transcript { .. }
@@ -369,7 +409,10 @@ impl App {
                 );
                 let fill_history = matches!(
                     ev,
-                    AgentEvent::Transcript { .. } | AgentEvent::HistoryOlder { .. }
+                    AgentEvent::Transcript {
+                        from_watch: false,
+                        ..
+                    } | AgentEvent::HistoryOlder { .. }
                 );
                 self.on_event(ev);
                 let mut tasks = Vec::new();
@@ -385,7 +428,11 @@ impl App {
             Msg::DraftChanged(s) => self.draft = s,
             Msg::Send => {
                 let text = self.draft.trim().to_string();
-                if text.is_empty() || self.pending.is_some() || self.streaming {
+                if text.is_empty()
+                    || self.pending.is_some()
+                    || self.streaming
+                    || self.session_readonly
+                {
                     return Task::none();
                 }
                 self.draft.clear();
@@ -462,18 +509,28 @@ impl App {
                 if self.session_id.as_deref() == Some(id.as_str()) {
                     return Task::none();
                 }
-                let cwd = self
-                    .sessions
-                    .iter()
-                    .find(|s| s.id == id)
+                let summary = self.sessions.iter().find(|s| s.id == id);
+                let cwd = summary
                     .map(|s| s.cwd.clone())
                     .filter(|c| !c.is_empty())
                     .unwrap_or_else(|| self.project_root.to_string_lossy().into_owned());
+                let console_open = summary.map(|s| s.live).unwrap_or(false);
                 self.project_root = PathBuf::from(&cwd);
                 overlay::note_cwd(&cwd);
                 self.stick_to_bottom = true;
                 self.loading_older = false;
-                bridge::agent_send(AgentCmd::LoadSession { id, cwd });
+                self.draft.clear();
+                self.pending = None;
+                if console_open {
+                    // External Grok TUI owns this session — view only.
+                    self.session_readonly = true;
+                    self.watch_file_len = Some(sessions::updates_file_len(&cwd, &id));
+                    bridge::agent_send(AgentCmd::OpenReadonly { id, cwd });
+                } else {
+                    self.session_readonly = false;
+                    self.watch_file_len = None;
+                    bridge::agent_send(AgentCmd::LoadSession { id, cwd });
+                }
             }
             Msg::StartRename(id) => {
                 let draft = self
@@ -503,7 +560,7 @@ impl App {
                             Some(title.clone())
                         };
                     }
-                    self.sessions = sessions::list_all();
+                    self.sessions = sessions::merge_list(&self.sessions);
                 }
             }
             Msg::RenameCancel => {
@@ -533,8 +590,30 @@ impl App {
                 }
             }
             Msg::RefreshSessionsTick => {
-                // Keep ages + TUI-live dots fresh without requiring a click.
-                self.sessions = sessions::list_all();
+                // Metadata only — do not re-sort by activity (rows thrash mid-turn).
+                self.sessions = sessions::merge_list(&self.sessions);
+                // If the open session entered/left the console set, flip mode.
+                self.reconcile_console_mode();
+            }
+            Msg::WatchTranscriptTick => {
+                if !self.session_readonly {
+                    return Task::none();
+                }
+                let Some(id) = self.session_id.clone() else {
+                    return Task::none();
+                };
+                let cwd = self.project_root.to_string_lossy().into_owned();
+                let len = sessions::updates_file_len(&cwd, &id);
+                if self.watch_file_len == Some(len) {
+                    // Length unchanged — still refresh list ages/busy lightly.
+                    return Task::none();
+                }
+                self.watch_file_len = Some(len);
+                bridge::agent_send(AgentCmd::SyncTranscript {
+                    id,
+                    cwd,
+                    live: true,
+                });
             }
             Msg::PermissionPick(option_id) => {
                 if let Some(p) = self.pending.take() {
@@ -781,6 +860,8 @@ impl App {
         self.turns.clear();
         self.session_id = None;
         self.session_title = None;
+        self.session_readonly = false;
+        self.watch_file_len = None;
         self.history_start_byte = 0;
         self.has_older_history = false;
         self.history_auto_chunks = 0;
@@ -789,6 +870,34 @@ impl App {
         self.sessions = sessions::list_all();
         bridge::agent_send(AgentCmd::NewSession { cwd: cwd.clone() });
         bridge::agent_send(AgentCmd::RefreshSessions { cwd });
+    }
+
+    /// If the open session is no longer held by a console (or became one),
+    /// drop / enter readonly accordingly. Entering console mid-view stays
+    /// writable until reselect; leaving console keeps the file view.
+    fn reconcile_console_mode(&mut self) {
+        let Some(id) = self.session_id.as_deref() else {
+            return;
+        };
+        let still_live = self
+            .sessions
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.live)
+            .unwrap_or(false);
+        if self.session_readonly && !still_live {
+            // Console closed — stay read-only until the user re-selects
+            // (ACP load would attach a second process to the same id).
+            // Keep watching so the final transcript settles.
+        }
+        // Keep busy dots consistent for the open ACP session.
+        if !self.session_readonly {
+            if let Some(s) = self.sessions.iter_mut().find(|s| s.id == id) {
+                if self.streaming {
+                    s.busy = true;
+                }
+            }
+        }
     }
 
     fn refresh_title_from_turns(&mut self) {
@@ -877,20 +986,41 @@ impl App {
                 turns,
                 history_start_byte,
                 has_older,
+                from_watch,
             } => {
+                // Detect real change so watch ticks that re-read the same
+                // tail do not thrash scroll / auto-title.
+                let changed = self.turns != turns
+                    || self.history_start_byte != history_start_byte
+                    || self.has_older_history != has_older;
                 self.turns = turns;
                 self.history_start_byte = history_start_byte;
                 self.has_older_history = has_older;
                 self.loading_older = false;
-                self.history_auto_chunks = 0;
-                self.scroll_rel_y = None;
-                self.streaming = false;
-                self.pending = None;
-                self.stick_to_bottom = true;
-                self.scroll_bottom_pending = true;
-                self.refresh_title_from_turns();
-                // Do not re-sort ages from summary — list_all uses updates mtime.
-                self.sessions = sessions::list_all();
+                if !from_watch {
+                    self.history_auto_chunks = 0;
+                    self.scroll_rel_y = None;
+                    self.streaming = false;
+                    self.pending = None;
+                    self.stick_to_bottom = true;
+                    self.scroll_bottom_pending = true;
+                } else if changed && self.stick_to_bottom {
+                    self.scroll_bottom_pending = true;
+                }
+                // Reflect in-flight tools on console watches in the footer.
+                if self.session_readonly {
+                    self.streaming = self.turns.iter().any(|t| {
+                        matches!(
+                            t,
+                            Turn::Tool(tt) if !sessions::is_terminal_tool_status(&tt.status)
+                        )
+                    });
+                }
+                if changed {
+                    self.refresh_title_from_turns();
+                }
+                // Update ages/busy without reshuffling the sidebar.
+                self.sessions = sessions::merge_list(&self.sessions);
             }
             AgentEvent::HistoryOlder {
                 turns,
@@ -986,7 +1116,7 @@ impl App {
                 self.pending = None;
                 self.finalize_open_tools();
                 self.refresh_title_from_turns();
-                self.sessions = sessions::list_all();
+                self.sessions = sessions::merge_list(&self.sessions);
                 if stop_reason != "end_turn" && stop_reason != "EndTurn" {
                     tracing::info!(%stop_reason, "turn ended");
                 }
@@ -996,7 +1126,8 @@ impl App {
                 self.turns.push(Turn::Error(message));
             }
             AgentEvent::SessionsListed { entries } => {
-                self.sessions = entries;
+                // Worker refresh: merge so a mid-turn list poll doesn't reshuffle.
+                self.sessions = sessions::merge_with(&self.sessions, entries);
             }
             AgentEvent::BulkDeleteProgress {
                 done,
@@ -1022,6 +1153,8 @@ impl App {
                     if !still_there {
                         self.session_id = None;
                         self.session_title = None;
+                        self.session_readonly = false;
+                        self.watch_file_len = None;
                         self.turns.clear();
                         self.history_start_byte = 0;
                         self.has_older_history = false;

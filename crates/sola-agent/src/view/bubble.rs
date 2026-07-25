@@ -1,13 +1,17 @@
 //! Transcript stream — Grok Build–style blocks (not chat cards).
 //!
 //! Reference: xai-org/grok-build `scrollback/blocks/{user,agent,thinking,tool}`.
+//! The Grok TUI is terminal-native (monospace grid). We mirror that with the
+//! system mono face for all scrollback text — user, agent, tools, thoughts.
+//!
 //! User: ❯ + soft band. Agent: bare markdown. Thought: collapsed header.
 //! Tools: verb + short target; consecutive groupable kinds fold ("Read 3 files").
 //! Spacing is kind-aware: tight action clusters, air around prose turns.
 
-use iced::widget::text::LineHeight;
+use iced::font::Weight;
+use iced::widget::text::{LineHeight, Shaping};
 use iced::widget::{column, container, row, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
+use iced::{Alignment, Background, Border, Color, Element, Font, Length, Padding, Theme};
 use sola_kit::components::style::RADIUS_MD;
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
@@ -17,11 +21,27 @@ use crate::view::markdown;
 use crate::Msg;
 
 const STREAM_MAX: f32 = 960.0;
-const USER_BODY_PX: f32 = 14.0;
-const TOOL_PX: f32 = 12.5;
-const TOOL_LH: f32 = 1.45;
-const USER_LH: f32 = 1.5;
+/// Match sola-terminal default glyph size (integer px for crisp raster).
+const USER_BODY_PX: f32 = 15.0;
+const TOOL_PX: f32 = 14.0;
 const CMD_MAX: usize = 72;
+
+/// System mono for scrollback (matches Grok TUI’s terminal face).
+fn mono() -> Font {
+    fonts::mono()
+}
+
+fn mono_medium() -> Font {
+    Font {
+        weight: Weight::Medium,
+        ..fonts::mono()
+    }
+}
+
+fn mono_lh(px: f32) -> LineHeight {
+    let m = fonts::mono_metrics();
+    LineHeight::Absolute((m.line_per_em * px).ceil().into())
+}
 
 /// Coarse class for inter-turn rhythm (not the same as ToolKind).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -195,14 +215,16 @@ fn user_prompt(body: &str, theme: &Theme) -> Element<'static, Msg> {
         a: 1.0,
     };
     let arrow = text("❯")
-        .font(fonts::ui_medium())
+        .font(mono_medium())
         .size(USER_BODY_PX)
-        .line_height(LineHeight::Relative(USER_LH))
+        .line_height(mono_lh(USER_BODY_PX))
+        .shaping(Shaping::Basic)
         .style(kit_text::accent);
     let body = text(body.to_string())
-        .font(fonts::ui())
+        .font(mono())
         .size(USER_BODY_PX)
-        .line_height(LineHeight::Relative(USER_LH))
+        .line_height(mono_lh(USER_BODY_PX))
+        .shaping(Shaping::Basic)
         .wrapping(iced::widget::text::Wrapping::Word)
         .width(Length::Fill);
 
@@ -252,14 +274,16 @@ fn thought_line(body: &str) -> Element<'static, Msg> {
         "Thought"
     };
     let bullet = text("·")
-        .font(fonts::ui())
+        .font(mono())
         .size(TOOL_PX)
-        .line_height(LineHeight::Relative(TOOL_LH))
+        .line_height(mono_lh(TOOL_PX))
+        .shaping(Shaping::Basic)
         .style(kit_text::muted);
     let title = text(label)
-        .font(fonts::ui_medium())
+        .font(mono_medium())
         .size(TOOL_PX)
-        .line_height(LineHeight::Relative(TOOL_LH))
+        .line_height(mono_lh(TOOL_PX))
+        .shaping(Shaping::Basic)
         .style(kit_text::muted);
 
     container(
@@ -293,15 +317,17 @@ fn tool_row(t: &ToolTurn, _theme: &Theme) -> Element<'static, Msg> {
     };
 
     let bullet = text("·")
-        .font(fonts::ui())
+        .font(mono())
         .size(TOOL_PX)
-        .line_height(LineHeight::Relative(TOOL_LH))
+        .line_height(mono_lh(TOOL_PX))
+        .shaping(Shaping::Basic)
         .style(bullet_style);
 
     let title = text(label)
-        .font(fonts::ui())
+        .font(mono())
         .size(TOOL_PX)
-        .line_height(LineHeight::Relative(TOOL_LH))
+        .line_height(mono_lh(TOOL_PX))
+        .shaping(Shaping::Basic)
         .style(title_style)
         .wrapping(iced::widget::text::Wrapping::Word)
         .width(Length::Fill);
@@ -322,9 +348,10 @@ fn tool_row(t: &ToolTurn, _theme: &Theme) -> Element<'static, Msg> {
     if let Some((s, style)) = status {
         line = line.push(
             text(s)
-                .font(fonts::ui())
-                .size(11.0)
-                .line_height(LineHeight::Relative(TOOL_LH))
+                .font(mono())
+                .size(12.0)
+                .line_height(mono_lh(12.0))
+                .shaping(Shaping::Basic)
                 .style(style),
         );
     }
@@ -351,14 +378,16 @@ fn verb_group_row(kind: ToolKind, tools: &[&ToolTurn], _theme: &Theme) -> Elemen
     };
 
     let bullet = text("·")
-        .font(fonts::ui())
+        .font(mono())
         .size(TOOL_PX)
-        .line_height(LineHeight::Relative(TOOL_LH))
+        .line_height(mono_lh(TOOL_PX))
+        .shaping(Shaping::Basic)
         .style(style);
     let title = text(label)
-        .font(fonts::ui_medium())
+        .font(mono_medium())
         .size(TOOL_PX)
-        .line_height(LineHeight::Relative(TOOL_LH))
+        .line_height(mono_lh(TOOL_PX))
+        .shaping(Shaping::Basic)
         .style(style);
 
     container(
@@ -606,9 +635,10 @@ fn plan_block(entries: &[crate::protocol::PlanEntry], theme: &Theme) -> Element<
         a: 1.0,
     };
     let mut lines = column![text("Next")
-        .font(fonts::ui_medium())
-        .size(13.0)
-        .line_height(LineHeight::Relative(1.4))
+        .font(mono_medium())
+        .size(TOOL_PX)
+        .line_height(mono_lh(TOOL_PX))
+        .shaping(Shaping::Basic)
         .style(move |_t: &Theme| iced::widget::text::Style {
             color: Some(heading),
         })]
@@ -622,9 +652,10 @@ fn plan_block(entries: &[crate::protocol::PlanEntry], theme: &Theme) -> Element<
         };
         lines = lines.push(
             text(format!("{mark}  {}", e.content))
-                .font(fonts::ui())
-                .size(13.0)
-                .line_height(LineHeight::Relative(1.45))
+                .font(mono())
+                .size(TOOL_PX)
+                .line_height(mono_lh(TOOL_PX))
+                .shaping(Shaping::Basic)
                 .style(kit_text::muted)
                 .wrapping(iced::widget::text::Wrapping::Word),
         );
@@ -641,14 +672,16 @@ fn error_block(msg: &str) -> Element<'static, Msg> {
     container(
         column![
             text("Error")
-                .font(fonts::ui_medium())
-                .size(12.5)
-                .line_height(LineHeight::Relative(1.4))
+                .font(mono_medium())
+                .size(TOOL_PX)
+                .line_height(mono_lh(TOOL_PX))
+                .shaping(Shaping::Basic)
                 .style(kit_text::danger),
             text(msg.to_string())
-                .font(fonts::ui())
-                .size(13.5)
-                .line_height(LineHeight::Relative(1.5))
+                .font(mono())
+                .size(USER_BODY_PX)
+                .line_height(mono_lh(USER_BODY_PX))
+                .shaping(Shaping::Basic)
                 .style(kit_text::danger)
                 .wrapping(iced::widget::text::Wrapping::Word),
         ]

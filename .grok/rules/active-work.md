@@ -13,26 +13,35 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**agent-console-sessions** (worktree `.worktrees/agent-console-sessions`)
+
+Console / external Grok TUI sessions in sola-agent:
+
+1. Activity **dot** = working (recent transcript / streaming), not “open in console”
+2. Console sessions in sidebar section **In console** (rest under Sessions/Recent)
+3. Auto-sync transcript while viewing a console session (poll `updates.jsonl`)
+4. Read-only viewer — no composer; no ACP `session/load` (avoids fighting TUI)
+
+### Status
+
+Implementation complete; `cargo make build sola-agent` passes. Awaiting install /
+smoke + user approval to merge.
+
+### Resume
+
+```text
+cd .worktrees/agent-console-sessions
+# cargo make install sola-agent   # only with user permission
+```
 
 ### Last completed
 
 **agent-bulk-delete → master**: sola-agent **Bulk Delete…** panel (Agent menu).
-Age filters, safety toggles, preview with size, two-step confirm, worker-thread
-`grok sessions delete` + overlay scrub. List padding + title ellipsis so
-trailing sizes stay visible.
 
 ### Future / follow-ups
 
 - Leader daemon (`ConnectionMode::Leader`)
 - Polish from further agent UI feedback
 - Storybook page parity for non-Overview tabs (on demand when touching components;
-  see `.grok/rules/kit-storybook-pages.md`)
+  see `.grok/rules/kit-storybook-pages.md`) — **Sidebar** indicator is new kit API
 - Remaining worktree: `libei-portal` (unrelated)
-
-### Resume
-
-```text
-# master is current; install when needed:
-# cargo make install sola-agent
-```

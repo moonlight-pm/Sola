@@ -37,7 +37,12 @@ pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
         } else {
             Space::new().height(0).into()
         },
-        composer(app),
+        // Console-held sessions are view-only — no input, no send.
+        if app.session_readonly {
+            readonly_banner(app)
+        } else {
+            composer(app)
+        },
         footer::view(app),
     ]
     .width(Length::Fill)
@@ -420,6 +425,60 @@ const COMPOSER_PAD: Padding = Padding {
     bottom: 6.0,
     left: 4.0,
 };
+
+/// Banner instead of the composer when viewing a console-owned session.
+fn readonly_banner(app: &App) -> Element<'_, Msg> {
+    let label = if app.streaming {
+        "Open in console · live (read-only)"
+    } else {
+        "Open in console · read-only"
+    };
+    let shell = container(
+        row![
+            container(Space::new().width(6.0).height(6.0))
+                .width(Length::Fixed(6.0))
+                .height(Length::Fixed(6.0))
+                .style(|_t: &Theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.24,
+                        g: 0.81,
+                        b: 0.56,
+                        a: 1.0,
+                    })),
+                    border: Border {
+                        radius: 999.0.into(),
+                        ..Default::default()
+                    },
+                    ..container::Style::default()
+                }),
+            text(label)
+                .font(fonts::ui_medium())
+                .size(13)
+                .style(kit_text::muted),
+            Space::new().width(Length::Fill),
+            text("Continue in the Grok TUI")
+                .font(fonts::ui())
+                .size(12)
+                .style(kit_text::muted),
+        ]
+        .spacing(10.0)
+        .align_y(Alignment::Center)
+        .padding(Padding::from([12.0, 14.0])),
+    )
+    .width(Length::Fill)
+    .style(composer_shell_style);
+
+    container(shell)
+        .width(Length::Fill)
+        .padding(Padding {
+            top: 10.0,
+            right: SIDE_PAD,
+            bottom: 12.0,
+            left: SIDE_PAD,
+        })
+        .style(composer_band_style)
+        .into()
+}
 
 fn composer(app: &App) -> Element<'_, Msg> {
     let gated = app.pending.is_some();

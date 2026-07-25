@@ -1,4 +1,7 @@
 //! Session sidebar — sola-kit [`SidebarPanel`] with filter header.
+//!
+//! Console-held sessions (external Grok TUI) sit in their own section;
+//! the activity dot means "working", not "open in terminal".
 
 use iced::widget::{button, column, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
@@ -7,7 +10,9 @@ use sola_kit::components::style::{RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input;
 use sola_kit::components::text_input::text_input;
-use sola_kit::components::{DividerColors, SidebarItem, SidebarPanel, SidebarSection};
+use sola_kit::components::{
+    DividerColors, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection,
+};
 use sola_kit::fonts;
 
 use crate::protocol::SessionSummary;
@@ -31,17 +36,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
         })
         .collect();
 
-    let sections = if filtered.is_empty() {
-        Vec::new()
-    } else {
-        let items: Vec<SidebarItem<Msg>> = filtered
-            .iter()
-            .map(|s| session_item(s, app, busy))
-            .collect();
-        // Fill section: sticky "Sessions" label + bar-less item scroll with
-        // ↑ N … / ↓ N … chips (see SidebarPanel::section_scroll).
-        vec![SidebarSection::new("Sessions", items).fill()]
-    };
+    let sections = build_sections(&filtered, app, busy);
 
     // Divider bands: raised sidebar | hairline | deeper main pane.
     let p_bg = app.theme.extended_palette().background;
@@ -94,6 +89,49 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
     }
 
     panel.build()
+}
+
+fn build_sections(
+    filtered: &[&SessionSummary],
+    app: &App,
+    busy: bool,
+) -> Vec<SidebarSection<Msg>> {
+    if filtered.is_empty() {
+        return Vec::new();
+    }
+
+    let console: Vec<&SessionSummary> = filtered.iter().copied().filter(|s| s.live).collect();
+    let rest: Vec<&SessionSummary> = filtered.iter().copied().filter(|s| !s.live).collect();
+
+    let mut sections = Vec::new();
+
+    if !console.is_empty() {
+        let items: Vec<SidebarItem<Msg>> = console
+            .iter()
+            .map(|s| session_item(s, app, busy))
+            .collect();
+        // Natural height — usually few rows. Main list keeps the fill slot.
+        sections.push(SidebarSection::new("In console", items));
+    }
+
+    if !rest.is_empty() {
+        let items: Vec<SidebarItem<Msg>> =
+            rest.iter().map(|s| session_item(s, app, busy)).collect();
+        let label = if console.is_empty() {
+            "Sessions"
+        } else {
+            "Recent"
+        };
+        sections.push(SidebarSection::new(label, items).fill());
+    } else if !console.is_empty() {
+        // Only console sessions — let that section fill so the list
+        // still uses the full sidebar height.
+        if let Some(sec) = sections.last_mut() {
+            sec.fill = true;
+        }
+    }
+
+    sections
 }
 
 fn sidebar_header(app: &App) -> Element<'_, Msg> {
@@ -156,6 +194,17 @@ fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<
     let project = ellipsize(&short_path(&summary.cwd), max_path);
     let when = relative_time(summary.updated);
 
+    // Activity dot = what is happening, not "open in console".
+    // Always show a dot (green/grey) so the title never shifts when busy flips.
+    // Selected ACP stream counts as busy even if disk mtime hasn't caught up.
+    let working = summary.busy
+        || (selected && !app.session_readonly && (app.streaming || app.pending.is_some()));
+    let indicator = if working {
+        SidebarIndicator::Active
+    } else {
+        SidebarIndicator::Idle
+    };
+
     // Single click selects; double-click rename is handled in App
     // (two SelectSession within a short window) so the kit button path
     // keeps hover chrome.
@@ -164,6 +213,7 @@ fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<
         .active(selected)
         .subtitle(project)
         .secondary(when)
+        .indicator(indicator)
 }
 
 fn ellipsize(s: &str, max_chars: usize) -> String {
