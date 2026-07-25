@@ -186,16 +186,16 @@ pub fn hairline_on(surface: Color, amount: f32, radius: f32) -> Border {
 
 /// TL-dark → BR-light 1px frame fill (use with outer `padding(1)`).
 pub fn bevel_ring(surface: Color) -> Background {
-    // Darker than the mid hairline — sinks the TL edge (near-black).
+    // Soft sink on the TL edge — keep contrast modest vs mid hairline.
     let dark = Color {
-        r: surface.r * 0.45,
-        g: surface.g * 0.45,
-        b: surface.b * 0.45,
+        r: surface.r * 0.62,
+        g: surface.g * 0.62,
+        b: surface.b * 0.62,
         a: 1.0,
     };
     let mid = mix_white(surface, HAIRLINE_A);
-    // Brighter catch on the BR edge.
-    let light = mix_white(surface, 0.20);
+    // Soft catch on the BR edge.
+    let light = mix_white(surface, 0.14);
     // 135°: first stop sits at the top-left, last at the bottom-right.
     linear_bg(135.0, &[(0.0, dark), (0.40, mid), (1.0, light)])
 }
@@ -203,13 +203,13 @@ pub fn bevel_ring(surface: Color) -> Background {
 /// Stronger dual-tone ring (hero / stage / hairline-strong panels).
 pub fn bevel_ring_strong(surface: Color) -> Background {
     let dark = Color {
-        r: surface.r * 0.35,
-        g: surface.g * 0.35,
-        b: surface.b * 0.35,
+        r: surface.r * 0.55,
+        g: surface.g * 0.55,
+        b: surface.b * 0.55,
         a: 1.0,
     };
     let mid = mix_white(surface, HAIRLINE_STRONG_A);
-    let light = mix_white(surface, 0.24);
+    let light = mix_white(surface, 0.17);
     linear_bg(135.0, &[(0.0, dark), (0.40, mid), (1.0, light)])
 }
 
