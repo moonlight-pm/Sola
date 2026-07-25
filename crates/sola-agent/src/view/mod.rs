@@ -24,6 +24,10 @@ use crate::{App, Msg};
 
 const CHAT_MAX: f32 = 1100.0;
 const SIDE_PAD: f32 = 28.0;
+/// New-session project picker — compact card, not full-window width.
+const PICKER_W: f32 = 440.0;
+/// Drop the card under the toolbar (New lives top-left).
+const PICKER_TOP: f32 = 56.0;
 
 pub(crate) fn screen(app: &App) -> Element<'_, Msg> {
     if app.need_setup.is_some() && app.session_id.is_none() && app.turns.is_empty() {
@@ -182,11 +186,15 @@ fn stack_picker<'a>(base: Element<'a, Msg>, picker: &'a crate::ProjectPicker) ->
         .width(Length::Fill);
 
     let actions = row![
+        Space::new().width(Length::Fill),
         kit_btn::labeled("Cancel", kit_btn::secondary).on_press(Msg::PickerCancel),
         kit_btn::labeled("Use", kit_btn::primary).on_press(Msg::PickerUse),
     ]
     .spacing(SPACE_MD);
 
+    // Fixed width on the *container* (column max_width alone still lets the
+    // card paint full-bleed). Centered horizontally, parked under the toolbar
+    // near "+ New".
     let card = container(
         column![
             kit_text::subheading("New session"),
@@ -206,16 +214,22 @@ fn stack_picker<'a>(base: Element<'a, Msg>, picker: &'a crate::ProjectPicker) ->
             actions,
         ]
         .spacing(SPACE_LG)
-        .padding(Padding::from([SPACE_XL, SPACE_XL]))
-        .max_width(480.0),
+        .padding(Padding::from([SPACE_XL, SPACE_XL])),
     )
+    .width(Length::Fixed(PICKER_W))
     .style(picker_card_style);
 
     let overlay = container(card)
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
-        .center_y(Length::Fill)
+        .align_y(Alignment::Start)
+        .padding(Padding {
+            top: PICKER_TOP,
+            right: 24.0,
+            bottom: 24.0,
+            left: 24.0,
+        })
         .style(picker_scrim_style);
 
     stack![base, overlay].into()
