@@ -477,7 +477,8 @@ fn scale_chip(name: &'static str, value: &'static str) -> Element<'static, Butto
         .spacing(2),
     )
     .padding(Padding::from([8, 10]))
-    .width(Length::Fixed(76.0))
+    // Wide enough for "pad control" without wrapping the label.
+    .width(Length::Fixed(88.0))
     .style(|theme: &iced::Theme| {
         let p = theme.extended_palette();
         let fill = p.background.weaker.color;
