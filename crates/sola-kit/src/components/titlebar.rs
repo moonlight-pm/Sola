@@ -177,9 +177,14 @@ fn resize_zone(bounds: Rectangle, p: Point, grip: f32) -> Option<Direction> {
 }
 
 fn interaction_for(dir: Direction) -> mouse::Interaction {
+    // Prefer Col/Row resize over Horizontally/Vertically: iced maps the latter
+    // to XDG `ew-resize` / `ns-resize`, which McMojave (and many themes) lack —
+    // wlroots then silently falls back to default. `col-resize` / `row-resize`
+    // exist and are what the monitor divider already uses for the same reason.
+    // Diagonals (`nwse-resize` / `nesw-resize`) are present in McMojave.
     match dir {
-        Direction::North | Direction::South => mouse::Interaction::ResizingVertically,
-        Direction::East | Direction::West => mouse::Interaction::ResizingHorizontally,
+        Direction::North | Direction::South => mouse::Interaction::ResizingRow,
+        Direction::East | Direction::West => mouse::Interaction::ResizingColumn,
         Direction::NorthWest | Direction::SouthEast => mouse::Interaction::ResizingDiagonallyDown,
         Direction::NorthEast | Direction::SouthWest => mouse::Interaction::ResizingDiagonallyUp,
     }
