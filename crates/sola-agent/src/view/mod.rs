@@ -363,7 +363,7 @@ fn transcript(app: &App) -> Element<'_, Msg> {
         empty_transcript(app)
     } else if app.turns.is_empty() {
         Column::with_children(bubbles)
-            .spacing(14.0)
+            .spacing(8.0)
             .width(Length::Fill)
             .into()
     } else {
@@ -371,7 +371,7 @@ fn transcript(app: &App) -> Element<'_, Msg> {
             bubbles.push(el);
         }
         Column::with_children(bubbles)
-            .spacing(14.0)
+            .spacing(8.0)
             .width(Length::Fill)
             .into()
     };
