@@ -18,7 +18,7 @@ sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 sola-kit = { path = "../sola-kit" }
 tracing = "0.1"
+# Shared sample pipeline (WGSL fullscreen triangle) lives in core so
+# both engines use one implementation.
 wgpu = { version = "27", features = ["vulkan-portability"] }
-wgpu-hal = { version = "27", features = ["vulkan"] }
-ash = "0.38"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

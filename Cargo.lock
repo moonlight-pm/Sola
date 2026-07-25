@@ -4290,25 +4290,20 @@ version = "0.1.0"
 name = "sola-browser-cef"
 version = "0.1.0"
 dependencies = [
- "ash",
  "cef",
  "iced",
- "libc",
  "sola-browser-core",
  "sola-bus",
  "sola-core",
  "sola-kit",
- "tokio",
  "tracing",
  "wgpu",
- "wgpu-hal",
 ]
 
 [[package]]
 name = "sola-browser-core"
 version = "0.1.0"
 dependencies = [
- "ash",
  "iced",
  "iced_futures",
  "sola-bus",
@@ -4317,7 +4312,6 @@ dependencies = [
  "tokio",
  "tracing",
  "wgpu",
- "wgpu-hal",
 ]
 
 [[package]]
@@ -4330,12 +4324,10 @@ dependencies = [
  "iced",
  "libc",
  "pkg-config",
- "png 0.18.1",
  "sola-browser-core",
  "sola-bus",
  "sola-core",
  "sola-kit",
- "tokio",
  "tracing",
  "wgpu",
  "wgpu-hal",

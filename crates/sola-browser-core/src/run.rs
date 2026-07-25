@@ -57,10 +57,14 @@ pub fn frame_stream<E: Engine>(
                 _ => break,
             };
             // Drop frames from background tabs — only the active tab's
-            // content should reach the shader.
+            // content should reach the shader. Engine frames implement
+            // Drop that recycles producer buffers (WPE tokens), so a
+            // plain `continue` is safe.
             if tagged.tab_id.0 != active.load(Ordering::Relaxed) {
                 continue;
             }
+            // Overwriting `pending` drops the previous frame (and its
+            // recycle token) if iced hasn't prepared it yet.
             *slot.pending.lock().unwrap() = Some(tagged.frame);
             if output.send(Msg::NewFrame).await.is_err() {
                 break;
@@ -131,14 +135,14 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     tracing::info!(%url, "loading url");
     let engine = E::spawn(app_id, &url, VIEW_W, VIEW_H);
 
-    let releaser = engine.cmd_sender();
+    let cmd_tx = engine.cmd_sender();
     let tabs_handle = engine.tabs_handle();
     let active_handle = engine.active_tab_handle();
     let cursor = engine.cursor_handle();
 
     let slot = Arc::new(FrameSlot::<E> {
         pending: Mutex::new(None),
-        releaser: releaser.clone(),
+        cmd_tx: cmd_tx.clone(),
         last_size: Mutex::new((VIEW_W, VIEW_H)),
         cursor,
     });
@@ -162,7 +166,7 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
             App::<E>::new(
                 engine,
                 slot.clone(),
-                releaser.clone(),
+                cmd_tx.clone(),
                 tabs_handle.clone(),
                 active_handle.clone(),
                 url.clone(),

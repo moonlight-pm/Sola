@@ -9,7 +9,6 @@
 
 use cef::sys::cef_event_flags_t as F;
 use iced::{
-    Point, Rectangle,
     keyboard::{Key, Modifiers, key::Named},
     mouse,
 };
@@ -66,7 +65,7 @@ pub fn button_to_modifier(button: u32) -> u32 {
 
 /// iced `mouse::Button` → our internal 1/2/3 button number.
 /// (Translated to a CEF `MouseButtonType` at dispatch time.)
-pub fn button_to_wpe_like(b: mouse::Button) -> Option<u32> {
+pub fn button_number(b: mouse::Button) -> Option<u32> {
     Some(match b {
         mouse::Button::Left => 1,
         // Middle button is intentionally inert in Sola — drop it so it never
@@ -77,12 +76,6 @@ pub fn button_to_wpe_like(b: mouse::Button) -> Option<u32> {
         // the OSR seams; drop them silently for now.
         _ => return None,
     })
-}
-
-pub fn project_cursor(point: Point, bounds: Rectangle, scale: f32) -> (i32, i32) {
-    let x = ((point.x - bounds.x).max(0.0) * scale) as i32;
-    let y = ((point.y - bounds.y).max(0.0) * scale) as i32;
-    (x, y)
 }
 
 pub fn scroll_delta_to_cef(d: mouse::ScrollDelta) -> (i32, i32, bool) {
@@ -187,59 +180,7 @@ pub fn key_to_character(text_first: Option<char>, key: &Key) -> Option<u16> {
 
 // ── cursor ──────────────────────────────────────────────────────
 
-/// Mirror of WPE's CursorKind — shape stays the same across both
-/// crates so iced widgets / chrome can be engine-agnostic in
-/// future. Discriminants are stable; new variants append.
-#[repr(u32)]
-#[derive(Copy, Clone, Debug, Default)]
-pub enum CursorKind {
-    #[default]
-    Default = 0,
-    Pointer = 1,
-    Text = 2,
-    Grab = 3,
-    Grabbing = 4,
-    Crosshair = 5,
-    Move = 6,
-    NotAllowed = 7,
-    ResizingHorizontally = 8,
-    ResizingVertically = 9,
-    Working = 10,
-}
-
-impl CursorKind {
-    pub fn from_u32(v: u32) -> Self {
-        match v {
-            1 => CursorKind::Pointer,
-            2 => CursorKind::Text,
-            3 => CursorKind::Grab,
-            4 => CursorKind::Grabbing,
-            5 => CursorKind::Crosshair,
-            6 => CursorKind::Move,
-            7 => CursorKind::NotAllowed,
-            8 => CursorKind::ResizingHorizontally,
-            9 => CursorKind::ResizingVertically,
-            10 => CursorKind::Working,
-            _ => CursorKind::Default,
-        }
-    }
-
-    pub fn to_iced(self) -> mouse::Interaction {
-        match self {
-            CursorKind::Default => mouse::Interaction::default(),
-            CursorKind::Pointer => mouse::Interaction::Pointer,
-            CursorKind::Text => mouse::Interaction::Text,
-            CursorKind::Grab => mouse::Interaction::Grab,
-            CursorKind::Grabbing => mouse::Interaction::Grabbing,
-            CursorKind::Crosshair => mouse::Interaction::Crosshair,
-            CursorKind::Move => mouse::Interaction::Move,
-            CursorKind::NotAllowed => mouse::Interaction::NotAllowed,
-            CursorKind::ResizingHorizontally => mouse::Interaction::ResizingHorizontally,
-            CursorKind::ResizingVertically => mouse::Interaction::ResizingVertically,
-            CursorKind::Working => mouse::Interaction::Wait,
-        }
-    }
-}
+pub use sola_browser_core::CursorKind;
 
 /// CEF's `CursorType` → our `CursorKind`. CEF's enum is bigger
 /// (many resize directions, copy/alias variants, …) — we collapse
@@ -363,8 +304,8 @@ mod tests {
 
     #[test]
     fn middle_button_is_inert() {
-        assert_eq!(button_to_wpe_like(mouse::Button::Middle), None);
-        assert_eq!(button_to_wpe_like(mouse::Button::Left), Some(1));
-        assert_eq!(button_to_wpe_like(mouse::Button::Right), Some(3));
+        assert_eq!(button_number(mouse::Button::Middle), None);
+        assert_eq!(button_number(mouse::Button::Left), Some(1));
+        assert_eq!(button_number(mouse::Button::Right), Some(3));
     }
 }

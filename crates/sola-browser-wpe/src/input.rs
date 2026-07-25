@@ -12,7 +12,6 @@
 //! `wpe_event_*_new` constructors and `wpe_view_event`.
 
 use iced::{
-    Point, Rectangle,
     keyboard::{self, Key, Modifiers, key::Named},
     mouse,
 };
@@ -71,17 +70,6 @@ pub fn button_to_modifier(button: u32) -> u32 {
         5 => sys::WPEModifiers_WPE_MODIFIER_POINTER_BUTTON5,
         _ => 0,
     }
-}
-
-/// Project a cursor `point` (window-local CSS pixels) into the
-/// WPE view's coordinate system (pixels at the size we last sent
-/// via `Cmd::Resize`). The shader widget always fills the window
-/// in our setup, so we subtract the widget's origin and scale by
-/// the display's device-pixel ratio.
-pub fn project_cursor(point: Point, bounds: Rectangle, scale: f32) -> (f64, f64) {
-    let x = ((point.x - bounds.x).max(0.0) * scale) as f64;
-    let y = ((point.y - bounds.y).max(0.0) * scale) as f64;
-    (x, y)
 }
 
 /// Iced scroll-wheel `ScrollDelta` → (delta_x, delta_y, precise).
@@ -192,60 +180,7 @@ pub fn keyboard_event_to_wpe(
     })
 }
 
-/// Cursor shape carried across the worker→iced boundary as a
-/// plain `u32` (via `AtomicU32`). Discriminants are stable; new
-/// variants append at the end. The fallback for any unknown
-/// CSS name is `Default`.
-#[repr(u32)]
-#[derive(Copy, Clone, Debug, Default)]
-pub enum CursorKind {
-    #[default]
-    Default = 0,
-    Pointer = 1,
-    Text = 2,
-    Grab = 3,
-    Grabbing = 4,
-    Crosshair = 5,
-    Move = 6,
-    NotAllowed = 7,
-    ResizingHorizontally = 8,
-    ResizingVertically = 9,
-    Working = 10,
-}
-
-impl CursorKind {
-    pub fn from_u32(v: u32) -> Self {
-        match v {
-            1 => CursorKind::Pointer,
-            2 => CursorKind::Text,
-            3 => CursorKind::Grab,
-            4 => CursorKind::Grabbing,
-            5 => CursorKind::Crosshair,
-            6 => CursorKind::Move,
-            7 => CursorKind::NotAllowed,
-            8 => CursorKind::ResizingHorizontally,
-            9 => CursorKind::ResizingVertically,
-            10 => CursorKind::Working,
-            _ => CursorKind::Default,
-        }
-    }
-
-    pub fn to_iced(self) -> mouse::Interaction {
-        match self {
-            CursorKind::Default => mouse::Interaction::default(),
-            CursorKind::Pointer => mouse::Interaction::Pointer,
-            CursorKind::Text => mouse::Interaction::Text,
-            CursorKind::Grab => mouse::Interaction::Grab,
-            CursorKind::Grabbing => mouse::Interaction::Grabbing,
-            CursorKind::Crosshair => mouse::Interaction::Crosshair,
-            CursorKind::Move => mouse::Interaction::Move,
-            CursorKind::NotAllowed => mouse::Interaction::NotAllowed,
-            CursorKind::ResizingHorizontally => mouse::Interaction::ResizingHorizontally,
-            CursorKind::ResizingVertically => mouse::Interaction::ResizingVertically,
-            CursorKind::Working => mouse::Interaction::Wait,
-        }
-    }
-}
+pub use sola_browser_core::CursorKind;
 
 /// Map a freedesktop CSS cursor name (the strings WebKit passes
 /// to `wpe_view_set_cursor_from_name`) to a `CursorKind`. Coverage

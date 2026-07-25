@@ -49,8 +49,14 @@ pub enum InputEvent {
 /// One frame as it crosses thread boundaries. The FD is dup'd by
 /// the worker before sending so iced can own the lifetime
 /// independent of WPE's buffer-recycle cycle.
+///
+/// **Drop recycles the buffer.** Any path that drops a `WpeFrame`
+/// without `take_token()` sends `Cmd::Release` so WPE returns the
+/// dma-buf to its pool (inactive-tab drops, pending overwrite,
+/// import failure).
 pub struct WpeFrame {
-    pub fd: OwnedFd,
+    /// Taken by the importer; `None` after successful import handoff.
+    pub fd: Option<OwnedFd>,
     pub width: u32,
     pub height: u32,
     /// DRM fourcc (e.g. `0x34325241` = ARGB8888).
@@ -58,17 +64,60 @@ pub struct WpeFrame {
     pub modifier: u64,
     pub stride: u32,
     pub offset: u32,
-    /// Opaque tokens the consumer hands back via `Cmd::Release`
-    /// when it's done with the frame. The pair (view, buffer) is
-    /// what `wpe_view_buffer_released` needs.
+    token: Option<ResourceToken>,
+    pub(crate) release_tx: Sender<Cmd<WpeEngine>>,
+}
+
+impl WpeFrame {
+    /// Take the recycle token for GPU-held ownership. After this,
+    /// Drop no longer releases — the holder must send `Cmd::Release`
+    /// (or drop a `HeldToken`) when the GPU is done.
+    pub fn take_token(&mut self) -> Option<ResourceToken> {
+        self.token.take()
+    }
+
+    pub fn take_fd(&mut self) -> Option<OwnedFd> {
+        self.fd.take()
+    }
+}
+
+impl Drop for WpeFrame {
+    fn drop(&mut self) {
+        if let Some(token) = self.token.take() {
+            let _ = self.release_tx.send(Cmd::Release { token });
+        }
+    }
+}
+
+/// GPU-held buffer token: on Drop, sends `Cmd::Release` back to the worker.
+pub struct HeldToken {
     pub token: ResourceToken,
+    release_tx: Sender<Cmd<WpeEngine>>,
+}
+
+impl HeldToken {
+    pub fn new(token: ResourceToken, release_tx: Sender<Cmd<WpeEngine>>) -> Self {
+        Self { token, release_tx }
+    }
+}
+
+impl Drop for HeldToken {
+    fn drop(&mut self) {
+        let token = ResourceToken {
+            tab_id: self.token.tab_id,
+            view: self.token.view,
+            buffer: self.token.buffer,
+        };
+        let _ = self.release_tx.send(Cmd::Release { token });
+    }
 }
 
 /// `Send + Sync`-safe wrapper around the raw `WPEView*` +
 /// `WPEBuffer*` pair we get from the buffer-arrival callback.
-/// Always treated as opaque off the worker thread.
+/// Tagged with `tab_id` so late releases for closed tabs are ignored.
 #[derive(Clone, Copy, Debug)]
 pub struct ResourceToken {
+    pub tab_id: TabId,
     pub view: *mut c_void,
     pub buffer: *mut c_void,
 }
@@ -164,7 +213,7 @@ impl Engine for WpeEngine {
         crate::frame::WpeProgram { slot }
     }
 
-    fn shutdown(mut self) {
+    fn shutdown(&mut self) {
         let _ = self.cmd_tx.send(Cmd::Quit);
         if let Some(h) = self.worker.take() {
             let _ = h.join();
@@ -203,16 +252,19 @@ impl WpeEngine {
         let active_w = active_atomic.clone();
         let next_id_w = next_id.clone();
         let clipboard_w = clipboard_out.clone();
+        let release_tx = cmd_tx.clone();
         let worker = thread::Builder::new()
             .name("wpe-engine".into())
             .spawn(move || unsafe {
                 worker_main(
-                    width, height, frame_tx, cmd_rx, ready_tx, cursor_w, snapshot_w, active_w,
-                    next_id_w, clipboard_w,
+                    width, height, frame_tx, cmd_rx, release_tx, ready_tx, cursor_w, snapshot_w,
+                    active_w, next_id_w, clipboard_w,
                 )
             })
             .expect("spawn wpe-engine thread");
-        let _ = ready_rx.recv();
+        if ready_rx.recv().is_err() {
+            panic!("wpe-engine worker exited before becoming ready");
+        }
 
         Self {
             worker: Some(worker),
@@ -234,6 +286,8 @@ struct WorkerCtx {
     main_loop: *mut sys::GMainLoop,
     frame_tx: Sender<TaggedFrame<WpeFrame>>,
     cmd_rx: Receiver<Cmd<WpeEngine>>,
+    /// Clone used when emitting frames so Drop can `Cmd::Release`.
+    release_tx: Sender<Cmd<WpeEngine>>,
     tabs: Vec<TabState>,
     active: TabId,
     last_size: (u32, u32),
@@ -253,6 +307,8 @@ struct WorkerCtx {
     /// shared `Vec<TabInfo>` snapshot. Cheap to check; spares us
     /// from having to rebuild on every iced poll.
     snapshot_dirty: Arc<std::sync::atomic::AtomicBool>,
+    /// Outstanding buffer tokens not yet released (instrumentation).
+    outstanding_tokens: std::sync::atomic::AtomicU64,
 }
 
 /// Per-tab state living on the worker thread. The webview ptr is
@@ -277,6 +333,7 @@ unsafe fn worker_main(
     height: u32,
     frame_tx: Sender<TaggedFrame<WpeFrame>>,
     cmd_rx: Receiver<Cmd<WpeEngine>>,
+    release_tx: Sender<Cmd<WpeEngine>>,
     ready_tx: Sender<()>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
@@ -306,6 +363,7 @@ unsafe fn worker_main(
         main_loop: ptr::null_mut(),
         frame_tx,
         cmd_rx,
+        release_tx,
         tabs: Vec::new(),
         active: TabId(u64::MAX),
         last_size: (width, height),
@@ -315,6 +373,7 @@ unsafe fn worker_main(
         next_id,
         clipboard_out,
         snapshot_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        outstanding_tokens: std::sync::atomic::AtomicU64::new(0),
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
     sys::sola_wpe_set_cursor_callback(Some(on_cursor_changed), ctx as *mut c_void);
@@ -365,7 +424,7 @@ unsafe extern "C" fn on_cursor_changed(
 ) {
     let ctx = &*(user_data as *mut WorkerCtx);
     let kind = if name.is_null() {
-        crate::input::CursorKind::Default
+        sola_browser_core::CursorKind::Default
     } else {
         let s = std::ffi::CStr::from_ptr(name).to_string_lossy();
         crate::input::parse_cursor_name(&s)
@@ -486,18 +545,22 @@ unsafe extern "C" fn on_buffer_rendered(
     }
 
     let frame = WpeFrame {
-        fd: OwnedFd::from_raw_fd(dup_fd),
+        fd: Some(OwnedFd::from_raw_fd(dup_fd)),
         width: width as u32,
         height: height as u32,
         format,
         modifier,
         stride,
         offset,
-        token: ResourceToken {
+        token: Some(ResourceToken {
+            tab_id,
             view: view as *mut c_void,
             buffer: buffer as *mut c_void,
-        },
+        }),
+        release_tx: ctx.release_tx.clone(),
     };
+    ctx.outstanding_tokens
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if ctx.frame_tx.send(TaggedFrame { tab_id, frame }).is_err() {
         tracing::info!("frame channel closed, quitting GMainLoop");
         sys::g_main_loop_quit(ctx.main_loop);
@@ -544,10 +607,26 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
             }
         }
         Cmd::Release { token } => {
-            sys::wpe_view_buffer_released(
-                token.view as *mut sys::WPEView,
-                token.buffer as *mut sys::WPEBuffer,
-            );
+            let left = ctx
+                .outstanding_tokens
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed)
+                .saturating_sub(1);
+            // Closed-tab quarantine: never call into a freed view.
+            if !ctx.tabs.iter().any(|t| t.id == token.tab_id) {
+                tracing::debug!(
+                    ?token.tab_id,
+                    outstanding = left,
+                    "dropping release for closed tab"
+                );
+            } else {
+                sys::wpe_view_buffer_released(
+                    token.view as *mut sys::WPEView,
+                    token.buffer as *mut sys::WPEBuffer,
+                );
+            }
+            if left > 8 {
+                tracing::warn!(outstanding = left, "wpe buffer tokens outstanding");
+            }
         }
         Cmd::Input(ev) => {
             if let Some(tab) = active_tab(ctx) {
@@ -587,6 +666,11 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                         EditCmd::Copy => {
                             sys::sola_wpe_copy_selection(tab.webview as *mut _);
                         }
+                        // Paste without text is a no-op on headless WPE — use
+                        // Cmd::PasteText with chrome-read clipboard content.
+                        EditCmd::Paste => {
+                            tracing::debug!("EditCmd::Paste ignored; use PasteText");
+                        }
                         _ => {
                             let name = sola_browser_core::util::editing_command_name(edit);
                             let name_c = std::ffi::CString::new(name).unwrap();
@@ -596,6 +680,21 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                             );
                         }
                     }
+                }
+            }
+        }
+        Cmd::PasteText(text) => {
+            if let Some(tab) = active_tab(ctx) {
+                if !tab.webview.is_null() && !text.is_empty() {
+                    // InsertText with argument — WebKit has no Wayland clipboard
+                    // on the headless display, so the chrome ships the string.
+                    let cmd = CString::new("InsertText").unwrap();
+                    let arg = CString::new(text.as_str()).unwrap_or_else(|_| CString::new("").unwrap());
+                    sys::webkit_web_view_execute_editing_command_with_argument(
+                        tab.webview as *mut _,
+                        cmd.as_ptr(),
+                        arg.as_ptr(),
+                    );
                 }
             }
         }
@@ -642,13 +741,6 @@ fn find_tab_by_view<'a>(ctx: &'a WorkerCtx, view: *mut sys::WPEView) -> Option<&
     ctx.tabs.iter().find(|t| t.wpe_view == view)
 }
 
-#[allow(dead_code)]
-fn find_tab_by_webview<'a>(
-    ctx: &'a WorkerCtx,
-    webview: *mut sys::WebKitWebView,
-) -> Option<&'a TabState> {
-    ctx.tabs.iter().find(|t| t.webview == webview)
-}
 
 /// Per-tab signal-callback context. We Box::into_raw one of these
 /// per webview and pass it as `user_data` to
@@ -780,7 +872,15 @@ unsafe fn close_tab(ctx: &mut WorkerCtx, id: TabId) {
         sys::g_object_unref(tab.webview as *mut c_void);
     }
     rebuild_snapshot(ctx);
-    tracing::info!(?id, remaining = ctx.tabs.len(), "closed tab");
+    let outstanding = ctx
+        .outstanding_tokens
+        .load(std::sync::atomic::Ordering::Relaxed);
+    tracing::info!(
+        ?id,
+        remaining = ctx.tabs.len(),
+        outstanding_tokens = outstanding,
+        "closed tab"
+    );
 }
 
 /// Rewrite the shared `Vec<TabInfo>` from the current tab state.

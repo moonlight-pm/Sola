@@ -16,15 +16,15 @@ libwayland. The workspace was unified accordingly (commit 7f97004); the
 stale per-crate `Cargo.lock` files under each browser crate are leftovers
 from the isolated era and are ignored.
 
-**Status (2026-06-17).** WPE is primary, CEF is at feature parity. The
-legacy GTK/WebKit `sola-browser` crate has been retired (WPE is the shell's
-default "Browser"). Both engines are now wired into the Sola bus
-(`Topic::OpenUrl` → new tab, a "Browser" app-menu that doubles as the
-keyboard-shortcut mechanism, and live `Topic::Theme` chrome restyling) — see
-`docs/specs/2026-06-17-sola-browser-bus-integration-design.md`. Neither is
-yet a production-grade browser: no profile/cookie persistence, minimal
-chrome. The architecture is proven; what remains is polish + the deeper
-browser feature set (bookmarks, downloads, history, devtools UI, etc.).
+**Status (2026-07-25).** WPE is primary, CEF is a **parallel engine at
+feature parity** (not an archive). Shared chrome lives in `sola-browser-core`;
+a thin `sola-browser` dispatcher `exec`s the engine binary. Both engines are
+on the Sola bus (`Topic::OpenUrl`, Browser/Edit app-menus, live theme).
+Lifecycle cleanse 2026-07-25: WPE buffer tokens release on Drop, last-tab
+never empties the list, engine shutdown on app drop, paste-into-page via
+chrome clipboard → `Cmd::PasteText`. Not yet production-grade (no profiles /
+bookmarks / downloads / history / devtools). See
+`docs/specs/2026-07-25-sola-browser-cleanup.md`.
 
 ## Architecture
 
@@ -40,7 +40,7 @@ browser feature set (bookmarks, downloads, history, devtools UI, etc.).
                 │            • Cmd::Resize on change  │
                 │            • upload texture, draw   │
                 └──────────┬──────────────────────────┘
-                           │ slot.releaser (mpsc Sender<Cmd>)
+                           │ slot.cmd_tx (mpsc Sender<Cmd>)
                            ▼
               ┌──── engine worker thread ─────┐
               │  GMainLoop (WPE) /            │
@@ -241,3 +241,27 @@ In rough priority order:
    iced API?
 
 Items 1–3 are small. 4+ are real product features.
+
+
+## Known gaps (documented, not open bugs)
+
+- IME / multi-codepoint text input
+- WPE keyboard hardware scancode always 0
+- CEF `<select>` dropdowns (`PET_POPUP` paints ignored)
+- CEF full-frame paints (no dirty-rects → larger memcpy)
+- WPE DPR / text sharpness polish
+- Profile / cookie persistence, bookmarks, downloads, history, devtools
+
+## Crate map (2026-07-25)
+
+| Path | Role |
+|---|---|
+| `crates/sola-browser/` | Engine dispatcher (`exec` wpe/cef) |
+| `crates/sola-browser-core/` | Shared chrome, `Engine` trait, bus, sample shader |
+| `crates/sola-browser-wpe/` | WPE engine + dma-buf import + C hijacks |
+| `crates/sola-browser-cef/` | CEF engine + CPU OSR upload |
+
+### Active-tab ownership
+
+The engine worker is the sole writer of `ActiveHandle`. Chrome keeps
+`cached_active` for optimistic paint and sends `Cmd::SetActiveTab`.

@@ -213,7 +213,7 @@ impl Engine for CefEngine {
         crate::frame::CefProgram { slot }
     }
 
-    fn shutdown(mut self) {
+    fn shutdown(&mut self) {
         let _ = self.cmd_tx.send(Cmd::Quit);
         if let Some(h) = self.worker.take() {
             let _ = h.join();
@@ -517,8 +517,11 @@ cef::wrap_life_span_handler! {
                     rebuild_snapshot(&state);
                 }
             }
+            // Do NOT quit the message loop when the tab list empties —
+            // chrome enforces ≥1 tab and may open a blank replacement.
+            // Only Cmd::Quit / channel disconnect should stop the loop.
             if state.tabs.borrow().is_empty() {
-                cef::quit_message_loop();
+                tracing::debug!("cef tab list empty (waiting for chrome to open a tab)");
             }
         }
 
@@ -750,6 +753,15 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                         EditCmd::Undo => frame.undo(),
                         EditCmd::Redo => frame.redo(),
                     }
+                }
+            }
+        }
+        Cmd::PasteText(_text) => {
+            // Chromium OSR still has a clipboard path; use native paste.
+            // Chrome reads Wayland clipboard for WPE; CEF can paste itself.
+            if let Some(tab) = active_tab(state) {
+                if let Some(frame) = tab.browser.main_frame() {
+                    frame.paste();
                 }
             }
         }

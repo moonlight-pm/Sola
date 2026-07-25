@@ -69,6 +69,8 @@ pub enum Msg {
     EditRouted { cmd: EditCmd, url_bar_focused: bool },
     /// Result of an `iced::clipboard::read` kicked off by a URL-bar paste.
     UrlPasted(Option<String>),
+    /// Result of an `iced::clipboard::read` for paste into page content.
+    PagePasted(Option<String>),
 }
 
 /// Browser chrome application state, generic over the web engine.
@@ -80,12 +82,13 @@ pub struct App<E: Engine> {
     /// `Arc` is needed to keep the worker alive.
     pub engine: E,
     pub slot: Arc<FrameSlot<E>>,
-    pub releaser: Sender<Cmd<E>>,
+    /// Command channel to the engine worker.
+    pub cmd_tx: Sender<Cmd<E>>,
     /// Live tab snapshot, owned by the engine. We re-read on
     /// every Tick; `cached_tabs` is the value at last read.
     pub tabs_handle: TabsHandle,
-    /// Atomic id of the currently-active tab. Mirror cached in
-    /// `cached_active`.
+    /// Active-tab id (worker is the sole writer after startup).
+    /// Chrome keeps `cached_active` for optimistic paint.
     pub active_handle: Arc<AtomicU64>,
     /// Snapshot of tabs as of the last Tick — view() and
     /// subscription helpers read from here so they don't have to
@@ -132,7 +135,7 @@ impl<E: Engine> App<E> {
     pub fn new(
         engine: E,
         slot: Arc<FrameSlot<E>>,
-        releaser: Sender<Cmd<E>>,
+        cmd_tx: Sender<Cmd<E>>,
         tabs_handle: TabsHandle,
         active_handle: Arc<AtomicU64>,
         url: String,
@@ -142,7 +145,7 @@ impl<E: Engine> App<E> {
         Self {
             engine,
             slot,
-            releaser,
+            cmd_tx,
             tabs_handle,
             active_handle,
             cached_tabs: Vec::new(),
@@ -168,13 +171,13 @@ impl<E: Engine> App<E> {
         match msg {
             Msg::NewFrame => {}
             Msg::NavBack => {
-                let _ = self.releaser.send(Cmd::Nav(NavCmd::Back));
+                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Back));
             }
             Msg::NavForward => {
-                let _ = self.releaser.send(Cmd::Nav(NavCmd::Forward));
+                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Forward));
             }
             Msg::NavReload => {
-                let _ = self.releaser.send(Cmd::Nav(NavCmd::Reload));
+                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Reload));
             }
             Msg::UrlInput(s) => {
                 self.url_field = s;
@@ -188,26 +191,31 @@ impl<E: Engine> App<E> {
                 }
                 self.url_field = url.clone();
                 self.last_seen_url = url.clone();
-                let _ = self.releaser.send(Cmd::Nav(NavCmd::LoadUrl(url)));
+                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
             }
             Msg::CloseTab(id) => {
+                // Never drop below one tab: open a blank replacement first.
+                // (Bus-integration + CEF message-loop contract.)
+                if self.cached_tabs.len() <= 1 {
+                    self.open_tab(BLANK_URL.to_string(), true);
+                }
                 // If closing the active tab, pick a new active tab
                 // first so the engine never sees `active` pointing
-                // at a closed tab.
+                // at a closed tab. Optimistic cached_active only —
+                // the worker is the sole ActiveHandle writer.
                 let was_active = self.cached_active == id;
                 if was_active {
                     if let Some(new_active) = self.pick_new_active_after_close(id) {
-                        let _ = self.releaser.send(Cmd::SetActiveTab(new_active));
+                        let _ = self.cmd_tx.send(Cmd::SetActiveTab(new_active));
                         self.cached_active = new_active;
-                        self.active_handle.store(new_active.0, Ordering::Relaxed);
                     }
                 }
-                let _ = self.releaser.send(Cmd::CloseTab(id));
+                let _ = self.cmd_tx.send(Cmd::CloseTab(id));
             }
             Msg::ActivateTab(id) => {
-                let _ = self.releaser.send(Cmd::SetActiveTab(id));
+                let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
+                // Optimistic paint only — worker owns ActiveHandle.
                 self.cached_active = id;
-                self.active_handle.store(id.0, Ordering::Relaxed);
                 // Force the URL bar to immediately reflect the new
                 // active tab's url on the next Tick (not on next
                 // engine URL change).
@@ -293,13 +301,23 @@ impl<E: Engine> App<E> {
                     };
                 }
                 tracing::debug!(?cmd, "edit → engine (web content)");
-                let _ = self.releaser.send(Cmd::Edit(cmd));
+                // Paste-into-page: read iced's Wayland clipboard and ship the
+                // text (WPE headless has no clipboard backend).
+                if cmd == EditCmd::Paste {
+                    return iced::clipboard::read().map(Msg::PagePasted);
+                }
+                let _ = self.cmd_tx.send(Cmd::Edit(cmd));
             }
             Msg::UrlPasted(text) => {
                 if let Some(s) = text {
                     // Best-effort: iced exposes no caret/selection, so append
                     // at the end (cursor-at-end assumption).
                     self.url_field.push_str(&s);
+                }
+            }
+            Msg::PagePasted(text) => {
+                if let Some(s) = text {
+                    let _ = self.cmd_tx.send(Cmd::PasteText(s));
                 }
             }
         }
@@ -312,11 +330,11 @@ impl<E: Engine> App<E> {
     pub fn open_tab(&mut self, url: String, activate: bool) {
         let url = crate::util::normalize_url(&url);
         let id = self.engine.alloc_tab_id();
-        let _ = self.releaser.send(Cmd::OpenTab { id, url });
+        let _ = self.cmd_tx.send(Cmd::OpenTab { id, url });
         if activate {
-            let _ = self.releaser.send(Cmd::SetActiveTab(id));
+            let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
+            // Optimistic only — worker writes ActiveHandle.
             self.cached_active = id;
-            self.active_handle.store(id.0, Ordering::Relaxed);
         }
     }
 
@@ -461,5 +479,12 @@ impl<E: Engine> App<E> {
                 _ => None,
             }),
         ])
+    }
+}
+
+impl<E: Engine> Drop for App<E> {
+    fn drop(&mut self) {
+        // Orderly engine teardown on iced exit (Cmd::Quit + join worker).
+        self.engine.shutdown();
     }
 }

@@ -16,10 +16,9 @@ edition = "2024"
 # equivalent port should follow here before considering the
 # feature "done".
 #
-# CEF-backed sibling of sola-browser-wpe. Same iced chrome, same
-# wgpu shader sampling pipeline, same modifier-aware DMA-BUF import
-# via wgpu-hal-patched (workspace-level `[patch.crates-io]`). Engine
-# swap only — see `docs/specs/2026-05-21-sola-browser-cef-port-and-benchmark.md`.
+# CEF uses CPU OSR (`on_paint` BGRA → `queue.write_texture`). There is
+# no dma-buf path on this host; do not enable the `accelerated_osr`
+# feature on the `cef` crate.
 
 [[bin]]
 name = "sola-browser-cef"
@@ -33,23 +32,13 @@ sola-core = { path = "../sola-core" }
 sola-kit = { path = "../sola-kit" }
 tracing = "0.1"
 
-# wgpu pinned to the exact version iced 0.14 carries so handle types
-# unify; wgpu-hal at its matching minor for the same reason. ash is
-# the underlying Vulkan binding wgpu-hal itself uses.
 wgpu = { version = "27", features = ["vulkan-portability"] }
-wgpu-hal = { version = "27", features = ["vulkan"] }
-ash = "0.38"
 
 # CEF binding. Version pinned to match `cef-version` at workspace
 # root — sola-make's `install-cef` reads the same file and downloads
 # the matching binary distribution into `~/.cache/sola/cef-<ver>/`.
-# Do NOT enable `accelerated_osr` — that pulls wgpu/ash/metal into
-# CEF's own importer, which we don't use. We import DMA-BUFs through
-# `wgpu-hal-patched` exactly like the WPE crate does.
+# Do NOT enable `accelerated_osr`.
 cef = "147.1.0"
-
-libc = "0.2"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [build-dependencies]
 # No bindgen, no pkg-config — CEF is the only system dep and it

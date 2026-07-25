@@ -28,6 +28,10 @@ pub enum NavCmd {
 /// to the URL bar). Names map to WebKit editing-command strings via
 /// [`crate::util::editing_command_name`]; CEF maps them to `cef::Frame`
 /// methods directly.
+///
+/// Paste of system-clipboard text into page content uses
+/// [`Cmd::PasteText`] instead — headless WPE has no Wayland clipboard, so
+/// the chrome must read iced's clipboard and ship the string in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditCmd {
     Copy,
@@ -46,6 +50,8 @@ pub enum EditCmd {
 /// process-wide side-channel.
 pub enum Cmd<E: Engine> {
     Resize { width: u32, height: u32 },
+    /// Recycle a producer buffer (WPE dma-buf pool). CEF ignores this
+    /// (CPU OSR memcpy has no recycle token).
     Release { token: E::Token },
     Input(E::Input),
     Focus(bool),
@@ -55,6 +61,9 @@ pub enum Cmd<E: Engine> {
     SetActiveTab(TabId),
     /// Run an editing command against the active tab's web content.
     Edit(EditCmd),
+    /// Insert clipboard text into the page (chrome already read iced's
+    /// Wayland clipboard). Preferred path for paste-into-page on WPE.
+    PasteText(String),
     Quit,
 }
 
@@ -65,15 +74,20 @@ pub struct TaggedFrame<F> {
 }
 
 /// Shared between `App` (fills `pending`) and the engine's shader Program
-/// (drains it on next prepare). `releaser` goes back to the engine worker.
+/// (drains it on next prepare). `cmd_tx` goes back to the engine worker.
 pub struct FrameSlot<E: Engine> {
     pub pending: Mutex<Option<E::Frame>>,
-    pub releaser: Sender<Cmd<E>>,
+    /// Command channel to the engine worker (input, resize, nav, release, …).
+    pub cmd_tx: Sender<Cmd<E>>,
     pub last_size: Mutex<(u32, u32)>,
     pub cursor: Arc<AtomicU32>,
 }
 
 pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;
+/// Active-tab id. **Worker is the sole writer** after startup; chrome reads
+/// it for frame filtering and optimistic paint, and keeps a local
+/// `cached_active` for rendering. Chrome still *sends* `Cmd::SetActiveTab`
+/// so the worker can update this atomic.
 pub type ActiveHandle = Arc<AtomicU64>;
 pub type CursorHandle = Arc<AtomicU32>;
 pub type FrameReceiver<F> = Arc<Mutex<Receiver<TaggedFrame<F>>>>;
@@ -83,15 +97,13 @@ pub type FrameReceiver<F> = Arc<Mutex<Receiver<TaggedFrame<F>>>>;
 /// there's nothing pending.
 pub type ClipboardHandle = Arc<Mutex<Option<String>>>;
 
-/// A browser engine. Both `WpeEngine` and `CefEngine` already expose this
-/// exact surface (7 methods + the CEF subprocess gate); the trait names it.
+/// A browser engine. Both `WpeEngine` and `CefEngine` expose this surface.
 pub trait Engine: Sized + Send + Sync + 'static {
-    /// Engine-specific raw frame (WPE: dma-buf fd; CEF: dma-buf or CPU buffer).
+    /// Engine-specific raw frame (WPE: dma-buf fd; CEF: CPU buffer).
     type Frame: Send + 'static;
     /// Opaque buffer-recycle token returned via `Cmd::Release`.
     type Token: Send + 'static;
-    /// Engine-specific native input event carried by `Cmd::Input` (WPE:
-    /// GDK keyvals + f64 coords; CEF: Windows VK codes + integer pixels).
+    /// Engine-specific native input event carried by `Cmd::Input`.
     type Input: Send + 'static;
     /// The iced shader Program that imports `Self::Frame` and samples it.
     type Program: iced::widget::shader::Program<crate::app::Msg> + 'static;
@@ -117,5 +129,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn clipboard_handle(&self) -> ClipboardHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;
-    fn shutdown(self);
+    /// Orderly engine teardown: send Quit, join the worker. Called from
+    /// `App` drop so iced exit flushes the engine cleanly.
+    fn shutdown(&mut self);
 }

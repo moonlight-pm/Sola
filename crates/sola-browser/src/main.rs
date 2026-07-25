@@ -131,7 +131,15 @@ fn resolve_target(dir: &Path, engine: &str) -> Option<PathBuf> {
     }
     let other = if engine == "wpe" { "cef" } else { "wpe" };
     let fallback = dir.join(format!("sola-browser-{other}"));
-    fallback.exists().then_some(fallback)
+    if fallback.exists() {
+        eprintln!(
+            "sola-browser: engine '{engine}' not found; falling back to '{other}' ({})",
+            fallback.display()
+        );
+        Some(fallback)
+    } else {
+        None
+    }
 }
 
 fn main() -> ExitCode {

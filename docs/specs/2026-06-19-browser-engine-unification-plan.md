@@ -1,3 +1,5 @@
+> **Cleanup 2026-07-25:** shared shader (`SamplePipeline` / `FrameImport`) and shared `CursorKind` landed in `sola-browser-core`; remaining Task-7-shaped work complete for the sample path. See `2026-07-25-sola-browser-cleanup.md`.
+
 # Browser Engine Unification Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
