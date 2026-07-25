@@ -65,6 +65,37 @@ fn run(mode: ConnectionMode) {
                         }
                     }
                 }
+                AgentCmd::OpenReadonly { id, cwd } => {
+                    // External Grok TUI owns the session — file-only viewer.
+                    // Do not call ACP session/load (would fight the console).
+                    crate::overlay::note_opened(&id, &cwd);
+                    let slice = sessions::history_tail_live(&cwd, &id);
+                    let title = sessions::title_for(&cwd, &id);
+                    bridge::emit(AgentEvent::SessionReady {
+                        id: id.clone(),
+                        title,
+                    });
+                    bridge::emit(AgentEvent::Transcript {
+                        turns: slice.turns,
+                        history_start_byte: slice.start_byte,
+                        has_older: slice.has_older,
+                        from_watch: false,
+                    });
+                    refresh_sessions(&cwd);
+                }
+                AgentCmd::SyncTranscript { id, cwd, live } => {
+                    let slice = if live {
+                        sessions::history_tail_live(&cwd, &id)
+                    } else {
+                        sessions::history_tail(&cwd, &id)
+                    };
+                    bridge::emit(AgentEvent::Transcript {
+                        turns: slice.turns,
+                        history_start_byte: slice.start_byte,
+                        has_older: slice.has_older,
+                        from_watch: true,
+                    });
+                }
                 AgentCmd::LoadOlderHistory {
                     id,
                     cwd,

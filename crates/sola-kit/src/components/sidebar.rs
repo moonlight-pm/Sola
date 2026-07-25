@@ -55,11 +55,24 @@ const ITEM_PAD_H: f32 = 12.0;
 /// Gap between title and subtitle lines.
 const TITLE_SUB_GAP: f32 = 5.0;
 
+/// Leading status dot for a sidebar row (activity / health, not selection).
+///
+/// Prefer always showing a dot (Active or Idle) so the title does not
+/// shift horizontally when activity starts/stops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarIndicator {
+    /// Session is actively working (streaming, tools, recent writes).
+    Active,
+    /// Present but idle — dim placeholder so layout stays fixed.
+    #[default]
+    Idle,
+}
+
 /// One row in the sidebar. `active` flips on the visual state; `message`
 /// is what the parent receives when the row is clicked.
 ///
 /// The `shortcut` / `on_close` / `secondary` / `subtitle` /
-/// `on_double_click` fields are opt-in extras consumed by
+/// `on_double_click` / `indicator` fields are opt-in extras consumed by
 /// [`SidebarPanel`] (and the shared row renderer used by plain
 /// [`sidebar`]). They default to `None`, so existing `::new().active()`
 /// callers behave exactly as before.
@@ -81,6 +94,8 @@ pub struct SidebarItem<Message> {
     /// Double-click on the row (e.g. rename). Single click still emits
     /// [`Self::message`].
     pub on_double_click: Option<Message>,
+    /// Optional leading status dot (activity), independent of selection.
+    pub indicator: Option<SidebarIndicator>,
 }
 
 impl<Message> SidebarItem<Message> {
@@ -94,6 +109,7 @@ impl<Message> SidebarItem<Message> {
             secondary: None,
             subtitle: None,
             on_double_click: None,
+            indicator: None,
         }
     }
 
@@ -129,6 +145,12 @@ impl<Message> SidebarItem<Message> {
     /// Message emitted on double-click (rename, open properties, …).
     pub fn on_double_click(mut self, msg: Message) -> Self {
         self.on_double_click = Some(msg);
+        self
+    }
+
+    /// Leading status dot (e.g. session actively working).
+    pub fn indicator(mut self, indicator: SidebarIndicator) -> Self {
+        self.indicator = Some(indicator);
         self
     }
 }
@@ -781,10 +803,17 @@ where
         secondary,
         subtitle,
         on_double_click,
+        indicator,
     } = item;
 
     let content = row_with_active_bar(
-        item_content(&label, subtitle.as_deref(), secondary.as_deref(), shortcut),
+        item_content(
+            &label,
+            subtitle.as_deref(),
+            secondary.as_deref(),
+            shortcut,
+            indicator,
+        ),
         active,
         subtitle.is_some(),
     );
@@ -892,16 +921,17 @@ where
 ///
 /// Layout:
 /// ```text
-/// [ title …………………  19m ]
-/// [ subtitle ……………      ]
+/// [ ● title …………………  19m ]
+/// [   subtitle ……………      ]
 /// ```
 /// Title/subtitle take `Fill` and clip; secondary sits in a shrink column
-/// so times never overlap the title.
+/// so times never overlap the title. Leading indicator is activity status.
 fn item_content<'a, Message: 'a>(
     label: &str,
     subtitle: Option<&str>,
     secondary: Option<&str>,
     shortcut: Option<u8>,
+    indicator: Option<SidebarIndicator>,
 ) -> Element<'a, Message> {
     let title = text(label.to_string())
         .font(fonts::ui())
@@ -909,20 +939,39 @@ fn item_content<'a, Message: 'a>(
         .wrapping(Wrapping::None)
         .width(Length::Fill);
 
-    let mut text_col = column![title].spacing(TITLE_SUB_GAP).width(Length::Fill);
+    let mut title_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
+    if let Some(ind) = indicator {
+        title_row = title_row.push(status_dot(ind));
+    }
+    title_row = title_row.push(title);
+
+    let mut text_col = column![title_row]
+        .spacing(TITLE_SUB_GAP)
+        .width(Length::Fill);
     if let Some(sub) = subtitle {
+        // Indent subtitle under the title text when a leading dot is present.
+        let sub_pad = if indicator.is_some() { 14.0 } else { 0.0 };
         text_col = text_col.push(
-            text(sub.to_string())
-                .font(fonts::mono())
-                .size(11)
-                .style(|theme: &Theme| {
-                    let c = theme.extended_palette().background.base.text;
-                    iced::widget::text::Style {
-                        color: Some(Color { a: 0.48, ..c }),
-                    }
-                })
-                .wrapping(Wrapping::None)
-                .width(Length::Fill),
+            container(
+                text(sub.to_string())
+                    .font(fonts::mono())
+                    .size(11)
+                    .style(|theme: &Theme| {
+                        let c = theme.extended_palette().background.base.text;
+                        iced::widget::text::Style {
+                            color: Some(Color { a: 0.48, ..c }),
+                        }
+                    })
+                    .wrapping(Wrapping::None)
+                    .width(Length::Fill),
+            )
+            .padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: sub_pad,
+            })
+            .width(Length::Fill),
         );
     }
 
@@ -960,6 +1009,36 @@ fn item_content<'a, Message: 'a>(
         );
     }
     r.into()
+}
+
+fn status_dot<'a, Message: 'a>(indicator: SidebarIndicator) -> Element<'a, Message> {
+    let color = match indicator {
+        SidebarIndicator::Active => Color {
+            r: 0.24,
+            g: 0.81,
+            b: 0.56,
+            a: 1.0,
+        },
+        // Quiet placeholder — visible enough to reserve space, not attention.
+        SidebarIndicator::Idle => Color {
+            r: 0.45,
+            g: 0.48,
+            b: 0.55,
+            a: 0.55,
+        },
+    };
+    container(Space::new().width(6.0).height(6.0))
+        .width(Length::Fixed(6.0))
+        .height(Length::Fixed(6.0))
+        .style(move |_t: &Theme| container::Style {
+            background: Some(Background::Color(color)),
+            border: Border {
+                radius: 999.0.into(),
+                ..Default::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
 }
 
 /// Collapsed-row content: just the shortcut number (or index+1), centred.

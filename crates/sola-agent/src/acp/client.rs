@@ -97,6 +97,7 @@ impl AcpClient {
             turns: Vec::new(),
             history_start_byte: 0,
             has_older: false,
+            from_watch: false,
         });
         Ok(id)
     }
@@ -128,6 +129,7 @@ impl AcpClient {
             turns: slice.turns,
             history_start_byte: slice.start_byte,
             has_older: slice.has_older,
+            from_watch: false,
         });
         Ok(())
     }

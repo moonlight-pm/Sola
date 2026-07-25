@@ -15,12 +15,14 @@ pub enum AgentEvent {
         id: String,
         title: Option<String>,
     },
-    /// Transcript replace (after load). May be a **tail** window only.
+    /// Transcript replace (after load or watch sync). May be a **tail** window only.
     Transcript {
         turns: Vec<Turn>,
         /// Absolute byte offset of the first line included in `turns`.
         history_start_byte: u64,
         has_older: bool,
+        /// When true, this is a live watch re-read — preserve scroll stickiness.
+        from_watch: bool,
     },
     /// Older history chunk to **prepend** (scroll-up load).
     HistoryOlder {
@@ -113,7 +115,7 @@ pub struct PermissionChoice {
     pub kind: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanEntry {
     pub content: String,
     pub status: String,
@@ -127,12 +129,17 @@ pub struct SessionSummary {
     /// Unix secs of last **turn** activity (updates.jsonl mtime), not open time.
     pub updated: u64,
     pub pinned: bool,
-    /// True when a live Grok TUI process has this session open.
+    /// True when a live Grok TUI process has this session open in a console.
+    /// (Grouping only — activity uses [`Self::busy`].)
     #[serde(default)]
     pub live: bool,
+    /// True when the session is actively working (recent transcript writes).
+    /// Independent of whether a console has it open.
+    #[serde(default)]
+    pub busy: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Turn {
     User(String),
     Assistant(String),
@@ -142,7 +149,7 @@ pub enum Turn {
     Error(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolTurn {
     pub call_id: String,
     /// Tool title/kind (metadata only; not expanded in the transcript).
@@ -160,6 +167,19 @@ pub enum AgentCmd {
     LoadSession {
         id: String,
         cwd: String,
+    },
+    /// File-only open for a session held by an external Grok TUI.
+    /// Does **not** call ACP `session/load` (read-only viewer).
+    OpenReadonly {
+        id: String,
+        cwd: String,
+    },
+    /// Re-read the transcript tail for a watched (typically console) session.
+    SyncTranscript {
+        id: String,
+        cwd: String,
+        /// When true, leave in-progress tool statuses as-is (live watch).
+        live: bool,
     },
     /// Load an older window of `updates.jsonl` ending at `before_byte`.
     LoadOlderHistory {
