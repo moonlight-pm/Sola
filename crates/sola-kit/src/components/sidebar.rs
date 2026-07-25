@@ -806,16 +806,14 @@ where
         indicator,
     } = item;
 
-    let content = row_with_active_bar(
-        item_content(
-            &label,
-            subtitle.as_deref(),
-            secondary.as_deref(),
-            shortcut,
-            indicator,
-        ),
-        active,
-        subtitle.is_some(),
+    // Selection is background-only (see `item_style`) — no left accent bar,
+    // so title/subtitle stay aligned with idle rows.
+    let content = item_content(
+        &label,
+        subtitle.as_deref(),
+        secondary.as_deref(),
+        shortcut,
+        indicator,
     );
     let pad = Padding::from([ITEM_PAD_V, ITEM_PAD_H]);
 
@@ -1806,9 +1804,8 @@ fn row_container_style(theme: &Theme, active: bool) -> container::Style {
 /// building custom row widgets (e.g. with leading icons) can match the
 /// kit's visual language.
 ///
-/// Active = quiet selection wash + rounded corners. The **left accent
-/// bar** is drawn in the row content ([`row_with_active_bar`]), not as a
-/// full focus-ring border.
+/// Active = quiet selection wash + rounded corners only. No left accent
+/// bar (that shifted title/subtitle relative to idle rows).
 pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     let p = theme.extended_palette();
     if active {
@@ -1839,50 +1836,6 @@ pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button
         shadow: Default::default(),
         snap: false,
     }
-}
-
-/// Prefix `content` with a 2px accent bar when `active` (OD left inset).
-fn row_with_active_bar<'a, Message: 'a>(
-    content: Element<'a, Message, Theme>,
-    active: bool,
-    has_subtitle: bool,
-) -> Element<'a, Message, Theme> {
-    if !active {
-        return content;
-    }
-    // Fixed height matching the text column — never Length::Fill.
-    // ClipScroll lays out the list with unbounded max height; a Fill-height
-    // bar makes the whole row report Fill, which then expands to infinity and
-    // the session list vanishes after a selection.
-    let bar_h = if has_subtitle {
-        13.0 + TITLE_SUB_GAP + 11.0
-    } else {
-        13.0
-    };
-    let bar = container(
-        Space::new()
-            .width(Length::Fixed(2.0))
-            .height(Length::Fixed(bar_h)),
-    )
-    .width(Length::Fixed(2.0))
-    .height(Length::Fixed(bar_h))
-    .style(|theme: &Theme| {
-        let accent = theme.extended_palette().primary.base.color;
-        container::Style {
-            background: Some(Background::Color(Color { a: 0.85, ..accent })),
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: 1.0.into(),
-            },
-            ..container::Style::default()
-        }
-    });
-    row![bar, content]
-        .spacing(8)
-        .align_y(iced::Alignment::Center)
-        .width(Length::Fill)
-        .into()
 }
 
 #[cfg(test)]
