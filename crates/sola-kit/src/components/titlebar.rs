@@ -2,12 +2,15 @@
 //!
 //! macOS-adjacent floating chrome: taller bar, left traffic-light close
 //! (solid circle, no glyph), horizontally centered title, whole bar is a
-//! drag handle. Pair with [`floating_frame`] for rounded window corners.
+//! drag handle. Pair with [`floating_frame`] for rounded window corners and
+//! edge/corner resize grips.
 //!
 //! Borders/fills only — no drop shadow (they render hard here).
 
 use iced::border::Radius;
-use iced::widget::{Space, button, container, mouse_area, row, text};
+use iced::mouse;
+use iced::widget::{Space, button, container, mouse_area, row, stack, text};
+use iced::window::Direction;
 use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
 
 use crate::components::style::{HAIRLINE_A, RADIUS_XL, SPACE_LG, mix_white};
@@ -19,6 +22,9 @@ pub const HEIGHT: f32 = 38.0;
 
 /// Corner radius for a floating window frame (matches kit `RADIUS_XL`).
 pub const WINDOW_RADIUS: f32 = RADIUS_XL;
+
+/// Hit-strip width for edge/corner resize grips (logical px).
+const RESIZE_GRIP: f32 = 6.0;
 
 /// Outer border width. Face content is inset by this so children never
 /// paint over the hairline (same trick as kit `card`).
@@ -53,7 +59,8 @@ where
     titlebar_inner(title, on_drag, on_close, /*round_top*/ false)
 }
 
-/// Floating window chrome: rounded outer frame, titlebar on top, content below.
+/// Floating window chrome: rounded outer frame, titlebar on top, content
+/// below, and invisible edge/corner resize grips around the perimeter.
 ///
 /// Structure mirrors kit [`crate::components::card`]: a 1px outer pad keeps
 /// the hairline border outside the content layout box so the full-bleed
@@ -61,10 +68,14 @@ where
 ///
 /// The host window should be `transparent: true` and (while floating) use
 /// [`crate::theme::overlay`] so the corners outside this frame stay see-through.
+///
+/// `on_resize` is invoked with an iced [`Direction`] when a grip is pressed;
+/// the consumer should return `iced::window::drag_resize(id, direction)`.
 pub fn floating_frame<'a, Message>(
     title: impl Into<String>,
     on_drag: Message,
     on_close: Message,
+    on_resize: impl Fn(Direction) -> Message + 'a,
     content: Element<'a, Message, Theme>,
 ) -> Element<'a, Message, Theme>
 where
@@ -86,12 +97,114 @@ where
         .clip(true);
 
     // Outer frame: 1px pad = border ring that children cannot cover.
-    container(face)
+    let framed = container(face)
         .padding(FRAME_BORDER)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(frame_style)
-        .into()
+        .style(frame_style);
+
+    // Perimeter resize grips overlaid on the frame edges (no layout inset).
+    // Stack hit-tests top-down; grips only cover their strips so the
+    // titlebar/content keep the centre.
+    with_resize_grips(framed.into(), on_resize)
+}
+
+/// Overlay invisible edge/corner mouse areas on `inner` without changing
+/// its layout size. Corners are discrete so diagonal cursors win there.
+fn with_resize_grips<'a, Message>(
+    inner: Element<'a, Message, Theme>,
+    on_resize: impl Fn(Direction) -> Message + 'a,
+) -> Element<'a, Message, Theme>
+where
+    Message: Clone + 'a,
+{
+    let g = RESIZE_GRIP;
+
+    let strip = |dir: Direction,
+                 interaction: mouse::Interaction,
+                 w: Length,
+                 h: Length|
+     -> Element<'a, Message, Theme> {
+        mouse_area(Space::new().width(w).height(h))
+            .interaction(interaction)
+            .on_press(on_resize(dir))
+            .into()
+    };
+
+    // Full-window column of [top strip | middle row | bottom strip]. The
+    // middle centre is empty `Space` so events fall through to `inner`
+    // below in the stack (stack probes children reverse-z; empty Space
+    // does not claim the pointer).
+    let grips: Element<'a, Message, Theme> = iced::widget::column![
+        row![
+            strip(
+                Direction::NorthWest,
+                mouse::Interaction::ResizingDiagonallyDown,
+                Length::Fixed(g),
+                Length::Fixed(g),
+            ),
+            strip(
+                Direction::North,
+                mouse::Interaction::ResizingVertically,
+                Length::Fill,
+                Length::Fixed(g),
+            ),
+            strip(
+                Direction::NorthEast,
+                mouse::Interaction::ResizingDiagonallyUp,
+                Length::Fixed(g),
+                Length::Fixed(g),
+            ),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fixed(g)),
+        row![
+            strip(
+                Direction::West,
+                mouse::Interaction::ResizingHorizontally,
+                Length::Fixed(g),
+                Length::Fill,
+            ),
+            // Pass-through hole over the content/titlebar.
+            Space::new().width(Length::Fill).height(Length::Fill),
+            strip(
+                Direction::East,
+                mouse::Interaction::ResizingHorizontally,
+                Length::Fixed(g),
+                Length::Fill,
+            ),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill),
+        row![
+            strip(
+                Direction::SouthWest,
+                mouse::Interaction::ResizingDiagonallyUp,
+                Length::Fixed(g),
+                Length::Fixed(g),
+            ),
+            strip(
+                Direction::South,
+                mouse::Interaction::ResizingVertically,
+                Length::Fill,
+                Length::Fixed(g),
+            ),
+            strip(
+                Direction::SouthEast,
+                mouse::Interaction::ResizingDiagonallyDown,
+                Length::Fixed(g),
+                Length::Fixed(g),
+            ),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fixed(g)),
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
+
+    // `inner` first (bottom), grips on top for edge hit-testing.
+    stack![inner, grips].width(Length::Fill).height(Length::Fill).into()
 }
 
 fn titlebar_inner<'a, Message>(

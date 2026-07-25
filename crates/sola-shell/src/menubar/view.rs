@@ -27,9 +27,17 @@ use crate::menubar::FlashTarget;
 // Bar height stays at `WINDOW_HEIGHT` (28) for zoning.
 const CHROME_SIZE: f32 = 13.0;
 const ICON_SIZE: u16 = 14;
-/// Vertical, horizontal padding inside each menubar hit target.
-/// ~9px horizontal ≈ macOS menu-title breathing room at 13pt.
-const ITEM_PAD: [u16; 2] = [2, 9];
+/// Horizontal pad inside each menubar hit target.
+/// ~9px ≈ macOS menu-title breathing room at 13pt.
+/// Vertical pad is 0 — buttons stretch to full bar height so the hit
+/// target reaches y=0 (top of the screen) without a dead band above labels.
+const ITEM_PAD_H: f32 = 9.0;
+const ITEM_PAD: Padding = Padding {
+    top: 0.0,
+    right: ITEM_PAD_H,
+    bottom: 0.0,
+    left: ITEM_PAD_H,
+};
 /// Optical nudge for the flower glyph (SVG visual center sits slightly
 /// low relative to SF Pro Text cap height at 13pt).
 const FLOWER_NUDGE_UP: f32 = 1.5;
@@ -75,6 +83,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         iced::widget::button(flower)
             .style(kit_btn::menubar(system_active))
             .padding(ITEM_PAD)
+            .height(Length::Fill)
             .on_press(Msg::OpenMenu {
                 index: 0,
                 is_system: true,
@@ -103,6 +112,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             )
             .style(kit_btn::menubar(title_active))
             .padding(ITEM_PAD)
+            .height(Length::Fill)
             .on_press(Msg::OpenMenu {
                 index: 0,
                 is_system: false,
@@ -120,6 +130,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
                 .size(CHROME_SIZE),
         )
         .padding(ITEM_PAD)
+        .height(Length::Fill)
+        .center_y(Length::Fill)
         .into()
     };
 
@@ -132,6 +144,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let clock: Element<'_, Msg> = iced::widget::button(clock_widget(&mb.clock_now))
         .style(kit_btn::menubar(clock_active))
         .padding(ITEM_PAD)
+        .height(Length::Fill)
         .on_press(Msg::ToggleCalendar)
         .into();
 
@@ -154,6 +167,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Cpu)),
     ))
     .padding(ITEM_PAD)
+    .height(Length::Fill)
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Cpu))
     .into();
 
@@ -173,6 +187,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Mem)),
     ))
     .padding(ITEM_PAD)
+    .height(Length::Fill)
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Mem))
     .into();
 
@@ -186,6 +201,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Rx)),
     ))
     .padding(ITEM_PAD)
+    .height(Length::Fill)
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Rx))
     .into();
     let tx_btn: Element<'_, Msg> = iced::widget::button(rate_indicator(
@@ -198,6 +214,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Tx)),
     ))
     .padding(ITEM_PAD)
+    .height(Length::Fill)
     .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Tx))
     .into();
 
@@ -218,6 +235,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             shell.open_panel == Some(crate::app::Panel::Stat(crate::stats::Metric::Gpu)),
         ))
         .padding(ITEM_PAD)
+        .height(Length::Fill)
         .on_press(Msg::ToggleStatPanel(crate::stats::Metric::Gpu))
         .into();
         cluster.push(gpu_btn);
@@ -227,13 +245,18 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     cluster.push(tx_btn);
     cluster.push(clock);
 
+    // Full-height left/right rows so menu labels' hit targets reach y=0.
+    // Buttons use height Fill + horizontal-only pad; iced centres the label.
     row![
-        row(left).align_y(iced::alignment::Vertical::Center),
+        row(left)
+            .align_y(iced::alignment::Vertical::Center)
+            .height(Length::Fill),
         iced::widget::Space::new().width(iced::Length::Fill),
         toast,
         iced::widget::row(cluster)
             .spacing(CLUSTER_SPACING)
-            .align_y(iced::alignment::Vertical::Center),
+            .align_y(iced::alignment::Vertical::Center)
+            .height(Length::Fill),
     ]
     .height(Length::Fill)
     .align_y(iced::alignment::Vertical::Center)
@@ -303,6 +326,7 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
                 )
                 .style(kit_btn::menubar(active))
                 .padding(ITEM_PAD)
+                .height(Length::Fill)
                 .on_press(Msg::OpenMenu {
                     index,
                     is_system: false,
