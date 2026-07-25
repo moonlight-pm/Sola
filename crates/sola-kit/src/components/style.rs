@@ -9,6 +9,9 @@
 //!   linear approximations.
 //! - [`hairline`] / [`hairline_strong`] build **thin** edges (card /
 //!   popover / swatch / text_input). See the hairline note below.
+//! - [`bevel_ring`] / [`bevel_frame`] give panels a **dual-tone** edge
+//!   (TL darker → BR lighter) — iced borders are single-colour, so the
+//!   raised look is a 1px gradient frame around the face.
 //! - [`dim`] is the shared disabled treatment (halve every alpha).
 //! - the `RADIUS_*` / `SPACE_*` constants name the radii and spacing
 //!   steps the kit uses, so component code stops sprinkling bare
@@ -170,6 +173,70 @@ pub fn hairline_on(surface: Color, amount: f32, radius: f32) -> Border {
         color: mix_white(surface, amount),
         width: 1.0,
         radius: radius.into(),
+    }
+}
+
+// ── Dual-tone bevel (raised edge) ─────────────────────────────────
+//
+// Iced `Border` is one colour on all sides. OD panels read slightly
+// raised because the top-left edge is darker than the bottom-right
+// (light from BR / catch-shadow on TL). We approximate that with a
+// **1px gradient ring**: outer container paints [`bevel_ring`], content
+// sits inside with `padding(1)`.
+
+/// TL-dark → BR-light 1px frame fill (use with outer `padding(1)`).
+pub fn bevel_ring(surface: Color) -> Background {
+    // Darker than the mid hairline — sinks the TL edge (near-black).
+    let dark = Color {
+        r: surface.r * 0.45,
+        g: surface.g * 0.45,
+        b: surface.b * 0.45,
+        a: 1.0,
+    };
+    let mid = mix_white(surface, HAIRLINE_A);
+    // Brighter catch on the BR edge.
+    let light = mix_white(surface, 0.20);
+    // 135°: first stop sits at the top-left, last at the bottom-right.
+    linear_bg(135.0, &[(0.0, dark), (0.40, mid), (1.0, light)])
+}
+
+/// Stronger dual-tone ring (hero / stage / hairline-strong panels).
+pub fn bevel_ring_strong(surface: Color) -> Background {
+    let dark = Color {
+        r: surface.r * 0.35,
+        g: surface.g * 0.35,
+        b: surface.b * 0.35,
+        a: 1.0,
+    };
+    let mid = mix_white(surface, HAIRLINE_STRONG_A);
+    let light = mix_white(surface, 0.24);
+    linear_bg(135.0, &[(0.0, dark), (0.40, mid), (1.0, light)])
+}
+
+/// Outer frame style for a dual-tone bevel. Pair with `padding(1)` and an
+/// inner face that carries the panel fill (no border).
+pub fn bevel_frame(surface: Color, radius: f32) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(bevel_ring(surface)),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: radius.into(),
+        },
+        ..iced::widget::container::Style::default()
+    }
+}
+
+/// Like [`bevel_frame`] with the stronger dual-tone ring.
+pub fn bevel_frame_strong(surface: Color, radius: f32) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(bevel_ring_strong(surface)),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: radius.into(),
+        },
+        ..iced::widget::container::Style::default()
     }
 }
 
@@ -382,6 +449,25 @@ mod tests {
         // 0.07*1 + 0.93*channel
         assert!((c.r - (surface.r * 0.93 + 0.07)).abs() < 1e-5);
         assert!((c.a - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn bevel_ring_is_gradient_tl_darker_than_br() {
+        let surface = Color::from_rgb(0.082, 0.098, 0.133);
+        let Background::Gradient(g) = bevel_ring(surface) else {
+            panic!("bevel_ring must be a gradient");
+        };
+        let iced::gradient::Gradient::Linear(lin) = g;
+        let stops: Vec<_> = lin.stops.iter().flatten().collect();
+        assert!(stops.len() >= 2);
+        let first = stops[0].color;
+        let last = stops[stops.len() - 1].color;
+        // TL (first) is darker → lower luma than BR (last).
+        let luma = |c: Color| 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        assert!(
+            luma(first) < luma(last),
+            "TL should be darker than BR: {first:?} vs {last:?}"
+        );
     }
 
     #[test]

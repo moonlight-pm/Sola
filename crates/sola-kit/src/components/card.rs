@@ -1,32 +1,75 @@
-//! Card — an elevated container with kit chrome (raised bg, hairline
-//! border, rounded corners, kit padding).
+//! Card — an elevated container with kit chrome (raised bg, dual-tone
+//! bevel edge, rounded corners, kit padding).
 //!
 //! `card(content)` returns an `iced::widget::Container` so the caller
 //! can chain further iced methods (`.width(Fill)`, `.padding(...)`,
 //! `.center_x()`, …). The style fn is exposed separately for callers
 //! who already have a container and only want the kit chrome.
+//!
+//! ## Dual-tone edge
+//!
+//! Iced borders are a single colour. Cards use a **1px gradient frame**
+//! (TL darker → BR lighter) via [`style::bevel_ring`] so panels read
+//! slightly raised, matching the Open Design edge light.
 
 use iced::widget::{Container, container};
-use iced::{Background, Color, Element, Shadow, Theme, Vector};
+use iced::{Background, Border, Color, Element, Length, Shadow, Theme, Vector};
 
-use crate::components::style::{card_fill, hairline, RADIUS_LG, RADIUS_XL, SPACE_XL};
+use crate::components::style::{
+    bevel_frame, card_fill, hairline, RADIUS_LG, RADIUS_XL, SPACE_XL,
+};
 
-/// Wrap `content` in a card-styled container. Default padding is 16px;
-/// override with `.padding(...)` on the returned container if needed.
+/// Wrap `content` in a card-styled container. Default padding is 16px
+/// on the **face** (inside the 1px bevel); override with `.padding(...)`
+/// only if you accept replacing the outer ring pad — prefer wrapping
+/// content yourself when you need a different inner pad.
 pub fn card<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
 ) -> Container<'a, Message, Theme> {
-    container(content).style(style).padding(18)
+    let face = container(content)
+        .padding(18)
+        .width(Length::Fill)
+        .style(style_face);
+    container(face).padding(1).style(style_frame)
 }
 
+/// Outer 1px dual-tone bevel + soft drop shadow.
+pub fn style_frame(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    let raised = p.background.weaker.color;
+    let mut s = bevel_frame(raised, RADIUS_XL);
+    s.shadow = Shadow {
+        color: Color::from_rgba(0.0, 0.0, 0.0, 0.28),
+        offset: Vector::new(0.0, 6.0),
+        blur_radius: 16.0,
+    };
+    s
+}
+
+/// Inner face — soft vertical lift fill, no border (the frame is the edge).
+pub fn style_face(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    let raised = p.background.weaker.color;
+    container::Style {
+        background: Some(card_fill(raised)),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_XL.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Flat single-colour hairline style (no dual-tone). Kept for callers that
+/// apply `.style(card::style)` to a bare container without the nest.
+/// Prefer [`card`] / [`style_frame`] + [`style_face`] for new UI.
 pub fn style(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     let raised = p.background.weaker.color;
     container::Style {
-        // Soft vertical lift — flat raised slabs read dull vs OD.
         background: Some(card_fill(raised)),
         border: hairline(p, RADIUS_XL),
-        // Tight soft lift — heavy blur + high alpha reads as a thick frame.
         shadow: Shadow {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.28),
             offset: Vector::new(0.0, 6.0),
@@ -43,7 +86,7 @@ pub fn style_plain(theme: &Theme) -> container::Style {
     let p = theme.extended_palette();
     container::Style {
         background: Some(card_fill(p.background.weaker.color)),
-        border: iced::Border {
+        border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
             radius: RADIUS_XL.into(),
@@ -60,37 +103,32 @@ pub fn plain<'a, Message: 'a>(
     container(content).style(style_plain).padding(SPACE_XL)
 }
 
-/// Style for [`modal`]: opaque raised background, hairline border at
-/// `RADIUS_XL`, and a soft drop shadow — Spotlight/command-palette
-/// restraint, not a marketing card lift.
+/// Style for [`modal`]: dual-tone frame + opaque raised face, soft shadow.
 ///
-/// **Background is `weaker`, not `base`**: overlay windows set
-/// `base`'s alpha to zero for the see-through window fill; the modal
-/// card must remain opaque, so we use the card-raised tier instead.
-///
-/// Shadow is the kit's standard escape hatch — iced's palette
-/// vocabulary carries no shadow token (same rationale as `popover::style`).
+/// **Face is `weaker`, not `base`**: overlay windows set `base`'s alpha to
+/// zero for the see-through window fill; the modal card must remain opaque.
 pub fn modal_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(card_fill(p.background.weaker.color)),
-        border: hairline(p, RADIUS_XL),
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.38),
-            offset: Vector::new(0.0, 8.0),
-            blur_radius: 28.0,
-        },
-        ..container::Style::default()
-    }
+    // Legacy single-container path — prefer [`modal`] which nests the bevel.
+    style(theme)
 }
 
-/// Centred overlay panel chrome (launcher / command palette). Opaque
-/// `weaker` bg, soft hairline, soft shadow. Returns a
-/// `Container` so the caller can chain `.width(..)`, `.padding(..)`, etc.
+/// Centred overlay panel chrome (launcher / command palette). Dual-tone
+/// bevel + soft shadow. Returns a `Container` so the caller can chain
+/// `.width(..)`, `.padding(..)`, etc. on the **outer** frame.
 pub fn modal<'a, Message: 'a>(
     content: impl Into<Element<'a, Message, Theme>>,
 ) -> Container<'a, Message, Theme> {
-    container(content).style(modal_style)
+    let face = container(content).width(Length::Fill).style(style_face);
+    container(face).padding(1).style(|theme: &Theme| {
+        let p = theme.extended_palette();
+        let mut s = bevel_frame(p.background.weaker.color, RADIUS_XL);
+        s.shadow = Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.38),
+            offset: Vector::new(0.0, 8.0),
+            blur_radius: 28.0,
+        };
+        s
+    })
 }
 
 /// Parameterized backplate style: caller supplies fill and border
@@ -108,7 +146,7 @@ pub fn modal<'a, Message: 'a>(
 pub fn backplate_style(fill: Color, border: Color) -> impl Fn(&Theme) -> container::Style {
     move |_theme: &Theme| container::Style {
         background: Some(Background::Color(fill)),
-        border: iced::Border {
+        border: Border {
             color: border,
             width: 1.0,
             radius: RADIUS_XL.into(),
@@ -163,7 +201,7 @@ pub fn list_tile_style(selected: bool) -> impl Fn(&Theme) -> container::Style {
         container::Style {
             background,
             text_color: selected.then_some(p.background.base.text),
-            border: iced::Border {
+            border: Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
                 radius: RADIUS_LG.into(),
@@ -186,7 +224,7 @@ pub fn list_tile_style_colored(
     move |_theme: &Theme| container::Style {
         background: selected.then_some(Background::Color(fill)),
         text_color: Some(fg),
-        border: iced::Border {
+        border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
             radius: RADIUS_LG.into(),

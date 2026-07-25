@@ -11,7 +11,7 @@ use sola_kit::components::badge::{self, Tone};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
 use sola_kit::components::style::{
-    hairline, hairline_on, hero_fill, mix, mix_white, stage_fill, HAIRLINE_A, HAIRLINE_STRONG_A,
+    bevel_frame, bevel_frame_strong, hero_fill, mix, mix_white, stage_fill, HAIRLINE_A,
     RADIUS_LG, RADIUS_MD, RADIUS_XL,
 };
 use sola_kit::components::swatch::swatch_sized;
@@ -53,7 +53,7 @@ fn north_star() -> Element<'static, ButtonMsg> {
     // collapses when the parent row is shrink-height. Use a `stack` whose
     // base layer is the rules column (intrinsic height); the hero layer then
     // receives that height as its limit and can `Fill` to match.
-    let hero = container(
+    let hero_face = container(
         column![
             text("NORTH STAR")
                 .font(fonts::ui_medium())
@@ -89,10 +89,22 @@ fn north_star() -> Element<'static, ButtonMsg> {
         let selection = sola_kit::theme::selection();
         iced::widget::container::Style {
             background: Some(hero_fill(bg, raised, selection)),
-            border: hairline_on(raised, HAIRLINE_STRONG_A, RADIUS_XL),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_XL.into(),
+            },
             ..Default::default()
         }
     });
+    // Dual-tone bevel ring (TL dark → BR light).
+    let hero = container(hero_face)
+        .padding(1)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|theme: &iced::Theme| {
+            bevel_frame_strong(theme.extended_palette().background.weaker.color, RADIUS_XL)
+        });
 
     let rules = column![
         rule_card(
@@ -137,7 +149,7 @@ fn north_star() -> Element<'static, ButtonMsg> {
 }
 
 fn rule_card(title: &'static str, body_text: &'static str) -> Element<'static, ButtonMsg> {
-    container(
+    let face = container(
         column![
             text(title).font(fonts::ui_medium()).size(12),
             caption(body_text).style(muted),
@@ -154,11 +166,23 @@ fn rule_card(title: &'static str, body_text: &'static str) -> Element<'static, B
         let fill = mix(raised, bg, 0.75);
         iced::widget::container::Style {
             background: Some(Background::Color(fill)),
-            border: hairline_on(fill, HAIRLINE_A, RADIUS_LG),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_LG.into(),
+            },
             ..Default::default()
         }
-    })
-    .into()
+    });
+    container(face)
+        .padding(1)
+        .width(Length::Fill)
+        .style(|theme: &iced::Theme| {
+            let p = theme.extended_palette();
+            let fill = mix(p.background.weaker.color, p.background.base.color, 0.75);
+            bevel_frame(fill, RADIUS_LG)
+        })
+        .into()
 }
 
 fn selection_compare(selection: Color) -> Element<'static, ButtonMsg> {
@@ -328,19 +352,12 @@ fn compare_card(
             }
         });
 
-    // Outer shell: border only. `padding(1)` keeps opaque children from
-    // painting over the 1px hairline; matching corner radii on hdr/body
-    // keep the top/bottom arcs clean.
+    // Outer dual-tone bevel; `padding(1)` + per-corner radii on hdr/body.
     container(column![hdr, rule, body_block])
         .padding(1)
         .clip(true)
         .style(|theme: &iced::Theme| {
-            let p = theme.extended_palette();
-            iced::widget::container::Style {
-                background: Some(Background::Color(p.background.base.color)),
-                border: hairline(p, RADIUS_LG),
-                ..Default::default()
-            }
+            bevel_frame(theme.extended_palette().background.weaker.color, RADIUS_LG)
         })
         .width(Length::Fill)
         .into()
@@ -427,7 +444,6 @@ fn color_foundation(atoms: &Atoms) -> Element<'_, ButtonMsg> {
         ]
         .spacing(10),
     )
-    .padding(18)
     .width(Length::Fill)
     .into()
 }
@@ -481,7 +497,6 @@ fn type_roles() -> Element<'static, ButtonMsg> {
             ]
             .spacing(8),
         )
-        .padding(18)
         .width(Length::Fill),
     ]
     .spacing(8)
@@ -511,7 +526,7 @@ fn spacing_radius() -> Element<'static, ButtonMsg> {
 }
 
 fn scale_chip(name: &'static str, value: &'static str) -> Element<'static, ButtonMsg> {
-    container(
+    let face = container(
         column![
             // OD: <b> name — medium 11px primary, not muted caption.
             text(name).font(fonts::ui_medium()).size(11),
@@ -524,28 +539,33 @@ fn scale_chip(name: &'static str, value: &'static str) -> Element<'static, Butto
         .spacing(2),
     )
     .padding(Padding::from([8, 10]))
-    // Wide enough for "pad control" without wrapping the label.
-    .width(Length::Fixed(88.0))
+    .width(Length::Fill)
     .style(|theme: &iced::Theme| {
         let p = theme.extended_palette();
         let fill = p.background.weaker.color;
         iced::widget::container::Style {
             background: Some(Background::Color(fill)),
             border: Border {
-                color: mix_white(fill, HAIRLINE_A),
-                width: 1.0,
-                // OD uses r-md on scale chips.
+                color: Color::TRANSPARENT,
+                width: 0.0,
                 radius: RADIUS_MD.into(),
             },
             text_color: Some(p.background.base.text),
             ..Default::default()
         }
-    })
-    .into()
+    });
+    // Wide enough for "pad control" without wrapping the label.
+    container(face)
+        .padding(1)
+        .width(Length::Fixed(88.0))
+        .style(|theme: &iced::Theme| {
+            bevel_frame(theme.extended_palette().background.weaker.color, RADIUS_MD)
+        })
+        .into()
 }
 
 fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
-    let product = container(
+    let product_face = container(
         column![
             text("PRODUCT MOMENT")
                 .font(fonts::ui_medium())
@@ -606,7 +626,7 @@ fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
         .spacing(12),
     )
     .padding(18)
-    .width(Length::FillPortion(3))
+    .width(Length::Fill)
     .style(|theme: &iced::Theme| {
         let p = theme.extended_palette();
         let bg = p.background.base.color;
@@ -614,13 +634,23 @@ fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
         let accent = p.primary.base.color;
         iced::widget::container::Style {
             background: Some(stage_fill(bg, raised, accent)),
-            border: hairline_on(raised, HAIRLINE_STRONG_A, RADIUS_XL),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_XL.into(),
+            },
             ..Default::default()
         }
     });
+    let product = container(product_face)
+        .padding(1)
+        .width(Length::FillPortion(3))
+        .style(|theme: &iced::Theme| {
+            bevel_frame_strong(theme.extended_palette().background.weaker.color, RADIUS_XL)
+        });
 
-    // OD `.style-key` — soft raised mix, not full card gradient + shadow.
-    let style_key = container(
+    // OD `.style-key` — soft raised mix + dual-tone bevel.
+    let style_key_face = container(
         column![
             row![
                 text("Style key").font(fonts::ui_medium()).size(13),
@@ -668,7 +698,7 @@ fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
         .spacing(10),
     )
     .padding(16)
-    .width(Length::FillPortion(2))
+    .width(Length::Fill)
     .style(|theme: &iced::Theme| {
         let p = theme.extended_palette();
         let raised = p.background.weaker.color;
@@ -677,10 +707,22 @@ fn control_stage(button_state: &button_page::State) -> Element<'_, ButtonMsg> {
         let fill = mix(raised, bg, 0.90);
         iced::widget::container::Style {
             background: Some(Background::Color(fill)),
-            border: hairline_on(fill, HAIRLINE_A, RADIUS_XL),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: RADIUS_XL.into(),
+            },
             ..Default::default()
         }
     });
+    let style_key = container(style_key_face)
+        .padding(1)
+        .width(Length::FillPortion(2))
+        .style(|theme: &iced::Theme| {
+            let p = theme.extended_palette();
+            let fill = mix(p.background.weaker.color, p.background.base.color, 0.90);
+            bevel_frame(fill, RADIUS_XL)
+        });
 
     column![
         subheading("Control stage"),
