@@ -444,6 +444,15 @@ fn pull_pack(name: &str, pack: &Pack, nix_resolved: Option<PathBuf>) {
             let cursors_dest = dest.join("cursors");
             let count = copy_cursor_files(&src, &cursors_dest);
             println!("  {count} cursors -> {}", cursors_dest.display());
+            // McMojave (and some other themes) ship size_hor/size_ver but
+            // not the CSS names ew-resize/ns-resize that winit/sctk request
+            // for side resize. Without these, side grips silently fall
+            // back to the default arrow. Symlink when the CSS name is
+            // missing and a known alias exists.
+            let aliases = ensure_cursor_aliases(&cursors_dest);
+            if aliases > 0 {
+                println!("  {aliases} XDG cursor aliases -> {}", cursors_dest.display());
+            }
             // Cursor themes need an `index.theme` next to `cursors/`.
             // XDG-conventional location is the parent of the cursors
             // directory (McMojave's `dist/index.theme`); Adwaita keeps
