@@ -853,20 +853,23 @@ where
 
     // ── Plain path (no reorder). ──
     let Some(reorder) = reorder else {
-        // Hover-action rows: the **full padded row** is the select hit target
-        // (including vertical pad — otherwise 2×ITEM_PAD_V between text
-        // blocks is dead space). Trash stays a **sibling** so its button
-        // never also fires select.
+        // Hover-action rows: full padded row is the select target (pad is
+        // inside the mouse_area so inter-row space is clickable). Trash
+        // overlays bottom-right (under the age label) via `stack` — same
+        // pattern as [`vertical_tabs`] — so showing it never steals width
+        // from the age label or shifts layout (which also broke hover
+        // enter/exit when moving across rows).
         let row_el: Element<'a, Message> = if hover_action.is_some() {
-            let left = item_text_block(&label, subtitle.as_deref(), indicator);
-            // Age/shortcut only inside the select target — not the trash.
-            let trail = item_trailing(secondary.as_deref(), shortcut, None);
-            let body = row![left, trail]
-                .spacing(SPACE_MD)
-                .align_y(iced::Alignment::Start)
-                .width(Length::Fill);
+            let content = item_content(
+                &label,
+                subtitle.as_deref(),
+                secondary.as_deref(),
+                shortcut,
+                indicator,
+                None,
+            );
             let mut select = mouse_area(
-                container(body)
+                container(content)
                     .width(Length::Fill)
                     .padding(pad)
                     .style(move |theme: &Theme| row_container_style(theme, active)),
@@ -878,18 +881,20 @@ where
             }
             if show_hover_action {
                 if let Some(action) = hover_action {
-                    // Align trash with the row's top pad so it sits under age.
+                    // Float trash over the trailing age corner; stack sizes
+                    // to the base row so nothing reflows.
                     let trash = container(hover_action_button(action))
+                        .align_x(iced::alignment::Horizontal::Right)
+                        .align_y(iced::alignment::Vertical::Bottom)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
                         .padding(Padding {
-                            top: ITEM_PAD_V + 1.0,
-                            right: ITEM_PAD_H,
-                            bottom: ITEM_PAD_V,
+                            top: 0.0,
+                            right: (ITEM_PAD_H - 2.0).max(0.0),
+                            bottom: (ITEM_PAD_V - 2.0).max(0.0),
                             left: 0.0,
                         });
-                    row![select, trash]
-                        .align_y(iced::Alignment::Start)
-                        .width(Length::Fill)
-                        .into()
+                    stack![select, trash].into()
                 } else {
                     select.into()
                 }
@@ -1366,7 +1371,12 @@ where
 
     /// Track which item id is hovered so [`SidebarItem::hover_action`] can
     /// appear only on that row. `hovered` is the app-owned id (or `None`);
-    /// `on_hover` receives `Some(id)` on enter and `None` on exit.
+    /// `on_hover` receives `Some(id)` when the pointer enters a row and
+    /// `None` when it leaves the item list entirely.
+    ///
+    /// Rows only emit **enter** (not exit). A list-level exit clears hover.
+    /// Per-row exit races with the next row's enter (order depends on move
+    /// direction) and left trash stuck off when sweeping upward.
     pub fn item_hover(
         mut self,
         hovered: Option<String>,
@@ -1527,13 +1537,12 @@ where
                             .is_some_and(|id| hovered_id.as_ref() == Some(id));
                         let mut row_el =
                             render_item(item, reorder_ref, row_index, show_action);
+                        // Enter only — list-level exit clears hover so A→B
+                        // cannot race (exit A after enter B → stuck None).
                         if let (Some(id), Some(ref mut on_hover)) =
                             (item_id, on_item_hover.as_mut())
                         {
-                            row_el = mouse_area(row_el)
-                                .on_enter(on_hover(Some(id)))
-                                .on_exit(on_hover(None))
-                                .into();
+                            row_el = mouse_area(row_el).on_enter(on_hover(Some(id))).into();
                         }
                         body_items = body_items.push(row_el);
                     }
@@ -1543,16 +1552,27 @@ where
                 if wants_fill {
                     // First fill section owns app-driven scroll + chips.
                     let scroll_cb = on_section_scroll.take();
-                    let body = fill_section_body(
+                    let mut body = fill_section_body(
                         body_items,
                         n_in_section,
                         content_h,
                         scroll_snap,
                         scroll_cb,
                     );
+                    if let Some(ref mut on_hover) = on_item_hover {
+                        body = mouse_area(body).on_exit(on_hover(None)).into();
+                    }
                     sections_col = sections_col.push(body);
                 } else {
-                    sections_col = sections_col.push(body_items);
+                    let body: Element<'a, Message> =
+                        if let Some(ref mut on_hover) = on_item_hover {
+                            mouse_area(body_items)
+                                .on_exit(on_hover(None))
+                                .into()
+                        } else {
+                            body_items.into()
+                        };
+                    sections_col = sections_col.push(body);
                 }
             }
 
