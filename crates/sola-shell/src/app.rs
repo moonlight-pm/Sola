@@ -260,8 +260,13 @@ impl Shell {
     ///
     /// Stack order (bottom → top):
     ///   1. Shell menubar — always at bottom.
-    ///   2. App windows ordered by MRU (least recent first), per-app MRU window on top.
-    ///   3. Shell overlays when active (menu, switcher, launcher — launcher on top).
+    ///   2. App windows not yet in MRU (never raised) — under everything raised,
+    ///      so focus-follows-mouse without a raise cannot leave an external app
+    ///      permanently stuck on top of activated windows.
+    ///   3. App windows ordered by MRU (least recent first), per-app MRU window
+    ///      on top of its siblings. Only click / switcher / map activation bumps
+    ///      MRU (raise).
+    ///   4. Shell overlays when active (menu, switcher, launcher — launcher on top).
     pub fn emit_composition(&self) {
         let mut entries: Vec<CompositionEntry> = Vec::new();
 
@@ -270,14 +275,22 @@ impl Shell {
             entries.push(CompositionEntry { window_id: wid });
         }
 
-        // 2. App windows ordered by MRU (least recent first = bottom of stack).
+        let mru_set: HashSet<&str> = self.mru_apps.iter().map(String::as_str).collect();
+
+        // 2. Apps not yet in MRU — bottom of the app stack (never auto-raised).
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID || mru_set.contains(w.app_id.as_str()) {
+                continue;
+            }
+            entries.push(CompositionEntry { window_id: w.window_id });
+        }
+
+        // 3. App windows ordered by MRU (least recent first = bottom of raised stack).
         // Within each app, the per-app MRU window sits on top of its siblings.
-        let mut seen_app_ids: HashSet<&str> = HashSet::new();
         for app_id in self.mru_apps.iter().rev() {
             if app_id.as_str() == Self::APP_ID {
                 continue;
             }
-            seen_app_ids.insert(app_id.as_str());
             let top_wid = self.mru_window_by_app.get(app_id).copied();
             for w in &self.known_windows {
                 if w.app_id == *app_id && Some(w.window_id) != top_wid {
@@ -294,15 +307,8 @@ impl Shell {
                 }
             }
         }
-        // Apps not yet in MRU.
-        for w in &self.known_windows {
-            if w.app_id == Self::APP_ID || seen_app_ids.contains(w.app_id.as_str()) {
-                continue;
-            }
-            entries.push(CompositionEntry { window_id: w.window_id });
-        }
 
-        // 3. Shell overlays on top when active.
+        // 4. Shell overlays on top when active.
         if self.menu_open {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
                 entries.push(CompositionEntry { window_id: wid });

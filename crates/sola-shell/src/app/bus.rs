@@ -184,6 +184,20 @@ impl Shell {
             );
         }
 
+        // Ensure every known non-shell app is tracked in mru_apps at least at
+        // the least-recent end. Without this, apps only pointer-focused (never
+        // click-raised) used to live outside MRU and were composition-stacked
+        // *above* every raised window — Helium/external apps looked "stuck"
+        // on top. New maps still raise via bus_set_focus below.
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID {
+                continue;
+            }
+            if !self.mru_apps.iter().any(|m| m == &w.app_id) {
+                self.mru_apps.push(w.app_id.clone());
+            }
+        }
+
         // Focus the newest app so the user can start using it immediately.
         // If no new app appeared but the focused app was just closed, fall
         // back to the next MRU app — or clear the menubar if none remain.
@@ -262,6 +276,11 @@ impl Shell {
     /// Shared focus bookkeeping. When `bump_mru` is true the app moves to the
     /// front of the stack (raise on next `emit_composition`); when false only
     /// input focus / menubar / chords follow.
+    ///
+    /// Pointer focus still **registers** the app at the least-recent end of
+    /// `mru_apps` if it is missing — that keeps Super+Tab complete and stops
+    /// never-raised external windows from living in the "not in MRU" bucket.
+    /// It never moves an already-listed app forward (that is raise-only).
     fn apply_focus(&mut self, app_id: &str, bump_mru: bool) {
         let app_changed = self.focused_app_id.as_deref() != Some(app_id);
         self.focused_app_id = Some(app_id.to_string());
@@ -269,6 +288,9 @@ impl Shell {
         if bump_mru {
             self.mru_apps.retain(|m| m != app_id);
             self.mru_apps.insert(0, app_id.to_string());
+        } else if !self.mru_apps.iter().any(|m| m == app_id) {
+            // Track without raising — least-recent = bottom of stack.
+            self.mru_apps.push(app_id.to_string());
         }
 
         // Close any open menu on focus change.
