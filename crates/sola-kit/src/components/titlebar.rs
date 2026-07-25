@@ -14,7 +14,8 @@ use iced::border::Radius;
 use iced::widget::{Space, button, container, mouse_area, row, stack, text};
 use iced::window::Direction;
 use iced::{
-    Alignment, Border, Color, Element, Event, Length, Padding, Point, Rectangle, Size, Theme,
+    Alignment, Background, Border, Color, Element, Event, Length, Padding, Point, Rectangle, Size,
+    Theme,
 };
 
 use crate::components::style::{HAIRLINE_A, RADIUS_XL, SPACE_LG, mix_white};
@@ -27,11 +28,17 @@ pub const HEIGHT: f32 = 38.0;
 /// Corner radius for a floating window frame (matches kit `RADIUS_XL`).
 pub const WINDOW_RADIUS: f32 = RADIUS_XL;
 
-/// Inward edge/corner resize grip thickness (logical px). One size for both
-/// so the eight regions tile the perimeter without gaps or overlaps — a
-/// hairline-thick mismatch was letting the default cursor flash on the
-/// border, and taller corner layers were stealing mid-edge hits.
-const GRIP: f32 = 14.0;
+/// Inward edge resize band (logical px). Straight sides only — corners use
+/// the larger [`CORNER_GRIP`] square so the rounded visual arc stays inside
+/// a single diagonal zone (no edge↔corner cursor twiggle on the curve).
+const EDGE_GRIP: f32 = 12.0;
+/// Square corner hit box (logical px). ≥ [`WINDOW_RADIUS`] so the
+/// transparent "ear" between the curved paint and the AABB corner still
+/// belongs to this window for pointer hits (obscures apps below).
+const CORNER_GRIP: f32 = 18.0;
+/// Nearly-invisible alpha for the square corner pads. Non-zero so the
+/// buffer isn't empty there; low enough to stay visually transparent.
+const CORNER_PAD_A: f32 = 0.02;
 
 /// Outer border width. Face content is inset by this so children never
 /// paint over the hairline (same trick as kit `card`).
@@ -131,49 +138,78 @@ where
         .into()
 }
 
-/// Invisible full-window rim that maps the pointer to one of eight resize
-/// directions when it sits within [`GRIP`] px of the edge (corners win on
-/// the g×g squares). Outside the rim, interaction is `None` so the stack
+/// Full-window rim: square corner pads (drawn nearly invisible) + eight-way
+/// resize hit zones. Outside the rim, interaction is `None` so the stack
 /// falls through to titlebar/content.
 struct ResizeRim<'a, Message> {
     on_resize: Box<dyn Fn(Direction) -> Message + 'a>,
-    grip: f32,
+    edge: f32,
+    corner: f32,
 }
 
 impl<'a, Message> ResizeRim<'a, Message> {
     fn new(on_resize: impl Fn(Direction) -> Message + 'a) -> Self {
         Self {
             on_resize: Box::new(on_resize),
-            grip: GRIP,
+            edge: EDGE_GRIP,
+            corner: CORNER_GRIP,
         }
     }
 }
 
 /// Which resize direction contains `p` inside `bounds`, if any.
-/// Corners take priority over pure edges when the pointer is in a g×g square.
-fn resize_zone(bounds: Rectangle, p: Point, grip: f32) -> Option<Direction> {
+///
+/// Corners are **axis-aligned squares** of side `corner` (not just the
+/// curved paint), so the transparent ear outside the rounded chrome still
+/// counts as this window. Straight edges use the thinner `edge` band and
+/// stop where the corner squares begin.
+fn resize_zone(bounds: Rectangle, p: Point, edge: f32, corner: f32) -> Option<Direction> {
     let x0 = bounds.x;
     let y0 = bounds.y;
     let x1 = bounds.x + bounds.width;
     let y1 = bounds.y + bounds.height;
-    // Inclusive outer edge, exclusive inner — covers the hairline border
-    // pixel and the inward grip band with no gap.
-    let left = p.x >= x0 && p.x < x0 + grip;
-    let right = p.x < x1 && p.x >= x1 - grip;
-    let top = p.y >= y0 && p.y < y0 + grip;
-    let bottom = p.y < y1 && p.y >= y1 - grip;
-
-    match (top, bottom, left, right) {
-        (true, _, true, _) => Some(Direction::NorthWest),
-        (true, _, _, true) => Some(Direction::NorthEast),
-        (_, true, true, _) => Some(Direction::SouthWest),
-        (_, true, _, true) => Some(Direction::SouthEast),
-        (true, _, _, _) => Some(Direction::North),
-        (_, true, _, _) => Some(Direction::South),
-        (_, _, true, _) => Some(Direction::West),
-        (_, _, _, true) => Some(Direction::East),
-        _ => None,
+    // Inclusive outer edge — covers the hairline pixel.
+    let dl = p.x - x0;
+    let dr = x1 - p.x;
+    let dt = p.y - y0;
+    let db = y1 - p.y;
+    if dl < 0.0 || dr < 0.0 || dt < 0.0 || db < 0.0 {
+        return None;
     }
+
+    let in_left_c = dl < corner;
+    let in_right_c = dr < corner;
+    let in_top_c = dt < corner;
+    let in_bottom_c = db < corner;
+
+    // Square corner cells first (full AABB corner, not just the curve).
+    if in_top_c && in_left_c {
+        return Some(Direction::NorthWest);
+    }
+    if in_top_c && in_right_c {
+        return Some(Direction::NorthEast);
+    }
+    if in_bottom_c && in_left_c {
+        return Some(Direction::SouthWest);
+    }
+    if in_bottom_c && in_right_c {
+        return Some(Direction::SouthEast);
+    }
+
+    // Straight edges — only outside the corner squares.
+    if dt < edge {
+        return Some(Direction::North);
+    }
+    if db < edge {
+        return Some(Direction::South);
+    }
+    if dl < edge {
+        return Some(Direction::West);
+    }
+    if dr < edge {
+        return Some(Direction::East);
+    }
+    None
 }
 
 fn interaction_for(dir: Direction) -> mouse::Interaction {
@@ -227,7 +263,7 @@ where
         let Some(p) = cursor.position() else {
             return;
         };
-        let Some(dir) = resize_zone(layout.bounds(), p, self.grip) else {
+        let Some(dir) = resize_zone(layout.bounds(), p, self.edge, self.corner) else {
             return;
         };
         shell.publish((self.on_resize)(dir));
@@ -245,7 +281,7 @@ where
         let Some(p) = cursor.position() else {
             return mouse::Interaction::None;
         };
-        match resize_zone(layout.bounds(), p, self.grip) {
+        match resize_zone(layout.bounds(), p, self.edge, self.corner) {
             Some(dir) => interaction_for(dir),
             None => mouse::Interaction::None,
         }
@@ -254,14 +290,60 @@ where
     fn draw(
         &self,
         _tree: &Tree,
-        _renderer: &mut Renderer,
+        renderer: &mut Renderer,
         _theme: &Theme,
         _style: &renderer::Style,
-        _layout: Layout<'_>,
+        layout: Layout<'_>,
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
-        // Invisible — hit-test only.
+        // Paint nearly-invisible square pads in the four AABB corners so the
+        // transparent "ears" outside the rounded chrome still own pointer
+        // hits (and visually obscure apps below in that tiny square).
+        let b = layout.bounds();
+        let c = self.corner;
+        let pad = Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: CORNER_PAD_A,
+        };
+        let corners = [
+            Rectangle {
+                x: b.x,
+                y: b.y,
+                width: c,
+                height: c,
+            },
+            Rectangle {
+                x: b.x + b.width - c,
+                y: b.y,
+                width: c,
+                height: c,
+            },
+            Rectangle {
+                x: b.x,
+                y: b.y + b.height - c,
+                width: c,
+                height: c,
+            },
+            Rectangle {
+                x: b.x + b.width - c,
+                y: b.y + b.height - c,
+                width: c,
+                height: c,
+            },
+        ];
+        for rect in corners {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: rect,
+                    border: Border::default(),
+                    ..renderer::Quad::default()
+                },
+                Background::Color(pad),
+            );
+        }
     }
 }
 
@@ -293,32 +375,35 @@ mod resize_zone_tests {
     #[test]
     fn mid_edges_and_corners() {
         let b = bounds();
-        let g = 14.0;
+        let e = 12.0;
+        let c = 18.0;
         // Mid-right → East (not a corner). Direction has no PartialEq.
         assert!(matches!(
-            resize_zone(b, Point::new(b.x + b.width - 2.0, b.y + b.height / 2.0), g),
+            resize_zone(b, Point::new(b.x + b.width - 2.0, b.y + b.height / 2.0), e, c),
             Some(Direction::East)
         ));
         assert!(matches!(
-            resize_zone(b, Point::new(b.x + 2.0, b.y + b.height / 2.0), g),
+            resize_zone(b, Point::new(b.x + 2.0, b.y + b.height / 2.0), e, c),
             Some(Direction::West)
         ));
+        // Geometric AABB corner (outside the visual curve) → SouthEast.
         assert!(matches!(
-            resize_zone(b, Point::new(b.x + b.width - 2.0, b.y + b.height - 2.0), g),
+            resize_zone(b, Point::new(b.x + b.width - 1.0, b.y + b.height - 1.0), e, c),
             Some(Direction::SouthEast)
         ));
-        // Hairline on the right edge (outermost pixel) → East.
+        // On the rounded-arc region near SE → still SouthEast (square corner cell).
         assert!(matches!(
-            resize_zone(
-                b,
-                Point::new(b.x + b.width - 0.5, b.y + b.height / 2.0),
-                g
-            ),
+            resize_zone(b, Point::new(b.x + b.width - 4.0, b.y + b.height - 4.0), e, c),
+            Some(Direction::SouthEast)
+        ));
+        // Hairline mid-right → East.
+        assert!(matches!(
+            resize_zone(b, Point::new(b.x + b.width - 0.5, b.y + b.height / 2.0), e, c),
             Some(Direction::East)
         ));
         // Centre → None (pass through).
         assert!(
-            resize_zone(b, Point::new(b.x + b.width / 2.0, b.y + b.height / 2.0), g).is_none()
+            resize_zone(b, Point::new(b.x + b.width / 2.0, b.y + b.height / 2.0), e, c).is_none()
         );
     }
 }
