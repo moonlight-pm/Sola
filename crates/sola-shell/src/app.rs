@@ -84,8 +84,6 @@ pub enum Msg {
     SwitcherConfirm,
     /// Cancel without focus change: deactivate.
     SwitcherCancel,
-    /// Focus-hover timer fired: raise `window_id` if `generation` still matches.
-    FocusHoverFire { window_id: u32, generation: u64 },
     /// Cycle to the next window of the currently focused app (Meta+`).
     CycleAppWindows,
     Noop,
@@ -164,11 +162,6 @@ pub struct Shell {
     pub net_down_hist: crate::stats::History,
     pub net_up_hist: crate::stats::History,
     pub gpu_hist: crate::stats::History,
-
-    // Focus-hover generation counter (replaces legacy AppRuntimeHandle pattern).
-    // Incremented on every schedule_focus_from_pointer call so stale timer
-    // callbacks can detect they've been superseded.
-    pub pending_focus_generation: u64,
 }
 
 impl Shell {
@@ -242,7 +235,6 @@ impl Shell {
             net_down_hist: crate::stats::History::new(60),
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
-            pending_focus_generation: 0,
         };
 
         (state, task)
@@ -971,31 +963,6 @@ impl Shell {
                 self.switcher.active = false;
                 self.emit_composition();
                 self.emit_registered_chords();
-                iced::Task::none()
-            }
-            Msg::FocusHoverFire { window_id, generation } => {
-                // Only act if the generation matches — any mouse-enter or
-                // mouse-left bump cancels the pending fire.
-                if generation != self.pending_focus_generation {
-                    return iced::Task::none();
-                }
-                // Look up app_id from known_windows; skip shell surfaces.
-                let app_id = self
-                    .known_windows
-                    .iter()
-                    .find(|w| w.window_id == window_id && w.app_id != Self::APP_ID)
-                    .map(|w| w.app_id.clone());
-                if let Some(ref id) = app_id {
-                    self.bus_set_focus(id);
-                    self.focused_window_id = Some(window_id);
-                    self.mru_window_by_app.insert(id.clone(), window_id);
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(sola_bus::topics::Topic::Focus(
-                            sola_bus::topics::FocusTarget { window_id },
-                        ));
-                    }
-                    self.emit_composition();
-                }
                 iced::Task::none()
             }
             Msg::CycleAppWindows => {

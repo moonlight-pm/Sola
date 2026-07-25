@@ -245,15 +245,31 @@ impl Shell {
         let _ = focused_is_this; // used implicitly via emit_registered_chords
     }
 
-    /// Update focus state, zoning, and MRU ordering for the given app_id.
-    /// Also emits registered chords if the focused app changed (per-app chord
-    /// set may have changed).
+    /// Update keyboard/menubar focus for `app_id` and bump it to the front of
+    /// the app MRU list (used by composition stacking + Super+Tab).
+    ///
+    /// Prefer [`Self::set_pointer_focus`] for focus-follows-mouse — that path
+    /// must not raise windows.
     pub fn bus_set_focus(&mut self, app_id: &str) {
+        self.apply_focus(app_id, true);
+    }
+
+    /// Focus-follows-mouse: keyboard/menubar focus only — no MRU bump, no raise.
+    pub fn set_pointer_focus(&mut self, app_id: &str) {
+        self.apply_focus(app_id, false);
+    }
+
+    /// Shared focus bookkeeping. When `bump_mru` is true the app moves to the
+    /// front of the stack (raise on next `emit_composition`); when false only
+    /// input focus / menubar / chords follow.
+    fn apply_focus(&mut self, app_id: &str, bump_mru: bool) {
         let app_changed = self.focused_app_id.as_deref() != Some(app_id);
         self.focused_app_id = Some(app_id.to_string());
         self.zoning.set_focused(app_id.to_string());
-        self.mru_apps.retain(|m| m != app_id);
-        self.mru_apps.insert(0, app_id.to_string());
+        if bump_mru {
+            self.mru_apps.retain(|m| m != app_id);
+            self.mru_apps.insert(0, app_id.to_string());
+        }
 
         // Close any open menu on focus change.
         if self.menu_open && app_changed {
@@ -265,6 +281,46 @@ impl Shell {
         if app_changed {
             self.emit_registered_chords();
         }
+    }
+
+    /// Resolve a non-shell window_id → app_id, if known.
+    fn app_id_for_window(&self, window_id: u32) -> Option<String> {
+        self.known_windows
+            .iter()
+            .find(|w| w.window_id == window_id && w.app_id != Self::APP_ID)
+            .map(|w| w.app_id.clone())
+    }
+
+    /// Emit `Topic::Focus` so sola-river routes keyboard/pointer to `window_id`.
+    fn emit_focus(&self, window_id: u32) {
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
+        }
+    }
+
+    /// Instant pointer focus (no raise, no stack change).
+    fn focus_window_from_pointer(&mut self, window_id: u32) {
+        if self.focused_window_id == Some(window_id) {
+            return;
+        }
+        let Some(app_id) = self.app_id_for_window(window_id) else {
+            return;
+        };
+        self.set_pointer_focus(&app_id);
+        self.focused_window_id = Some(window_id);
+        self.emit_focus(window_id);
+    }
+
+    /// Click activation: focus + raise to front of the composition stack.
+    fn raise_window_from_click(&mut self, window_id: u32) {
+        let Some(app_id) = self.app_id_for_window(window_id) else {
+            return;
+        };
+        self.bus_set_focus(&app_id);
+        self.focused_window_id = Some(window_id);
+        self.mru_window_by_app.insert(app_id, window_id);
+        self.emit_focus(window_id);
+        self.emit_composition();
     }
 
     /// Look up any window_id for an app_id (first match in known_windows).
@@ -643,7 +699,11 @@ impl Shell {
     // -------------------------------------------------------------------------
 
     /// Cursor entered a window surface.
-    /// Starts a 500 ms focus-hover timer; if the cursor stays, raise that window.
+    ///
+    /// Focus-follows-mouse: keyboard/pointer input target updates **instantly**,
+    /// but the window is **not** raised. Raising is click-only (see
+    /// [`Self::on_mouse_clicked`]) so floating foreground windows stay on top
+    /// while the pointer moves over a large background app.
     fn on_mouse_entered(&mut self, e: MouseEnteredPayload) -> Task<Msg> {
         // Skip shell surfaces — hovering the menubar must not steal focus.
         let is_shell = self
@@ -654,28 +714,18 @@ impl Shell {
             return Task::none();
         }
 
-        // Bump generation to cancel any previous pending fire.
-        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
-        let focus_gen = self.pending_focus_generation;
-        let wid = e.window_id;
-
-        Task::perform(
-            tokio::time::sleep(Duration::from_millis(500)),
-            move |_| Msg::FocusHoverFire { window_id: wid, generation: focus_gen },
-        )
+        self.focus_window_from_pointer(e.window_id);
+        Task::none()
     }
 
     /// Mouse button pressed on a window surface.
-    /// If a menu is open and the click lands on a non-shell window, close it.
+    ///
+    /// Any click on an app window raises it to the front (and focuses it).
+    /// Also dismisses an open menubar dropdown when the click is outside shell.
     fn on_mouse_clicked(&mut self, e: MouseClickedPayload) {
-        if !self.menu_open {
-            return;
-        }
-        // Dismiss the menu only when the user clicks a non-shell window.
         // known_windows includes shell surfaces (sola-river reports them in
         // Topic::Windows), so we must exclude clicks on our own surfaces —
-        // otherwise clicking a menubar label fires both OpenMenu AND this
-        // dismiss handler, racing the open.
+        // otherwise clicking a menubar label races OpenMenu with dismiss/raise.
         let clicked_shell = self
             .known_windows
             .iter()
@@ -685,22 +735,37 @@ impl Shell {
             // let the normal OpenMenu / CloseMenu messages handle it.
             return;
         }
+
         let is_app_window = self
             .known_windows
             .iter()
             .any(|w| w.window_id == e.window_id);
-        if is_app_window {
+        if !is_app_window {
+            return;
+        }
+
+        // Outside-click dismiss for the menubar dropdown (before raise so
+        // composition includes both the closed menu and the raised app).
+        // Re-emit chords so Escape is unregistered once the overlay is gone.
+        let dismissed_menu = self.menu_open;
+        if dismissed_menu {
             self.menu_open = false;
             self.current_open_index = None;
-            self.emit_composition();
+            self.open_panel = None;
+        }
+
+        self.raise_window_from_click(e.window_id);
+
+        if dismissed_menu {
+            // raise may already have re-emitted chords on app change; always
+            // re-emit here so Escape drops even when focus stays put.
             self.emit_registered_chords();
         }
     }
 
     /// Cursor left all tracked surfaces.
-    /// Cancels any pending focus-hover timer by bumping the generation counter.
+    /// Leave keyboard focus where it is (classic sloppy-focus leave policy).
     fn on_mouse_left(&mut self) -> Task<Msg> {
-        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
         Task::none()
     }
 
