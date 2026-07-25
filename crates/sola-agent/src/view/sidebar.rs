@@ -57,6 +57,9 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
 
     let mut panel = SidebarPanel::new(sections)
         .header(header)
+        // Packed rows: no dead band between sessions (kit default is 0;
+        // set explicitly so a future kit default change cannot reintroduce gaps).
+        .item_spacing(0.0)
         .section_scroll(app.session_section_scroll, Msg::SessionSectionScroll)
         .item_hover(app.session_hover.clone(), Msg::SessionHover)
         .resizable_with(

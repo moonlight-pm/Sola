@@ -349,7 +349,11 @@ fn transcript(app: &App) -> Element<'_, Msg> {
         bubbles.push(older);
     }
 
-    let inner: Element<'_, Msg> = if app.turns.is_empty() && bubbles.is_empty() {
+    let inner: Element<'_, Msg> = if app.content_loading && app.turns.is_empty() {
+        // Keep the pane blank while content is en route — no loading label.
+        // Selection already flipped; content arrives on the next message.
+        Space::new().width(Length::Fill).height(Length::Fill).into()
+    } else if app.turns.is_empty() && bubbles.is_empty() {
         empty_transcript(app)
     } else if app.turns.is_empty() {
         // Gaps are applied per-block in bubble::turns_view (kind-aware).

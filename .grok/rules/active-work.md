@@ -24,14 +24,19 @@ Implemented in `sola-river`:
 - attach/rebuild on float + size change; tear-down on unfloat/fullscreen/close
 - `render_start` path: `set_offset` + `sync_next_commit` when buffer is new
 - binds `wl_compositor`; reuses existing `wl_shm`
+- rebased/merged master (includes sola-make `ensure_cursor_aliases`)
 
 ### Next
 
 - User smoke: float Monitor / foreign app; confirm soft shadow, no click steal
 - Tune MARGIN / BLUR / PEAK_ALPHA / OFFSET_Y if needed
-- `cargo make install sola-river` when ready (ask first)
 
 ### Last completed (prior)
+
+**agent-session-perf → master**: optimistic session switch + transcript
+cache; full-row sidebar hit targets / `item_spacing`; no
+`session/cancel` on tab switch (shared leader + TUI); cursor alias fix
+in sola-make.
 
 **focus-follows-mouse → master**: focus without raise (raise on click);
 200ms dwell; pointer resync after map; float drag clamps under menubar;
@@ -49,13 +54,11 @@ order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Further Grok TUI presentation parity
 - Storybook page parity for non-Overview tabs (on demand)
-- Opt other kit apps into titlebar / floating_frame + resize
 - Remaining worktrees: `libei-portal`
 
 ### Resume
 
 ```text
 cd .worktrees/float-shadows
-# after approval + install permission:
 # cargo make install sola-river
 ```

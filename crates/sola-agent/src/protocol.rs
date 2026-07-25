@@ -37,6 +37,8 @@ pub enum AgentEvent {
     },
     /// Transcript replace (after load or watch sync). May be a **tail** window only.
     Transcript {
+        /// Session this slice belongs to — UI drops stale emits after a fast switch.
+        session_id: String,
         turns: Vec<Turn>,
         /// Absolute byte offset of the first line included in `turns`.
         history_start_byte: u64,
@@ -46,6 +48,8 @@ pub enum AgentEvent {
     },
     /// Older history chunk to **prepend** (scroll-up load).
     HistoryOlder {
+        /// Session this slice belongs to — UI drops stale emits after a fast switch.
+        session_id: String,
         turns: Vec<Turn>,
         history_start_byte: u64,
         has_older: bool,

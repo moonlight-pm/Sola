@@ -600,6 +600,39 @@ fn copy_cursor_files(src: &Path, dest: &Path) -> usize {
     count
 }
 
+/// XDG / CSS cursor names that some themes omit. Map CSS name → theme
+/// file that already exists (X11 classic size_hor/size_ver).
+const CURSOR_ALIASES: &[(&str, &str)] = &[
+    ("ew-resize", "size_hor"),
+    ("ns-resize", "size_ver"),
+    ("col-resize", "size_hor"),
+    ("row-resize", "size_ver"),
+];
+
+/// Create missing CSS-name cursor files as symlinks to the theme's
+/// X11 equivalents. Returns how many aliases were created.
+fn ensure_cursor_aliases(cursors_dest: &Path) -> usize {
+    let mut n = 0;
+    for &(css_name, theme_name) in CURSOR_ALIASES {
+        let target = cursors_dest.join(theme_name);
+        let link = cursors_dest.join(css_name);
+        if link.exists() || !target.exists() {
+            continue;
+        }
+        // Relative symlink so the theme stays relocatable.
+        if let Err(e) = std::os::unix::fs::symlink(theme_name, &link) {
+            eprintln!(
+                "warning: failed to symlink {} -> {}: {e}",
+                link.display(),
+                theme_name
+            );
+            continue;
+        }
+        n += 1;
+    }
+    n
+}
+
 fn run(program: &str, args: &[&str]) {
     let status = Command::new(program)
         .args(args)

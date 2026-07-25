@@ -317,12 +317,20 @@ fn item_row_height<Message>(item: &SidebarItem<Message>) -> f32 {
 
 /// Full scroll content height for a section body (padding + rows + gaps).
 pub fn section_content_height<Message>(items: &[SidebarItem<Message>]) -> f32 {
+    section_content_height_with_spacing(items, 0.0)
+}
+
+/// Like [`section_content_height`], with explicit inter-row spacing.
+pub fn section_content_height_with_spacing<Message>(
+    items: &[SidebarItem<Message>],
+    item_spacing: f32,
+) -> f32 {
     let pad_v = 8.0; // matches body column padding [4, 8]
     if items.is_empty() {
         return pad_v;
     }
     let rows: f32 = items.iter().map(item_row_height).sum();
-    let gaps = SPACE_SM * items.len().saturating_sub(1) as f32;
+    let gaps = item_spacing * items.len().saturating_sub(1) as f32;
     pad_v + rows + gaps
 }
 
@@ -593,9 +601,9 @@ pub const PANEL_REORDER_THRESHOLD: f32 = 5.0;
 pub const PANEL_REORDER_ANIM_MS: u64 = 180;
 /// Subtle lift scale applied to the row under the cursor during reorder.
 pub const PANEL_REORDER_LIFT_SCALE: f32 = 1.02;
-/// Vertical pitch of one panel row including the column gap — used when
-/// siblings slide to open a drop slot.
-pub const PANEL_ROW_STRIDE: f32 = PANEL_ROW_H + SPACE_XS;
+/// Vertical pitch of one panel row — used when siblings slide to open a
+/// drop slot. Matches packed item spacing (no inter-row gap).
+pub const PANEL_ROW_STRIDE: f32 = PANEL_ROW_H;
 
 /// Compute the new panel width from a drag gesture.
 ///
@@ -845,33 +853,49 @@ where
 
     // ── Plain path (no reorder). ──
     let Some(reorder) = reorder else {
-        // Hover-action rows split press targets: left (title/path) selects;
-        // trailing column (age + trash) is a sibling so trash never also
-        // fires select.
+        // Hover-action rows: the **full padded row** is the select hit target
+        // (including vertical pad — otherwise 2×ITEM_PAD_V between text
+        // blocks is dead space). Trash stays a **sibling** so its button
+        // never also fires select.
         let row_el: Element<'a, Message> = if hover_action.is_some() {
-            let action = if show_hover_action {
-                hover_action
-            } else {
-                None
-            };
             let left = item_text_block(&label, subtitle.as_deref(), indicator);
-            let trail = item_trailing(secondary.as_deref(), shortcut, action);
-            let mut left_area = mouse_area(left)
-                .interaction(mouse::Interaction::Pointer)
-                .on_press(message);
-            if let Some(dbl) = on_double_click {
-                left_area = left_area.on_double_click(dbl);
-            }
-            container(
-                row![left_area, trail]
-                    .spacing(SPACE_MD)
-                    .align_y(iced::Alignment::Start)
-                    .width(Length::Fill),
+            // Age/shortcut only inside the select target — not the trash.
+            let trail = item_trailing(secondary.as_deref(), shortcut, None);
+            let body = row![left, trail]
+                .spacing(SPACE_MD)
+                .align_y(iced::Alignment::Start)
+                .width(Length::Fill);
+            let mut select = mouse_area(
+                container(body)
+                    .width(Length::Fill)
+                    .padding(pad)
+                    .style(move |theme: &Theme| row_container_style(theme, active)),
             )
-            .width(Length::Fill)
-            .padding(pad)
-            .style(move |theme: &Theme| row_container_style(theme, active))
-            .into()
+            .interaction(mouse::Interaction::Pointer)
+            .on_press(message);
+            if let Some(dbl) = on_double_click {
+                select = select.on_double_click(dbl);
+            }
+            if show_hover_action {
+                if let Some(action) = hover_action {
+                    // Align trash with the row's top pad so it sits under age.
+                    let trash = container(hover_action_button(action))
+                        .padding(Padding {
+                            top: ITEM_PAD_V + 1.0,
+                            right: ITEM_PAD_H,
+                            bottom: ITEM_PAD_V,
+                            left: 0.0,
+                        });
+                    row![select, trash]
+                        .align_y(iced::Alignment::Start)
+                        .width(Length::Fill)
+                        .into()
+                } else {
+                    select.into()
+                }
+            } else {
+                select.into()
+            }
         } else {
             let content = item_content(
                 &label,
@@ -1247,6 +1271,10 @@ pub struct SidebarPanel<'a, Message> {
     section_scroll: Option<(SectionScroll, Box<dyn Fn(SectionScroll) -> Message + 'a>)>,
     /// Per-row hover id + callback (for hover-only trailing actions).
     item_hover: Option<(Option<String>, Box<dyn Fn(Option<String>) -> Message + 'a>)>,
+    /// Vertical gap between item rows in a section body. Default `0` so the
+    /// full band between labels is clickable (nav lists). Pass e.g.
+    /// [`SPACE_SM`] for a looser lab layout.
+    item_spacing: f32,
 }
 
 impl<'a, Message> SidebarPanel<'a, Message>
@@ -1263,7 +1291,14 @@ where
             footer: None,
             section_scroll: None,
             item_hover: None,
+            item_spacing: 0.0,
         }
+    }
+
+    /// Space between consecutive item rows (`0` = packed / fully clickable).
+    pub fn item_spacing(mut self, spacing: f32) -> Self {
+        self.item_spacing = spacing.max(0.0);
+        self
     }
 
     /// Leading chrome above the section list (filter, brand, …).
@@ -1351,6 +1386,7 @@ where
             footer,
             section_scroll,
             item_hover,
+            item_spacing,
         } = self;
 
         let collapsed = collapse.as_ref().map(|(c, _)| *c).unwrap_or(false);
@@ -1424,7 +1460,9 @@ where
                     row_index += 1;
                 }
             }
-            let mut items = column![].spacing(SPACE_SM).padding(Padding::from([4.0, 8.0]));
+            let mut items = column![]
+                .spacing(item_spacing)
+                .padding(Padding::from([4.0, 8.0]));
             for (stable_index, item) in flat {
                 let is_dragged = stable_index == from;
                 let dy = if is_dragged {
@@ -1459,7 +1497,8 @@ where
                 }
 
                 let n_in_section = section.items.len();
-                let content_h = section_content_height(&section.items);
+                let content_h =
+                    section_content_height_with_spacing(&section.items, item_spacing);
                 let wants_fill = !collapsed
                     && (section.fill || auto_fill_single)
                     && !assigned_fill;
@@ -1474,8 +1513,9 @@ where
                     }
                 }
 
-                let mut body_items =
-                    column![].spacing(SPACE_SM).padding(Padding::from([4.0, 8.0]));
+                let mut body_items = column![]
+                    .spacing(item_spacing)
+                    .padding(Padding::from([4.0, 8.0]));
                 for item in section.items {
                     if collapsed {
                         body_items =
