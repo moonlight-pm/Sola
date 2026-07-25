@@ -13,36 +13,14 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**agent-session-perf** (branch `fix/agent-session-perf`)
-
-### Goal
-
-Instant sidebar session switch: selection + content on click, not after
-ACP `session/load`.
-
-### Done
-
-- Optimistic `session_id` + `history_tail` paint on `SelectSession`
-- Older history / auto-fill on UI thread (not blocked by worker attach)
-- Worker coalesces rapid `LoadSession` / `NewSession`
-- Transcript/HistoryOlder carry `session_id`; stale events dropped
-- `acp_attached` gate so prior-session stream events cannot paint into
-  the optimistic transcript
-
-### Next
-
-- Smoke in UI (`cargo make install sola-agent` from worktree when ready)
-- Merge when approved
-
-### Resume
-
-```text
-cd /home/joshua/Workspace/Sola/.worktrees/agent-session-perf
-# install only with user permission:
-# cargo make install sola-agent
-```
+**none**
 
 ### Last completed (prior)
+
+**agent-session-perf → master**: optimistic session switch + transcript
+cache; full-row sidebar hit targets / `item_spacing`; no
+`session/cancel` on tab switch (shared leader + TUI); cursor alias fix
+in sola-make.
 
 **focus-follows-mouse → master**: focus without raise (raise on click);
 200ms dwell; pointer resync after map; float drag clamps under menubar;
@@ -53,10 +31,17 @@ full-height menubar hits (macOS idle chrome); edge/corner float resize
 newline + growing composer; always-approve auto-answer + effort/mode
 order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 
+**agent-leader → master**: leader-only attach; console group removed.
+
 ### Future / follow-ups
 
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Further Grok TUI presentation parity
 - Storybook page parity for non-Overview tabs (on demand)
-- Opt other kit apps into titlebar / floating_frame + resize
-- Remaining worktrees: `libei-portal`
+- Remaining worktrees: `float-shadows`, `libei-portal`
+
+### Resume
+
+```text
+# no active feature worktree
+```
