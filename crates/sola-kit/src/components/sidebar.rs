@@ -47,7 +47,8 @@ use iced::{
 
 use crate::components::icon::{icon_handle, icon_svg_colored};
 use crate::components::style::{
-    RADIUS_LG, RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
+    linear_bg, mix, mix_white, RADIUS_LG, RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS,
+    alpha,
 };
 use crate::fonts;
 
@@ -926,9 +927,12 @@ where
 
     // Selection is background-only (see `item_style`) — no left accent bar,
     // so title/subtitle stay aligned with idle rows.
-    let (pad_v, pad_h) = match chrome {
-        SidebarItemChrome::Row => (ITEM_PAD_V, ITEM_PAD_H),
-        SidebarItemChrome::Card => (CARD_PAD_V, CARD_PAD_H),
+    // Custom card bodies own their own padding (session tabs inset a
+    // bottom context bar); structured card rows keep kit pad.
+    let (pad_v, pad_h) = match (chrome, custom.is_some()) {
+        (SidebarItemChrome::Row, _) => (ITEM_PAD_V, ITEM_PAD_H),
+        (SidebarItemChrome::Card, true) => (0.0, 0.0),
+        (SidebarItemChrome::Card, false) => (CARD_PAD_V, CARD_PAD_H),
     };
     let pad = Padding::from([pad_v, pad_h]);
     let hovered = show_hover_action;
@@ -2110,9 +2114,11 @@ pub fn style(theme: &Theme) -> container::Style {
 }
 
 /// Background style for a row rendered as a non-pressable `container`
-/// (the reorder / hover-action path). Selected rows use the dedicated
-/// [`crate::theme::selection`] highlight (matching [`item_style`]).
-/// Card chrome adds a soft raised idle material (Overview rule cards).
+/// (the reorder / hover-action path).
+///
+/// - **Row:** selected → quiet [`crate::theme::selection`]; idle flat / hover lift.
+/// - **Card:** OD session-tab graphite (not selection teal). Idle raised
+///   wash + hairline; active gradient + stronger border. Same box either way.
 /// Mid-drag lift (scale + shadow) is applied by [`with_reorder_motion`].
 fn row_container_style(
     theme: &Theme,
@@ -2121,41 +2127,79 @@ fn row_container_style(
     hovered: bool,
 ) -> container::Style {
     let p = theme.extended_palette();
-    let radius = match chrome {
-        SidebarItemChrome::Row => RADIUS_MD,
-        SidebarItemChrome::Card => RADIUS_LG,
-    };
-    let bg = if active {
-        Some(Background::Color(crate::theme::selection()))
-    } else {
-        match chrome {
-            SidebarItemChrome::Card => {
-                let raised = p.background.weaker.color;
-                let base = p.background.base.color;
-                // Overview rule_card: raised@75% over canvas.
-                let idle = crate::components::style::mix(raised, base, 0.75);
-                let fill = if hovered {
-                    crate::components::style::mix(p.background.strong.color, idle, 0.35)
-                } else {
-                    idle
-                };
-                Some(Background::Color(fill))
-            }
-            SidebarItemChrome::Row if hovered => {
+    match chrome {
+        SidebarItemChrome::Row => {
+            let bg = if active {
+                Some(Background::Color(crate::theme::selection()))
+            } else if hovered {
                 Some(Background::Color(alpha(p.background.strong.color, 0.70)))
+            } else {
+                None
+            };
+            container::Style {
+                background: bg,
+                text_color: Some(p.background.base.text),
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: RADIUS_MD.into(),
+                },
+                ..container::Style::default()
             }
-            SidebarItemChrome::Row => None,
         }
-    };
-    container::Style {
-        background: bg,
-        text_color: Some(p.background.base.text),
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: radius.into(),
-        },
-        ..container::Style::default()
+        SidebarItemChrome::Card => card_surface_style(theme, active, hovered),
+    }
+}
+
+/// OD `sola-agent-ds` session tab surface — idle/active share dimensions;
+/// selection is graphite surface only (never the kit selection atom).
+fn card_surface_style(theme: &Theme, active: bool, hovered: bool) -> container::Style {
+    let p = theme.extended_palette();
+    let raised = p.background.weaker.color;
+    let base = p.background.base.color;
+    let hover = p.background.strong.color; // ~bg-hover
+    let border_atom = p.background.stronger.color;
+
+    if active {
+        // --tab-active-bg: gradient hover@92%+raised → raised@88%+#0a0c10
+        let top = mix(hover, raised, 0.92);
+        let bottom = mix(raised, Color::from_rgb(0.039, 0.047, 0.063), 0.88);
+        container::Style {
+            background: Some(linear_bg(180.0, &[(0.0, top), (1.0, bottom)])),
+            text_color: Some(p.background.base.text),
+            border: Border {
+                // --tab-active-border: white@12% into border
+                color: mix(mix_white(border_atom, 0.12), border_atom, 0.55),
+                width: 1.0,
+                radius: RADIUS_LG.into(),
+            },
+            // inset top hairline approximated as a light top edge via shadow
+            shadow: Shadow {
+                color: Color::from_rgba(1.0, 1.0, 1.0, 0.04),
+                offset: Vector::new(0.0, 1.0),
+                blur_radius: 0.0,
+            },
+            ..container::Style::default()
+        }
+    } else {
+        // --tab-idle-bg: raised@42% over canvas; hover lifts toward bg-hover.
+        let idle = mix(raised, base, 0.42);
+        let fill = if hovered {
+            mix(hover, idle, 0.55)
+        } else {
+            idle
+        };
+        container::Style {
+            background: Some(Background::Color(fill)),
+            text_color: Some(p.background.base.text),
+            border: Border {
+                // --tab-idle-border: white@5%
+                color: mix_white(fill, 0.05),
+                width: 1.0,
+                radius: RADIUS_LG.into(),
+            },
+            ..container::Style::default()
+        }
     }
 }
 
@@ -2177,50 +2221,51 @@ pub fn item_style_chrome(
     chrome: SidebarItemChrome,
 ) -> button::Style {
     let p = theme.extended_palette();
-    let radius = match chrome {
-        SidebarItemChrome::Row => RADIUS_MD,
-        SidebarItemChrome::Card => RADIUS_LG,
-    };
-    if active {
-        return button::Style {
-            background: Some(Background::Color(crate::theme::selection())),
-            text_color: p.background.base.text,
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: radius.into(),
-            },
-            shadow: Default::default(),
-            snap: false,
-        };
-    }
-    let bg = match (chrome, status) {
-        (SidebarItemChrome::Card, button::Status::Hovered) => {
-            let raised = p.background.weaker.color;
-            let base = p.background.base.color;
-            let idle = crate::components::style::mix(raised, base, 0.75);
-            crate::components::style::mix(p.background.strong.color, idle, 0.35)
+    match chrome {
+        SidebarItemChrome::Row => {
+            if active {
+                return button::Style {
+                    background: Some(Background::Color(crate::theme::selection())),
+                    text_color: p.background.base.text,
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: RADIUS_MD.into(),
+                    },
+                    shadow: Default::default(),
+                    snap: false,
+                };
+            }
+            let bg = match status {
+                button::Status::Hovered => alpha(p.background.strong.color, 0.70),
+                _ => Color::TRANSPARENT,
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                text_color: p.background.base.text,
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: RADIUS_MD.into(),
+                },
+                shadow: Default::default(),
+                snap: false,
+            }
         }
-        (SidebarItemChrome::Card, _) => {
-            let raised = p.background.weaker.color;
-            let base = p.background.base.color;
-            crate::components::style::mix(raised, base, 0.75)
+        SidebarItemChrome::Card => {
+            let hovered = matches!(
+                status,
+                button::Status::Hovered | button::Status::Pressed
+            );
+            let s = card_surface_style(theme, active, hovered);
+            button::Style {
+                background: s.background,
+                text_color: s.text_color.unwrap_or(p.background.base.text),
+                border: s.border,
+                shadow: s.shadow,
+                snap: false,
+            }
         }
-        (SidebarItemChrome::Row, button::Status::Hovered) => {
-            alpha(p.background.strong.color, 0.70)
-        }
-        (SidebarItemChrome::Row, _) => Color::TRANSPARENT,
-    };
-    button::Style {
-        background: Some(Background::Color(bg)),
-        text_color: p.background.base.text,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: radius.into(),
-        },
-        shadow: Default::default(),
-        snap: false,
     }
 }
 

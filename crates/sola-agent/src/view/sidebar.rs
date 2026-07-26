@@ -1,27 +1,31 @@
-//! Session sidebar — sola-kit [`SidebarPanel`] with card-style sessions.
+//! Session sidebar — sola-kit [`SidebarPanel`] with OD session cards.
 //!
-//! Each session is a soft raised **card** (kit [`SidebarItemChrome::Card`])
-//! with custom body content: project leaf, generated title, context badge,
-//! age, and activity. Hover a card for trash (first click arms, second deletes).
+//! Matches Open Design `sola-agent-ds.html`: equal graphite cards, surface-only
+//! selection, slim bottom context progress bar (no numeric label), rail with
+//! hover X close on top and relative time below. No LIVE badge.
 
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{button, column, container, row, text, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
-use sola_kit::components::badge::{self, Tone};
 use sola_kit::components::button as kit_btn;
-use sola_kit::components::style::{RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM};
+use sola_kit::components::style::{
+    linear_bg, mix, mix_white, RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM,
+};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::{
-    DividerColors, SidebarHoverAction, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection,
+    DividerColors, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection,
 };
 use sola_kit::fonts;
 
 use crate::protocol::SessionSummary;
 use crate::{App, Msg};
 
-/// Intrinsic card height for scroll-chip math (pad + lines + badge row).
-const SESSION_CARD_H: f32 = 92.0;
+/// Default context window when size is unknown (matches OD `CTX_MAX_K` × 1k).
+const DEFAULT_CTX_SIZE: u64 = 500_000;
+
+/// OD session card min-height (~76) + a little for layout slack.
+const SESSION_CARD_H: f32 = 80.0;
 
 pub(crate) fn view(app: &App) -> Element<'_, Msg> {
     let busy = app.streaming || app.pending.is_some();
@@ -62,7 +66,7 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
 
     let mut panel = SidebarPanel::new(sections)
         .header(header)
-        // Air between cards so each reads as a surface, not a packed list.
+        // OD: margin-bottom 8px between session cards.
         .item_spacing(SPACE_MD)
         .section_scroll(app.session_section_scroll, Msg::SessionSectionScroll)
         .item_hover(app.session_hover.clone(), Msg::SessionHover)
@@ -168,16 +172,12 @@ fn sidebar_header(app: &App) -> Element<'_, Msg> {
 
 fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<'static, Msg> {
     let selected = app.session_id.as_deref() == Some(summary.id.as_str());
-    // Budget for list width so clip + ellipsis both read clean.
-    let max_dir = ((app.sidebar_w - 96.0) / 7.0).clamp(10.0, 36.0) as usize;
-    let max_title = ((app.sidebar_w - 72.0) / 6.4).clamp(12.0, 52.0) as usize;
-    // Directory is the primary identity; generated titles are secondary.
+    let max_dir = ((app.sidebar_w - 100.0) / 7.0).clamp(10.0, 36.0) as usize;
+    let max_title = ((app.sidebar_w - 80.0) / 6.4).clamp(12.0, 52.0) as usize;
     let dir = ellipsize(&project_leaf(&summary.cwd), max_dir);
     let title = ellipsize(&summary.title, max_title);
     let when = relative_time(summary.updated);
 
-    // Prefer live ACP usage for the open tab; otherwise disk-scanned values
-    // so unloaded rows still show last known context size.
     let (used, size) = if selected {
         (
             app.usage_used.or(summary.usage_used),
@@ -186,127 +186,337 @@ fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<
     } else {
         (summary.usage_used, summary.usage_size)
     };
-    let context = format_context_kb(used, size);
 
-    // Activity: recent disk activity, or the selected session streaming.
     let working =
-        summary.busy || (selected && (app.streaming || app.pending.is_some()));
+        summary.busy || (selected && (app.streaming || app.pending.is_some() || busy));
     let indicator = if working {
         SidebarIndicator::Active
     } else {
         SidebarIndicator::Idle
     };
 
-    let _ = busy;
+    let hovered = app.session_hover.as_deref() == Some(summary.id.as_str());
     let armed = app.delete_armed.as_deref() == Some(summary.id.as_str());
-    let body = session_card_body(&dir, &title, &when, context.as_deref(), working, indicator);
+    let body = session_card_body(
+        &dir,
+        &title,
+        &when,
+        used,
+        size,
+        selected,
+        indicator,
+        summary.id.clone(),
+        hovered,
+        armed,
+    );
 
-    // Collapsed / fallback label still uses the project leaf.
+    // Custom body owns padding; card chrome draws OD graphite surface.
+    // Hover tracking still needs `.id`; close lives in the rail (not hover_action).
     SidebarItem::new(dir, Msg::SelectSession(summary.id.clone()))
         .id(summary.id.clone())
         .active(selected)
         .card()
         .content(body)
         .height_hint(SESSION_CARD_H)
-        .hover_action(SidebarHoverAction {
-            message: Msg::SessionDeleteClick(summary.id.clone()),
-            armed,
-        })
 }
 
-/// Card face: status + project, title, then meta chips (context / live / age).
-///
-/// Layout (Overview-inspired density):
+/// OD session card body:
 /// ```text
-/// ●  Sola                         12m
-///    That works perfectly. Merge…
-///    [42k/500k]  [LIVE]
+/// ●  Project                     [×]
+///    Generated title…             12m
+/// ──────────────── ctx bar ─────────
 /// ```
 fn session_card_body(
     dir: &str,
     title: &str,
     when: &str,
-    context: Option<&str>,
-    working: bool,
+    used: Option<u64>,
+    size: Option<u64>,
+    selected: bool,
     indicator: SidebarIndicator,
+    session_id: String,
+    show_close: bool,
+    armed: bool,
 ) -> Element<'static, Msg> {
-    let title_row = row![
-        status_dot(indicator),
-        text(dir.to_string())
-            .font(fonts::ui_medium())
-            .size(14)
-            .width(Length::Fill),
-        text(when.to_string())
-            .font(fonts::ui())
-            .size(11)
-            .style(|theme: &Theme| {
-                let c = theme.extended_palette().background.base.text;
-                iced::widget::text::Style {
-                    color: Some(Color { a: 0.45, ..c }),
-                }
-            }),
-    ]
-    .spacing(SPACE_MD)
-    .align_y(Alignment::Center)
-    .width(Length::Fill);
-
-    let subtitle = text(title.to_string())
-        .font(fonts::ui())
-        .size(12)
-        .style(|theme: &Theme| {
-            let c = theme.extended_palette().background.base.text;
+    let project = text(dir.to_string())
+        .font(fonts::ui_medium())
+        .size(13)
+        .style(move |theme: &Theme| {
+            let p = theme.extended_palette();
             iced::widget::text::Style {
-                color: Some(Color { a: 0.48, ..c }),
+                color: Some(if selected {
+                    Color::from_rgb(0.949, 0.961, 0.980) // #f2f5fa
+                } else {
+                    p.background.base.text
+                }),
             }
         })
         .width(Length::Fill);
 
-    // Indent subtitle under the title text (past the status dot).
-    let subtitle = container(subtitle)
-        .padding(Padding {
-            top: 0.0,
-            right: 0.0,
-            bottom: 0.0,
-            left: 14.0,
+    let subtitle = text(title.to_string())
+        .font(fonts::ui())
+        .size(12)
+        .style(move |theme: &Theme| {
+            let p = theme.extended_palette();
+            let muted = p.secondary.base.text;
+            let fg = p.background.base.text;
+            iced::widget::text::Style {
+                color: Some(if selected {
+                    mix(fg, muted, 0.72)
+                } else {
+                    muted
+                }),
+            }
         })
         .width(Length::Fill);
 
-    let mut chips = row![].spacing(SPACE_SM).align_y(Alignment::Center);
-    if let Some(kb) = context {
-        chips = chips.push(badge::badge(kb.to_string(), Tone::Neutral));
-    }
-    if working {
-        chips = chips.push(badge::badge("LIVE", Tone::Success));
-    }
-    let chips = container(chips).padding(Padding {
-        top: 0.0,
-        right: 0.0,
-        bottom: 0.0,
-        left: 14.0,
-    });
+    let meta = column![project, subtitle]
+        .spacing(3.0)
+        .width(Length::Fill);
 
-    column![title_row, subtitle, chips]
-        .spacing(SPACE_SM + 1.0)
+    let when_el = text(when.to_string())
+        .font(fonts::ui())
+        .size(10)
+        .style(move |theme: &Theme| {
+            let p = theme.extended_palette();
+            let muted = p.secondary.base.text;
+            let fg = p.background.base.text;
+            iced::widget::text::Style {
+                color: Some(if selected {
+                    mix(fg, muted, 0.55)
+                } else {
+                    Color {
+                        a: 0.85,
+                        ..muted
+                    }
+                }),
+            }
+        });
+
+    // Rail: 22px close slot on top (always reserved), time below.
+    let close_slot: Element<'static, Msg> = if show_close {
+        close_button(session_id, armed)
+    } else {
+        Space::new().width(22.0).height(22.0).into()
+    };
+
+    let rail = column![
+        container(close_slot)
+            .width(Length::Fixed(30.0))
+            .align_x(Alignment::End),
+        container(when_el)
+            .width(Length::Fixed(30.0))
+            .align_x(Alignment::End)
+            .padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 2.0,
+                left: 0.0,
+            }),
+    ]
+    .spacing(4.0)
+    .align_x(Alignment::End)
+    .width(Length::Fixed(30.0));
+
+    let row_main = row![
+        container(status_dot(indicator))
+            .width(Length::Fixed(12.0))
+            .padding(Padding {
+                top: 6.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 2.0,
+            }),
+        meta,
+        rail,
+    ]
+    .spacing(10.0)
+    .align_y(Alignment::Start)
+    .width(Length::Fill);
+
+    let main_pad = container(row_main)
+        .padding(Padding {
+            top: 12.0,
+            right: 12.0,
+            bottom: 12.0,
+            left: 12.0,
+        })
+        .width(Length::Fill);
+
+    let bar = context_bar(used, size, selected);
+
+    column![main_pad, bar].width(Length::Fill).into()
+}
+
+/// Slim 3px inset progress track — fill only, no label (OD `.ctx-track`).
+fn context_bar(used: Option<u64>, size: Option<u64>, selected: bool) -> Element<'static, Msg> {
+    let size = size.filter(|s| *s > 0).unwrap_or(DEFAULT_CTX_SIZE);
+    let used = used.unwrap_or(0);
+    let pct = if size == 0 {
+        0.0
+    } else {
+        (used as f32 / size as f32).clamp(0.0, 1.0)
+    };
+
+    // FillPortion needs integers; 0 fill keeps an empty quiet track.
+    let used_parts = ((pct * 1000.0).round() as u16).max(if pct > 0.001 { 1 } else { 0 });
+    let empty_parts = 1000u16.saturating_sub(used_parts).max(1);
+
+    let fill_row: Element<'static, Msg> = if used_parts == 0 {
+        Space::new().width(Length::Fill).height(3.0).into()
+    } else {
+        row![
+            container(Space::new().width(Length::Fill).height(3.0))
+                .width(Length::FillPortion(used_parts))
+                .height(Length::Fixed(3.0))
+                .style(move |theme: &Theme| {
+                    let accent = theme.extended_palette().primary.base.color;
+                    let bright = mix(accent, Color::from_rgb(0.545, 0.914, 1.0), 0.55);
+                    let a = if selected { 1.0 } else { 0.90 };
+                    container::Style {
+                        background: Some(linear_bg(
+                            90.0,
+                            &[
+                                (
+                                    0.0,
+                                    Color {
+                                        a: if selected { 0.50 } else { 0.40 },
+                                        ..accent
+                                    },
+                                ),
+                                (1.0, Color { a, ..bright }),
+                            ],
+                        )),
+                        border: Border {
+                            radius: 999.0.into(),
+                            ..Default::default()
+                        },
+                        ..container::Style::default()
+                    }
+                }),
+            Space::new()
+                .width(Length::FillPortion(empty_parts))
+                .height(3.0),
+        ]
         .width(Length::Fill)
+        .height(Length::Fixed(3.0))
+        .into()
+    };
+
+    // Track is the 3px pill; outer padding insets it from the card edges.
+    let track = container(fill_row)
+        .width(Length::Fill)
+        .height(Length::Fixed(3.0))
+        .clip(true)
+        .style(move |theme: &Theme| {
+            let raised = theme.extended_palette().background.weaker.color;
+            let track = if selected {
+                mix_white(raised, 0.08)
+            } else {
+                mix_white(raised, 0.06)
+            };
+            container::Style {
+                background: Some(Background::Color(track)),
+                border: Border {
+                    radius: 999.0.into(),
+                    ..Default::default()
+                },
+                ..container::Style::default()
+            }
+        });
+
+    container(track)
+        .width(Length::Fill)
+        .padding(Padding {
+            top: 0.0,
+            right: 10.0,
+            bottom: 10.0,
+            left: 10.0,
+        })
         .into()
 }
 
-fn status_dot(indicator: SidebarIndicator) -> Element<'static, Msg> {
-    let color = match indicator {
-        SidebarIndicator::Active => Color {
-            r: 0.24,
-            g: 0.81,
-            b: 0.56,
+fn close_button(session_id: String, armed: bool) -> Element<'static, Msg> {
+    let color = if armed {
+        Color {
+            r: 0.94,
+            g: 0.44,
+            b: 0.47,
             a: 1.0,
-        },
-        SidebarIndicator::Idle => Color {
-            r: 0.45,
-            g: 0.48,
-            b: 0.55,
-            a: 0.55,
-        },
+        }
+    } else {
+        Color {
+            r: 0.55,
+            g: 0.58,
+            b: 0.66,
+            a: 0.95,
+        }
     };
-    container(iced::widget::Space::new().width(7.0).height(7.0))
+    button(text("×").font(fonts::ui()).size(14).style(move |_t: &Theme| {
+        iced::widget::text::Style {
+            color: Some(color),
+        }
+    }))
+    .padding(Padding::from([2, 6]))
+    .style(move |theme: &Theme, status| {
+        let p = theme.extended_palette();
+        let bg = match status {
+            button::Status::Hovered if armed => Color {
+                a: 0.22,
+                ..p.danger.base.color
+            },
+            button::Status::Hovered => Color {
+                a: 0.14,
+                ..p.danger.base.color
+            },
+            button::Status::Pressed => Color {
+                a: 0.28,
+                ..p.danger.base.color
+            },
+            _ => Color::TRANSPARENT,
+        };
+        button::Style {
+            background: Some(Background::Color(bg)),
+            border: Border {
+                radius: RADIUS_SM.into(),
+                ..Default::default()
+            },
+            text_color: color,
+            ..button::Style::default()
+        }
+    })
+    .on_press(Msg::SessionDeleteClick(session_id))
+    .into()
+}
+
+fn status_dot(indicator: SidebarIndicator) -> Element<'static, Msg> {
+    let (color, ring) = match indicator {
+        SidebarIndicator::Active => (
+            Color {
+                r: 0.24,
+                g: 0.81,
+                b: 0.56,
+                a: 1.0,
+            },
+            Some(Color {
+                r: 0.24,
+                g: 0.81,
+                b: 0.56,
+                a: 0.20,
+            }),
+        ),
+        SidebarIndicator::Idle => (
+            Color {
+                r: 0.55,
+                g: 0.58,
+                b: 0.66,
+                a: 0.55,
+            },
+            None,
+        ),
+    };
+    // Soft glow ring for live: outer 13px wash + 7px core (OD box-shadow 0 0 0 3px).
+    let core = container(Space::new().width(7.0).height(7.0))
         .width(Length::Fixed(7.0))
         .height(Length::Fixed(7.0))
         .style(move |_t: &Theme| container::Style {
@@ -316,19 +526,21 @@ fn status_dot(indicator: SidebarIndicator) -> Element<'static, Msg> {
                 ..Default::default()
             },
             ..container::Style::default()
-        })
-        .into()
-}
-
-/// Compact context badge for a session row (`42k` or `42k/500k`).
-fn format_context_kb(used: Option<u64>, size: Option<u64>) -> Option<String> {
-    let used = used?;
-    let used_k = (used + 500) / 1000;
-    if let Some(size) = size.filter(|s| *s > 0) {
-        let size_k = (size + 500) / 1000;
-        Some(format!("{used_k}k/{size_k}k"))
+        });
+    if let Some(ring) = ring {
+        container(core)
+            .padding(3)
+            .style(move |_t: &Theme| container::Style {
+                background: Some(Background::Color(ring)),
+                border: Border {
+                    radius: 999.0.into(),
+                    ..Default::default()
+                },
+                ..container::Style::default()
+            })
+            .into()
     } else {
-        Some(format!("{used_k}k"))
+        core.into()
     }
 }
 
