@@ -1,10 +1,12 @@
-//! Session sidebar — sola-kit [`SidebarPanel`] with filter header.
+//! Session sidebar — sola-kit [`SidebarPanel`] with card-style sessions.
 //!
-//! Activity dots mean "working". Hover a row for a trash control under the
-//! age label: first click arms, second click deletes (no dialog).
+//! Each session is a soft raised **card** (kit [`SidebarItemChrome::Card`])
+//! with custom body content: project leaf, generated title, context badge,
+//! age, and activity. Hover a card for trash (first click arms, second deletes).
 
 use iced::widget::{button, column, container, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
+use sola_kit::components::badge::{self, Tone};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM};
 use sola_kit::components::text as kit_text;
@@ -17,6 +19,9 @@ use sola_kit::fonts;
 
 use crate::protocol::SessionSummary;
 use crate::{App, Msg};
+
+/// Intrinsic card height for scroll-chip math (pad + lines + badge row).
+const SESSION_CARD_H: f32 = 92.0;
 
 pub(crate) fn view(app: &App) -> Element<'_, Msg> {
     let busy = app.streaming || app.pending.is_some();
@@ -57,9 +62,8 @@ pub(crate) fn view(app: &App) -> Element<'_, Msg> {
 
     let mut panel = SidebarPanel::new(sections)
         .header(header)
-        // Packed rows: no dead band between sessions (kit default is 0;
-        // set explicitly so a future kit default change cannot reintroduce gaps).
-        .item_spacing(0.0)
+        // Air between cards so each reads as a surface, not a packed list.
+        .item_spacing(SPACE_MD)
         .section_scroll(app.session_section_scroll, Msg::SessionSectionScroll)
         .item_hover(app.session_hover.clone(), Msg::SessionHover)
         .resizable_with(
@@ -99,12 +103,12 @@ fn build_sections(
     filtered: &[&SessionSummary],
     app: &App,
     busy: bool,
-) -> Vec<SidebarSection<Msg>> {
+) -> Vec<SidebarSection<'static, Msg>> {
     if filtered.is_empty() {
         return Vec::new();
     }
 
-    let items: Vec<SidebarItem<Msg>> = filtered
+    let items: Vec<SidebarItem<'static, Msg>> = filtered
         .iter()
         .map(|s| session_item(s, app, busy))
         .collect();
@@ -125,7 +129,7 @@ fn sidebar_header(app: &App) -> Element<'_, Msg> {
         .spacing(SPACE_MD)
         .align_y(Alignment::Center),
     )
-    .padding(Padding::from([8.0, 10.0]))
+    .padding(Padding::from([10.0, 12.0]))
     .width(Length::Fill)
     .style(filter_shell_style);
 
@@ -152,21 +156,21 @@ fn sidebar_header(app: &App) -> Element<'_, Msg> {
             ]
             .spacing(6.0),
         )
-        .padding(Padding::from([8.0, 10.0]))
+        .padding(Padding::from([10.0, 12.0]))
         .width(Length::Fill)
         .style(filter_shell_style);
 
-        return column![search, rename_row].spacing(8.0).into();
+        return column![search, rename_row].spacing(SPACE_MD).into();
     }
 
     search.into()
 }
 
-fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<Msg> {
+fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<'static, Msg> {
     let selected = app.session_id.as_deref() == Some(summary.id.as_str());
     // Budget for list width so clip + ellipsis both read clean.
-    let max_dir = ((app.sidebar_w - 88.0) / 7.2).clamp(10.0, 40.0) as usize;
-    let max_title = ((app.sidebar_w - 72.0) / 6.5).clamp(10.0, 48.0) as usize;
+    let max_dir = ((app.sidebar_w - 96.0) / 7.0).clamp(10.0, 36.0) as usize;
+    let max_title = ((app.sidebar_w - 72.0) / 6.4).clamp(12.0, 52.0) as usize;
     // Directory is the primary identity; generated titles are secondary.
     let dir = ellipsize(&project_leaf(&summary.cwd), max_dir);
     let title = ellipsize(&summary.title, max_title);
@@ -182,14 +186,9 @@ fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<
     } else {
         (summary.usage_used, summary.usage_size)
     };
-    let secondary = match format_context_kb(used, size) {
-        Some(kb) if !when.is_empty() => format!("{kb}\n{when}"),
-        Some(kb) => kb,
-        None => when,
-    };
+    let context = format_context_kb(used, size);
 
-    // Activity dot: recent disk activity, or the selected session streaming.
-    // Always show a dot (green/grey) so the title never shifts when busy flips.
+    // Activity: recent disk activity, or the selected session streaming.
     let working =
         summary.busy || (selected && (app.streaming || app.pending.is_some()));
     let indicator = if working {
@@ -198,21 +197,127 @@ fn session_item(summary: &SessionSummary, app: &App, busy: bool) -> SidebarItem<
         SidebarIndicator::Idle
     };
 
-    // Single click selects; double-click rename is handled in App
-    // (two SelectSession within a short window) so the kit button path
-    // keeps hover chrome.
     let _ = busy;
     let armed = app.delete_armed.as_deref() == Some(summary.id.as_str());
+    let body = session_card_body(&dir, &title, &when, context.as_deref(), working, indicator);
+
+    // Collapsed / fallback label still uses the project leaf.
     SidebarItem::new(dir, Msg::SelectSession(summary.id.clone()))
         .id(summary.id.clone())
         .active(selected)
-        .subtitle(title)
-        .secondary(secondary)
-        .indicator(indicator)
+        .card()
+        .content(body)
+        .height_hint(SESSION_CARD_H)
         .hover_action(SidebarHoverAction {
             message: Msg::SessionDeleteClick(summary.id.clone()),
             armed,
         })
+}
+
+/// Card face: status + project, title, then meta chips (context / live / age).
+///
+/// Layout (Overview-inspired density):
+/// ```text
+/// ●  Sola                         12m
+///    That works perfectly. Merge…
+///    [42k/500k]  [LIVE]
+/// ```
+fn session_card_body(
+    dir: &str,
+    title: &str,
+    when: &str,
+    context: Option<&str>,
+    working: bool,
+    indicator: SidebarIndicator,
+) -> Element<'static, Msg> {
+    let title_row = row![
+        status_dot(indicator),
+        text(dir.to_string())
+            .font(fonts::ui_medium())
+            .size(14)
+            .width(Length::Fill),
+        text(when.to_string())
+            .font(fonts::ui())
+            .size(11)
+            .style(|theme: &Theme| {
+                let c = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(Color { a: 0.45, ..c }),
+                }
+            }),
+    ]
+    .spacing(SPACE_MD)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+
+    let subtitle = text(title.to_string())
+        .font(fonts::ui())
+        .size(12)
+        .style(|theme: &Theme| {
+            let c = theme.extended_palette().background.base.text;
+            iced::widget::text::Style {
+                color: Some(Color { a: 0.48, ..c }),
+            }
+        })
+        .width(Length::Fill);
+
+    // Indent subtitle under the title text (past the status dot).
+    let subtitle = container(subtitle)
+        .padding(Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 14.0,
+        })
+        .width(Length::Fill);
+
+    let mut chips = row![].spacing(SPACE_SM).align_y(Alignment::Center);
+    if let Some(kb) = context {
+        chips = chips.push(badge::badge(kb.to_string(), Tone::Neutral));
+    }
+    if working {
+        chips = chips.push(badge::badge("LIVE", Tone::Success));
+    }
+    let chips = container(chips).padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 14.0,
+    });
+
+    column![title_row, subtitle, chips]
+        .spacing(SPACE_SM + 1.0)
+        .width(Length::Fill)
+        .into()
+}
+
+fn status_dot(indicator: SidebarIndicator) -> Element<'static, Msg> {
+    let color = match indicator {
+        SidebarIndicator::Active => Color {
+            r: 0.24,
+            g: 0.81,
+            b: 0.56,
+            a: 1.0,
+        },
+        SidebarIndicator::Idle => Color {
+            r: 0.45,
+            g: 0.48,
+            b: 0.55,
+            a: 0.55,
+        },
+    };
+    container(iced::widget::Space::new().width(7.0).height(7.0))
+        .width(Length::Fixed(7.0))
+        .height(Length::Fixed(7.0))
+        .style(move |_t: &Theme| container::Style {
+            background: Some(Background::Color(color)),
+            border: Border {
+                radius: 999.0.into(),
+                ..Default::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
 }
 
 /// Compact context badge for a session row (`42k` or `42k/500k`).

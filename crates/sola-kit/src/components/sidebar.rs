@@ -46,15 +46,36 @@ use iced::{
 };
 
 use crate::components::icon::{icon_handle, icon_svg_colored};
-use crate::components::style::{RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha};
+use crate::components::style::{
+    RADIUS_LG, RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, alpha,
+};
 use crate::fonts;
 
 /// Vertical padding for a standard sidebar row (top+bottom each).
 const ITEM_PAD_V: f32 = 10.0;
 /// Horizontal padding for a standard sidebar row.
 const ITEM_PAD_H: f32 = 12.0;
+/// Card chrome: roomier face pad (Overview rule-card density).
+const CARD_PAD_V: f32 = 14.0;
+const CARD_PAD_H: f32 = 14.0;
+/// Default scroll-math height when chrome is [`SidebarItemChrome::Card`]
+/// and the caller did not supply [`SidebarItem::height_hint`].
+const CARD_HEIGHT_HINT: f32 = 78.0;
 /// Gap between title and subtitle lines.
 const TITLE_SUB_GAP: f32 = 5.0;
+
+/// Visual chrome for a [`SidebarItem`].
+///
+/// [`Self::Row`] is the historical packed nav row. [`Self::Card`] is a
+/// softer, roomier product surface (session switcher, mailbox cards) —
+/// raised idle material, larger radius, more internal pad. Pair cards
+/// with non-zero [`SidebarPanel::item_spacing`] (e.g. [`SPACE_MD`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarItemChrome {
+    #[default]
+    Row,
+    Card,
+}
 
 /// Leading status dot for a sidebar row (activity / health, not selection).
 ///
@@ -82,11 +103,17 @@ pub struct SidebarHoverAction<Message> {
 /// is what the parent receives when the row is clicked.
 ///
 /// The `shortcut` / `on_close` / `secondary` / `subtitle` /
-/// `on_double_click` / `indicator` / `hover_action` fields are opt-in
-/// extras consumed by [`SidebarPanel`] (and the shared row renderer used
-/// by plain [`sidebar`]). They default to `None`, so existing
-/// `::new().active()` callers behave exactly as before.
-pub struct SidebarItem<Message> {
+/// `on_double_click` / `indicator` / `hover_action` / `chrome` /
+/// `content` fields are opt-in extras consumed by [`SidebarPanel`]
+/// (and the shared row renderer used by plain [`sidebar`]). They default
+/// to `None` / [`SidebarItemChrome::Row`], so existing `::new().active()`
+/// callers behave exactly as before.
+///
+/// Set [`Self::content`] to supply a fully custom body (session cards,
+/// rich mail rows). Outer press/selection/hover-trash chrome still wraps
+/// it; label/subtitle/secondary are ignored when content is present
+/// (keep a short `label` for collapsed/icon-only modes).
+pub struct SidebarItem<'a, Message> {
     pub label: String,
     pub active: bool,
     pub message: Message,
@@ -111,9 +138,16 @@ pub struct SidebarItem<Message> {
     /// Control under the secondary label; visible only while this row is
     /// the hovered item (see [`SidebarPanel::item_hover`]).
     pub hover_action: Option<SidebarHoverAction<Message>>,
+    /// Row vs card materials / padding. Default is packed nav row.
+    pub chrome: SidebarItemChrome,
+    /// Custom body — replaces the default title/subtitle/secondary layout.
+    pub content: Option<Element<'a, Message, Theme>>,
+    /// Scroll-chip / overflow math when body height is not obvious from
+    /// label+subtitle (required accuracy for tall custom cards).
+    pub height_hint: Option<f32>,
 }
 
-impl<Message> SidebarItem<Message> {
+impl<'a, Message> SidebarItem<'a, Message> {
     pub fn new(label: impl Into<String>, message: Message) -> Self {
         Self {
             label: label.into(),
@@ -127,6 +161,9 @@ impl<Message> SidebarItem<Message> {
             indicator: None,
             id: None,
             hover_action: None,
+            chrome: SidebarItemChrome::Row,
+            content: None,
+            height_hint: None,
         }
     }
 
@@ -183,6 +220,31 @@ impl<Message> SidebarItem<Message> {
         self.hover_action = Some(action);
         self
     }
+
+    /// Soft card chrome (more pad, raised idle material, larger radius).
+    pub fn chrome(mut self, chrome: SidebarItemChrome) -> Self {
+        self.chrome = chrome;
+        self
+    }
+
+    /// Convenience: [`SidebarItemChrome::Card`].
+    pub fn card(mut self) -> Self {
+        self.chrome = SidebarItemChrome::Card;
+        self
+    }
+
+    /// Replace the default title/subtitle body with a custom element.
+    /// Outer selection / hover-trash chrome still applies.
+    pub fn content(mut self, content: impl Into<Element<'a, Message, Theme>>) -> Self {
+        self.content = Some(content.into());
+        self
+    }
+
+    /// Intrinsic height hint for section scroll math (custom / card rows).
+    pub fn height_hint(mut self, h: f32) -> Self {
+        self.height_hint = Some(h.max(0.0));
+        self
+    }
 }
 
 /// A group of sidebar rows with an optional section header label.
@@ -193,9 +255,9 @@ impl<Message> SidebarItem<Message> {
 /// Mark [`Self::fill`] so the section's **item body** (not the label)
 /// takes remaining panel height and scrolls without a scrollbar. Wire
 /// [`SidebarPanel::section_scroll`] for `↑ N …` / `↓ N …` overflow chips.
-pub struct SidebarSection<Message> {
+pub struct SidebarSection<'a, Message> {
     pub label: Option<String>,
-    pub items: Vec<SidebarItem<Message>>,
+    pub items: Vec<SidebarItem<'a, Message>>,
     /// When true, this section's item list fills remaining height and
     /// scrolls (hidden bar). At most one fill section is useful; if
     /// several are marked, the first wins the `Fill` slot and others
@@ -203,8 +265,8 @@ pub struct SidebarSection<Message> {
     pub fill: bool,
 }
 
-impl<Message> SidebarSection<Message> {
-    pub fn new(label: impl Into<String>, items: Vec<SidebarItem<Message>>) -> Self {
+impl<'a, Message> SidebarSection<'a, Message> {
+    pub fn new(label: impl Into<String>, items: Vec<SidebarItem<'a, Message>>) -> Self {
         Self {
             label: Some(label.into()),
             items,
@@ -212,7 +274,7 @@ impl<Message> SidebarSection<Message> {
         }
     }
 
-    pub fn unlabeled(items: Vec<SidebarItem<Message>>) -> Self {
+    pub fn unlabeled(items: Vec<SidebarItem<'a, Message>>) -> Self {
         Self {
             label: None,
             items,
@@ -306,7 +368,13 @@ impl SectionScroll {
 }
 
 /// Intrinsic height of one sidebar row (padding + text), excluding column gap.
-fn item_row_height<Message>(item: &SidebarItem<Message>) -> f32 {
+fn item_row_height<Message>(item: &SidebarItem<'_, Message>) -> f32 {
+    if let Some(h) = item.height_hint {
+        return h;
+    }
+    if item.content.is_some() || item.chrome == SidebarItemChrome::Card {
+        return CARD_HEIGHT_HINT;
+    }
     let text_h = if item.subtitle.is_some() {
         14.0 + TITLE_SUB_GAP + 11.0
     } else {
@@ -322,13 +390,13 @@ fn item_row_height<Message>(item: &SidebarItem<Message>) -> f32 {
 }
 
 /// Full scroll content height for a section body (padding + rows + gaps).
-pub fn section_content_height<Message>(items: &[SidebarItem<Message>]) -> f32 {
+pub fn section_content_height<Message>(items: &[SidebarItem<'_, Message>]) -> f32 {
     section_content_height_with_spacing(items, 0.0)
 }
 
 /// Like [`section_content_height`], with explicit inter-row spacing.
 pub fn section_content_height_with_spacing<Message>(
-    items: &[SidebarItem<Message>],
+    items: &[SidebarItem<'_, Message>],
     item_spacing: f32,
 ) -> f32 {
     let pad_v = 8.0; // matches body column padding [4, 8]
@@ -388,7 +456,7 @@ pub const SIDEBAR_WIDTH: f32 = 220.0;
 /// full height) by chaining `.width(..)` / `.height(..)` before dropping
 /// it into a layout.
 pub fn sidebar<'a, Message>(
-    sections: Vec<SidebarSection<Message>>,
+    sections: Vec<SidebarSection<'a, Message>>,
 ) -> Container<'a, Message, Theme>
 where
     Message: Clone + 'a,
@@ -400,7 +468,7 @@ where
 /// stacked above the section list. Used by the storybook brand block.
 pub fn sidebar_with_header<'a, Message>(
     header: Option<Element<'a, Message, Theme>>,
-    sections: Vec<SidebarSection<Message>>,
+    sections: Vec<SidebarSection<'a, Message>>,
 ) -> Container<'a, Message, Theme>
 where
     Message: Clone + 'a,
@@ -831,7 +899,7 @@ pub struct ReorderCfg<'a, Message> {
 /// fire). The `×` close button — which IS pressable — therefore sits
 /// OUTSIDE that `mouse_area`, as a sibling in the row.
 fn render_item<'a, Message>(
-    item: SidebarItem<Message>,
+    item: SidebarItem<'a, Message>,
     reorder: Option<&ReorderCfg<'a, Message>>,
     index: usize,
     show_hover_action: bool,
@@ -851,11 +919,39 @@ where
         indicator,
         id: _,
         hover_action,
+        chrome,
+        content: custom,
+        height_hint: _,
     } = item;
 
     // Selection is background-only (see `item_style`) — no left accent bar,
     // so title/subtitle stay aligned with idle rows.
-    let pad = Padding::from([ITEM_PAD_V, ITEM_PAD_H]);
+    let (pad_v, pad_h) = match chrome {
+        SidebarItemChrome::Row => (ITEM_PAD_V, ITEM_PAD_H),
+        SidebarItemChrome::Card => (CARD_PAD_V, CARD_PAD_H),
+    };
+    let pad = Padding::from([pad_v, pad_h]);
+    let hovered = show_hover_action;
+
+    // Inline hover action only on the reorder + structured path; the plain
+    // path overlays trash via stack so layout never shifts.
+    let inline_hover = if reorder.is_some() && show_hover_action && custom.is_none() {
+        hover_action.clone()
+    } else {
+        None
+    };
+    let body: Element<'a, Message> = if let Some(custom) = custom {
+        custom
+    } else {
+        item_content(
+            &label,
+            subtitle.as_deref(),
+            secondary.as_deref(),
+            shortcut,
+            indicator,
+            inline_hover,
+        )
+    };
 
     // ── Plain path (no reorder). ──
     let Some(reorder) = reorder else {
@@ -866,19 +962,13 @@ where
         // from the age label or shifts layout (which also broke hover
         // enter/exit when moving across rows).
         let row_el: Element<'a, Message> = if hover_action.is_some() {
-            let content = item_content(
-                &label,
-                subtitle.as_deref(),
-                secondary.as_deref(),
-                shortcut,
-                indicator,
-                None,
-            );
             let mut select = mouse_area(
-                container(content)
+                container(body)
                     .width(Length::Fill)
                     .padding(pad)
-                    .style(move |theme: &Theme| row_container_style(theme, active)),
+                    .style(move |theme: &Theme| {
+                        row_container_style(theme, active, chrome, hovered)
+                    }),
             )
             .interaction(mouse::Interaction::Pointer)
             .on_press(message);
@@ -896,8 +986,8 @@ where
                         .height(Length::Fill)
                         .padding(Padding {
                             top: 0.0,
-                            right: (ITEM_PAD_H - 2.0).max(0.0),
-                            bottom: (ITEM_PAD_V - 2.0).max(0.0),
+                            right: (pad_h - 2.0).max(0.0),
+                            bottom: (pad_v - 2.0).max(0.0),
                             left: 0.0,
                         });
                     stack![select, trash].into()
@@ -907,34 +997,26 @@ where
             } else {
                 select.into()
             }
-        } else {
-            let content = item_content(
-                &label,
-                subtitle.as_deref(),
-                secondary.as_deref(),
-                shortcut,
-                indicator,
-                None,
-            );
-            if let Some(dbl) = on_double_click {
-                mouse_area(
-                    container(content)
-                        .width(Length::Fill)
-                        .padding(pad)
-                        .style(move |theme: &Theme| row_container_style(theme, active)),
-                )
-                .interaction(mouse::Interaction::Pointer)
-                .on_press(message)
-                .on_double_click(dbl)
-                .into()
-            } else {
-                button(content)
-                    .style(move |t, status| item_style(t, status, active))
-                    .padding(pad)
+        } else if let Some(dbl) = on_double_click {
+            mouse_area(
+                container(body)
                     .width(Length::Fill)
-                    .on_press(message)
-                    .into()
-            }
+                    .padding(pad)
+                    .style(move |theme: &Theme| {
+                        row_container_style(theme, active, chrome, false)
+                    }),
+            )
+            .interaction(mouse::Interaction::Pointer)
+            .on_press(message)
+            .on_double_click(dbl)
+            .into()
+        } else {
+            button(body)
+                .style(move |t, status| item_style_chrome(t, status, active, chrome))
+                .padding(pad)
+                .width(Length::Fill)
+                .on_press(message)
+                .into()
         };
         if let Some(close_msg) = on_close {
             return row![row_el, close_button(close_msg)]
@@ -944,19 +1026,6 @@ where
         }
         return row_el;
     };
-
-    let content = item_content(
-        &label,
-        subtitle.as_deref(),
-        secondary.as_deref(),
-        shortcut,
-        indicator,
-        if show_hover_action {
-            hover_action
-        } else {
-            None
-        },
-    );
 
     // ── Reorder-enabled path. ──
     // Live-reorder chrome is active only while `reorder.active` is `Some` —
@@ -968,10 +1037,12 @@ where
     let is_dragged = matches!(reorder.active, Some((from, _)) if from == index);
 
     let mut pressable = mouse_area(
-        container(content)
+        container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| row_container_style(theme, active)),
+            .style(move |theme: &Theme| {
+                row_container_style(theme, active, chrome, hovered)
+            }),
     )
     // Pointer at rest; grabbing while this row is the one in flight.
     .interaction(if is_dragged {
@@ -1273,7 +1344,7 @@ fn close_button<'a, Message: Clone + 'a>(msg: Message) -> Element<'a, Message> {
 /// keeps the resize cursor while `dragging`. Returns an `Element` (a
 /// `row!`/`stack!`), not a `Container`, so it composes directly.
 pub struct SidebarPanel<'a, Message> {
-    sections: Vec<SidebarSection<Message>>,
+    sections: Vec<SidebarSection<'a, Message>>,
     collapse: Option<(bool, Message)>,
     /// `(width, dragging, on_press, colors)` — `colors` is `None` for
     /// theme-default divider chrome.
@@ -1290,7 +1361,7 @@ pub struct SidebarPanel<'a, Message> {
     item_hover: Option<(Option<String>, Box<dyn Fn(Option<String>) -> Message + 'a>)>,
     /// Vertical gap between item rows in a section body. Default `0` so the
     /// full band between labels is clickable (nav lists). Pass e.g.
-    /// [`SPACE_SM`] for a looser lab layout.
+    /// [`SPACE_MD`] for card stacks.
     item_spacing: f32,
 }
 
@@ -1298,7 +1369,7 @@ impl<'a, Message> SidebarPanel<'a, Message>
 where
     Message: Clone + 'a,
 {
-    pub fn new(sections: Vec<SidebarSection<Message>>) -> Self {
+    pub fn new(sections: Vec<SidebarSection<'a, Message>>) -> Self {
         Self {
             sections,
             collapse: None,
@@ -1474,7 +1545,7 @@ where
             );
             let now = Instant::now();
             let anim = reorder_ref.and_then(|r| r.anim);
-            let mut flat: Vec<(usize, SidebarItem<Message>)> = Vec::with_capacity(total_items);
+            let mut flat: Vec<(usize, SidebarItem<'a, Message>)> = Vec::with_capacity(total_items);
             let mut row_index = 0usize;
             for section in sections {
                 for item in section.items {
@@ -1995,7 +2066,7 @@ fn overflow_slot<'a, Message: Clone + 'a>(
 /// `index + 1`), pressable via the same reorder/select mouse_area when
 /// reorder is enabled, else a plain button.
 fn collapsed_row<'a, Message>(
-    item: &SidebarItem<Message>,
+    item: &SidebarItem<'_, Message>,
     index: usize,
     reorder: Option<&ReorderCfg<'a, Message>>,
 ) -> Element<'a, Message>
@@ -2004,17 +2075,20 @@ where
 {
     let number = item.shortcut.unwrap_or((index + 1) as u8);
     let active = item.active;
+    let chrome = item.chrome;
     match reorder {
         Some(cfg) => mouse_area(
             container(collapsed_content::<Message>(number))
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
-                .style(move |theme: &Theme| row_container_style(theme, active)),
+                .style(move |theme: &Theme| {
+                    row_container_style(theme, active, chrome, false)
+                }),
         )
         .on_press((cfg.on_press)(index))
         .into(),
         None => button(collapsed_content::<Message>(number))
-            .style(move |t, status| item_style(t, status, active))
+            .style(move |t, status| item_style_chrome(t, status, active, chrome))
             .padding(Padding::from([6, 4]))
             .width(Length::Fill)
             .on_press(item.message.clone())
@@ -2036,20 +2110,50 @@ pub fn style(theme: &Theme) -> container::Style {
 }
 
 /// Background style for a row rendered as a non-pressable `container`
-/// (the reorder path). Selected rows use the dedicated
-/// [`crate::theme::selection`] highlight (matching [`item_style`]);
-/// everything else is flat. Mid-drag lift (scale + shadow) is applied
-/// by [`with_reorder_motion`], not here.
-fn row_container_style(theme: &Theme, active: bool) -> container::Style {
+/// (the reorder / hover-action path). Selected rows use the dedicated
+/// [`crate::theme::selection`] highlight (matching [`item_style`]).
+/// Card chrome adds a soft raised idle material (Overview rule cards).
+/// Mid-drag lift (scale + shadow) is applied by [`with_reorder_motion`].
+fn row_container_style(
+    theme: &Theme,
+    active: bool,
+    chrome: SidebarItemChrome,
+    hovered: bool,
+) -> container::Style {
     let p = theme.extended_palette();
-    let bg = active.then(|| Background::Color(crate::theme::selection()));
+    let radius = match chrome {
+        SidebarItemChrome::Row => RADIUS_MD,
+        SidebarItemChrome::Card => RADIUS_LG,
+    };
+    let bg = if active {
+        Some(Background::Color(crate::theme::selection()))
+    } else {
+        match chrome {
+            SidebarItemChrome::Card => {
+                let raised = p.background.weaker.color;
+                let base = p.background.base.color;
+                // Overview rule_card: raised@75% over canvas.
+                let idle = crate::components::style::mix(raised, base, 0.75);
+                let fill = if hovered {
+                    crate::components::style::mix(p.background.strong.color, idle, 0.35)
+                } else {
+                    idle
+                };
+                Some(Background::Color(fill))
+            }
+            SidebarItemChrome::Row if hovered => {
+                Some(Background::Color(alpha(p.background.strong.color, 0.70)))
+            }
+            SidebarItemChrome::Row => None,
+        }
+    };
     container::Style {
         background: bg,
         text_color: Some(p.background.base.text),
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: RADIUS_MD.into(),
+            radius: radius.into(),
         },
         ..container::Style::default()
     }
@@ -2062,7 +2166,21 @@ fn row_container_style(theme: &Theme, active: bool) -> container::Style {
 /// Active = quiet selection wash + rounded corners only. No left accent
 /// bar (that shifted title/subtitle relative to idle rows).
 pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
+    item_style_chrome(theme, status, active, SidebarItemChrome::Row)
+}
+
+/// Like [`item_style`], with explicit [`SidebarItemChrome`].
+pub fn item_style_chrome(
+    theme: &Theme,
+    status: button::Status,
+    active: bool,
+    chrome: SidebarItemChrome,
+) -> button::Style {
     let p = theme.extended_palette();
+    let radius = match chrome {
+        SidebarItemChrome::Row => RADIUS_MD,
+        SidebarItemChrome::Card => RADIUS_LG,
+    };
     if active {
         return button::Style {
             background: Some(Background::Color(crate::theme::selection())),
@@ -2070,15 +2188,28 @@ pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button
             border: Border {
                 color: Color::TRANSPARENT,
                 width: 0.0,
-                radius: RADIUS_MD.into(),
+                radius: radius.into(),
             },
             shadow: Default::default(),
             snap: false,
         };
     }
-    let bg = match status {
-        button::Status::Hovered => alpha(p.background.strong.color, 0.70),
-        _ => Color::TRANSPARENT,
+    let bg = match (chrome, status) {
+        (SidebarItemChrome::Card, button::Status::Hovered) => {
+            let raised = p.background.weaker.color;
+            let base = p.background.base.color;
+            let idle = crate::components::style::mix(raised, base, 0.75);
+            crate::components::style::mix(p.background.strong.color, idle, 0.35)
+        }
+        (SidebarItemChrome::Card, _) => {
+            let raised = p.background.weaker.color;
+            let base = p.background.base.color;
+            crate::components::style::mix(raised, base, 0.75)
+        }
+        (SidebarItemChrome::Row, button::Status::Hovered) => {
+            alpha(p.background.strong.color, 0.70)
+        }
+        (SidebarItemChrome::Row, _) => Color::TRANSPARENT,
     };
     button::Style {
         background: Some(Background::Color(bg)),
@@ -2086,7 +2217,7 @@ pub fn item_style(theme: &Theme, status: button::Status, active: bool) -> button
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: RADIUS_MD.into(),
+            radius: radius.into(),
         },
         shadow: Default::default(),
         snap: false,
