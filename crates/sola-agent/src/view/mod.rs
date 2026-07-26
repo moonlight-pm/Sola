@@ -138,6 +138,12 @@ fn toolbar(app: &App) -> Element<'_, Msg> {
         kit_btn::ghost,
     );
 
+    // Far-right destructive: wipe the open session and start a fresh one
+    // in the same project (no picker). Always available — no session just
+    // starts new.
+    let reset_btn =
+        kit_btn::labeled_sm("RESET", kit_btn::danger_outline).on_press(Msg::ResetSession);
+
     // Fixed height only — never center_y(Length::Fill), which overrides
     // height to Fill and steals half the window in a Fill column.
     container(
@@ -146,6 +152,7 @@ fn toolbar(app: &App) -> Element<'_, Msg> {
             chip,
             Space::new().width(Length::Fill),
             model,
+            reset_btn,
         ]
         .spacing(10.0)
         .align_y(Alignment::Center)

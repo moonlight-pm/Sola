@@ -290,6 +290,8 @@ pub(crate) enum Msg {
     ShiftHeld(bool),
     Cancel,
     NewSession,
+    /// Delete the open session (if any) and start a fresh one in the same cwd.
+    ResetSession,
     SelectSession(String),
     PermissionPick(String),
     PermissionAllowFirst,
@@ -642,6 +644,16 @@ impl App {
                     draft: default,
                     recent: sessions::recent_project_cwds(),
                 });
+            }
+            Msg::ResetSession => {
+                // Permanently drop the open session, then spawn a fresh one
+                // in the same project cwd (no picker).
+                if let Some(id) = self.session_id.clone() {
+                    self.transcript_cache.remove(&id);
+                    bridge::agent_send(AgentCmd::BulkDelete { ids: vec![id] });
+                }
+                let cwd = self.project_root.to_string_lossy().into_owned();
+                self.start_session_in(cwd);
             }
             Msg::PickerDraft(s) => {
                 if let Some(p) = &mut self.project_picker {
