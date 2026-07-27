@@ -13,9 +13,36 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**none**
+**sola-kvm** — custom software KVM (novus server → ember macOS client)
 
-### Last completed (prior)
+- Spec: [`docs/specs/2026-07-27-sola-kvm-design.md`](../../docs/specs/2026-07-27-sola-kvm-design.md)
+- Branch / worktree: `sola-kvm` (`/home/joshua/orca/workspaces/Sola/sola-kvm`)
+- Base: local `master` @ `3d1d44b`
+
+### Next phase
+
+**Phase B — Mac agent** (or continue Phase C on novus if Mac inject is deferred)
+
+1. UDP listen + CGEvent inject (motion/button/key) on ember
+2. LaunchAgent in GUI session
+3. Manual feed: `sola-kvm send-test --to 10.0.0.21:4242`
+
+### Done this branch
+
+**Phase A — Spec + skeleton**
+
+- Design doc committed earlier (`8b2ebb0`)
+- `crates/sola-kvm` — protocol, layout math, TOML config, UDP send/listen
+- CLI: `show`, `init`, `server` (idle stub), `listen`, `send-test`
+- 28 unit tests (encode/decode, layout bottoms-align, localhost UDP)
+- Mac stub note: `apps/sola-kvm-mac/README.md`
+
+### Later phases
+
+- **C** — novus edge capture + exclusive grab + chord suppress + UDP emit
+- **D** — autostart, stuck keys, polish; drop lan-mouse daily path
+
+## Last completed (prior, master)
 
 **app-icon-raster → master**: full-color app icons (path/PNG refs) in launcher + switcher; case-insensitive catalog lookup for Wayland app_id mismatches (e.g. orca).
 
@@ -24,31 +51,7 @@ If Current is `none`, ask what they want instead of inventing work.
 × + time rail); kit `SidebarItem` card chrome + custom content; toolbar
 RESET deletes open session and starts fresh.
 
-**sidebar-hover-trash → master**: stable hover trash (stack overlay +
-enter-only hover); no hard-crop GFM table cells; live thinking stream
-→ "Thought for N sec"; directory-first session tabs with context KB
-from disk `usage_update`.
-
-**float-shadows → master**: WM drop shadows via `get_decoration_below`;
-filled soft silhouette (no bottom bleed); half-size cast; PEAK_ALPHA 0.28.
-
-**agent-session-perf → master**: optimistic session switch + transcript
-cache; full-row sidebar hit targets / `item_spacing`; no
-`session/cancel` on tab switch (shared leader + TUI); cursor alias fix
-in sola-make.
-
-**focus-follows-mouse → master**: focus without raise (raise on click);
-200ms dwell; pointer resync after map; float drag clamps under menubar;
-full-height menubar hits (macOS idle chrome); edge/corner float resize
-(geometry rim, col/row cursors, square corner pads).
-
-**agent-ui-fixes → master**: markdown tables; Enter submit / Shift+Enter
-newline + growing composer; always-approve auto-answer + effort/mode
-order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
-
-**agent-leader → master**: leader-only attach; console group removed.
-
-### Future / follow-ups
+### Future / follow-ups (other)
 
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Further Grok TUI presentation parity
@@ -58,5 +61,8 @@ order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 ### Resume
 
 ```text
-# no active feature worktree
+# sola-kvm worktree — Phase A done; next Phase B (Mac) or C (novus capture)
+cd /home/joshua/orca/workspaces/Sola/sola-kvm
+cargo test -p sola-kvm
+cargo run -p sola-kvm -- show
 ```

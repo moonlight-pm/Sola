@@ -4902,6 +4902,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-kvm"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "sola-core",
+ "tempfile",
+ "toml 0.8.23",
+ "tracing",
+]
+
+[[package]]
 name = "sola-make"
 version = "0.1.0"
 dependencies = [

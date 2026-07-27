@@ -1,7 +1,7 @@
 # sola-kvm — Design
 
 **Date:** 2026-07-27  
-**Status:** Design (implementation next)  
+**Status:** Implementing — Phase A done (skeleton + protocol + layout)  
 **Worktree:** Orca `sola-kvm` (`/home/joshua/orca/workspaces/Sola/sola-kvm`)  
 **Base:** local `master` @ `3d1d44b`
 
@@ -224,11 +224,12 @@ Map Linux evdev → Mac CGKeyCode table (subset for v1: letters, mods, arrows, S
 
 ## 10. Implementation plan (phased)
 
-### Phase A — Spec + skeleton (this worktree)
+### Phase A — Spec + skeleton (this worktree) ✅
 
 1. This design doc  
-2. Crate/binary stubs: `crates/sola-kvm` (server) + `apps/sola-kvm-mac` or external Mac target  
-3. Packet encode/decode unit tests  
+2. Crate/binary: `crates/sola-kvm` (server CLI) + `apps/sola-kvm-mac/README.md` (Mac stub)  
+3. Packet encode/decode + layout + config unit tests (28 passing)  
+4. CLI tools: `show`, `init`, `server` (idle), `listen`, `send-test`  
 
 ### Phase B — Mac agent
 
