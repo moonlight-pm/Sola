@@ -446,6 +446,7 @@ mod tests {
             rec.events,
             vec![
                 "warp:100,200",
+                "warp:100,200", // Enter warps twice so CG sticks
                 "warp:150,220",
                 "button:0:1",
                 "button:0:0",
