@@ -211,6 +211,9 @@ pub enum Zone {
     TopMiddle,
     BottomMiddle,
     FullMiddle,
+    /// Center + right columns combined (FullMiddle ∪ Right). Full height
+    /// under the menubar — Meta+KP_Add.
+    MiddleRight,
     /// Fullscreen *under* the menubar — the standard "max window".
     Fullscreen,
     /// True fullscreen including the menubar — the cinema / no-chrome
@@ -236,6 +239,8 @@ impl Zone {
             Zone::TopMiddle => (0.28, 0.0, 0.44, 0.7),
             Zone::BottomMiddle => (0.28, 0.7, 0.44, 0.3),
             Zone::FullMiddle => (0.28, 0.0, 0.44, 1.0),
+            // FullMiddle (0.28..0.72) + Right (0.72..1.0) → 0.28..1.0
+            Zone::MiddleRight => (0.28, 0.0, 0.72, 1.0),
             Zone::Fullscreen => (0.0, 0.0, 1.0, 1.0),
             Zone::Cinema => (0.0, 0.0, 1.0, 1.0),
             // Float never goes through the sizing path; the value is unused
@@ -832,6 +837,12 @@ mod tests {
         // Float never goes through the sizing path; rect() must stay
         // exhaustive but its value is unused.
         assert_eq!(Zone::Float.rect(), (0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn zone_middle_right_is_full_middle_union_right() {
+        // FullMiddle (0.28, 0.44) ∪ Right (0.72, 0.28) → (0.28, 0.72)
+        assert_eq!(Zone::MiddleRight.rect(), (0.28, 0.0, 0.72, 1.0));
     }
 
     #[test]

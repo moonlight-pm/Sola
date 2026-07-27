@@ -135,6 +135,9 @@ impl KeyCode {
     pub const KP_ENTER: Self = Self(104);
     /// Numpad `*` (KP_Multiply) — floats the focused window.
     pub const KP_MULTIPLY: Self = Self(63);
+    /// Numpad `+` (KP_Add) — MiddleRight zone (center + right columns).
+    /// XKB keycode = Linux KEY_KPPLUS (78) + 8.
+    pub const KP_ADD: Self = Self(86);
 
     /// Returns true if this key code is either left or right Meta.
     #[inline]
@@ -206,6 +209,7 @@ impl KeyCode {
             91 => "KP.",
             125 => "KP=",
             63 => "KP*",
+            86 => "KP+",
             _ => "?",
         }
     }
@@ -308,6 +312,12 @@ mod tests {
     fn kp_multiply_has_xkb_code_and_label() {
         assert_eq!(KeyCode::KP_MULTIPLY.raw(), 63);
         assert_eq!(KeyCode::KP_MULTIPLY.display(), "KP*");
+    }
+
+    #[test]
+    fn kp_add_has_xkb_code_and_label() {
+        assert_eq!(KeyCode::KP_ADD.raw(), 86);
+        assert_eq!(KeyCode::KP_ADD.display(), "KP+");
     }
 
     #[test]

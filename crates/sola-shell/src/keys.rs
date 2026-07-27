@@ -148,6 +148,7 @@ fn keycode_to_keysym(k: KeyCode) -> u32 {
         KeyCode::KP_DECIMAL => 0xFFAE, // XK_KP_Decimal
         KeyCode::KP_ENTER => 0xFF8D,    // XK_KP_Enter
         KeyCode::KP_MULTIPLY => 0xFFAA, // XK_KP_Multiply — floats the window
+        KeyCode::KP_ADD => 0xFFAB,      // XK_KP_Add — MiddleRight zone
         KeyCode::F12 => 0xFFC9,         // XK_F12
         _ => {
             if let Some(sym) = letter_keysym(k) {
@@ -246,6 +247,7 @@ fn keysym_to_keycode(sym: u32) -> Option<KeyCode> {
         0xFFAE => Some(KeyCode::KP_DECIMAL),
         0xFF8D => Some(KeyCode::KP_ENTER),
         0xFFAA => Some(KeyCode::KP_MULTIPLY),
+        0xFFAB => Some(KeyCode::KP_ADD),
         0xFFC9 => Some(KeyCode::F12),
         // NumLock-off variants of the zoning numpad keys.
         KEYSYM_KP_UP => Some(KeyCode::KP_8),
@@ -379,6 +381,28 @@ mod tests {
         })
         .expect("KP_Multiply keysym must round-trip");
         assert_eq!(back.keycode, KeyCode::KP_MULTIPLY);
+        assert!(back.meta);
+    }
+
+    #[test]
+    fn round_trip_kp_add() {
+        // Meta+KP_Add → MiddleRight. Same keysym-mapping class as
+        // KP_MULTIPLY: must register as XK_KP_Add (0xFFAB), not raw 86.
+        let chord = KeyChord {
+            keycode: KeyCode::KP_ADD,
+            meta: true,
+            alt: false,
+            ctrl: false,
+            shift: false,
+        };
+        let reg = to_registered(&chord);
+        assert_eq!(reg.keysym, 0xFFAB, "KP_ADD must map to XK_KP_Add");
+        let back = from_chord_event(&ChordEvent {
+            keysym: reg.keysym,
+            modifiers: reg.modifiers,
+        })
+        .expect("KP_Add keysym must round-trip");
+        assert_eq!(back.keycode, KeyCode::KP_ADD);
         assert!(back.meta);
     }
 

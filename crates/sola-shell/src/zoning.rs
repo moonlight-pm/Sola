@@ -419,6 +419,7 @@ pub const ZONING_KEYCODES: &[u32] = &[
     KeyCode::KP_DECIMAL.raw(),
     KeyCode::KP_ENTER.raw(),
     KeyCode::KP_MULTIPLY.raw(),
+    KeyCode::KP_ADD.raw(),
 ];
 
 fn zone_for_keycode(code: u32) -> Option<Zone> {
@@ -433,6 +434,7 @@ fn zone_for_keycode(code: u32) -> Option<Zone> {
         c if c == KeyCode::KP_DECIMAL.raw() => Some(Zone::Bottom),
         c if c == KeyCode::KP_ENTER.raw() => Some(Zone::Cinema),
         c if c == KeyCode::KP_MULTIPLY.raw() => Some(Zone::Float),
+        c if c == KeyCode::KP_ADD.raw() => Some(Zone::MiddleRight),
         _ => None,
     }
 }
@@ -589,6 +591,19 @@ mod tests {
     }
 
     #[test]
+    fn zone_middle_right() {
+        // Zone::MiddleRight rect = (0.28, 0.0, 0.72, 1.0) — FullMiddle ∪ Right
+        let f = frame_for(Zone::MiddleRight);
+        assert_eq!(f.x, (0.28 * 1920.0f64).round() as i32);
+        assert_eq!(f.y, MENUBAR_HEIGHT);
+        assert_eq!(f.width, (0.72 * 1920.0f64).round() as i32);
+        assert_eq!(f.height, UH);
+        assert!(!f.fullscreen);
+        // Right edge should land on the output edge (same as Fullscreen width start+w).
+        assert_eq!(f.x + f.width, 1920);
+    }
+
+    #[test]
     fn zone_fullscreen() {
         // Zone::Fullscreen rect = (0.0, 0.0, 1.0, 1.0) — still below menubar
         let f = frame_for(Zone::Fullscreen);
@@ -686,6 +701,34 @@ mod tests {
     #[test]
     fn zoning_keycodes_include_float_key() {
         assert!(ZONING_KEYCODES.contains(&KeyCode::KP_MULTIPLY.raw()));
+    }
+
+    #[test]
+    fn kp_add_maps_to_middle_right() {
+        assert_eq!(
+            zone_for_keycode(KeyCode::KP_ADD.raw()),
+            Some(Zone::MiddleRight)
+        );
+    }
+
+    #[test]
+    fn zoning_keycodes_include_middle_right_key() {
+        assert!(ZONING_KEYCODES.contains(&KeyCode::KP_ADD.raw()));
+    }
+
+    #[test]
+    fn handle_key_middle_right_snaps_and_persists() {
+        let mut s = state_with_output(1920, 1080);
+        s.set_focused("sola-browser".to_string());
+        let frame = s
+            .handle_key(KeyCode::KP_ADD.raw(), Some(11))
+            .expect("MiddleRight must emit a frame");
+        assert_eq!(frame.window_id, 11);
+        assert_eq!(frame.x, (0.28 * 1920.0f64).round() as i32);
+        assert_eq!(frame.width, (0.72 * 1920.0f64).round() as i32);
+        assert_eq!(s.window_zones.get(&11).copied(), Some(Zone::MiddleRight));
+        let update = s.take_zones_update().expect("zones dirty");
+        assert_eq!(update.get("sola-browser").copied(), Some(Zone::MiddleRight));
     }
 
     #[test]
