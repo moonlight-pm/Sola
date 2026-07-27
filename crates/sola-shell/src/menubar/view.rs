@@ -350,7 +350,7 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
 }
 
 fn display_label(shell: &crate::app::Shell, app_id: &str) -> String {
-    if let Some(app) = shell.applications.get(app_id) {
+    if let Some(app) = shell.applications.get_for_window(app_id) {
         return app.label.clone();
     }
     let mut chars = app_id.chars();

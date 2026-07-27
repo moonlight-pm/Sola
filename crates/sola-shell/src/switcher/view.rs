@@ -56,7 +56,9 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .iter()
         .enumerate()
         .map(|(i, app)| {
-            let catalog_entry = shell.applications.get(&app.app_id);
+            // Window app_ids come from the compositor; catalog keys may
+            // differ in case (e.g. Wayland `orca` vs launcher `Orca`).
+            let catalog_entry = shell.applications.get_for_window(&app.app_id);
             let icon_name = catalog_entry
                 .map(|a| a.icon.as_str())
                 .filter(|s| !s.is_empty())
@@ -64,8 +66,8 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
             let is_selected = i == switcher.selected;
 
-            // Theme-tinted stroke icons (full-color app icons deferred).
-            // Keep both states on the same face — selection is the plate.
+            // Same icon resolver as the launcher: pack SVGs theme-tinted,
+            // path / pack PNG refs full-color (official app faces).
             let icon_el: Element<'_, Msg> = icon(icon_name, ICON_SIZE);
 
             let plate: Element<'_, Msg> = container(icon_el)
