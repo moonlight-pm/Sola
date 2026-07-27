@@ -54,45 +54,60 @@ pub enum AgentEvent {
         history_start_byte: u64,
         has_older: bool,
     },
+    /// Local or remote user text. `session_id` is the Grok session UUID —
+    /// never a display title (many sessions share a directory leaf title).
     UserEcho {
+        session_id: String,
         text: String,
     },
     AgentDelta {
+        session_id: String,
         text: String,
     },
     ThoughtDelta {
+        session_id: String,
         text: String,
     },
     ToolStart {
+        session_id: String,
         call_id: String,
         tool: String,
     },
     ToolUpdate {
+        session_id: String,
         call_id: String,
         status: Option<String>,
         title: Option<String>,
     },
     ToolEnd {
+        session_id: String,
         call_id: String,
         status: String,
     },
     Plan {
+        session_id: String,
         entries: Vec<PlanEntry>,
     },
     Usage {
+        /// When known, update only this session's badge / open usage.
+        session_id: Option<String>,
         used: u64,
         size: Option<u64>,
     },
     PermissionRequired {
+        session_id: Option<String>,
         request_id: u64,
         tool: String,
         preview: String,
         options: Vec<PermissionChoice>,
     },
     TurnEnded {
+        session_id: String,
         stop_reason: String,
     },
     Error {
+        /// When set, only the matching open session surfaces the error.
+        session_id: Option<String>,
         message: String,
     },
     SessionsListed {
