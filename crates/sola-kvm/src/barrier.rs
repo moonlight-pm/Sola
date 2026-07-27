@@ -19,6 +19,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 
 use crate::layout::Side;
 
+/// Strip thickness (lan-mouse uses 1; we use 2 for easier hit-testing).
 const STRIP: i32 = 2;
 
 /// Wayland edge barrier. Poll from the server loop while local.
@@ -34,6 +35,8 @@ struct BarrierState {
     shm: Option<wl_shm::WlShm>,
     layer_shell: Option<ZwlrLayerShellV1>,
     seat: Option<wl_seat::WlSeat>,
+    /// First bound output (prefer binding the layer surface to it).
+    output: Option<wl_output::WlOutput>,
     /// Output geometries discovered so far.
     output_sizes: Vec<(i32, i32)>,
     primary_w: i32,
@@ -44,9 +47,13 @@ struct BarrierState {
     layer_surface: Option<ZwlrLayerSurfaceV1>,
     pointer: Option<wl_pointer::WlPointer>,
     configured: bool,
+    /// Size assigned by the compositor (after configure).
+    surface_w: i32,
+    surface_h: i32,
     active: bool,
-    /// Primary-space Y when the real pointer entered the strip.
-    pending_hit_y: Option<i32>,
+    /// Coordinate along the edge when the real pointer entered the strip
+    /// (y for left/right, x for top/bottom), in surface-local coords.
+    pending_hit_along: Option<i32>,
 }
 
 impl EdgeBarrier {
@@ -63,6 +70,7 @@ impl EdgeBarrier {
             shm: None,
             layer_shell: None,
             seat: None,
+            output: None,
             output_sizes: Vec::new(),
             primary_w,
             primary_h,
@@ -71,8 +79,10 @@ impl EdgeBarrier {
             layer_surface: None,
             pointer: None,
             configured: false,
+            surface_w: 0,
+            surface_h: 0,
             active: true,
-            pending_hit_y: None,
+            pending_hit_along: None,
         };
 
         state.compositor = Some(
@@ -98,6 +108,11 @@ impl EdgeBarrier {
                 .bind(&qh, 1..=8, ())
                 .map_err(|e| format!("wl_seat: {e}"))?,
         );
+        // Multi-instance outputs: bind the first advertised one for geometry + layer target.
+        // (Further outputs can arrive via registry Global events.)
+        if let Ok(output) = globals.bind::<wl_output::WlOutput, _, _>(&qh, 1..=4, ()) {
+            state.output = Some(output);
+        }
 
         event_queue
             .roundtrip(&mut state)
@@ -110,6 +125,7 @@ impl EdgeBarrier {
             .max_by_key(|(w, h)| (*w as i64) * (*h as i64))
         {
             if w > 0 && h > 0 {
+                info!(w, h, "barrier: using compositor output size");
                 state.primary_w = w;
                 state.primary_h = h;
             }
@@ -157,7 +173,7 @@ impl EdgeBarrier {
                 .dispatch_pending(&mut self.state)
                 .map_err(|e| format!("dispatch2: {e}"))?;
         }
-        Ok(self.state.pending_hit_y.take())
+        Ok(self.state.pending_hit_along.take())
     }
 
     pub fn set_active(&mut self, active: bool) -> Result<(), String> {
@@ -187,48 +203,42 @@ fn create_strip(state: &mut BarrierState, qh: &QueueHandle<BarrierState>) -> Res
     let compositor = state.compositor.as_ref().ok_or("no compositor")?;
     let layer_shell = state.layer_shell.as_ref().ok_or("no layer_shell")?;
     let surface = compositor.create_surface(qh, ());
+
+    // Bind to a concrete output when we have one (matches lan-mouse).
     let layer_surface = layer_shell.get_layer_surface(
         &surface,
-        None,
+        state.output.as_ref(),
         Layer::Overlay,
         String::from("sola-kvm-edge"),
         qh,
         (),
     );
 
+    // lan-mouse pattern: anchor to ONE edge only, size = strip × full edge length,
+    // exclusive_zone = -1 (extend to edges; don't get pushed by other exclusives).
     let (w, h, anchor) = match state.side {
-        Side::Right => (
-            STRIP,
-            state.primary_h,
-            Anchor::Right | Anchor::Top | Anchor::Bottom,
-        ),
-        Side::Left => (
-            STRIP,
-            state.primary_h,
-            Anchor::Left | Anchor::Top | Anchor::Bottom,
-        ),
-        Side::Top => (
-            state.primary_w,
-            STRIP,
-            Anchor::Top | Anchor::Left | Anchor::Right,
-        ),
-        Side::Bottom => (
-            state.primary_w,
-            STRIP,
-            Anchor::Bottom | Anchor::Left | Anchor::Right,
-        ),
+        Side::Right => (STRIP as u32, state.primary_h.max(1) as u32, Anchor::Right),
+        Side::Left => (STRIP as u32, state.primary_h.max(1) as u32, Anchor::Left),
+        Side::Top => (state.primary_w.max(1) as u32, STRIP as u32, Anchor::Top),
+        Side::Bottom => (state.primary_w.max(1) as u32, STRIP as u32, Anchor::Bottom),
     };
 
     layer_surface.set_anchor(anchor);
-    layer_surface.set_exclusive_zone(STRIP);
-    layer_surface.set_size(w as u32, h as u32);
+    layer_surface.set_size(w, h);
+    layer_surface.set_exclusive_zone(-1);
+    layer_surface.set_margin(0, 0, 0, 0);
     layer_surface.set_keyboard_interactivity(KeyboardInteractivity::None);
+    // Entire surface is input-sensitive (don't inherit a tiny buffer region).
+    surface.set_input_region(None);
     surface.commit();
 
     state.surface = Some(surface);
     state.layer_surface = Some(layer_surface);
     state.configured = false;
-    state.pending_hit_y = None;
+    state.surface_w = w as i32;
+    state.surface_h = h as i32;
+    state.pending_hit_along = None;
+    info!(w, h, ?state.side, "barrier strip requested (full edge length)");
     Ok(())
 }
 
@@ -242,14 +252,21 @@ fn destroy_strip(state: &mut BarrierState) {
     state.configured = false;
 }
 
-fn attach_empty_buffer(
+/// Transparent ARGB buffer matching the strip pixel size (lan-mouse style).
+fn attach_strip_buffer(
     state: &BarrierState,
     surface: &wl_surface::WlSurface,
+    width: i32,
+    height: i32,
     qh: &QueueHandle<BarrierState>,
 ) {
     let Some(shm) = state.shm.as_ref() else {
         return;
     };
+    let width = width.max(1);
+    let height = height.max(1);
+    let stride = width * 4;
+    let size = (stride * height) as usize;
     let mut memfd = match rustix::fs::memfd_create(
         "sola-kvm-barrier",
         rustix::fs::MemfdFlags::CLOEXEC | rustix::fs::MemfdFlags::ALLOW_SEALING,
@@ -260,16 +277,26 @@ fn attach_empty_buffer(
             return;
         }
     };
-    if rustix::io::write(&mut memfd, &[0u8; 4]).is_err() {
+    // Transparent black ARGB8888.
+    let zeros = vec![0u8; size];
+    if rustix::io::write(&mut memfd, &zeros).is_err() {
         return;
     }
-    let pool = shm.create_pool(memfd.as_fd(), 4, qh, ());
-    let buffer = pool.create_buffer(0, 1, 1, 4, wl_shm::Format::Argb8888, qh, ());
+    let pool = shm.create_pool(memfd.as_fd(), size as i32, qh, ());
+    let buffer = pool.create_buffer(
+        0,
+        width,
+        height,
+        stride,
+        wl_shm::Format::Argb8888,
+        qh,
+        (),
+    );
     surface.attach(Some(&buffer), 0, 0);
-    surface.damage(0, 0, 1, 1);
+    surface.damage(0, 0, width, height);
+    surface.set_input_region(None);
     surface.commit();
     pool.destroy();
-    // Buffer released asynchronously; destroy on Release event.
     let _ = buffer;
 }
 
@@ -277,7 +304,7 @@ fn attach_empty_buffer(
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for BarrierState {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         registry: &wl_registry::WlRegistry,
         event: wl_registry::Event,
         _: &GlobalListContents,
@@ -291,9 +318,12 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for BarrierState {
         } = event
         {
             if interface == "wl_output" {
-                let _output: wl_output::WlOutput =
+                let output: wl_output::WlOutput =
                     registry.bind(name, version.min(3), qh, ());
-                debug!(name, "barrier: bound wl_output");
+                if state.output.is_none() {
+                    state.output = Some(output);
+                }
+                debug!(name, "barrier: bound wl_output (hotplug)");
             }
         }
     }
@@ -396,6 +426,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for BarrierState {
         }
         if let wl_pointer::Event::Enter {
             surface,
+            surface_x,
             surface_y,
             ..
         } = event
@@ -404,9 +435,26 @@ impl Dispatch<wl_pointer::WlPointer, ()> for BarrierState {
             if !ours {
                 return;
             }
-            let y = (surface_y as i32).clamp(0, state.primary_h.saturating_sub(1));
-            info!(y, "PHYSICAL edge hit (layer-shell barrier)");
-            state.pending_hit_y = Some(y);
+            // Along-edge coordinate: y for left/right strips, x for top/bottom.
+            let along = match state.side {
+                Side::Left | Side::Right => {
+                    let max = state.surface_h.max(state.primary_h).saturating_sub(1);
+                    (surface_y as i32).clamp(0, max)
+                }
+                Side::Top | Side::Bottom => {
+                    let max = state.surface_w.max(state.primary_w).saturating_sub(1);
+                    (surface_x as i32).clamp(0, max)
+                }
+            };
+            info!(
+                along,
+                surface_x,
+                surface_y,
+                surface_w = state.surface_w,
+                surface_h = state.surface_h,
+                "PHYSICAL edge hit (layer-shell barrier)"
+            );
+            state.pending_hit_along = Some(along);
         }
     }
 }
@@ -467,9 +515,28 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for BarrierState {
             } => {
                 layer_surface.ack_configure(serial);
                 state.configured = true;
-                debug!(width, height, "barrier layer configured");
+                // Compositor may rewrite size; use what it assigned for the buffer.
+                let w = if width == 0 {
+                    state.surface_w.max(STRIP)
+                } else {
+                    width as i32
+                };
+                let h = if height == 0 {
+                    state.surface_h.max(STRIP)
+                } else {
+                    height as i32
+                };
+                state.surface_w = w;
+                state.surface_h = h;
+                // Keep primary edge length in sync with what the compositor gave us.
+                match state.side {
+                    Side::Left | Side::Right if h > 0 => state.primary_h = h,
+                    Side::Top | Side::Bottom if w > 0 => state.primary_w = w,
+                    _ => {}
+                }
+                info!(w, h, "barrier layer configured (full-edge buffer)");
                 if let Some(surface) = state.surface.clone() {
-                    attach_empty_buffer(state, &surface, qh);
+                    attach_strip_buffer(state, &surface, w, h, qh);
                 }
             }
             zwlr_layer_surface_v1::Event::Closed => {
