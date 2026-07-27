@@ -13,66 +13,46 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ## Current
 
-**sola-kvm** — custom software KVM (novus server → ember macOS client)
+**sola-kvm** — Phases A–C on branch `sola-kvm` (not merged to master)
 
 - Spec: [`docs/specs/2026-07-27-sola-kvm-design.md`](../../docs/specs/2026-07-27-sola-kvm-design.md)
 - Operator: [`docs/manual/sola-kvm-operator.md`](../../docs/manual/sola-kvm-operator.md)
-- Branch / worktree: `sola-kvm` (`/home/joshua/orca/workspaces/Sola/sola-kvm`)
-- Base: local `master` @ `3d1d44b`
+- Mac client: [`apps/sola-kvm-mac/README.md`](../../apps/sola-kvm-mac/README.md)
 
-### Next phase
+### Done (orchestrated parallel B+C)
 
-**Phase B — Mac agent** (parallel / remaining) **or** Phase D polish
+| Phase | Commit | Notes |
+|-------|--------|-------|
+| A skeleton | `7761b0b` | protocol, layout, config, CLI |
+| B Mac agent | `76c942d` | UDP + CGEvent inject (Linux stub; needs ember smoke) |
+| C novus capture | `f2de5d8` | Session machine, feed/demo/evdev, edge enter/leave |
 
-1. Phase B: UDP listen + CGEvent inject on ember; LaunchAgent
-2. Phase D: layer-shell barriers + sola-river chord suppress port; compositor warp; autostart
+**44** `sola-kvm` unit tests pass.
 
-### Done this branch
+### Next
 
-**Phase A — Spec + skeleton**
+1. **Desk smoke** — build Mac agent on ember + Accessibility; novus `sola-kvm server` against peer
+2. **Layer-shell / chord suppress** — pull or port from `libei-portal` if Meta still eaten during remote
+3. **Phase D** — autostart, primary size from bus, real Wayland warp on leave
+4. Merge to master only with explicit user approval
 
-- Design doc (`8b2ebb0`)
-- `crates/sola-kvm` — protocol, layout math, TOML config, UDP send/listen
-- CLI: `show`, `init`, `server` (idle), `listen`, `send-test`
+### Orchestration (completed)
 
-**Phase C — Novus edge + virtual cursor + UDP emit**
+| Task | Worker | Status |
+|------|--------|--------|
+| `task_be40a25f306f` Phase B | `term_5bd77c38…` | completed |
+| `task_e63e110a48df` Phase C | `term_25f471de…` | completed |
 
-- Pure `Session` state machine: Local ↔ Remote, enter/leave, abs Motion, stuck-key recovery
-- Layout `try_enter_from_motion` edge hit helpers
-- Server loop wired: `--input feed|demo|evdev`
-- Evdev EVIOCGRAB spike while remote (needs `/dev/input` access)
-- Operator doc; design §10 Phase C notes
-- Unit tests for edge math + state machine
+## Last completed (prior, master)
 
-### Later phases
-
-- **B** — Mac agent (if not done in parallel)
-- **D** — layer-shell path, sola-river hooks, autostart, drop lan-mouse
+app-icon-raster, session-id-routing, sidebar-hover-trash, float-shadows,
+agent-session-perf, focus-follows-mouse, agent-ui-fixes, agent-leader.
 
 ### Resume
 
 ```text
 cd /home/joshua/orca/workspaces/Sola/sola-kvm
+git log --oneline master..HEAD
 cargo test -p sola-kvm
-cargo make build sola-kvm
-# smoke (no HID):
-#   sola-kvm listen --bind 127.0.0.1:4242
-#   sola-kvm server --input demo   # peer must match or use listen on same port carefully
-printf 'abs 5119 2000\nrel 3 0\nrel 40 10\nleave\n' | sola-kvm server --input feed
+# desk: see docs/manual/sola-kvm-operator.md + apps/sola-kvm-mac/README.md
 ```
-
-## Last completed (prior, master)
-
-**app-icon-raster → master**: full-color app icons (path/PNG refs) in launcher + switcher; case-insensitive catalog lookup for Wayland app_id mismatches (e.g. orca).
-
-**session-id-routing → master**: live ACP stream keyed by session UUID
-(not title); OD session cards (graphite select, slim context bar, hover
-× + time rail); kit `SidebarItem` card chrome + custom content; toolbar
-RESET deletes open session and starts fresh.
-
-### Future / follow-ups (other)
-
-- Permission fan-out UX when TUI + sola-agent both attached (ask mode)
-- Further Grok TUI presentation parity
-- Storybook page parity for non-Overview tabs (on demand)
-- Remaining worktrees: `libei-portal`, `app-icon-raster`
