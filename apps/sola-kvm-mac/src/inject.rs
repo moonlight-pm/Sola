@@ -18,8 +18,11 @@ pub trait Injector {
     /// Dispatch a decoded packet.
     fn handle(&mut self, packet: &Packet) {
         match packet {
-            Packet::Enter { x, y, .. } => {
-                debug!(x, y, "enter → warp");
+            Packet::Enter { x, y, edge } => {
+                // Always absolute warp to the server's enter point (not residual
+                // Mac cursor position). Warp twice to beat CG association races.
+                tracing::info!(x, y, ?edge, "enter → warp");
+                self.warp(*x, *y);
                 self.warp(*x, *y);
             }
             Packet::Leave => {
@@ -217,10 +220,13 @@ mod platform {
             y: y as f64,
         };
         unsafe {
-            let _ = CGAssociateMouseAndMouseCursorPosition(true);
+            // Dissociate during warp so the OS does not immediately re-apply
+            // the previous cursor position (common CGWarp pitfall).
+            let _ = CGAssociateMouseAndMouseCursorPosition(false);
             let err = CGWarpMouseCursorPosition(pt);
             if err != 0 {
                 error!(err, x, y, "CGWarpMouseCursorPosition failed");
+                let _ = CGAssociateMouseAndMouseCursorPosition(true);
                 return;
             }
 
@@ -237,6 +243,8 @@ mod platform {
                 (CG_EVENT_MOUSE_MOVED, CG_MOUSE_BUTTON_LEFT)
             };
 
+            // Post a HID mouse-moved/dragged at the new point so apps and the
+            // window server agree with the warp (warp alone is often ignored).
             let src = source();
             let ev = CGEventCreateMouseEvent(src, mouse_type, pt, button);
             if !ev.is_null() {
@@ -246,7 +254,10 @@ mod platform {
                 warn!("CGEventCreateMouseEvent returned null (Accessibility?)");
             }
             release(src);
+            let _ = CGAssociateMouseAndMouseCursorPosition(true);
         }
+        // Info once is too noisy for every motion; debug for stream, warn-level
+        // only on failure above.
         debug!(x, y, "warp");
     }
 

@@ -58,6 +58,8 @@ fn apply(
             SideEffect::Grab => {
                 info!(
                     mac = ?session.mac_pos(),
+                    local_x = session.local_x,
+                    local_y = session.local_y,
                     "ENTER remote — grab + chord suppress (if available)"
                 );
                 grab(true);
@@ -151,8 +153,13 @@ fn run_evdev(session: &mut Session, sender: &mut Sender) -> Result<(), String> {
         session.local_x, session.local_y
     );
     info!(
+        edge_band = session.layout.edge_band,
+        enter_push = session.layout.enter_push,
+        "edge enter: must be within edge_band of shared edge, then push enter_push px outward"
+    );
+    info!(
         "note: local absolute position is estimated from relative deltas (may drift); \
-         layer-shell barriers are the planned precise edge path once sola-river enables them"
+         layer-shell barriers are the planned precise edge path"
     );
 
     loop {

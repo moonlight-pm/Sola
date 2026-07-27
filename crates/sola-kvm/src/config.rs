@@ -76,11 +76,21 @@ impl Default for LayoutSection {
 #[serde(default)]
 pub struct Motion {
     pub scale: f32,
+    /// Must be within this many primary pixels of the shared edge before enter
+    /// is allowed (default 64). Fights estimated-cursor drift.
+    pub edge_band: i32,
+    /// Outward rel motion while parked on the edge before enter (default 48).
+    /// Feels like pushing through a soft barrier.
+    pub enter_push: f32,
 }
 
 impl Default for Motion {
     fn default() -> Self {
-        Self { scale: 1.0 }
+        Self {
+            scale: 1.0,
+            edge_band: 64,
+            enter_push: 48.0,
+        }
     }
 }
 
@@ -161,6 +171,8 @@ impl Config {
             scale: self.motion.scale,
             offset_x: self.layout.offset_x,
             offset_y: self.layout.offset_y,
+            edge_band: self.motion.edge_band,
+            enter_push: self.motion.enter_push,
         })
     }
 
@@ -234,7 +246,7 @@ height = 2160
         let cfg = Config::parse(text).unwrap();
         assert_eq!(cfg.peer.host, "10.0.0.21");
         assert_eq!(cfg.peer.port, 4242);
-        assert_eq!(cfg.motion.scale, 1.25);
+        assert!((cfg.motion.scale - 1.25).abs() < f32::EPSILON);
         let layout = cfg.layout();
         assert_eq!(layout.origin_x, 5120);
         assert_eq!(layout.origin_y, -720);

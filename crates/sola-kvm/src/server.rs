@@ -81,6 +81,8 @@ pub struct Session {
     /// Estimated primary-space cursor while local (edge detection).
     pub local_x: i32,
     pub local_y: i32,
+    /// Outward push accumulated while parked on the shared edge.
+    edge_pressure: f32,
     /// Keys currently down (evdev codes) — released synthetically on leave.
     pressed_keys: BTreeSet<u32>,
     /// Buttons currently down — released synthetically on leave.
@@ -97,6 +99,7 @@ impl Session {
             mode: Mode::Local,
             local_x,
             local_y,
+            edge_pressure: 0.0,
             pressed_keys: BTreeSet::new(),
             pressed_buttons: BTreeSet::new(),
         }
@@ -110,6 +113,7 @@ impl Session {
             mode: Mode::Local,
             local_x: x,
             local_y: y,
+            edge_pressure: 0.0,
             pressed_keys: BTreeSet::new(),
             pressed_buttons: BTreeSet::new(),
         }
@@ -162,14 +166,35 @@ impl Session {
     fn on_pointer_rel(&mut self, dx: f32, dy: f32) -> Step {
         match self.mode {
             Mode::Local => {
-                if let Some((mx, my)) =
-                    self.layout
-                        .try_enter_from_motion(self.local_x, self.local_y, dx, dy)
-                {
-                    return self.enter_remote(mx, my);
-                }
                 let (nx, ny) = self.layout.apply_local_motion(self.local_x, self.local_y, dx, dy);
                 let (cx, cy) = self.layout.clamp_primary(nx, ny);
+                let outward = self.layout.outward_component(dx, dy);
+                // Soft barrier: only while already near / on the shared edge,
+                // accumulate outward push. Instant enter only after enough push
+                // (or a single huge delta that exceeds enter_push).
+                let near = self.layout.near_shared_edge(self.local_x, self.local_y)
+                    || self.layout.near_shared_edge(cx, cy);
+                let trying_out = outward > 0.0
+                    && match self.layout.side {
+                        crate::layout::Side::Right => nx >= self.layout.primary_w,
+                        crate::layout::Side::Left => nx < 0,
+                        crate::layout::Side::Top => ny < 0,
+                        crate::layout::Side::Bottom => ny >= self.layout.primary_h,
+                    };
+
+                if near && trying_out {
+                    self.edge_pressure += outward;
+                    if self.edge_pressure >= self.layout.enter_push {
+                        self.edge_pressure = 0.0;
+                        let (mx, my) = self.layout.enter_mac_coords(cx, cy);
+                        self.local_x = cx;
+                        self.local_y = cy;
+                        return self.enter_remote(mx, my);
+                    }
+                } else if !near || outward <= 0.0 {
+                    self.edge_pressure = 0.0;
+                }
+
                 self.local_x = cx;
                 self.local_y = cy;
                 Step::empty()
@@ -232,6 +257,7 @@ impl Session {
         let mx = mx.clamp(0, self.layout.mac_w.saturating_sub(1));
         let my = my.clamp(0, self.layout.mac_h.saturating_sub(1));
         self.mode = Mode::Remote { mx, my };
+        self.edge_pressure = 0.0;
         let edge: Edge = self.layout.enter_edge();
         Step {
             packets: vec![
@@ -241,6 +267,7 @@ impl Session {
                     y: my,
                 },
                 // Immediate abs position so clients that ignore Enter coords still track.
+                // Sent twice on the wire via enter+motion; Mac agent warps on both.
                 Packet::Motion { x: mx, y: my },
             ],
             effects: vec![SideEffect::Grab],
@@ -297,6 +324,7 @@ impl Session {
         packets.push(Packet::Leave);
 
         self.mode = Mode::Local;
+        self.edge_pressure = 0.0;
         let (wx, wy) = self.layout.clamp_primary(warp.0, warp.1);
         self.local_x = wx;
         self.local_y = wy;
@@ -326,13 +354,27 @@ mod tests {
             scale: 1.0,
             offset_x: None,
             offset_y: None,
+            edge_band: 64,
+            enter_push: 48.0,
         })
+    }
+
+    fn push_enter(s: &mut Session) {
+        // Park on right edge (keep current y) then push past enter_push (48).
+        let y = s.local_y;
+        s.local_x = 5119;
+        s.local_y = y;
+        s.handle(InputEvent::PointerRel { dx: 50.0, dy: 0.0 });
     }
 
     #[test]
     fn enter_on_right_edge_motion() {
         let mut s = Session::with_local_pos(desk(), 5119, 2000);
+        // Small nudge alone is not enough — need enter_push.
         let step = s.handle(InputEvent::PointerRel { dx: 3.0, dy: 0.0 });
+        assert!(!s.is_remote());
+        assert!(step.packets.is_empty());
+        let step = s.handle(InputEvent::PointerRel { dx: 50.0, dy: 0.0 });
         assert!(s.is_remote());
         assert!(matches!(step.effects.as_slice(), [SideEffect::Grab]));
         assert!(matches!(
@@ -347,6 +389,16 @@ mod tests {
     }
 
     #[test]
+    fn mid_screen_nudge_does_not_enter() {
+        let mut s = Session::with_local_pos(desk(), 100, 100);
+        // Even a huge rightward delta must not enter without being near the edge.
+        s.handle(InputEvent::PointerRel { dx: 5000.0, dy: 0.0 });
+        assert!(!s.is_remote());
+        // 100+5000 lands at 5100 (still inside primary) — no enter, no edge push.
+        assert_eq!(s.local_x, 5100);
+    }
+
+    #[test]
     fn local_motion_stays_local() {
         let mut s = Session::with_local_pos(desk(), 100, 100);
         let step = s.handle(InputEvent::PointerRel { dx: 10.0, dy: 5.0 });
@@ -358,7 +410,7 @@ mod tests {
     #[test]
     fn remote_motion_emits_abs() {
         let mut s = Session::with_local_pos(desk(), 5119, 2000);
-        s.handle(InputEvent::PointerRel { dx: 2.0, dy: 0.0 });
+        push_enter(&mut s);
         let step = s.handle(InputEvent::PointerRel { dx: 5.0, dy: -3.0 });
         assert_eq!(step.packets.len(), 1);
         match step.packets[0] {
@@ -373,7 +425,8 @@ mod tests {
     #[test]
     fn leave_toward_primary_releases() {
         let mut s = Session::with_local_pos(desk(), 5119, 1000);
-        s.handle(InputEvent::PointerRel { dx: 2.0, dy: 0.0 });
+        s.local_y = 1000;
+        push_enter(&mut s);
         assert!(s.is_remote());
         // Mac enter at mx=0; move left off Mac.
         let step = s.handle(InputEvent::PointerRel { dx: -5.0, dy: 0.0 });
@@ -390,7 +443,7 @@ mod tests {
     #[test]
     fn stuck_keys_released_on_leave() {
         let mut s = Session::with_local_pos(desk(), 5119, 1000);
-        s.handle(InputEvent::PointerRel { dx: 2.0, dy: 0.0 });
+        push_enter(&mut s);
         s.handle(InputEvent::Key {
             keycode: 29, // Ctrl
             pressed: true,
@@ -451,9 +504,11 @@ mod tests {
             scale: 2.0,
             offset_x: None,
             offset_y: None,
+            edge_band: base.edge_band,
+            enter_push: base.enter_push,
         });
         let mut s = Session::with_local_pos(layout, 5119, 1000);
-        s.handle(InputEvent::PointerRel { dx: 2.0, dy: 0.0 });
+        push_enter(&mut s);
         let (mx0, my0) = s.mac_pos().unwrap();
         s.handle(InputEvent::PointerRel { dx: 3.0, dy: 0.0 });
         let (mx1, _) = s.mac_pos().unwrap();
@@ -464,7 +519,7 @@ mod tests {
     #[test]
     fn scroll_while_remote() {
         let mut s = Session::with_local_pos(desk(), 5119, 1000);
-        s.handle(InputEvent::PointerRel { dx: 2.0, dy: 0.0 });
+        push_enter(&mut s);
         let step = s.handle(InputEvent::Scroll {
             dx: 0.0,
             dy: -1.5,

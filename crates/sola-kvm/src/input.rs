@@ -159,9 +159,9 @@ impl<R: BufRead> FeedSource<R> {
 /// Scripted smoke events for `server --input demo`.
 pub fn demo_events() -> Vec<InputEvent> {
     vec![
-        // Start near right edge (seed abs), then step off into Mac.
+        // Start near right edge (seed abs), then push through enter_push barrier.
         InputEvent::PointerAbs { x: 5119, y: 2000 },
-        InputEvent::PointerRel { dx: 3.0, dy: 0.0 }, // enter
+        InputEvent::PointerRel { dx: 50.0, dy: 0.0 }, // enter (enter_push default 48)
         InputEvent::PointerRel { dx: 40.0, dy: 10.0 },
         InputEvent::PointerRel { dx: 20.0, dy: -5.0 },
         InputEvent::Button {
@@ -387,23 +387,65 @@ pub struct EvdevSource {
 }
 
 impl EvdevSource {
-    /// Open every `/dev/input/event*` that is readable.
+    /// Open pointer-capable `/dev/input/event*` nodes that are readable.
+    ///
+    /// Prefers `by-id/*-event-mouse` so we do not double-count relative motion
+    /// from keyboards / LED controllers (which would race the estimated cursor).
     pub fn open_all() -> io::Result<Self> {
-        let mut devices = Vec::new();
-        let dir = Path::new("/dev/input");
-        let entries = std::fs::read_dir(dir)?;
-        for ent in entries.flatten() {
-            let name = ent.file_name();
-            let name = name.to_string_lossy();
-            if !name.starts_with("event") {
-                continue;
+        let mut candidates: Vec<PathBuf> = Vec::new();
+
+        // Prefer stable mouse nodes.
+        if let Ok(entries) = std::fs::read_dir("/dev/input/by-id") {
+            for ent in entries.flatten() {
+                let name = ent.file_name();
+                let name = name.to_string_lossy();
+                if name.contains("event-mouse") {
+                    if let Ok(canon) = std::fs::canonicalize(ent.path()) {
+                        candidates.push(canon);
+                    }
+                }
             }
-            let path = ent.path();
+        }
+        if candidates.is_empty() {
+            if let Ok(entries) = std::fs::read_dir("/dev/input/by-path") {
+                for ent in entries.flatten() {
+                    let name = ent.file_name();
+                    let name = name.to_string_lossy();
+                    if name.contains("event-mouse") {
+                        if let Ok(canon) = std::fs::canonicalize(ent.path()) {
+                            candidates.push(canon);
+                        }
+                    }
+                }
+            }
+        }
+        // Fall back: event* that looks like a pointer in sysfs (has REL_X).
+        if candidates.is_empty() {
+            if let Ok(entries) = std::fs::read_dir("/dev/input") {
+                for ent in entries.flatten() {
+                    let name = ent.file_name();
+                    let name = name.to_string_lossy();
+                    if !name.starts_with("event") {
+                        continue;
+                    }
+                    let path = ent.path();
+                    if sysfs_has_rel_xy(&name) {
+                        candidates.push(path);
+                    }
+                }
+            }
+        }
+
+        // De-dupe
+        candidates.sort();
+        candidates.dedup();
+
+        let mut devices = Vec::new();
+        for path in candidates {
             match EvdevDevice::open(&path) {
                 Ok(dev) => {
-                    // Non-blocking so the server loop can interleave devices.
                     set_nonblocking(dev.file.as_raw_fd())?;
-                    info!(path = %path.display(), "evdev opened");
+                    info!(path = %path.display(), "evdev opened (pointer)");
                     devices.push(dev);
                 }
                 Err(e) => {
@@ -414,7 +456,7 @@ impl EvdevSource {
         if devices.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "no readable /dev/input/event* nodes (need input group or uaccess)",
+                "no readable pointer /dev/input/event* nodes (need input group or uaccess)",
             ));
         }
         info!(count = devices.len(), "evdev backend ready");
@@ -454,6 +496,22 @@ impl EvdevSource {
         }
         Ok(out)
     }
+}
+
+/// True if `/sys/class/input/<eventN>/device/capabilities/rel` has REL_X+REL_Y bits.
+fn sysfs_has_rel_xy(event_name: &str) -> bool {
+    let path = format!("/sys/class/input/{event_name}/device/capabilities/rel");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    // Bitmask words, least-significant first. REL_X=0, REL_Y=1 → need low bits 0b11.
+    let Some(first) = text.split_whitespace().next() else {
+        return false;
+    };
+    let Ok(word) = u64::from_str_radix(first.trim_start_matches("0x"), 16) else {
+        return false;
+    };
+    (word & 0b11) == 0b11
 }
 
 fn set_nonblocking(fd: i32) -> io::Result<()> {

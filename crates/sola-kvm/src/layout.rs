@@ -56,6 +56,12 @@ pub struct Layout {
     pub align: Align,
     /// Motion scale applied when integrating HID deltas into the virtual cursor.
     pub scale: f32,
+    /// Must be within this many pixels of the shared edge before enter is allowed.
+    /// Counters estimated-cursor drift from relative-only tracking.
+    pub edge_band: i32,
+    /// Outward relative motion (px) that must be accumulated while parked on
+    /// the shared edge before remote enter fires (push-through barrier).
+    pub enter_push: f32,
 }
 
 /// Inputs used to place the virtual rect.
@@ -71,6 +77,8 @@ pub struct LayoutSpec {
     /// Manual origin override (when set, side/align only affect edge-hit logic).
     pub offset_x: Option<i32>,
     pub offset_y: Option<i32>,
+    pub edge_band: i32,
+    pub enter_push: f32,
 }
 
 impl Layout {
@@ -93,7 +101,40 @@ impl Layout {
             origin_y: spec.offset_y.unwrap_or(auto_y),
             side: spec.side,
             align: spec.align,
-            scale: spec.scale,
+            scale: spec.scale.max(0.01),
+            edge_band: spec.edge_band.max(1),
+            enter_push: spec.enter_push.max(1.0),
+        }
+    }
+
+    /// True if `(px, py)` is within [`Self::edge_band`] of the shared Mac edge.
+    pub fn near_shared_edge(&self, px: i32, py: i32) -> bool {
+        let b = self.edge_band;
+        match self.side {
+            Side::Right => px >= self.primary_w.saturating_sub(b),
+            Side::Left => px < b,
+            Side::Top => py < b,
+            Side::Bottom => py >= self.primary_h.saturating_sub(b),
+        }
+    }
+
+    /// True if the point is clamped onto the shared edge pixel row/column.
+    pub fn on_shared_edge_pixel(&self, px: i32, py: i32) -> bool {
+        match self.side {
+            Side::Right => px >= self.primary_w.saturating_sub(1),
+            Side::Left => px <= 0,
+            Side::Top => py <= 0,
+            Side::Bottom => py >= self.primary_h.saturating_sub(1),
+        }
+    }
+
+    /// Outward component of a relative delta toward the Mac (0 if inward/parallel).
+    pub fn outward_component(&self, dx: f32, dy: f32) -> f32 {
+        match self.side {
+            Side::Right => dx.max(0.0),
+            Side::Left => (-dx).max(0.0),
+            Side::Top => (-dy).max(0.0),
+            Side::Bottom => dy.max(0.0),
         }
     }
 
@@ -239,8 +280,16 @@ impl Layout {
         dx: f32,
         dy: f32,
     ) -> Option<(i32, i32)> {
+        // Require already being near the shared edge so a drifted estimate in
+        // the middle of the screen cannot jump remote on a small nudge.
+        if !self.near_shared_edge(px, py) {
+            return None;
+        }
+        if self.outward_component(dx, dy) <= 0.0 {
+            return None;
+        }
         let (nx, ny) = self.apply_local_motion(px, py, dx, dy);
-        // Still inside primary → no enter.
+        // Still inside primary → no enter (caller may accumulate push pressure).
         if nx >= 0 && nx < self.primary_w && ny >= 0 && ny < self.primary_h {
             return None;
         }
@@ -358,6 +407,8 @@ mod tests {
             scale: 1.0,
             offset_x: None,
             offset_y: None,
+            edge_band: 64,
+            enter_push: 48.0,
         }
     }
 
@@ -450,13 +501,22 @@ mod tests {
     #[test]
     fn try_enter_right_edge_from_motion() {
         let layout = Layout::compute(&desk_spec());
-        // Near right edge of novus, small rightward delta leaves into Mac.
+        // Near right edge of novus, rightward delta leaves into Mac.
         let enter = layout
             .try_enter_from_motion(5119, 2000, 2.0, 0.0)
             .expect("should enter Mac");
         assert_eq!(enter.0, 0);
         // 2000 - (-720) = 2720
         assert_eq!(enter.1, 2720);
+    }
+
+    #[test]
+    fn try_enter_requires_near_edge() {
+        let layout = Layout::compute(&desk_spec());
+        // Mid-screen: even a huge rightward jump must not enter.
+        assert!(layout
+            .try_enter_from_motion(100, 100, 9000.0, 0.0)
+            .is_none());
     }
 
     #[test]
