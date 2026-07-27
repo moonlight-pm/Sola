@@ -4906,11 +4906,15 @@ name = "sola-kvm"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
+ "rustix 1.1.4",
  "serde",
  "sola-core",
  "tempfile",
  "toml 0.8.23",
  "tracing",
+ "wayland-client",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]
