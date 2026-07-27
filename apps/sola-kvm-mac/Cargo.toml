@@ -1,0 +1,24 @@
+# Standalone package: empty workspace table so we are NOT a member of the
+# parent Sola workspace (Phase B owns only apps/sola-kvm-mac/**).
+[workspace]
+
+[package]
+name = "sola-kvm-mac"
+version = "0.1.0"
+edition = "2021"
+description = "ember (macOS) UDP receive + CGEvent inject agent for sola-kvm"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "sola-kvm-mac"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CoreGraphics / CoreFoundation are linked only on macOS (see inject.rs).
+# This package is intentionally standalone (not a Sola workspace member) so
+# it can be built on ember without pulling the full desktop tree.

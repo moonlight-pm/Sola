@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  sola-kvm-mac LaunchAgent — GUI login session (NOT SSH / not system daemon).
+
+  Install (as the logged-in GUI user on ember):
+    mkdir -p ~/Library/LaunchAgents
+    cp LaunchAgents/com.sola.kvm-mac.plist ~/Library/LaunchAgents/
+    # Edit ProgramArguments[0] to the absolute path of the binary.
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sola.kvm-mac.plist
+    launchctl enable gui/$(id -u)/com.sola.kvm-mac
+    launchctl kickstart -k gui/$(id -u)/com.sola.kvm-mac
+
+  Unload:
+    launchctl bootout gui/$(id -u)/com.sola.kvm-mac
+
+  Logs: ~/Library/Logs/sola-kvm-mac.{out,err}.log
+
+  IMPORTANT: Grant Accessibility to this binary (or the Terminal that first
+  launches it during development) in System Settings → Privacy & Security →
+  Accessibility. CGEventPost silently no-ops without it.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.sola.kvm-mac</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- REPLACE with absolute path after install, e.g.:
+         /Users/you/bin/sola-kvm-mac
+         or /opt/sola/bin/sola-kvm-mac -->
+    <string>/opt/sola/bin/sola-kvm-mac</string>
+    <string>listen</string>
+    <string>--bind</string>
+    <string>0.0.0.0:4242</string>
+  </array>
+
+  <!-- Run when the user logs into the Aqua GUI session. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- LimitEnvironmentVariableOverride is not needed; we only need a
+       normal GUI session so TCC Accessibility applies. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/REPLACE/Library/Logs/sola-kvm-mac.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/REPLACE/Library/Logs/sola-kvm-mac.err.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>RUST_LOG</key>
+    <string>info</string>
+  </dict>
+</dict>
+</plist>
