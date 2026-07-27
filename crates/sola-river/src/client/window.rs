@@ -69,6 +69,9 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                         .unwrap_or(24);
                     seat.set_xcursor_theme(theme.clone(), size);
                     info!(%theme, size, "set river xcursor theme");
+                    // Layer-shell children need the seat if we already
+                    // bound river_layer_shell_v1.
+                    crate::client::layer_shell::attach_seat(state, &seat, qh);
                     state.seat = Some(seat);
                 }
             }
@@ -76,6 +79,7 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
                 // Retain the proxy so its Dispatch impl can surface
                 // Dimensions events (forwarded as OutputGeometry on the
                 // bus). Dropping it would close the per-output channel.
+                crate::client::layer_shell::attach_output(state, &output, qh);
                 state.outputs.push(output);
             }
             Event::Unavailable => {

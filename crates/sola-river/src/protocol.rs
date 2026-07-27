@@ -114,3 +114,23 @@ pub mod river_libinput_config_v1 {
 
     wayland_scanner::generate_client_code!("protocols/river-libinput-config-v1.xml");
 }
+
+/// Enables standard `wlr-layer-shell-unstable-v1` for non-WM clients.
+/// Binding this global is what tells River "the WM supports layer shell";
+/// without it, River closes every layer surface immediately.
+///
+/// Required infrastructure for sola-kvm (and any other layer-shell client).
+pub mod river_layer_shell_v1 {
+    use wayland_client;
+
+    // `get_output` / `get_seat` reference types from the WM protocol.
+    use crate::protocol::river_window_management_v1::*;
+
+    pub mod __interfaces {
+        use crate::protocol::river_window_management_v1::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/river-layer-shell-v1.xml");
+    }
+    use self::__interfaces::*;
+
+    wayland_scanner::generate_client_code!("protocols/river-layer-shell-v1.xml");
+}

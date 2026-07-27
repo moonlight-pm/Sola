@@ -34,6 +34,7 @@ use crate::registry::{ChordRegistry, WindowRegistry};
 
 pub mod binding;
 pub mod input;
+pub mod layer_shell;
 pub mod manage;
 pub mod op;
 pub mod output_config;
@@ -153,6 +154,9 @@ pub struct AppData {
     pub screenshot: screenshot::ScreenshotState,
     /// Floating-window drop shadows (`get_decoration_below` + SHM silhouette).
     pub shadow: shadow::ShadowState,
+    /// `river_layer_shell_v1` — enables wlr-layer-shell for clients
+    /// (sola-kvm edge capture, panels, etc.).
+    pub layer_shell: layer_shell::LayerShellState,
 }
 
 impl AppData {
@@ -195,6 +199,7 @@ impl AppData {
             cursor_device: None,
             screenshot: screenshot::ScreenshotState::default(),
             shadow: shadow::ShadowState::default(),
+            layer_shell: layer_shell::LayerShellState::default(),
         }
     }
 }
@@ -470,6 +475,15 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let output: wl_output::WlOutput = proxy.bind(name, version.min(4), qh, ());
                     info!(%version, "bound wl_output for screencopy");
                     state.screenshot.outputs.push(output);
+                }
+                "river_layer_shell_v1" => {
+                    use crate::protocol::river_layer_shell_v1::river_layer_shell_v1::RiverLayerShellV1;
+                    let mgr: RiverLayerShellV1 = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound river_layer_shell_v1 (layer-shell clients enabled)");
+                    state.layer_shell.manager = Some(mgr);
+                    // Seat/outputs may already exist if the WM global was
+                    // processed first — attach children now.
+                    layer_shell::attach_existing(state, qh);
                 }
                 _ => {}
             }

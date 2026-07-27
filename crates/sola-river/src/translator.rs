@@ -62,14 +62,23 @@ pub fn apply_pending_chords(state: &mut AppData, new_pairs: Vec<(u32, u32)>) {
         }
     }
 
+    let added_any = !added.is_empty();
     for (keysym, modifiers) in added {
         let binding = bind_chord(&xb, &river_seat, keysym, modifiers, &qh);
-        binding.enable();
+        // When a layer surface holds exclusive focus (sola-kvm capture),
+        // leave new bindings disabled until focus is released. Otherwise
+        // a RegisteredChords refresh mid-capture would re-steal Meta keys.
+        if !state.layer_shell.exclusive_focus {
+            binding.enable();
+        }
         state
             .chords
             .by_object
             .insert(binding.id(), (keysym, modifiers));
         state.chords.by_chord.insert((keysym, modifiers), binding);
+    }
+    if state.layer_shell.exclusive_focus && added_any {
+        state.layer_shell.chords_suppressed = true;
     }
 }
 

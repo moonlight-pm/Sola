@@ -76,6 +76,9 @@ pub(crate) fn should_send(last: Option<(i32, i32)>, requested: (i32, i32)) -> bo
 pub fn handle_manage_start(state: &mut AppData) {
     let Some(wm) = state.wm.clone() else { return };
 
+    // Layer-shell default output (manage-sequence-only request).
+    crate::client::layer_shell::on_manage_start(state);
+
     // Drain into an owned vec so we can mutate `state.deferred_size` inside
     // the loop without aliasing `state.pending.manage`.
     let manage: Vec<(u32, (i32, i32))> = state.pending.manage.drain().collect();
@@ -117,18 +120,23 @@ pub fn handle_manage_start(state: &mut AppData) {
     state.pending.manage_dirty = false;
     // `pending.manage` was drained above; no separate clear needed.
 
-    if let Some(focus) = state.pending.focus.take() {
-        if let Some(seat) = state.seat.as_ref() {
-            match focus {
-                FocusAction::Window(id) => {
-                    if let Some(proxy) = state.windows_by_id.get(&id) {
-                        seat.focus_window(proxy);
-                        state.focused_window = Some(id);
+    // While a layer surface holds exclusive focus (e.g. sola-kvm edge
+    // capture), River ignores focus_window/clear_focus. Keep the pending
+    // action so we re-apply it on focus_none.
+    if !state.layer_shell.exclusive_focus {
+        if let Some(focus) = state.pending.focus.take() {
+            if let Some(seat) = state.seat.as_ref() {
+                match focus {
+                    FocusAction::Window(id) => {
+                        if let Some(proxy) = state.windows_by_id.get(&id) {
+                            seat.focus_window(proxy);
+                            state.focused_window = Some(id);
+                        }
                     }
-                }
-                FocusAction::None => {
-                    seat.clear_focus();
-                    state.focused_window = None;
+                    FocusAction::None => {
+                        seat.clear_focus();
+                        state.focused_window = None;
+                    }
                 }
             }
         }
@@ -137,6 +145,12 @@ pub fn handle_manage_start(state: &mut AppData) {
     if let Some(pairs) = state.pending.chords.take() {
         crate::translator::apply_pending_chords(state, pairs);
     }
+
+    // After chord set updates: if a layer client has exclusive focus
+    // (sola-kvm capture), keep shell Meta chords disabled so keys reach
+    // the Mac. Newly added bindings from apply_pending_chords are
+    // enabled by default — re-suppress them here.
+    crate::client::layer_shell::sync_chord_suppression(state);
 
     let close_ids: Vec<u32> = std::mem::take(&mut state.pending.close_windows);
     let mut close_count = 0;

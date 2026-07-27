@@ -26,18 +26,22 @@ If Current is `none`, ask what they want instead of inventing work.
 | A skeleton | `7761b0b` | protocol, layout, config, CLI |
 | B Mac agent | `76c942d` | UDP + CGEvent inject (Linux stub; needs ember smoke) |
 | C novus capture | `f2de5d8` | Session machine, feed/demo/evdev, edge enter/leave |
+| Layer-shell | `64c7b9d` | `river_layer_shell_v1` + Meta chord suppress for sola-kvm; no lan-mouse product path |
 
 **44** `sola-kvm` unit tests pass.
 
 **lan-mouse purge (novus):** stopped/disabled; wrapper + config quarantined
 (`.disabled`); removed from user nix profile. Docs note sola-kvm is the path.
 
+**sola-river layer-shell:** ported from libei-portal; rebranded for sola-kvm;
+installed to `/opt/sola/bin/sola-river`. See
+[`docs/manual/sola-river-layer-shell.md`](../../docs/manual/sola-river-layer-shell.md).
+
 ### Next
 
 1. **Desk smoke** — build Mac agent on ember + Accessibility; novus `sola-kvm server` against peer
-2. **Layer-shell / chord suppress** — pull or port from `libei-portal` if Meta still eaten during remote
-3. **Phase D** — autostart, primary size from bus, real Wayland warp on leave
-4. Merge to master only with explicit user approval
+2. **Phase D** — autostart, primary size from bus, real Wayland warp on leave
+3. Merge to master only with explicit user approval
 
 ### Orchestration (completed)
 
@@ -45,6 +49,7 @@ If Current is `none`, ask what they want instead of inventing work.
 |------|--------|--------|
 | `task_be40a25f306f` Phase B | `term_5bd77c38…` | completed |
 | `task_e63e110a48df` Phase C | `term_25f471de…` | completed |
+| `task_d9e12d7274b1` Layer-shell | this terminal | completed |
 
 ## Last completed (prior, master)
 

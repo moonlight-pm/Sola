@@ -15,6 +15,16 @@ the old user unit, wrapper, or nix profile package for daily use.
 
 Daily path: **`sola-kvm` server on novus** + **`sola-kvm-mac` on ember**.
 
+## Requires sola-river with layer-shell
+
+Edge capture / exclusive keyboard focus needs **`sola-river`** bound to
+`river_layer_shell_v1` (and Meta chord suppress during exclusive focus).
+Without that, River closes layer surfaces immediately and shell chords
+still eat Meta keys while remote.
+
+- Infra notes: [`sola-river-layer-shell.md`](./sola-river-layer-shell.md)
+- Log marker after restart: `bound river_layer_shell_v1 (layer-shell clients enabled)`
+
 ## Config
 
 ```bash
