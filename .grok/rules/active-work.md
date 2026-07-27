@@ -2,25 +2,22 @@
 
 ## Current
 
-**sola-kvm** on branch `sola-kvm` — desk path live; lan-mouse purged both hosts.
+**none**
 
-### Autostart
+### Last completed
 
-| Host | Mechanism |
-|------|-----------|
-| novus | `sola` MANAGED includes `sola-kvm` → `server --input evdev` |
-| ember | LaunchAgent `com.sola.kvm-mac` KeepAlive |
+**sola-kvm → master**: Sola-native software KVM (novus → ember). Layer-shell
+edge capture, UDP spray, Mac CGEvent agent, sola MANAGED autostart. lan-mouse
+purged both hosts.
 
-### After code install
+### Future / follow-ups
 
-Restart Sola from TTY so the new `/opt/sola/bin/sola` picks up MANAGED + launches sola-kvm.
+- Permanent /dev/input ACL or udev for sola-kvm (avoid per-boot setfacl)
+- Permission fan-out UX when TUI + sola-agent both attached (ask mode)
+- Remaining worktrees: `libei-portal` (archive/cleanup)
 
-### Installed
+### Resume
 
-- `/opt/sola/bin/sola` (with sola-kvm managed)
-- `/opt/sola/bin/sola-kvm`
-- ember: `/opt/sola/bin/sola-kvm-mac` + LaunchAgent
-
-## Last completed (prior, master)
-
-app-icon-raster, session-id-routing, … (see git log)
+```text
+# no active feature worktree
+```
