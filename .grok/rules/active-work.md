@@ -17,6 +17,8 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ### Last completed (prior)
 
+**app-icon-raster → master**: full-color app icons (path/PNG refs) in launcher + switcher; case-insensitive catalog lookup for Wayland app_id mismatches (e.g. orca).
+
 **session-id-routing → master**: live ACP stream keyed by session UUID
 (not title); OD session cards (graphite select, slim context bar, hover
 × + time rail); kit `SidebarItem` card chrome + custom content; toolbar
