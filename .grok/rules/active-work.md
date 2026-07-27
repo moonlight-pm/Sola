@@ -16,31 +16,50 @@ If Current is `none`, ask what they want instead of inventing work.
 **sola-kvm** — custom software KVM (novus server → ember macOS client)
 
 - Spec: [`docs/specs/2026-07-27-sola-kvm-design.md`](../../docs/specs/2026-07-27-sola-kvm-design.md)
+- Operator: [`docs/manual/sola-kvm-operator.md`](../../docs/manual/sola-kvm-operator.md)
 - Branch / worktree: `sola-kvm` (`/home/joshua/orca/workspaces/Sola/sola-kvm`)
 - Base: local `master` @ `3d1d44b`
 
 ### Next phase
 
-**Phase B — Mac agent** (or continue Phase C on novus if Mac inject is deferred)
+**Phase B — Mac agent** (parallel / remaining) **or** Phase D polish
 
-1. UDP listen + CGEvent inject (motion/button/key) on ember
-2. LaunchAgent in GUI session
-3. Manual feed: `sola-kvm send-test --to 10.0.0.21:4242`
+1. Phase B: UDP listen + CGEvent inject on ember; LaunchAgent
+2. Phase D: layer-shell barriers + sola-river chord suppress port; compositor warp; autostart
 
 ### Done this branch
 
 **Phase A — Spec + skeleton**
 
-- Design doc committed earlier (`8b2ebb0`)
+- Design doc (`8b2ebb0`)
 - `crates/sola-kvm` — protocol, layout math, TOML config, UDP send/listen
-- CLI: `show`, `init`, `server` (idle stub), `listen`, `send-test`
-- 28 unit tests (encode/decode, layout bottoms-align, localhost UDP)
-- Mac stub note: `apps/sola-kvm-mac/README.md`
+- CLI: `show`, `init`, `server` (idle), `listen`, `send-test`
+
+**Phase C — Novus edge + virtual cursor + UDP emit**
+
+- Pure `Session` state machine: Local ↔ Remote, enter/leave, abs Motion, stuck-key recovery
+- Layout `try_enter_from_motion` edge hit helpers
+- Server loop wired: `--input feed|demo|evdev`
+- Evdev EVIOCGRAB spike while remote (needs `/dev/input` access)
+- Operator doc; design §10 Phase C notes
+- Unit tests for edge math + state machine
 
 ### Later phases
 
-- **C** — novus edge capture + exclusive grab + chord suppress + UDP emit
-- **D** — autostart, stuck keys, polish; drop lan-mouse daily path
+- **B** — Mac agent (if not done in parallel)
+- **D** — layer-shell path, sola-river hooks, autostart, drop lan-mouse
+
+### Resume
+
+```text
+cd /home/joshua/orca/workspaces/Sola/sola-kvm
+cargo test -p sola-kvm
+cargo make build sola-kvm
+# smoke (no HID):
+#   sola-kvm listen --bind 127.0.0.1:4242
+#   sola-kvm server --input demo   # peer must match or use listen on same port carefully
+printf 'abs 5119 2000\nrel 3 0\nrel 40 10\nleave\n' | sola-kvm server --input feed
+```
 
 ## Last completed (prior, master)
 
@@ -57,12 +76,3 @@ RESET deletes open session and starts fresh.
 - Further Grok TUI presentation parity
 - Storybook page parity for non-Overview tabs (on demand)
 - Remaining worktrees: `libei-portal`, `app-icon-raster`
-
-### Resume
-
-```text
-# sola-kvm worktree — Phase A done; next Phase B (Mac) or C (novus capture)
-cd /home/joshua/orca/workspaces/Sola/sola-kvm
-cargo test -p sola-kvm
-cargo run -p sola-kvm -- show
-```

@@ -1,7 +1,7 @@
 //! sola-kvm — Sola-native software KVM (novus server).
 //!
 //! Phase A: config + layout + UDP spray / dump tools.
-//! Phase C will add edge capture and exclusive grab.
+//! Phase C: edge enter/leave state machine, UDP emit, feed/demo/evdev input.
 
 use std::path::PathBuf;
 use std::thread;
@@ -11,7 +11,9 @@ use clap::{Parser, Subcommand};
 use tracing::{error, info, warn};
 
 use sola_kvm::config::Config;
+use sola_kvm::input::InputBackendKind;
 use sola_kvm::protocol::{Edge, Packet};
+use sola_kvm::run;
 use sola_kvm::udp::{Listener, Sender};
 
 #[derive(Parser, Debug)]
@@ -40,8 +42,17 @@ enum Command {
         force: bool,
     },
 
-    /// Run the server loop (Phase A: layout + idle; no edge capture yet).
-    Server,
+    /// Run the server: edge enter/leave + virtual cursor + UDP emit.
+    ///
+    /// Input backends:
+    /// - `feed` (default): stdin line protocol (`rel`/`abs`/`btn`/`key`/`scroll`/`leave`)
+    /// - `demo`: scripted smoke sequence then idle
+    /// - `evdev`: `/dev/input` + EVIOCGRAB while remote (needs device access)
+    Server {
+        /// Input backend: feed | demo | evdev
+        #[arg(long, default_value = "feed")]
+        input: String,
+    },
 
     /// Listen for UDP packets and print them (debug / Mac-side stand-in).
     Listen {
@@ -73,7 +84,7 @@ fn main() {
     match cli.command {
         Command::Show => cmd_show(&config_path),
         Command::Init { force } => cmd_init(&config_path, force),
-        Command::Server => cmd_server(&config_path),
+        Command::Server { input } => cmd_server(&config_path, &input),
         Command::Listen { bind } => cmd_listen(&config_path, bind),
         Command::SendTest { to, x, y } => cmd_send_test(&config_path, to, x, y),
     }
@@ -139,30 +150,21 @@ fn cmd_init(path: &PathBuf, force: bool) {
     println!("wrote {}", path.display());
 }
 
-fn cmd_server(path: &PathBuf) {
+fn cmd_server(path: &PathBuf, input: &str) {
     let cfg = load(path);
-    let layout = cfg.layout();
-    info!(
-        peer = %cfg.peer_addr(),
-        origin_x = layout.origin_x,
-        origin_y = layout.origin_y,
-        mac_w = layout.mac_w,
-        mac_h = layout.mac_h,
-        scale = layout.scale,
-        "sola-kvm server (Phase A stub — no edge capture yet)"
-    );
-    info!(
-        "layout bottoms meet at y={} (mac_bottom); primary {}×{}",
-        layout.mac_bottom(),
-        layout.primary_w,
-        layout.primary_h
-    );
-
-    // Keep process alive so a future user unit / sola MANAGED entry can
-    // supervise it. Phase C replaces this sleep loop with the capture path.
-    loop {
-        thread::sleep(Duration::from_secs(60));
-        tracing::debug!("server idle tick");
+    let backend = match InputBackendKind::parse(input) {
+        Some(b) => b,
+        None => {
+            error!(
+                input,
+                "unknown --input backend (want feed | demo | evdev)"
+            );
+            std::process::exit(2);
+        }
+    };
+    if let Err(e) = run::run_server(&cfg, backend) {
+        error!("{e}");
+        std::process::exit(1);
     }
 }
 
@@ -186,8 +188,6 @@ fn cmd_listen(path: &PathBuf, bind: Option<String>) {
             }
             Err(e) => {
                 error!("recv: {e}");
-                // Brief pause on hard errors so we don't spin if the
-                // socket is wedged; timeouts would also land here if set.
                 thread::sleep(Duration::from_millis(50));
             }
         }

@@ -1,7 +1,7 @@
 # sola-kvm — Design
 
 **Date:** 2026-07-27  
-**Status:** Implementing — Phase A done (skeleton + protocol + layout)  
+**Status:** Implementing — Phase A done; Phase C server path in progress  
 **Worktree:** Orca `sola-kvm` (`/home/joshua/orca/workspaces/Sola/sola-kvm`)  
 **Base:** local `master` @ `3d1d44b`
 
@@ -237,26 +237,34 @@ Map Linux evdev → Mac CGKeyCode table (subset for v1: letters, mods, arrows, S
 2. LaunchAgent  
 3. Manual feed from `nc`/test tool on novus  
 
-### Phase C — Novus edge + virtual cursor
+### Phase C — Novus edge + virtual cursor ✅ (logic + grab spike)
 
-1. Read primary output size from sola-river / bus `OutputGeometry`  
-2. Edge detect + enter/leave  
-3. Grab + chord suppress  
-4. UDP emit with layout + scale  
+1. ~~Read primary output size from sola-river / bus `OutputGeometry`~~ — still config `primary` (bus later)  
+2. Edge detect + enter/leave — pure `Session` state machine + layout `try_enter_from_motion`  
+3. Grab spike — **evdev `EVIOCGRAB` while remote**; feed/demo backends for no-perms smoke  
+4. UDP emit with layout + scale — wired in `run::run_server`  
+5. Stuck-modifier recovery on leave (synthetic key/button ups)  
+6. Operator doc: `docs/manual/sola-kvm-operator.md`  
+
+**Not done in Phase C (honest):**
+
+- Layer-shell 1px barriers (needs `river_layer_shell_v1` enablement in `sola-river` on this branch; reference: `libei-portal` worktree)  
+- Live Wayland pointer warp on leave  
+- Automatic Meta chord suppress without layer exclusive focus  
+- Bus `OutputGeometry` for primary size  
 
 ### Phase D — Polish
 
 1. Autostart  
-2. Stuck keys  
-3. Scroll, multi-button  
-4. Logging under `/opt/sola/log/sola-kvm.log`  
-5. Drop lan-mouse from daily path  
+2. Layer-shell barrier path + sola-river chord suppress port  
+3. Compositor warp / abs pointer seed  
+4. Drop lan-mouse from daily path  
 
 ## 11. Open decisions
 
-1. **Absolute vs relative motion on the wire** — lean absolute in Mac space for layout.  
-2. **Grab mechanism** — layer-shell barrier vs other River APIs; spike in Phase C.  
-3. **Ship Mac agent** — app bundle vs single binary + LaunchAgent.  
+1. **Absolute vs relative motion on the wire** — **chosen: absolute** Mac-local `Motion` after enter.  
+2. **Grab mechanism** — Phase C spike = **evdev EVIOCGRAB**; layer-shell barrier remains preferred for precise edge hit once sola-river enables it.  
+3. **Ship Mac agent** — app bundle vs single binary + LaunchAgent (Phase B).  
 4. **Whether sola-kvm lives in-tree only or also a tiny out-of-repo Mac project.**
 
 ## 12. References

@@ -201,6 +201,94 @@ impl Layout {
         (mx, my)
     }
 
+    /// Wire-protocol edge for enter packets (matches layout side).
+    pub fn enter_edge(&self) -> crate::protocol::Edge {
+        match self.side {
+            Side::Left => crate::protocol::Edge::Left,
+            Side::Right => crate::protocol::Edge::Right,
+            Side::Top => crate::protocol::Edge::Top,
+            Side::Bottom => crate::protocol::Edge::Bottom,
+        }
+    }
+
+    /// Clamp a primary-space point into the real output (inclusive max).
+    pub fn clamp_primary(&self, px: i32, py: i32) -> (i32, i32) {
+        (
+            px.clamp(0, self.primary_w.saturating_sub(1)),
+            py.clamp(0, self.primary_h.saturating_sub(1)),
+        )
+    }
+
+    /// Apply an unscaled relative delta to a primary-space position (local mode).
+    pub fn apply_local_motion(&self, px: i32, py: i32, dx: f32, dy: f32) -> (i32, i32) {
+        let nx = (px as f32 + dx).round() as i32;
+        let ny = (py as f32 + dy).round() as i32;
+        (nx, ny)
+    }
+
+    /// If a relative motion from primary `(px, py)` would leave the real
+    /// output into the virtual Mac rect, return Mac-local enter coords.
+    ///
+    /// Used while local to detect the edge hit that starts remote mode.
+    /// Motion that leaves the primary *away* from the Mac is ignored
+    /// (caller should clamp instead).
+    pub fn try_enter_from_motion(
+        &self,
+        px: i32,
+        py: i32,
+        dx: f32,
+        dy: f32,
+    ) -> Option<(i32, i32)> {
+        let (nx, ny) = self.apply_local_motion(px, py, dx, dy);
+        // Still inside primary → no enter.
+        if nx >= 0 && nx < self.primary_w && ny >= 0 && ny < self.primary_h {
+            return None;
+        }
+        // Extrapolated point lands in the virtual Mac rect → enter from the
+        // last in-primary position (clamped to edge for enter_mac_coords).
+        if self.contains_primary(nx, ny) {
+            let (ex, ey) = self.clamp_primary(px, py);
+            return Some(self.enter_mac_coords(ex, ey));
+        }
+        // Also accept the shared-edge case where the extrapolated point is
+        // just past primary but still maps into Mac via side attachment
+        // (e.g. right side at x=primary_w, y within primary that projects
+        // into the Mac vertical range).
+        match self.side {
+            Side::Right if nx >= self.primary_w => {
+                let (ex, ey) = self.clamp_primary(px, py);
+                let (mx, my) = self.enter_mac_coords(ex, ey);
+                // Only enter if the along-edge coordinate projects into Mac.
+                if self.contains_mac_local(mx, my) || (my >= 0 && my < self.mac_h) {
+                    return Some((mx, my));
+                }
+            }
+            Side::Left if nx < 0 => {
+                let (ex, ey) = self.clamp_primary(px, py);
+                let (mx, my) = self.enter_mac_coords(ex, ey);
+                if my >= 0 && my < self.mac_h {
+                    return Some((mx, my));
+                }
+            }
+            Side::Top if ny < 0 => {
+                let (ex, ey) = self.clamp_primary(px, py);
+                let (mx, my) = self.enter_mac_coords(ex, ey);
+                if mx >= 0 && mx < self.mac_w {
+                    return Some((mx, my));
+                }
+            }
+            Side::Bottom if ny >= self.primary_h => {
+                let (ex, ey) = self.clamp_primary(px, py);
+                let (mx, my) = self.enter_mac_coords(ex, ey);
+                if mx >= 0 && mx < self.mac_w {
+                    return Some((mx, my));
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
     /// Integrate a relative HID delta into Mac-local position with motion scale.
     pub fn integrate_motion(&self, mx: i32, my: i32, dx: f32, dy: f32) -> (i32, i32) {
         let sdx = dx * self.scale;
@@ -357,5 +445,49 @@ mod tests {
         let (mx, my) = layout.enter_mac_coords(0, 1000);
         assert_eq!(mx, 2559);
         assert_eq!(my, 1000 - (-720));
+    }
+
+    #[test]
+    fn try_enter_right_edge_from_motion() {
+        let layout = Layout::compute(&desk_spec());
+        // Near right edge of novus, small rightward delta leaves into Mac.
+        let enter = layout
+            .try_enter_from_motion(5119, 2000, 2.0, 0.0)
+            .expect("should enter Mac");
+        assert_eq!(enter.0, 0);
+        // 2000 - (-720) = 2720
+        assert_eq!(enter.1, 2720);
+    }
+
+    #[test]
+    fn try_enter_ignores_inward_motion() {
+        let layout = Layout::compute(&desk_spec());
+        assert!(layout
+            .try_enter_from_motion(5119, 2000, -5.0, 0.0)
+            .is_none());
+        assert!(layout
+            .try_enter_from_motion(100, 100, 1.0, 1.0)
+            .is_none());
+    }
+
+    #[test]
+    fn try_enter_ignores_top_exit_when_mac_is_right() {
+        let layout = Layout::compute(&desk_spec());
+        // Leave primary upward — Mac is on the right, not above.
+        assert!(layout
+            .try_enter_from_motion(100, 0, 0.0, -3.0)
+            .is_none());
+    }
+
+    #[test]
+    fn try_enter_left_side() {
+        let mut spec = desk_spec();
+        spec.side = Side::Left;
+        let layout = Layout::compute(&spec);
+        let enter = layout
+            .try_enter_from_motion(0, 1000, -2.0, 0.0)
+            .expect("enter from left edge");
+        assert_eq!(enter.0, 2559);
+        assert_eq!(enter.1, 1000 - (-720));
     }
 }
