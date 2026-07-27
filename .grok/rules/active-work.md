@@ -29,6 +29,9 @@ If Current is `none`, ask what they want instead of inventing work.
 
 **44** `sola-kvm` unit tests pass.
 
+**lan-mouse purge (novus):** stopped/disabled; wrapper + config quarantined
+(`.disabled`); removed from user nix profile. Docs note sola-kvm is the path.
+
 ### Next
 
 1. **Desk smoke** — build Mac agent on ember + Accessibility; novus `sola-kvm server` against peer

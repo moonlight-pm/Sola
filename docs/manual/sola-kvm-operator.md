@@ -3,6 +3,18 @@
 Software KVM: physical mouse/keyboard on **novus** control **ember** (macOS)
 over UDP. Design: `docs/specs/2026-07-27-sola-kvm-design.md`.
 
+## Status vs lan-mouse
+
+**lan-mouse is disabled** on the desk path (novus + ember). Do not re-enable
+the old user unit, wrapper, or nix profile package for daily use.
+
+| Host | What was purged / quarantined |
+|------|-------------------------------|
+| **novus** | user unit stopped/disabled (`~/.config/systemd/user/lan-mouse.service.disabled`); `~/.local/bin/lan-mouse-sola` → `.disabled`; config+pem → `~/.config/lan-mouse.disabled`; removed from `nix profile` |
+| **ember** | stop any leftover lan-mouse client; sola-kvm-mac is the agent |
+
+Daily path: **`sola-kvm` server on novus** + **`sola-kvm-mac` on ember**.
+
 ## Config
 
 ```bash

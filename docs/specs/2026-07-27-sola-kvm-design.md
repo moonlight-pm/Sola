@@ -209,7 +209,7 @@ Map Linux evdev → Mac CGKeyCode table (subset for v1: letters, mods, arrows, S
 
 | Approach | Why not for this desk |
 |----------|------------------------|
-| **lan-mouse** | Works, but clunky handoff, weak layout, relative-only enter, no scale |
+| **lan-mouse** | Works, but clunky handoff, weak layout, relative-only enter, no scale. **Disabled** on novus+ember (unit/wrapper/config quarantined; removed from nix profile). Do not re-enable for daily use. |
 | **Input Leap server on River** | Needs EIS/portal; River doesn’t provide it today |
 | **sola-kvm (this)** | Own layout math, warm UDP, Sola chord control, only two machines |
 
@@ -258,7 +258,7 @@ Map Linux evdev → Mac CGKeyCode table (subset for v1: letters, mods, arrows, S
 1. Autostart  
 2. Layer-shell barrier path + sola-river chord suppress port  
 3. Compositor warp / abs pointer seed  
-4. Drop lan-mouse from daily path  
+4. ~~Drop lan-mouse from daily path~~ — **done on novus** (host purge + docs; secrets quarantined under `~/.config/lan-mouse.disabled`)
 
 ## 11. Open decisions
 
