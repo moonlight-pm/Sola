@@ -16,7 +16,15 @@ use tracing::{error, info, warn};
 
 use sola_bus::topics::Topic;
 
-const MANAGED: &[&str] = &["sola-bus", "sola-river", "sola-shell", "sola-session"];
+const MANAGED: &[&str] = &[
+    "sola-bus",
+    "sola-river",
+    "sola-shell",
+    "sola-session",
+    // Desk KVM (novus → ember). Needs Wayland socket (already up) + /dev/input
+    // ACLs for the evdev backend; activates WAYLAND_DISPLAY itself at startup.
+    "sola-kvm",
+];
 
 /// Minimum uptime before a restart is considered immediate (triggers backoff).
 const MIN_UPTIME: Duration = Duration::from_secs(5);
@@ -228,10 +236,15 @@ fn launch<'a>(
     // self-restart watcher — sola is already restarting these on
     // binary change, so without this they'd double-restart (kit
     // exec_self followed instantly by sola kill + launch).
+    // sola-kvm is a multi-command CLI; managed mode is always the KVM server
+    // with the physical-edge (layer-shell) + evdev path.
     let result = unsafe {
-        Command::new(&bin)
-            .env("SOLA_NO_SELF_WATCH", "1")
-            .pre_exec(sola_core::process::set_pdeathsig_and_leader)
+        let mut cmd = Command::new(&bin);
+        cmd.env("SOLA_NO_SELF_WATCH", "1");
+        if name == "sola-kvm" {
+            cmd.args(["server", "--input", "evdev"]);
+        }
+        cmd.pre_exec(sola_core::process::set_pdeathsig_and_leader)
             .spawn()
     };
     match result {

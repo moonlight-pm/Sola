@@ -27,7 +27,7 @@ struct Cli {
     config: Option<PathBuf>,
 
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -45,12 +45,15 @@ enum Command {
     /// Run the server: edge enter/leave + virtual cursor + UDP emit.
     ///
     /// Input backends:
-    /// - `feed` (default): stdin line protocol (`rel`/`abs`/`btn`/`key`/`scroll`/`leave`)
+    /// - `evdev` (default): layer-shell physical edge + EVIOCGRAB while remote
+    /// - `feed`: stdin line protocol (`rel`/`abs`/`btn`/`key`/`scroll`/`leave`)
     /// - `demo`: scripted smoke sequence then idle
-    /// - `evdev`: `/dev/input` + EVIOCGRAB while remote (needs device access)
+    ///
+    /// When sola manages this binary it runs `server --input evdev` with no
+    /// extra flags. Bare `sola-kvm` (no subcommand) also starts the server.
     Server {
         /// Input backend: feed | demo | evdev
-        #[arg(long, default_value = "feed")]
+        #[arg(long, default_value = "evdev")]
         input: String,
     },
 
@@ -82,11 +85,12 @@ fn main() {
     let config_path = cli.config.unwrap_or_else(Config::default_path);
 
     match cli.command {
-        Command::Show => cmd_show(&config_path),
-        Command::Init { force } => cmd_init(&config_path, force),
-        Command::Server { input } => cmd_server(&config_path, &input),
-        Command::Listen { bind } => cmd_listen(&config_path, bind),
-        Command::SendTest { to, x, y } => cmd_send_test(&config_path, to, x, y),
+        None => cmd_server(&config_path, "evdev"),
+        Some(Command::Show) => cmd_show(&config_path),
+        Some(Command::Init { force }) => cmd_init(&config_path, force),
+        Some(Command::Server { input }) => cmd_server(&config_path, &input),
+        Some(Command::Listen { bind }) => cmd_listen(&config_path, bind),
+        Some(Command::SendTest { to, x, y }) => cmd_send_test(&config_path, to, x, y),
     }
 }
 
@@ -151,6 +155,21 @@ fn cmd_init(path: &PathBuf, force: bool) {
 }
 
 fn cmd_server(path: &PathBuf, input: &str) {
+    // When managed by sola (or launched from a bare TTY), pick up the
+    // River Wayland socket so layer-shell edge barriers can bind.
+    let wayland_display = sola_core::env::activate_wayland_session(30_000);
+    if !sola_core::env::wait_for_wayland_socket(&wayland_display, 30_000) {
+        warn!(
+            wayland_display = %wayland_display,
+            "wayland socket not ready after 30s — barrier may fail until River is up"
+        );
+    } else {
+        info!(
+            wayland_display = %wayland_display,
+            "WAYLAND_DISPLAY ready for layer-shell barrier"
+        );
+    }
+
     let cfg = load(path);
     let backend = match InputBackendKind::parse(input) {
         Some(b) => b,

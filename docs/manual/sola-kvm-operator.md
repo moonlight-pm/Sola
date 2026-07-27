@@ -5,15 +5,14 @@ over UDP. Design: `docs/specs/2026-07-27-sola-kvm-design.md`.
 
 ## Status vs lan-mouse
 
-**lan-mouse is disabled** on the desk path (novus + ember). Do not re-enable
-the old user unit, wrapper, or nix profile package for daily use.
+**lan-mouse is fully removed** from the desk path. Daily KVM is sola-kvm only.
 
-| Host | What was purged / quarantined |
-|------|-------------------------------|
-| **novus** | user unit stopped/disabled (`~/.config/systemd/user/lan-mouse.service.disabled`); `~/.local/bin/lan-mouse-sola` → `.disabled`; config+pem → `~/.config/lan-mouse.disabled`; removed from `nix profile` |
-| **ember** | stop any leftover lan-mouse client; sola-kvm-mac is the agent |
+| Host | Autostart |
+|------|-----------|
+| **novus** | Managed by **`sola`** (`MANAGED` includes `sola-kvm` → `server --input evdev`) after River is up |
+| **ember** | LaunchAgent `com.sola.kvm-mac` (`RunAtLoad` + `KeepAlive`) → `/opt/sola/bin/sola-kvm-mac listen` |
 
-Daily path: **`sola-kvm` server on novus** + **`sola-kvm-mac` on ember**.
+Do not reinstall Lan Mouse.app or the old `lan-mouse` user unit.
 
 ## Requires sola-river with layer-shell
 
@@ -63,9 +62,23 @@ port = 4242
 
 ## Run the server (novus)
 
-Logs: `/opt/sola/log/sola-kvm.log` (via `sola_core::log`) and stderr.
+Logs: `/opt/sola/log/sola.log` (shared) and stderr; also check for `sola-kvm` lines.
 
-### Feed backend (default — no device perms)
+### Autostart (managed by sola)
+
+1. Install binaries: `/opt/sola/bin/sola` (with MANAGED including sola-kvm) and `/opt/sola/bin/sola-kvm`
+2. Config: `~/.config/sola-kvm/config.toml` (`peer.host` = ember IP)
+3. `/dev/input/event*` readable by your user (e.g. `sudo setfacl -m u:$USER:rw- /dev/input/event*` once per boot, or a permanent udev/ACL rule)
+4. Start Sola from the TTY as usual — `sola-kvm` is launched after the Wayland socket is ready
+
+Manual override (debug):
+
+```bash
+/opt/sola/bin/sola-kvm server --input evdev
+# or: cargo run -p sola-kvm -- server --input evdev
+```
+
+### Feed backend (no device perms)
 
 Line protocol on stdin. Useful for development and pairing with Phase B
 without HID grab.

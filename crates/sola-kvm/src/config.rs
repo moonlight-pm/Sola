@@ -42,7 +42,8 @@ pub struct Peer {
 impl Default for Peer {
     fn default() -> Self {
         Self {
-            host: "10.0.0.21".into(),
+            // Desk default: ember LAN IP (update if DHCP changes).
+            host: "10.0.0.133".into(),
             port: 4242,
         }
     }
