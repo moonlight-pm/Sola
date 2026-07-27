@@ -25,7 +25,11 @@ pub struct Application {
     pub label: String,
     /// Command to spawn. Whitespace-split into argv; no shell interpretation.
     pub command: String,
-    /// Icon reference in `"<pack>/<name>"` form (e.g. `"lucide/terminal"`).
+    /// Icon reference. Either a pack name (`"lucide/terminal"`,
+    /// `"simpleicons/firefox"`) resolved under `/opt/sola/share/icons/`,
+    /// or a filesystem path to a full-color raster
+    /// (`"/home/…/orca-ide.png"`, `"~/.local/share/sola/icons/…"`).
+    /// Pack SVGs are theme-tinted; path / pack PNGs render full-color.
     pub icon: String,
 }
 
@@ -36,8 +40,24 @@ pub struct ApplicationsConfig {
 }
 
 impl ApplicationsConfig {
+    /// Exact `app_id` match (launcher, settings, emit/update keys).
     pub fn get(&self, app_id: &str) -> Option<&Application> {
         self.apps.iter().find(|a| a.app_id == app_id)
+    }
+
+    /// Catalog look-up for a **running** window's Wayland / xdg `app_id`.
+    ///
+    /// Tries exact match first, then ASCII case-insensitive. External apps
+    /// often disagree with the launcher catalog on casing
+    /// (`StartupWMClass=orca` vs catalog `Orca`, `signal` vs `Signal`).
+    /// Switcher icon/label resolution uses this so official faces still
+    /// show when the catalog key was entered with different case.
+    pub fn get_for_window(&self, app_id: &str) -> Option<&Application> {
+        self.get(app_id).or_else(|| {
+            self.apps
+                .iter()
+                .find(|a| a.app_id.eq_ignore_ascii_case(app_id))
+        })
     }
 
     /// Append a new entry. Errors if `app_id` already exists.
@@ -214,6 +234,26 @@ mod tests {
     fn missing_apps_field_defaults_to_empty() {
         let cfg: ApplicationsConfig = serde_json::from_str("{}").unwrap();
         assert!(cfg.apps.is_empty());
+    }
+
+    #[test]
+    fn get_for_window_falls_back_to_case_insensitive() {
+        let cfg = ApplicationsConfig {
+            apps: vec![Application {
+                app_id: "Orca".into(),
+                label: "Orca".into(),
+                command: "orca".into(),
+                icon: "/tmp/orca.png".into(),
+            }],
+        };
+        assert!(cfg.get("orca").is_none(), "exact get stays case-sensitive");
+        let hit = cfg.get_for_window("orca").expect("ci match");
+        assert_eq!(hit.app_id, "Orca");
+        assert_eq!(hit.icon, "/tmp/orca.png");
+        assert_eq!(
+            cfg.get_for_window("ORCA").map(|a| a.label.as_str()),
+            Some("Orca")
+        );
     }
 
     #[test]
