@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use tracing::{debug, error, info, warn};
 
+use crate::barrier::EdgeBarrier;
 use crate::config::Config;
 use crate::input::{demo_events, EvdevSource, FeedSource, InputBackendKind, EVDEV_POLL};
 use crate::server::{InputEvent, Session, SideEffect};
@@ -145,33 +146,109 @@ fn run_evdev(session: &mut Session, sender: &mut Sender) -> Result<(), String> {
         )
     })?;
 
+    // Physical edge only: layer-shell strip. Relative estimate is NEVER used
+    // to enter remote (that was the "hit zone creeping left" bug).
+    let mut barrier = match EdgeBarrier::connect(
+        session.layout.side,
+        session.layout.primary_w,
+        session.layout.primary_h,
+    ) {
+        Ok(b) => {
+            let (w, h) = b.primary_size();
+            // Prefer compositor-reported size if larger than config.
+            if w > 0 && h > 0 {
+                info!(w, h, "barrier reports output size");
+            }
+            Some(b)
+        }
+        Err(e) => {
+            warn!(
+                %e,
+                "layer-shell barrier unavailable — edge enter disabled (use feed/demo, or fix WAYLAND_DISPLAY)"
+            );
+            None
+        }
+    };
+
     info!(
-        "input backend: evdev — mirror rel motion while local; EVIOCGRAB while remote"
+        "input backend: evdev + layer-shell barrier — enter ONLY on physical shared edge"
     );
     info!(
-        "seed local cursor at primary center ({}, {}); move toward Mac edge to enter",
-        session.local_x, session.local_y
-    );
-    info!(
-        edge_band = session.layout.edge_band,
-        enter_push = session.layout.enter_push,
-        "edge enter: must be within edge_band of shared edge, then push enter_push px outward"
-    );
-    info!(
-        "note: local absolute position is estimated from relative deltas (may drift); \
-         layer-shell barriers are the planned precise edge path"
+        "while remote: relative motion + EVIOCGRAB; leave toward primary releases"
     );
 
     loop {
+        // 1) Physical edge hit while local.
+        if !session.is_remote() {
+            if let Some(ref mut b) = barrier {
+                match b.poll_hit() {
+                    Ok(Some(along)) => {
+                        let mut grab_fn = |g: bool| {
+                            source.set_grabbed(g);
+                            if let Some(ref mut b) = barrier {
+                                let _ = b.set_active(!g);
+                            }
+                        };
+                        let step = session.enter_from_physical_edge(along);
+                        // Reuse apply's emit path for packets/effects.
+                        for effect in &step.effects {
+                            match effect {
+                                SideEffect::Grab => {
+                                    info!(
+                                        mac = ?session.mac_pos(),
+                                        local_x = session.local_x,
+                                        local_y = session.local_y,
+                                        "ENTER remote (physical edge barrier)"
+                                    );
+                                    grab_fn(true);
+                                }
+                                SideEffect::Release { .. } => {}
+                            }
+                        }
+                        for packet in &step.packets {
+                            match sender.send(packet) {
+                                Ok(seq) => debug!(seq, ?packet, "sent"),
+                                Err(e) => error!(?packet, %e, "udp send failed"),
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => warn!(%e, "barrier poll"),
+                }
+            }
+        }
+
+        // 2) Evdev: only drive the session while remote (or keys/buttons).
+        //    While local, ignore relative motion entirely — no estimate creep.
         let events = source.poll().map_err(|e| format!("evdev poll: {e}"))?;
-        if events.is_empty() {
-            thread::sleep(EVDEV_POLL);
-            continue;
+        if events.is_empty() && session.is_remote() {
+            // still need to spin
         }
         for ev in events {
-            let mut grab_fn = |g: bool| source.set_grabbed(g);
+            if !session.is_remote() {
+                // Local: drop pointer rel/abs from evdev — barrier owns enter.
+                match &ev {
+                    InputEvent::PointerRel { .. } | InputEvent::PointerAbs { .. } => continue,
+                    _ => continue, // also drop keys while local for now
+                }
+            }
+            let was_remote = session.is_remote();
+            let mut grab_fn = |g: bool| {
+                source.set_grabbed(g);
+                if let Some(ref mut b) = barrier {
+                    let _ = b.set_active(!g);
+                }
+            };
             apply(session, sender, ev, &mut grab_fn);
+            if was_remote && !session.is_remote() {
+                // Re-arm barrier on leave.
+                if let Some(ref mut b) = barrier {
+                    let _ = b.set_active(true);
+                }
+            }
         }
+
+        thread::sleep(EVDEV_POLL);
     }
 }
 

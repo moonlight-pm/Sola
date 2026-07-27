@@ -130,6 +130,31 @@ impl Session {
         }
     }
 
+    /// Enter remote from a **physical** edge hit (layer-shell barrier).
+    ///
+    /// `along` is the coordinate along the shared edge in primary space
+    /// (y for left/right sides, x for top/bottom).
+    pub fn enter_from_physical_edge(&mut self, along: i32) -> Step {
+        if self.is_remote() {
+            return Step::empty();
+        }
+        let (px, py) = match self.layout.side {
+            crate::layout::Side::Right => {
+                (self.layout.primary_w.saturating_sub(1), along)
+            }
+            crate::layout::Side::Left => (0, along),
+            crate::layout::Side::Top => (along, 0),
+            crate::layout::Side::Bottom => {
+                (along, self.layout.primary_h.saturating_sub(1))
+            }
+        };
+        let (px, py) = self.layout.clamp_primary(px, py);
+        self.local_x = px;
+        self.local_y = py;
+        let (mx, my) = self.layout.enter_mac_coords(px, py);
+        self.enter_remote(mx, my)
+    }
+
     /// Apply one event; returns packets to send and grab side-effects.
     pub fn handle(&mut self, event: InputEvent) -> Step {
         match event {
@@ -396,6 +421,18 @@ mod tests {
         assert!(!s.is_remote());
         // 100+5000 lands at 5100 (still inside primary) — no enter, no edge push.
         assert_eq!(s.local_x, 5100);
+    }
+
+    #[test]
+    fn physical_edge_hit_enters_at_y() {
+        let mut s = Session::new(desk());
+        let step = s.enter_from_physical_edge(2000);
+        assert!(s.is_remote());
+        assert!(matches!(step.effects.as_slice(), [SideEffect::Grab]));
+        // enter_mac_coords snaps x to 0, y = 2000 - (-720) = 2720
+        assert_eq!(s.mac_pos(), Some((0, 2720)));
+        assert_eq!(s.local_x, 5119);
+        assert_eq!(s.local_y, 2000);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! The binary (`main.rs`) owns process lifecycle, input backends, and UDP I/O.
 //! Pure enter/leave/motion logic lives in [`server`] for unit tests and reuse.
 
+pub mod barrier;
 pub mod config;
 pub mod input;
 pub mod layout;
