@@ -17,6 +17,11 @@ If Current is `none`, ask what they want instead of inventing work.
 
 ### Last completed (prior)
 
+**session-id-routing → master**: live ACP stream keyed by session UUID
+(not title); OD session cards (graphite select, slim context bar, hover
+× + time rail); kit `SidebarItem` card chrome + custom content; toolbar
+RESET deletes open session and starts fresh.
+
 **sidebar-hover-trash → master**: stable hover trash (stack overlay +
 enter-only hover); no hard-crop GFM table cells; live thinking stream
 → "Thought for N sec"; directory-first session tabs with context KB
@@ -46,7 +51,7 @@ order fix; approval strip redesign; Edit menu cut/copy/paste/select-all.
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Further Grok TUI presentation parity
 - Storybook page parity for non-Overview tabs (on demand)
-- Remaining worktrees: `libei-portal`
+- Remaining worktrees: `libei-portal`, `app-icon-raster`
 
 ### Resume
 
