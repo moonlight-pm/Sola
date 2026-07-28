@@ -1026,13 +1026,22 @@ fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
             .into()
     };
 
+    // Keep sender to one visual line (list column is narrow).
+    let from_disp = if from.chars().count() > 28 {
+        let mut s: String = from.chars().take(27).collect();
+        s.push('…');
+        s
+    } else {
+        from
+    };
+
     let from_text = if m.seen {
-        text(from)
+        text(from_disp)
             .font(fonts::ui())
             .size(13)
             .style(|t: &Theme| kit_text::muted(t))
     } else {
-        text(from).font(fonts::ui_medium()).size(13)
+        text(from_disp).font(fonts::ui_medium()).size(13)
     };
 
     let subj_text = if m.seen {
@@ -1093,31 +1102,55 @@ fn short_date(date: &str) -> String {
     if t.is_empty() {
         return String::new();
     }
-    // RFC3339 / ISO-ish: 2026-07-28T01:42:22 → 28 Jul
-    if t.len() >= 10 && t.as_bytes().get(4) == Some(&b'-') {
-        let y = &t[0..4];
-        let mo = &t[5..7];
-        let d = &t[8..10];
-        let month = match mo {
-            "01" => "Jan",
-            "02" => "Feb",
-            "03" => "Mar",
-            "04" => "Apr",
-            "05" => "May",
-            "06" => "Jun",
-            "07" => "Jul",
-            "08" => "Aug",
-            "09" => "Sep",
-            "10" => "Oct",
-            "11" => "Nov",
-            "12" => "Dec",
-            _ => mo,
-        };
-        return format!("{d} {month} {y}");
+    // ISO / RFC3339: 2026-07-28T… or 2026-07-28 …
+    if t.len() >= 10 && t.as_bytes().get(4) == Some(&b'-') && t.as_bytes().get(7) == Some(&b'-') {
+        if let (Ok(mo), Ok(d)) = (t[5..7].parse::<u8>(), t[8..10].parse::<u8>()) {
+            return format!("{d} {}", month_abbr(mo));
+        }
     }
-    // Envelope dates are long — keep first token groups.
-    let parts: Vec<&str> = t.split_whitespace().take(4).collect();
-    parts.join(" ")
+    // RFC 2822-ish: "Mon, 28 Jul 2026 01:31:42 +0000" → "28 Jul"
+    let tokens: Vec<&str> = t.split_whitespace().collect();
+    for i in 0..tokens.len().saturating_sub(1) {
+        let day = tokens[i].trim_end_matches(',');
+        if day.parse::<u8>().is_ok() && is_month_token(tokens[i + 1]) {
+            let mon = tokens[i + 1];
+            let mon = &mon[..mon.len().min(3)];
+            return format!("{day} {mon}");
+        }
+    }
+    tokens
+        .into_iter()
+        .filter(|tok| !tok.starts_with('+') && !tok.contains(':'))
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn month_abbr(mo: u8) -> &'static str {
+    match mo {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
+        _ => "???",
+    }
+}
+
+fn is_month_token(s: &str) -> bool {
+    let head = s.chars().take(3).collect::<String>().to_ascii_lowercase();
+    matches!(
+        head.as_str(),
+        "jan" | "feb" | "mar" | "apr" | "may" | "jun" | "jul" | "aug" | "sep" | "oct" | "nov"
+            | "dec"
+    )
 }
 
 fn short_url_label(url: &str, index: usize) -> String {
