@@ -573,6 +573,10 @@ mod platform {
 
     pub fn scroll(dx: f32, dy: f32) {
         ensure_trusted_logged();
+        // Linux REL_WHEEL and macOS CG scroll axes are opposite for the usual
+        // "finger/wheel → content" direction — invert both axes on inject.
+        let dx = -dx;
+        let dy = -dy;
         let mut wheel1 = dy.round() as i32;
         let mut wheel2 = dx.round() as i32;
         if wheel1 == 0 && dy.abs() > f32::EPSILON {
