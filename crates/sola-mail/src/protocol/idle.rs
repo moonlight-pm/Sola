@@ -59,23 +59,34 @@ impl Drop for IdleHandle {
     }
 }
 
+/// What changed on INBOX while IDLE was waiting.
+#[derive(Debug, Clone, Copy)]
+pub enum IdleChange {
+    /// EXISTS increased — `new_count` is the approximate number of arrivals.
+    Arrived { new_count: u32 },
+    /// EXISTS decreased (expunge / delete from another client).
+    Removed { gone: u32 },
+    /// IDLE woke but EXISTS is unchanged (flags, etc.). Still worth a light refresh.
+    Touched,
+}
+
 /// Start a background IDLE watcher on INBOX.
 ///
-/// Opens a separate IMAP connection and enters IDLE mode.
-/// When new mail arrives (EXISTS response), calls `on_new` with the new message count
-/// and a mutable reference to an `ImapClient` that can be used for mail operations
-/// (e.g., listing messages, moving them per rules).
+/// Opens a separate IMAP connection and enters IDLE mode. On any wake, re-SELECTs
+/// INBOX and reports [`IdleChange`] so the UI can refresh when *other* clients
+/// delete/expunge mail — not only when new mail arrives.
+///
 /// Reconnects automatically on errors.
-pub fn start_idle<F>(config: Account, on_new: F) -> IdleHandle
+pub fn start_idle<F>(config: Account, on_change: F) -> IdleHandle
 where
-    F: Fn(u32, &mut ImapClient) + Send + 'static,
+    F: Fn(IdleChange, &mut ImapClient) + Send + 'static,
 {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let flag = stop_flag.clone();
 
     let thread = std::thread::spawn(move || {
         while !flag.load(Ordering::Relaxed) {
-            match run_idle_loop(&config, &on_new, &flag) {
+            match run_idle_loop(&config, &on_change, &flag) {
                 Ok(()) => break, // clean shutdown
                 Err(e) => {
                     warn!("IDLE connection error: {e}, reconnecting in 10s...");
@@ -100,11 +111,11 @@ where
 
 fn run_idle_loop<F>(
     config: &Account,
-    on_new: &F,
+    on_change: &F,
     stop_flag: &Arc<AtomicBool>,
 ) -> anyhow::Result<()>
 where
-    F: Fn(u32, &mut ImapClient),
+    F: Fn(IdleChange, &mut ImapClient),
 {
     let addr = format!("{}:{}", config.imap_host, config.imap_port);
     let tcp = TcpStream::connect(&addr)
@@ -136,7 +147,12 @@ where
         const MAX_INITIAL_SCAN: u32 = 500;
         let scan_count = last_exists.min(MAX_INITIAL_SCAN);
         debug!("IDLE: applying rules to {scan_count} existing INBOX messages");
-        on_new(scan_count, &mut ops_client);
+        on_change(
+            IdleChange::Arrived {
+                new_count: scan_count,
+            },
+            &mut ops_client,
+        );
         // Re-select to get accurate count after any moves
         let updated = session.select("INBOX")?;
         last_exists = updated.exists;
@@ -157,17 +173,27 @@ where
             }
         }
 
-        // Check if new messages arrived
+        // Re-SELECT to observe EXISTS (covers arrivals *and* expunge/deletes
+        // from other clients — the old code only handled increases).
         let mailbox = session.select("INBOX")?;
-        if mailbox.exists > last_exists {
-            let new_count = mailbox.exists - last_exists;
-            debug!("IDLE: {new_count} new messages in INBOX");
-            on_new(new_count, &mut ops_client);
-            // Re-select to get accurate count after moves by ops_client
+        let exists = mailbox.exists;
+        if exists > last_exists {
+            let new_count = exists - last_exists;
+            debug!("IDLE: {new_count} new messages in INBOX ({last_exists} → {exists})");
+            on_change(IdleChange::Arrived { new_count }, &mut ops_client);
             let updated = session.select("INBOX")?;
             last_exists = updated.exists;
+        } else if exists < last_exists {
+            let gone = last_exists - exists;
+            debug!("IDLE: {gone} messages removed from INBOX ({last_exists} → {exists})");
+            on_change(IdleChange::Removed { gone }, &mut ops_client);
+            last_exists = exists;
         } else {
-            last_exists = mailbox.exists;
+            // Same EXISTS: still notify so flag-only changes can refresh if needed.
+            // UI may no-op for Touched; worker always emits InboxChanged for remove/arrive.
+            debug!("IDLE: INBOX unchanged at {exists}");
+            on_change(IdleChange::Touched, &mut ops_client);
+            last_exists = exists;
         }
     }
 

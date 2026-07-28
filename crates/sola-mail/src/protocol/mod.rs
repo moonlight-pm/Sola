@@ -10,7 +10,7 @@ pub mod types;
 pub mod wicket;
 
 pub use account::Account;
-pub use idle::{IdleHandle, start_idle};
+pub use idle::{start_idle, IdleChange, IdleHandle};
 pub use imap::ImapClient;
 pub use rules::rule_matches;
 pub use types::{folder_count_badge, folder_label, Folder, MessageBody, MessageSummary};

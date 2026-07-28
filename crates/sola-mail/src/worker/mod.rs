@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 
 use crate::bridge;
 use crate::protocol::{
-    Account, ImapClient, start_idle, rule_matches, sender, wicket,
+    start_idle, Account, IdleChange, ImapClient, rule_matches, sender, wicket,
 };
 
 struct WorkerState {
@@ -182,15 +182,24 @@ fn do_connect(state: &mut WorkerState) {
     *state.idle_move_rules.lock().unwrap_or_else(|e| e.into_inner()) = move_rules;
 
     let shared_rules = Arc::clone(&state.idle_move_rules);
-    let idle = start_idle(account.clone(), move |new_count, idle_client| {
-        let rules = shared_rules.lock().unwrap_or_else(|e| e.into_inner());
-        let remaining = if !rules.is_empty() {
-            apply_move_rules_on_idle(idle_client, &rules, new_count)
-        } else {
-            new_count
-        };
-        if remaining > 0 {
-            bridge::emit(MailEvent::NewMail);
+    let idle = start_idle(account.clone(), move |change, idle_client| {
+        match change {
+            IdleChange::Arrived { new_count } => {
+                let rules = shared_rules.lock().unwrap_or_else(|e| e.into_inner());
+                if !rules.is_empty() {
+                    let _ = apply_move_rules_on_idle(idle_client, &rules, new_count);
+                }
+                // Always refresh UI — even if every arrival was auto-moved away.
+                bridge::emit(MailEvent::NewMail);
+            }
+            IdleChange::Removed { gone } => {
+                tracing::debug!(gone, "IDLE: remote deletes/expunge — refreshing UI");
+                bridge::emit(MailEvent::NewMail);
+            }
+            IdleChange::Touched => {
+                // Flag-only / keepalive: no EXISTS change. Periodic PollRefresh
+                // covers stragglers without thrashing on every IDLE nudge.
+            }
         }
     });
 

@@ -55,6 +55,8 @@ pub enum Msg {
     OpenUrl(String),
     DismissToast,
     KeyPressed(keyboard::Key, keyboard::Modifiers),
+    /// Quiet background re-fetch (IDLE + multi-client safety net).
+    PollRefresh,
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +173,13 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
+        // Periodic refresh catches deletes when IDLE is quiet or the server
+        // only notifies on keepalive (common with multi-client expunge).
+        let poll = if self.connected && !self.loading {
+            iced::time::every(std::time::Duration::from_secs(45)).map(|_| Msg::PollRefresh)
+        } else {
+            Subscription::none()
+        };
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             bridge::mail_subscription().map(Msg::Worker),
@@ -180,6 +189,7 @@ impl App {
                 }
                 _ => None,
             }),
+            poll,
         ])
     }
 
@@ -371,6 +381,13 @@ impl App {
                 Task::none()
             }
             Msg::KeyPressed(key, mods) => self.on_key(key, mods),
+            Msg::PollRefresh => {
+                if self.connected && !self.composing && !self.loading {
+                    // Silent refresh — do not toast on transient failures.
+                    self.refresh_all();
+                }
+                Task::none()
+            }
         }
     }
 
