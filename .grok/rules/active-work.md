@@ -2,27 +2,14 @@
 
 ## Current
 
-**sola-kvm-performance** (branch `sola-kvm-performance`) — key auto-repeat +
-input latency.
+**none**
 
-### Done in this branch
+### Last completed
 
-- Forward Linux `EV_KEY` value `2` as wire `Key.pressed=2` (was dropped)
-- Mac inject sets `kCGKeyboardEventAutorepeat` + unicode on repeats
-- Latency: idle `poll` wait (no fixed 2ms sleep after busy ticks), coalesce
-  motion/scroll runs, quiet Mac high-rate `info` logging
-
-### Smoke after install
-
-1. Install novus: `cargo make install sola-kvm` (needs explicit permission)
-2. Ember: rebuild/install sola-kvm-mac via `apps/sola-kvm-mac/scripts/install.sh`
-3. Hold a key in a text field on Mac → should auto-repeat
-4. Rapid mouse move + typing while remote → less lag / fewer stalls
-
-### Last completed (prior)
-
-**sola-kvm keyboard/click/scroll** → master: open keyboard nodes, Mac CGEvent
-inject (suppression + unicode), scroll invert/speed, stable signed .app
+**sola-kvm-performance → master**: Key auto-repeat (Linux EV_KEY=2 → wire
+`pressed=2` + Mac `kCGKeyboardEventAutorepeat`) and remote lag fixes (poll
+wait, motion/scroll coalesce, quieter Mac high-rate logging). Both hosts
+installed and smoked.
 
 ### Future / follow-ups
 
@@ -34,8 +21,5 @@ inject (suppression + unicode), scroll invert/speed, stable signed .app
 ### Resume
 
 ```text
-# this worktree / branch
-cargo make build sola-kvm
-cargo test -p sola-kvm
-# Mac agent (separate tree): apps/sola-kvm-mac
+# no active feature worktree
 ```
