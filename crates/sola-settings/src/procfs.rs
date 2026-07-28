@@ -21,6 +21,7 @@ const SYSTEM_APP_IDS: &[&str] = &[
     "sola-browser-cef",
     "sola-kit",
     "sola-agent",
+    "sola-mail",
 ];
 
 pub fn is_system_app(app_id: &str) -> bool {
