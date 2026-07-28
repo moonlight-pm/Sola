@@ -38,10 +38,12 @@ impl ImapClient {
         })
     }
 
-    /// List all folders with unread/total counts.
+    /// List all folders with unread/total counts via `STATUS` (no SELECT).
     ///
-    /// Totals use `SEARCH UNDELETED` / `UNSEEN UNDELETED` so soft-deleted
-    /// messages (still in the mailbox until EXPUNGE) are not counted.
+    /// Uses STATUS rather than SELECT+SEARCH per folder: some servers/crates
+    /// leave the session desynced after repeated SEARCH failures, and the
+    /// imap client panics on tag mismatch (killing the mail worker).
+    /// Message lists still exclude `\Deleted` via `UNDELETED` SEARCH.
     pub fn list_folders(&mut self) -> anyhow::Result<Vec<Folder>> {
         self.with_reconnect(|s| {
             let mailboxes = s.session.list(None, Some("*"))?;
@@ -49,29 +51,38 @@ impl ImapClient {
 
             for mb in mailboxes.iter() {
                 let name = mb.name().to_string();
-                // Skip \Noselect mailboxes (can't STATUS/SELECT).
-                if mb.attributes().iter().any(|a| {
-                    matches!(a, imap::types::NameAttribute::NoSelect)
-                }) {
+                // Skip \Noselect mailboxes (can't STATUS).
+                if mb
+                    .attributes()
+                    .iter()
+                    .any(|a| matches!(a, imap::types::NameAttribute::NoSelect))
+                {
                     continue;
                 }
-                match s.session.select(&name) {
+                match s.session.status(&name, "(MESSAGES UNSEEN)") {
                     Ok(_) => {
-                        s.selected_folder = Some(name.clone());
-                        let total = match s.session.uid_search("UNDELETED") {
-                            Ok(uids) => uids.len() as u32,
-                            Err(e) => {
-                                warn!("UNDELETED search failed for {name}: {e}");
-                                0
+                        // The imap crate routes STATUS responses to the
+                        // unsolicited channel, so drain it for the attributes.
+                        let mut total = 0u32;
+                        let mut unread = 0u32;
+                        while let Ok(resp) = s.session.unsolicited_responses.try_recv() {
+                            if let imap::types::UnsolicitedResponse::Status {
+                                mailbox: ref mb,
+                                attributes,
+                            } = resp
+                            {
+                                if mb != &name {
+                                    continue;
+                                }
+                                for attr in attributes {
+                                    match attr {
+                                        imap::types::StatusAttribute::Messages(n) => total = n,
+                                        imap::types::StatusAttribute::Unseen(n) => unread = n,
+                                        _ => {}
+                                    }
+                                }
                             }
-                        };
-                        let unread = match s.session.uid_search("UNSEEN UNDELETED") {
-                            Ok(uids) => uids.len() as u32,
-                            Err(e) => {
-                                warn!("UNSEEN UNDELETED search failed for {name}: {e}");
-                                0
-                            }
-                        };
+                        }
                         folders.push(Folder {
                             name,
                             unread,
@@ -82,7 +93,7 @@ impl ImapClient {
                         return Err(anyhow::Error::from(e));
                     }
                     Err(e) => {
-                        warn!("SELECT failed for {name}: {e}");
+                        warn!("STATUS failed for {name}: {e}");
                         folders.push(Folder {
                             name,
                             unread: 0,
@@ -110,7 +121,7 @@ impl ImapClient {
         let folder = folder.to_string();
         self.with_reconnect(move |s| {
             s.ensure_selected(&folder)?;
-            let mut uids: Vec<u32> = s.session.uid_search("UNDELETED")?.into_iter().collect();
+            let mut uids: Vec<u32> = uid_search_undeleted(&mut s.session)?.into_iter().collect();
             uids.sort_unstable_by(|a, b| b.cmp(a));
             let total = uids.len() as u32;
             fetch_envelopes(&mut s.session, &uids, offset, limit, total)
@@ -127,7 +138,7 @@ impl ImapClient {
         let rules = rules.to_vec();
         self.with_reconnect(move |s| {
             s.ensure_selected("INBOX")?;
-            let all_uids = s.session.uid_search("UNDELETED")?;
+            let all_uids = uid_search_undeleted(&mut s.session)?;
             let excluded = smart_mailbox_uids(&mut s.session, &rules);
             let mut kept: Vec<u32> = all_uids
                 .into_iter()
@@ -446,15 +457,12 @@ impl ImapClient {
     {
         match Self::run_or_catch_panic(&op, self) {
             Ok(val) => Ok(val),
-            Err(e) if is_connection_error(&e) => {
-                warn!("IMAP connection error, reconnecting: {e}");
+            Err(e) if is_connection_error(&e) || e.to_string().contains("imap panic") => {
+                warn!("IMAP error, reconnecting once: {e}");
                 self.reconnect()?;
-                op(self)
-            }
-            Err(e) if e.to_string().contains("imap panic") => {
-                warn!("IMAP session corrupted (panic), reconnecting: {e}");
-                self.reconnect()?;
-                op(self)
+                // Retry under catch_unwind too — a bare `op(self)` would kill
+                // the worker thread if the imap crate panics again on tag mismatch.
+                Self::run_or_catch_panic(&op, self)
             }
             Err(e) => Err(e),
         }
@@ -752,26 +760,40 @@ fn fetch_envelopes(
     Ok((messages, total))
 }
 
+/// UID SEARCH preferring undeleted messages; falls back to ALL if UNDELETED fails.
+fn uid_search_undeleted(
+    session: &mut ImapSession,
+) -> anyhow::Result<std::collections::HashSet<u32>> {
+    match session.uid_search("UNDELETED") {
+        Ok(uids) => Ok(uids),
+        Err(e) => {
+            warn!("UNDELETED search failed, falling back to ALL: {e}");
+            Ok(session.uid_search("ALL")?)
+        }
+    }
+}
+
 /// Build an IMAP SEARCH query string from mail rule conditions.
 ///
-/// Always prefixes `UNDELETED` so soft-deleted messages are excluded.
 /// Conditions are ANDed (IMAP SEARCH criteria listed together are implicitly ANDed).
 /// IMAP SEARCH only supports substring matching on header fields, so "domain" and
 /// "address" match types are approximated as substring searches. Counts may slightly
 /// overcount compared to the precise frontend filtering.
+///
+/// Soft-deleted messages are filtered out later via [`parse_summary`] / list paths;
+/// we intentionally do **not** prefix `UNDELETED` here — some servers mishandle
+/// combined criteria and desync the imap crate's command tags.
 fn build_imap_search(conditions: &[MailRuleCondition]) -> String {
-    let mut parts: Vec<String> = vec!["UNDELETED".into()];
-    for c in conditions {
-        let safe = c.value.replace('\\', "\\\\").replace('"', "\\\"");
-        match c.field.as_str() {
-            "from" => parts.push(format!("FROM \"{safe}\"")),
-            "subject" => parts.push(format!("SUBJECT \"{safe}\"")),
-            _ => {}
-        }
-    }
-    // Only UNDELETED with no field criteria → empty (no smart match).
-    if parts.len() == 1 {
-        return String::new();
-    }
-    parts.join(" ")
+    conditions
+        .iter()
+        .filter_map(|c| {
+            let safe = c.value.replace('\\', "\\\\").replace('"', "\\\"");
+            match c.field.as_str() {
+                "from" => Some(format!("FROM \"{safe}\"")),
+                "subject" => Some(format!("SUBJECT \"{safe}\"")),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
