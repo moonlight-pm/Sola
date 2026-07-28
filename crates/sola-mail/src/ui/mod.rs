@@ -1,31 +1,34 @@
-//! Kit UI: three-pane mail client.
+//! Kit UI: three-pane mail client (graphite list + reading composition).
 
 use std::sync::Arc;
 
 use iced::event;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
-use iced::widget::{column, container, row, scrollable, Space};
-use iced::{Element, Event, Length, Subscription, Task, Theme};
+use iced::widget::{button, column, container, row, scrollable, text, text_editor, Space};
+use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscription, Task, Theme};
 use sola_bus::Message;
 use sola_bus::topics::{MailConfig, MailRule, Topic};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
-use sola_kit::components::style::{SPACE_MD, SPACE_SM, SPACE_XS};
+use sola_kit::components::style::{
+    mix_white, HAIRLINE_A, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
+};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
-use sola_kit::components::{
-    button as kit_btn, sidebar, SidebarItem, SidebarSection,
-};
-use sola_kit::theme::default_theme;
+use sola_kit::components::{button as kit_btn, sidebar, SidebarItem, SidebarSection};
+use sola_kit::fonts;
+use sola_kit::theme::{self, default_theme};
 
 use crate::bridge::{self, mail_send};
-use crate::protocol::{
-    folder_count_badge, folder_label, Folder, MessageBody, MessageSummary,
-};
+use crate::protocol::{folder_count_badge, folder_label, Folder, MessageBody, MessageSummary};
 use crate::worker::{MailCmd, MailEvent};
 
 const APP_ID: &str = "sola-mail";
 const PAGE: u32 = 50;
+const LIST_W: f32 = 300.0;
+const SIDEBAR_W: f32 = 200.0;
+/// Comfortable reading measure (~65ch at 13px).
+const READ_MAX_W: f32 = 560.0;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -44,11 +47,10 @@ pub enum Msg {
     ComposeTo(String),
     ComposeCc(String),
     ComposeSubject(String),
-    ComposeBody(String),
+    ComposeBodyAction(text_editor::Action),
     Send,
     MoveSelected(String),
     Undo,
-    BulkMove(String),
     EmptyFolder,
     OpenUrl(String),
     DismissToast,
@@ -62,13 +64,12 @@ struct LastMove {
     to_folder: String,
 }
 
-#[derive(Debug, Clone)]
 struct ComposeDraft {
     from: String,
     to: String,
     cc: String,
     subject: String,
-    body: String,
+    body: text_editor::Content,
     in_reply_to: Option<String>,
 }
 
@@ -92,8 +93,9 @@ pub struct App {
     loading: bool,
     folder_loading: bool,
     is_loading_more: bool,
-    bulk_in_progress: bool,
     toast: Option<String>,
+    /// When set, toast (and reading toolbar) offer Undo.
+    toast_undo: bool,
     composing: bool,
     draft: ComposeDraft,
     last_move: Option<LastMove>,
@@ -121,8 +123,8 @@ impl Default for App {
             loading: true,
             folder_loading: false,
             is_loading_more: false,
-            bulk_in_progress: false,
             toast: None,
+            toast_undo: false,
             composing: false,
             draft: empty_draft(""),
             last_move: None,
@@ -136,8 +138,26 @@ fn empty_draft(from: &str) -> ComposeDraft {
         to: String::new(),
         cc: String::new(),
         subject: String::new(),
-        body: String::new(),
+        body: text_editor::Content::new(),
         in_reply_to: None,
+    }
+}
+
+fn draft_with_body(
+    from: String,
+    to: String,
+    cc: String,
+    subject: String,
+    body: String,
+    in_reply_to: Option<String>,
+) -> ComposeDraft {
+    ComposeDraft {
+        from,
+        to,
+        cc,
+        subject,
+        body: text_editor::Content::with_text(&body),
+        in_reply_to,
     }
 }
 
@@ -264,14 +284,14 @@ impl App {
                     .map(|l| format!("> {l}"))
                     .collect::<Vec<_>>()
                     .join("\n");
-                self.draft = ComposeDraft {
+                self.draft = draft_with_body(
                     from,
                     to,
                     cc,
-                    subject: subj,
-                    body: format!("\n\nOn {} {} wrote:\n{quoted}", body.date, body.from),
-                    in_reply_to: body.message_id.clone(),
-                };
+                    subj,
+                    format!("\n\nOn {} {} wrote:\n{quoted}", body.date, body.from),
+                    body.message_id.clone(),
+                );
                 self.composing = true;
                 Task::none()
             }
@@ -295,13 +315,14 @@ impl App {
                 self.draft.subject = s;
                 Task::none()
             }
-            Msg::ComposeBody(s) => {
-                self.draft.body = s;
+            Msg::ComposeBodyAction(action) => {
+                self.draft.body.perform(action);
                 Task::none()
             }
             Msg::Send => {
                 if self.draft.to.trim().is_empty() {
                     self.toast = Some("To address is required".into());
+                    self.toast_undo = false;
                     return Task::none();
                 }
                 mail_send(MailCmd::Send {
@@ -309,7 +330,7 @@ impl App {
                     to: self.draft.to.clone(),
                     cc: self.draft.cc.clone(),
                     subject: self.draft.subject.clone(),
-                    body: self.draft.body.clone(),
+                    body: self.draft.body.text(),
                     in_reply_to: self.draft.in_reply_to.clone(),
                 });
                 Task::none()
@@ -328,29 +349,10 @@ impl App {
                         uid: lm.uid,
                         dest: lm.from_folder,
                     });
+                    self.toast = Some("Move undone".into());
+                    self.toast_undo = false;
                     self.load_folder(self.selected_folder.clone());
                 }
-                Task::none()
-            }
-            Msg::BulkMove(dest) => {
-                if self.bulk_in_progress {
-                    return Task::none();
-                }
-                self.bulk_in_progress = true;
-                let source = if self.selected_folder.starts_with("smart:") {
-                    "INBOX".to_string()
-                } else {
-                    self.selected_folder.clone()
-                };
-                for m in &self.messages {
-                    mail_send(MailCmd::Move {
-                        folder: source.clone(),
-                        uid: m.uid,
-                        dest: dest.clone(),
-                    });
-                }
-                self.load_folder(self.selected_folder.clone());
-                self.bulk_in_progress = false;
                 Task::none()
             }
             Msg::EmptyFolder => {
@@ -360,12 +362,12 @@ impl App {
                 Task::none()
             }
             Msg::OpenUrl(url) => {
-                // System browser is Helium (sola-browser not day-to-day).
                 sola_core::open_url_logged(&url);
                 Task::none()
             }
             Msg::DismissToast => {
                 self.toast = None;
+                self.toast_undo = false;
                 Task::none()
             }
             Msg::KeyPressed(key, mods) => self.on_key(key, mods),
@@ -429,7 +431,6 @@ impl App {
                 self.folder_loading = false;
                 self.is_loading_more = false;
                 self.total_messages = total;
-                // Keep sidebar total aligned with the undeleted list total.
                 if let Some(f) = self.folders.iter_mut().find(|f| f.name == folder) {
                     f.total = total;
                 }
@@ -451,6 +452,7 @@ impl App {
             MailEvent::Sent => {
                 self.composing = false;
                 self.toast = Some("Message sent".into());
+                self.toast_undo = false;
                 mail_send(MailCmd::ListFolders);
             }
             MailEvent::Moved { .. } => {}
@@ -460,6 +462,7 @@ impl App {
             MailEvent::RulesApplied { moved } => {
                 if moved > 0 {
                     self.toast = Some(format!("Moved {moved} messages"));
+                    self.toast_undo = false;
                     self.refresh_all();
                 }
             }
@@ -471,6 +474,7 @@ impl App {
                 self.folder_loading = false;
                 self.is_loading_more = false;
                 self.toast = Some(format!("{context}: {message}"));
+                self.toast_undo = false;
                 if context == "connect" {
                     self.connected = false;
                 }
@@ -478,19 +482,33 @@ impl App {
             MailEvent::Disconnected { reason } => {
                 self.connected = false;
                 self.toast = Some(reason);
+                self.toast_undo = false;
             }
         }
         Task::none()
     }
 
     fn on_key(&mut self, key: keyboard::Key, mods: keyboard::Modifiers) -> Task<Msg> {
+        if matches!(key, keyboard::Key::Named(NamedKey::Escape)) {
+            if self.composing {
+                self.composing = false;
+                return Task::none();
+            }
+            if self.search_active || !self.search_query.is_empty() {
+                self.search_active = false;
+                self.search_query.clear();
+                self.search_total = 0;
+                self.load_folder(self.selected_folder.clone());
+                return Task::none();
+            }
+        }
+
         if self.composing {
             return Task::none();
         }
         if mods.control() || mods.alt() || mods.logo() {
             return Task::none();
         }
-        // Ignore pure navigation keys we don't handle.
         if matches!(
             key,
             keyboard::Key::Named(
@@ -524,6 +542,8 @@ impl App {
                         uid: lm.uid,
                         dest: lm.from_folder,
                     });
+                    self.toast = Some("Move undone".into());
+                    self.toast_undo = false;
                     self.load_folder(self.selected_folder.clone());
                 }
             }
@@ -540,6 +560,16 @@ impl App {
         } else {
             self.selected_folder.clone()
         }
+    }
+
+    fn is_emptyable_folder(&self) -> bool {
+        matches!(
+            self.selected_folder.as_str(),
+            "Trash" | "Junk" | "trash" | "junk"
+        ) || self
+            .selected_folder
+            .eq_ignore_ascii_case("Trash")
+            || self.selected_folder.eq_ignore_ascii_case("Junk")
     }
 
     fn load_folder(&mut self, name: String) {
@@ -589,6 +619,8 @@ impl App {
             from_folder: folder.clone(),
             to_folder: dest.clone(),
         });
+        self.toast = Some(format!("Moved to {dest}"));
+        self.toast_undo = true;
         mail_send(MailCmd::Move {
             folder,
             uid,
@@ -631,6 +663,8 @@ impl App {
         self.select_message(self.messages[idx + 1].uid);
     }
 
+    // ── View ──────────────────────────────────────────────────────────
+
     pub fn view(&self) -> Element<'_, Msg> {
         let content: Element<'_, Msg> = if self.loading {
             container(kit_text::body("Connecting…"))
@@ -638,6 +672,7 @@ impl App {
                 .height(Length::Fill)
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
+                .style(canvas_style)
                 .into()
         } else if self.not_configured {
             container(
@@ -652,11 +687,14 @@ impl App {
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill)
+            .style(canvas_style)
             .into()
         } else {
             row![
                 self.view_folders(),
+                v_hairline(),
                 self.view_message_list(),
+                v_hairline(),
                 if self.composing {
                     self.view_compose()
                 } else {
@@ -669,114 +707,125 @@ impl App {
 
         let mut col = column![content].width(Length::Fill).height(Length::Fill);
         if let Some(toast) = &self.toast {
-            col = col.push(
-                container(
-                    row![
-                        kit_text::body(toast.clone()),
-                        Space::new().width(Length::Fill),
-                        kit_btn::labeled_sm("Dismiss", kit_btn::ghost)
-                            .on_press(Msg::DismissToast),
-                    ]
-                    .spacing(SPACE_SM)
-                    .align_y(iced::Alignment::Center),
-                )
-                .padding(SPACE_MD)
-                .width(Length::Fill),
+            col = col.push(self.view_toast(toast));
+        }
+        container(col)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(canvas_style)
+            .into()
+    }
+
+    fn view_toast<'a>(&'a self, toast: &'a str) -> Element<'a, Msg> {
+        let mut actions = row![].spacing(SPACE_SM);
+        if self.toast_undo && self.last_move.is_some() {
+            actions = actions.push(
+                kit_btn::labeled_sm("Undo", kit_btn::secondary).on_press(Msg::Undo),
             );
         }
-        col.into()
+        actions = actions.push(
+            kit_btn::labeled_sm("Dismiss", kit_btn::ghost).on_press(Msg::DismissToast),
+        );
+
+        container(
+            row![
+                kit_text::body(toast.to_string()),
+                Space::new().width(Length::Fill),
+                actions,
+            ]
+            .spacing(SPACE_SM)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(Padding::from([SPACE_MD, SPACE_LG]))
+        .width(Length::Fill)
+        .style(toast_style)
+        .into()
     }
 
     fn view_folders(&self) -> Element<'_, Msg> {
-        let mut items: Vec<SidebarItem<'_, Msg>> = Vec::new();
-        // Folders arrive pre-sorted (Inbox, Sent, Drafts, Archive, Junk, Trash, …).
+        let mut sections = Vec::new();
+
+        let mut mailbox_items: Vec<SidebarItem<'_, Msg>> = Vec::new();
         for f in &self.folders {
-            let mut label = folder_label(&f.name);
+            let mut item =
+                SidebarItem::new(folder_label(&f.name), Msg::SelectFolder(f.name.clone()))
+                    .active(self.selected_folder == f.name);
             if let Some(badge) = folder_count_badge(f.unread, f.total) {
-                label = format!("{label}  {badge}");
+                item = item.secondary(badge);
             }
-            items.push(
-                SidebarItem::new(label, Msg::SelectFolder(f.name.clone()))
-                    .active(self.selected_folder == f.name),
-            );
+            mailbox_items.push(item);
         }
-        for f in &self.smart_counts {
-            let id = format!("smart:{}", f.name);
-            let mut label = format!("★ {}", f.name);
-            if let Some(badge) = folder_count_badge(f.unread, f.total) {
-                label = format!("{label}  {badge}");
+        sections.push(SidebarSection::new("Mailboxes", mailbox_items).fill());
+
+        if !self.smart_counts.is_empty() {
+            let mut smart_items = Vec::new();
+            for f in &self.smart_counts {
+                let id = format!("smart:{}", f.name);
+                let mut item =
+                    SidebarItem::new(f.name.clone(), Msg::SelectFolder(id.clone()))
+                        .active(self.selected_folder == id);
+                if let Some(badge) = folder_count_badge(f.unread, f.total) {
+                    item = item.secondary(badge);
+                }
+                smart_items.push(item);
             }
-            items.push(
-                SidebarItem::new(label, Msg::SelectFolder(id.clone()))
-                    .active(self.selected_folder == id),
-            );
+            sections.push(SidebarSection::new("Smart", smart_items));
         }
 
-        container(sidebar(vec![SidebarSection::new("Mailboxes", items).fill()]))
-            .width(Length::Fixed(220.0))
+        container(sidebar(sections))
+            .width(Length::Fixed(SIDEBAR_W))
             .height(Length::Fill)
             .into()
     }
 
     fn view_message_list(&self) -> Element<'_, Msg> {
-        let search_row = row![
-            text_input("Search…", &self.search_query)
-                .on_input(Msg::SearchChanged)
-                .on_submit(Msg::SearchSubmit)
-                .width(Length::Fill),
-            kit_btn::labeled_sm("Go", kit_btn::secondary).on_press(Msg::SearchSubmit),
-            kit_btn::labeled_sm("Clear", kit_btn::ghost).on_press(Msg::ClearSearch),
-        ]
-        .spacing(SPACE_XS)
-        .padding(SPACE_SM);
+        // Single chrome row: search + Compose (one primary).
+        let search = text_input("Search…", &self.search_query)
+            .on_input(Msg::SearchChanged)
+            .on_submit(Msg::SearchSubmit)
+            .width(Length::Fill);
 
-        let actions = row![
+        let header = row![
+            search,
             kit_btn::labeled_sm("Compose", kit_btn::primary).on_press(Msg::Compose),
-            kit_btn::labeled_sm("Archive all", kit_btn::ghost)
-                .on_press(Msg::BulkMove("Archive".into())),
-            kit_btn::labeled_sm("Trash all", kit_btn::ghost)
-                .on_press(Msg::BulkMove("Trash".into())),
-            kit_btn::labeled_sm("Empty", kit_btn::ghost).on_press(Msg::EmptyFolder),
         ]
-        .spacing(SPACE_XS)
-        .padding(SPACE_SM);
+        .spacing(SPACE_SM)
+        .padding(Padding::from([SPACE_MD, SPACE_MD]))
+        .align_y(iced::Alignment::Center);
 
-        let header = if self.search_active {
+        let status = if self.search_active {
             kit_text::caption(format!("{} results", self.search_total)).style(kit_text::muted)
         } else if self.folder_loading {
             kit_text::caption("Loading…").style(kit_text::muted)
         } else {
             kit_text::caption(format!(
-                "{} · {} messages",
+                "{} · {}",
                 folder_label(&self.selected_folder),
                 self.total_messages
             ))
             .style(kit_text::muted)
         };
 
-        let mut list = column![header].spacing(SPACE_XS).padding(SPACE_SM);
+        let mut status_row = row![status, Space::new().width(Length::Fill)].spacing(SPACE_SM);
+        if self.is_emptyable_folder() && !self.search_active {
+            status_row = status_row.push(
+                kit_btn::labeled_sm("Empty", kit_btn::ghost).on_press(Msg::EmptyFolder),
+            );
+        }
+
+        let status_bar = container(status_row)
+            .padding(Padding {
+                top: 0.0,
+                right: SPACE_MD,
+                bottom: SPACE_SM,
+                left: SPACE_MD,
+            })
+            .width(Length::Fill);
+
+        let mut list = column![].spacing(0).width(Length::Fill);
         for m in &self.messages {
             let selected = self.selected_uid == Some(m.uid);
-            let subj = if m.subject.is_empty() {
-                "(no subject)".into()
-            } else {
-                m.subject.clone()
-            };
-            let line = if m.seen {
-                format!("{} — {}", m.from, subj)
-            } else {
-                format!("● {} — {}", m.from, subj)
-            };
-            let style = if selected {
-                kit_btn::secondary
-            } else {
-                kit_btn::ghost
-            };
-            list = list.push(
-                kit_btn::labeled_sm(line, style)
-                    .on_press(Msg::SelectMessage(m.uid))
-                    .width(Length::Fill),
-            );
+            list = list.push(message_row(m, selected));
         }
         if !self.search_active && (self.messages.len() as u32) < self.total_messages {
             let label = if self.is_loading_more {
@@ -784,15 +833,28 @@ impl App {
             } else {
                 "Load more"
             };
-            list = list.push(kit_btn::labeled_sm(label, kit_btn::ghost).on_press(Msg::LoadMore));
+            list = list.push(
+                container(
+                    kit_btn::labeled_sm(label, kit_btn::ghost)
+                        .on_press(Msg::LoadMore)
+                        .width(Length::Fill),
+                )
+                .padding(SPACE_MD)
+                .width(Length::Fill),
+            );
         }
 
         container(
-            column![search_row, actions, scrollable(list).height(Length::Fill)]
-                .height(Length::Fill),
+            column![
+                header,
+                status_bar,
+                scrollable(list).height(Length::Fill).width(Length::Fill),
+            ]
+            .height(Length::Fill),
         )
-        .width(Length::Fixed(340.0))
+        .width(Length::Fixed(LIST_W))
         .height(Length::Fill)
+        .style(list_pane_style)
         .into()
     }
 
@@ -803,10 +865,11 @@ impl App {
                 .height(Length::Fill)
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
+                .style(read_pane_style)
                 .into();
         };
 
-        let toolbar = row![
+        let mut toolbar = row![
             kit_btn::labeled_sm("Reply", kit_btn::secondary)
                 .on_press(Msg::Reply { all: false }),
             kit_btn::labeled_sm("Reply all", kit_btn::ghost).on_press(Msg::Reply { all: true }),
@@ -816,73 +879,111 @@ impl App {
                 .on_press(Msg::MoveSelected("Trash".into())),
             kit_btn::labeled_sm("Junk", kit_btn::ghost)
                 .on_press(Msg::MoveSelected("Junk".into())),
-            kit_btn::labeled_sm("Undo", kit_btn::ghost).on_press(Msg::Undo),
         ]
-        .spacing(SPACE_XS)
-        .padding(SPACE_SM);
+        .spacing(SPACE_XS);
+
+        if self.last_move.is_some() {
+            toolbar = toolbar
+                .push(Space::new().width(Length::Fill))
+                .push(kit_btn::labeled_sm("Undo", kit_btn::ghost).on_press(Msg::Undo));
+        } else {
+            toolbar = toolbar.push(Space::new().width(Length::Fill));
+        }
+
+        let toolbar = container(toolbar)
+            .padding(Padding::from([SPACE_MD, SPACE_LG]))
+            .width(Length::Fill)
+            .style(toolbar_style);
 
         let subj = if body.subject.is_empty() {
             "(no subject)".to_string()
         } else {
             body.subject.clone()
         };
-        let meta = column![
+
+        let mut meta = column![
             kit_text::subheading(subj),
-            kit_text::caption(format!("From: {}", body.from)).style(kit_text::muted),
-            kit_text::caption(format!("To: {}", body.to)).style(kit_text::muted),
-            kit_text::caption(if body.cc.is_empty() {
-                String::new()
-            } else {
-                format!("Cc: {}", body.cc)
-            })
-            .style(kit_text::muted),
-            kit_text::caption(format!("Date: {}", body.date)).style(kit_text::muted),
+            meta_line("From", body.from.clone()),
+            meta_line("To", body.to.clone()),
         ]
         .spacing(SPACE_XS)
-        .padding(SPACE_SM);
+        .width(Length::Fill);
+
+        let date_s = short_date(&body.date);
+        if !body.cc.trim().is_empty() {
+            meta = meta.push(meta_line("Cc", body.cc.clone()));
+        }
+        meta = meta.push(meta_line("Date", date_s));
 
         let display = body.display_text();
         let urls = extract_urls(&display);
-        let mut url_row = row![].spacing(SPACE_XS);
-        for u in urls.into_iter().take(8) {
-            let label = if u.len() > 48 {
-                format!("{}…", &u[..45])
-            } else {
-                u.clone()
-            };
-            url_row = url_row.push(
-                kit_btn::labeled_sm(label, kit_btn::ghost).on_press(Msg::OpenUrl(u)),
-            );
+
+        let mut body_col = column![
+            kit_text::body(display).width(Length::Fill),
+        ]
+        .spacing(SPACE_LG)
+        .width(Length::Fill);
+
+        if !urls.is_empty() {
+            let mut link_col = column![kit_text::caption("Links").style(kit_text::muted)]
+                .spacing(SPACE_XS);
+            let mut link_row = row![].spacing(SPACE_SM);
+            for (i, u) in urls.into_iter().take(6).enumerate() {
+                let label = short_url_label(&u, i);
+                link_row = link_row.push(
+                    kit_btn::labeled_sm(label, kit_btn::ghost).on_press(Msg::OpenUrl(u)),
+                );
+            }
+            link_col = link_col.push(link_row);
+            body_col = body_col.push(link_col);
         }
 
-        let body_view = scrollable(
-            column![kit_text::body(display), url_row]
-                .spacing(SPACE_MD)
-                .padding(SPACE_MD),
+        let article = container(
+            column![meta, body_col]
+                .spacing(SPACE_LG)
+                .width(Length::Fill)
+                .padding(Padding::from([SPACE_LG, SPACE_XL])),
         )
-        .height(Length::Fill);
+        .width(Length::Fill)
+        .max_width(READ_MAX_W);
 
-        container(column![toolbar, meta, body_view].height(Length::Fill))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        container(
+            column![
+                toolbar,
+                scrollable(article).height(Length::Fill).width(Length::Fill),
+            ]
+            .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(read_pane_style)
+        .into()
     }
 
     fn view_compose(&self) -> Element<'_, Msg> {
+        let editor = text_editor(&self.draft.body)
+            .placeholder("Message…")
+            .height(Length::Fill)
+            .padding(12)
+            .style(compose_editor_style)
+            .on_action(Msg::ComposeBodyAction);
+
         let form = column![
             kit_text::subheading("Compose"),
-            kit_text::caption("From").style(kit_text::muted),
+            field_label("From"),
             text_input("from@", &self.draft.from).on_input(Msg::ComposeFrom),
-            kit_text::caption("To").style(kit_text::muted),
+            field_label("To"),
             text_input("to@", &self.draft.to).on_input(Msg::ComposeTo),
-            kit_text::caption("Cc").style(kit_text::muted),
+            field_label("Cc"),
             text_input("cc@", &self.draft.cc).on_input(Msg::ComposeCc),
-            kit_text::caption("Subject").style(kit_text::muted),
+            field_label("Subject"),
             text_input("Subject", &self.draft.subject).on_input(Msg::ComposeSubject),
-            kit_text::caption("Body").style(kit_text::muted),
-            text_input("Message…", &self.draft.body)
-                .on_input(Msg::ComposeBody)
-                .width(Length::Fill),
+            field_label("Body"),
+            container(editor)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .max_height(420.0)
+                .style(compose_field_style),
             row![
                 kit_btn::labeled("Send", kit_btn::primary).on_press(Msg::Send),
                 kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::CancelCompose),
@@ -890,13 +991,162 @@ impl App {
             .spacing(SPACE_SM),
         ]
         .spacing(SPACE_SM)
-        .padding(SPACE_MD);
+        .padding(Padding::from([SPACE_LG, SPACE_XL]))
+        .width(Length::Fill)
+        .max_width(READ_MAX_W);
 
-        container(scrollable(form))
+        container(scrollable(form).height(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
+            .style(read_pane_style)
             .into()
     }
+}
+
+// ── List row ──────────────────────────────────────────────────────────
+
+fn message_row(m: &MessageSummary, selected: bool) -> Element<'_, Msg> {
+    let from = short_from(&m.from);
+    let subj = if m.subject.is_empty() {
+        "(no subject)".to_string()
+    } else {
+        m.subject.clone()
+    };
+    let date = short_date(&m.date);
+
+    let unread_dot: Element<'_, Msg> = if m.seen {
+        Space::new().width(8).height(8).into()
+    } else {
+        container(Space::new().width(6).height(6))
+            .width(8)
+            .height(8)
+            .center_x(Length::Fixed(8.0))
+            .center_y(Length::Fixed(8.0))
+            .style(unread_dot_style)
+            .into()
+    };
+
+    let from_text = if m.seen {
+        text(from)
+            .font(fonts::ui())
+            .size(13)
+            .style(|t: &Theme| kit_text::muted(t))
+    } else {
+        text(from).font(fonts::ui_medium()).size(13)
+    };
+
+    let subj_text = if m.seen {
+        kit_text::caption(subj).style(kit_text::muted)
+    } else {
+        kit_text::body(subj)
+    };
+
+    let top = row![
+        unread_dot,
+        from_text.width(Length::Fill),
+        kit_text::caption(date).style(kit_text::muted),
+    ]
+    .spacing(SPACE_SM)
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill);
+
+    let content = column![top, subj_text]
+        .spacing(SPACE_XS)
+        .width(Length::Fill)
+        .padding(Padding::from([SPACE_MD, SPACE_MD]));
+
+    button(content)
+        .on_press(Msg::SelectMessage(m.uid))
+        .padding(0)
+        .width(Length::Fill)
+        .style(if selected {
+            list_row_selected
+        } else {
+            list_row_idle
+        })
+        .into()
+}
+
+// ── Display helpers ───────────────────────────────────────────────────
+
+fn short_from(from: &str) -> String {
+    let t = from.trim();
+    if let Some(start) = t.find('<') {
+        let name = t[..start].trim().trim_matches('"');
+        if !name.is_empty() {
+            return name.to_string();
+        }
+        if let Some(end) = t.rfind('>') {
+            return t[start + 1..end].trim().to_string();
+        }
+    }
+    if let Some((local, _)) = t.split_once('@') {
+        if !local.is_empty() {
+            return local.to_string();
+        }
+    }
+    t.to_string()
+}
+
+fn short_date(date: &str) -> String {
+    let t = date.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    // RFC3339 / ISO-ish: 2026-07-28T01:42:22 → 28 Jul
+    if t.len() >= 10 && t.as_bytes().get(4) == Some(&b'-') {
+        let y = &t[0..4];
+        let mo = &t[5..7];
+        let d = &t[8..10];
+        let month = match mo {
+            "01" => "Jan",
+            "02" => "Feb",
+            "03" => "Mar",
+            "04" => "Apr",
+            "05" => "May",
+            "06" => "Jun",
+            "07" => "Jul",
+            "08" => "Aug",
+            "09" => "Sep",
+            "10" => "Oct",
+            "11" => "Nov",
+            "12" => "Dec",
+            _ => mo,
+        };
+        return format!("{d} {month} {y}");
+    }
+    // Envelope dates are long — keep first token groups.
+    let parts: Vec<&str> = t.split_whitespace().take(4).collect();
+    parts.join(" ")
+}
+
+fn short_url_label(url: &str, index: usize) -> String {
+    let stripped = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let host = stripped.split('/').next().unwrap_or(stripped);
+    if host.is_empty() {
+        format!("link {}", index + 1)
+    } else if host.len() > 28 {
+        format!("{}…", &host[..25])
+    } else {
+        host.to_string()
+    }
+}
+
+fn meta_line(label: &str, value: String) -> Element<'static, Msg> {
+    row![
+        kit_text::caption(format!("{label}:"))
+            .style(kit_text::muted)
+            .width(Length::Fixed(44.0)),
+        kit_text::caption(value).style(kit_text::muted),
+    ]
+    .spacing(SPACE_SM)
+    .into()
+}
+
+fn field_label(label: &str) -> Element<'_, Msg> {
+    kit_text::caption(label.to_string()).style(kit_text::muted).into()
 }
 
 fn extract_urls(text: &str) -> Vec<String> {
@@ -911,4 +1161,159 @@ fn extract_urls(text: &str) -> Vec<String> {
         }
     }
     out
+}
+
+fn v_hairline() -> Element<'static, Msg> {
+    container(Space::new().width(1).height(Length::Fill))
+        .width(1)
+        .height(Length::Fill)
+        .style(hairline_style)
+        .into()
+}
+
+// ── Styles ────────────────────────────────────────────────────────────
+
+fn canvas_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.background.base.color)),
+        ..container::Style::default()
+    }
+}
+
+fn list_pane_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.background.base.color)),
+        ..container::Style::default()
+    }
+}
+
+fn read_pane_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    // Slight raise vs list canvas.
+    let fill = mix_white(p.background.base.color, 0.02);
+    container::Style {
+        background: Some(Background::Color(fill)),
+        ..container::Style::default()
+    }
+}
+
+fn toolbar_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.background.base.color)),
+        border: Border {
+            color: mix_white(p.background.base.color, HAIRLINE_A),
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn toast_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.background.weaker.color)),
+        border: Border {
+            color: mix_white(p.background.weaker.color, HAIRLINE_A),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn hairline_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(mix_white(
+            p.background.base.color,
+            HAIRLINE_A,
+        ))),
+        ..container::Style::default()
+    }
+}
+
+fn unread_dot_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.primary.base.color)),
+        border: Border {
+            radius: 99.0.into(),
+            ..Default::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+fn list_row_idle(theme: &Theme, status: button::Status) -> button::Style {
+    let p = theme.extended_palette();
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+        background: if hover {
+            Some(Background::Color(Color {
+                a: 0.55,
+                ..p.background.strong.color
+            }))
+        } else {
+            None
+        },
+        text_color: p.background.base.text,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_MD.into(),
+        },
+        shadow: Default::default(),
+        snap: true,
+    }
+}
+
+fn list_row_selected(theme: &Theme, _status: button::Status) -> button::Style {
+    let p = theme.extended_palette();
+    button::Style {
+        background: Some(Background::Color(theme::selection())),
+        text_color: p.background.base.text,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_MD.into(),
+        },
+        shadow: Default::default(),
+        snap: true,
+    }
+}
+
+fn compose_field_style(theme: &Theme) -> container::Style {
+    let p = theme.extended_palette();
+    container::Style {
+        background: Some(Background::Color(p.background.weaker.color)),
+        border: Border {
+            color: mix_white(p.background.weaker.color, HAIRLINE_A),
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn compose_editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
+    let p = theme.extended_palette();
+    let _ = status;
+    text_editor::Style {
+        background: Background::Color(Color::TRANSPARENT),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_MD.into(),
+        },
+        placeholder: Color {
+            a: 0.75,
+            ..p.secondary.base.color
+        },
+        value: p.background.base.text,
+        selection: p.primary.weak.color,
+    }
 }
