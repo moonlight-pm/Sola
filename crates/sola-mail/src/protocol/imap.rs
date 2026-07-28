@@ -39,6 +39,9 @@ impl ImapClient {
     }
 
     /// List all folders with unread/total counts.
+    ///
+    /// Totals use `SEARCH UNDELETED` / `UNSEEN UNDELETED` so soft-deleted
+    /// messages (still in the mailbox until EXPUNGE) are not counted.
     pub fn list_folders(&mut self) -> anyhow::Result<Vec<Folder>> {
         self.with_reconnect(|s| {
             let mailboxes = s.session.list(None, Some("*"))?;
@@ -46,30 +49,29 @@ impl ImapClient {
 
             for mb in mailboxes.iter() {
                 let name = mb.name().to_string();
-                match s.session.status(&name, "(MESSAGES UNSEEN)") {
+                // Skip \Noselect mailboxes (can't STATUS/SELECT).
+                if mb.attributes().iter().any(|a| {
+                    matches!(a, imap::types::NameAttribute::NoSelect)
+                }) {
+                    continue;
+                }
+                match s.session.select(&name) {
                     Ok(_) => {
-                        // The imap crate routes STATUS responses to the
-                        // unsolicited channel, so drain it for the attributes.
-                        let mut total = 0u32;
-                        let mut unread = 0u32;
-                        while let Ok(resp) = s.session.unsolicited_responses.try_recv() {
-                            if let imap::types::UnsolicitedResponse::Status {
-                                mailbox: ref mb,
-                                attributes,
-                            } = resp
-                            {
-                                if mb != &name {
-                                    continue;
-                                }
-                                for attr in attributes {
-                                    match attr {
-                                        imap::types::StatusAttribute::Messages(n) => total = n,
-                                        imap::types::StatusAttribute::Unseen(n) => unread = n,
-                                        _ => {}
-                                    }
-                                }
+                        s.selected_folder = Some(name.clone());
+                        let total = match s.session.uid_search("UNDELETED") {
+                            Ok(uids) => uids.len() as u32,
+                            Err(e) => {
+                                warn!("UNDELETED search failed for {name}: {e}");
+                                0
                             }
-                        }
+                        };
+                        let unread = match s.session.uid_search("UNSEEN UNDELETED") {
+                            Ok(uids) => uids.len() as u32,
+                            Err(e) => {
+                                warn!("UNSEEN UNDELETED search failed for {name}: {e}");
+                                0
+                            }
+                        };
                         folders.push(Folder {
                             name,
                             unread,
@@ -80,7 +82,7 @@ impl ImapClient {
                         return Err(anyhow::Error::from(e));
                     }
                     Err(e) => {
-                        warn!("STATUS failed for {name}: {e}");
+                        warn!("SELECT failed for {name}: {e}");
                         folders.push(Folder {
                             name,
                             unread: 0,
@@ -90,11 +92,15 @@ impl ImapClient {
                 }
             }
 
+            super::types::sort_folders(&mut folders);
             Ok(folders)
         })
     }
 
     /// Select a folder and fetch a page of message summaries (most recent first).
+    ///
+    /// Excludes messages with the `\Deleted` flag so soft-deleted mail does
+    /// not linger in the list after another client (or a failed expunge) marks them.
     pub fn list_messages(
         &mut self,
         folder: &str,
@@ -103,34 +109,11 @@ impl ImapClient {
     ) -> anyhow::Result<(Vec<MessageSummary>, u32)> {
         let folder = folder.to_string();
         self.with_reconnect(move |s| {
-            let mailbox = s.session.select(&folder)?;
-            s.selected_folder = Some(folder.clone());
-
-            let total = mailbox.exists;
-            if total == 0 || limit == 0 {
-                return Ok((Vec::new(), total));
-            }
-
-            // Sequence numbers from the end: newest messages have highest numbers
-            let end = total.saturating_sub(offset);
-            if end == 0 {
-                return Ok((Vec::new(), total));
-            }
-            let start = end.saturating_sub(limit - 1).max(1);
-
-            let range = format!("{start}:{end}");
-            let fetches = s.session.fetch(
-                &range,
-                "(UID FLAGS ENVELOPE BODY.PEEK[HEADER.FIELDS (X-Forwarded-For)])",
-            )?;
-
-            let mut messages: Vec<MessageSummary> =
-                fetches.iter().filter_map(parse_summary).collect();
-
-            // Most recent first
-            messages.sort_unstable_by(|a, b| b.uid.cmp(&a.uid));
-
-            Ok((messages, total))
+            s.ensure_selected(&folder)?;
+            let mut uids: Vec<u32> = s.session.uid_search("UNDELETED")?.into_iter().collect();
+            uids.sort_unstable_by(|a, b| b.cmp(a));
+            let total = uids.len() as u32;
+            fetch_envelopes(&mut s.session, &uids, offset, limit, total)
         })
     }
 
@@ -144,7 +127,7 @@ impl ImapClient {
         let rules = rules.to_vec();
         self.with_reconnect(move |s| {
             s.ensure_selected("INBOX")?;
-            let all_uids = s.session.uid_search("ALL")?;
+            let all_uids = s.session.uid_search("UNDELETED")?;
             let excluded = smart_mailbox_uids(&mut s.session, &rules);
             let mut kept: Vec<u32> = all_uids
                 .into_iter()
@@ -229,10 +212,11 @@ impl ImapClient {
 
             // Escape IMAP quoted-string special characters
             let safe = query.replace('\\', "\\\\").replace('"', "\\\"");
-            // IMAP SEARCH: OR across subject, from, to, and body (TEXT)
+            // IMAP SEARCH: OR across subject, from, to, and body (TEXT),
+            // restricted to non-deleted messages.
             // TEXT searches both headers and body content per RFC 3501
             let imap_query = format!(
-                "OR OR OR (SUBJECT \"{safe}\") (FROM \"{safe}\") (TO \"{safe}\") (TEXT \"{safe}\")"
+                "UNDELETED OR OR OR (SUBJECT \"{safe}\") (FROM \"{safe}\") (TO \"{safe}\") (TEXT \"{safe}\")"
             );
             let uids = match s.session.uid_search(&imap_query) {
                 Ok(uids) => uids,
@@ -604,6 +588,15 @@ fn parse_summary(fetch: &Fetch) -> Option<MessageSummary> {
         .unwrap_or("")
         .to_string();
 
+    // Soft-deleted messages should not appear in the UI list.
+    if fetch
+        .flags()
+        .iter()
+        .any(|f| matches!(f, imap::types::Flag::Deleted))
+    {
+        return None;
+    }
+
     let seen = fetch
         .flags()
         .iter()
@@ -761,21 +754,24 @@ fn fetch_envelopes(
 
 /// Build an IMAP SEARCH query string from mail rule conditions.
 ///
+/// Always prefixes `UNDELETED` so soft-deleted messages are excluded.
 /// Conditions are ANDed (IMAP SEARCH criteria listed together are implicitly ANDed).
 /// IMAP SEARCH only supports substring matching on header fields, so "domain" and
 /// "address" match types are approximated as substring searches. Counts may slightly
 /// overcount compared to the precise frontend filtering.
 fn build_imap_search(conditions: &[MailRuleCondition]) -> String {
-    conditions
-        .iter()
-        .filter_map(|c| {
-            let safe = c.value.replace('\\', "\\\\").replace('"', "\\\"");
-            match c.field.as_str() {
-                "from" => Some(format!("FROM \"{safe}\"")),
-                "subject" => Some(format!("SUBJECT \"{safe}\"")),
-                _ => None,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut parts: Vec<String> = vec!["UNDELETED".into()];
+    for c in conditions {
+        let safe = c.value.replace('\\', "\\\\").replace('"', "\\\"");
+        match c.field.as_str() {
+            "from" => parts.push(format!("FROM \"{safe}\"")),
+            "subject" => parts.push(format!("SUBJECT \"{safe}\"")),
+            _ => {}
+        }
+    }
+    // Only UNDELETED with no field criteria → empty (no smart match).
+    if parts.len() == 1 {
+        return String::new();
+    }
+    parts.join(" ")
 }

@@ -13,4 +13,6 @@ pub use account::Account;
 pub use idle::{IdleHandle, start_idle};
 pub use imap::ImapClient;
 pub use rules::rule_matches;
-pub use types::{Folder, MessageBody, MessageSummary};
+pub use types::{
+    folder_count_badge, folder_label, sort_folders, Folder, MessageBody, MessageSummary,
+};

@@ -19,7 +19,9 @@ use sola_kit::components::{
 use sola_kit::theme::default_theme;
 
 use crate::bridge::{self, mail_send};
-use crate::protocol::{Folder, MessageBody, MessageSummary};
+use crate::protocol::{
+    folder_count_badge, folder_label, Folder, MessageBody, MessageSummary,
+};
 use crate::worker::{MailCmd, MailEvent};
 
 const APP_ID: &str = "sola-mail";
@@ -431,6 +433,10 @@ impl App {
                 self.folder_loading = false;
                 self.is_loading_more = false;
                 self.total_messages = total;
+                // Keep sidebar total aligned with the undeleted list total.
+                if let Some(f) = self.folders.iter_mut().find(|f| f.name == folder) {
+                    f.total = total;
+                }
                 if offset == 0 {
                     self.messages = messages;
                 } else {
@@ -687,12 +693,12 @@ impl App {
 
     fn view_folders(&self) -> Element<'_, Msg> {
         let mut items: Vec<SidebarItem<'_, Msg>> = Vec::new();
+        // Folders arrive pre-sorted (Inbox, Sent, Drafts, Archive, Junk, Trash, …).
         for f in &self.folders {
-            let label = if f.unread > 0 {
-                format!("{} ({})", f.name, f.unread)
-            } else {
-                f.name.clone()
-            };
+            let mut label = folder_label(&f.name);
+            if let Some(badge) = folder_count_badge(f.unread, f.total) {
+                label = format!("{label}  {badge}");
+            }
             items.push(
                 SidebarItem::new(label, Msg::SelectFolder(f.name.clone()))
                     .active(self.selected_folder == f.name),
@@ -700,11 +706,10 @@ impl App {
         }
         for f in &self.smart_counts {
             let id = format!("smart:{}", f.name);
-            let label = if f.unread > 0 {
-                format!("★ {} ({})", f.name, f.unread)
-            } else {
-                format!("★ {}", f.name)
-            };
+            let mut label = format!("★ {}", f.name);
+            if let Some(badge) = folder_count_badge(f.unread, f.total) {
+                label = format!("{label}  {badge}");
+            }
             items.push(
                 SidebarItem::new(label, Msg::SelectFolder(id.clone()))
                     .active(self.selected_folder == id),
@@ -747,7 +752,8 @@ impl App {
         } else {
             kit_text::caption(format!(
                 "{} · {} messages",
-                self.selected_folder, self.total_messages
+                folder_label(&self.selected_folder),
+                self.total_messages
             ))
             .style(kit_text::muted)
         };
