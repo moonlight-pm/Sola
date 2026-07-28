@@ -7,6 +7,11 @@ use crate::keymap::{self, CgKeyCode};
 use crate::protocol::Packet;
 use tracing::{debug, warn};
 
+/// Log Accessibility trust at agent startup (and open Settings if untrusted).
+pub fn check_accessibility_at_startup() {
+    platform::check_accessibility_at_startup();
+}
+
 /// High-level inject API used by the UDP agent loop.
 pub trait Injector {
     fn warp(&mut self, x: i32, y: i32);
@@ -162,6 +167,8 @@ mod platform {
     const K_CG_HID_EVENT_TAP: CGEventTapLocation = 0;
     const K_CG_SCROLL_WHEEL_EVENT_DELTA_AXIS_1: CGEventField = 11;
     const K_CG_SCROLL_WHEEL_EVENT_DELTA_AXIS_2: CGEventField = 12;
+    /// kCGMouseEventClickState — single click = 1
+    const K_CG_MOUSE_EVENT_CLICK_STATE: CGEventField = 1;
 
     // kCGEventSourceStatePrivate — synthetic events must not share physical HID state.
     const K_CG_EVENT_SOURCE_STATE_PRIVATE: i32 = -1;
@@ -216,6 +223,12 @@ mod platform {
             length: usize,
             string: *const u16,
         );
+        /// Critical for KVM: continuous CGWarp suppresses subsequent local
+        /// (including our own synthetic) click/key events for ~250ms by default.
+        fn CGEventSourceSetLocalEventsSuppressionInterval(
+            source: CGEventSourceRef,
+            seconds: f64,
+        );
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -236,16 +249,68 @@ mod platform {
     /// Synthetic modifier flags we own (not the physical Mac keyboard).
     static MOD_FLAGS: AtomicU64 = AtomicU64::new(0);
     static TRUSTED_LOGGED: AtomicI32 = AtomicI32::new(0);
+    /// Process-wide event source with suppression disabled (see `source()`).
+    static EVENT_SOURCE: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
+        std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
+    /// Long-lived private event source with **zero** local-event suppression.
+    ///
+    /// `CGWarpMouseCursorPosition` (used every motion packet) otherwise starts
+    /// a ~0.25s suppression window that is continuously refreshed by the motion
+    /// stream — so clicks and keys appear to "do nothing" while the cursor still
+    /// moves. Barrier / Input Leap / lan-mouse all set this to 0.
     fn source() -> CGEventSourceRef {
-        // Private state so synthetic keys are not filtered against the Mac's
-        // physical HID keyboard state (novus keyboard is remote).
-        unsafe { CGEventSourceCreate(K_CG_EVENT_SOURCE_STATE_PRIVATE) }
+        use std::sync::atomic::Ordering as Ord;
+        let existing = EVENT_SOURCE.load(Ord::Acquire);
+        if !existing.is_null() {
+            return existing;
+        }
+        unsafe {
+            let src = CGEventSourceCreate(K_CG_EVENT_SOURCE_STATE_PRIVATE);
+            if src.is_null() {
+                // Fall back: combined session state.
+                let src = CGEventSourceCreate(0);
+                configure_source(src);
+                let _ = EVENT_SOURCE.compare_exchange(
+                    std::ptr::null_mut(),
+                    src,
+                    Ord::AcqRel,
+                    Ord::Acquire,
+                );
+                return EVENT_SOURCE.load(Ord::Acquire);
+            }
+            configure_source(src);
+            match EVENT_SOURCE.compare_exchange(
+                std::ptr::null_mut(),
+                src,
+                Ord::AcqRel,
+                Ord::Acquire,
+            ) {
+                Ok(_) => src,
+                Err(winner) => {
+                    // Another thread won — release ours, use theirs.
+                    CFRelease(src);
+                    winner
+                }
+            }
+        }
     }
 
-    fn release(cf: *mut std::ffi::c_void) {
-        if !cf.is_null() {
-            unsafe { CFRelease(cf) };
+    fn configure_source(src: CGEventSourceRef) {
+        if src.is_null() {
+            return;
+        }
+        // Zero out the default 0.25s post-synthetic suppression window.
+        // Without this, a 500 Hz motion warp stream permanently blocks clicks/keys.
+        unsafe {
+            CGEventSourceSetLocalEventsSuppressionInterval(src, 0.0);
+        }
+    }
+
+    /// Keep the process-wide source alive; do not CFRelease it after each post.
+    fn release_event(ev: CGEventRef) {
+        if !ev.is_null() {
+            unsafe { CFRelease(ev) };
         }
     }
 
@@ -256,20 +321,38 @@ mod platform {
         }
     }
 
+    pub fn check_accessibility_at_startup() {
+        TRUSTED_LOGGED.store(0, Ordering::Relaxed);
+        ensure_trusted_logged();
+    }
+
     fn ensure_trusted_logged() {
         if TRUSTED_LOGGED.swap(1, Ordering::Relaxed) != 0 {
             return;
         }
+        // TCC can list a *stale* path as allowed after an ad-hoc re-sign while
+        // AXIsProcessTrusted is still false — that exact state makes CGWarp work
+        // (cursor moves) while CGEventPost for clicks/keys is silently dropped.
         let trusted = unsafe { AXIsProcessTrusted() } != 0;
         if trusted {
             info!("AXIsProcessTrusted=true (Accessibility granted)");
         } else {
             warn!(
-                "AXIsProcessTrusted=false — CGEvent inject will no-op until \
-                 Accessibility is enabled for sola-kvm-mac"
+                "AXIsProcessTrusted=false — clicks/keys will no-op. \
+                 System Settings → Privacy & Security → Accessibility: \
+                 REMOVE sola-kvm-mac, re-add /opt/sola/bin/sola-kvm-mac, enable it. \
+                 (Toggle alone is not enough after a re-sign; cursor warp still works without AX.)"
             );
+            // Open the pane so the user can re-grant the *current* binary.
+            let _ = std::process::Command::new("open")
+                .arg(
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+                )
+                .spawn();
         }
     }
+
+
 
     fn update_mod_flags(cg: CgKeyCode, pressed: bool) {
         let bit = match cg {
@@ -391,15 +474,17 @@ mod platform {
 
             // Post a HID mouse-moved/dragged at the new point so apps and the
             // window server agree with the warp (warp alone is often ignored).
+            // Re-apply suppression=0 on the shared source after every warp —
+            // CGWarp itself can re-arm the system suppression window.
             let src = source();
+            configure_source(src);
             let ev = CGEventCreateMouseEvent(src, mouse_type, pt, button);
             if !ev.is_null() {
                 CGEventPost(K_CG_HID_EVENT_TAP, ev);
-                release(ev);
+                release_event(ev);
             } else {
                 warn!("CGEventCreateMouseEvent returned null (Accessibility?)");
             }
-            release(src);
             let _ = CGAssociateMouseAndMouseCursorPosition(true);
         }
         // Info once is too noisy for every motion; debug for stream, warn-level
@@ -438,15 +523,18 @@ mod platform {
         let pt = point();
         unsafe {
             let src = source();
+            // Ensure warps haven't re-armed suppression right before the click.
+            configure_source(src);
             let ev = CGEventCreateMouseEvent(src, ty, pt, cg_btn);
             if !ev.is_null() {
+                // Without click-state, some AppKit targets ignore the down/up pair.
+                CGEventSetIntegerValueField(ev, K_CG_MOUSE_EVENT_CLICK_STATE, 1);
                 CGEventPost(K_CG_HID_EVENT_TAP, ev);
-                release(ev);
-                debug!(button, pressed, "button");
+                release_event(ev);
+                info!(button, pressed, x = pt.x, y = pt.y, "inject button");
             } else {
                 warn!(button, pressed, "button event null (Accessibility?)");
             }
-            release(src);
         }
     }
 
@@ -458,17 +546,13 @@ mod platform {
         let flags = MOD_FLAGS.load(Ordering::Relaxed);
 
         unsafe {
-            // NULL source → combined session state; private source as fallback
-            // if NULL is rejected. Prefer NULL so Cocoa text input maps glyphs.
-            let mut src = std::ptr::null_mut();
-            let mut ev = CGEventCreateKeyboardEvent(src, cg, pressed);
-            if ev.is_null() {
-                src = source();
-                ev = CGEventCreateKeyboardEvent(src, cg, pressed);
-            }
+            // Always use the shared source (suppression interval 0). NULL
+            // sources inherit the default 250ms suppression from warps.
+            let src = source();
+            configure_source(src);
+            let ev = CGEventCreateKeyboardEvent(src, cg, pressed);
             if ev.is_null() {
                 warn!(cg, pressed, "key event null (Accessibility?)");
-                release(src);
                 return;
             }
 
@@ -481,11 +565,8 @@ mod platform {
                 CGEventKeyboardSetUnicodeString(ev, 1, chars.as_ptr());
             }
 
-            // HID tap matches mouse inject; session tap is a fallback some
-            // targets prefer, but posting the *same* ref twice double-types.
             CGEventPost(K_CG_HID_EVENT_TAP, ev);
-            release(ev);
-            release(src);
+            release_event(ev);
             debug!(cg, pressed, flags, "key posted");
         }
     }
@@ -505,6 +586,7 @@ mod platform {
         }
         unsafe {
             let src = source();
+            configure_source(src);
             // kCGScrollEventUnitLine = 0
             let ev = CGEventCreateScrollWheelEvent2(src, 0, 2, wheel1, wheel2, 0);
             if !ev.is_null() {
@@ -519,12 +601,11 @@ mod platform {
                     wheel2 as i64,
                 );
                 CGEventPost(K_CG_HID_EVENT_TAP, ev);
-                release(ev);
+                release_event(ev);
                 debug!(wheel1, wheel2, "scroll");
             } else {
                 warn!("scroll event null (Accessibility?)");
             }
-            release(src);
         }
     }
 }
@@ -533,6 +614,10 @@ mod platform {
 mod platform {
     use super::CgKeyCode;
     use tracing::info;
+
+    pub fn check_accessibility_at_startup() {
+        info!("stub accessibility check (not macOS)");
+    }
 
     pub fn warp_cursor(x: i32, y: i32) {
         info!(x, y, "stub warp (not macOS)");
