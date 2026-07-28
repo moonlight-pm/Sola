@@ -73,31 +73,39 @@ cargo run -- listen --bind 127.0.0.1:4242
 
 ## Accessibility permission
 
-Synthetic input requires TCC **Accessibility**:
+Synthetic input requires TCC **Accessibility**.
+
+**Preferred install** packages a signed `.app` with a stable Apple Development
+identity so the grant **survives rebuilds** (ad-hoc `/opt/sola/bin` copies do not):
+
+```bash
+cd apps/sola-kvm-mac
+./scripts/install.sh          # build + sign + LaunchAgent
+# or: ./scripts/install.sh --no-build
+```
+
+Then **once**:
 
 1. System Settings → **Privacy & Security** → **Accessibility**
-2. Enable **`sola-kvm-mac`** (or the Terminal used when first launching a dev build)
-3. If inject still no-ops: remove the entry, re-add, and relaunch the agent
+2. Enable **Sola Kvm Mac** / `com.sola.kvm-mac`  
+   (remove any stale `/opt/sola/bin/sola-kvm-mac` entries)
+3. If inject no-ops: remove the entry, re-add the **.app**, relaunch
 
-**SSH is unreliable for TCC.** Prefer a LaunchAgent in the Aqua GUI session, or
-launch from Terminal.app while logged in at the console.
+`install.sh` picks `Apple Development: …` from the keychain by default.
+Override with `CODESIGN_IDENTITY='…'`.
+
+**SSH is unreliable for TCC.** Prefer the LaunchAgent in the Aqua GUI session.
 
 ## LaunchAgent (GUI session)
 
 ```bash
-# After building + copying binary to /opt/sola/bin/sola-kvm-mac:
-./scripts/install-launchagent.sh --bin /opt/sola/bin/sola-kvm-mac --bind 0.0.0.0:4242
-```
+# Full path (signed app + agent):
+./scripts/install.sh
 
-Manual equivalent:
-
-```bash
-mkdir -p ~/Library/LaunchAgents ~/Library/Logs
-# edit ProgramArguments + log paths in the plist, then:
-cp LaunchAgents/com.sola.kvm-mac.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sola.kvm-mac.plist
-launchctl enable gui/$(id -u)/com.sola.kvm-mac
-launchctl kickstart -k gui/$(id -u)/com.sola.kvm-mac
+# Agent only (already-signed binary):
+./scripts/install-launchagent.sh \
+  --bin /Applications/SolaKvmMac.app/Contents/MacOS/sola-kvm-mac \
+  --bind 0.0.0.0:4242
 ```
 
 Unload:
@@ -113,6 +121,7 @@ Logs: `~/Library/Logs/sola-kvm-mac.{out,err}.log`
 - `CGEventPost` / Accessibility grants attach to the **GUI user’s** session.
 - `launchctl` domain must be **`gui/$(id -u)`**, not `system/`.
 - Do not use a LaunchDaemon as root for input injection.
+- Do not reinstall with ad-hoc `codesign -s -` if you care about keeping TCC.
 
 ## Manual test from novus
 

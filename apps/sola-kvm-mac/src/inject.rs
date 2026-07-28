@@ -340,8 +340,9 @@ mod platform {
             warn!(
                 "AXIsProcessTrusted=false — clicks/keys will no-op. \
                  System Settings → Privacy & Security → Accessibility: \
-                 REMOVE sola-kvm-mac, re-add /opt/sola/bin/sola-kvm-mac, enable it. \
-                 (Toggle alone is not enough after a re-sign; cursor warp still works without AX.)"
+                 enable «Sola KVM Mac» (/Applications/SolaKvmMac.app). \
+                 Remove stale /opt/sola/bin entries. After install.sh uses a stable \
+                 codesign cert, rebuilds keep the grant."
             );
             // Open the pane so the user can re-grant the *current* binary.
             let _ = std::process::Command::new("open")
@@ -580,7 +581,7 @@ mod platform {
         // One Linux detent as a single CG *line* tick feels glacial in Cocoa.
         // Scale into pixel units so speed roughly matches a native Mac mouse.
         // (detent → ~48px; fractional hi-res values from novus scale smoothly.)
-        const PIXELS_PER_DETENT: f32 = 48.0;
+        const PIXELS_PER_DETENT: f32 = 24.0;
         let mut wheel1 = (dy * PIXELS_PER_DETENT).round() as i32;
         let mut wheel2 = (dx * PIXELS_PER_DETENT).round() as i32;
         if wheel1 == 0 && dy.abs() > f32::EPSILON {

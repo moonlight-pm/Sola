@@ -12,8 +12,9 @@
 
   Logs: ~/Library/Logs/sola-kvm-mac.{out,err}.log
 
-  Grant Accessibility to /opt/sola/bin/sola-kvm-mac in
-  System Settings → Privacy & Security → Accessibility.
+  Prefer install via scripts/install.sh (signed .app). Accessibility should
+  be granted to SolaKvmMac.app / com.sola.kvm-mac once; re-signing with the
+  same Apple Development identity keeps the grant across rebuilds.
 -->
 <plist version="1.0">
 <dict>
@@ -22,7 +23,7 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/sola/bin/sola-kvm-mac</string>
+    <string>/Applications/SolaKvmMac.app/Contents/MacOS/sola-kvm-mac</string>
     <string>listen</string>
     <string>--bind</string>
     <string>0.0.0.0:4242</string>
