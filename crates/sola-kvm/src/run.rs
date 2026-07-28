@@ -7,7 +7,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::barrier::EdgeBarrier;
 use crate::config::Config;
-use crate::input::{demo_events, EvdevSource, FeedSource, InputBackendKind, EVDEV_POLL};
+use crate::input::{
+    coalesce_input_events, demo_events, EvdevSource, FeedSource, InputBackendKind, EVDEV_POLL,
+};
 use crate::server::{InputEvent, Session, SideEffect};
 use crate::udp::Sender;
 
@@ -178,11 +180,14 @@ fn run_evdev(session: &mut Session, sender: &mut Sender) -> Result<(), String> {
     );
 
     loop {
+        let mut work = false;
+
         // 1) Physical edge hit while local.
         if !session.is_remote() {
             if let Some(ref mut b) = barrier {
                 match b.poll_hit() {
                     Ok(Some(along)) => {
+                        work = true;
                         let mut grab_fn = |g: bool| {
                             source.set_grabbed(g);
                             if let Some(ref mut b) = barrier {
@@ -221,8 +226,11 @@ fn run_evdev(session: &mut Session, sender: &mut Sender) -> Result<(), String> {
         // 2) Evdev: only drive the session while remote (or keys/buttons).
         //    While local, ignore relative motion entirely — no estimate creep.
         let events = source.poll().map_err(|e| format!("evdev poll: {e}"))?;
-        if events.is_empty() && session.is_remote() {
-            // still need to spin
+        // Collapse multi-SYN motion runs so a high-rate mouse does not flood
+        // ember with one UDP datagram per kernel report.
+        let events = coalesce_input_events(events);
+        if !events.is_empty() {
+            work = true;
         }
         for ev in events {
             if !session.is_remote() {
@@ -248,7 +256,17 @@ fn run_evdev(session: &mut Session, sender: &mut Sender) -> Result<(), String> {
             }
         }
 
-        thread::sleep(EVDEV_POLL);
+        // Idle only: block on device/wayland fds up to EVDEV_POLL so input
+        // wakes us immediately (no fixed 2ms sleep after every busy tick).
+        if !work {
+            let mut extra = Vec::new();
+            if !session.is_remote() {
+                if let Some(ref b) = barrier {
+                    extra.push(b.wayland_fd());
+                }
+            }
+            source.wait_readable(&extra, EVDEV_POLL);
+        }
     }
 }
 

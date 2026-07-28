@@ -16,7 +16,8 @@ pub fn check_accessibility_at_startup() {
 pub trait Injector {
     fn warp(&mut self, x: i32, y: i32);
     fn button(&mut self, button: u8, pressed: bool);
-    fn key(&mut self, keycode: u32, pressed: bool);
+    /// `pressed` false = release; true = press. `autorepeat` marks Linux EV_KEY=2.
+    fn key(&mut self, keycode: u32, pressed: bool, autorepeat: bool);
     fn scroll(&mut self, dx: f32, dy: f32);
     fn leave(&mut self);
 
@@ -41,7 +42,12 @@ pub trait Injector {
                 self.button(*button, *pressed != 0);
             }
             Packet::Key { keycode, pressed } => {
-                self.key(*keycode, *pressed != 0);
+                // Wire: 0=up, 1=down, 2=auto-repeat (Linux EV_KEY).
+                match *pressed {
+                    0 => self.key(*keycode, false, false),
+                    2 => self.key(*keycode, true, true),
+                    _ => self.key(*keycode, true, false),
+                }
             }
             Packet::Scroll { dx, dy } => {
                 self.scroll(*dx, *dy);
@@ -84,7 +90,7 @@ impl Injector for CgInjector {
         platform::mouse_button(button, pressed);
     }
 
-    fn key(&mut self, keycode: u32, pressed: bool) {
+    fn key(&mut self, keycode: u32, pressed: bool, autorepeat: bool) {
         let Some(cg) = keymap::linux_to_cg(keycode) else {
             warn!(
                 keycode,
@@ -100,14 +106,16 @@ impl Injector for CgInjector {
         } else {
             self.pressed_keys.retain(|&k| k != keycode);
         }
-        tracing::info!(
+        // Keys are common; keep steady-state at debug. Enter/Leave stay info.
+        debug!(
             keycode,
             cg,
             pressed,
+            autorepeat,
             name = keymap::linux_key_name(keycode).unwrap_or("?"),
             "inject key"
         );
-        platform::key_event(cg, pressed);
+        platform::key_event(cg, pressed, autorepeat);
     }
 
     fn scroll(&mut self, dx: f32, dy: f32) {
@@ -121,7 +129,7 @@ impl Injector for CgInjector {
         for kc in stuck {
             if let Some(cg) = keymap::linux_to_cg(kc) {
                 debug!(kc, "leave: releasing stuck key");
-                platform::key_event(cg, false);
+                platform::key_event(cg, false, false);
             }
         }
     }
@@ -169,6 +177,8 @@ mod platform {
     const K_CG_SCROLL_WHEEL_EVENT_DELTA_AXIS_2: CGEventField = 12;
     /// kCGMouseEventClickState — single click = 1
     const K_CG_MOUSE_EVENT_CLICK_STATE: CGEventField = 1;
+    /// kCGKeyboardEventAutorepeat — mark Linux EV_KEY value=2 as a true OS repeat.
+    const K_CG_KEYBOARD_EVENT_AUTOREPEAT: CGEventField = 8;
 
     // kCGEventSourceStatePrivate — synthetic events must not share physical HID state.
     const K_CG_EVENT_SOURCE_STATE_PRIVATE: i32 = -1;
@@ -532,18 +542,21 @@ mod platform {
                 CGEventSetIntegerValueField(ev, K_CG_MOUSE_EVENT_CLICK_STATE, 1);
                 CGEventPost(K_CG_HID_EVENT_TAP, ev);
                 release_event(ev);
-                info!(button, pressed, x = pt.x, y = pt.y, "inject button");
+                debug!(button, pressed, x = pt.x, y = pt.y, "inject button");
             } else {
                 warn!(button, pressed, "button event null (Accessibility?)");
             }
         }
     }
 
-    pub fn key_event(cg: CgKeyCode, pressed: bool) {
+    pub fn key_event(cg: CgKeyCode, pressed: bool, autorepeat: bool) {
         ensure_trusted_logged();
         // Update our synthetic modifier mask *before* building the event so
         // key-down of a character sees any modifier that just went down.
-        update_mod_flags(cg, pressed);
+        // Auto-repeat does not change modifier ownership.
+        if !autorepeat {
+            update_mod_flags(cg, pressed);
+        }
         let flags = MOD_FLAGS.load(Ordering::Relaxed);
 
         unsafe {
@@ -551,24 +564,32 @@ mod platform {
             // sources inherit the default 250ms suppression from warps.
             let src = source();
             configure_source(src);
-            let ev = CGEventCreateKeyboardEvent(src, cg, pressed);
+            // Auto-repeat is still a key-down CGEvent with the autorepeat field set.
+            let down = pressed || autorepeat;
+            let ev = CGEventCreateKeyboardEvent(src, cg, down);
             if ev.is_null() {
-                warn!(cg, pressed, "key event null (Accessibility?)");
+                warn!(cg, pressed, autorepeat, "key event null (Accessibility?)");
                 return;
             }
 
             CGEventSetFlags(ev, flags);
+            if autorepeat {
+                CGEventSetIntegerValueField(ev, K_CG_KEYBOARD_EVENT_AUTOREPEAT, 1);
+            }
 
             // Many Cocoa apps ignore bare virtual keycodes for text insertion
             // unless a unicode string is attached (Input Leap / Barrier do this).
-            if let Some(ch) = unicode_for_cg(cg, flags) {
-                let chars = [ch];
-                CGEventKeyboardSetUnicodeString(ev, 1, chars.as_ptr());
+            // Attach unicode on press *and* auto-repeat so held keys keep typing.
+            if down {
+                if let Some(ch) = unicode_for_cg(cg, flags) {
+                    let chars = [ch];
+                    CGEventKeyboardSetUnicodeString(ev, 1, chars.as_ptr());
+                }
             }
 
             CGEventPost(K_CG_HID_EVENT_TAP, ev);
             release_event(ev);
-            debug!(cg, pressed, flags, "key posted");
+            debug!(cg, pressed, autorepeat, flags, "key posted");
         }
     }
 
@@ -636,8 +657,8 @@ mod platform {
         info!(button, pressed, "stub button (not macOS)");
     }
 
-    pub fn key_event(cg: CgKeyCode, pressed: bool) {
-        info!(cg, pressed, "stub key (not macOS)");
+    pub fn key_event(cg: CgKeyCode, pressed: bool, autorepeat: bool) {
+        info!(cg, pressed, autorepeat, "stub key (not macOS)");
     }
 
     pub fn scroll(dx: f32, dy: f32) {
@@ -662,9 +683,13 @@ mod tests {
             self.events
                 .push(format!("button:{button}:{}", pressed as u8));
         }
-        fn key(&mut self, keycode: u32, pressed: bool) {
-            self.events
-                .push(format!("key:{keycode}:{}", pressed as u8));
+        fn key(&mut self, keycode: u32, pressed: bool, autorepeat: bool) {
+            if autorepeat {
+                self.events.push(format!("key:{keycode}:2"));
+            } else {
+                self.events
+                    .push(format!("key:{keycode}:{}", pressed as u8));
+            }
         }
         fn scroll(&mut self, dx: f32, dy: f32) {
             self.events.push(format!("scroll:{dx},{dy}"));
@@ -698,6 +723,10 @@ mod tests {
             },
             Packet::Key {
                 keycode: 30,
+                pressed: 2, // auto-repeat
+            },
+            Packet::Key {
+                keycode: 30,
                 pressed: 0,
             },
             Packet::Scroll {
@@ -718,6 +747,7 @@ mod tests {
                 "button:0:1",
                 "button:0:0",
                 "key:30:1",
+                "key:30:2",
                 "key:30:0",
                 "scroll:0,-1",
                 "leave",

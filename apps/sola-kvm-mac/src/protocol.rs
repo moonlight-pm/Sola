@@ -88,7 +88,10 @@ pub enum Packet {
     Motion { x: i32, y: i32 },
     /// Mouse button. `button`: 0=left, 1=right, 2=middle; `pressed`: 0/1.
     Button { button: u8, pressed: u8 },
-    /// Linux evdev keycode + press/release.
+    /// Linux evdev keycode + press state.
+    ///
+    /// `pressed`: `0` = release, `1` = press, `2` = kernel auto-repeat
+    /// (same values as Linux `EV_KEY`).
     Key { keycode: u32, pressed: u8 },
     /// Scroll deltas (line/pixel scale as sent by novus).
     Scroll { dx: f32, dy: f32 },

@@ -3,7 +3,7 @@
 use std::net::UdpSocket;
 use std::time::Duration;
 
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::inject::{CgInjector, Injector};
 use crate::protocol::{self, MAX_PACKET_LEN};
@@ -44,7 +44,19 @@ pub fn run(bind: &str) -> Result<(), AgentError> {
                         }
                         last_seq = Some(seq);
                         ok_count += 1;
-                        info!(%src, seq, ?packet, ok_count, "recv");
+                        // Motion is high-rate; logging every packet at info stalls inject.
+                        // Enter/Leave stay visible at info for session debugging.
+                        match &packet {
+                            protocol::Packet::Enter { .. } | protocol::Packet::Leave => {
+                                info!(%src, seq, ?packet, ok_count, "recv");
+                            }
+                            protocol::Packet::Motion { .. } => {
+                                debug!(%src, seq, ?packet, ok_count, "recv");
+                            }
+                            _ => {
+                                debug!(%src, seq, ?packet, ok_count, "recv");
+                            }
+                        }
                         injector.handle(&packet);
                     }
                     Err(e) => {

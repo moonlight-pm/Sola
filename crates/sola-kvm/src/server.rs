@@ -66,7 +66,14 @@ pub enum InputEvent {
     /// Mouse button. `button`: 0=left, 1=right, 2=middle.
     Button { button: u8, pressed: bool },
     /// Linux evdev keycode.
-    Key { keycode: u32, pressed: bool },
+    ///
+    /// `pressed` is false for release, true for press **and** kernel auto-repeat.
+    /// `repeat` is true only for auto-repeat (evdev value `2` / wire `pressed=2`).
+    Key {
+        keycode: u32,
+        pressed: bool,
+        repeat: bool,
+    },
     /// Scroll deltas.
     Scroll { dx: f32, dy: f32 },
     /// Emergency leave (config release chord or CLI).
@@ -161,7 +168,11 @@ impl Session {
             InputEvent::PointerAbs { x, y } => self.on_pointer_abs(x, y),
             InputEvent::PointerRel { dx, dy } => self.on_pointer_rel(dx, dy),
             InputEvent::Button { button, pressed } => self.on_button(button, pressed),
-            InputEvent::Key { keycode, pressed } => self.on_key(keycode, pressed),
+            InputEvent::Key {
+                keycode,
+                pressed,
+                repeat,
+            } => self.on_key(keycode, pressed, repeat),
             InputEvent::Scroll { dx, dy } => self.on_scroll(dx, dy),
             InputEvent::ForceLeave => self.leave_remote(None),
         }
@@ -256,18 +267,26 @@ impl Session {
         }])
     }
 
-    fn on_key(&mut self, keycode: u32, pressed: bool) -> Step {
+    fn on_key(&mut self, keycode: u32, pressed: bool, repeat: bool) -> Step {
         if !self.is_remote() {
             return Step::empty();
         }
-        if pressed {
-            self.pressed_keys.insert(keycode);
-        } else {
+        // Wire: 0 = release, 1 = press, 2 = auto-repeat (matches Linux EV_KEY).
+        let wire = if !pressed {
             self.pressed_keys.remove(&keycode);
-        }
+            0u8
+        } else if repeat {
+            // Repeat implies the key is already down; keep bookkeeping consistent
+            // even if we somehow missed the initial press.
+            self.pressed_keys.insert(keycode);
+            2
+        } else {
+            self.pressed_keys.insert(keycode);
+            1
+        };
         Step::packets(vec![Packet::Key {
             keycode,
-            pressed: if pressed { 1 } else { 0 },
+            pressed: wire,
         }])
     }
 
@@ -484,10 +503,12 @@ mod tests {
         s.handle(InputEvent::Key {
             keycode: 29, // Ctrl
             pressed: true,
+            repeat: false,
         });
         s.handle(InputEvent::Key {
             keycode: 56, // Alt
             pressed: true,
+            repeat: false,
         });
         s.handle(InputEvent::Button {
             button: 0,
@@ -513,11 +534,43 @@ mod tests {
     }
 
     #[test]
+    fn key_auto_repeat_wires_pressed_two() {
+        let mut s = Session::with_local_pos(desk(), 5119, 1000);
+        push_enter(&mut s);
+        let down = s.handle(InputEvent::Key {
+            keycode: 30,
+            pressed: true,
+            repeat: false,
+        });
+        assert!(matches!(
+            down.packets.as_slice(),
+            [Packet::Key {
+                keycode: 30,
+                pressed: 1
+            }]
+        ));
+        let rep = s.handle(InputEvent::Key {
+            keycode: 30,
+            pressed: true,
+            repeat: true,
+        });
+        assert!(matches!(
+            rep.packets.as_slice(),
+            [Packet::Key {
+                keycode: 30,
+                pressed: 2
+            }]
+        ));
+        assert!(s.pressed_keys.contains(&30));
+    }
+
+    #[test]
     fn buttons_and_keys_ignored_while_local() {
         let mut s = Session::with_local_pos(desk(), 100, 100);
         let step = s.handle(InputEvent::Key {
             keycode: 30,
             pressed: true,
+            repeat: false,
         });
         assert!(step.packets.is_empty());
         let step = s.handle(InputEvent::Button {

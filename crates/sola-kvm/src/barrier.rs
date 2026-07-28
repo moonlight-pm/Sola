@@ -3,7 +3,7 @@
 //! The compositor only delivers pointer enter when the **real** cursor hits
 //! that edge — relative-evdev estimates cannot fake it.
 
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, AsRawFd, RawFd};
 
 use tracing::{debug, info, warn};
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
@@ -148,6 +148,11 @@ impl EdgeBarrier {
             event_queue,
             state,
         })
+    }
+
+    /// Wayland display fd for the server idle wait (`poll` alongside evdev).
+    pub fn wayland_fd(&self) -> RawFd {
+        self.conn.as_fd().as_raw_fd()
     }
 
     /// Non-blocking pump; `Some(y)` when the real cursor enters the strip.
@@ -547,5 +552,3 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for BarrierState {
         }
     }
 }
-
-use std::os::fd::AsRawFd;

@@ -124,7 +124,7 @@ Fixed little-endian header + payload. Version byte for evolution.
 | 2 | `Leave` | empty |
 | 3 | `Motion` | `x: i32`, `y: i32` **or** `dx: f32`, `dy: f32` — prefer **abs** in Mac space for layout fidelity |
 | 4 | `Button` | `button: u8`, `pressed: u8` |
-| 5 | `Key` | `keycode: u32` (Linux evdev), `pressed: u8` |
+| 5 | `Key` | `keycode: u32` (Linux evdev), `pressed: u8` (`0` release, `1` press, `2` kernel auto-repeat) |
 | 6 | `Scroll` | `dx: f32`, `dy: f32` |
 | 7 | `Modifiers` | `mask: u32` (optional explicit mod state) |
 

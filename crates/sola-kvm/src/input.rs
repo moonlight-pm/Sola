@@ -11,7 +11,7 @@
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -52,7 +52,7 @@ impl InputBackendKind {
 /// - `rel <dx> <dy>`
 /// - `abs <x> <y>`
 /// - `btn <button> <0|1>`
-/// - `key <keycode> <0|1>`
+/// - `key <keycode> <0|1|2>`  (`2` = auto-repeat, matching Linux `EV_KEY`)
 /// - `scroll <dx> <dy>`
 /// - `leave`
 /// - `#` comments and blank lines → `None`
@@ -84,10 +84,11 @@ pub fn parse_feed_line(line: &str) -> Result<Option<InputEvent>, String> {
         }
         "key" => {
             let keycode: u32 = next_parse(&mut parts, "keycode")?;
-            let pressed: u8 = next_parse(&mut parts, "pressed")?;
+            let state: u8 = next_parse(&mut parts, "pressed")?;
             Ok(Some(InputEvent::Key {
                 keycode,
-                pressed: pressed != 0,
+                pressed: state != 0,
+                repeat: state == 2,
             }))
         }
         "scroll" => {
@@ -174,10 +175,12 @@ pub fn demo_events() -> Vec<InputEvent> {
         InputEvent::Key {
             keycode: 30, // KEY_A
             pressed: true,
+            repeat: false,
         },
         InputEvent::Key {
             keycode: 30,
             pressed: false,
+            repeat: false,
         },
         InputEvent::Scroll {
             dx: 0.0,
@@ -331,9 +334,14 @@ impl EvdevDevice {
                 _ => {}
             },
             EV_KEY => {
-                let pressed = ev.value != 0;
                 // Mouse buttons vs keyboard
                 if (BTN_LEFT..=BTN_MIDDLE).contains(&ev.code) {
+                    // Buttons: 0=up, 1=down; ignore value==2 if a device ever
+                    // emits it (kernel rarely does for BTN_*).
+                    if ev.value == 2 {
+                        return;
+                    }
+                    let pressed = ev.value != 0;
                     let button = match ev.code {
                         BTN_LEFT => 0,
                         BTN_RIGHT => 1,
@@ -342,14 +350,28 @@ impl EvdevDevice {
                     };
                     self.pending.push(InputEvent::Button { button, pressed });
                 } else if ev.code < 0x100 {
-                    // Keyboard keys are below BTN_*; ignore repeats (value==2)
-                    if ev.value == 2 {
-                        return;
+                    // Keyboard keys are below BTN_*.
+                    // Linux EV_KEY: 0=release, 1=press, 2=auto-repeat.
+                    // Forward repeats so Mac inject can set kCGKeyboardEventAutorepeat
+                    // (otherwise holding a key only types once).
+                    match ev.value {
+                        0 => self.pending.push(InputEvent::Key {
+                            keycode: ev.code as u32,
+                            pressed: false,
+                            repeat: false,
+                        }),
+                        1 => self.pending.push(InputEvent::Key {
+                            keycode: ev.code as u32,
+                            pressed: true,
+                            repeat: false,
+                        }),
+                        2 => self.pending.push(InputEvent::Key {
+                            keycode: ev.code as u32,
+                            pressed: true,
+                            repeat: true,
+                        }),
+                        _ => {}
                     }
-                    self.pending.push(InputEvent::Key {
-                        keycode: ev.code as u32,
-                        pressed,
-                    });
                 }
             }
             EV_SYN => {
@@ -544,6 +566,104 @@ impl EvdevSource {
         }
         Ok(out)
     }
+
+    /// Block until any device (or optional extra fd) is readable, or `timeout`.
+    ///
+    /// Prefer this over a blind `sleep` so motion/keys wake the loop immediately
+    /// instead of adding up to `EVDEV_POLL` of artificial latency.
+    pub fn wait_readable(&self, extra_fds: &[RawFd], timeout: Duration) {
+        let mut pfds: Vec<libc::pollfd> = self
+            .devices
+            .iter()
+            .map(|d| libc::pollfd {
+                fd: d.file.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            })
+            .collect();
+        for &fd in extra_fds {
+            pfds.push(libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        }
+        if pfds.is_empty() {
+            std::thread::sleep(timeout);
+            return;
+        }
+        let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+        // SAFETY: poll on open device/wayland fds; timeout is non-negative.
+        let _ = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, ms) };
+    }
+}
+
+/// Collapse consecutive relative-motion (and scroll) events so one poll batch
+/// does not spray N near-identical UDP Motion packets. Key/button order is
+/// preserved relative to motion runs.
+pub fn coalesce_input_events(events: Vec<InputEvent>) -> Vec<InputEvent> {
+    if events.len() <= 1 {
+        return events;
+    }
+    let mut out: Vec<InputEvent> = Vec::with_capacity(events.len());
+    let mut acc_dx = 0.0f32;
+    let mut acc_dy = 0.0f32;
+    let mut has_rel = false;
+    let mut acc_sdx = 0.0f32;
+    let mut acc_sdy = 0.0f32;
+    let mut has_scroll = false;
+
+    let flush_rel =
+        |out: &mut Vec<InputEvent>, dx: &mut f32, dy: &mut f32, has: &mut bool| {
+            if *has {
+                out.push(InputEvent::PointerRel {
+                    dx: *dx,
+                    dy: *dy,
+                });
+                *dx = 0.0;
+                *dy = 0.0;
+                *has = false;
+            }
+        };
+    let flush_scroll =
+        |out: &mut Vec<InputEvent>, dx: &mut f32, dy: &mut f32, has: &mut bool| {
+            if *has {
+                out.push(InputEvent::Scroll {
+                    dx: *dx,
+                    dy: *dy,
+                });
+                *dx = 0.0;
+                *dy = 0.0;
+                *has = false;
+            }
+        };
+
+    for ev in events {
+        match ev {
+            InputEvent::PointerRel { dx, dy } => {
+                // Keep motion and scroll as separate streams but flush the
+                // other when switching, so order stays intuitive.
+                flush_scroll(&mut out, &mut acc_sdx, &mut acc_sdy, &mut has_scroll);
+                has_rel = true;
+                acc_dx += dx;
+                acc_dy += dy;
+            }
+            InputEvent::Scroll { dx, dy } => {
+                flush_rel(&mut out, &mut acc_dx, &mut acc_dy, &mut has_rel);
+                has_scroll = true;
+                acc_sdx += dx;
+                acc_sdy += dy;
+            }
+            other => {
+                flush_rel(&mut out, &mut acc_dx, &mut acc_dy, &mut has_rel);
+                flush_scroll(&mut out, &mut acc_sdx, &mut acc_sdy, &mut has_scroll);
+                out.push(other);
+            }
+        }
+    }
+    flush_rel(&mut out, &mut acc_dx, &mut acc_dy, &mut has_rel);
+    flush_scroll(&mut out, &mut acc_sdx, &mut acc_sdy, &mut has_scroll);
+    out
 }
 
 /// Collect `*-event-mouse` / `*-event-kbd` symlinks under `dir` (by-id or by-path).
@@ -624,7 +744,10 @@ fn set_nonblocking(fd: i32) -> io::Result<()> {
     Ok(())
 }
 
-/// Suggested poll interval when using non-blocking evdev.
+/// Max idle wait when using non-blocking evdev + `wait_readable`.
+///
+/// Wakes immediately when a device (or barrier fd) is readable; this is only
+/// the upper bound when the desk is idle.
 pub const EVDEV_POLL: Duration = Duration::from_millis(2);
 
 #[cfg(test)]
@@ -649,13 +772,50 @@ mod tests {
             parse_feed_line("key 30 1").unwrap(),
             Some(InputEvent::Key {
                 keycode: 30,
-                pressed: true
+                pressed: true,
+                repeat: false,
+            })
+        ));
+        assert!(matches!(
+            parse_feed_line("key 30 2").unwrap(),
+            Some(InputEvent::Key {
+                keycode: 30,
+                pressed: true,
+                repeat: true,
             })
         ));
         assert!(matches!(
             parse_feed_line("leave").unwrap(),
             Some(InputEvent::ForceLeave)
         ));
+    }
+
+    #[test]
+    fn coalesce_sums_rel_and_keeps_keys() {
+        let events = vec![
+            InputEvent::PointerRel { dx: 1.0, dy: 0.0 },
+            InputEvent::PointerRel { dx: 2.0, dy: 3.0 },
+            InputEvent::Key {
+                keycode: 30,
+                pressed: true,
+                repeat: false,
+            },
+            InputEvent::PointerRel { dx: 4.0, dy: 0.0 },
+            InputEvent::PointerRel { dx: 1.0, dy: 1.0 },
+        ];
+        let out = coalesce_input_events(events);
+        assert_eq!(
+            out,
+            vec![
+                InputEvent::PointerRel { dx: 3.0, dy: 3.0 },
+                InputEvent::Key {
+                    keycode: 30,
+                    pressed: true,
+                    repeat: false,
+                },
+                InputEvent::PointerRel { dx: 5.0, dy: 1.0 },
+            ]
+        );
     }
 
     #[test]
