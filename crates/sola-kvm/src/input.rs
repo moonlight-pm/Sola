@@ -216,6 +216,9 @@ const REL_X: u16 = 0x00;
 const REL_Y: u16 = 0x01;
 const REL_WHEEL: u16 = 0x08;
 const REL_HWHEEL: u16 = 0x06;
+/// High-res wheel (1/120 of a detent). Prefer over REL_WHEEL when present.
+const REL_WHEEL_HI_RES: u16 = 0x0b;
+const REL_HWHEEL_HI_RES: u16 = 0x0c;
 const BTN_LEFT: u16 = 0x110;
 const BTN_RIGHT: u16 = 0x111;
 const BTN_MIDDLE: u16 = 0x112;
@@ -248,8 +251,12 @@ struct EvdevDevice {
     /// Pending REL deltas between SYN reports.
     pend_dx: f32,
     pend_dy: f32,
+    /// Discrete wheel detents (REL_WHEEL / REL_HWHEEL).
     pend_scroll_dx: f32,
     pend_scroll_dy: f32,
+    /// High-res wheel in 1/120 detent units (REL_*_HI_RES).
+    pend_scroll_hi_dx: f32,
+    pend_scroll_hi_dy: f32,
     /// Accumulated events since last SYN.
     pending: Vec<InputEvent>,
 }
@@ -264,6 +271,8 @@ impl EvdevDevice {
             pend_dy: 0.0,
             pend_scroll_dx: 0.0,
             pend_scroll_dy: 0.0,
+            pend_scroll_hi_dx: 0.0,
+            pend_scroll_hi_dy: 0.0,
             pending: Vec::new(),
         })
     }
@@ -315,6 +324,10 @@ impl EvdevDevice {
                 REL_Y => self.pend_dy += ev.value as f32,
                 REL_WHEEL => self.pend_scroll_dy += ev.value as f32,
                 REL_HWHEEL => self.pend_scroll_dx += ev.value as f32,
+                // Do not also add discrete WHEEL when HI_RES is present — both
+                // are emitted for the same physical motion on modern mice.
+                REL_WHEEL_HI_RES => self.pend_scroll_hi_dy += ev.value as f32,
+                REL_HWHEEL_HI_RES => self.pend_scroll_hi_dx += ev.value as f32,
                 _ => {}
             },
             EV_KEY => {
@@ -348,13 +361,23 @@ impl EvdevDevice {
                     self.pend_dx = 0.0;
                     self.pend_dy = 0.0;
                 }
-                if self.pend_scroll_dx != 0.0 || self.pend_scroll_dy != 0.0 {
-                    self.pending.push(InputEvent::Scroll {
-                        dx: self.pend_scroll_dx,
-                        dy: self.pend_scroll_dy,
-                    });
-                    self.pend_scroll_dx = 0.0;
-                    self.pend_scroll_dy = 0.0;
+                // Prefer HI_RES (÷120 → detent units) when the device sends it.
+                let (sdx, sdy) = if self.pend_scroll_hi_dx != 0.0
+                    || self.pend_scroll_hi_dy != 0.0
+                {
+                    (
+                        self.pend_scroll_hi_dx / 120.0,
+                        self.pend_scroll_hi_dy / 120.0,
+                    )
+                } else {
+                    (self.pend_scroll_dx, self.pend_scroll_dy)
+                };
+                self.pend_scroll_dx = 0.0;
+                self.pend_scroll_dy = 0.0;
+                self.pend_scroll_hi_dx = 0.0;
+                self.pend_scroll_hi_dy = 0.0;
+                if sdx != 0.0 || sdy != 0.0 {
+                    self.pending.push(InputEvent::Scroll { dx: sdx, dy: sdy });
                 }
                 out.append(&mut self.pending);
             }

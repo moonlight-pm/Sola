@@ -577,8 +577,12 @@ mod platform {
         // "finger/wheel → content" direction — invert both axes on inject.
         let dx = -dx;
         let dy = -dy;
-        let mut wheel1 = dy.round() as i32;
-        let mut wheel2 = dx.round() as i32;
+        // One Linux detent as a single CG *line* tick feels glacial in Cocoa.
+        // Scale into pixel units so speed roughly matches a native Mac mouse.
+        // (detent → ~48px; fractional hi-res values from novus scale smoothly.)
+        const PIXELS_PER_DETENT: f32 = 48.0;
+        let mut wheel1 = (dy * PIXELS_PER_DETENT).round() as i32;
+        let mut wheel2 = (dx * PIXELS_PER_DETENT).round() as i32;
         if wheel1 == 0 && dy.abs() > f32::EPSILON {
             wheel1 = if dy > 0.0 { 1 } else { -1 };
         }
@@ -591,8 +595,8 @@ mod platform {
         unsafe {
             let src = source();
             configure_source(src);
-            // kCGScrollEventUnitLine = 0
-            let ev = CGEventCreateScrollWheelEvent2(src, 0, 2, wheel1, wheel2, 0);
+            // kCGScrollEventUnitPixel = 1 (line = 0 is too coarse/slow).
+            let ev = CGEventCreateScrollWheelEvent2(src, 1, 2, wheel1, wheel2, 0);
             if !ev.is_null() {
                 CGEventSetIntegerValueField(
                     ev,
