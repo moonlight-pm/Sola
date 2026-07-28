@@ -16,6 +16,10 @@ pub fn run(bind: &str) -> Result<(), AgentError> {
     let local = sock.local_addr().ok();
     info!(?local, "sola-kvm-mac listening (UDP)");
 
+    // Surface AX trust failures immediately (cursor warp still works without it;
+    // clicks/keys do not).
+    crate::inject::check_accessibility_at_startup();
+
     let mut injector = CgInjector::new();
     let mut buf = [0u8; 256];
     let mut last_seq: Option<u32> = None;

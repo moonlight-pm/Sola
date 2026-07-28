@@ -4,11 +4,10 @@
 //!
 //! - **`feed`** — line protocol on stdin (tests / remote drive)
 //! - **`demo`** — scripted enter → motion → leave sequence (smoke without HID)
-//! - **`evdev`** — optional `/dev/input` read + `EVIOCGRAB` while remote (spike;
-//!   needs group/`uaccess` on event nodes; documented operator path)
-//!
-//! Layer-shell barriers (lan-mouse style) are deferred until `sola-river`
-//! exposes `river_layer_shell_v1` on this branch; see design §5.2.
+//! - **`evdev`** — `/dev/input` read + `EVIOCGRAB` while remote (needs
+//!   group/`uaccess` on event nodes). Opens **pointer** (`*-event-mouse`) and
+//!   **keyboard** (`*-event-kbd`) nodes; opening only the mouse was a regression
+//!   that left remote typing dead while cursor still moved.
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
@@ -217,6 +216,9 @@ const REL_X: u16 = 0x00;
 const REL_Y: u16 = 0x01;
 const REL_WHEEL: u16 = 0x08;
 const REL_HWHEEL: u16 = 0x06;
+/// High-res wheel (1/120 of a detent). Prefer over REL_WHEEL when present.
+const REL_WHEEL_HI_RES: u16 = 0x0b;
+const REL_HWHEEL_HI_RES: u16 = 0x0c;
 const BTN_LEFT: u16 = 0x110;
 const BTN_RIGHT: u16 = 0x111;
 const BTN_MIDDLE: u16 = 0x112;
@@ -249,8 +251,12 @@ struct EvdevDevice {
     /// Pending REL deltas between SYN reports.
     pend_dx: f32,
     pend_dy: f32,
+    /// Discrete wheel detents (REL_WHEEL / REL_HWHEEL).
     pend_scroll_dx: f32,
     pend_scroll_dy: f32,
+    /// High-res wheel in 1/120 detent units (REL_*_HI_RES).
+    pend_scroll_hi_dx: f32,
+    pend_scroll_hi_dy: f32,
     /// Accumulated events since last SYN.
     pending: Vec<InputEvent>,
 }
@@ -265,6 +271,8 @@ impl EvdevDevice {
             pend_dy: 0.0,
             pend_scroll_dx: 0.0,
             pend_scroll_dy: 0.0,
+            pend_scroll_hi_dx: 0.0,
+            pend_scroll_hi_dy: 0.0,
             pending: Vec::new(),
         })
     }
@@ -316,6 +324,10 @@ impl EvdevDevice {
                 REL_Y => self.pend_dy += ev.value as f32,
                 REL_WHEEL => self.pend_scroll_dy += ev.value as f32,
                 REL_HWHEEL => self.pend_scroll_dx += ev.value as f32,
+                // Do not also add discrete WHEEL when HI_RES is present — both
+                // are emitted for the same physical motion on modern mice.
+                REL_WHEEL_HI_RES => self.pend_scroll_hi_dy += ev.value as f32,
+                REL_HWHEEL_HI_RES => self.pend_scroll_hi_dx += ev.value as f32,
                 _ => {}
             },
             EV_KEY => {
@@ -349,13 +361,23 @@ impl EvdevDevice {
                     self.pend_dx = 0.0;
                     self.pend_dy = 0.0;
                 }
-                if self.pend_scroll_dx != 0.0 || self.pend_scroll_dy != 0.0 {
-                    self.pending.push(InputEvent::Scroll {
-                        dx: self.pend_scroll_dx,
-                        dy: self.pend_scroll_dy,
-                    });
-                    self.pend_scroll_dx = 0.0;
-                    self.pend_scroll_dy = 0.0;
+                // Prefer HI_RES (÷120 → detent units) when the device sends it.
+                let (sdx, sdy) = if self.pend_scroll_hi_dx != 0.0
+                    || self.pend_scroll_hi_dy != 0.0
+                {
+                    (
+                        self.pend_scroll_hi_dx / 120.0,
+                        self.pend_scroll_hi_dy / 120.0,
+                    )
+                } else {
+                    (self.pend_scroll_dx, self.pend_scroll_dy)
+                };
+                self.pend_scroll_dx = 0.0;
+                self.pend_scroll_dy = 0.0;
+                self.pend_scroll_hi_dx = 0.0;
+                self.pend_scroll_hi_dy = 0.0;
+                if sdx != 0.0 || sdy != 0.0 {
+                    self.pending.push(InputEvent::Scroll { dx: sdx, dy: sdy });
                 }
                 out.append(&mut self.pending);
             }
@@ -380,6 +402,13 @@ fn raw_from_bytes(buf: &[u8]) -> RawInputEvent {
     }
 }
 
+/// Role of an opened evdev node (for logging / selection).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvdevRole {
+    Pointer,
+    Keyboard,
+}
+
 /// Multi-device evdev source with grab-while-remote semantics.
 pub struct EvdevSource {
     devices: Vec<EvdevDevice>,
@@ -387,40 +416,32 @@ pub struct EvdevSource {
 }
 
 impl EvdevSource {
-    /// Open pointer-capable `/dev/input/event*` nodes that are readable.
+    /// Open pointer **and** keyboard `/dev/input/event*` nodes that are readable.
     ///
-    /// Prefers `by-id/*-event-mouse` so we do not double-count relative motion
-    /// from keyboards / LED controllers (which would race the estimated cursor).
+    /// Pointer selection prefers `by-id/*-event-mouse` so we do not double-count
+    /// relative motion from keyboards / LED / consumer-control interfaces (which
+    /// would race the estimated cursor).
+    ///
+    /// Keyboard selection prefers `by-id/*-event-kbd` (and the same under
+    /// `by-path`). Without keyboards, remote mode only moves the Mac cursor —
+    /// keys never leave the local seat.
     pub fn open_all() -> io::Result<Self> {
-        let mut candidates: Vec<PathBuf> = Vec::new();
+        let mut candidates: Vec<(PathBuf, EvdevRole)> = Vec::new();
 
-        // Prefer stable mouse nodes.
-        if let Ok(entries) = std::fs::read_dir("/dev/input/by-id") {
-            for ent in entries.flatten() {
-                let name = ent.file_name();
-                let name = name.to_string_lossy();
-                if name.contains("event-mouse") {
-                    if let Ok(canon) = std::fs::canonicalize(ent.path()) {
-                        candidates.push(canon);
-                    }
-                }
+        collect_by_symlink_role("/dev/input/by-id", &mut candidates);
+        // Fill missing roles from by-path (some seats only expose one tree).
+        {
+            let have_ptr = candidates.iter().any(|(_, r)| *r == EvdevRole::Pointer);
+            let have_kbd = candidates.iter().any(|(_, r)| *r == EvdevRole::Keyboard);
+            if !have_ptr || !have_kbd {
+                collect_by_symlink_role("/dev/input/by-path", &mut candidates);
             }
         }
-        if candidates.is_empty() {
-            if let Ok(entries) = std::fs::read_dir("/dev/input/by-path") {
-                for ent in entries.flatten() {
-                    let name = ent.file_name();
-                    let name = name.to_string_lossy();
-                    if name.contains("event-mouse") {
-                        if let Ok(canon) = std::fs::canonicalize(ent.path()) {
-                            candidates.push(canon);
-                        }
-                    }
-                }
-            }
-        }
-        // Fall back: event* that looks like a pointer in sysfs (has REL_X).
-        if candidates.is_empty() {
+
+        // Fall back: sysfs capability probes when symlink names are absent.
+        let have_ptr = candidates.iter().any(|(_, r)| *r == EvdevRole::Pointer);
+        let have_kbd = candidates.iter().any(|(_, r)| *r == EvdevRole::Keyboard);
+        if !have_ptr || !have_kbd {
             if let Ok(entries) = std::fs::read_dir("/dev/input") {
                 for ent in entries.flatten() {
                     let name = ent.file_name();
@@ -429,23 +450,39 @@ impl EvdevSource {
                         continue;
                     }
                     let path = ent.path();
-                    if sysfs_has_rel_xy(&name) {
-                        candidates.push(path);
+                    if !have_ptr && sysfs_has_rel_xy(&name) {
+                        candidates.push((path.clone(), EvdevRole::Pointer));
+                    }
+                    // Real keyboards report KEY_A; skip pure mouse button pads
+                    // (REL_X+Y) and consumer/hotkey devices without letter keys.
+                    if !have_kbd && sysfs_has_key_a(&name) && !sysfs_has_rel_xy(&name) {
+                        candidates.push((path, EvdevRole::Keyboard));
                     }
                 }
             }
         }
 
-        // De-dupe
-        candidates.sort();
-        candidates.dedup();
+        // De-dupe by path (prefer first role assigned — mouse vs kbd names differ).
+        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        candidates.dedup_by(|a, b| a.0 == b.0);
 
         let mut devices = Vec::new();
-        for path in candidates {
+        let mut n_ptr = 0usize;
+        let mut n_kbd = 0usize;
+        for (path, role) in candidates {
             match EvdevDevice::open(&path) {
                 Ok(dev) => {
                     set_nonblocking(dev.file.as_raw_fd())?;
-                    info!(path = %path.display(), "evdev opened (pointer)");
+                    match role {
+                        EvdevRole::Pointer => {
+                            n_ptr += 1;
+                            info!(path = %path.display(), "evdev opened (pointer)");
+                        }
+                        EvdevRole::Keyboard => {
+                            n_kbd += 1;
+                            info!(path = %path.display(), "evdev opened (keyboard)");
+                        }
+                    }
                     devices.push(dev);
                 }
                 Err(e) => {
@@ -459,7 +496,18 @@ impl EvdevSource {
                 "no readable pointer /dev/input/event* nodes (need input group or uaccess)",
             ));
         }
-        info!(count = devices.len(), "evdev backend ready");
+        if n_kbd == 0 {
+            warn!(
+                "evdev: no keyboard nodes opened — remote typing will not work \
+                 (look for by-id/*-event-kbd or grant access to keyboard event nodes)"
+            );
+        }
+        info!(
+            count = devices.len(),
+            pointers = n_ptr,
+            keyboards = n_kbd,
+            "evdev backend ready"
+        );
         Ok(Self {
             devices,
             grabbed: false,
@@ -498,6 +546,27 @@ impl EvdevSource {
     }
 }
 
+/// Collect `*-event-mouse` / `*-event-kbd` symlinks under `dir` (by-id or by-path).
+fn collect_by_symlink_role(dir: &str, out: &mut Vec<(PathBuf, EvdevRole)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for ent in entries.flatten() {
+        let name = ent.file_name();
+        let name = name.to_string_lossy();
+        let role = if name.contains("event-mouse") {
+            EvdevRole::Pointer
+        } else if name.contains("event-kbd") {
+            EvdevRole::Keyboard
+        } else {
+            continue;
+        };
+        if let Ok(canon) = std::fs::canonicalize(ent.path()) {
+            out.push((canon, role));
+        }
+    }
+}
+
 /// True if `/sys/class/input/<eventN>/device/capabilities/rel` has REL_X+REL_Y bits.
 fn sysfs_has_rel_xy(event_name: &str) -> bool {
     let path = format!("/sys/class/input/{event_name}/device/capabilities/rel");
@@ -512,6 +581,25 @@ fn sysfs_has_rel_xy(event_name: &str) -> bool {
         return false;
     };
     (word & 0b11) == 0b11
+}
+
+/// True if the device reports `KEY_A` (evdev 30) in its key capability bitmask.
+///
+/// Used to distinguish full keyboards from button-only / power / LED nodes.
+fn sysfs_has_key_a(event_name: &str) -> bool {
+    let path = format!("/sys/class/input/{event_name}/device/capabilities/key");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    // Kernel prints capability bitmasks as space-separated 64-bit words,
+    // least-significant word first. KEY_A = 30 → bit 30 in word 0.
+    let Some(first) = text.split_whitespace().next() else {
+        return false;
+    };
+    let Ok(word) = u64::from_str_radix(first.trim_start_matches("0x"), 16) else {
+        return false;
+    };
+    (word & (1u64 << 30)) != 0
 }
 
 fn set_nonblocking(fd: i32) -> io::Result<()> {
