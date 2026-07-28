@@ -9,9 +9,11 @@ pub mod encrypted;
 pub mod env;
 pub mod keys;
 pub mod log;
+pub mod open_url;
 pub mod process;
 pub mod theme;
 pub mod watcher;
 
 pub use encrypted::Encrypted;
 pub use keys::{KeyChord, KeyCode};
+pub use open_url::{open as open_url, open_logged as open_url_logged};

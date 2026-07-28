@@ -8,8 +8,8 @@ use iced::keyboard::key::Named as NamedKey;
 use iced::widget::{column, container, row, scrollable, Space};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 use sola_bus::Message;
-use sola_bus::topics::{MailConfig, MailRule, OpenUrlRequest, Topic};
-use sola_kit::app::{apply_theme_update, bus, bus_subscription, is_self_quit};
+use sola_bus::topics::{MailConfig, MailRule, Topic};
+use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::style::{SPACE_MD, SPACE_SM, SPACE_XS};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
@@ -360,12 +360,8 @@ impl App {
                 Task::none()
             }
             Msg::OpenUrl(url) => {
-                if let Ok(mut b) = bus().lock() {
-                    let _ = b.emit(Topic::OpenUrl(OpenUrlRequest {
-                        url,
-                        activate: true,
-                    }));
-                }
+                // System browser is Helium (sola-browser not day-to-day).
+                sola_core::open_url_logged(&url);
                 Task::none()
             }
             Msg::DismissToast => {
