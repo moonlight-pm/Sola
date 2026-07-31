@@ -9,15 +9,20 @@ use crate::protocol::types::MessageBody;
 pub fn links_for_message(body: &MessageBody) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(html) = &body.html {
-        for u in extract_hrefs(html) {
+        // Strip soft hyphens / zero-width chars that break attribute scans.
+        let cleaned = scrub_invisible(html);
+        for u in extract_hrefs(&cleaned) {
+            push_unique(&mut out, u);
+        }
+        // Also scan html2text-ish plain conversion for bare URLs in HTML.
+        for u in extract_urls_from_text(&crate::protocol::html_text::to_plain(&cleaned)) {
             push_unique(&mut out, u);
         }
     }
     for u in extract_urls_from_text(&body.display_text()) {
         push_unique(&mut out, u);
     }
-    // Prefer text when empty HTML-only edge cases leave nothing.
-    if out.is_empty() && !body.text.is_empty() {
+    if !body.text.is_empty() {
         for u in extract_urls_from_text(&body.text) {
             push_unique(&mut out, u);
         }
@@ -32,6 +37,12 @@ fn push_unique(out: &mut Vec<String>, u: String) {
     if !out.iter().any(|x| x == &u) {
         out.push(u);
     }
+}
+
+fn scrub_invisible(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, '\u{00ad}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}'))
+        .collect()
 }
 
 /// Pull `href="..."` / `href='...'` from HTML (case-insensitive attribute name).
@@ -58,7 +69,6 @@ pub fn extract_hrefs(html: &str) -> Vec<String> {
             i += 1;
             (quote, i)
         } else {
-            // Unquoted href=value
             (b' ', i)
         };
         let mut j = start;
@@ -88,8 +98,32 @@ pub fn extract_hrefs(html: &str) -> Vec<String> {
 
 /// Find http(s) URLs in plain text, rejoining soft line wraps mid-URL.
 pub fn extract_urls_from_text(text: &str) -> Vec<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = Vec::new();
+    let cleaned = scrub_invisible(text);
+    // Angle-bracket form: <https://...> (RFC 3986 appendix)
+    let mut pre = Vec::new();
+    let mut rest = cleaned.as_str();
+    while let Some(start) = rest.find('<') {
+        let after = &rest[start + 1..];
+        if let Some(end) = after.find('>') {
+            let inner = after[..end].trim();
+            if is_http_url(inner) || inner.to_ascii_lowercase().starts_with("www.") {
+                let u = if inner.to_ascii_lowercase().starts_with("www.") {
+                    format!("https://{inner}")
+                } else {
+                    normalize_url(inner)
+                };
+                if is_http_url(&u) {
+                    push_unique(&mut pre, u);
+                }
+            }
+            rest = &after[end + 1..];
+        } else {
+            break;
+        }
+    }
+
+    let chars: Vec<char> = cleaned.chars().collect();
+    let mut out = pre;
     let mut i = 0;
     while i < chars.len() {
         let Some((scheme_len, scheme_prefix)) = scheme_at(&chars, i) else {
@@ -98,22 +132,53 @@ pub fn extract_urls_from_text(text: &str) -> Vec<String> {
         };
         let start = i;
         i += scheme_len;
-        // Consume URL body, treating a single newline as soft wrap when the
-        // next non-empty line continues the path (not a new sentence/scheme).
         while i < chars.len() {
             let c = chars[i];
             if is_url_body(c) {
                 i += 1;
                 continue;
             }
+            // Soft wrap: newline (optionally after a format=flowed trailing space).
+            if c == ' ' || c == '\t' {
+                let mut j = i;
+                while j < chars.len() && (chars[j] == ' ' || chars[j] == '\t') {
+                    j += 1;
+                }
+                if j < chars.len() && (chars[j] == '\n' || chars[j] == '\r') {
+                    // format=flowed soft break — skip space+newline and continue.
+                    while j < chars.len() && (chars[j] == '\n' || chars[j] == '\r') {
+                        j += 1;
+                    }
+                    // Skip quote markers common in replies: "> "
+                    while j < chars.len() && (chars[j] == '>' || chars[j] == ' ' || chars[j] == '\t')
+                    {
+                        if chars[j] == '>' {
+                            j += 1;
+                            continue;
+                        }
+                        if chars[j] == ' ' || chars[j] == '\t' {
+                            j += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                    if j < chars.len()
+                        && is_url_body(chars[j])
+                        && scheme_at(&chars, j).is_none()
+                        && !is_sentence_start_after_wrap(&chars, j)
+                    {
+                        i = j;
+                        continue;
+                    }
+                }
+            }
             if c == '\n' || c == '\r' {
                 let mut j = i;
                 while j < chars.len() && (chars[j] == '\n' || chars[j] == '\r') {
                     j += 1;
                 }
-                // Optional leading whitespace after wrap (rare).
                 let mut k = j;
-                while k < chars.len() && (chars[k] == ' ' || chars[k] == '\t') {
+                while k < chars.len() && (chars[k] == ' ' || chars[k] == '\t' || chars[k] == '>') {
                     k += 1;
                 }
                 if k < chars.len()
@@ -127,7 +192,6 @@ pub fn extract_urls_from_text(text: &str) -> Vec<String> {
             }
             break;
         }
-        // Build URI without embedded newlines/soft-wrap gaps.
         let mut uri = String::new();
         if scheme_prefix.is_empty() {
             uri.push_str("https://");
@@ -135,21 +199,27 @@ pub fn extract_urls_from_text(text: &str) -> Vec<String> {
         let mut r = start;
         while r < i {
             let c = chars[r];
-            if c == '\n' || c == '\r' {
+            if c == '\n' || c == '\r' || c == '>' {
                 r += 1;
-                while r < i && (chars[r] == ' ' || chars[r] == '\t') {
+                while r < i && (chars[r] == ' ' || chars[r] == '\t' || chars[r] == '>') {
                     r += 1;
                 }
+                continue;
+            }
+            // Drop single spaces that only exist as format=flowed soft breaks
+            // (space immediately before what was a newline — already skipped NL).
+            if c == ' ' || c == '\t' {
+                // Only keep space if it looks intentional inside URL (rare); drop soft breaks.
+                r += 1;
                 continue;
             }
             uri.push(c);
             r += 1;
         }
-        // Strip trailing punctuation that is rarely part of the URI.
         while uri
             .chars()
             .last()
-            .is_some_and(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"'))
+            .is_some_and(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"' | '>'))
         {
             uri.pop();
         }
@@ -167,10 +237,10 @@ fn is_http_url(u: &str) -> bool {
 
 fn normalize_url(raw: &str) -> String {
     let t = raw.trim();
-    // HTML entities common in mail
     t.replace("&amp;", "&")
         .replace("&#38;", "&")
         .replace("&quot;", "")
+        .replace("&#39;", "")
 }
 
 fn scheme_at(chars: &[char], i: usize) -> Option<(usize, &'static str)> {
@@ -208,15 +278,11 @@ fn is_url_body(c: char) -> bool {
     }
 }
 
-/// After a soft wrap, reject lines that look like a new English sentence
-/// (`The ...`) rather than a path continuation (`path`, `?q=`, `/foo`).
 fn is_sentence_start_after_wrap(chars: &[char], i: usize) -> bool {
     let c = chars[i];
-    // Path / query / fragment continuations are fine.
-    if matches!(c, '/' | '?' | '#' | '&' | '=' | '%' | '-' | '_' | '.') {
+    if matches!(c, '/' | '?' | '#' | '&' | '=' | '%' | '-' | '_' | '.' | '~' | '+') {
         return false;
     }
-    // Uppercase letter then lowercase word → likely prose, not URL.
     if c.is_uppercase() {
         if let Some(next) = chars.get(i + 1) {
             if next.is_lowercase() || next.is_whitespace() {
@@ -252,6 +318,20 @@ mod tests {
         let text = "https://cdn.example.com/very/long/\npath/to/resource";
         let u = extract_urls_from_text(text);
         assert_eq!(u, vec!["https://cdn.example.com/very/long/path/to/resource"]);
+    }
+
+    #[test]
+    fn rejoins_format_flowed_space_break() {
+        // Trailing space before newline (format=flowed soft break).
+        let text = "https://example.com/long \npath/more";
+        let u = extract_urls_from_text(text);
+        assert_eq!(u, vec!["https://example.com/longpath/more"]);
+    }
+
+    #[test]
+    fn angle_bracket_url() {
+        let u = extract_urls_from_text("see <https://example.com/a/b> thanks");
+        assert_eq!(u, vec!["https://example.com/a/b"]);
     }
 
     #[test]

@@ -48,6 +48,9 @@ pub enum Msg {
     ComposeCc(String),
     ComposeSubject(String),
     ComposeBodyAction(text_editor::Action),
+    /// Read-only body editor (selection / scroll only).
+    BodyAction(text_editor::Action),
+    ClipboardPasted(Option<String>),
     Send,
     MoveSelected(String),
     Undo,
@@ -87,6 +90,10 @@ pub struct App {
     total_messages: u32,
     selected_uid: Option<u32>,
     message_body: Option<MessageBody>,
+    /// Selectable body surface (read-only; Edit menu Select All / Copy).
+    body_content: text_editor::Content,
+    /// Cached links for the open message (chips under meta).
+    body_links: Vec<String>,
     from_addresses: Vec<String>,
     rules: Vec<MailRule>,
     search_query: String,
@@ -117,6 +124,8 @@ impl Default for App {
             total_messages: 0,
             selected_uid: None,
             message_body: None,
+            body_content: text_editor::Content::new(),
+            body_links: Vec::new(),
             from_addresses: Vec::new(),
             rules: Vec::new(),
             search_query: String::new(),
@@ -201,6 +210,8 @@ impl App {
                 self.selected_folder = name.clone();
                 self.selected_uid = None;
                 self.message_body = None;
+                self.body_content = text_editor::Content::new();
+                self.body_links.clear();
                 self.composing = false;
                 self.search_active = false;
                 self.search_query.clear();
@@ -329,6 +340,23 @@ impl App {
                 self.draft.body.perform(action);
                 Task::none()
             }
+            Msg::BodyAction(action) => {
+                // Read-only: allow selection / cursor / scroll, ignore edits.
+                if !matches!(action, text_editor::Action::Edit(_)) {
+                    self.body_content.perform(action);
+                }
+                Task::none()
+            }
+            Msg::ClipboardPasted(text) => {
+                if self.composing {
+                    if let Some(t) = text {
+                        self.draft.body.perform(text_editor::Action::Edit(
+                            text_editor::Edit::Paste(std::sync::Arc::new(t)),
+                        ));
+                    }
+                }
+                Task::none()
+            }
             Msg::Send => {
                 if self.draft.to.trim().is_empty() {
                     self.toast = Some("To address is required".into());
@@ -397,12 +425,87 @@ impl App {
             mail_send(MailCmd::Shutdown);
             return iced::exit();
         }
+        if let Some(Topic::MenuAction(p)) = Topic::parse(message) {
+            if p.app_id == APP_ID {
+                return self.on_menu_action(&p.action_id);
+            }
+        }
         if let Some(Topic::MailConfig(cfg)) = Topic::parse(message) {
             self.mail_config = cfg.clone();
             mail_send(MailCmd::Reconfigure(cfg));
             self.loading = true;
         }
         Task::none()
+    }
+
+    fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
+        match action {
+            "cut" => self.edit_cut(),
+            "copy" => self.edit_copy(),
+            "paste" => self.edit_paste(),
+            "select_all" => {
+                if self.composing {
+                    self.draft.body.perform(text_editor::Action::SelectAll);
+                } else if self.message_body.is_some() {
+                    self.body_content.perform(text_editor::Action::SelectAll);
+                }
+                Task::none()
+            }
+            "quit" => {
+                mail_send(MailCmd::Shutdown);
+                iced::exit()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    fn edit_copy(&self) -> Task<Msg> {
+        if self.composing {
+            if let Some(sel) = self.draft.body.selection() {
+                if !sel.is_empty() {
+                    return iced::clipboard::write(sel);
+                }
+            }
+            let t = self.draft.body.text();
+            if !t.is_empty() {
+                return iced::clipboard::write(t);
+            }
+            return Task::none();
+        }
+        if let Some(sel) = self.body_content.selection() {
+            if !sel.is_empty() {
+                return iced::clipboard::write(sel);
+            }
+        }
+        // No selection → copy full open body (useful after open).
+        let t = self.body_content.text();
+        if !t.is_empty() {
+            return iced::clipboard::write(t);
+        }
+        Task::none()
+    }
+
+    fn edit_cut(&mut self) -> Task<Msg> {
+        if !self.composing {
+            return Task::none();
+        }
+        let Some(sel) = self.draft.body.selection() else {
+            return Task::none();
+        };
+        if sel.is_empty() {
+            return Task::none();
+        }
+        self.draft
+            .body
+            .perform(text_editor::Action::Edit(text_editor::Edit::Delete));
+        iced::clipboard::write(sel)
+    }
+
+    fn edit_paste(&self) -> Task<Msg> {
+        if !self.composing {
+            return Task::none();
+        }
+        iced::clipboard::read().map(Msg::ClipboardPasted)
     }
 
     fn on_worker(&mut self, ev: MailEvent) -> Task<Msg> {
@@ -464,6 +567,17 @@ impl App {
                 self.total_messages = total;
             }
             MailEvent::Body(body) => {
+                let plain = body.display_text();
+                let links = crate::protocol::links::links_for_message(&body);
+                tracing::debug!(
+                    uid = body.uid,
+                    n_links = links.len(),
+                    text_len = plain.len(),
+                    has_html = body.html.is_some(),
+                    "opened message body"
+                );
+                self.body_content = text_editor::Content::with_text(&plain);
+                self.body_links = links;
                 self.message_body = Some(body);
             }
             MailEvent::Sent => {
@@ -647,6 +761,8 @@ impl App {
         if self.messages.is_empty() {
             self.selected_uid = None;
             self.message_body = None;
+            self.body_content = text_editor::Content::new();
+            self.body_links.clear();
         } else if let Some(i) = idx {
             let next = if i > 0 { i - 1 } else { 0 };
             let next_uid = self.messages[next.min(self.messages.len() - 1)].uid;
@@ -932,39 +1048,51 @@ impl App {
         }
         meta = meta.push(meta_line("Date", date_s));
 
-        let display = body.display_text();
-        // HTML hrefs + soft-wrap-aware text scan (line-broken URLs still clickable).
-        let urls = crate::protocol::links::links_for_message(body);
+        // Links first (always clickable chips), then selectable body.
+        let mut article_col = column![meta].spacing(SPACE_LG).width(Length::Fill);
 
-        let mut body_col = column![
-            kit_text::body(display).width(Length::Fill),
-        ]
-        .spacing(SPACE_LG)
-        .width(Length::Fill);
-
-        if !urls.is_empty() {
-            let mut link_col = column![kit_text::caption("Links").style(kit_text::muted)]
-                .spacing(SPACE_SM);
-            for (i, u) in urls.into_iter().take(12).enumerate() {
-                let label = short_url_label(&u, i);
-                // Full-width row so long / wrapped targets stay one hit target.
+        if !self.body_links.is_empty() {
+            let mut link_col = column![
+                kit_text::caption(format!(
+                    "Links · click to open ({} found)",
+                    self.body_links.len()
+                ))
+                .style(kit_text::muted)
+            ]
+            .spacing(SPACE_SM)
+            .width(Length::Fill);
+            for (i, u) in self.body_links.iter().take(12).enumerate() {
+                let label = short_url_label(u, i);
                 link_col = link_col.push(
-                    kit_btn::labeled_sm(label, kit_btn::ghost)
-                        .on_press(Msg::OpenUrl(u))
+                    kit_btn::labeled(label, kit_btn::secondary)
+                        .on_press(Msg::OpenUrl(u.clone()))
                         .width(Length::Fill),
                 );
             }
-            body_col = body_col.push(link_col);
+            article_col = article_col.push(link_col);
         }
 
-        let article = container(
-            column![meta, body_col]
-                .spacing(SPACE_LG)
-                .width(Length::Fill)
-                .padding(Padding::from([SPACE_LG, SPACE_XL])),
-        )
-        .width(Length::Fill)
-        .max_width(READ_MAX_W);
+        let body_editor = text_editor(&self.body_content)
+            .height(Length::Shrink)
+            .min_height(120.0)
+            .padding(0)
+            .size(13.0)
+            .style(body_editor_style)
+            .on_action(Msg::BodyAction);
+
+        article_col = article_col.push(
+            column![
+                kit_text::caption("Message · select text, then Edit → Copy (⌘C)")
+                    .style(kit_text::muted),
+                body_editor,
+            ]
+            .spacing(SPACE_SM)
+            .width(Length::Fill),
+        );
+
+        let article = container(article_col.padding(Padding::from([SPACE_LG, SPACE_XL])))
+            .width(Length::Fill)
+            .max_width(READ_MAX_W);
 
         container(
             column![
@@ -1176,14 +1304,15 @@ fn short_url_label(url: &str, index: usize) -> String {
     let stripped = url
         .trim_start_matches("https://")
         .trim_start_matches("http://");
-    let host = stripped.split('/').next().unwrap_or(stripped);
-    if host.is_empty() {
-        format!("link {}", index + 1)
-    } else if host.len() > 28 {
-        format!("{}…", &host[..25])
+    // Prefer host + start of path so magic-link mails are recognizable.
+    let label = if stripped.len() > 56 {
+        format!("{}…", &stripped[..53])
+    } else if stripped.is_empty() {
+        format!("Open link {}", index + 1)
     } else {
-        host.to_string()
-    }
+        stripped.to_string()
+    };
+    format!("↗  {label}")
 }
 
 fn meta_line(label: &str, value: String) -> Element<'static, Msg> {
@@ -1353,5 +1482,21 @@ fn compose_editor_style(theme: &Theme, status: text_editor::Status) -> text_edit
         },
         value: p.background.base.text,
         selection: p.primary.weak.color,
+    }
+}
+
+fn body_editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
+    let p = theme.extended_palette();
+    let _ = status;
+    text_editor::Style {
+        background: Background::Color(Color::TRANSPARENT),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 0.0.into(),
+        },
+        placeholder: p.secondary.base.color,
+        value: p.background.base.text,
+        selection: theme::selection(),
     }
 }
