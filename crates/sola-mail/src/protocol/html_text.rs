@@ -2,9 +2,9 @@
 
 /// Convert HTML mail into plain text suitable for an iced scrollable.
 pub fn to_plain(html: &str) -> String {
-    // html2text wants a width for wrapping; 100 columns is a reasonable
-    // reading width inside a desktop pane.
-    let raw = match html2text::from_read(html.as_bytes(), 100) {
+    // Wide wrap width so long URLs stay on one line when possible; the link
+    // extractor also rejoins soft wraps if the converter still breaks them.
+    let raw = match html2text::from_read(html.as_bytes(), 200) {
         Ok(s) => s,
         Err(_) => {
             // Fallback: crude tag strip so the user still sees something.

@@ -933,7 +933,8 @@ impl App {
         meta = meta.push(meta_line("Date", date_s));
 
         let display = body.display_text();
-        let urls = extract_urls(&display);
+        // HTML hrefs + soft-wrap-aware text scan (line-broken URLs still clickable).
+        let urls = crate::protocol::links::links_for_message(body);
 
         let mut body_col = column![
             kit_text::body(display).width(Length::Fill),
@@ -943,15 +944,16 @@ impl App {
 
         if !urls.is_empty() {
             let mut link_col = column![kit_text::caption("Links").style(kit_text::muted)]
-                .spacing(SPACE_XS);
-            let mut link_row = row![].spacing(SPACE_SM);
-            for (i, u) in urls.into_iter().take(6).enumerate() {
+                .spacing(SPACE_SM);
+            for (i, u) in urls.into_iter().take(12).enumerate() {
                 let label = short_url_label(&u, i);
-                link_row = link_row.push(
-                    kit_btn::labeled_sm(label, kit_btn::ghost).on_press(Msg::OpenUrl(u)),
+                // Full-width row so long / wrapped targets stay one hit target.
+                link_col = link_col.push(
+                    kit_btn::labeled_sm(label, kit_btn::ghost)
+                        .on_press(Msg::OpenUrl(u))
+                        .width(Length::Fill),
                 );
             }
-            link_col = link_col.push(link_row);
             body_col = body_col.push(link_col);
         }
 
@@ -1197,20 +1199,6 @@ fn meta_line(label: &str, value: String) -> Element<'static, Msg> {
 
 fn field_label(label: &str) -> Element<'_, Msg> {
     kit_text::caption(label.to_string()).style(kit_text::muted).into()
-}
-
-fn extract_urls(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for token in text.split_whitespace() {
-        let t = token.trim_matches(|c: char| {
-            matches!(c, ')' | ']' | '>' | '"' | '\'' | ',' | '.' | ';' | ':')
-        });
-        if (t.starts_with("http://") || t.starts_with("https://")) && !out.iter().any(|u| u == t)
-        {
-            out.push(t.to_string());
-        }
-    }
-    out
 }
 
 fn v_hairline() -> Element<'static, Msg> {

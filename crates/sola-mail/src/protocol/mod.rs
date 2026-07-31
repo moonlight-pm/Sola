@@ -4,6 +4,7 @@ pub mod account;
 pub mod html_text;
 pub mod idle;
 pub mod imap;
+pub mod links;
 pub mod rules;
 pub mod sender;
 pub mod types;
