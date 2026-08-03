@@ -2,7 +2,9 @@
 
 ## Current
 
-**none**
+**opening-app** (branch `opening-app`, this worktree): menubar “Opening …” toast
+while launcher starts an app; clears on new matching window / fail / exit / 20s.
+Installed to `/opt/sola/bin/sola-shell` (direct cp; sudo install blocked here).
 
 ### Last completed
 
