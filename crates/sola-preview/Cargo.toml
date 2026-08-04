@@ -1,0 +1,18 @@
+[package]
+name = "sola-preview"
+version = "0.1.0"
+edition = "2024"
+
+# Screenshot / image viewer (macOS Preview–like for captures).
+# Opened by sola-shell after Super+Shift+3/4/5, or via LaunchApp / OpenImage.
+
+[[bin]]
+name = "sola-preview"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "image"] }
+tracing = "0.1"

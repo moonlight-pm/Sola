@@ -459,7 +459,8 @@ pub struct CaptureScreenPayload {
     pub path: Option<PathBuf>,
     /// What to capture. `FullOutput` (default) captures the whole
     /// compositor output. `Window { app_id, title? }` captures the
-    /// region currently occupied by that window.
+    /// region currently occupied by that window. `Region` is an
+    /// absolute rectangle on the first `wl_output` (V1 single-output).
     #[serde(default)]
     pub target: CaptureTarget,
 }
@@ -472,11 +473,27 @@ pub enum CaptureTarget {
         app_id: String,
         title: Option<String>,
     },
+    /// Absolute compositor coordinates on the first output.
+    Region {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenshotPayload {
     pub result: Result<PathBuf, String>,
+}
+
+/// Ask sola-preview (or a future image viewer) to open a file.
+/// Ephemeral — same pattern as [`OpenUrlRequest`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenImageRequest {
+    pub path: PathBuf,
+    /// When true, the viewer should raise / take focus if it can.
+    pub activate: bool,
 }
 
 /// Synthesize a pointer event on the seat. Handled by sola-river via
@@ -663,6 +680,10 @@ define_topics! {
 
     // Browser
     OpenUrl(OpenUrlRequest),
+
+    // Image viewer (shell → sola-preview). Ephemeral; cold-start uses
+    // LaunchApp with a path arg instead.
+    OpenImage(OpenImageRequest),
 
     // Debug introspection (solactl ↔ apps via sola-app framework).
     Evaluate(EvaluatePayload),

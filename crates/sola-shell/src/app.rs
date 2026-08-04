@@ -17,6 +17,7 @@ use crate::launcher::state::LauncherState;
 use crate::menu::state::MenuCache;
 use crate::menubar;
 use crate::menubar::{FlashTarget, MenubarState};
+use crate::selection::state::SelectionState;
 use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
@@ -28,6 +29,7 @@ pub enum WindowKind {
     Menu,
     Launcher,
     Switcher,
+    Selection,
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +91,16 @@ pub enum Msg {
     FocusHoverFire { window_id: u32, generation: u64 },
     /// Cycle to the next window of the currently focused app (Meta+`).
     CycleAppWindows,
+    /// Super+Shift+4: open the selection marquee overlay.
+    OpenSelection,
+    /// Escape / cancel selection without capturing.
+    CloseSelection,
+    /// Pointer down on the selection overlay (compositor-space coords).
+    SelectionPress { x: f32, y: f32 },
+    /// Pointer move while dragging a selection.
+    SelectionMove { x: f32, y: f32 },
+    /// Pointer up — finish region capture if large enough.
+    SelectionRelease { x: f32, y: f32 },
     Noop,
 }
 
@@ -111,6 +123,7 @@ pub struct Shell {
     pub menu_window_id: Option<iced::window::Id>,
     pub launcher_window_id: Option<iced::window::Id>,
     pub switcher_window_id: Option<iced::window::Id>,
+    pub selection_window_id: Option<iced::window::Id>,
 
     // Focus
     pub focused_app_id: Option<String>,
@@ -161,6 +174,10 @@ pub struct Shell {
     pub calendar_month: chrono::NaiveDate,
     pub switcher: SwitcherState,
     pub launcher: LauncherState,
+    pub selection: SelectionState,
+    /// When true, the next `Topic::Screenshot` from sola-river should
+    /// open/raise sola-preview. Set only by shell hotkey / selection paths.
+    pub open_preview_on_next: bool,
     pub zoning: ZoningState,
 
     // Menubar state (clock, toast, label positions)
@@ -203,16 +220,18 @@ impl Shell {
             }
         }
 
-        // Pre-allocate window ids and produce open tasks for all four windows.
+        // Pre-allocate window ids and produce open tasks for all shell surfaces.
         let (menubar_id, menubar_task) = menubar::open_window();
         let (menu_id, menu_task) = crate::menu::open_window();
         let (launcher_id, launcher_task) = crate::launcher::open_window();
         let (switcher_id, switcher_task) = crate::switcher::open_window();
+        let (selection_id, selection_task) = crate::selection::open_window();
         let task = iced::Task::batch([
             menubar_task.map(|id| Msg::WindowOpened(WindowKind::Menubar, id)),
             menu_task.map(|id| Msg::WindowOpened(WindowKind::Menu, id)),
             launcher_task.map(|id| Msg::WindowOpened(WindowKind::Launcher, id)),
             switcher_task.map(|id| Msg::WindowOpened(WindowKind::Switcher, id)),
+            selection_task.map(|id| Msg::WindowOpened(WindowKind::Selection, id)),
         ]);
 
         let state = Self {
@@ -222,6 +241,7 @@ impl Shell {
             menu_window_id: Some(menu_id),
             launcher_window_id: Some(launcher_id),
             switcher_window_id: Some(switcher_id),
+            selection_window_id: Some(selection_id),
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -241,6 +261,8 @@ impl Shell {
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
+            selection: SelectionState::default(),
+            open_preview_on_next: false,
             zoning: ZoningState::new(),
             menubar: MenubarState::new(),
             stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
@@ -280,7 +302,8 @@ impl Shell {
     ///   3. App windows ordered by MRU (least recent first), per-app MRU window
     ///      on top of its siblings. Only click / switcher / map activation bumps
     ///      MRU (raise).
-    ///   4. Shell overlays when active (menu, switcher, launcher — launcher on top).
+    ///   4. Shell overlays when active (menu, switcher, launcher, selection —
+    ///      selection on top while capturing).
     pub fn emit_composition(&self) {
         let mut entries: Vec<CompositionEntry> = Vec::new();
 
@@ -335,6 +358,11 @@ impl Shell {
         }
         if self.launcher.active {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "launcher") {
+                entries.push(CompositionEntry { window_id: wid });
+            }
+        }
+        if self.selection.active {
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "selection") {
                 entries.push(CompositionEntry { window_id: wid });
             }
         }
@@ -411,7 +439,11 @@ impl Shell {
         // While any overlay is active, grab Escape so the user can dismiss it
         // regardless of which surface owns input focus. Deregistered as soon as
         // the overlay closes so terminal apps keep their Escape.
-        if self.launcher.active || self.switcher.active || self.menu_open {
+        if self.launcher.active
+            || self.switcher.active
+            || self.menu_open
+            || self.selection.active
+        {
             chords.push(RegisteredChord {
                 keysym: keys::KEYSYM_ESCAPE,
                 modifiers: 0,
@@ -453,9 +485,10 @@ impl Shell {
         bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::Q.meta());     // Meta+Q → close focused app
-        // Super+Shift+3 full output / Super+Shift+4 focused window (macOS-style).
+        // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
         bindings.push(KeyCode::KEY_3.meta_shift());
         bindings.push(KeyCode::KEY_4.meta_shift());
+        bindings.push(KeyCode::KEY_5.meta_shift());
 
         // Meta+Numpad zones a window.
         for &raw in crate::zoning::ZONING_KEYCODES {
@@ -491,6 +524,19 @@ impl Shell {
             // switcher view centers a grid that grows to fit the open apps.
             // (Previously a fixed 800x400 frame, which clipped the grid.)
             if let Some(f) = self.zoning.default_app_frame(wid) { frames.push(f); }
+        }
+        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "selection") {
+            // Full output at 0,0 so marquee coords match compositor space.
+            if let Some((w, h)) = self.zoning.output_size {
+                frames.push(FrameUpdate {
+                    window_id: wid,
+                    x: 0,
+                    y: 0,
+                    width: w,
+                    height: h,
+                    fullscreen: false,
+                });
+            }
         }
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID { continue; }
@@ -535,6 +581,9 @@ impl Shell {
         }
         if Some(window) == self.switcher_window_id {
             return "switcher".to_string();
+        }
+        if Some(window) == self.selection_window_id {
+            return "selection".to_string();
         }
         Self::APP_ID.to_string()
     }
@@ -997,6 +1046,70 @@ impl Shell {
                 self.focus_window_from_pointer(window_id);
                 iced::Task::none()
             }
+            Msg::OpenSelection => {
+                // Dismiss other overlays so the marquee is alone on top.
+                if self.launcher.active {
+                    self.launcher.active = false;
+                }
+                if self.switcher.active {
+                    self.switcher.active = false;
+                }
+                if self.menu_open {
+                    self.menu_open = false;
+                    self.open_panel = None;
+                }
+                self.selection.begin();
+                self.emit_composition();
+                self.emit_registered_chords();
+                // Focus the selection surface so canvas gets pointer/keyboard.
+                if let Some(wid) = self.lookup_window_id(Self::APP_ID, "selection") {
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
+                }
+                iced::Task::none()
+            }
+            Msg::CloseSelection => {
+                self.selection.cancel();
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::SelectionPress { x, y } => {
+                self.selection.press(x, y);
+                iced::Task::none()
+            }
+            Msg::SelectionMove { x, y } => {
+                self.selection.move_to(x, y);
+                iced::Task::none()
+            }
+            Msg::SelectionRelease { x, y } => {
+                self.selection.move_to(x, y);
+                let region = self.selection.finish_region();
+                // Hide overlay before capture so the marquee/scrim is not
+                // in the PNG (Composition precedes CaptureScreen on the bus).
+                self.emit_composition();
+                self.emit_registered_chords();
+                let Some((rx, ry, rw, rh)) = region else {
+                    tracing::info!("selection cancelled (too small or empty)");
+                    return iced::Task::none();
+                };
+                tracing::info!(x = rx, y = ry, w = rw, h = rh, "selection capture");
+                self.open_preview_on_next = true;
+                if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                    use sola_bus::topics::{CaptureScreenPayload, CaptureTarget};
+                    let _ = bus.emit(Topic::CaptureScreen(CaptureScreenPayload {
+                        path: None,
+                        target: CaptureTarget::Region {
+                            x: rx,
+                            y: ry,
+                            width: rw,
+                            height: rh,
+                        },
+                    }));
+                }
+                iced::Task::none()
+            }
             Msg::CycleAppWindows => {
                 // Find all windows of the focused app and cycle to the next.
                 let Some(ref app_id) = self.focused_app_id.clone() else {
@@ -1052,6 +1165,9 @@ impl Shell {
         }
         if Some(window) == self.switcher_window_id {
             return crate::switcher::view::view(self);
+        }
+        if Some(window) == self.selection_window_id {
+            return crate::selection::view::view(self);
         }
         // Fallback — shouldn't happen under normal operation.
         iced::widget::container(iced::widget::text(""))

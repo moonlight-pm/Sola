@@ -197,6 +197,30 @@ pub fn handle(state: &mut AppData, req: CaptureScreenPayload) {
             );
             manager.capture_output_region(0, &output, x, y, w, h, &qh, ())
         }
+        CaptureTarget::Region {
+            x,
+            y,
+            width,
+            height,
+        } => {
+            let (x, y, width, height) = (*x, *y, *width, *height);
+            if width <= 0 || height <= 0 {
+                emit_err(
+                    state,
+                    format!("invalid region size: {width}×{height}"),
+                );
+                return;
+            }
+            info!(
+                path = %path.display(),
+                x,
+                y,
+                width,
+                height,
+                "screenshot: explicit region"
+            );
+            manager.capture_output_region(0, &output, x, y, width, height, &qh, ())
+        }
     };
 
     state.screenshot.flight = Some(CaptureFlight {

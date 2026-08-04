@@ -4941,6 +4941,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-preview"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "tracing",
+]
+
+[[package]]
 name = "sola-river"
 version = "0.1.0"
 dependencies = [
