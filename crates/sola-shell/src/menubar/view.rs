@@ -1,8 +1,12 @@
 //! Menubar window view.
 //!
 //! Layout (left-to-right):
-//!   [≡] [App Name] [Menu1] [Menu2] … ──────────────── [toast] [stats] [clock]
+//!   [≡] [App Name] [Menu1] [Menu2] … ──────────────── [stats] [clock]
 //!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
+//!
+//! Transient toasts are overlaid at the **horizontal center** of the bar
+//! (not in the right cluster), so short status like "Opening Terminal…"
+//! reads as bar-level feedback rather than a trailing status item.
 //!
 //! Type matches macOS menu bar: one chrome face throughout (labels, stats,
 //! clock). Focused-app name is bold (macOS application menu title). Colours
@@ -12,7 +16,7 @@
 //! Hit targets are full bar height ([`BAR_H`] = window height) so a pointer
 //! at y=0 on the screen still activates a menu title.
 
-use iced::widget::{container, mouse_area, row, text};
+use iced::widget::{container, mouse_area, row, stack, text};
 use iced::{Alignment, Color, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon_colored;
@@ -170,8 +174,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // ── App-menu labels (menus[1..]) ──────────────────────────────────
     let menu_labels: Vec<Element<'_, Msg>> = app_menu_labels(shell);
 
-    // ── Right cluster: toast + clock ─────────────────────────────────
-    let toast = toast_widget(mb.toast.as_deref());
+    // ── Right cluster: stats + clock (toast is centered overlay) ─────
     let clock_active = shell.menu_open && shell.open_panel == Some(crate::app::Panel::Calendar);
     let clock: Element<'_, Msg> = bar_button(
         clock_widget(&mb.clock_now),
@@ -257,23 +260,43 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     cluster.push(tx_btn);
     cluster.push(clock);
 
+    // Base chrome: left menus | flexible gap | right stats/clock.
     // Fixed BAR_H root — matches the window size so children with Fixed(BAR_H)
     // are not shrink-wrapped / vertically centred with a dead band at y=0.
-    container(
-        row![
-            row(left).height(Length::Fixed(BAR_H)),
-            iced::widget::Space::new().width(Length::Fill),
-            toast,
-            iced::widget::row(cluster)
-                .spacing(CLUSTER_SPACING)
-                .height(Length::Fixed(BAR_H)),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fixed(BAR_H)),
-    )
+    let base: Element<'_, Msg> = row![
+        row(left).height(Length::Fixed(BAR_H)),
+        iced::widget::Space::new().width(Length::Fill),
+        iced::widget::row(cluster)
+            .spacing(CLUSTER_SPACING)
+            .height(Length::Fixed(BAR_H)),
+    ]
     .width(Length::Fill)
     .height(Length::Fixed(BAR_H))
-    .into()
+    .into();
+
+    // Toast sits in the true horizontal center of the bar (window mid-line),
+    // layered above left/right chrome so asymmetric clusters don't pull it
+    // off center. Only stacked when a message is active so the fill overlay
+    // cannot sit idle over the chrome.
+    let bar: Element<'_, Msg> = if mb.toast.is_some() {
+        let toast_layer: Element<'_, Msg> = container(toast_widget(mb.toast.as_deref()))
+            .width(Length::Fill)
+            .height(Length::Fixed(BAR_H))
+            .center_x(Length::Fill)
+            .align_y(Alignment::Center)
+            .into();
+        stack![base, toast_layer]
+            .width(Length::Fill)
+            .height(Length::Fixed(BAR_H))
+            .into()
+    } else {
+        base
+    };
+
+    container(bar)
+        .width(Length::Fill)
+        .height(Length::Fixed(BAR_H))
+        .into()
 }
 
 // ---------------------------------------------------------------------------
