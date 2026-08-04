@@ -61,6 +61,7 @@ pub enum Msg {
     /// Reset the calendar to the current month.
     CalendarToday,
     /// Expire the toast for `generation` if it matches the current generation.
+    /// Also clears a matching pending launch (opening feedback timeout).
     ToastExpire(u64),
     /// End a menubar shortcut-flash for `generation` if it's still current.
     MenuFlashExpire(u64),
@@ -98,6 +99,27 @@ pub enum Panel {
     Calendar,
     Stat(crate::stats::Metric),
 }
+
+/// In-flight launcher spawn waiting for a first matching window (or timeout).
+///
+/// Shows a menubar toast (`Opening {label}…`) so slow cold starts are not
+/// silent. Cleared when a new window with a matching `app_id` appears, on
+/// launch failure / early exit, or when the toast generation expires.
+#[derive(Debug, Clone)]
+pub struct PendingLaunch {
+    /// Catalog `app_id` from the launcher entry.
+    pub app_id: String,
+    /// `MenubarState::toast_generation` at the moment the opening toast was
+    /// pushed — used to ignore stale timeouts and clear only our toast.
+    pub toast_generation: u64,
+    /// Window ids already present for this app at launch time. A resolve
+    /// requires a **new** window so re-launching an already-open app does not
+    /// dismiss against the existing surface.
+    pub existing_wids: HashSet<u32>,
+}
+
+/// How long the "Opening …" toast stays up if no matching window appears.
+const OPENING_TOAST_SECS: u64 = 20;
 
 pub struct Shell {
     pub theme: iced::Theme,
@@ -165,6 +187,9 @@ pub struct Shell {
 
     // Menubar state (clock, toast, label positions)
     pub menubar: MenubarState,
+
+    /// Launcher spawn waiting for a matching window, if any.
+    pub pending_launch: Option<PendingLaunch>,
 
     /// Latest system-stats sample for the menubar indicators + panels.
     pub stats: std::sync::Arc<crate::stats::Snapshot>,
@@ -243,6 +268,7 @@ impl Shell {
             launcher: LauncherState::default(),
             zoning: ZoningState::new(),
             menubar: MenubarState::new(),
+            pending_launch: None,
             stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
             cpu_hist: crate::stats::History::new(60),
             mem_hist: crate::stats::History::new(60),
@@ -264,6 +290,100 @@ impl Shell {
         self.window_id_by_key
             .get(&(app_id.to_string(), title.to_string()))
             .copied()
+    }
+
+    // -------------------------------------------------------------------------
+    // Opening-app toast (launcher feedback)
+    // -------------------------------------------------------------------------
+
+    /// Whether a Wayland / catalog `window_app_id` belongs to `pending_app_id`.
+    ///
+    /// Exact match, ASCII case-insensitive match, or catalog
+    /// [`ApplicationsConfig::get_for_window`] hit whose key equals the
+    /// pending catalog id.
+    pub fn window_matches_pending_app(window_app_id: &str, pending_app_id: &str) -> bool {
+        window_app_id == pending_app_id || window_app_id.eq_ignore_ascii_case(pending_app_id)
+    }
+
+    /// Catalog-aware match: also accepts windows whose Wayland id resolves to
+    /// the pending catalog entry via case-insensitive lookup.
+    pub fn matches_pending_app(&self, window_app_id: &str, pending_app_id: &str) -> bool {
+        if Self::window_matches_pending_app(window_app_id, pending_app_id) {
+            return true;
+        }
+        self.applications
+            .get_for_window(window_app_id)
+            .is_some_and(|a| a.app_id == pending_app_id)
+    }
+
+    /// Push `Opening {label}…`, record pending launch state, schedule a 20s
+    /// timeout that clears both toast and pending if still current.
+    pub fn begin_opening(&mut self, app_id: &str, label: &str) -> iced::Task<Msg> {
+        let existing_wids: HashSet<u32> = self
+            .known_windows
+            .iter()
+            .filter(|w| self.matches_pending_app(&w.app_id, app_id))
+            .map(|w| w.window_id)
+            .collect();
+        self.menubar
+            .push_toast(format!("Opening {label}…"));
+        let toast_generation = self.menubar.toast_generation;
+        self.pending_launch = Some(PendingLaunch {
+            app_id: app_id.to_string(),
+            toast_generation,
+            existing_wids,
+        });
+        iced::Task::perform(
+            tokio::time::sleep(Duration::from_secs(OPENING_TOAST_SECS)),
+            move |_| Msg::ToastExpire(toast_generation),
+        )
+    }
+
+    /// Drop pending launch (and its toast, if still current) when a matching
+    /// **new** window appears in `known_windows`.
+    pub fn resolve_pending_launch_if_window(&mut self) {
+        let Some(pending) = self.pending_launch.as_ref() else {
+            return;
+        };
+        let app_id = pending.app_id.clone();
+        let existing = pending.existing_wids.clone();
+        let toast_gen = pending.toast_generation;
+        let appeared = self.known_windows.iter().any(|w| {
+            !existing.contains(&w.window_id) && self.matches_pending_app(&w.app_id, &app_id)
+        });
+        if appeared {
+            self.clear_pending_launch(Some(toast_gen));
+        }
+    }
+
+    /// Clear `pending_launch`. When `toast_generation` is `Some` and still
+    /// matches the menubar toast, expire that toast too. When `None`, clear
+    /// pending without touching a toast that may already have been replaced
+    /// (caller will push a failure/exit toast next).
+    pub fn clear_pending_launch(&mut self, toast_generation: Option<u64>) {
+        let Some(pending) = self.pending_launch.take() else {
+            return;
+        };
+        if let Some(toast_gen) = toast_generation {
+            if pending.toast_generation == toast_gen {
+                self.menubar.expire_toast(toast_gen);
+            }
+        }
+    }
+
+    /// If there is a pending launch for `app_id` (case-insensitive), take it
+    /// without expiring its toast — the caller will push a replacement toast
+    /// or clear the opening toast via the returned generation.
+    pub fn take_pending_for_app(&mut self, app_id: &str) -> Option<PendingLaunch> {
+        let matches = self
+            .pending_launch
+            .as_ref()
+            .is_some_and(|p| Self::window_matches_pending_app(&p.app_id, app_id));
+        if matches {
+            self.pending_launch.take()
+        } else {
+            None
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -758,6 +878,13 @@ impl Shell {
             }
             Msg::ToastExpire(toast_gen) => {
                 self.menubar.expire_toast(toast_gen);
+                if self
+                    .pending_launch
+                    .as_ref()
+                    .is_some_and(|p| p.toast_generation == toast_gen)
+                {
+                    self.pending_launch = None;
+                }
                 iced::Task::none()
             }
             Msg::MenuFlashExpire(flash_gen) => {
@@ -915,16 +1042,20 @@ impl Shell {
                     .filtered_ids
                     .get(self.launcher.selected)
                     .cloned();
+                let mut opening = iced::Task::none();
                 if let Some(ref id) = app_id {
                     if let Some(app) = self.applications.get(id) {
+                        let command = app.command.clone();
+                        let label = app.label.clone();
                         if let Ok(mut bus) = sola_kit::app::bus().lock() {
                             let _ = bus.emit(Topic::LaunchApp(
                                 sola_bus::topics::LaunchAppPayload {
                                     app_id: id.clone(),
-                                    command: app.command.clone(),
+                                    command,
                                 },
                             ));
                         }
+                        opening = self.begin_opening(id, &label);
                     }
                 }
                 self.launcher.active = false;
@@ -936,7 +1067,7 @@ impl Shell {
                         let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
                     }
                 }
-                iced::Task::none()
+                opening
             }
             // --- Switcher ---
             Msg::SwitcherNav { next } => {
@@ -1058,5 +1189,87 @@ impl Shell {
             .width(iced::Length::Fill)
             .height(iced::Length::Fill)
             .into()
+    }
+}
+
+#[cfg(test)]
+mod pending_launch_tests {
+    use super::*;
+
+    #[test]
+    fn window_matches_pending_app_exact_and_case_insensitive() {
+        assert!(Shell::window_matches_pending_app("sola-terminal", "sola-terminal"));
+        assert!(Shell::window_matches_pending_app("Orca", "orca"));
+        assert!(Shell::window_matches_pending_app("orca", "Orca"));
+        assert!(!Shell::window_matches_pending_app("sola-browser", "sola-terminal"));
+    }
+
+    #[test]
+    fn resolve_requires_new_window_id() {
+        let mut shell = Shell {
+            theme: theme::default_theme(),
+            style: theme::ShellStyle::default(),
+            menubar_window_id: None,
+            menu_window_id: None,
+            launcher_window_id: None,
+            switcher_window_id: None,
+            focused_app_id: None,
+            focused_window_id: None,
+            pointer_window_id: None,
+            pending_focus_generation: 0,
+            mru_apps: Vec::new(),
+            mru_window_by_app: HashMap::new(),
+            known_windows: vec![Window {
+                window_id: 1,
+                app_id: "sola-terminal".into(),
+                title: "Terminal".into(),
+                pid: None,
+            }],
+            window_id_by_key: HashMap::new(),
+            applications: ApplicationsConfig {
+                apps: crate::builtins::builtin_apps(),
+            },
+            menus: MenuCache::new(),
+            output_size: None,
+            menu_open: false,
+            menu_anchor_x: 0.0,
+            current_open_index: None,
+            current_open_is_system: false,
+            open_panel: None,
+            calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
+            switcher: SwitcherState::default(),
+            launcher: LauncherState::default(),
+            zoning: ZoningState::new(),
+            menubar: MenubarState::new(),
+            pending_launch: Some(PendingLaunch {
+                app_id: "sola-terminal".into(),
+                toast_generation: 1,
+                existing_wids: HashSet::from([1]),
+            }),
+            stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
+            cpu_hist: crate::stats::History::new(60),
+            mem_hist: crate::stats::History::new(60),
+            net_down_hist: crate::stats::History::new(60),
+            net_up_hist: crate::stats::History::new(60),
+            gpu_hist: crate::stats::History::new(60),
+        };
+        shell.menubar.toast_generation = 1;
+        shell.menubar.toast = Some("Opening Terminal…".into());
+
+        // Existing window only — still pending.
+        shell.resolve_pending_launch_if_window();
+        assert!(shell.pending_launch.is_some());
+        assert_eq!(shell.menubar.toast.as_deref(), Some("Opening Terminal…"));
+
+        // New matching window resolves.
+        shell.known_windows.push(Window {
+            window_id: 2,
+            app_id: "sola-terminal".into(),
+            title: "Terminal".into(),
+            pid: None,
+        });
+        shell.resolve_pending_launch_if_window();
+        assert!(shell.pending_launch.is_none());
+        assert!(shell.menubar.toast.is_none());
     }
 }

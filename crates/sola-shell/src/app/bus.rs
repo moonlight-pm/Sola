@@ -29,7 +29,11 @@ impl Shell {
         match topic {
             Topic::Theme(t) => { self.on_theme(t); Task::none() }
             Topic::OutputGeometry(g) => { self.on_output_geometry(g); Task::none() }
-            Topic::Windows(w) => { self.on_windows(w); Task::none() }
+            Topic::Windows(w) => {
+                self.on_windows(w);
+                self.resolve_pending_launch_if_window();
+                Task::none()
+            }
             Topic::SetAppMenu(m) => { self.on_set_app_menu(m); Task::none() }
             Topic::Application(a) => { self.on_application(a); Task::none() }
             Topic::Chord(c) => self.on_chord(c),
@@ -405,11 +409,14 @@ impl Shell {
     // -------------------------------------------------------------------------
 
     /// Receive the result of a Topic::LaunchApp request.
-    /// On failure: surface a toast in the menubar and schedule its expiry.
+    /// On failure: drop any opening toast and surface a failure toast.
+    /// On success: leave the opening toast until a matching window appears
+    /// (or the opening timeout fires).
     fn on_launch_result(&mut self, r: LaunchResultPayload) -> Task<Msg> {
         if r.ok {
             return Task::none();
         }
+        let _ = self.take_pending_for_app(&r.app_id);
         let msg = format!(
             "Failed to launch {}: {}",
             r.app_id,
@@ -429,7 +436,11 @@ impl Shell {
     /// are silent — the legacy shell toasted on all exits but that was noisy
     /// for apps that self-close (e.g. a settings dialog that writes its config
     /// and exits). This divergence is intentional.
+    ///
+    /// If we were still showing "Opening …" for this app, clear that pending
+    /// state either way so a hung toast does not outlive a dead process.
     fn on_user_app_exited(&mut self, e: UserAppExitedPayload) -> Task<Msg> {
+        let pending = self.take_pending_for_app(&e.app_id);
         let msg = if let Some(sig) = e.signal {
             format!("{} killed (signal {})", e.app_id, sig)
         } else {
@@ -437,6 +448,11 @@ impl Shell {
             if code != 0 {
                 format!("{} exited (code {})", e.app_id, code)
             } else {
+                // Clean exit: if we were mid-open, drop the opening toast so
+                // it does not sit until the 20s timeout with no window.
+                if let Some(p) = pending {
+                    self.menubar.expire_toast(p.toast_generation);
+                }
                 return Task::none();
             }
         };
