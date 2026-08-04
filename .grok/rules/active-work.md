@@ -2,11 +2,13 @@
 
 ## Current
 
-**opening-app** (branch `opening-app`, this worktree): menubar “Opening …” toast
-while launcher starts an app; clears on new matching window / fail / exit / 20s.
-Installed to `/opt/sola/bin/sola-shell` (direct cp; sudo install blocked here).
+**none**
 
 ### Last completed
+
+**opening-app → master**: Menubar “Opening {label}…” toast while launcher
+starts an app; clears on new matching window / fail / exit / 20s timeout.
+Toast centered in the menubar (overlay), not the right stats cluster.
 
 **sola-kvm-performance → master**: Key auto-repeat (Linux EV_KEY=2 → wire
 `pressed=2` + Mac `kCGKeyboardEventAutorepeat`) and remote lag fixes (poll
