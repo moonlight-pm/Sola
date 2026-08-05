@@ -516,28 +516,35 @@ impl Shell {
             .find(|w| w.app_id == PREVIEW_ID)
             .map(|w| w.window_id);
 
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            if let Some(window_id) = preview_wid {
-                // activate:false — viewer should load the image but not
-                // demand seat focus (shell keeps keyboard on the prior app).
+        if let Some(window_id) = preview_wid {
+            // activate:false — viewer should load the image but not
+            // demand seat focus (shell keeps keyboard on the prior app).
+            //
+            // IMPORTANT: do not call `emit_composition` (or any other
+            // helper that locks the bus) while holding `bus().lock()` —
+            // `std::sync::Mutex` is not reentrant and deadlocks the
+            // shell (frozen menubar / FFM / chords after screenshot).
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
                 let _ = bus.emit(Topic::OpenImage(OpenImageRequest {
                     path: path.to_path_buf(),
                     activate: false,
                 }));
-                // Raise via MRU so composition puts preview on top.
-                self.mru_apps.retain(|id| id != PREVIEW_ID);
-                self.mru_apps.insert(0, PREVIEW_ID.to_string());
-                self.mru_window_by_app
-                    .insert(PREVIEW_ID.to_string(), window_id);
-                self.emit_composition();
-            } else {
-                // sola-session splits the command on whitespace (no shell).
-                // Screenshot paths are `/tmp/sola/screenshots/<ms>.png` —
-                // no spaces — so a bare path is safe.
-                // Suppress the normal "new app maps → steal focus" path so
-                // the cold-start preview doesn't yank the keyboard.
-                self.suppress_map_focus_for = Some(PREVIEW_ID.to_string());
-                let command = format!("/opt/sola/bin/sola-preview {}", path.display());
+            }
+            // Raise via MRU so composition puts preview on top.
+            self.mru_apps.retain(|id| id != PREVIEW_ID);
+            self.mru_apps.insert(0, PREVIEW_ID.to_string());
+            self.mru_window_by_app
+                .insert(PREVIEW_ID.to_string(), window_id);
+            self.emit_composition();
+        } else {
+            // sola-session splits the command on whitespace (no shell).
+            // Screenshot paths are `/tmp/sola/screenshots/<ms>.png` —
+            // no spaces — so a bare path is safe.
+            // Suppress the normal "new app maps → steal focus" path so
+            // the cold-start preview doesn't yank the keyboard.
+            self.suppress_map_focus_for = Some(PREVIEW_ID.to_string());
+            let command = format!("/opt/sola/bin/sola-preview {}", path.display());
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
                 let _ = bus.emit(Topic::LaunchApp(LaunchAppPayload {
                     app_id: PREVIEW_ID.to_string(),
                     command,

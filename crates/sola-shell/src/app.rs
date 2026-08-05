@@ -780,41 +780,42 @@ impl Shell {
     pub fn subscription(&self) -> iced::Subscription<Msg> {
         use iced::time;
 
-        let mut subs = vec![
+        // IMPORTANT: keep this recipe **stable**. Toggling optional
+        // subscriptions (e.g. only listening to keyboard while the launcher
+        // is open) rebuilds the whole batch and restarts `bus_subscription`.
+        // A race in the bus poller handoff used to return an *empty* stream
+        // forever after that — shell looked frozen (no FFM, no chords, stale
+        // menubar). Always register the same set; gate behaviour in update.
+        let kb = iced::keyboard::listen().map(|event| {
+            use iced::keyboard::key::Named;
+            use iced::keyboard::{Event, Key};
+            match event {
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowUp),
+                    ..
+                } => Msg::LauncherNav { up: true },
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowDown),
+                    ..
+                } => Msg::LauncherNav { up: false },
+                Event::KeyPressed {
+                    key: Key::Named(Named::Enter),
+                    ..
+                } => Msg::Launch,
+                Event::KeyPressed {
+                    key: Key::Named(Named::Escape),
+                    ..
+                } => Msg::CloseLauncher,
+                _ => Msg::Noop,
+            }
+        });
+
+        iced::Subscription::batch([
             sola_kit::app::bus_subscription().map(Msg::Bus),
             time::every(Duration::from_secs(10)).map(|_| Msg::ClockTick),
             crate::stats::subscription().map(Msg::StatsTick),
-        ];
-
-        // While the launcher is active, subscribe to keyboard events so
-        // ArrowUp/Down, Enter, and Escape route to launcher messages.
-        // Printable characters are already handled by the text input's
-        // on_input callback (→ Msg::LauncherQuery). Only navigation keys
-        // need explicit routing here; they would otherwise be eaten by the
-        // chord-dispatch guard in on_chord that eats all chords while
-        // launcher.active is true.
-        if self.launcher.active {
-            let kb = iced::keyboard::listen().map(|event| {
-                use iced::keyboard::{Event, Key};
-                use iced::keyboard::key::Named;
-                match event {
-                    Event::KeyPressed { key: Key::Named(Named::ArrowUp), .. } => {
-                        Msg::LauncherNav { up: true }
-                    }
-                    Event::KeyPressed { key: Key::Named(Named::ArrowDown), .. } => {
-                        Msg::LauncherNav { up: false }
-                    }
-                    Event::KeyPressed { key: Key::Named(Named::Enter), .. } => Msg::Launch,
-                    Event::KeyPressed { key: Key::Named(Named::Escape), .. } => {
-                        Msg::CloseLauncher
-                    }
-                    _ => Msg::Noop,
-                }
-            });
-            subs.push(kb);
-        }
-
-        iced::Subscription::batch(subs)
+            kb,
+        ])
     }
 
     pub fn update(&mut self, msg: Msg) -> iced::Task<Msg> {
@@ -1013,6 +1014,9 @@ impl Shell {
                 ))
             }
             Msg::CloseLauncher => {
+                if !self.launcher.active {
+                    return iced::Task::none();
+                }
                 self.launcher.active = false;
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -1030,6 +1034,11 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::LauncherNav { up } => {
+                // Keyboard sub is always live (stable subscription recipe);
+                // ignore nav when the launcher is closed.
+                if !self.launcher.active {
+                    return iced::Task::none();
+                }
                 let len = self.launcher.filtered_ids.len();
                 if len == 0 {
                     return iced::Task::none();
@@ -1042,6 +1051,9 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::Launch => {
+                if !self.launcher.active {
+                    return iced::Task::none();
+                }
                 let app_id = self
                     .launcher
                     .filtered_ids
