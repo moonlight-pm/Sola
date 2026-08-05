@@ -2,15 +2,14 @@
 
 ## Current
 
-**fix/bus-restart-output-geometry** (worktree
-`.worktrees/bus-restart-output-geometry`) — menubar mid-screen after
-simultaneous bus/river/shell reinstall.
-
-Bus restart wipes in-memory sticky `OutputGeometry`. River used to
-reconnect without re-subscribing or re-emitting geometry; shell then
-never frames the menubar and river default-centers the 28px bar.
+**none**
 
 ### Last completed
+
+**bus-restart-output-geometry → master**: Survive bus restart so the
+menubar stays framed. River re-subscribes + re-emits OutputGeometry /
+Windows / geometry / floating on reconnect; kit poller reconnects +
+resubscribes; shell re-emits chords on OutputGeometry.
 
 **sola-mail → master**: Kit-native mail client (`crates/sola-mail`) — IMAP/SMTP
 worker, graphite three-pane UI, Helium URL open, IDLE multi-client refresh,
