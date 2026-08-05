@@ -32,6 +32,11 @@ use sola_core::KeyChord;
 /// A static is the natural fit; thread-locals are the alternative.
 static BUS: OnceLock<Arc<Mutex<BusClient>>> = OnceLock::new();
 
+/// Topic kinds the process subscribed to at install time. Replayed on
+/// bus reconnect so a sola-bus restart mid-session does not leave the
+/// app connected but deaf (and so sticky replays re-fire handlers).
+static BUS_KINDS: OnceLock<&'static [TopicKind]> = OnceLock::new();
+
 /// Borrow the process-wide bus. Panics if [`BusSetup::install`]
 /// has not been called yet — that's a setup-order bug, not a
 /// recoverable runtime condition.
@@ -140,6 +145,9 @@ impl BusSetup {
         client.connect_blocking(self.connect_timeout);
         tracing::info!(app_id = self.app_id, "bus connected");
         if let Some(kinds) = self.subscribe {
+            // Remember for reconnect — OnceLock so a second install panics
+            // above before we get here twice.
+            let _ = BUS_KINDS.set(kinds);
             if let Err(e) = client.subscribe(kinds) {
                 tracing::warn!("bus subscribe failed: {e}");
             }
@@ -331,7 +339,28 @@ fn ensure_bus_poller() {
     std::thread::spawn(|| {
         loop {
             let next = match bus().lock() {
-                Ok(guard) => {
+                Ok(mut guard) => {
+                    // sola-bus restart kills the reader thread. Reconnect and
+                    // re-subscribe so sticky OutputGeometry / Theme / Windows
+                    // replay into iced (shell frames the menubar from that).
+                    if !guard.is_connected() {
+                        match guard.connect() {
+                            Ok(()) => {
+                                tracing::info!("bus reconnected");
+                                if let Some(kinds) = BUS_KINDS.get() {
+                                    if let Err(e) = guard.subscribe(kinds) {
+                                        tracing::warn!("bus resubscribe failed: {e}");
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // Bus still down — don't spin.
+                                drop(guard);
+                                std::thread::sleep(Duration::from_millis(250));
+                                continue;
+                            }
+                        }
+                    }
                     guard.drain_notify();
                     guard.try_recv()
                 }

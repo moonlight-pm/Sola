@@ -75,11 +75,18 @@ impl Shell {
     }
 
     /// Store output geometry, emit frames for all windows, and emit composition.
+    ///
+    /// Also re-emits registered chords. After a sola-bus restart the sticky
+    /// chord map is empty; river re-publishes `OutputGeometry` on reconnect
+    /// (and sticky replay hits this path on shell re-subscribe), so this is
+    /// the natural place to restore shell grabs without a dedicated
+    /// reconnect topic.
     fn on_output_geometry(&mut self, g: OutputGeometry) {
         self.output_size = Some((g.width, g.height));
         self.zoning.set_output_size(&g);
         self.emit_all_frames();
         self.emit_composition();
+        self.emit_registered_chords();
     }
 
     /// Receive the full window list from sola-river.

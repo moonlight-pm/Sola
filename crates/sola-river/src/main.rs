@@ -5,7 +5,6 @@ use calloop::EventLoop;
 use calloop_wayland_source::WaylandSource;
 use tracing::{error, info};
 
-use sola_bus::topics::TopicKind;
 use sola_core::env::{SOLA_WAYLAND_NAME_FILE, wayland_socket};
 use sola_river::{bus, client};
 
@@ -30,23 +29,11 @@ fn main() {
     }
 
     let mut bus = bus::BusClient::new();
+    // Connect + subscribe. On later bus restarts `bus_tick` re-connects,
+    // re-subscribes (via `BusClient::ensure_connected`), and re-publishes
+    // sticky OutputGeometry / Windows so shell can frame the menubar again.
     bus.ensure_connected();
-    bus.subscribe(&[
-        TopicKind::Composition,
-        TopicKind::Frame,
-        TopicKind::Focus,
-        // Floating state gates interactive Meta+drag move/resize. Sticky, so
-        // subscribing replays the current float bit for every window (also on a
-        // sola-river restart). Without this, `floating` stays empty and every
-        // Meta-drag bails at the "not floating" guard.
-        TopicKind::WindowFloating,
-        TopicKind::RegisteredChords,
-        TopicKind::CloseApp,
-        TopicKind::CaptureScreen,
-        TopicKind::SimulatePointer,
-        TopicKind::SimulateKey,
-        TopicKind::Shutdown,
-    ]);
+    bus.subscribe(bus::SUBSCRIPTIONS);
 
     let (_conn, queue, mut data) = match client::connect(bus) {
         Ok(x) => x,

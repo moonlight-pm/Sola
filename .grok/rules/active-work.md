@@ -2,7 +2,13 @@
 
 ## Current
 
-**none**
+**fix/bus-restart-output-geometry** (worktree
+`.worktrees/bus-restart-output-geometry`) — menubar mid-screen after
+simultaneous bus/river/shell reinstall.
+
+Bus restart wipes in-memory sticky `OutputGeometry`. River used to
+reconnect without re-subscribing or re-emitting geometry; shell then
+never frames the menubar and river default-centers the 28px bar.
 
 ### Last completed
 

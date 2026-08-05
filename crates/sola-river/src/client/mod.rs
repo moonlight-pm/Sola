@@ -240,7 +240,14 @@ pub fn connect(
 /// and if pending is dirty, asks River to start a new manage cycle via
 /// `manage_dirty`.
 pub fn bus_tick(state: &mut AppData) {
-    state.bus.ensure_connected();
+    // sola-bus holds sticky topics only in memory. A bus restart wipes
+    // OutputGeometry / Windows; if we stay connected without re-emitting,
+    // a late shell (or a shell that also restarted for the install) never
+    // frames the menubar and river's default placement centers the 28px
+    // bar in the middle of the screen.
+    if state.bus.ensure_connected() {
+        republish_after_bus_reconnect(state);
+    }
     state.bus.drain_notify();
     // Screenshot PNG encode runs off-thread; deliver results here.
     screenshot::poll_results(state);
@@ -387,6 +394,47 @@ pub fn bus_tick(state: &mut AppData) {
                 tracing::warn!(%e, "wayland flush failed");
             }
         }
+    }
+}
+
+/// Re-publish sticky bus state after sola-bus restarts.
+///
+/// sola-bus keeps stickies in memory only. When the bus process is replaced
+/// (e.g. `cargo make install bus shell river` mid-session), every sticky is
+/// wiped. River still has live Wayland state; without re-emitting, a shell
+/// that comes up (or reconnects) never sees `OutputGeometry` and cannot
+/// frame the menubar — river then default-centers the 28px bar mid-screen.
+fn republish_after_bus_reconnect(state: &mut AppData) {
+    use sola_bus::topics::{OutputGeometry, Topic, WindowFloating};
+
+    if let Some((width, height)) = state.output_size {
+        info!(width, height, "re-emitting OutputGeometry after bus reconnect");
+        state
+            .bus
+            .emit(Topic::OutputGeometry(OutputGeometry { width, height }));
+    } else {
+        tracing::warn!("bus reconnected but output_size unknown; OutputGeometry not re-emitted");
+    }
+
+    // Windows list so shell can look up menubar/launcher/… by title again.
+    crate::translator::emit_windows(state);
+
+    // Live geometry for every window we already placed/sized — late
+    // subscribers (and shell float restore) need the sticky map rebuilt.
+    let ids: Vec<u32> = state.registry.as_windows().iter().map(|w| w.window_id).collect();
+    for window_id in ids {
+        crate::translator::emit_geometry(state, window_id);
+    }
+
+    // Re-assert floating bits we still track locally. Shell is the usual
+    // publisher, but after a bus wipe our local set is the authority until
+    // shell re-syncs via WindowFloating on its own restart.
+    let floating: Vec<u32> = state.floating.iter().copied().collect();
+    for window_id in floating {
+        state.bus.emit(Topic::WindowFloating(WindowFloating {
+            window_id,
+            floating: true,
+        }));
     }
 }
 
