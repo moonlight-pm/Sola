@@ -6,6 +6,10 @@
 
 ### Last completed
 
+**preview-enhancements → master**: sola-preview top header with legible
+filename + directory meta and a proper **Copy path** button (clipboard
+write + brief “Copied” feedback). Replaces the ad-hoc bottom path strip.
+
 **kvm-performance → master**: sola-kvm clipboard (CLIP1 TCP, Enter→Mac /
 Leave→Linux, hang-safe wl-copy), cold-enter IOPM/display wake, seat
 resilience (Leave spray, stuck modifiers, udev uaccess), metrics/priority.
@@ -36,7 +40,7 @@ Spec: `docs/specs/2026-07-30-sola-kvm-clipboard-design.md`
 - Edge hysteresis if thrash returns
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Remaining worktrees: `libei-portal` (archive/cleanup)
-- sola-preview: zoom, clipboard copy, solactl `--region`
+- sola-preview: zoom, image clipboard copy, solactl `--region`
 
 ### Resume
 
