@@ -1048,27 +1048,20 @@ impl App {
         }
         meta = meta.push(meta_line("Date", date_s));
 
-        // Links first (always clickable chips), then selectable body.
+        // Compact link chips (visible URLs only — see links_for_message).
         let mut article_col = column![meta].spacing(SPACE_LG).width(Length::Fill);
 
         if !self.body_links.is_empty() {
-            let mut link_col = column![
-                kit_text::caption(format!(
-                    "Links · click to open ({} found)",
-                    self.body_links.len()
-                ))
-                .style(kit_text::muted)
-            ]
-            .spacing(SPACE_SM)
-            .width(Length::Fill);
-            for (i, u) in self.body_links.iter().take(12).enumerate() {
+            let mut link_col =
+                column![kit_text::caption("Links").style(kit_text::muted)].spacing(SPACE_SM);
+            let mut link_row = row![].spacing(SPACE_SM);
+            for (i, u) in self.body_links.iter().take(8).enumerate() {
                 let label = short_url_label(u, i);
-                link_col = link_col.push(
-                    kit_btn::labeled(label, kit_btn::secondary)
-                        .on_press(Msg::OpenUrl(u.clone()))
-                        .width(Length::Fill),
+                link_row = link_row.push(
+                    kit_btn::labeled_sm(label, kit_btn::ghost).on_press(Msg::OpenUrl(u.clone())),
                 );
             }
+            link_col = link_col.push(link_row);
             article_col = article_col.push(link_col);
         }
 
