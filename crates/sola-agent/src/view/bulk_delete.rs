@@ -6,7 +6,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::form::checkbox_style;
 use sola_kit::components::style::{
-    hairline, RADIUS_LG, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS,
+    hairline, RADIUS_LG, RADIUS_MD, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;

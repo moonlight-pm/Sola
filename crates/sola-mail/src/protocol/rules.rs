@@ -45,15 +45,6 @@ pub fn rule_matches(rule: &MailRule, from: &str, subject: &str, to: &str) -> boo
     })
 }
 
-/// Smart mailbox display names from config rules.
-pub fn smart_mailbox_names(rules: &[MailRule]) -> Vec<String> {
-    rules
-        .iter()
-        .filter(|r| r.action == "smart_mailbox")
-        .map(|r| r.name.clone())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

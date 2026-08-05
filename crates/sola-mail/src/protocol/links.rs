@@ -34,7 +34,8 @@ fn push_unique(out: &mut Vec<String>, u: String) {
 }
 
 /// Pull `href="..."` / `href='...'` from HTML (case-insensitive attribute name).
-pub fn extract_hrefs(html: &str) -> Vec<String> {
+#[cfg(test)]
+fn extract_hrefs(html: &str) -> Vec<String> {
     let mut out = Vec::new();
     let bytes = html.as_bytes();
     let lower: Vec<u8> = html.bytes().map(|b| b.to_ascii_lowercase()).collect();
@@ -164,6 +165,7 @@ fn is_http_url(u: &str) -> bool {
     (l.starts_with("http://") || l.starts_with("https://")) && u.len() > 10
 }
 
+#[cfg(test)]
 fn normalize_url(raw: &str) -> String {
     let t = raw.trim();
     // HTML entities common in mail

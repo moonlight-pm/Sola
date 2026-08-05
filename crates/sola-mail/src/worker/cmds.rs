@@ -6,8 +6,6 @@ use crate::protocol::{Folder, MessageBody, MessageSummary};
 
 #[derive(Debug, Clone)]
 pub enum MailCmd {
-    /// Connect (or reconnect) using the worker's current config.
-    Connect,
     /// Push latest bus config; reconnects if already connected or credentials changed.
     Reconfigure(MailConfig),
     ListFolders,
@@ -43,7 +41,6 @@ pub enum MailCmd {
         body: String,
         in_reply_to: Option<String>,
     },
-    ApplyRules,
     Shutdown,
 }
 
@@ -71,25 +68,13 @@ pub enum MailEvent {
     },
     Body(MessageBody),
     Sent,
-    Moved {
-        folder: String,
-        uid: u32,
-        dest: String,
-    },
-    Emptied {
-        folder: String,
-    },
-    RulesApplied {
-        moved: u32,
-    },
+    Moved,
+    Emptied,
     /// IDLE saw remaining new mail after move-rules.
     NewMail,
     Error {
         context: String,
         message: String,
-    },
-    Disconnected {
-        reason: String,
     },
     /// Config present but incomplete — UI shows settings prompt.
     NotConfigured,

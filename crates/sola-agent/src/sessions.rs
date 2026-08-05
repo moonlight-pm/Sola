@@ -123,58 +123,6 @@ pub fn merge_with(
     out
 }
 
-/// Back-compat: list for a cwd (+ git root). Prefer [`list_all`] in the UI.
-pub fn list_for_cwd(cwd: &str) -> Vec<SessionSummary> {
-    let pins = overlay::load();
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for root in session_roots(cwd) {
-        let group = sessions_root().join(encode_cwd(&root));
-        collect_group(&group, &root, &pins, &mut seen, &mut out);
-    }
-    out.sort_by(|a, b| {
-        b.pinned
-            .cmp(&a.pinned)
-            .then(b.busy.cmp(&a.busy))
-            .then(b.updated.cmp(&a.updated))
-    });
-    out
-}
-
-fn session_roots(cwd: &str) -> Vec<String> {
-    let mut roots = vec![cwd.to_string()];
-    if let Some(git) = find_git_root(Path::new(cwd)) {
-        let g = git.to_string_lossy().into_owned();
-        if g != cwd {
-            roots.push(g);
-        }
-    }
-    roots
-        .into_iter()
-        .map(|r| {
-            PathBuf::from(&r)
-                .canonicalize()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or(r)
-        })
-        .collect()
-}
-
-fn find_git_root(start: &Path) -> Option<PathBuf> {
-    let mut cur = start.to_path_buf();
-    if let Ok(c) = cur.canonicalize() {
-        cur = c;
-    }
-    loop {
-        if cur.join(".git").exists() {
-            return Some(cur);
-        }
-        if !cur.pop() {
-            return None;
-        }
-    }
-}
-
 fn collect_group(
     group_path: &Path,
     group_cwd: &str,
@@ -565,11 +513,6 @@ pub struct HistorySlice {
     /// Absolute file byte where the first complete line of this slice began.
     pub start_byte: u64,
     pub has_older: bool,
-}
-
-/// Rebuild display turns from Grok `updates.jsonl` for a session (full file).
-pub fn turns_from_updates_jsonl(cwd: &str, id: &str) -> Vec<Turn> {
-    history_tail(cwd, id).turns
 }
 
 /// Load the **tail** of a session transcript for first paint.
@@ -1199,14 +1142,12 @@ mod tests {
         )
         .unwrap();
 
-        let list = list_for_cwd(cwd);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].title, "Hello");
-        let turns = turns_from_updates_jsonl(cwd, "abc-123");
-        assert!(matches!(&turns[0], Turn::User(s) if s == "hi"));
-        assert!(matches!(&turns[1], Turn::Assistant(s) if s == "yo"));
         let all = list_all();
         assert_eq!(all.len(), 1);
+        assert_eq!(all[0].title, "Hello");
+        let turns = history_tail(cwd, "abc-123").turns;
+        assert!(matches!(&turns[0], Turn::User(s) if s == "hi"));
+        assert!(matches!(&turns[1], Turn::Assistant(s) if s == "yo"));
         let title = derive_title_from_turns(&turns).unwrap();
         assert!(title.to_lowercase().contains("hi") || title.contains("yo"));
         unsafe {

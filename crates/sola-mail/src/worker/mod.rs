@@ -59,7 +59,6 @@ fn run() {
                     bridge::emit(MailEvent::NotConfigured);
                 }
             }
-            MailCmd::Connect => do_connect(&mut state),
             MailCmd::ListFolders => do_list_folders(&state),
             MailCmd::ListMessages {
                 folder,
@@ -79,7 +78,6 @@ fn run() {
                 body,
                 in_reply_to,
             } => do_send(&state, from, to, cc, subject, body, in_reply_to),
-            MailCmd::ApplyRules => do_apply_rules(&state),
         }
     }
     debug!("mail worker stopped");
@@ -405,7 +403,7 @@ fn do_move(state: &WorkerState, folder: String, uid: u32, dest: String) {
     };
     let mut c = client.lock().unwrap_or_else(|e| e.into_inner());
     match c.move_message(&folder, uid, &dest) {
-        Ok(()) => bridge::emit(MailEvent::Moved { folder, uid, dest }),
+        Ok(()) => bridge::emit(MailEvent::Moved),
         Err(e) => bridge::emit(MailEvent::Error {
             context: "move".into(),
             message: e.to_string(),
@@ -426,7 +424,7 @@ fn do_empty(state: &WorkerState, folder: String) {
     };
     let mut c = client.lock().unwrap_or_else(|e| e.into_inner());
     match c.empty_folder(&folder) {
-        Ok(()) => bridge::emit(MailEvent::Emptied { folder }),
+        Ok(()) => bridge::emit(MailEvent::Emptied),
         Err(e) => bridge::emit(MailEvent::Error {
             context: "empty_folder".into(),
             message: e.to_string(),
@@ -486,65 +484,6 @@ fn do_send(
             message: e.to_string(),
         }),
     }
-}
-
-fn do_apply_rules(state: &WorkerState) {
-    let Some(account) = state.account.clone() else {
-        bridge::emit(MailEvent::Error {
-            context: "apply_rules".into(),
-            message: "Not connected".into(),
-        });
-        return;
-    };
-    let move_rules: Vec<_> = account
-        .rules
-        .into_iter()
-        .filter(|r| r.action == "move")
-        .collect();
-    if move_rules.is_empty() {
-        bridge::emit(MailEvent::RulesApplied { moved: 0 });
-        return;
-    }
-    let client = match get_client(state) {
-        Ok(c) => c,
-        Err(e) => {
-            bridge::emit(MailEvent::Error {
-                context: "apply_rules".into(),
-                message: e,
-            });
-            return;
-        }
-    };
-    let mut c = client.lock().unwrap_or_else(|e| e.into_inner());
-    let messages = match c.list_messages("INBOX", 0, 500) {
-        Ok((m, _)) => m,
-        Err(e) => {
-            bridge::emit(MailEvent::Error {
-                context: "apply_rules".into(),
-                message: e.to_string(),
-            });
-            return;
-        }
-    };
-    let mut moved = 0u32;
-    for msg in &messages {
-        for rule in &move_rules {
-            if let Some(dest) = &rule.dest {
-                if rule_matches(rule, &msg.from, &msg.subject, &msg.to) {
-                    if let Err(e) = c.move_message("INBOX", msg.uid, dest) {
-                        warn!("apply_rules: move uid {} to {dest}: {e}", msg.uid);
-                    } else {
-                        moved += 1;
-                    }
-                    break;
-                }
-            }
-        }
-    }
-    if moved > 0 {
-        bridge::emit(MailEvent::NewMail);
-    }
-    bridge::emit(MailEvent::RulesApplied { moved });
 }
 
 fn apply_move_rules_on_idle(

@@ -307,7 +307,6 @@ pub(crate) enum Msg {
     TranscriptLoaded {
         load_gen: u64,
         id: String,
-        cwd: String,
         slice: sessions::HistorySlice,
         file_len: u64,
     },
@@ -324,8 +323,7 @@ pub(crate) enum Msg {
     PickerUse,
     PickerPick(String),
     PickerCancel,
-    // Rename
-    StartRename(String),
+    // Rename (started via double-click on SelectSession)
     RenameDraft(String),
     RenameCommit,
     RenameCancel,
@@ -587,7 +585,7 @@ impl App {
                     AgentEvent::Transcript {
                         from_watch: false,
                         ..
-                    } | AgentEvent::HistoryOlder { .. }
+                    }
                 );
                 self.on_event(ev);
                 let mut tasks = Vec::new();
@@ -705,7 +703,6 @@ impl App {
             Msg::TranscriptLoaded {
                 load_gen,
                 id,
-                cwd: _,
                 slice,
                 file_len,
             } => {
@@ -742,15 +739,6 @@ impl App {
                     return self.maybe_scroll_bottom();
                 }
                 return Task::none();
-            }
-            Msg::StartRename(id) => {
-                let draft = self
-                    .sessions
-                    .iter()
-                    .find(|s| s.id == id)
-                    .map(|s| s.title.clone())
-                    .unwrap_or_default();
-                self.rename = Some(RenameState { id, draft });
             }
             Msg::RenameDraft(s) => {
                 if let Some(r) = &mut self.rename {
@@ -1182,14 +1170,13 @@ impl App {
             .spawn(move || {
                 let slice = sessions::load_for_display(&load_cwd, &load_id);
                 let len = sessions::updates_file_len(&load_cwd, &load_id);
-                let _ = tx.send((load_id, load_cwd, slice, len));
+                let _ = tx.send((load_id, slice, len));
             })
             .expect("spawn history load");
         Task::perform(
             async move {
                 rx.await.unwrap_or_else(|_| {
                     (
-                        String::new(),
                         String::new(),
                         sessions::HistorySlice {
                             turns: Vec::new(),
@@ -1200,10 +1187,9 @@ impl App {
                     )
                 })
             },
-            move |(id, cwd, slice, file_len)| Msg::TranscriptLoaded {
+            move |(id, slice, file_len)| Msg::TranscriptLoaded {
                 load_gen,
                 id,
-                cwd,
                 slice,
                 file_len,
             },
@@ -1392,7 +1378,6 @@ impl App {
                 current,
                 latest,
                 update_available,
-                channel: _,
             } => {
                 if let Some(v) = current {
                     self.grok_version = Some(v);
@@ -1513,24 +1498,6 @@ impl App {
                     let len = sessions::updates_file_len(&cwd, &session_id);
                     self.cache_current_session(len);
                 }
-            }
-            AgentEvent::HistoryOlder {
-                session_id,
-                turns,
-                history_start_byte,
-                has_older,
-            } => {
-                if !self.is_open_session(&session_id) {
-                    return;
-                }
-                if !turns.is_empty() {
-                    let mut merged = turns;
-                    merged.append(&mut self.turns);
-                    self.turns = merged;
-                }
-                self.history_start_byte = history_start_byte;
-                self.has_older_history = has_older;
-                self.loading_older = false;
             }
             AgentEvent::UserEcho { session_id, text } => {
                 if !self.accepts_live_stream(&session_id) {

@@ -59,10 +59,6 @@ impl AcpClient {
         self.session_id.as_deref()
     }
 
-    pub fn prompt_inflight(&self) -> bool {
-        self.prompt_inflight
-    }
-
     pub fn initialize(&mut self) -> Result<(), String> {
         let result = self.request(
             "initialize",
@@ -169,16 +165,6 @@ impl AcpClient {
             }),
         )?;
         Ok(())
-    }
-
-    pub fn load_older_history(&mut self, id: &str, cwd: &str, before_byte: u64) {
-        let slice = sessions::history_before(cwd, id, before_byte);
-        bridge::emit(AgentEvent::HistoryOlder {
-            session_id: id.to_string(),
-            turns: slice.turns,
-            history_start_byte: slice.start_byte,
-            has_older: slice.has_older,
-        });
     }
 
     /// Start a prompt without blocking; completion arrives via `poll`.

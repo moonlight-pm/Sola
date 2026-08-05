@@ -112,10 +112,6 @@ impl Tabs {
         self.tabs.remove(id);
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.tabs.is_empty()
-    }
-
     pub fn tab_ids_in_order(&self) -> Vec<String> {
         let mut v: Vec<&Tab> = self.tabs.values().collect();
         v.sort_by(|a, b| a.ordinal.cmp(&b.ordinal).then(a.id.cmp(&b.id)));

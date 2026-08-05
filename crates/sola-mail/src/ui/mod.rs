@@ -38,7 +38,6 @@ pub enum Msg {
     SelectMessage(u32),
     SearchChanged(String),
     SearchSubmit,
-    ClearSearch,
     LoadMore,
     Compose,
     Reply { all: bool },
@@ -234,13 +233,6 @@ impl App {
                 self.search_active = true;
                 self.folder_loading = true;
                 mail_send(MailCmd::Search { query: q });
-                Task::none()
-            }
-            Msg::ClearSearch => {
-                self.search_active = false;
-                self.search_query.clear();
-                self.search_total = 0;
-                self.load_folder(self.selected_folder.clone());
                 Task::none()
             }
             Msg::LoadMore => {
@@ -586,16 +578,9 @@ impl App {
                 self.toast_undo = false;
                 mail_send(MailCmd::ListFolders);
             }
-            MailEvent::Moved { .. } => {}
-            MailEvent::Emptied { .. } => {
+            MailEvent::Moved => {}
+            MailEvent::Emptied => {
                 self.load_folder(self.selected_folder.clone());
-            }
-            MailEvent::RulesApplied { moved } => {
-                if moved > 0 {
-                    self.toast = Some(format!("Moved {moved} messages"));
-                    self.toast_undo = false;
-                    self.refresh_all();
-                }
             }
             MailEvent::NewMail => {
                 self.refresh_all();
@@ -609,11 +594,6 @@ impl App {
                 if context == "connect" {
                     self.connected = false;
                 }
-            }
-            MailEvent::Disconnected { reason } => {
-                self.connected = false;
-                self.toast = Some(reason);
-                self.toast_undo = false;
             }
         }
         Task::none()

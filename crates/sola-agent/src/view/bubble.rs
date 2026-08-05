@@ -79,7 +79,6 @@ fn gap_before(prev: Option<StreamKind>, cur: StreamKind) -> f32 {
         (Some(StreamKind::Tool) | Some(StreamKind::Meta), StreamKind::Agent) => 16.0,
         (Some(StreamKind::Agent), StreamKind::Agent) => 14.0,
         (Some(StreamKind::Agent), StreamKind::Tool | StreamKind::Meta) => 12.0,
-        _ => 10.0,
     }
 }
 

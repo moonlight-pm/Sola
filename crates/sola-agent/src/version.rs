@@ -14,7 +14,6 @@ pub struct GrokVersionInfo {
     pub current: Option<String>,
     pub latest: Option<String>,
     pub update_available: bool,
-    pub channel: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -23,7 +22,6 @@ struct CheckJson {
     current_version: Option<String>,
     latest_version: Option<String>,
     update_available: Option<bool>,
-    channel: Option<String>,
 }
 
 /// Run `grok update --check --json` (best-effort).
@@ -47,7 +45,6 @@ pub fn check_update() -> GrokVersionInfo {
             current: j.current_version,
             latest: j.latest_version,
             update_available: j.update_available.unwrap_or(false),
-            channel: j.channel,
         },
         Err(_) => {
             // Fallback: parse `grok --version` → "grok 0.2.112 (...)"
@@ -72,7 +69,6 @@ pub fn version_from_cli() -> GrokVersionInfo {
         current,
         latest: None,
         update_available: false,
-        channel: None,
     }
 }
 
@@ -97,6 +93,5 @@ fn emit_check() {
         current: info.current,
         latest: info.latest,
         update_available: info.update_available,
-        channel: info.channel,
     });
 }

@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct BackendSpec {
-    pub id: &'static str,
     pub label: &'static str,
     pub command: PathBuf,
     pub args: Vec<String>,
@@ -26,7 +25,6 @@ impl BackendSpec {
             args.push(sock.display().to_string());
         }
         Self {
-            id: "grok",
             label: "Grok",
             command: resolve_grok_binary(),
             args,
@@ -57,18 +55,6 @@ impl ConnectionMode {
     pub fn label(&self) -> crate::protocol::ConnectionModeLabel {
         match self {
             Self::Leader { .. } => crate::protocol::ConnectionModeLabel::Leader,
-        }
-    }
-
-    pub fn backend_label(&self) -> &str {
-        match self {
-            Self::Leader { bridge, .. } => bridge.label,
-        }
-    }
-
-    pub fn socket(&self) -> &Path {
-        match self {
-            Self::Leader { socket, .. } => socket,
         }
     }
 }

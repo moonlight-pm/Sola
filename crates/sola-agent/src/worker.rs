@@ -52,10 +52,7 @@ fn run(mode: ConnectionMode) {
         };
 
         match cmd {
-            AgentCmd::Shutdown => {
-                client = None;
-                break;
-            }
+            AgentCmd::Shutdown => break,
             AgentCmd::Restart | AgentCmd::EnsureConnected => {
                 client = connect(&mode);
             }
@@ -108,34 +105,6 @@ fn run(mode: ConnectionMode) {
                         }),
                     }
                 }
-            }
-            AgentCmd::SyncTranscript { id, cwd, live } => {
-                let slice = if live {
-                    sessions::history_tail_live(&cwd, &id)
-                } else {
-                    sessions::history_tail(&cwd, &id)
-                };
-                bridge::emit(AgentEvent::Transcript {
-                    session_id: id,
-                    turns: slice.turns,
-                    history_start_byte: slice.start_byte,
-                    has_older: slice.has_older,
-                    from_watch: true,
-                });
-            }
-            AgentCmd::LoadOlderHistory {
-                id,
-                cwd,
-                before_byte,
-            } => {
-                // File-only — never wait on ACP client presence.
-                let slice = sessions::history_before(&cwd, &id, before_byte);
-                bridge::emit(AgentEvent::HistoryOlder {
-                    session_id: id,
-                    turns: slice.turns,
-                    history_start_byte: slice.start_byte,
-                    has_older: slice.has_older,
-                });
             }
             AgentCmd::Send { text } => {
                 if client.is_none() {

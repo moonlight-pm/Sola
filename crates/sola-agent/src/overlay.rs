@@ -54,14 +54,6 @@ pub fn save(overlay: &Overlay) {
     }
 }
 
-pub fn toggle_pin(id: &str) {
-    let mut o = load();
-    if !o.pinned.remove(id) {
-        o.pinned.insert(id.to_string());
-    }
-    save(&o);
-}
-
 pub fn note_opened(id: &str, cwd: &str) {
     let mut o = load();
     o.last_cwd = Some(cwd.to_string());

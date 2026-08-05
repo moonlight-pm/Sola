@@ -23,7 +23,6 @@ pub enum AgentEvent {
         current: Option<String>,
         latest: Option<String>,
         update_available: bool,
-        channel: Option<String>,
     },
     SessionReady {
         id: String,
@@ -45,14 +44,6 @@ pub enum AgentEvent {
         has_older: bool,
         /// When true, this is a live watch re-read — preserve scroll stickiness.
         from_watch: bool,
-    },
-    /// Older history chunk to **prepend** (scroll-up load).
-    HistoryOlder {
-        /// Session this slice belongs to — UI drops stale emits after a fast switch.
-        session_id: String,
-        turns: Vec<Turn>,
-        history_start_byte: u64,
-        has_older: bool,
     },
     /// Local or remote user text. `session_id` is the Grok session UUID —
     /// never a display title (many sessions share a directory leaf title).
@@ -173,15 +164,6 @@ impl PermissionMode {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::AlwaysApprove => "always-approve",
-            Self::Default => "default",
-            Self::Auto => "auto",
-            Self::Plan => "plan",
-        }
-    }
-
     /// Client should auto-answer `session/request_permission` without a strip.
     pub fn auto_answers_permissions(self) -> bool {
         matches!(self, Self::AlwaysApprove)
@@ -275,19 +257,6 @@ pub enum AgentCmd {
     LoadSession {
         id: String,
         cwd: String,
-    },
-    /// Re-read the transcript tail from disk (optional live watch).
-    SyncTranscript {
-        id: String,
-        cwd: String,
-        /// When true, leave in-progress tool statuses as-is (live watch).
-        live: bool,
-    },
-    /// Load an older window of `updates.jsonl` ending at `before_byte`.
-    LoadOlderHistory {
-        id: String,
-        cwd: String,
-        before_byte: u64,
     },
     Send {
         text: String,
