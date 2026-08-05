@@ -84,6 +84,20 @@ impl EditBuffer {
     }
 }
 
+/// Single detail panel selection for the list+detail Applications UI.
+/// (Wired into update/view in later tasks; helpers/tests use it now.)
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // Closed is Default; Edit/Draft constructed once Task 2 lands
+pub enum Detail {
+    #[default]
+    Closed,
+    Edit {
+        orig: String,
+        buffer: EditBuffer,
+    },
+    Draft(EditBuffer),
+}
+
 #[derive(Default)]
 pub struct AppsState {
     pub drafts: Vec<DraftRow>,
@@ -93,6 +107,73 @@ pub struct AppsState {
     /// Inline error messages, keyed by `draft-<key>` or
     /// `app-<original_app_id>`.
     pub errors: BTreeMap<String, String>,
+    /// List+detail selection (new path; multi-draft/edit still active).
+    #[allow(dead_code)] // Task 2 wires update/view onto detail
+    pub detail: Detail,
+    /// Single detail-panel error (new path; multi-key `errors` still active).
+    #[allow(dead_code)] // Task 2 wires update/view onto error
+    pub error: Option<String>,
+}
+
+// Pure helpers for list+detail. Task 2 wires them into update/view;
+// until then they are only exercised by unit tests (binary crate lints
+// unused `pub` items).
+#[allow(dead_code)]
+/// Label if non-empty after trim, otherwise `app_id`.
+pub fn display_title(app: &Application) -> &str {
+    if app.label.trim().is_empty() {
+        app.app_id.as_str()
+    } else {
+        app.label.as_str()
+    }
+}
+
+#[allow(dead_code)]
+/// Case-insensitive sort key from [`display_title`].
+pub fn sort_key(app: &Application) -> String {
+    display_title(app).to_ascii_lowercase()
+}
+
+#[allow(dead_code)]
+/// Configured apps sorted by [`sort_key`], then `app_id`.
+pub fn sorted_apps(apps: &ApplicationsConfig) -> Vec<&Application> {
+    let mut v: Vec<&Application> = apps.apps.iter().collect();
+    v.sort_by(|a, b| {
+        sort_key(a)
+            .cmp(&sort_key(b))
+            .then_with(|| a.app_id.cmp(&b.app_id))
+    });
+    v
+}
+
+#[allow(dead_code)]
+/// Draft is dirty when any field has non-whitespace content.
+pub fn draft_is_dirty(buf: &EditBuffer) -> bool {
+    !buf.app_id.trim().is_empty()
+        || !buf.label.trim().is_empty()
+        || !buf.command.trim().is_empty()
+        || !buf.icon.trim().is_empty()
+}
+
+#[allow(dead_code)]
+/// Edit is dirty when the buffer differs from the canonical app.
+pub fn edit_is_dirty(buf: &EditBuffer, canonical: &Application) -> bool {
+    !buf.matches(canonical)
+}
+
+#[allow(dead_code)]
+/// Whether the user may leave the current detail without discard/save.
+/// Blank drafts and clean edits may leave; dirty draft/edit may not.
+pub fn can_leave_detail(detail: &Detail, apps: &ApplicationsConfig) -> bool {
+    match detail {
+        Detail::Closed => true,
+        Detail::Draft(buf) => !draft_is_dirty(buf),
+        Detail::Edit { orig, buffer } => match apps.get(orig) {
+            Some(canonical) => !edit_is_dirty(buffer, canonical),
+            // Canonical gone — treat as free to leave (on_apps_changed will close).
+            None => true,
+        },
+    }
 }
 
 static DRAFT_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -539,5 +620,86 @@ fn emit(topic: Topic) {
 fn retract(topic: Topic) {
     if let Err(e) = bus().lock().unwrap().retract(topic) {
         tracing::warn!("bus retract failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sola_bus::topics::Application;
+
+    fn app(id: &str, label: &str) -> Application {
+        Application {
+            app_id: id.into(),
+            label: label.into(),
+            command: "true".into(),
+            icon: String::new(),
+        }
+    }
+
+    #[test]
+    fn display_title_prefers_nonempty_label() {
+        assert_eq!(display_title(&app("x", "Chrome")), "Chrome");
+        assert_eq!(display_title(&app("x", "  ")), "x");
+        assert_eq!(display_title(&app("x", "")), "x");
+    }
+
+    #[test]
+    fn sorted_apps_orders_case_insensitive_by_label() {
+        let mut cfg = ApplicationsConfig::default();
+        cfg.apps = vec![
+            app("z", "chrome"),
+            app("a", "Bitwarden"),
+            app("m", "Signal"),
+        ];
+        let ids: Vec<&str> = sorted_apps(&cfg).iter().map(|a| a.app_id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "z", "m"]); // Bitwarden, chrome, Signal
+    }
+
+    #[test]
+    fn draft_dirty_when_any_field_nonempty() {
+        assert!(!draft_is_dirty(&EditBuffer::default()));
+        assert!(draft_is_dirty(&EditBuffer {
+            label: "x".into(),
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    fn can_leave_blank_draft_but_not_dirty_edit() {
+        let mut cfg = ApplicationsConfig::default();
+        let a = app("chrome", "Chrome");
+        cfg.apps.push(a.clone());
+
+        assert!(can_leave_detail(&Detail::Closed, &cfg));
+        assert!(can_leave_detail(
+            &Detail::Draft(EditBuffer::default()),
+            &cfg
+        ));
+        assert!(!can_leave_detail(
+            &Detail::Draft(EditBuffer {
+                command: "x".into(),
+                ..Default::default()
+            }),
+            &cfg
+        ));
+
+        let clean = EditBuffer::from_app(&a);
+        assert!(can_leave_detail(
+            &Detail::Edit {
+                orig: "chrome".into(),
+                buffer: clean.clone(),
+            },
+            &cfg
+        ));
+        let mut dirty = clean;
+        dirty.label = "Nope".into();
+        assert!(!can_leave_detail(
+            &Detail::Edit {
+                orig: "chrome".into(),
+                buffer: dirty,
+            },
+            &cfg
+        ));
     }
 }
