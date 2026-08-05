@@ -105,6 +105,17 @@ in
     # GPU subprocess for the kit. Both want a working GBM / EGL stack.
     hardware.graphics.enable = true;
 
+    # sola-kvm (evdev backend) needs RW on /dev/input/event* for EVIOCGRAB
+    # while remote. Re-plug creates *new* nodes that do not inherit old ACLs,
+    # so a one-shot setfacl always rots. TAG+="uaccess" lets logind grant the
+    # active seat user RW on every (re)plug; GROUP=input is a belt-and-braces
+    # path for users who are also in the input group.
+    users.groups.input = { };
+    services.udev.extraRules = ''
+      # sola-kvm: seat user can open input event nodes after re-plug
+      SUBSYSTEM=="input", KERNEL=="event[0-9]*", MODE="0660", GROUP="input", TAG+="uaccess"
+    '';
+
     # The sola binaries have several hardcoded `/opt/sola/*` paths
     # baked into the source (asset lookup, launcher app commands,
     # log destination, cursor theme path). Nix wants everything in

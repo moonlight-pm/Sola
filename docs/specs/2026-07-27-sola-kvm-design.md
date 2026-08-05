@@ -199,7 +199,9 @@ Map Linux evdev → Mac CGKeyCode table (subset for v1: letters, mods, arrows, S
 
 - TLS, pairing UI, certificate fingerprints  
 - Multi-client / multi-Mac / mesh  
-- Clipboard, file transfer  
+- Clipboard, file transfer — **clipboard text is a follow-on**: see
+  `docs/specs/2026-07-30-sola-kvm-clipboard-design.md` (TCP side channel,
+  worker thread, sync on Enter/Leave only, hash cache)
 - Bidirectional control (Mac controlling novus)  
 - GNOME/KDE portals, libei, Deskflow/Input Leap protocol compatibility  
 - Pixel-perfect multi-monitor beyond one virtual peer rect  

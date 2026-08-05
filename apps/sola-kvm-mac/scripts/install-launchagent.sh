@@ -68,6 +68,10 @@ cat >"$PLIST_DST" <<EOF
   <true/>
   <key>ProcessType</key>
   <string>Interactive</string>
+  <key>Nice</key>
+  <integer>-10</integer>
+  <key>LowPriorityIO</key>
+  <false/>
   <key>StandardOutPath</key>
   <string>${LOG_DIR}/sola-kvm-mac.out.log</string>
   <key>StandardErrorPath</key>

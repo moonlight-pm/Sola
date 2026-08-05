@@ -1,14 +1,66 @@
-//! Linux evdev keycode → macOS `CGKeyCode` map (v1 subset).
+//! Linux evdev keycode → macOS inject target.
 //!
 //! Evdev codes: `/usr/include/linux/input-event-codes.h` (`KEY_*`).
 //! Mac virtual key codes: `HIToolbox/Events.h` (`kVK_*`).
-//!
-//! Coverage for v1: letters, digits, common punctuation, modifiers
-//! (Cmd/Opt/Ctrl/Shift), arrows, Space, Escape, Tab, Enter/Return,
-//! Backspace/Delete, Home/End/PageUp/PageDown, common F-keys.
+//! Media / brightness use NX_KEYTYPE_* aux control events (not kVK).
 
-/// macOS virtual key code (`CGKeyCode` / `CGKeyCode` as u16).
+/// macOS virtual key code (`CGKeyCode` as u16).
 pub type CgKeyCode = u16;
+
+/// NX_KEYTYPE_* values for system-defined aux media keys (IOHID / NSEvent).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NxMediaKey {
+    SoundUp = 0,
+    SoundDown = 1,
+    BrightnessUp = 2,
+    BrightnessDown = 3,
+    Mute = 7,
+    Play = 16,
+    Next = 17,
+    Previous = 18,
+    IlluminationToggle = 23,
+    IlluminationDown = 22,
+    IlluminationUp = 21,
+}
+
+/// Where a Linux key should go on the Mac inject path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacTarget {
+    /// Normal `CGEventCreateKeyboardEvent` virtual key.
+    Key(CgKeyCode),
+    /// System-defined media/brightness aux key (NX_KEYTYPE).
+    Media(NxMediaKey),
+}
+
+/// Map a Linux evdev keycode to a Mac inject target.
+pub fn linux_to_mac(keycode: u32) -> Option<MacTarget> {
+    if let Some(m) = linux_to_media(keycode) {
+        return Some(MacTarget::Media(m));
+    }
+    linux_to_cg(keycode).map(MacTarget::Key)
+}
+
+/// Media / brightness / transport keys (not ordinary typing keys).
+pub fn linux_to_media(keycode: u32) -> Option<NxMediaKey> {
+    Some(match keycode {
+        113 => NxMediaKey::Mute,               // KEY_MUTE
+        114 => NxMediaKey::SoundDown,          // KEY_VOLUMEDOWN
+        115 => NxMediaKey::SoundUp,            // KEY_VOLUMEUP
+        163 => NxMediaKey::Next,               // KEY_NEXTSONG
+        164 => NxMediaKey::Play,               // KEY_PLAYPAUSE
+        165 => NxMediaKey::Previous,           // KEY_PREVIOUSSONG
+        166 => NxMediaKey::Play,               // KEY_STOPCD → stop-ish; Play toggle is closest
+        168 => NxMediaKey::Previous,           // KEY_REWIND
+        208 => NxMediaKey::Next,               // KEY_FASTFORWARD / FORWARD
+        224 => NxMediaKey::BrightnessDown,     // KEY_BRIGHTNESSDOWN
+        225 => NxMediaKey::BrightnessUp,       // KEY_BRIGHTNESSUP
+        228 => NxMediaKey::IlluminationToggle, // KEY_KBDILLUMTOGGLE
+        229 => NxMediaKey::IlluminationDown,   // KEY_KBDILLUMDOWN
+        230 => NxMediaKey::IlluminationUp,     // KEY_KBDILLUMUP
+        _ => return None,
+    })
+}
 
 /// Map a Linux evdev keycode to a Mac `CGKeyCode`.
 /// Returns `None` for unmapped keys (caller should log + drop).
@@ -115,6 +167,31 @@ pub fn linux_to_cg(keycode: u32) -> Option<CgKeyCode> {
         // ISO extra key (non-US backslash / §) — map to ISO section
         86 => 0x0a, // KEY_102ND → kVK_ISO_Section
 
+        // --- keypad ---
+        55 => 0x43, // KEY_KPASTERISK → kVK_ANSI_KeypadMultiply
+        71 => 0x59, // KEY_KP7 → kVK_ANSI_Keypad7
+        72 => 0x5b, // KEY_KP8
+        73 => 0x5c, // KEY_KP9
+        74 => 0x4e, // KEY_KPMINUS → kVK_ANSI_KeypadMinus
+        75 => 0x56, // KEY_KP4
+        76 => 0x57, // KEY_KP5
+        77 => 0x58, // KEY_KP6
+        78 => 0x45, // KEY_KPPLUS → kVK_ANSI_KeypadPlus
+        79 => 0x53, // KEY_KP1
+        80 => 0x54, // KEY_KP2
+        81 => 0x55, // KEY_KP3
+        82 => 0x52, // KEY_KP0
+        83 => 0x41, // KEY_KPDOT → kVK_ANSI_KeypadDecimal
+        96 => 0x4c, // KEY_KPENTER → kVK_ANSI_KeypadEnter
+        98 => 0x4b, // KEY_KPSLASH → kVK_ANSI_KeypadDivide
+        117 => 0x51, // KEY_KPEQUAL → kVK_ANSI_KeypadEquals
+
+        // Volume also has kVK aliases; media path prefers NX, but these remain
+        // available if a caller asks for a CG keycode only.
+        113 => 0x4a, // KEY_MUTE → kVK_Mute
+        114 => 0x49, // KEY_VOLUMEDOWN → kVK_VolumeDown
+        115 => 0x48, // KEY_VOLUMEUP → kVK_VolumeUp
+
         _ => return None,
     })
 }
@@ -132,14 +209,23 @@ pub fn linux_key_name(keycode: u32) -> Option<&'static str> {
         54 => "RSHIFT",
         56 => "LALT",
         57 => "SPACE",
+        96 => "KPENTER",
         97 => "RCTRL",
         100 => "RALT",
         103 => "UP",
         105 => "LEFT",
         106 => "RIGHT",
         108 => "DOWN",
+        113 => "MUTE",
+        114 => "VOLDOWN",
+        115 => "VOLUP",
         125 => "LMETA",
         126 => "RMETA",
+        163 => "NEXT",
+        164 => "PLAYPAUSE",
+        165 => "PREV",
+        224 => "BRIGHTDOWN",
+        225 => "BRIGHTUP",
         _ => return None,
     })
 }
@@ -200,5 +286,23 @@ mod tests {
     fn unmapped_returns_none() {
         assert_eq!(linux_to_cg(0), None);
         assert_eq!(linux_to_cg(9999), None);
+    }
+
+    #[test]
+    fn maps_media_to_nx() {
+        assert_eq!(linux_to_media(113), Some(NxMediaKey::Mute));
+        assert_eq!(linux_to_media(114), Some(NxMediaKey::SoundDown));
+        assert_eq!(linux_to_media(115), Some(NxMediaKey::SoundUp));
+        assert_eq!(linux_to_media(164), Some(NxMediaKey::Play));
+        assert_eq!(
+            linux_to_mac(114),
+            Some(MacTarget::Media(NxMediaKey::SoundDown))
+        );
+        assert_eq!(linux_to_mac(30), Some(MacTarget::Key(0x00))); // A
+    }
+
+    #[test]
+    fn maps_keypad_enter() {
+        assert_eq!(linux_to_cg(96), Some(0x4c));
     }
 }

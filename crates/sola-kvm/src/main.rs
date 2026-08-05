@@ -155,6 +155,10 @@ fn cmd_init(path: &PathBuf, force: bool) {
 }
 
 fn cmd_server(path: &PathBuf, input: &str) {
+    // Prefer this process under desktop load (best-effort; may need CAP_SYS_NICE).
+    sola_kvm::priority::boost_process();
+    sola_kvm::priority::warn_if_still_default();
+
     // When managed by sola (or launched from a bare TTY), pick up the
     // River Wayland socket so layer-shell edge barriers can bind.
     let wayland_display = sola_core::env::activate_wayland_session(30_000);

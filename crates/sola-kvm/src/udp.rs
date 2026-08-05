@@ -19,6 +19,7 @@ impl Sender {
         let sock = UdpSocket::bind("0.0.0.0:0").map_err(UdpError::Io)?;
         // Connected UDP so send() doesn't need the address each time.
         sock.connect(peer).map_err(UdpError::Io)?;
+        crate::priority::boost_udp_socket(&sock);
         Ok(Self {
             sock,
             peer,

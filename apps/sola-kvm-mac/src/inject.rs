@@ -14,31 +14,66 @@ pub fn check_accessibility_at_startup() {
 
 /// High-level inject API used by the UDP agent loop.
 pub trait Injector {
+    /// Continuous motion (cheap path — CGEvent only on macOS).
     fn warp(&mut self, x: i32, y: i32);
+    /// Hard snap (CGWarp) — enter / click resync.
+    fn hard_warp(&mut self, x: i32, y: i32) {
+        self.warp(x, y);
+    }
+    /// Re-anchor system cursor to last abs position before a click.
+    fn resync_pointer(&mut self) {}
     fn button(&mut self, button: u8, pressed: bool);
     /// `pressed` false = release; true = press. `autorepeat` marks Linux EV_KEY=2.
     fn key(&mut self, keycode: u32, pressed: bool, autorepeat: bool);
     fn scroll(&mut self, dx: f32, dy: f32);
     fn leave(&mut self);
 
+    /// Drop any tracked pressed-key state (default: no tracking).
+    fn clear_key_tracking(&mut self) {}
+
     /// Dispatch a decoded packet.
     fn handle(&mut self, packet: &Packet) {
         match packet {
             Packet::Enter { x, y, edge } => {
-                // Always absolute warp to the server's enter point (not residual
-                // Mac cursor position). Warp twice to beat CG association races.
+                // Cold-enter first: wake display / IOPM / suppression before
+                // any CG work so idle Mac isn't still power-gated mid-warp.
+                crate::priority::on_enter_remote();
+                // Dissociate once for the whole remote session — flipping
+                // associate on every motion is a major source of "fighting"
+                // lag right after crossover.
+                let _ = platform::begin_remote_pointer();
+                platform::reset_multi_click();
+                // Clear any stuck Cmd/Shift left from a prior session or a
+                // lost key-up (otherwise every click is a ⌘-click).
+                self.clear_key_tracking();
+                platform::release_all_modifiers();
+                // Force CGWarp on enter (twice) so the cursor snaps to the
+                // shared edge; continuous motion after this is CGEvent-only.
                 tracing::info!(x, y, ?edge, "enter → warp");
-                self.warp(*x, *y);
-                self.warp(*x, *y);
+                self.hard_warp(*x, *y);
+                self.hard_warp(*x, *y);
             }
             Packet::Leave => {
                 debug!("leave");
                 self.leave();
+                platform::reset_multi_click();
+                platform::end_remote_pointer();
+                // Release session IOPM assertions after pointer teardown.
+                crate::priority::on_leave_remote();
             }
             Packet::Motion { x, y } => {
+                // In case Enter was lost: dissociate + cold-wake on first motion.
+                if platform::begin_remote_pointer() {
+                    crate::priority::on_enter_remote();
+                }
                 self.warp(*x, *y);
             }
             Packet::Button { button, pressed } => {
+                // Warp once on press so the click lands at the true abs position
+                // (motion path may have only posted CGEvents since last warp).
+                if *pressed != 0 {
+                    self.resync_pointer();
+                }
                 self.button(*button, *pressed != 0);
             }
             Packet::Key { keycode, pressed } => {
@@ -83,7 +118,21 @@ impl Default for CgInjector {
 
 impl Injector for CgInjector {
     fn warp(&mut self, x: i32, y: i32) {
-        platform::warp_cursor(x, y);
+        // Continuous motion: CGEvent only. CGWarp every packet was the lag
+        // source (metrics: inject_ms 8–14 on single motions, then backlog).
+        platform::move_cursor(x, y, false);
+    }
+
+    fn hard_warp(&mut self, x: i32, y: i32) {
+        platform::move_cursor(x, y, true);
+    }
+
+    fn resync_pointer(&mut self) {
+        platform::resync_cursor();
+    }
+
+    fn clear_key_tracking(&mut self) {
+        self.pressed_keys.clear();
     }
 
     fn button(&mut self, button: u8, pressed: bool) {
@@ -91,7 +140,7 @@ impl Injector for CgInjector {
     }
 
     fn key(&mut self, keycode: u32, pressed: bool, autorepeat: bool) {
-        let Some(cg) = keymap::linux_to_cg(keycode) else {
+        let Some(target) = keymap::linux_to_mac(keycode) else {
             warn!(
                 keycode,
                 name = keymap::linux_key_name(keycode).unwrap_or("?"),
@@ -99,23 +148,38 @@ impl Injector for CgInjector {
             );
             return;
         };
-        if pressed {
-            if !self.pressed_keys.contains(&keycode) {
-                self.pressed_keys.push(keycode);
+        match target {
+            keymap::MacTarget::Media(nx) => {
+                // Media keys are not sticky "held letters"; track nothing.
+                debug!(
+                    keycode,
+                    ?nx,
+                    pressed,
+                    name = keymap::linux_key_name(keycode).unwrap_or("?"),
+                    "inject media"
+                );
+                // Auto-repeat on volume is fine (hold = keep changing).
+                platform::media_key(nx, pressed || autorepeat);
             }
-        } else {
-            self.pressed_keys.retain(|&k| k != keycode);
+            keymap::MacTarget::Key(cg) => {
+                if pressed {
+                    if !self.pressed_keys.contains(&keycode) {
+                        self.pressed_keys.push(keycode);
+                    }
+                } else {
+                    self.pressed_keys.retain(|&k| k != keycode);
+                }
+                debug!(
+                    keycode,
+                    cg,
+                    pressed,
+                    autorepeat,
+                    name = keymap::linux_key_name(keycode).unwrap_or("?"),
+                    "inject key"
+                );
+                platform::key_event(cg, pressed, autorepeat);
+            }
         }
-        // Keys are common; keep steady-state at debug. Enter/Leave stay info.
-        debug!(
-            keycode,
-            cg,
-            pressed,
-            autorepeat,
-            name = keymap::linux_key_name(keycode).unwrap_or("?"),
-            "inject key"
-        );
-        platform::key_event(cg, pressed, autorepeat);
     }
 
     fn scroll(&mut self, dx: f32, dy: f32) {
@@ -132,13 +196,19 @@ impl Injector for CgInjector {
                 platform::key_event(cg, false, false);
             }
         }
+        // Always zero every modifier VK + MOD_FLAGS even if tracking missed a
+        // press (lost UDP key-down still leaves WindowServer thinking ⌘ is held).
+        platform::release_all_modifiers();
     }
 }
 
 #[cfg(target_os = "macos")]
 mod platform {
     use super::CgKeyCode;
+    use crate::click::MultiClick;
     use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+    use std::sync::Mutex;
+    use std::time::Instant;
     use tracing::{debug, error, info, warn};
 
     #[repr(C)]
@@ -206,6 +276,8 @@ mod platform {
         fn CGWarpMouseCursorPosition(new_cursor_position: CGPoint) -> CGError;
         fn CGAssociateMouseAndMouseCursorPosition(connected: bool) -> CGError;
         fn CGEventSourceCreate(state_id: i32) -> CGEventSourceRef;
+        fn CGEventCreate(source: CGEventSourceRef) -> CGEventRef;
+        fn CGEventSetType(event: CGEventRef, mouse_type: CGEventType);
         fn CGEventCreateMouseEvent(
             source: CGEventSourceRef,
             mouse_type: CGEventType,
@@ -262,6 +334,13 @@ mod platform {
     /// Process-wide event source with suppression disabled (see `source()`).
     static EVENT_SOURCE: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
         std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+    /// Multi-click counter for kCGMouseEventClickState (double-click etc.).
+    static MULTI_CLICK: Mutex<MultiClick> = Mutex::new(MultiClick::new(
+        crate::click::DEFAULT_INTERVAL,
+        crate::click::DEFAULT_SLOP,
+    ));
+    /// Monotonic ms of last CGEventSourceSetLocalEventsSuppressionInterval call.
+    static LAST_SUPPRESS_CFG_MS: AtomicU64 = AtomicU64::new(0);
 
     /// Long-lived private event source with **zero** local-event suppression.
     ///
@@ -314,6 +393,29 @@ mod platform {
         // Without this, a 500 Hz motion warp stream permanently blocks clicks/keys.
         unsafe {
             CGEventSourceSetLocalEventsSuppressionInterval(src, 0.0);
+        }
+    }
+
+    /// Re-apply suppression=0, but not on every motion (that was pure overhead).
+    /// Always re-apply for clicks/keys; for motion, at most ~every 16 ms.
+    fn configure_source_throttled(src: CGEventSourceRef, force: bool) {
+        if src.is_null() {
+            return;
+        }
+        if !force {
+            // Cheap approx ms from Instant is awkward in atomics; use a coarse
+            // counter of calls: force every 4th motion path is enough.
+            let n = LAST_SUPPRESS_CFG_MS.fetch_add(1, Ordering::Relaxed);
+            if n % 4 != 0 {
+                return;
+            }
+        }
+        configure_source(src);
+    }
+
+    pub fn reset_multi_click() {
+        if let Ok(mut m) = MULTI_CLICK.lock() {
+            m.reset();
         }
     }
 
@@ -378,6 +480,48 @@ mod platform {
             MOD_FLAGS.fetch_or(bit, Ordering::Relaxed);
         } else {
             MOD_FLAGS.fetch_and(!bit, Ordering::Relaxed);
+        }
+    }
+
+    /// Force key-up for every modifier VK and zero `MOD_FLAGS`.
+    ///
+    /// Called on Enter and Leave so a missed key-up (UDP loss, process restart,
+    /// EVIOCGRAB cut mid-chord) cannot leave the Mac with permanent ⌘-click.
+    pub fn release_all_modifiers() {
+        const MOD_VKS: &[CgKeyCode] = &[
+            VK_COMMAND,
+            VK_RIGHT_COMMAND,
+            VK_SHIFT,
+            VK_RIGHT_SHIFT,
+            VK_CONTROL,
+            VK_RIGHT_CONTROL,
+            VK_OPTION,
+            VK_RIGHT_OPTION,
+            // Caps: up only; we do not toggle on clear.
+            VK_CAPS_LOCK,
+        ];
+        // Zero mask first so the key-up events carry flags=0.
+        MOD_FLAGS.store(0, Ordering::Relaxed);
+        for &cg in MOD_VKS {
+            // Bypass update_mod_flags path that would re-touch the mask;
+            // post a bare key-up so WindowServer drops the chord.
+            post_key_up_raw(cg);
+        }
+        MOD_FLAGS.store(0, Ordering::Relaxed);
+        info!("released all synthetic modifiers (Cmd/Shift/Ctrl/Opt)");
+    }
+
+    fn post_key_up_raw(cg: CgKeyCode) {
+        unsafe {
+            let src = source();
+            configure_source_throttled(src, true);
+            let ev = CGEventCreateKeyboardEvent(src, cg, false);
+            if ev.is_null() {
+                return;
+            }
+            CGEventSetFlags(ev, 0);
+            CGEventPost(K_CG_HID_EVENT_TAP, ev);
+            release_event(ev);
         }
     }
 
@@ -451,7 +595,55 @@ mod platform {
         })
     }
 
-    pub fn warp_cursor(x: i32, y: i32) {
+    /// True while we hold CGAssociate=false for the remote session.
+    static REMOTE_DISSOCIATED: AtomicI32 = AtomicI32::new(0);
+
+    /// Dissociate mouse↔cursor once for a remote session (idempotent).
+    ///
+    /// Returns `true` if this call newly entered remote (0→1), so callers can
+    /// run cold-wake once when Enter was lost and the first packet is Motion.
+    ///
+    /// Barrier / Input Leap keep association off for the whole grab rather
+    /// than toggling on every warp — the per-motion flip was a big cost on
+    /// enter when motion rates spike.
+    pub fn begin_remote_pointer() -> bool {
+        if REMOTE_DISSOCIATED.swap(1, Ordering::Relaxed) == 0 {
+            unsafe {
+                let err = CGAssociateMouseAndMouseCursorPosition(false);
+                if err != 0 {
+                    error!(err, "CGAssociateMouseAndMouseCursorPosition(false) failed");
+                } else {
+                    debug!("pointer dissociated for remote session");
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Re-associate mouse↔cursor when leaving remote (idempotent).
+    pub fn end_remote_pointer() {
+        if REMOTE_DISSOCIATED.swap(0, Ordering::Relaxed) != 0 {
+            unsafe {
+                let err = CGAssociateMouseAndMouseCursorPosition(true);
+                if err != 0 {
+                    error!(err, "CGAssociateMouseAndMouseCursorPosition(true) failed");
+                } else {
+                    debug!("pointer re-associated after leave");
+                }
+            }
+        }
+    }
+
+    /// Move the synthetic cursor.
+    ///
+    /// * `force_warp = true` — `CGWarpMouseCursorPosition` (enter, click resync only).
+    /// * `force_warp = false` — **CGEvent mouse-moved/dragged only** (hot path).
+    ///
+    /// No periodic hard-warps: metrics showed even occasional CGWarp under load
+    /// contributed to multi-hundred-ms gaps. Enter + click resync is enough.
+    pub fn move_cursor(x: i32, y: i32, force_warp: bool) {
         ensure_trusted_logged();
         LAST_X.store(x, Ordering::Relaxed);
         LAST_Y.store(y, Ordering::Relaxed);
@@ -459,15 +651,13 @@ mod platform {
             x: x as f64,
             y: y as f64,
         };
+
         unsafe {
-            // Dissociate during warp so the OS does not immediately re-apply
-            // the previous cursor position (common CGWarp pitfall).
-            let _ = CGAssociateMouseAndMouseCursorPosition(false);
-            let err = CGWarpMouseCursorPosition(pt);
-            if err != 0 {
-                error!(err, x, y, "CGWarpMouseCursorPosition failed");
-                let _ = CGAssociateMouseAndMouseCursorPosition(true);
-                return;
+            if force_warp {
+                let err = CGWarpMouseCursorPosition(pt);
+                if err != 0 {
+                    error!(err, x, y, "CGWarpMouseCursorPosition failed");
+                }
             }
 
             let left = LEFT_DOWN.load(Ordering::Relaxed) != 0;
@@ -483,12 +673,8 @@ mod platform {
                 (CG_EVENT_MOUSE_MOVED, CG_MOUSE_BUTTON_LEFT)
             };
 
-            // Post a HID mouse-moved/dragged at the new point so apps and the
-            // window server agree with the warp (warp alone is often ignored).
-            // Re-apply suppression=0 on the shared source after every warp —
-            // CGWarp itself can re-arm the system suppression window.
             let src = source();
-            configure_source(src);
+            configure_source_throttled(src, force_warp);
             let ev = CGEventCreateMouseEvent(src, mouse_type, pt, button);
             if !ev.is_null() {
                 CGEventPost(K_CG_HID_EVENT_TAP, ev);
@@ -496,11 +682,20 @@ mod platform {
             } else {
                 warn!("CGEventCreateMouseEvent returned null (Accessibility?)");
             }
-            let _ = CGAssociateMouseAndMouseCursorPosition(true);
         }
-        // Info once is too noisy for every motion; debug for stream, warn-level
-        // only on failure above.
-        debug!(x, y, "warp");
+        debug!(x, y, force_warp, "move");
+    }
+
+    /// Hard-warp to the last known abs position (before a click).
+    pub fn resync_cursor() {
+        let x = LAST_X.load(Ordering::Relaxed);
+        let y = LAST_Y.load(Ordering::Relaxed);
+        move_cursor(x, y, true);
+    }
+
+    /// Back-compat name used by tests/stubs.
+    pub fn warp_cursor(x: i32, y: i32) {
+        move_cursor(x, y, true);
     }
 
     pub fn mouse_button(button: u8, pressed: bool) {
@@ -532,17 +727,40 @@ mod platform {
         flag.store(if pressed { 1 } else { 0 }, Ordering::Relaxed);
         let ty = if pressed { down_ty } else { up_ty };
         let pt = point();
+        let x = LAST_X.load(Ordering::Relaxed);
+        let y = LAST_Y.load(Ordering::Relaxed);
+
+        // Double-click / triple-click: AppKit reads kCGMouseEventClickState.
+        // Always posting 1 made every click a fresh single-click.
+        let click_state = {
+            let mut mc = MULTI_CLICK.lock().unwrap_or_else(|e| e.into_inner());
+            if pressed {
+                mc.on_down(button, x, y, Instant::now())
+            } else {
+                mc.on_up(button)
+            }
+        };
+
         unsafe {
             let src = source();
-            // Ensure warps haven't re-armed suppression right before the click.
-            configure_source(src);
+            // Always re-zero suppression around clicks — warps re-arm it.
+            configure_source_throttled(src, true);
             let ev = CGEventCreateMouseEvent(src, ty, pt, cg_btn);
             if !ev.is_null() {
-                // Without click-state, some AppKit targets ignore the down/up pair.
-                CGEventSetIntegerValueField(ev, K_CG_MOUSE_EVENT_CLICK_STATE, 1);
+                CGEventSetIntegerValueField(ev, K_CG_MOUSE_EVENT_CLICK_STATE, click_state);
+                // Explicit flags from our mask only — do not inherit a stuck
+                // system ⌘ from a prior lost key-up.
+                CGEventSetFlags(ev, MOD_FLAGS.load(Ordering::Relaxed));
                 CGEventPost(K_CG_HID_EVENT_TAP, ev);
                 release_event(ev);
-                debug!(button, pressed, x = pt.x, y = pt.y, "inject button");
+                debug!(
+                    button,
+                    pressed,
+                    click_state,
+                    x = pt.x,
+                    y = pt.y,
+                    "inject button"
+                );
             } else {
                 warn!(button, pressed, "button event null (Accessibility?)");
             }
@@ -563,7 +781,7 @@ mod platform {
             // Always use the shared source (suppression interval 0). NULL
             // sources inherit the default 250ms suppression from warps.
             let src = source();
-            configure_source(src);
+            configure_source_throttled(src, true);
             // Auto-repeat is still a key-down CGEvent with the autorepeat field set.
             let down = pressed || autorepeat;
             let ev = CGEventCreateKeyboardEvent(src, cg, down);
@@ -577,10 +795,11 @@ mod platform {
                 CGEventSetIntegerValueField(ev, K_CG_KEYBOARD_EVENT_AUTOREPEAT, 1);
             }
 
-            // Many Cocoa apps ignore bare virtual keycodes for text insertion
-            // unless a unicode string is attached (Input Leap / Barrier do this).
-            // Attach unicode on press *and* auto-repeat so held keys keep typing.
-            if down {
+            // Text insertion needs a unicode string (Input Leap / Barrier do this).
+            // **Never** attach unicode for Cmd/Ctrl chords — Cocoa then treats the
+            // event as text input and shortcuts like ⌘C / ⌘V / ⌘T silently fail.
+            let shortcut = (flags & (FLAG_COMMAND | FLAG_CONTROL)) != 0;
+            if down && !shortcut {
                 if let Some(ch) = unicode_for_cg(cg, flags) {
                     let chars = [ch];
                     CGEventKeyboardSetUnicodeString(ev, 1, chars.as_ptr());
@@ -589,7 +808,73 @@ mod platform {
 
             CGEventPost(K_CG_HID_EVENT_TAP, ev);
             release_event(ev);
-            debug!(cg, pressed, autorepeat, flags, "key posted");
+            debug!(cg, pressed, autorepeat, flags, shortcut, "key posted");
+        }
+    }
+
+    /// Post a system-defined NX media / brightness key (volume, play, etc.).
+    ///
+    /// Ordinary `CGEventCreateKeyboardEvent` does not drive the system volume
+    /// HUD or media transport; those use NX_KEYTYPE aux control events.
+    pub fn media_key(nx: crate::keymap::NxMediaKey, pressed: bool) {
+        ensure_trusted_logged();
+        // Prefer the classic kVK path for mute/volume — widely supported via
+        // CG keyboard events. Fall through to NX aux for transport/brightness.
+        match nx {
+            crate::keymap::NxMediaKey::SoundUp => {
+                key_event(0x48, pressed, false); // kVK_VolumeUp
+                return;
+            }
+            crate::keymap::NxMediaKey::SoundDown => {
+                key_event(0x49, pressed, false); // kVK_VolumeDown
+                return;
+            }
+            crate::keymap::NxMediaKey::Mute => {
+                key_event(0x4a, pressed, false); // kVK_Mute
+                return;
+            }
+            _ => {}
+        }
+        post_nx_aux_key(nx as u8, pressed);
+    }
+
+    /// NX_SUBTYPE_AUX_CONTROL_BUTTONS system-defined event via CGEvent.
+    ///
+    /// Packing matches NSEvent `otherEventWithType:NSSystemDefined subtype:8
+    /// data1:(key<<16)|((down?0xa:0xb)<<8) data2:-1` — the form Barrier /
+    /// Input Leap / Hammerspoon use for media keys without IOKit connect.
+    fn post_nx_aux_key(key_type: u8, down: bool) {
+        // NSEventTypeSystemDefined / NX_SYSDEFINED
+        const CG_EVENT_SYSTEM_DEFINED: CGEventType = 14;
+        // Undocumented but stable field ids used by NSEvent→CGEvent for
+        // compound system events (subtype + data1/data2).
+        const K_CG_EVENT_SUBTYPE: CGEventField = 55; // 0x37
+        const K_CG_EVENT_DATA1: CGEventField = 149; // 0x95
+        const K_CG_EVENT_DATA2: CGEventField = 150; // 0x96
+        const NX_SUBTYPE_AUX_CONTROL_BUTTONS: i64 = 8;
+
+        let key_state: i64 = if down { 0x0a } else { 0x0b };
+        let data1 = ((key_type as i64) << 16) | (key_state << 8);
+        let flags: CGEventFlags = if down { 0xa00 } else { 0xb00 };
+
+        unsafe {
+            let src = source();
+            configure_source_throttled(src, true);
+            // NULL-source system events are accepted; we still use our private
+            // source so suppression interval stays zero.
+            let ev = CGEventCreate(src);
+            if ev.is_null() {
+                warn!(key_type, down, "media CGEventCreate null");
+                return;
+            }
+            CGEventSetType(ev, CG_EVENT_SYSTEM_DEFINED);
+            CGEventSetFlags(ev, flags);
+            CGEventSetIntegerValueField(ev, K_CG_EVENT_SUBTYPE, NX_SUBTYPE_AUX_CONTROL_BUTTONS);
+            CGEventSetIntegerValueField(ev, K_CG_EVENT_DATA1, data1);
+            CGEventSetIntegerValueField(ev, K_CG_EVENT_DATA2, -1);
+            CGEventPost(K_CG_HID_EVENT_TAP, ev);
+            release_event(ev);
+            debug!(key_type, down, data1, "media nx posted");
         }
     }
 
@@ -601,8 +886,8 @@ mod platform {
         let dy = -dy;
         // One Linux detent as a single CG *line* tick feels glacial in Cocoa.
         // Scale into pixel units so speed roughly matches a native Mac mouse.
-        // (detent → ~48px; fractional hi-res values from novus scale smoothly.)
-        const PIXELS_PER_DETENT: f32 = 24.0;
+        // Tuned down from 48 → 24 → 12 after desk feedback (still half prior).
+        const PIXELS_PER_DETENT: f32 = 12.0;
         let mut wheel1 = (dy * PIXELS_PER_DETENT).round() as i32;
         let mut wheel2 = (dx * PIXELS_PER_DETENT).round() as i32;
         if wheel1 == 0 && dy.abs() > f32::EPSILON {
@@ -616,7 +901,7 @@ mod platform {
         }
         unsafe {
             let src = source();
-            configure_source(src);
+            configure_source_throttled(src, true);
             // kCGScrollEventUnitPixel = 1 (line = 0 is too coarse/slow).
             let ev = CGEventCreateScrollWheelEvent2(src, 1, 2, wheel1, wheel2, 0);
             if !ev.is_null() {
@@ -649,8 +934,36 @@ mod platform {
         info!("stub accessibility check (not macOS)");
     }
 
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static REMOTE: AtomicBool = AtomicBool::new(false);
+
+    /// Returns `true` on first remote entry (matches macOS semantics).
+    pub fn begin_remote_pointer() -> bool {
+        !REMOTE.swap(true, Ordering::Relaxed)
+    }
+
+    pub fn end_remote_pointer() {
+        REMOTE.store(false, Ordering::Relaxed);
+    }
+
+    pub fn reset_multi_click() {
+        // no-op stub
+    }
+
+    pub fn release_all_modifiers() {
+        info!("stub release_all_modifiers (not macOS)");
+    }
+
+    pub fn move_cursor(x: i32, y: i32, force_warp: bool) {
+        info!(x, y, force_warp, "stub move (not macOS)");
+    }
+
+    pub fn resync_cursor() {
+        info!("stub resync (not macOS)");
+    }
+
     pub fn warp_cursor(x: i32, y: i32) {
-        info!(x, y, "stub warp (not macOS)");
+        move_cursor(x, y, true);
     }
 
     pub fn mouse_button(button: u8, pressed: bool) {
@@ -659,6 +972,10 @@ mod platform {
 
     pub fn key_event(cg: CgKeyCode, pressed: bool, autorepeat: bool) {
         info!(cg, pressed, autorepeat, "stub key (not macOS)");
+    }
+
+    pub fn media_key(nx: crate::keymap::NxMediaKey, pressed: bool) {
+        info!(?nx, pressed, "stub media (not macOS)");
     }
 
     pub fn scroll(dx: f32, dy: f32) {
@@ -677,6 +994,9 @@ mod tests {
 
     impl Injector for Recording {
         fn warp(&mut self, x: i32, y: i32) {
+            self.events.push(format!("warp:{x},{y}"));
+        }
+        fn hard_warp(&mut self, x: i32, y: i32) {
             self.events.push(format!("warp:{x},{y}"));
         }
         fn button(&mut self, button: u8, pressed: bool) {

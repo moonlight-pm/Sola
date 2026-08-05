@@ -1,0 +1,23 @@
+# sola-kvm — permanent input access (re-plug safe)
+#
+# sola-kvm server --input evdev needs RW on /dev/input/event* for EVIOCGRAB
+# while the pointer is over the Mac. A one-shot `setfacl` dies the next time
+# the mouse re-enumerates (new eventN node, no ACL).
+#
+# TAG+="uaccess" → systemd-logind grants the *active seat user* RW when the
+# device appears (including hotplug). GROUP=input is a fallback if the user
+# is also in group `input`.
+#
+# Install (NixOS preferred): enable services.sola (see nix/module.nix) which
+# ships this rule, then `nixos-rebuild switch`.
+#
+# Manual / non-module hosts (requires root, persists under /etc):
+#   sudo cp crates/sola-kvm/udev/99-sola-kvm-input.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger -s input
+#
+# One-shot ACL (when you cannot reload udev yet) — note the *quotes*:
+#   sudo setfacl -m "u:$(id -un):rw" /dev/input/event[0-9]*
+# Do **not** use unquoted u:$USER:rw- (empty $USER → u::rw- → "Invalid argument").
+
+SUBSYSTEM=="input", KERNEL=="event[0-9]*", MODE="0660", GROUP="input", TAG+="uaccess"
