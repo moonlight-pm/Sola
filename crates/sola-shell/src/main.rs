@@ -1,5 +1,5 @@
-//! sola-shell — iced-native desktop shell. Four windows on one
-//! iced multi-window application.
+//! sola-shell — iced-native desktop shell. Multi-window daemon
+//! (menubar, menu, launcher, switcher, selection marquee).
 
 use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
 use sola_core::KeyCode;
@@ -15,6 +15,7 @@ pub mod launcher;
 pub mod media;
 pub mod menu;
 pub mod menubar;
+pub mod selection;
 pub mod stats;
 pub mod switcher;
 pub mod zoning;

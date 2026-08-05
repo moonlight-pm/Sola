@@ -315,34 +315,21 @@ fn matches_self_quit(topic: &Option<Topic>, app_id: &str) -> bool {
     }
 }
 
-/// Guards the single bus poller — the client has one process receiver,
-/// so at most one polling thread may run. Set while a [`bus_stream`]
-/// thread is alive, cleared when it exits.
-static POLLER_ACTIVE: AtomicBool = AtomicBool::new(false);
-fn bus_stream() -> impl Stream<Item = Arc<Message>> {
-    let (tx, rx) = iced::futures::channel::mpsc::unbounded::<Arc<Message>>();
+/// Live iced-side sink for bus messages. The process-wide poller (started
+/// once) always drains the bus client; each [`bus_stream`] install swaps
+/// this sender so a restarted iced `Subscription` never needs a second
+/// poller and never permanently loses the stream (which froze sola-shell
+/// after screenshot / launcher toggles).
+static BUS_STREAM_TX: Mutex<Option<iced::futures::channel::mpsc::UnboundedSender<Arc<Message>>>> =
+    Mutex::new(None);
+static BUS_POLLER_STARTED: AtomicBool = AtomicBool::new(false);
 
-    // The bus client has a single process receiver, so at most one
-    // polling thread may drain it. If a poller is already running (a
-    // second `bus_subscription` in the same process), refuse rather than
-    // race `try_recv` and split the message stream.
-    if POLLER_ACTIVE.swap(true, Ordering::AcqRel) {
-        tracing::warn!(
-            "bus_subscription started while a poller is already active; \
-             returning an empty stream (one receiver per process)"
-        );
-        drop(tx);
-        return rx;
+fn ensure_bus_poller() {
+    if BUS_POLLER_STARTED.swap(true, Ordering::AcqRel) {
+        return;
     }
-
-    std::thread::spawn(move || {
+    std::thread::spawn(|| {
         loop {
-            // Exit as soon as the iced side drops the subscription, so a
-            // dropped subscription stops draining the bus instead of
-            // looping forever on failed sends.
-            if tx.is_closed() {
-                break;
-            }
             let next = match bus().lock() {
                 Ok(guard) => {
                     guard.drain_notify();
@@ -364,16 +351,35 @@ fn bus_stream() -> impl Stream<Item = Arc<Message>> {
             };
             match next {
                 Some(msg) => {
-                    if tx.unbounded_send(Arc::new(msg)).is_err() {
-                        break;
+                    let msg = Arc::new(msg);
+                    // Drop closed senders; a new bus_stream will install a
+                    // fresh one. Keep polling either way so we don't back
+                    // up the bus client receiver.
+                    let mut slot = BUS_STREAM_TX.lock().unwrap_or_else(|p| p.into_inner());
+                    if let Some(tx) = slot.as_ref() {
+                        if tx.unbounded_send(msg).is_err() {
+                            *slot = None;
+                        }
                     }
                 }
                 None => std::thread::sleep(Duration::from_millis(8)),
             }
         }
-        POLLER_ACTIVE.store(false, Ordering::Release);
     });
+}
 
+fn bus_stream() -> impl Stream<Item = Arc<Message>> {
+    let (tx, rx) = iced::futures::channel::mpsc::unbounded::<Arc<Message>>();
+    // Point the singleton poller at this subscription's channel. Replaces
+    // any previous sender (old iced subscription is going away).
+    match BUS_STREAM_TX.lock() {
+        Ok(mut slot) => *slot = Some(tx),
+        Err(poisoned) => {
+            let mut slot = poisoned.into_inner();
+            *slot = Some(tx);
+        }
+    }
+    ensure_bus_poller();
     rx
 }
 

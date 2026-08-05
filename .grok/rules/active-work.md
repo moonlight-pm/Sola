@@ -6,6 +6,10 @@
 
 ### Last completed
 
+**screenshot-tool → master**: sola-preview + selection capture (macOS
+Super+Shift+3/4/5), OpenImage handoff without stealing focus, shell freeze
+fixes (bus mutex deadlock + singleton bus poller).
+
 **opening-app → master**: Menubar “Opening {label}…” toast while launcher
 starts an app; clears on new matching window / fail / exit / 20s timeout.
 Toast centered in the menubar (overlay), not the right stats cluster.
@@ -21,6 +25,7 @@ installed and smoked.
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Remaining worktrees: `libei-portal` (archive/cleanup)
 - Optional: further Mac warp path cost (associate/disassociate every motion)
+- sola-preview: zoom, clipboard copy, solactl `--region`
 
 ### Resume
 

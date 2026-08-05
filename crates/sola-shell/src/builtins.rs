@@ -58,5 +58,11 @@ pub fn builtin_apps() -> Vec<Application> {
             command: "/opt/sola/bin/sola-agent".into(),
             icon: "lucide/bot".into(),
         },
+        Application {
+            app_id: "sola-preview".into(),
+            label: "Preview".into(),
+            command: "/opt/sola/bin/sola-preview".into(),
+            icon: "lucide/image".into(),
+        },
     ]
 }
