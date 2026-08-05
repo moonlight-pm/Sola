@@ -170,30 +170,36 @@ impl App {
             Panel::Mail => "Mail",
         };
 
-        let body: Element<'_, Msg> = match self.panel {
-            Panel::Applications => {
-                applications::view(&self.applications, &self.running, &self.apps_ui)
-                    .map(Msg::Apps)
-            }
-            Panel::Mail => mail::view(&self.mail, &self.mail_ui).map(Msg::Mail),
-        };
-
         // Page pad 24 = SPACE_XL + SPACE_MD (content margin, not control density).
         let page_pad = SPACE_XL + SPACE_MD;
-        let main_pane = container(
-            scrollable(
+        // Applications master–detail needs fill-height + internal list scroll;
+        // Mail stays in an outer scrollable for long forms.
+        let main_inner: Element<'_, Msg> = match self.panel {
+            Panel::Applications => column![
+                kit_text::heading(title_text),
+                applications::view(&self.applications, &self.running, &self.apps_ui)
+                    .map(Msg::Apps),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
+            .height(Length::Fill)
+            .into(),
+            Panel::Mail => scrollable(
                 column![
                     kit_text::heading(title_text),
-                    body,
+                    mail::view(&self.mail, &self.mail_ui).map(Msg::Mail),
                 ]
                 .spacing(page_pad)
                 .padding(Padding::new(page_pad)),
             )
             .height(Length::Fill)
-            .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill);
+            .width(Length::Fill)
+            .into(),
+        };
+
+        let main_pane = container(main_inner)
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         // The kit's sidebar is fixed-width; pair it with the main
         // pane in a plain row (no draggable divider — settings has

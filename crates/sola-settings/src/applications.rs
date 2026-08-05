@@ -13,7 +13,7 @@
 //! are seeded by the shell directly and are not part of the
 //! `Topic::Application` stream.
 
-use iced::widget::{button, column, container, row};
+use iced::widget::{button, column, container, row, scrollable};
 use iced::{Element, Length, Task};
 use sola_kit::components::text_input::text_input;
 
@@ -376,7 +376,12 @@ fn list_column<'a>(
     for app in sorted_apps(apps) {
         rows = rows.push(app_row(app, ui));
     }
-    col = col.push(rows);
+    // List scrolls independently; detail panel stays fixed height with the row.
+    col = col.push(
+        scrollable(rows)
+            .height(Length::Fill)
+            .width(Length::Fill),
+    );
 
     let candidates = collect_candidates(apps, running);
     if !candidates.is_empty() {
