@@ -1,6 +1,7 @@
 # sola-settings Applications — compact list + detail panel
 
-**Status:** draft (awaiting user review). Next: implementation plan.  
+**Status:** approved. Implementation plan:
+`docs/specs/2026-08-05-sola-settings-applications-list-detail-plan.md`.  
 **Date:** 2026-08-05  
 **Scope:** UI only inside `crates/sola-settings` (primarily `applications.rs`,
 light touch in `main.rs` if page scroll must change). No bus schema changes.
