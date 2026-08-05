@@ -6,6 +6,10 @@
 
 ### Last completed
 
+**preview-enhancements → master**: sola-preview top header with legible
+filename + directory meta and a proper **Copy path** button (clipboard
+write + brief “Copied” feedback). Replaces the ad-hoc bottom path strip.
+
 **screenshot-tool → master**: sola-preview + selection capture (macOS
 Super+Shift+3/4/5), OpenImage handoff without stealing focus, shell freeze
 fixes (bus mutex deadlock + singleton bus poller).
@@ -25,7 +29,7 @@ installed and smoked.
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Remaining worktrees: `libei-portal` (archive/cleanup)
 - Optional: further Mac warp path cost (associate/disassociate every motion)
-- sola-preview: zoom, clipboard copy, solactl `--region`
+- sola-preview: zoom, image clipboard copy, solactl `--region`
 
 ### Resume
 
