@@ -5,7 +5,7 @@
 //!   eval        — evaluate a JS expression in a WebView, print the result
 //!   logs        — tail an app's log file
 //!   emit        — emit any bus topic with a JSON payload
-//!   open        — open a URL in sola-browser (used as xdg-open handler)
+//!   open        — open a URL in Helium (system browser / xdg-open path)
 //!   click/move/scroll/key — synthesized input
 //!   screenshot  — capture the compositor output to a PNG
 //!

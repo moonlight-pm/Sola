@@ -7,17 +7,12 @@
 //! selection, including when the press begins on a URL.
 //!
 //! Super/⌘ is intentionally not used — sola-river owns Meta+Left for window
-//! move. We also deliberately skip `xdg-open`: the MIME default is still
-//! `sola-browser.desktop` → stuck `sola-browser-*` processes. Helium is
-//! launched the same way as `helium.desktop`:
-//! `appimage-run ~/Applications/Helium.AppImage <url>`.
+//! move. Opening uses [`sola_core::open_url`] (Helium) — same path as mail,
+//! solactl, and shell's `Topic::OpenUrl` handler.
 //!
 //! The scanner is deliberately simple — no regex crate — and matches the
 //! conventions terminals like alacritty use: scheme prefix, then non-space
 //! runes, with trailing punctuation stripped.
-
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as GridPoint};
@@ -36,57 +31,9 @@ pub struct UrlSpan {
     pub end: GridPoint,
 }
 
-/// Env override for the Helium AppImage path (defaults to
-/// `$HOME/Applications/Helium.AppImage`, matching `helium.desktop`).
-const HELIUM_APPIMAGE_ENV: &str = "HELIUM_APPIMAGE";
-
-/// Open `uri` in Helium.
-///
-/// Spawns detached so a slow browser launch never blocks the terminal event
-/// loop. Chromium-based Helium hands the URL to a running instance when one
-/// exists. Failures are logged; the caller should not surface them as UI.
+/// Open `uri` in Helium (shared sola-wide helper).
 pub fn open_url(uri: &str) {
-    match open_in_helium(uri) {
-        Ok(()) => tracing::info!(%uri, "opened URL in Helium"),
-        Err(e) => tracing::warn!(%uri, error = %e, "failed to open URL in Helium"),
-    }
-}
-
-/// Resolve the Helium AppImage and spawn it with `uri`.
-fn open_in_helium(uri: &str) -> Result<(), String> {
-    let appimage = helium_appimage().ok_or_else(|| {
-        format!(
-            "Helium AppImage not found (set {HELIUM_APPIMAGE_ENV} or install \
-             ~/Applications/Helium.AppImage)"
-        )
-    })?;
-    // Same command line as helium.desktop's Exec=.
-    Command::new("appimage-run")
-        .arg(&appimage)
-        .arg(uri)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("spawn appimage-run {}: {e}", appimage.display()))?;
-    Ok(())
-}
-
-/// Path to the Helium AppImage, if present on disk.
-fn helium_appimage() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var(HELIUM_APPIMAGE_ENV) {
-        let path = PathBuf::from(p);
-        if path.is_file() {
-            return Some(path);
-        }
-        tracing::warn!(
-            path = %path.display(),
-            "HELIUM_APPIMAGE set but file missing; falling back to default"
-        );
-    }
-    let home = std::env::var_os("HOME")?;
-    let path = Path::new(&home).join("Applications/Helium.AppImage");
-    path.is_file().then_some(path)
+    sola_core::open_url_logged(uri);
 }
 
 /// Find a URL under `point`, if any.
@@ -532,24 +479,6 @@ mod tests {
         assert!(!point_in_span(GridPoint::new(Line(0), Column(4)), &span));
         assert!(!point_in_span(GridPoint::new(Line(0), Column(15)), &span));
         assert!(!point_in_span(GridPoint::new(Line(1), Column(10)), &span));
-    }
-
-    #[test]
-    fn helium_appimage_resolves_default_when_present() {
-        // On this machine the AppImage lives at ~/Applications/Helium.AppImage
-        // (helium.desktop). The helper is pure path logic; skip if the file
-        // isn't there (CI / other hosts).
-        let Some(home) = std::env::var_os("HOME") else {
-            return;
-        };
-        let expected = Path::new(&home).join("Applications/Helium.AppImage");
-        if !expected.is_file() {
-            return;
-        }
-        // Clear any override so we exercise the default branch.
-        // SAFETY: test-only, single-threaded unit test process.
-        unsafe { std::env::remove_var(HELIUM_APPIMAGE_ENV) };
-        assert_eq!(helium_appimage().as_deref(), Some(expected.as_path()));
     }
 
     /// End-to-end against a real `Term`: write a URL into the grid, then hit

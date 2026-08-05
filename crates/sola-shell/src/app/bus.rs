@@ -48,6 +48,13 @@ impl Shell {
             Topic::WindowGeometry(g) => { self.on_window_geometry(g); Task::none() }
             Topic::FloatGeometry(f) => { self.on_float_geometry(f); Task::none() }
             Topic::Screenshot(r) => self.on_screenshot(r),
+            // External links: Helium is the system browser while sola-browser
+            // is not day-to-day usable. Mail, solactl (if still bus-emitting),
+            // and other apps emit OpenUrl; shell is always running.
+            Topic::OpenUrl(req) => {
+                sola_core::open_url_logged(&req.url);
+                Task::none()
+            }
             // All other topics are not consumed by sola-shell; ignore quietly.
             _ => Task::none(),
         }

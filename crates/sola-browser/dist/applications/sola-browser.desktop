@@ -1,7 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=Sola Browser
+Comment=Legacy engine entry — http/https defaults go to Helium; this remains for launching sola-browser explicitly
 Exec=/opt/sola/bin/sola-browser %u
 Terminal=false
 Categories=Network;WebBrowser;
-MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+MimeType=
+NoDisplay=true

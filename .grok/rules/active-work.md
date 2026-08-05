@@ -6,6 +6,10 @@
 
 ### Last completed
 
+**sola-mail → master**: Kit-native mail client (`crates/sola-mail`) — IMAP/SMTP
+worker, graphite three-pane UI, Helium URL open, IDLE multi-client refresh,
+Edit menu select/copy, soft-wrapped link chips.
+
 **preview-enhancements → master**: sola-preview top header with legible
 filename + directory meta and a proper **Copy path** button (clipboard
 write + brief “Copied” feedback). Replaces the ad-hoc bottom path strip.
@@ -41,10 +45,12 @@ Spec: `docs/specs/2026-07-30-sola-kvm-clipboard-design.md`
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Remaining worktrees: `libei-portal` (archive/cleanup)
 - sola-preview: zoom, image clipboard copy, solactl `--region`
+- sola-mail: inline rich-text link hits (vs chips), multiline polish
 
 ### Resume
 
 ```text
+# no active feature worktree
 # lag: docs/notes/2026-07-28-sola-kvm-lag-claude-second-opinion.md
 # clipboard: docs/specs/2026-07-30-sola-kvm-clipboard-design.md
 ```

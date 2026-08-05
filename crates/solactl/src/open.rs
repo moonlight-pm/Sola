@@ -1,31 +1,23 @@
-//! `solactl open <URL>` — emit `Topic::OpenUrl` so `sola-browser`
-//! creates a new tab.
+//! `solactl open <URL>` — open a URL in Helium (system browser).
 //!
-//! Wired into the desktop as the default http/https handler via the
-//! installed `sola-browser.desktop` (sourced from
-//! `crates/sola-browser/dist/applications/sola-browser.desktop`). Stays
-//! silent on success so it can be invoked from `xdg-open` without
-//! polluting the caller's stdout.
+//! Used as the desktop http/https handler when MIME defaults point at a
+//! `.desktop` that execs `solactl open`, and as a CLI for scripts. Does
+//! **not** emit `Topic::OpenUrl` (sola-browser is not the day-to-day
+//! browser); sola-shell also handles bus `OpenUrl` → Helium for in-Sola
+//! emitters.
 
-use sola_bus::topics::{OpenUrlRequest, Topic};
-
-use crate::bus;
+use sola_core::open_url;
 
 pub fn run(url: &str) -> i32 {
     if url.is_empty() {
         eprintln!("solactl: open requires a URL");
         return 3;
     }
-    let mut client = bus::connect_or_exit();
-    bus::emit(
-        &mut client,
-        Topic::OpenUrl(OpenUrlRequest {
-            url: url.to_string(),
-            activate: true,
-        }),
-    );
-    // Bus writes are async — give the writer thread a moment to flush
-    // before we exit, otherwise the message may never reach the bus.
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    0
+    match open_url::open(url) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("solactl: open failed: {e}");
+            3
+        }
+    }
 }

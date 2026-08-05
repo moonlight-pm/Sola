@@ -565,72 +565,40 @@ appears.
 
 ## Default browser / URL handler
 
-When a non-Sola app (`xdg-open`, GIO, electron's `shell.openExternal`,
-`git web--browse`, etc.) opens an http/https URL, we want it to land
-in `sola-browser` as a new tab. We do this with a stock XDG MIME
-handler and a thin CLI:
+**Current default: Helium** (AppImage). sola-browser is not the
+day-to-day handler while the engine stack is still immature.
 
-- `solactl open <URL>` connects to sola-bus and emits
-  `Topic::OpenUrl`. `sola-browser` subscribes and creates a tab.
-- `crates/sola-browser/dist/applications/sola-browser.desktop`
-  declares Sola Browser as a handler for `x-scheme-handler/http`,
-  `x-scheme-handler/https`, `text/html`, and `application/xhtml+xml`,
-  with `Exec=/opt/sola/bin/solactl open %u`.
-- `cargo make install` copies that file to
-  `~/.local/share/applications/sola-browser.desktop` (it mirrors any
-  `crates/*/dist/` tree onto `$XDG_DATA_HOME`) and runs
-  `update-desktop-database` so the cache picks it up immediately.
+Shared helper: `sola_core::open_url` →
+`appimage-run ~/Applications/Helium.AppImage <url>`
+(override path with `HELIUM_APPIMAGE`).
 
-User-local install on purpose: Sola is a single-user system, and
-`$XDG_DATA_HOME` (default `~/.local/share`) is always on the search
-path, so xdg-open / GIO find the handler with no `XDG_DATA_DIRS`
-ceremony.
-
-### Required host packages
-
-NixOS — add to `environment.systemPackages`:
-```nix
-xdg-utils          # xdg-open, xdg-mime
-desktop-file-utils # update-desktop-database
-```
-
-Without `xdg-utils`, electron-style apps that call `xdg-open` for the
-default browser silently fail with no fallback.
+| Path | Behaviour |
+|---|---|
+| Mail / terminal link click | `sola_core::open_url_logged` |
+| `Topic::OpenUrl` on the bus | sola-shell opens Helium |
+| `solactl open <URL>` | opens Helium (no bus) |
+| `xdg-open` / GIO / electron | `helium.desktop` MIME default |
 
 ### One-time host setup
 
-After the first `cargo make install`:
+```sh
+xdg-mime default helium.desktop x-scheme-handler/http
+xdg-mime default helium.desktop x-scheme-handler/https
+xdg-mime default helium.desktop text/html
+# optional for CLI tools:
+export BROWSER='/opt/sola/bin/solactl open'
+```
 
-1. Register Sola Browser as the default for web links — writes the
-   pairing into `~/.config/mimeapps.list`:
-   ```sh
-   xdg-mime default sola-browser.desktop x-scheme-handler/http
-   xdg-mime default sola-browser.desktop x-scheme-handler/https
-   xdg-mime default sola-browser.desktop text/html
-   ```
-2. Optional — make terminal apps (`git web--browse`, `gh browse`,
-   `htmlview`, etc.) route through us too. In `~/.zshrc`:
-   ```sh
-   export BROWSER='/opt/sola/bin/solactl open'
-   ```
-
-Verify: `xdg-settings get default-web-browser` should print
-`sola-browser.desktop`, and `xdg-mime query default x-scheme-handler/https`
-should match.
+Verify: `xdg-mime query default x-scheme-handler/https` → `helium.desktop`.
 
 ### Troubleshooting
 
-- `solactl: bus connect failed: …` — sola isn't running, so there's
-  nothing to receive the URL. Start `sola` first.
-- The wrong browser opens — the caller process started before
-  `xdg-utils` was on PATH or before the handler was registered.
-  Restart the caller (Zed, Slack, etc.) from a fresh shell.
-- xdg-open routes to the wrong browser despite `xdg-mime default` —
-  check `~/.config/mimeapps.list` for an older entry and remove it,
-  then re-run `xdg-mime default`.
-- Flatpak/Snap apps still open the previous browser — those go through
-  `xdg-desktop-portal` and need a portal `OpenURI` backend, which we
-  don't ship yet. See the upcoming portal-backend work.
+- Wrong browser — check `~/.config/mimeapps.list`; remove stale
+  `sola-browser.desktop` entries for http/https, re-run `xdg-mime default`.
+- Helium missing — install `~/Applications/Helium.AppImage` or set
+  `HELIUM_APPIMAGE`.
+- Flatpak/Snap apps — go through `xdg-desktop-portal`; no portal
+  OpenURI backend yet.
 
 ## See also
 
