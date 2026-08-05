@@ -208,14 +208,35 @@ impl Shell {
         // If no new app appeared but the focused app was just closed, fall
         // back to the next MRU app — or clear the menubar if none remain —
         // then the same pointer resync applies.
+        //
+        // Screenshot cold-launch of sola-preview sets `suppress_map_focus_for`
+        // so we raise the window in MRU/composition without taking the seat
+        // (keyboard stays on the app that was focused when the chord fired).
         let prev_focused = self.focused_window_id;
         if let Some(id) = added.first() {
-            self.bus_set_focus(id);
-            if let Some(wid) = self.lookup_any_window_id(id) {
-                self.focused_window_id = Some(wid);
-                self.mru_window_by_app.insert(id.clone(), wid);
-                if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                    let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+            let suppress = self
+                .suppress_map_focus_for
+                .as_deref()
+                .is_some_and(|s| s == id.as_str());
+            if suppress {
+                self.suppress_map_focus_for = None;
+                // Still put the new app at the front of MRU so it is raised,
+                // but leave keyboard focus alone (and re-assert return focus).
+                self.mru_apps.retain(|m| m != id);
+                self.mru_apps.insert(0, id.clone());
+                if let Some(wid) = self.lookup_any_window_id(id) {
+                    self.mru_window_by_app.insert(id.clone(), wid);
+                }
+                let keep = self.screenshot_return_focus;
+                self.restore_app_focus(keep);
+            } else {
+                self.bus_set_focus(id);
+                if let Some(wid) = self.lookup_any_window_id(id) {
+                    self.focused_window_id = Some(wid);
+                    self.mru_window_by_app.insert(id.clone(), wid);
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                    }
                 }
             }
         } else if focused_app_was_removed {
@@ -451,10 +472,12 @@ impl Shell {
 
     /// Screenshot capture finished in sola-river — toast path or error.
     /// When the capture was shell-initiated (`open_preview_on_next`), also
-    /// open/raise sola-preview with the image.
+    /// open/raise sola-preview with the image **without** stealing keyboard
+    /// (macOS-style: show the shot, keep typing in the previous app).
     fn on_screenshot(&mut self, r: ScreenshotPayload) -> Task<Msg> {
         let open_preview = self.open_preview_on_next;
         self.open_preview_on_next = false;
+        let return_focus = self.screenshot_return_focus.take();
 
         let msg = match &r.result {
             Ok(path) => format!("Screenshot saved: {}", path.display()),
@@ -472,11 +495,19 @@ impl Shell {
                 self.open_or_raise_preview(&path);
             }
         }
+        // Always re-assert the pre-capture app focus after handoff so a
+        // warm OpenImage / composition raise cannot leave the seat on a
+        // shell surface or a non-interactive preview load freeze.
+        if open_preview {
+            self.restore_app_focus(return_focus);
+        }
 
         toast_task
     }
 
-    /// Focus sola-preview if running, else LaunchApp with the image path.
+    /// Open/raise sola-preview with `path`. Raises in the stack so the
+    /// shot is visible, but does **not** take keyboard focus — the caller
+    /// reasserts `screenshot_return_focus` afterward.
     fn open_or_raise_preview(&mut self, path: &std::path::Path) {
         const PREVIEW_ID: &str = "sola-preview";
         let preview_wid = self
@@ -487,10 +518,11 @@ impl Shell {
 
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             if let Some(window_id) = preview_wid {
-                let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
+                // activate:false — viewer should load the image but not
+                // demand seat focus (shell keeps keyboard on the prior app).
                 let _ = bus.emit(Topic::OpenImage(OpenImageRequest {
                     path: path.to_path_buf(),
-                    activate: true,
+                    activate: false,
                 }));
                 // Raise via MRU so composition puts preview on top.
                 self.mru_apps.retain(|id| id != PREVIEW_ID);
@@ -502,6 +534,9 @@ impl Shell {
                 // sola-session splits the command on whitespace (no shell).
                 // Screenshot paths are `/tmp/sola/screenshots/<ms>.png` —
                 // no spaces — so a bare path is safe.
+                // Suppress the normal "new app maps → steal focus" path so
+                // the cold-start preview doesn't yank the keyboard.
+                self.suppress_map_focus_for = Some(PREVIEW_ID.to_string());
                 let command = format!("/opt/sola/bin/sola-preview {}", path.display());
                 let _ = bus.emit(Topic::LaunchApp(LaunchAppPayload {
                     app_id: PREVIEW_ID.to_string(),
@@ -677,7 +712,7 @@ impl Shell {
             && chord.keycode == sola_core::KeyCode::KEY_3
         {
             tracing::info!("Super+Shift+3 — full-output screenshot");
-            self.open_preview_on_next = true;
+            self.arm_screenshot_handoff();
             if let Ok(mut bus) = sola_kit::app::bus().lock() {
                 let _ = bus.emit(Topic::CaptureScreen(CaptureScreenPayload {
                     path: None,
@@ -721,7 +756,7 @@ impl Shell {
                     .find(|w| w.window_id == wid)
                     .map(|w| w.title.clone())
             });
-            self.open_preview_on_next = true;
+            self.arm_screenshot_handoff();
             if let Ok(mut bus) = sola_kit::app::bus().lock() {
                 let _ = bus.emit(Topic::CaptureScreen(CaptureScreenPayload {
                     path: None,

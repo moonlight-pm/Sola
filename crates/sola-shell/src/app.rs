@@ -178,6 +178,14 @@ pub struct Shell {
     /// When true, the next `Topic::Screenshot` from sola-river should
     /// open/raise sola-preview. Set only by shell hotkey / selection paths.
     pub open_preview_on_next: bool,
+    /// Window that should keep keyboard after a shell-initiated capture
+    /// finishes (preview is raised without stealing focus). Set when a
+    /// Super+Shift+3/4/5 capture starts; applied after open/raise preview.
+    pub screenshot_return_focus: Option<u32>,
+    /// When `Some(app_id)`, the next `on_windows` "new app mapped" focus
+    /// steal for that app is skipped (screenshot cold-launch of preview
+    /// must not yank the keyboard off the pre-capture app).
+    pub suppress_map_focus_for: Option<String>,
     pub zoning: ZoningState,
 
     // Menubar state (clock, toast, label positions)
@@ -263,6 +271,8 @@ impl Shell {
             launcher: LauncherState::default(),
             selection: SelectionState::default(),
             open_preview_on_next: false,
+            screenshot_return_focus: None,
+            suppress_map_focus_for: None,
             zoning: ZoningState::new(),
             menubar: MenubarState::new(),
             stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
@@ -288,30 +298,76 @@ impl Shell {
             .copied()
     }
 
-    /// After the selection marquee ends, put keyboard focus back on the
-    /// window that had it when Super+Shift+4 opened. Falls back to the
-    /// current `focused_window_id` if the prior window is gone (closed
-    /// mid-drag). Never leaves focus on the hidden selection surface.
-    fn restore_focus_after_selection(&mut self, prior: Option<u32>) {
+    /// Dismiss transient shell overlays so a capture doesn't leave the
+    /// switcher/launcher/selection holding the scene (and keyboard routing).
+    pub fn dismiss_transient_overlays(&mut self) {
+        let mut changed = false;
+        if self.launcher.active {
+            self.launcher.active = false;
+            changed = true;
+        }
+        if self.switcher.active {
+            self.switcher.active = false;
+            changed = true;
+        }
+        if self.menu_open {
+            self.menu_open = false;
+            self.open_panel = None;
+            self.current_open_index = None;
+            changed = true;
+        }
+        if self.selection.active {
+            let _ = self.selection.cancel();
+            changed = true;
+        }
+        if changed {
+            self.emit_composition();
+            self.emit_registered_chords();
+        }
+    }
+
+    /// Mark the next Screenshot result as shell-initiated (preview handoff)
+    /// and remember which app window should keep the keyboard afterward.
+    pub fn arm_screenshot_handoff(&mut self) {
+        self.dismiss_transient_overlays();
+        self.open_preview_on_next = true;
+        // Prefer the app that currently has keyboard focus; never the shell.
+        self.screenshot_return_focus = self.focused_window_id.filter(|wid| {
+            self.known_windows
+                .iter()
+                .any(|w| w.window_id == *wid && w.app_id != Self::APP_ID)
+        });
+    }
+
+    /// Put keyboard focus on `window_id` if it is still a live non-shell
+    /// window. Used after selection ends and after preview handoff so we
+    /// never leave focus on a hidden shell surface.
+    pub fn restore_app_focus(&mut self, prior: Option<u32>) {
         let target = prior
-            .filter(|wid| self.known_windows.iter().any(|w| w.window_id == *wid))
-            .or(self.focused_window_id.filter(|wid| {
-                // Don't restore onto a shell overlay / the selection surface.
+            .filter(|wid| {
                 self.known_windows
                     .iter()
                     .any(|w| w.window_id == *wid && w.app_id != Self::APP_ID)
-            }));
+            })
+            .or_else(|| {
+                self.focused_window_id.filter(|wid| {
+                    self.known_windows
+                        .iter()
+                        .any(|w| w.window_id == *wid && w.app_id != Self::APP_ID)
+                })
+            });
         let Some(window_id) = target else {
-            tracing::warn!("selection ended with no app window to restore focus to");
+            tracing::warn!("no app window available to restore keyboard focus");
             return;
         };
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
         }
-        // Keep shell's idea of focus in sync so chords / menubar stay correct.
         if let Some(w) = self.known_windows.iter().find(|w| w.window_id == window_id) {
             self.focused_window_id = Some(window_id);
             self.focused_app_id = Some(w.app_id.clone());
+            self.mru_window_by_app
+                .insert(w.app_id.clone(), window_id);
         }
     }
 
@@ -1074,19 +1130,16 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::OpenSelection => {
-                // Dismiss other overlays so the marquee is alone on top.
-                if self.launcher.active {
-                    self.launcher.active = false;
-                }
-                if self.switcher.active {
-                    self.switcher.active = false;
-                }
-                if self.menu_open {
-                    self.menu_open = false;
-                    self.open_panel = None;
-                }
-                // Snapshot focus *before* we steal it for the marquee.
-                self.selection.begin(self.focused_window_id);
+                // Snapshot the live app under the keyboard *before* overlays
+                // are dismissed / marquee steals focus.
+                let prior = self.focused_window_id.filter(|wid| {
+                    self.known_windows
+                        .iter()
+                        .any(|w| w.window_id == *wid && w.app_id != Self::APP_ID)
+                });
+                self.dismiss_transient_overlays();
+                self.selection.begin(prior);
+                self.screenshot_return_focus = prior;
                 self.emit_composition();
                 self.emit_registered_chords();
                 // Focus the selection surface so canvas gets pointer/keyboard.
@@ -1101,7 +1154,9 @@ impl Shell {
                 let prior = self.selection.cancel();
                 self.emit_composition();
                 self.emit_registered_chords();
-                self.restore_focus_after_selection(prior);
+                self.restore_app_focus(prior.or(self.screenshot_return_focus));
+                self.screenshot_return_focus = None;
+                self.open_preview_on_next = false;
                 iced::Task::none()
             }
             Msg::SelectionPress { x, y } => {
@@ -1121,10 +1176,14 @@ impl Shell {
                 self.emit_registered_chords();
                 // Always return keyboard to the pre-marquee window — even on
                 // cancel / tiny drag — so focus isn't left on the hidden
-                // selection surface.
-                self.restore_focus_after_selection(prior);
+                // selection surface. Preview handoff later must not steal it.
+                let keep = prior.or(self.screenshot_return_focus);
+                self.screenshot_return_focus = keep;
+                self.restore_app_focus(keep);
                 let Some((rx, ry, rw, rh)) = region else {
                     tracing::info!("selection cancelled (too small or empty)");
+                    self.screenshot_return_focus = None;
+                    self.open_preview_on_next = false;
                     return iced::Task::none();
                 };
                 tracing::info!(x = rx, y = ry, w = rw, h = rh, "selection capture");
