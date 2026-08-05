@@ -127,6 +127,10 @@ impl App {
                         if message.sticky {
                             self.applications.apps.push(app);
                         }
+                        applications::on_apps_changed(
+                            &self.applications,
+                            &mut self.apps_ui,
+                        );
                     }
                     Some(Topic::MailConfig(cfg)) => {
                         self.mail = cfg;

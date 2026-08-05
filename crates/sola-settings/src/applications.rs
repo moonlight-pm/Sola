@@ -141,6 +141,37 @@ pub fn can_leave_detail(detail: &Detail, apps: &ApplicationsConfig) -> bool {
     }
 }
 
+/// Reconcile open Edit detail after the apps list changes (bus replay).
+///
+/// - Retracted app while editing → close detail.
+/// - Clean edit still present → refresh buffer from canonical (external update).
+/// - Dirty edit → keep local buffer.
+/// - Closed / Draft → unchanged.
+pub fn on_apps_changed(apps: &ApplicationsConfig, ui: &mut AppsState) {
+    match &ui.detail {
+        Detail::Closed | Detail::Draft(_) => {}
+        Detail::Edit { orig, buffer } => {
+            match apps.get(orig) {
+                None => {
+                    ui.detail = Detail::Closed;
+                    ui.error = None;
+                }
+                Some(canonical) if !edit_is_dirty(buffer, canonical) => {
+                    // Refresh clean buffer from canonical (external update).
+                    let refreshed = EditBuffer::from_app(canonical);
+                    ui.detail = Detail::Edit {
+                        orig: orig.clone(),
+                        buffer: refreshed,
+                    };
+                }
+                Some(_) => {
+                    // Dirty — keep local buffer.
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum AppsMsg {
     Select(String),
@@ -680,5 +711,94 @@ mod tests {
             },
             &cfg
         ));
+    }
+
+    #[test]
+    fn on_apps_changed_closes_edit_when_app_removed() {
+        let mut cfg = ApplicationsConfig::default();
+        let a = app("chrome", "Chrome");
+        cfg.apps.push(a.clone());
+        let mut ui = AppsState {
+            detail: Detail::Edit {
+                orig: "chrome".into(),
+                buffer: EditBuffer::from_app(&a),
+            },
+            error: None,
+        };
+        cfg.remove("chrome");
+        on_apps_changed(&cfg, &mut ui);
+        assert!(matches!(ui.detail, Detail::Closed));
+    }
+
+    #[test]
+    fn on_apps_changed_keeps_clean_edit_when_app_still_present() {
+        let mut cfg = ApplicationsConfig::default();
+        let a = app("chrome", "Chrome");
+        cfg.apps.push(a.clone());
+        let mut ui = AppsState {
+            detail: Detail::Edit {
+                orig: "chrome".into(),
+                buffer: EditBuffer::from_app(&a),
+            },
+            error: None,
+        };
+        // Bus replay re-upserts the same sticky entry — still clean.
+        on_apps_changed(&cfg, &mut ui);
+        match &ui.detail {
+            Detail::Edit { orig, buffer } => {
+                assert_eq!(orig, "chrome");
+                assert!(buffer.matches(&a));
+            }
+            other => panic!("expected Edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn on_apps_changed_keeps_dirty_edit_buffer() {
+        let mut cfg = ApplicationsConfig::default();
+        let a = app("chrome", "Chrome");
+        cfg.apps.push(a.clone());
+        let mut dirty = EditBuffer::from_app(&a);
+        dirty.label = "Local draft".into();
+        let mut ui = AppsState {
+            detail: Detail::Edit {
+                orig: "chrome".into(),
+                buffer: dirty,
+            },
+            error: None,
+        };
+        // External sticky upsert with different fields — buffer ≠ canonical,
+        // so treat as dirty and keep local edits.
+        cfg.remove("chrome");
+        cfg.apps.push(Application {
+            app_id: "chrome".into(),
+            label: "Google Chrome".into(),
+            command: "true".into(),
+            icon: String::new(),
+        });
+        on_apps_changed(&cfg, &mut ui);
+        match &ui.detail {
+            Detail::Edit { buffer, .. } => assert_eq!(buffer.label, "Local draft"),
+            other => panic!("expected Edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn on_apps_changed_leaves_draft_and_closed_alone() {
+        let cfg = ApplicationsConfig::default();
+        let mut closed = AppsState::default();
+        on_apps_changed(&cfg, &mut closed);
+        assert!(matches!(closed.detail, Detail::Closed));
+
+        let mut draft = AppsState {
+            detail: Detail::Draft(EditBuffer {
+                app_id: "x".into(),
+                ..Default::default()
+            }),
+            error: Some("err".into()),
+        };
+        on_apps_changed(&cfg, &mut draft);
+        assert!(matches!(draft.detail, Detail::Draft(_)));
+        assert_eq!(draft.error.as_deref(), Some("err"));
     }
 }
