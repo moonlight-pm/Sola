@@ -2,27 +2,23 @@
 
 ## Current
 
-**sola-mail kit port** — `crates/sola-mail` layered kit app (protocol +
-worker + ui), parity with apocrypha mail. Design:
-`docs/specs/2026-07-27-sola-mail-kit-design.md`. Branch: `sola-mail`.
+**none**
 
 ### Last completed
 
-**sola-kvm → master**: Sola-native software KVM (novus → ember). Layer-shell
-edge capture, UDP spray, Mac CGEvent agent, sola MANAGED autostart. lan-mouse
-purged both hosts.
+**sola-mail → master**: Kit-native mail client (`crates/sola-mail`) — IMAP/SMTP
+worker, graphite three-pane UI, Helium URL open, IDLE multi-client refresh,
+Edit menu select/copy, soft-wrapped link chips.
 
 ### Future / follow-ups
 
 - Permanent /dev/input ACL or udev for sola-kvm (avoid per-boot setfacl)
 - Permission fan-out UX when TUI + sola-agent both attached (ask mode)
 - Remaining worktrees: `libei-portal` (archive/cleanup)
-- sola-mail: polish compose multiline body, storybook N/A
+- sola-mail: inline rich-text link hits (vs chips), multiline polish
 
 ### Resume
 
 ```text
-# branch sola-mail — crates/sola-mail
-cargo make build mail
-cargo test -p sola-mail
+# no active feature worktree
 ```
