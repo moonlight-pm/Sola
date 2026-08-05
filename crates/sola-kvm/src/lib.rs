@@ -4,9 +4,12 @@
 //! Pure enter/leave/motion logic lives in [`server`] for unit tests and reuse.
 
 pub mod barrier;
+pub mod clip;
 pub mod config;
 pub mod input;
 pub mod layout;
+pub mod metrics;
+pub mod priority;
 pub mod protocol;
 pub mod run;
 pub mod server;

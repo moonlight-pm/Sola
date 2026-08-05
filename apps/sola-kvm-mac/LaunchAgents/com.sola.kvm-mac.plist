@@ -37,6 +37,12 @@
   <key>ProcessType</key>
   <string>Interactive</string>
 
+  <!-- Higher CPU priority for inject under desktop load (lower Nice = more CPU). -->
+  <key>Nice</key>
+  <integer>-10</integer>
+  <key>LowPriorityIO</key>
+  <false/>
+
   <key>StandardOutPath</key>
   <string>/Users/joshua/Library/Logs/sola-kvm-mac.out.log</string>
   <key>StandardErrorPath</key>

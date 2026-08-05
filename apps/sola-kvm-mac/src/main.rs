@@ -5,8 +5,12 @@
 //! decode + keymap unit tests still run on Linux.
 
 mod agent;
+mod click;
+mod clip;
 mod inject;
 mod keymap;
+mod metrics;
+mod priority;
 mod protocol;
 
 use clap::{Parser, Subcommand};
@@ -64,6 +68,8 @@ fn main() {
         os = std::env::consts::OS,
         "starting sola-kvm-mac"
     );
+
+    priority::boost_process();
 
     if let Err(e) = agent::run(&bind) {
         eprintln!("sola-kvm-mac failed: {e}");

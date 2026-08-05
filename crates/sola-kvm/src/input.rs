@@ -15,7 +15,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::server::InputEvent;
 
@@ -227,6 +227,13 @@ const BTN_RIGHT: u16 = 0x111;
 const BTN_MIDDLE: u16 = 0x112;
 // _IOW('E', 0x90, int) on Linux: dir=WRITE(1), type='E', nr=0x90, size=4
 const EVIOCGRAB: u64 = 0x4004_4590;
+// _IOR('E', 0x01, int) — driver version; fails with ENODEV after unplug
+// even when fstat on the fd still succeeds.
+const EVIOCGVERSION: u64 = 0x8004_4501;
+// EVIOCGKEY(len): kernel key/button pressed bitmap (for stuck-key clear).
+const KEY_MAX: u16 = 0x2ff;
+const KEY_BIT_BYTES: usize = ((KEY_MAX as usize) + 1 + 7) / 8; // 96
+const SYN_REPORT: u16 = 0;
 
 #[cfg(target_os = "linux")]
 mod linux_ioctl {
@@ -245,11 +252,38 @@ mod linux_ioctl {
             Ok(())
         }
     }
+
+    /// `true` if the event node still answers EVIOCGVERSION.
+    pub fn eviocgversion_ok(fd: RawFd) -> Result<(), std::io::Error> {
+        let mut ver: i32 = 0;
+        // SAFETY: EVIOCGVERSION out-param is stack-local; fd is open.
+        let rc = unsafe { ioctl(fd, super::EVIOCGVERSION, &mut ver) };
+        if rc < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Read the kernel's current key/button pressed bitmap for this device.
+    pub fn eviocgkey(fd: RawFd, buf: &mut [u8]) -> std::io::Result<()> {
+        // _IOC(_IOC_READ=2, 'E', 0x18, len)
+        let len = buf.len() as u64;
+        let req = (2u64 << 30) | (len << 16) | ((b'E' as u64) << 8) | 0x18;
+        // SAFETY: EVIOCGKEY reads into a buffer of the declared length.
+        let rc = unsafe { ioctl(fd, req, buf.as_mut_ptr()) };
+        if rc < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 /// One open event node.
 struct EvdevDevice {
     path: PathBuf,
+    role: EvdevRole,
     file: File,
     /// Pending REL deltas between SYN reports.
     pend_dx: f32,
@@ -265,10 +299,11 @@ struct EvdevDevice {
 }
 
 impl EvdevDevice {
-    fn open(path: &Path) -> io::Result<Self> {
+    fn open(path: &Path, role: EvdevRole) -> io::Result<Self> {
         let file = File::options().read(true).write(true).open(path)?;
         Ok(Self {
             path: path.to_path_buf(),
+            role,
             file,
             pend_dx: 0.0,
             pend_dy: 0.0,
@@ -278,6 +313,100 @@ impl EvdevDevice {
             pend_scroll_hi_dy: 0.0,
             pending: Vec::new(),
         })
+    }
+
+    /// True if the error means the device is gone (unplugged).
+    ///
+    /// After USB re-plug the fd often still `fstat`s successfully but every
+    /// `read` returns ENODEV — we must treat that as dead or the keyboard
+    /// stays EVIOCGRAB'd while the new mouse is only local (split seat).
+    fn is_gone(err: &io::Error) -> bool {
+        if matches!(
+            err.kind(),
+            io::ErrorKind::NotFound
+                | io::ErrorKind::BrokenPipe
+                | io::ErrorKind::UnexpectedEof
+        ) {
+            return true;
+        }
+        match err.raw_os_error() {
+            // ENODEV, ENXIO, ENODEV aliases, EIO on some kernels after unplug
+            Some(19) | Some(6) | Some(5) => true,
+            _ => {
+                // Belt-and-suspenders: Display form varies by libc/Rust.
+                let s = err.to_string();
+                s.contains("No such device") || s.contains("No such device or address")
+            }
+        }
+    }
+
+    /// Probe whether this open fd still talks to a live input device.
+    /// Prefer EVIOCGVERSION over fstat — fstat stays green after unplug.
+    fn still_alive(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            match linux_ioctl::eviocgversion_ok(self.file.as_raw_fd()) {
+                Ok(()) => true,
+                Err(err) => {
+                    // Permission / transient → keep; only drop on gone-class errors.
+                    !Self::is_gone(&err)
+                        && err.raw_os_error() != Some(9) // EBADF
+                        && err.kind() != io::ErrorKind::InvalidInput
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            true
+        }
+    }
+
+    /// Codes currently pressed on this device (kernel EVIOCGKEY bitmap).
+    fn keys_down(&self) -> io::Result<Vec<u16>> {
+        #[cfg(target_os = "linux")]
+        {
+            let mut bits = [0u8; KEY_BIT_BYTES];
+            linux_ioctl::eviocgkey(self.file.as_raw_fd(), &mut bits)?;
+            let mut out = Vec::new();
+            for code in 1..=KEY_MAX {
+                let i = code as usize;
+                if bits[i / 8] & (1 << (i % 8)) != 0 {
+                    out.push(code);
+                }
+            }
+            Ok(out)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Inject KEY press/release (+ SYN) so libinput/compositor see state
+    /// changes that exclusive grab would otherwise steal. Needs O_RDWR.
+    fn inject_keys(&self, codes: &[u16], pressed: bool) -> io::Result<()> {
+        if codes.is_empty() {
+            return Ok(());
+        }
+        let value = if pressed { 1i32 } else { 0 };
+        let fd = self.file.as_raw_fd();
+        for &code in codes {
+            write_raw_event(fd, EV_KEY, code, value)?;
+        }
+        write_raw_event(fd, EV_SYN, SYN_REPORT, 0)?;
+        Ok(())
+    }
+
+    /// Drop injected / leftover events so they are not session input.
+    fn drain(&mut self) {
+        let _ = self.pump();
+        self.pending.clear();
+        self.pend_dx = 0.0;
+        self.pend_dy = 0.0;
+        self.pend_scroll_dx = 0.0;
+        self.pend_scroll_dy = 0.0;
+        self.pend_scroll_hi_dx = 0.0;
+        self.pend_scroll_hi_dy = 0.0;
     }
 
     fn set_grab(&self, grab: bool) -> io::Result<()> {
@@ -424,6 +553,53 @@ fn raw_from_bytes(buf: &[u8]) -> RawInputEvent {
     }
 }
 
+fn raw_to_bytes(ev: &RawInputEvent) -> [u8; 24] {
+    let mut buf = [0u8; 24];
+    buf[0..8].copy_from_slice(&ev.sec.to_le_bytes());
+    buf[8..16].copy_from_slice(&ev.usec.to_le_bytes());
+    buf[16..18].copy_from_slice(&ev.type_.to_le_bytes());
+    buf[18..20].copy_from_slice(&ev.code.to_le_bytes());
+    buf[20..24].copy_from_slice(&ev.value.to_le_bytes());
+    buf
+}
+
+fn write_raw_event(fd: i32, type_: u16, code: u16, value: i32) -> io::Result<()> {
+    let ev = RawInputEvent {
+        sec: 0,
+        usec: 0,
+        type_,
+        code,
+        value,
+    };
+    let bytes = raw_to_bytes(&ev);
+    let mut off = 0usize;
+    while off < bytes.len() {
+        // SAFETY: write on an open O_RDWR input fd; layout is kernel input_event.
+        let rc = unsafe {
+            libc::write(
+                fd,
+                bytes[off..].as_ptr() as *const libc::c_void,
+                bytes.len() - off,
+            )
+        };
+        if rc < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err);
+        }
+        if rc == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "short write injecting input_event",
+            ));
+        }
+        off += rc as usize;
+    }
+    Ok(())
+}
+
 /// Role of an opened evdev node (for logging / selection).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EvdevRole {
@@ -435,6 +611,9 @@ enum EvdevRole {
 pub struct EvdevSource {
     devices: Vec<EvdevDevice>,
     grabbed: bool,
+    /// At least one pointer node opened. Without this, remote mode would
+    /// grab keyboard-only → "novus has mouse, Mac has keyboard" split brain.
+    has_pointer: bool,
 }
 
 impl EvdevSource {
@@ -475,9 +654,15 @@ impl EvdevSource {
                     if !have_ptr && sysfs_has_rel_xy(&name) {
                         candidates.push((path.clone(), EvdevRole::Pointer));
                     }
-                    // Real keyboards report KEY_A; skip pure mouse button pads
-                    // (REL_X+Y) and consumer/hotkey devices without letter keys.
-                    if !have_kbd && sysfs_has_key_a(&name) && !sysfs_has_rel_xy(&name) {
+                    // Real keyboards report KEY_A; also open consumer-control
+                    // nodes that expose volume/media keys (no KEY_A).
+                    if !have_kbd
+                        && sysfs_has_key_a(&name)
+                        && !sysfs_has_rel_xy(&name)
+                    {
+                        candidates.push((path.clone(), EvdevRole::Keyboard));
+                    }
+                    if sysfs_has_key_volumeup(&name) && !sysfs_has_rel_xy(&name) {
                         candidates.push((path, EvdevRole::Keyboard));
                     }
                 }
@@ -492,7 +677,7 @@ impl EvdevSource {
         let mut n_ptr = 0usize;
         let mut n_kbd = 0usize;
         for (path, role) in candidates {
-            match EvdevDevice::open(&path) {
+            match EvdevDevice::open(&path, role) {
                 Ok(dev) => {
                     set_nonblocking(dev.file.as_raw_fd())?;
                     match role {
@@ -512,17 +697,33 @@ impl EvdevSource {
                 }
             }
         }
+        // Never fatal-exit for missing ACLs. After a cold boot or power loss,
+        // /dev/input is often nobody:nogroup with no seat ACL until udev/uaccess
+        // or a one-shot setfacl. sola manages us — if we exit(1) it crash-loops
+        // and KVM "never comes up". Stay alive empty; rescan_new() will open
+        // devices when they become readable.
         if devices.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "no readable pointer /dev/input/event* nodes (need input group or uaccess)",
-            ));
-        }
-        if n_kbd == 0 {
-            warn!(
-                "evdev: no keyboard nodes opened — remote typing will not work \
-                 (look for by-id/*-event-kbd or grant access to keyboard event nodes)"
+            error!(
+                "evdev: no readable /dev/input/event* yet — staying up and retrying. \
+                 Immediate: sudo /opt/sola/bin/sola-kvm-grant-input-acl \
+                 Permanent: services.sola udev uaccess (nix/module.nix) or \
+                 crates/sola-kvm/udev/99-sola-kvm-input.rules + udevadm trigger"
             );
+        } else {
+            if n_kbd == 0 {
+                warn!(
+                    "evdev: no keyboard nodes opened — remote typing will not work \
+                     (look for by-id/*-event-kbd or grant access to keyboard event nodes)"
+                );
+            }
+            if n_ptr == 0 {
+                warn!(
+                    "evdev: no pointer nodes opened — refusing remote enter until a mouse \
+                     is readable. Re-plug drops ACLs; grant access with: \
+                     sudo setfacl -m \"u:$(id -un):rw\" /dev/input/event[0-9]* \
+                     (or enable services.sola udev rule — crates/sola-kvm/udev/99-sola-kvm-input.rules)"
+                );
+            }
         }
         info!(
             count = devices.len(),
@@ -533,35 +734,279 @@ impl EvdevSource {
         Ok(Self {
             devices,
             grabbed: false,
+            has_pointer: n_ptr > 0,
         })
     }
 
-    pub fn set_grabbed(&mut self, grab: bool) {
-        if grab == self.grabbed {
-            return;
+    /// True if at least one pointer event node is open *right now*.
+    pub fn has_pointer(&self) -> bool {
+        self.has_pointer
+    }
+
+    fn recompute_has_pointer(&mut self) {
+        self.has_pointer = self
+            .devices
+            .iter()
+            .any(|d| d.role == EvdevRole::Pointer);
+    }
+
+    /// Apply exclusive grab. Returns `true` only when grab-ON succeeded with
+    /// at least one live **pointer** grabbed. Grab-OFF always returns `true`.
+    ///
+    /// Callers that enter remote **must** abort (ForceLeave, no Enter UDP)
+    /// when this returns `false` — otherwise keyboard-only grab creates the
+    /// "novus mouse + ember keyboard" split seat.
+    pub fn set_grabbed(&mut self, grab: bool) -> bool {
+        // Never grab keyboard-only — that creates the split seat.
+        if grab && !self.has_pointer {
+            warn!("refusing EVIOCGRAB — no pointer device open");
+            return false;
         }
-        for dev in &self.devices {
-            if let Err(e) = dev.set_grab(grab) {
-                warn!(path = %dev.path.display(), %e, grab, "EVIOCGRAB failed");
-            } else {
-                debug!(path = %dev.path.display(), grab, "EVIOCGRAB ok");
+        if grab == self.grabbed {
+            // Already in desired state — grab-ON only "ok" if we still have a pointer.
+            return !grab || self.has_pointer;
+        }
+
+        if !grab {
+            // Ungrab first so inject_keys after can reach the seat.
+            for dev in &mut self.devices {
+                if let Err(e) = dev.set_grab(false) {
+                    warn!(path = %dev.path.display(), %e, "EVIOCGRAB release failed");
+                }
+                // Keys still physically held: re-press for the compositor
+                // (we may have synthetic-released them before grab).
+                match dev.keys_down() {
+                    Ok(keys) if !keys.is_empty() => {
+                        info!(
+                            path = %dev.path.display(),
+                            n = keys.len(),
+                            "restoring held keys to seat after ungrab"
+                        );
+                        if let Err(e) = dev.inject_keys(&keys, true) {
+                            warn!(
+                                path = %dev.path.display(),
+                                %e,
+                                "inject key-down after ungrab failed"
+                            );
+                        }
+                        dev.drain();
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        debug!(path = %dev.path.display(), %e, "EVIOCGKEY after ungrab failed");
+                    }
+                }
+            }
+            self.grabbed = false;
+            info!("evdev exclusive grab OFF (local)");
+            return true;
+        }
+
+        // Grab ON: keys held at grab time never deliver KEY_UP to the
+        // compositor (only the grabber sees release) → stuck auto-repeat on
+        // novus (space, e, …). Clear host key state *before* exclusive grab.
+        // From fix/sola-kvm-stuck-keys (ported into pointer-required grab path).
+        for dev in &mut self.devices {
+            match dev.keys_down() {
+                Ok(keys) if !keys.is_empty() => {
+                    info!(
+                        path = %dev.path.display(),
+                        n = keys.len(),
+                        "releasing held keys to seat before exclusive grab"
+                    );
+                    if let Err(e) = dev.inject_keys(&keys, false) {
+                        warn!(
+                            path = %dev.path.display(),
+                            %e,
+                            "inject key-up before grab failed"
+                        );
+                    }
+                    dev.drain();
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    debug!(path = %dev.path.display(), %e, "EVIOCGKEY before grab failed");
+                }
             }
         }
-        self.grabbed = grab;
-        if grab {
-            info!("evdev exclusive grab ON (remote)");
-        } else {
-            info!("evdev exclusive grab OFF (local)");
+
+        // Require at least one *successful* pointer grab. If the mouse
+        // unplugged after open_all, ioctl fails with ENODEV — without this we
+        // still set grabbed=true and only the keyboard stays exclusive.
+        let mut pointer_grabbed = false;
+        for dev in &self.devices {
+            match dev.set_grab(true) {
+                Ok(()) => {
+                    debug!(path = %dev.path.display(), "EVIOCGRAB ok");
+                    if dev.role == EvdevRole::Pointer {
+                        pointer_grabbed = true;
+                    }
+                }
+                Err(e) => {
+                    warn!(path = %dev.path.display(), %e, grab = true, "EVIOCGRAB failed");
+                    if EvdevDevice::is_gone(&e) {
+                        // Mark for prune next tick; don't treat as pointer ok.
+                    }
+                }
+            }
         }
+        if !pointer_grabbed {
+            error!(
+                "abort EVIOCGRAB — no pointer grabbed (devices unplugged?). \
+                 Releasing any keyboard grabs to avoid split seat"
+            );
+            for dev in &self.devices {
+                let _ = dev.set_grab(false);
+            }
+            self.grabbed = false;
+            self.recompute_has_pointer();
+            return false;
+        }
+        self.grabbed = true;
+        info!("evdev exclusive grab ON (remote)");
+        true
+    }
+
+    /// Drop unplugged / dead nodes. Returns `true` if a **pointer** disappeared
+    /// (caller must leave remote if active).
+    ///
+    /// Uses EVIOCGVERSION rather than fstat: after USB unplug the fd often
+    /// still fstats cleanly while every read returns ENODEV.
+    pub fn prune_dead(&mut self) -> bool {
+        let before_ptr = self.has_pointer;
+        let mut lost_ptr = false;
+        self.devices.retain(|d| {
+            if d.still_alive() {
+                return true;
+            }
+            warn!(path = %d.path.display(), role = ?d.role, "evdev device gone (unplug)");
+            if d.role == EvdevRole::Pointer {
+                lost_ptr = true;
+            }
+            false
+        });
+        self.recompute_has_pointer();
+        if before_ptr && !self.has_pointer {
+            lost_ptr = true;
+        }
+        // Never keep exclusive grab without a live pointer.
+        if !self.has_pointer && self.grabbed {
+            error!(
+                "pointer gone — releasing exclusive grab (prevents split seat: \
+                 local mouse + grabbed keyboard)"
+            );
+            for dev in &self.devices {
+                let _ = dev.set_grab(false);
+            }
+            self.grabbed = false;
+        }
+        if self.devices.is_empty() {
+            self.grabbed = false;
+        }
+        lost_ptr
+    }
+
+    /// Try to open any new readable pointer/keyboard nodes (hotplug).
+    /// Returns `true` if a pointer was newly opened.
+    pub fn rescan_new(&mut self) -> bool {
+        let open_paths: std::collections::HashSet<_> =
+            self.devices.iter().map(|d| d.path.clone()).collect();
+        let mut candidates: Vec<(PathBuf, EvdevRole)> = Vec::new();
+        collect_by_symlink_role("/dev/input/by-id", &mut candidates);
+        collect_by_symlink_role("/dev/input/by-path", &mut candidates);
+        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        candidates.dedup_by(|a, b| a.0 == b.0);
+
+        let mut gained_ptr = false;
+        for (path, role) in candidates {
+            if open_paths.contains(&path) {
+                continue;
+            }
+            match EvdevDevice::open(&path, role) {
+                Ok(dev) => {
+                    if let Err(e) = set_nonblocking(dev.file.as_raw_fd()) {
+                        warn!(path = %path.display(), %e, "hotplug nonblock failed");
+                        continue;
+                    }
+                    // If we are already grabbed (remote), grab the new node too
+                    // — but only if we still have/now have a pointer.
+                    if self.grabbed && (self.has_pointer || role == EvdevRole::Pointer) {
+                        if let Err(e) = dev.set_grab(true) {
+                            warn!(path = %path.display(), %e, "hotplug EVIOCGRAB failed");
+                        }
+                    }
+                    match role {
+                        EvdevRole::Pointer => {
+                            info!(path = %path.display(), "evdev hotplug opened (pointer)");
+                            gained_ptr = true;
+                        }
+                        EvdevRole::Keyboard => {
+                            info!(path = %path.display(), "evdev hotplug opened (keyboard)");
+                        }
+                    }
+                    self.devices.push(dev);
+                }
+                Err(e) => {
+                    debug!(path = %path.display(), %e, "evdev hotplug open skipped");
+                }
+            }
+        }
+        self.recompute_has_pointer();
+        gained_ptr
     }
 
     /// Poll all devices; return any complete events.
+    /// Drops unplugged devices; sets `self.has_pointer` accordingly.
+    ///
+    /// Also releases exclusive grab the moment the last pointer dies — even
+    /// before the run loop notices and ForceLeaves — so the keyboard cannot
+    /// stay exclusive for a full event-loop tick.
     pub fn poll(&mut self) -> io::Result<Vec<InputEvent>> {
+        let before_ptr = self.has_pointer;
         let mut out = Vec::new();
-        for dev in &mut self.devices {
+        let mut dead: Vec<usize> = Vec::new();
+        for (i, dev) in self.devices.iter_mut().enumerate() {
             match dev.pump() {
                 Ok(mut v) => out.append(&mut v),
-                Err(e) => warn!(path = %dev.path.display(), %e, "evdev read error"),
+                Err(e) if EvdevDevice::is_gone(&e) => {
+                    warn!(path = %dev.path.display(), role = ?dev.role, %e, "evdev device died");
+                    dead.push(i);
+                }
+                Err(e) => {
+                    // Non-gone errors: still log. ENODEV-class that slipped past
+                    // is_gone get a second chance via still_alive on next prune.
+                    warn!(path = %dev.path.display(), %e, "evdev read error");
+                    if !dev.still_alive() {
+                        warn!(
+                            path = %dev.path.display(),
+                            role = ?dev.role,
+                            "evdev device unresponsive after read error — dropping"
+                        );
+                        dead.push(i);
+                    }
+                }
+            }
+        }
+        if !dead.is_empty() {
+            // Remove high indices first.
+            dead.sort_unstable();
+            dead.dedup();
+            for i in dead.into_iter().rev() {
+                self.devices.remove(i);
+            }
+            self.recompute_has_pointer();
+            if before_ptr && !self.has_pointer && self.grabbed {
+                error!(
+                    "pointer died mid-poll — releasing exclusive grab \
+                     (prevents split seat)"
+                );
+                for dev in &self.devices {
+                    let _ = dev.set_grab(false);
+                }
+                self.grabbed = false;
+            }
+            if self.devices.is_empty() {
+                self.grabbed = false;
             }
         }
         Ok(out)
@@ -666,7 +1111,7 @@ pub fn coalesce_input_events(events: Vec<InputEvent>) -> Vec<InputEvent> {
     out
 }
 
-/// Collect `*-event-mouse` / `*-event-kbd` symlinks under `dir` (by-id or by-path).
+/// Collect pointer / keyboard / consumer-control symlinks under `dir`.
 fn collect_by_symlink_role(dir: &str, out: &mut Vec<(PathBuf, EvdevRole)>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -674,9 +1119,14 @@ fn collect_by_symlink_role(dir: &str, out: &mut Vec<(PathBuf, EvdevRole)>) {
     for ent in entries.flatten() {
         let name = ent.file_name();
         let name = name.to_string_lossy();
+        // Consumer Control nodes carry KEY_VOLUME*/PLAYPAUSE and are not
+        // named `event-kbd` (e.g. LAMZU `…-event-if01`).
         let role = if name.contains("event-mouse") {
             EvdevRole::Pointer
-        } else if name.contains("event-kbd") {
+        } else if name.contains("event-kbd")
+            || name.contains("consumer")
+            || name.contains("event-if01")
+        {
             EvdevRole::Keyboard
         } else {
             continue;
@@ -707,19 +1157,30 @@ fn sysfs_has_rel_xy(event_name: &str) -> bool {
 ///
 /// Used to distinguish full keyboards from button-only / power / LED nodes.
 fn sysfs_has_key_a(event_name: &str) -> bool {
+    sysfs_has_key_bit(event_name, 30)
+}
+
+/// True if the device reports `KEY_VOLUMEUP` (evdev 115) — consumer control.
+fn sysfs_has_key_volumeup(event_name: &str) -> bool {
+    sysfs_has_key_bit(event_name, 115)
+}
+
+/// Kernel prints capability bitmasks as space-separated 64-bit words,
+/// least-significant word first.
+fn sysfs_has_key_bit(event_name: &str, keycode: u32) -> bool {
     let path = format!("/sys/class/input/{event_name}/device/capabilities/key");
     let Ok(text) = std::fs::read_to_string(path) else {
         return false;
     };
-    // Kernel prints capability bitmasks as space-separated 64-bit words,
-    // least-significant word first. KEY_A = 30 → bit 30 in word 0.
-    let Some(first) = text.split_whitespace().next() else {
+    let word_idx = (keycode / 64) as usize;
+    let bit = keycode % 64;
+    let Some(word_str) = text.split_whitespace().nth(word_idx) else {
         return false;
     };
-    let Ok(word) = u64::from_str_radix(first.trim_start_matches("0x"), 16) else {
+    let Ok(word) = u64::from_str_radix(word_str.trim_start_matches("0x"), 16) else {
         return false;
     };
-    (word & (1u64 << 30)) != 0
+    (word & (1u64 << bit)) != 0
 }
 
 fn set_nonblocking(fd: i32) -> io::Result<()> {

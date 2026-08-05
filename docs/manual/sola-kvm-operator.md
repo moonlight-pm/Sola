@@ -68,7 +68,27 @@ Logs: `/opt/sola/log/sola.log` (shared) and stderr; also check for `sola-kvm` li
 
 1. Install binaries: `/opt/sola/bin/sola` (with MANAGED including sola-kvm) and `/opt/sola/bin/sola-kvm`
 2. Config: `~/.config/sola-kvm/config.toml` (`peer.host` = ember IP)
-3. `/dev/input/event*` readable by your user (e.g. `sudo setfacl -m u:$USER:rw- /dev/input/event*` once per boot, or a permanent udev/ACL rule)
+3. **Input device access** (required for `evdev`; re-plug creates new nodes):
+
+   **Permanent (preferred — NixOS / `services.sola.enable`):** the sola NixOS
+   module installs a udev rule (`TAG+="uaccess"` + `GROUP=input`) so logind
+   re-grants the seat user on every plug. Rebuild/switch the host config that
+   imports `nix/module.nix`. Rule source: `crates/sola-kvm/udev/99-sola-kvm-input.rules`.
+
+   **One-shot ACL** (until udev is in place) — always quote `-m`, never bare
+   `$USER` if it might be empty (`u::rw-` → *Invalid argument near character 3*):
+
+   ```bash
+   # helper (re-execs under sudo, expands username safely)
+   sudo crates/sola-kvm/scripts/grant-input-acl.sh
+   # equivalent one-liner:
+   sudo setfacl -m "u:$(id -un):rw" /dev/input/event[0-9]*
+   killall sola-kvm   # sola relaunches; re-opens devices
+   ```
+
+   If logs show `pointers=0 keyboards=1`, the mouse node is not readable and
+   remote enter is refused (prevents “novus mouse / Mac keyboard” split).
+
 4. Start Sola from the TTY as usual — `sola-kvm` is launched after the Wayland socket is ready
 
 Manual override (debug):

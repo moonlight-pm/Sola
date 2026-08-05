@@ -18,6 +18,8 @@ wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 rustix = { version = "1", features = ["fs"] }
 libc = "0.2"
+# Wayland/X11 clipboard without requiring wl-clipboard on PATH.
+arboard = "3"
 
 [dev-dependencies]
 tempfile = "3"

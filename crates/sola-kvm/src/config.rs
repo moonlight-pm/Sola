@@ -18,6 +18,8 @@ pub struct Config {
     /// Primary output size. Phase C will pull this from sola-river /
     /// bus; until then these defaults (or overrides) drive layout math.
     pub primary: Primary,
+    /// Text clipboard sync over TCP (same host/port as UDP peer).
+    pub clipboard: Clipboard,
 }
 
 impl Default for Config {
@@ -28,6 +30,7 @@ impl Default for Config {
             motion: Motion::default(),
             bind: Bind::default(),
             primary: Primary::default(),
+            clipboard: Clipboard::default(),
         }
     }
 }
@@ -123,6 +126,27 @@ impl Default for Primary {
         Self {
             width: 5120,
             height: 2160,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Clipboard {
+    pub enable: bool,
+    /// Max UTF-8 bytes per Offer (default 1 MiB).
+    pub max_bytes: u32,
+    pub sync_on_enter: bool,
+    pub sync_on_leave: bool,
+}
+
+impl Default for Clipboard {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            max_bytes: 1_048_576,
+            sync_on_enter: true,
+            sync_on_leave: true,
         }
     }
 }
