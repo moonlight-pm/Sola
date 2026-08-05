@@ -5,22 +5,30 @@
 //! `app_id`), and the resulting replay is what updates our canonical
 //! `ApplicationsConfig`.
 //!
-//! Single open detail editor (edit or draft). Dirty state locks
-//! selection / blank draft / candidate configure until Save or Discard.
+//! Compact A→Z list (left) + fixed-width detail panel (right). Single
+//! open editor (edit or draft); dirty state locks selection / blank
+//! draft / candidate configure until Save or Discard.
 //!
 //! Builtin apps (defined in sola-shell) never appear here — they
 //! are seeded by the shell directly and are not part of the
 //! `Topic::Application` stream.
 
-use iced::{Element, Task};
+use iced::widget::{button, column, container, row};
+use iced::{Element, Length, Task};
+use sola_kit::components::text_input::text_input;
 
 use sola_bus::topics::{Application, ApplicationsConfig, Topic, Window as BusWindow};
 use sola_kit::app::bus;
+use sola_kit::components::style::{PAD_CONTROL, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
 use sola_kit::components::text as kit_text;
+use sola_kit::components::{Tone, badge, button as kit_btn, card, field, text_input as kit_input};
 
-// Constructed by the master–detail view (Task 3); update already handles Field.
+use crate::procfs;
+
+/// Fixed width of the right-hand detail panel (px).
+const DETAIL_WIDTH: f32 = 400.0;
+
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub enum AppField {
     Id,
     Label,
@@ -81,8 +89,6 @@ pub struct AppsState {
     pub error: Option<String>,
 }
 
-// Pure helpers for list+detail (sort used once master list lands in Task 3).
-#[allow(dead_code)]
 /// Label if non-empty after trim, otherwise `app_id`.
 pub fn display_title(app: &Application) -> &str {
     if app.label.trim().is_empty() {
@@ -92,13 +98,11 @@ pub fn display_title(app: &Application) -> &str {
     }
 }
 
-#[allow(dead_code)]
 /// Case-insensitive sort key from [`display_title`].
 pub fn sort_key(app: &Application) -> String {
     display_title(app).to_ascii_lowercase()
 }
 
-#[allow(dead_code)]
 /// Configured apps sorted by [`sort_key`], then `app_id`.
 pub fn sorted_apps(apps: &ApplicationsConfig) -> Vec<&Application> {
     let mut v: Vec<&Application> = apps.apps.iter().collect();
@@ -137,9 +141,7 @@ pub fn can_leave_detail(detail: &Detail, apps: &ApplicationsConfig) -> bool {
     }
 }
 
-// Variants are produced by the master–detail view (Task 3); update is wired now.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum AppsMsg {
     Select(String),
     StartBlank,
@@ -303,13 +305,260 @@ pub fn update(
     Task::none()
 }
 
-/// Temporary stub until Task 3 master–detail view lands.
 pub fn view<'a>(
-    _apps: &'a ApplicationsConfig,
-    _running: &'a [BusWindow],
-    _ui: &'a AppsState,
+    apps: &'a ApplicationsConfig,
+    running: &'a [BusWindow],
+    ui: &'a AppsState,
 ) -> Element<'a, AppsMsg> {
-    kit_text::body("Applications UI rebuild in progress").into()
+    let list = list_column(apps, running, ui);
+    let detail = detail_panel(apps, ui);
+    row![list, detail]
+        .spacing(SPACE_XL)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+// ── view helpers ───────────────────────────────────────────────────
+
+fn list_column<'a>(
+    apps: &'a ApplicationsConfig,
+    running: &'a [BusWindow],
+    ui: &'a AppsState,
+) -> Element<'a, AppsMsg> {
+    let mut col = column![
+        kit_btn::labeled("+ Add application", kit_btn::ghost).on_press(AppsMsg::StartBlank),
+    ]
+    .spacing(SPACE_MD)
+    .width(Length::Fill);
+
+    if apps.apps.is_empty() {
+        col = col.push(
+            kit_text::body(
+                "No applications configured. Click \"+ Add application\" or pick from the candidates below.",
+            )
+            .style(kit_text::muted),
+        );
+    }
+
+    let mut rows = column![].spacing(SPACE_XS).width(Length::Fill);
+    for app in sorted_apps(apps) {
+        rows = rows.push(app_row(app, ui));
+    }
+    col = col.push(rows);
+
+    let candidates = collect_candidates(apps, running);
+    if !candidates.is_empty() {
+        col = col.push(candidates_card(candidates));
+    }
+
+    col.height(Length::Fill).into()
+}
+
+fn app_row<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, AppsMsg> {
+    let selected = matches!(
+        &ui.detail,
+        Detail::Edit { orig, .. } if orig == &app.app_id
+    );
+    let missing = !sola_core::applications::command_exists(&app.command);
+
+    let mut hit = row![kit_text::body(display_title(app))]
+        .spacing(SPACE_MD)
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill);
+    if missing {
+        hit = hit.push(badge("not found", Tone::Warning));
+    }
+
+    row![
+        button(hit)
+            .on_press(AppsMsg::Select(app.app_id.clone()))
+            .padding(PAD_CONTROL)
+            .width(Length::Fill)
+            .style(kit_btn::list_item(selected)),
+        kit_btn::labeled("Remove", kit_btn::danger)
+            .on_press(AppsMsg::Remove(app.app_id.clone())),
+    ]
+    .spacing(SPACE_MD)
+    .align_y(iced::Alignment::Center)
+    .width(Length::Fill)
+    .into()
+}
+
+fn detail_panel<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, AppsMsg> {
+    let body: Element<'a, AppsMsg> = match &ui.detail {
+        Detail::Closed => kit_text::body("Select an app or add one")
+            .style(kit_text::muted)
+            .into(),
+        Detail::Edit { orig, buffer } => {
+            let dirty = apps
+                .get(orig)
+                .map(|canonical| edit_is_dirty(buffer, canonical))
+                .unwrap_or(true);
+            let title = if buffer.label.trim().is_empty() {
+                buffer.app_id.as_str()
+            } else {
+                buffer.label.as_str()
+            };
+            let title = if title.is_empty() {
+                orig.as_str()
+            } else {
+                title
+            };
+
+            let mut footer = row![].spacing(SPACE_MD).align_y(iced::Alignment::Center);
+            if dirty {
+                footer = footer
+                    .push(kit_btn::labeled("Save", kit_btn::primary).on_press(AppsMsg::Save))
+                    .push(
+                        kit_btn::labeled("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
+                    );
+            }
+            footer = footer
+                .push(iced::widget::Space::new().width(Length::Fill))
+                .push(kit_btn::labeled("Close", kit_btn::ghost).on_press(AppsMsg::CloseDetail));
+
+            let mut col = column![
+                kit_text::subheading(title),
+                detail_fields(buffer, /* draft placeholders */ false),
+            ]
+            .spacing(SPACE_LG);
+            if let Some(err) = ui.error.as_deref() {
+                col = col.push(kit_text::caption(err).style(kit_text::danger));
+            }
+            col = col.push(footer);
+            col.into()
+        }
+        Detail::Draft(buffer) => {
+            let footer = row![
+                kit_btn::labeled("Add", kit_btn::primary).on_press(AppsMsg::Save),
+                kit_btn::labeled("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
+            ]
+            .spacing(SPACE_MD)
+            .align_y(iced::Alignment::Center);
+
+            let mut col = column![
+                kit_text::subheading("New application").style(kit_text::muted),
+                detail_fields(buffer, /* draft placeholders */ true),
+            ]
+            .spacing(SPACE_LG);
+            if let Some(err) = ui.error.as_deref() {
+                col = col.push(kit_text::caption(err).style(kit_text::danger));
+            }
+            col = col.push(footer);
+            col.into()
+        }
+    };
+
+    container(card(body).width(Length::Fill).height(Length::Fill))
+        .width(Length::Fixed(DETAIL_WIDTH))
+        .height(Length::Fill)
+        .into()
+}
+
+fn detail_fields<'a>(buf: &'a EditBuffer, draft_placeholders: bool) -> Element<'a, AppsMsg> {
+    let (ph_id, ph_label, ph_icon, ph_cmd) = if draft_placeholders {
+        ("firefox", "Firefox", "simpleicons/firefox", "firefox")
+    } else {
+        ("", "", "", "")
+    };
+    column![
+        field_input("app_id", &buf.app_id, ph_id, AppField::Id),
+        field_input("label", &buf.label, ph_label, AppField::Label),
+        field_input("icon", &buf.icon, ph_icon, AppField::Icon),
+        field_input("command", &buf.command, ph_cmd, AppField::Command),
+    ]
+    .spacing(SPACE_LG)
+    .into()
+}
+
+fn field_input<'a>(
+    label: &'a str,
+    value: &'a str,
+    placeholder: &'a str,
+    f: AppField,
+) -> Element<'a, AppsMsg> {
+    let input = text_input(placeholder, value)
+        .on_input(move |v| AppsMsg::Field { field: f, value: v })
+        .size(13)
+        .style(kit_input::style)
+        .width(Length::Fill);
+    field(label, input, None, None).into()
+}
+
+fn candidates_card<'a>(candidates: Vec<Candidate>) -> Element<'a, AppsMsg> {
+    let mut col = column![
+        kit_text::subheading("Running, not configured"),
+        kit_text::caption(
+            "Pre-filled by what's currently running. Configure opens the detail panel.",
+        )
+        .style(kit_text::muted),
+    ]
+    .spacing(SPACE_SM);
+
+    for c in candidates {
+        let title_owned: String = if c.title.is_empty() {
+            "(no title)".to_string()
+        } else {
+            c.title.clone()
+        };
+        let detail = if let Some(cmd) = &c.suggested_command {
+            format!("{title_owned} · {cmd}")
+        } else {
+            format!("{title_owned} · command unknown — fill in manually")
+        };
+        let app_id_for_text = c.app_id.clone();
+        let row_el = row![
+            column![
+                kit_text::body(app_id_for_text),
+                kit_text::caption(detail).style(kit_text::muted),
+            ]
+            .spacing(SPACE_XS)
+            .width(Length::Fill),
+            kit_btn::labeled("Configure", kit_btn::ghost).on_press(AppsMsg::StartFromCandidate {
+                app_id: c.app_id,
+                command: c.suggested_command,
+            }),
+        ]
+        .spacing(SPACE_MD)
+        .align_y(iced::Alignment::Center);
+        col = col.push(row_el);
+    }
+
+    card(col.spacing(SPACE_LG)).width(Length::Fill).into()
+}
+
+// ── candidate derivation ───────────────────────────────────────────
+
+struct Candidate {
+    app_id: String,
+    title: String,
+    suggested_command: Option<String>,
+}
+
+fn collect_candidates(apps: &ApplicationsConfig, running: &[BusWindow]) -> Vec<Candidate> {
+    use std::collections::HashSet;
+    let configured: HashSet<&str> = apps.apps.iter().map(|a| a.app_id.as_str()).collect();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::new();
+    for w in running {
+        if configured.contains(w.app_id.as_str()) {
+            continue;
+        }
+        if procfs::is_system_app(&w.app_id) {
+            continue;
+        }
+        if !seen.insert(w.app_id.clone()) {
+            continue;
+        }
+        let suggested = procfs::suggest_command(&w.app_id, w.pid);
+        out.push(Candidate {
+            app_id: w.app_id.clone(),
+            title: w.title.clone(),
+            suggested_command: suggested,
+        });
+    }
+    out
 }
 
 // ── small helpers ──────────────────────────────────────────────────
