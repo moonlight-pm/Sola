@@ -6,6 +6,10 @@ pub const MIN_REGION: f32 = 2.0;
 #[derive(Debug, Clone, Default)]
 pub struct SelectionState {
     pub active: bool,
+    /// Window that held keyboard focus when the marquee opened — restored
+    /// on cancel / finish so we don't leave focus stuck on the hidden
+    /// selection surface (which drops keyboard routing for the desktop).
+    pub prior_focus: Option<u32>,
     /// Pointer down position in overlay/window space (compositor space
     /// when the surface is framed at 0,0 full output).
     pub drag_start: Option<(f32, f32)>,
@@ -13,16 +17,19 @@ pub struct SelectionState {
 }
 
 impl SelectionState {
-    pub fn begin(&mut self) {
+    pub fn begin(&mut self, prior_focus: Option<u32>) {
         self.active = true;
+        self.prior_focus = prior_focus;
         self.drag_start = None;
         self.drag_current = None;
     }
 
-    pub fn cancel(&mut self) {
+    /// End selection and return the focus window to restore (if any).
+    pub fn cancel(&mut self) -> Option<u32> {
         self.active = false;
         self.drag_start = None;
         self.drag_current = None;
+        self.prior_focus.take()
     }
 
     pub fn press(&mut self, x: f32, y: f32) {
@@ -36,12 +43,12 @@ impl SelectionState {
         }
     }
 
-    /// Normalized integer region `(x, y, w, h)` if the drag is large
-    /// enough; otherwise `None` (treat as cancel).
-    pub fn finish_region(&mut self) -> Option<(i32, i32, i32, i32)> {
+    /// End the drag: returns `(region?, prior_focus_to_restore)`.
+    /// Region is `None` when the drag is too small (cancel without capture).
+    pub fn finish_region(&mut self) -> (Option<(i32, i32, i32, i32)>, Option<u32>) {
         let region = self.current_region();
-        self.cancel();
-        region
+        let prior = self.cancel();
+        (region, prior)
     }
 
     /// Current axis-aligned rect from start→current, if large enough.
@@ -71,18 +78,31 @@ mod tests {
     #[test]
     fn tiny_drag_is_none() {
         let mut s = SelectionState::default();
-        s.begin();
+        s.begin(Some(7));
         s.press(10.0, 10.0);
         s.move_to(11.0, 10.5);
-        assert!(s.finish_region().is_none());
+        let (region, prior) = s.finish_region();
+        assert!(region.is_none());
+        assert_eq!(prior, Some(7));
     }
 
     #[test]
     fn normalizes_inverted_drag() {
         let mut s = SelectionState::default();
-        s.begin();
+        s.begin(None);
         s.press(100.0, 80.0);
         s.move_to(40.0, 20.0);
-        assert_eq!(s.finish_region(), Some((40, 20, 60, 60)));
+        let (region, prior) = s.finish_region();
+        assert_eq!(region, Some((40, 20, 60, 60)));
+        assert_eq!(prior, None);
+    }
+
+    #[test]
+    fn cancel_returns_prior_focus() {
+        let mut s = SelectionState::default();
+        s.begin(Some(42));
+        assert_eq!(s.cancel(), Some(42));
+        assert!(!s.active);
+        assert_eq!(s.prior_focus, None);
     }
 }

@@ -288,6 +288,33 @@ impl Shell {
             .copied()
     }
 
+    /// After the selection marquee ends, put keyboard focus back on the
+    /// window that had it when Super+Shift+4 opened. Falls back to the
+    /// current `focused_window_id` if the prior window is gone (closed
+    /// mid-drag). Never leaves focus on the hidden selection surface.
+    fn restore_focus_after_selection(&mut self, prior: Option<u32>) {
+        let target = prior
+            .filter(|wid| self.known_windows.iter().any(|w| w.window_id == *wid))
+            .or(self.focused_window_id.filter(|wid| {
+                // Don't restore onto a shell overlay / the selection surface.
+                self.known_windows
+                    .iter()
+                    .any(|w| w.window_id == *wid && w.app_id != Self::APP_ID)
+            }));
+        let Some(window_id) = target else {
+            tracing::warn!("selection ended with no app window to restore focus to");
+            return;
+        };
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
+        }
+        // Keep shell's idea of focus in sync so chords / menubar stay correct.
+        if let Some(w) = self.known_windows.iter().find(|w| w.window_id == window_id) {
+            self.focused_window_id = Some(window_id);
+            self.focused_app_id = Some(w.app_id.clone());
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Emit helpers — compute and push bus topics from current state
     // -------------------------------------------------------------------------
@@ -1058,7 +1085,8 @@ impl Shell {
                     self.menu_open = false;
                     self.open_panel = None;
                 }
-                self.selection.begin();
+                // Snapshot focus *before* we steal it for the marquee.
+                self.selection.begin(self.focused_window_id);
                 self.emit_composition();
                 self.emit_registered_chords();
                 // Focus the selection surface so canvas gets pointer/keyboard.
@@ -1070,9 +1098,10 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::CloseSelection => {
-                self.selection.cancel();
+                let prior = self.selection.cancel();
                 self.emit_composition();
                 self.emit_registered_chords();
+                self.restore_focus_after_selection(prior);
                 iced::Task::none()
             }
             Msg::SelectionPress { x, y } => {
@@ -1085,11 +1114,15 @@ impl Shell {
             }
             Msg::SelectionRelease { x, y } => {
                 self.selection.move_to(x, y);
-                let region = self.selection.finish_region();
+                let (region, prior) = self.selection.finish_region();
                 // Hide overlay before capture so the marquee/scrim is not
                 // in the PNG (Composition precedes CaptureScreen on the bus).
                 self.emit_composition();
                 self.emit_registered_chords();
+                // Always return keyboard to the pre-marquee window — even on
+                // cancel / tiny drag — so focus isn't left on the hidden
+                // selection surface.
+                self.restore_focus_after_selection(prior);
                 let Some((rx, ry, rw, rh)) = region else {
                     tracing::info!("selection cancelled (too small or empty)");
                     return iced::Task::none();
