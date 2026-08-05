@@ -3,6 +3,9 @@
 //! no app state. Lifted from the legacy main.rs unchanged; the
 //! original docstrings remain authoritative for behaviour.
 
+// Re-wired when the Applications master–detail view lands (Task 3).
+#![allow(dead_code)]
+
 use std::path::Path;
 
 use sola_core::applications::resolve_in_path;
