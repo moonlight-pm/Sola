@@ -5,23 +5,16 @@
 //! `app_id`), and the resulting replay is what updates our canonical
 //! `ApplicationsConfig`.
 //!
-//! The legacy web panel committed edits 500 ms after the last
-//! keystroke. The iced port uses explicit Save / Discard buttons
-//! per row instead, matching the Mail panel's pattern and removing
-//! the per-row debounce timer state.
+//! Compact A→Z list (left) + fixed-width detail panel (right). Single
+//! open editor (edit or draft); dirty state locks selection / blank
+//! draft / candidate configure until Save or Discard.
 //!
 //! Builtin apps (defined in sola-shell) never appear here — they
 //! are seeded by the shell directly and are not part of the
 //! `Topic::Application` stream.
-//!
-//! Chrome density inherits kit helpers (`button::labeled`, type roles,
-//! `SPACE_*`, field + text_input defaults) — no local pad/size snowflakes.
 
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-use iced::widget::{column, row};
-use iced::{Element, Length, Task};
+use iced::widget::{button, column, container, row, scrollable};
+use iced::{Alignment, Element, Length, Padding, Task};
 use sola_kit::components::text_input::text_input;
 
 use sola_bus::topics::{Application, ApplicationsConfig, Topic, Window as BusWindow};
@@ -32,21 +25,22 @@ use sola_kit::components::{Tone, badge, button as kit_btn, card, field, text_inp
 
 use crate::procfs;
 
+/// Fixed width of the right-hand detail panel (px).
+const DETAIL_WIDTH: f32 = 380.0;
+/// Vertical pad inside a compact app row (graphite density).
+const ROW_PAD: Padding = Padding {
+    top: 8.0,
+    bottom: 8.0,
+    left: 12.0,
+    right: 8.0,
+};
+
 #[derive(Debug, Clone, Copy)]
 pub enum AppField {
     Id,
     Label,
     Command,
     Icon,
-}
-
-#[derive(Debug, Clone)]
-pub struct DraftRow {
-    pub key: u64,
-    pub app_id: String,
-    pub label: String,
-    pub command: String,
-    pub icon: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -58,7 +52,7 @@ pub struct EditBuffer {
 }
 
 impl EditBuffer {
-    fn from_app(a: &Application) -> Self {
+    pub fn from_app(a: &Application) -> Self {
         Self {
             app_id: a.app_id.clone(),
             label: a.label.clone(),
@@ -66,13 +60,13 @@ impl EditBuffer {
             icon: a.icon.clone(),
         }
     }
-    fn matches(&self, a: &Application) -> bool {
+    pub fn matches(&self, a: &Application) -> bool {
         self.app_id == a.app_id
             && self.label == a.label
             && self.command == a.command
             && self.icon == a.icon
     }
-    fn to_application(&self) -> Application {
+    pub fn to_application(&self) -> Application {
         let mut a = Application {
             app_id: self.app_id.trim().to_string(),
             label: self.label.trim().to_string(),
@@ -84,44 +78,124 @@ impl EditBuffer {
     }
 }
 
-#[derive(Default)]
-pub struct AppsState {
-    pub drafts: Vec<DraftRow>,
-    /// Keyed by the canonical (original) app_id of the row being
-    /// edited; stays stable across rename until commit clears it.
-    pub edits: BTreeMap<String, EditBuffer>,
-    /// Inline error messages, keyed by `draft-<key>` or
-    /// `app-<original_app_id>`.
-    pub errors: BTreeMap<String, String>,
+/// Single detail panel selection for the list+detail Applications UI.
+#[derive(Debug, Clone, Default)]
+pub enum Detail {
+    #[default]
+    Closed,
+    Edit {
+        orig: String,
+        buffer: EditBuffer,
+    },
+    Draft(EditBuffer),
 }
 
-static DRAFT_SEQ: AtomicU64 = AtomicU64::new(1);
+#[derive(Default)]
+pub struct AppsState {
+    pub detail: Detail,
+    pub error: Option<String>,
+}
 
-fn next_key() -> u64 {
-    DRAFT_SEQ.fetch_add(1, Ordering::Relaxed)
+/// Label if non-empty after trim, otherwise `app_id`.
+pub fn display_title(app: &Application) -> &str {
+    if app.label.trim().is_empty() {
+        app.app_id.as_str()
+    } else {
+        app.label.as_str()
+    }
+}
+
+/// Case-insensitive sort key from [`display_title`].
+pub fn sort_key(app: &Application) -> String {
+    display_title(app).to_ascii_lowercase()
+}
+
+/// Configured apps sorted by [`sort_key`], then `app_id`.
+pub fn sorted_apps(apps: &ApplicationsConfig) -> Vec<&Application> {
+    let mut v: Vec<&Application> = apps.apps.iter().collect();
+    v.sort_by(|a, b| {
+        sort_key(a)
+            .cmp(&sort_key(b))
+            .then_with(|| a.app_id.cmp(&b.app_id))
+    });
+    v
+}
+
+/// Draft is dirty when any field has non-whitespace content.
+pub fn draft_is_dirty(buf: &EditBuffer) -> bool {
+    !buf.app_id.trim().is_empty()
+        || !buf.label.trim().is_empty()
+        || !buf.command.trim().is_empty()
+        || !buf.icon.trim().is_empty()
+}
+
+/// Edit is dirty when the buffer differs from the canonical app.
+pub fn edit_is_dirty(buf: &EditBuffer, canonical: &Application) -> bool {
+    !buf.matches(canonical)
+}
+
+/// Whether the user may leave the current detail without discard/save.
+/// Blank drafts and clean edits may leave; dirty draft/edit may not.
+pub fn can_leave_detail(detail: &Detail, apps: &ApplicationsConfig) -> bool {
+    match detail {
+        Detail::Closed => true,
+        Detail::Draft(buf) => !draft_is_dirty(buf),
+        Detail::Edit { orig, buffer } => match apps.get(orig) {
+            Some(canonical) => !edit_is_dirty(buffer, canonical),
+            // Canonical gone — treat as free to leave (on_apps_changed will close).
+            None => true,
+        },
+    }
+}
+
+/// Reconcile open Edit detail after the apps list changes (bus replay).
+///
+/// - Retracted app while editing → close detail.
+/// - Clean edit still present → refresh buffer from canonical (external update).
+/// - Dirty edit → keep local buffer.
+/// - Closed / Draft → unchanged.
+pub fn on_apps_changed(apps: &ApplicationsConfig, ui: &mut AppsState) {
+    match &ui.detail {
+        Detail::Closed | Detail::Draft(_) => {}
+        Detail::Edit { orig, buffer } => {
+            match apps.get(orig) {
+                None => {
+                    ui.detail = Detail::Closed;
+                    ui.error = None;
+                }
+                Some(canonical) if !edit_is_dirty(buffer, canonical) => {
+                    // Refresh clean buffer from canonical (external update).
+                    let refreshed = EditBuffer::from_app(canonical);
+                    ui.detail = Detail::Edit {
+                        orig: orig.clone(),
+                        buffer: refreshed,
+                    };
+                }
+                Some(_) => {
+                    // Dirty — keep local buffer.
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum AppsMsg {
+    Select(String),
     StartBlank,
     StartFromCandidate {
         app_id: String,
         command: Option<String>,
     },
-    DraftField {
-        key: u64,
+    Field {
         field: AppField,
         value: String,
     },
-    DraftCommit(u64),
-    DraftDiscard(u64),
-    EditField {
-        orig: String,
-        field: AppField,
-        value: String,
-    },
-    EditSave(String),
-    EditDiscard(String),
+    /// Edit: commit; draft: add.
+    Save,
+    /// Edit: reset buffer; draft: close.
+    Discard,
+    CloseDetail,
     Remove(String),
 }
 
@@ -131,123 +205,137 @@ pub fn update(
     ui: &mut AppsState,
 ) -> Task<AppsMsg> {
     match msg {
+        AppsMsg::Select(id) => {
+            if !can_leave_detail(&ui.detail, apps) {
+                return Task::none();
+            }
+            if let Some(a) = apps.get(&id) {
+                ui.detail = Detail::Edit {
+                    orig: id,
+                    buffer: EditBuffer::from_app(a),
+                };
+                ui.error = None;
+            }
+        }
         AppsMsg::StartBlank => {
-            ui.drafts.push(DraftRow {
-                key: next_key(),
-                app_id: String::new(),
-                label: String::new(),
-                command: String::new(),
-                icon: String::new(),
-            });
+            if !can_leave_detail(&ui.detail, apps) {
+                return Task::none();
+            }
+            ui.detail = Detail::Draft(EditBuffer::default());
+            ui.error = None;
         }
         AppsMsg::StartFromCandidate { app_id, command } => {
-            ui.drafts.insert(
-                0,
-                DraftRow {
-                    key: next_key(),
-                    app_id: app_id.clone(),
-                    label: app_id,
-                    command: command.unwrap_or_default(),
-                    icon: String::new(),
-                },
-            );
-        }
-        AppsMsg::DraftField { key, field, value } => {
-            if let Some(d) = ui.drafts.iter_mut().find(|d| d.key == key) {
-                set_field(field, value, &mut d.app_id, &mut d.label, &mut d.command, &mut d.icon);
-                ui.errors.remove(&draft_error_key(key));
-            }
-        }
-        AppsMsg::DraftCommit(key) => {
-            let Some(draft) = ui.drafts.iter().find(|d| d.key == key).cloned() else {
+            if !can_leave_detail(&ui.detail, apps) {
                 return Task::none();
-            };
-            if draft.app_id.trim().is_empty()
-                || draft.label.trim().is_empty()
-                || draft.command.trim().is_empty()
-            {
-                ui.errors.insert(
-                    draft_error_key(key),
-                    "app_id, label, and command are required".into(),
+            }
+            ui.detail = Detail::Draft(EditBuffer {
+                app_id: app_id.clone(),
+                label: app_id,
+                command: command.unwrap_or_default(),
+                icon: String::new(),
+            });
+            ui.error = None;
+        }
+        AppsMsg::Field { field, value } => {
+            if let Some(buf) = open_buffer_mut(&mut ui.detail) {
+                set_field(
+                    field,
+                    value,
+                    &mut buf.app_id,
+                    &mut buf.label,
+                    &mut buf.command,
+                    &mut buf.icon,
                 );
-                return Task::none();
+                ui.error = None;
             }
-            let mut new_app = Application {
-                app_id: draft.app_id.trim().to_string(),
-                label: draft.label.trim().to_string(),
-                command: draft.command.trim().to_string(),
-                icon: draft.icon.trim().to_string(),
-            };
-            new_app.normalize();
-            match apps.add(new_app.clone()) {
-                Ok(()) => {
-                    emit(Topic::Application(new_app));
-                    ui.drafts.retain(|d| d.key != key);
-                    ui.errors.remove(&draft_error_key(key));
+        }
+        AppsMsg::Save => match &ui.detail {
+            Detail::Edit { orig, buffer } => {
+                let orig = orig.clone();
+                let buf = buffer.clone();
+                if required_fields_missing(&buf) {
+                    ui.error = Some("app_id, label, and command are required".into());
+                    return Task::none();
                 }
-                Err(e) => {
-                    ui.errors.insert(draft_error_key(key), e.to_string());
-                }
-            }
-        }
-        AppsMsg::DraftDiscard(key) => {
-            ui.drafts.retain(|d| d.key != key);
-            ui.errors.remove(&draft_error_key(key));
-        }
-        AppsMsg::EditField { orig, field, value } => {
-            // Lazy-create the edit buffer from current canonical state.
-            let buf = ui
-                .edits
-                .entry(orig.clone())
-                .or_insert_with(|| match apps.get(&orig) {
-                    Some(a) => EditBuffer::from_app(a),
-                    None => EditBuffer::default(),
-                });
-            set_field(field, value, &mut buf.app_id, &mut buf.label, &mut buf.command, &mut buf.icon);
-            ui.errors.remove(&edit_error_key(&orig));
-        }
-        AppsMsg::EditSave(orig) => {
-            let Some(buf) = ui.edits.get(&orig).cloned() else {
-                return Task::none();
-            };
-            if buf.app_id.trim().is_empty()
-                || buf.label.trim().is_empty()
-                || buf.command.trim().is_empty()
-            {
-                ui.errors.insert(
-                    edit_error_key(&orig),
-                    "app_id, label, and command are required".into(),
-                );
-                return Task::none();
-            }
-            let new_app = buf.to_application();
-            let id_changed = new_app.app_id != orig;
-            let prev = apps.get(&orig).cloned();
-            match apps.update(&orig, new_app.clone()) {
-                Ok(()) => {
-                    if id_changed
-                        && let Some(old) = prev
-                    {
-                        retract(Topic::Application(old));
+                let new_app = buf.to_application();
+                let id_changed = new_app.app_id != orig;
+                let prev = apps.get(&orig).cloned();
+                match apps.update(&orig, new_app.clone()) {
+                    Ok(()) => {
+                        if id_changed && let Some(old) = prev {
+                            retract(Topic::Application(old));
+                        }
+                        emit(Topic::Application(new_app.clone()));
+                        ui.detail = Detail::Edit {
+                            orig: new_app.app_id.clone(),
+                            buffer: EditBuffer::from_app(&new_app),
+                        };
+                        ui.error = None;
                     }
-                    emit(Topic::Application(new_app));
-                    ui.edits.remove(&orig);
-                    ui.errors.remove(&edit_error_key(&orig));
-                }
-                Err(e) => {
-                    ui.errors.insert(edit_error_key(&orig), e.to_string());
+                    Err(e) => {
+                        ui.error = Some(e.to_string());
+                    }
                 }
             }
-        }
-        AppsMsg::EditDiscard(orig) => {
-            ui.edits.remove(&orig);
-            ui.errors.remove(&edit_error_key(&orig));
+            Detail::Draft(buf) => {
+                let buf = buf.clone();
+                if required_fields_missing(&buf) {
+                    ui.error = Some("app_id, label, and command are required".into());
+                    return Task::none();
+                }
+                let new_app = buf.to_application();
+                match apps.add(new_app.clone()) {
+                    Ok(()) => {
+                        emit(Topic::Application(new_app.clone()));
+                        ui.detail = Detail::Edit {
+                            orig: new_app.app_id.clone(),
+                            buffer: EditBuffer::from_app(&new_app),
+                        };
+                        ui.error = None;
+                    }
+                    Err(e) => {
+                        ui.error = Some(e.to_string());
+                    }
+                }
+            }
+            Detail::Closed => {}
+        },
+        AppsMsg::Discard => match &ui.detail {
+            Detail::Edit { orig, .. } => {
+                let orig = orig.clone();
+                if let Some(a) = apps.get(&orig) {
+                    ui.detail = Detail::Edit {
+                        orig,
+                        buffer: EditBuffer::from_app(a),
+                    };
+                }
+                ui.error = None;
+            }
+            Detail::Draft(_) => {
+                ui.detail = Detail::Closed;
+                ui.error = None;
+            }
+            Detail::Closed => {}
+        },
+        AppsMsg::CloseDetail => {
+            if !can_leave_detail(&ui.detail, apps) {
+                return Task::none();
+            }
+            match &ui.detail {
+                Detail::Edit { .. } | Detail::Draft(_) => {
+                    ui.detail = Detail::Closed;
+                    ui.error = None;
+                }
+                Detail::Closed => {}
+            }
         }
         AppsMsg::Remove(app_id) => {
             if let Some(removed) = apps.get(&app_id).cloned() {
                 apps.remove(&app_id);
-                ui.edits.remove(&app_id);
-                ui.errors.remove(&edit_error_key(&app_id));
+                if matches!(&ui.detail, Detail::Edit { orig, .. } if orig == &app_id) {
+                    ui.detail = Detail::Closed;
+                    ui.error = None;
+                }
                 retract(Topic::Application(removed));
             }
         }
@@ -260,27 +348,78 @@ pub fn view<'a>(
     running: &'a [BusWindow],
     ui: &'a AppsState,
 ) -> Element<'a, AppsMsg> {
-    let mut col = column![].spacing(SPACE_XL);
+    let list = list_column(apps, running, ui);
+    let detail = detail_panel(apps, ui);
+    row![list, detail]
+        .spacing(SPACE_XL)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
 
-    if apps.apps.is_empty() && ui.drafts.is_empty() {
-        col = col.push(
-            kit_text::body(
-                "No applications configured. Click \"+ Add application\" or pick from the candidates below.",
-            )
-            .style(kit_text::muted),
-        );
-    }
+// ── view helpers ───────────────────────────────────────────────────
 
-    for draft in &ui.drafts {
-        col = col.push(draft_card(draft, ui));
-    }
-    for app in &apps.apps {
-        col = col.push(configured_card(app, ui));
-    }
+fn list_column<'a>(
+    apps: &'a ApplicationsConfig,
+    running: &'a [BusWindow],
+    ui: &'a AppsState,
+) -> Element<'a, AppsMsg> {
+    // Toolbar: one quiet add control, not a second chrome layer.
+    let toolbar = row![
+        kit_btn::labeled_sm("+ Add application", kit_btn::ghost).on_press(AppsMsg::StartBlank),
+        iced::widget::Space::new().width(Length::Fill),
+        kit_text::caption(format!("{} apps", apps.apps.len())).style(kit_text::muted),
+    ]
+    .spacing(SPACE_MD)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
 
-    col = col.push(
-        kit_btn::labeled("+ Add application", kit_btn::ghost).on_press(AppsMsg::StartBlank),
-    );
+    let list_body: Element<'a, AppsMsg> = if apps.apps.is_empty()
+        && matches!(ui.detail, Detail::Closed)
+    {
+        container(
+            column![
+                kit_text::body("No applications yet").style(kit_text::muted),
+                kit_text::caption("Add one above, or configure a running app below.")
+                    .style(kit_text::muted),
+            ]
+            .spacing(SPACE_SM),
+        )
+        .padding(SPACE_LG)
+        .width(Length::Fill)
+        .into()
+    } else if apps.apps.is_empty() {
+        // Draft open while catalog empty — no noisy empty copy.
+        container(iced::widget::Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        let mut rows = column![].spacing(0).width(Length::Fill);
+        for app in sorted_apps(apps) {
+            rows = rows.push(app_row(app, ui));
+        }
+        scrollable(rows)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into()
+    };
+
+    // One raised surface holds the catalog — rows share the card, not
+    // a void of free-floating pink buttons across the pane.
+    let list_card = card(
+        column![toolbar, list_body]
+            .spacing(SPACE_MD)
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    let mut col = column![list_card]
+        .spacing(SPACE_LG)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
     let candidates = collect_candidates(apps, running);
     if !candidates.is_empty() {
@@ -290,114 +429,173 @@ pub fn view<'a>(
     col.into()
 }
 
-// ── view helpers ───────────────────────────────────────────────────
-
-fn configured_card<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, AppsMsg> {
-    let buf = ui.edits.get(&app.app_id);
-    // Read straight from the edit buffer (if any) so the returned
-    // widget borrows from data with the same `'a` lifetime as the
-    // caller's `ui` — synthesizing a local `EditBuffer` here would
-    // not outlive this function's stack frame.
-    let app_id = buf.map(|b| b.app_id.as_str()).unwrap_or(&app.app_id);
-    let label = buf.map(|b| b.label.as_str()).unwrap_or(&app.label);
-    let command = buf.map(|b| b.command.as_str()).unwrap_or(&app.command);
-    let icon = buf.map(|b| b.icon.as_str()).unwrap_or(&app.icon);
-    let dirty = buf.map(|b| !b.matches(app)).unwrap_or(false);
-
-    let missing = !sola_core::applications::command_exists(&app.command);
-    let display_title: &str = if app.label.is_empty() {
-        app.app_id.as_str()
-    } else {
-        app.label.as_str()
-    };
-
-    let mut header = row![kit_text::subheading(display_title)]
-        .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Center);
-    if missing {
-        header = header.push(badge("not found", Tone::Warning));
-    }
-    header = header.push(iced::widget::Space::new().width(Length::Fill));
-    if dirty {
-        let orig_save = app.app_id.clone();
-        let orig_discard = app.app_id.clone();
-        header = header
-            .push(
-                kit_btn::labeled("Save", kit_btn::primary)
-                    .on_press(AppsMsg::EditSave(orig_save)),
-            )
-            .push(
-                kit_btn::labeled("Discard", kit_btn::ghost)
-                    .on_press(AppsMsg::EditDiscard(orig_discard)),
-            );
-    }
-    header = header.push(
-        kit_btn::labeled("Remove", kit_btn::danger)
-            .on_press(AppsMsg::Remove(app.app_id.clone())),
+fn app_row<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, AppsMsg> {
+    let selected = matches!(
+        &ui.detail,
+        Detail::Edit { orig, .. } if orig == &app.app_id
     );
+    let missing = !sola_core::applications::command_exists(&app.command);
 
-    let orig_for_inputs = app.app_id.clone();
-    let row1 = row![
-        edit_text_input("app_id", app_id, orig_for_inputs.clone(), AppField::Id),
-        edit_text_input("label", label, orig_for_inputs.clone(), AppField::Label),
-        edit_text_input("icon", icon, orig_for_inputs.clone(), AppField::Icon),
-    ]
-    .spacing(SPACE_LG);
-    let row2 = edit_text_input("command", command, orig_for_inputs, AppField::Command);
-
-    let mut body = column![header, row1, row2].spacing(SPACE_LG);
-    if let Some(err) = ui.errors.get(&edit_error_key(&app.app_id)) {
-        body = body.push(kit_text::caption(err.as_str()).style(kit_text::danger));
+    // Title + optional status chip — primary Select hit target.
+    let mut title_row = row![kit_text::body(display_title(app))]
+        .spacing(SPACE_SM)
+        .align_y(Alignment::Center);
+    if missing {
+        title_row = title_row.push(badge("not found", Tone::Warning));
     }
 
-    card(body).width(Length::Fill).into()
+    // Sibling controls (not nested buttons — iced hit-testing is reliable
+    // this way). Title strip is list_item; Remove is compact outline so it
+    // does not form a pink wall down the pane.
+    row![
+        button(title_row)
+            .on_press(AppsMsg::Select(app.app_id.clone()))
+            .padding(ROW_PAD)
+            .width(Length::Fill)
+            .style(kit_btn::list_item(selected)),
+        kit_btn::labeled_sm("Remove", kit_btn::danger_outline)
+            .on_press(AppsMsg::Remove(app.app_id.clone())),
+    ]
+    .spacing(SPACE_SM)
+    .align_y(Alignment::Center)
+    .width(Length::Fill)
+    .padding(Padding {
+        top: 2.0,
+        bottom: 2.0,
+        left: 4.0,
+        right: 4.0,
+    })
+    .into()
 }
 
-fn draft_card<'a>(draft: &'a DraftRow, ui: &'a AppsState) -> Element<'a, AppsMsg> {
-    let header = row![
-        kit_text::subheading("New application").style(kit_text::muted),
-        iced::widget::Space::new().width(Length::Fill),
-        kit_btn::labeled("Add", kit_btn::primary).on_press(AppsMsg::DraftCommit(draft.key)),
-        kit_btn::labeled("Discard", kit_btn::ghost).on_press(AppsMsg::DraftDiscard(draft.key)),
+fn detail_panel<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, AppsMsg> {
+    let body: Element<'a, AppsMsg> = match &ui.detail {
+        Detail::Closed => {
+            // Centered empty state — no lonely caption glued to the top of a slab.
+            container(
+                column![
+                    kit_text::subheading("No selection").style(kit_text::muted),
+                    kit_text::caption("Select an app from the list, or add a new one.")
+                        .style(kit_text::muted),
+                ]
+                .spacing(SPACE_SM)
+                .align_x(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into()
+        }
+        Detail::Edit { orig, buffer } => {
+            let dirty = apps
+                .get(orig)
+                .map(|canonical| edit_is_dirty(buffer, canonical))
+                .unwrap_or(true);
+            let title = if buffer.label.trim().is_empty() {
+                buffer.app_id.as_str()
+            } else {
+                buffer.label.as_str()
+            };
+            let title = if title.is_empty() {
+                orig.as_str()
+            } else {
+                title
+            };
+
+            let mut footer = row![].spacing(SPACE_SM).align_y(Alignment::Center);
+            if dirty {
+                footer = footer
+                    .push(kit_btn::labeled_sm("Save", kit_btn::primary).on_press(AppsMsg::Save))
+                    .push(
+                        kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
+                    );
+            }
+            footer = footer
+                .push(iced::widget::Space::new().width(Length::Fill))
+                .push(kit_btn::labeled_sm("Close", kit_btn::ghost).on_press(AppsMsg::CloseDetail));
+
+            let mut col = column![
+                kit_text::subheading(title),
+                kit_text::caption(orig.as_str()).style(kit_text::muted),
+                detail_fields(buffer, /* draft placeholders */ false),
+            ]
+            .spacing(SPACE_MD);
+            if let Some(err) = ui.error.as_deref() {
+                col = col.push(kit_text::caption(err).style(kit_text::danger));
+            }
+            // Footer pinned below form with breathing room.
+            col = col
+                .push(iced::widget::Space::new().height(Length::Fill))
+                .push(footer);
+            col.height(Length::Fill).into()
+        }
+        Detail::Draft(buffer) => {
+            let footer = row![
+                kit_btn::labeled_sm("Add", kit_btn::primary).on_press(AppsMsg::Save),
+                kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
+            ]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center);
+
+            let mut col = column![
+                kit_text::subheading("New application"),
+                kit_text::caption("Fill in identity and launch command.")
+                    .style(kit_text::muted),
+                detail_fields(buffer, /* draft placeholders */ true),
+            ]
+            .spacing(SPACE_MD);
+            if let Some(err) = ui.error.as_deref() {
+                col = col.push(kit_text::caption(err).style(kit_text::danger));
+            }
+            col = col
+                .push(iced::widget::Space::new().height(Length::Fill))
+                .push(footer);
+            col.height(Length::Fill).into()
+        }
+    };
+
+    container(card(body).width(Length::Fill).height(Length::Fill))
+        .width(Length::Fixed(DETAIL_WIDTH))
+        .height(Length::Fill)
+        .into()
+}
+
+fn detail_fields<'a>(buf: &'a EditBuffer, draft_placeholders: bool) -> Element<'a, AppsMsg> {
+    let (ph_id, ph_label, ph_icon, ph_cmd) = if draft_placeholders {
+        ("firefox", "Firefox", "simpleicons/firefox", "firefox")
+    } else {
+        ("", "", "", "")
+    };
+    column![
+        field_input("app_id", &buf.app_id, ph_id, AppField::Id),
+        field_input("label", &buf.label, ph_label, AppField::Label),
+        field_input("icon", &buf.icon, ph_icon, AppField::Icon),
+        field_input("command", &buf.command, ph_cmd, AppField::Command),
     ]
-    .spacing(SPACE_MD)
-    .align_y(iced::Alignment::Center);
+    .spacing(SPACE_LG)
+    .into()
+}
 
-    let row1 = row![
-        draft_text_input("app_id", &draft.app_id, "firefox", draft.key, AppField::Id),
-        draft_text_input("label", &draft.label, "Firefox", draft.key, AppField::Label),
-        draft_text_input(
-            "icon",
-            &draft.icon,
-            "simpleicons/firefox",
-            draft.key,
-            AppField::Icon,
-        ),
-    ]
-    .spacing(SPACE_LG);
-    let row2 = draft_text_input(
-        "command",
-        &draft.command,
-        "firefox",
-        draft.key,
-        AppField::Command,
-    );
-
-    let mut body = column![header, row1, row2].spacing(SPACE_LG);
-    if let Some(err) = ui.errors.get(&draft_error_key(draft.key)) {
-        body = body.push(kit_text::caption(err.as_str()).style(kit_text::danger));
-    }
-
-    card(body).width(Length::Fill).into()
+fn field_input<'a>(
+    label: &'a str,
+    value: &'a str,
+    placeholder: &'a str,
+    f: AppField,
+) -> Element<'a, AppsMsg> {
+    let input = text_input(placeholder, value)
+        .on_input(move |v| AppsMsg::Field { field: f, value: v })
+        .size(13)
+        .style(kit_input::style)
+        .width(Length::Fill);
+    field(label, input, None, None).into()
 }
 
 fn candidates_card<'a>(candidates: Vec<Candidate>) -> Element<'a, AppsMsg> {
     let mut col = column![
         kit_text::subheading("Running, not configured"),
-        kit_text::caption(
-            "Pre-filled by what's currently running. One click drops a draft above.",
-        )
-        .style(kit_text::muted),
+        kit_text::caption("Apps open on the desktop but not in the catalog yet.")
+            .style(kit_text::muted),
     ]
     .spacing(SPACE_SM);
 
@@ -413,62 +611,32 @@ fn candidates_card<'a>(candidates: Vec<Candidate>) -> Element<'a, AppsMsg> {
             format!("{title_owned} · command unknown — fill in manually")
         };
         let app_id_for_text = c.app_id.clone();
-        let row = row![
+        let row_el = row![
             column![
                 kit_text::body(app_id_for_text),
                 kit_text::caption(detail).style(kit_text::muted),
             ]
             .spacing(SPACE_XS)
             .width(Length::Fill),
-            kit_btn::labeled("Configure", kit_btn::ghost).on_press(AppsMsg::StartFromCandidate {
-                app_id: c.app_id,
-                command: c.suggested_command,
-            }),
+            kit_btn::labeled_sm("Configure", kit_btn::ghost).on_press(
+                AppsMsg::StartFromCandidate {
+                    app_id: c.app_id,
+                    command: c.suggested_command,
+                },
+            ),
         ]
         .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Center);
-        col = col.push(row);
+        .align_y(Alignment::Center)
+        .padding(Padding {
+            top: 4.0,
+            bottom: 4.0,
+            left: 0.0,
+            right: 0.0,
+        });
+        col = col.push(row_el);
     }
 
-    card(col.spacing(SPACE_LG)).width(Length::Fill).into()
-}
-
-fn draft_text_input<'a>(
-    label: &'a str,
-    value: &'a str,
-    placeholder: &'a str,
-    key: u64,
-    f: AppField,
-) -> Element<'a, AppsMsg> {
-    // Padding from kit DEFAULT_PADDING; size 13 = body type role density.
-    let input = text_input(placeholder, value)
-        .on_input(move |v| AppsMsg::DraftField {
-            key,
-            field: f,
-            value: v,
-        })
-        .size(13)
-        .style(kit_input::style)
-        .width(Length::Fill);
-    field(label, input, None, None).into()
-}
-
-fn edit_text_input<'a>(
-    label: &'a str,
-    value: &'a str,
-    orig: String,
-    f: AppField,
-) -> Element<'a, AppsMsg> {
-    let input = text_input("", value)
-        .on_input(move |v| AppsMsg::EditField {
-            orig: orig.clone(),
-            field: f,
-            value: v,
-        })
-        .size(13)
-        .style(kit_input::style)
-        .width(Length::Fill);
-    field(label, input, None, None).into()
+    card(col.spacing(SPACE_MD)).width(Length::Fill).into()
 }
 
 // ── candidate derivation ───────────────────────────────────────────
@@ -506,6 +674,17 @@ fn collect_candidates(apps: &ApplicationsConfig, running: &[BusWindow]) -> Vec<C
 
 // ── small helpers ──────────────────────────────────────────────────
 
+fn open_buffer_mut(detail: &mut Detail) -> Option<&mut EditBuffer> {
+    match detail {
+        Detail::Edit { buffer, .. } | Detail::Draft(buffer) => Some(buffer),
+        Detail::Closed => None,
+    }
+}
+
+fn required_fields_missing(buf: &EditBuffer) -> bool {
+    buf.app_id.trim().is_empty() || buf.label.trim().is_empty() || buf.command.trim().is_empty()
+}
+
 fn set_field(
     f: AppField,
     value: String,
@@ -522,14 +701,6 @@ fn set_field(
     }
 }
 
-fn draft_error_key(key: u64) -> String {
-    format!("draft-{key}")
-}
-
-fn edit_error_key(orig: &str) -> String {
-    format!("app-{orig}")
-}
-
 fn emit(topic: Topic) {
     if let Err(e) = bus().lock().unwrap().emit(topic) {
         tracing::warn!("bus emit failed: {e}");
@@ -539,5 +710,175 @@ fn emit(topic: Topic) {
 fn retract(topic: Topic) {
     if let Err(e) = bus().lock().unwrap().retract(topic) {
         tracing::warn!("bus retract failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sola_bus::topics::Application;
+
+    fn app(id: &str, label: &str) -> Application {
+        Application {
+            app_id: id.into(),
+            label: label.into(),
+            command: "true".into(),
+            icon: String::new(),
+        }
+    }
+
+    #[test]
+    fn display_title_prefers_nonempty_label() {
+        assert_eq!(display_title(&app("x", "Chrome")), "Chrome");
+        assert_eq!(display_title(&app("x", "  ")), "x");
+        assert_eq!(display_title(&app("x", "")), "x");
+    }
+
+    #[test]
+    fn sorted_apps_orders_case_insensitive_by_label() {
+        let mut cfg = ApplicationsConfig::default();
+        cfg.apps = vec![
+            app("z", "chrome"),
+            app("a", "Bitwarden"),
+            app("m", "Signal"),
+        ];
+        let ids: Vec<&str> = sorted_apps(&cfg).iter().map(|a| a.app_id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "z", "m"]); // Bitwarden, chrome, Signal
+    }
+
+    #[test]
+    fn draft_dirty_when_any_field_nonempty() {
+        assert!(!draft_is_dirty(&EditBuffer::default()));
+        assert!(draft_is_dirty(&EditBuffer {
+            label: "x".into(),
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    fn can_leave_blank_draft_but_not_dirty_edit() {
+        let mut cfg = ApplicationsConfig::default();
+        let a = app("chrome", "Chrome");
+        cfg.apps.push(a.clone());
+
+        assert!(can_leave_detail(&Detail::Closed, &cfg));
+        assert!(can_leave_detail(
+            &Detail::Draft(EditBuffer::default()),
+            &cfg
+        ));
+        assert!(!can_leave_detail(
+            &Detail::Draft(EditBuffer {
+                command: "x".into(),
+                ..Default::default()
+            }),
+            &cfg
+        ));
+
+        let clean = EditBuffer::from_app(&a);
+        assert!(can_leave_detail(
+            &Detail::Edit {
+                orig: "chrome".into(),
+                buffer: clean.clone(),
+            },
+            &cfg
+        ));
+        let mut dirty = clean;
+        dirty.label = "Nope".into();
+        assert!(!can_leave_detail(
+            &Detail::Edit {
+                orig: "chrome".into(),
+                buffer: dirty,
+            },
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn on_apps_changed_closes_edit_when_app_removed() {
+        let mut cfg = ApplicationsConfig::default();
+        let a = app("chrome", "Chrome");
+        cfg.apps.push(a.clone());
+        let mut ui = AppsState {
+            detail: Detail::Edit {
+                orig: "chrome".into(),
+                buffer: EditBuffer::from_app(&a),
+            },
+            error: None,
+        };
+        cfg.remove("chrome");
+        on_apps_changed(&cfg, &mut ui);
+        assert!(matches!(ui.detail, Detail::Closed));
+    }
+
+    #[test]
+    fn on_apps_changed_keeps_clean_edit_when_app_still_present() {
+        let mut cfg = ApplicationsConfig::default();
+        let a = app("chrome", "Chrome");
+        cfg.apps.push(a.clone());
+        let mut ui = AppsState {
+            detail: Detail::Edit {
+                orig: "chrome".into(),
+                buffer: EditBuffer::from_app(&a),
+            },
+            error: None,
+        };
+        // Bus replay re-upserts the same sticky entry — still clean.
+        on_apps_changed(&cfg, &mut ui);
+        match &ui.detail {
+            Detail::Edit { orig, buffer } => {
+                assert_eq!(orig, "chrome");
+                assert!(buffer.matches(&a));
+            }
+            other => panic!("expected Edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn on_apps_changed_keeps_dirty_edit_buffer() {
+        let mut cfg = ApplicationsConfig::default();
+        let a = app("chrome", "Chrome");
+        cfg.apps.push(a.clone());
+        let mut dirty = EditBuffer::from_app(&a);
+        dirty.label = "Local draft".into();
+        let mut ui = AppsState {
+            detail: Detail::Edit {
+                orig: "chrome".into(),
+                buffer: dirty,
+            },
+            error: None,
+        };
+        // External sticky upsert with different fields — buffer ≠ canonical,
+        // so treat as dirty and keep local edits.
+        cfg.remove("chrome");
+        cfg.apps.push(Application {
+            app_id: "chrome".into(),
+            label: "Google Chrome".into(),
+            command: "true".into(),
+            icon: String::new(),
+        });
+        on_apps_changed(&cfg, &mut ui);
+        match &ui.detail {
+            Detail::Edit { buffer, .. } => assert_eq!(buffer.label, "Local draft"),
+            other => panic!("expected Edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn on_apps_changed_leaves_draft_and_closed_alone() {
+        let cfg = ApplicationsConfig::default();
+        let mut closed = AppsState::default();
+        on_apps_changed(&cfg, &mut closed);
+        assert!(matches!(closed.detail, Detail::Closed));
+
+        let mut draft = AppsState {
+            detail: Detail::Draft(EditBuffer {
+                app_id: "x".into(),
+                ..Default::default()
+            }),
+            error: Some("err".into()),
+        };
+        on_apps_changed(&cfg, &mut draft);
+        assert!(matches!(draft.detail, Detail::Draft(_)));
+        assert_eq!(draft.error.as_deref(), Some("err"));
     }
 }
