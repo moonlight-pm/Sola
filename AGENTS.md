@@ -4,14 +4,63 @@ Sola is a Wayland desktop shell — a full compositor and desktop environment
 built in Rust. UI is pure Rust via **Iced** (`sola-kit`); River is the
 Wayland compositor, bridged by `sola-river`.
 
-## Active work
+## Session start
 
-Queued work lives in [`.grok/rules/active-work.md`](.grok/rules/active-work.md)
-(auto-loaded every session). If the user signals go-ahead without a new task
-("go", "ok go", "continue", etc.), execute that file's **Current** work — do not
-re-plan from scratch. Keep `active-work.md` updated as phases complete.
+1. This file.
+2. [`CURRENT.md`](CURRENT.md) — living priority and dogfood/runtime state.
+3. [`docs/capabilities.md`](docs/capabilities.md) — as-built maturity for the
+   slice you will touch.
+4. [`docs/open-questions.md`](docs/open-questions.md) — any **Decision points**
+   for the slice? If yes, **ask the human**; do not invent product policy.
+5. Only the freeze or plan needed for the active domain.
 
-## Architecture
+If the user signals go-ahead without a new task ("go", "ok go", "continue",
+etc.), execute **CURRENT.md → Now** — do not re-plan from scratch.
+
+Update `CURRENT.md` and `docs/capabilities.md` when direction, capability
+status, or known runtime state changes. **No** one-off handoff files.
+[`.grok/rules/active-work.md`](.grok/rules/active-work.md) is only a
+pointer to `CURRENT.md` (auto-load reminder).
+
+**Skills (Grok):** `.grok/skills/` —
+
+- `sola-session-start` — boot order above  
+- `sola-progress-docs` — **mandatory** end-of-slice doc updates  
+
+## Progress documentation is first-class (mandatory)
+
+Describing the system and its progress is **paramount**. Incomplete meta work
+means incomplete product work. Full model:
+[`docs/progress-model.md`](docs/progress-model.md). Portable practice:
+[`docs/progress-documentation-practice.md`](docs/progress-documentation-practice.md).
+
+| Kind | Home | Role |
+|------|------|------|
+| Focus | Root `CURRENT.md` | Priority, next moves, dogfood facts, locks |
+| As-built progress | `docs/capabilities.md` | Capability status + gaps |
+| As-built map | `docs/architecture.md` | Processes, crates, paths, IPC |
+| Target design | `docs/specs/*` | Freezes (desired shape) |
+| Horizon | `docs/roadmap.md` | Phase-level program status |
+| Product docs | `docs/manual/` | **Shipped** operator truth only |
+
+**End of every real product slice (same change as code):**
+
+1. Update capability row(s) (status and/or gaps).  
+2. Update `CURRENT.md` if priority or dogfood changed.  
+3. Update `docs/manual/` if operator-visible **shipped** behavior changed.  
+4. Update `architecture.md` if the system map changed.  
+5. Flip `roadmap.md` phase status only when phase-level status changes.  
+6. Follow [`.grok/skills/sola-progress-docs/SKILL.md`](.grok/skills/sola-progress-docs/SKILL.md).
+
+Do not invent `STATUS.md` / `HANDOFF.md` / session diaries. Deferred
+*improvements* to this meta system are listed only in
+[`docs/progress-model.md`](docs/progress-model.md#deferred-meta-work).
+
+**Code wins** over stale docs — then fix the docs immediately.
+
+## Architecture (summary)
+
+Living map: [`docs/architecture.md`](docs/architecture.md).
 
 - **Process manager (`sola`):** Launches and supervises all components. No desktop or bus logic — pure process management.
 - **Bus (`sola-bus`):** General-purpose IPC bus. Separate process. All Sola components communicate via bus events over a Unix socket.
@@ -43,15 +92,25 @@ crates/
   sola-settings/       # Settings panel (incl. mail config)
   sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
   sola-terminal/       # Terminal emulator (alacritty grid + iced)
-  sola-agent/          # Coding agent (iced + Fugu)
+  sola-agent/          # Coding agent (iced + ACP / Grok leader)
+  sola-mail/           # Kit-native mail client
+  sola-kvm/            # KVM / input bridge
+  sola-preview/        # Image preview / selection capture
+  solactl/             # CLI helpers
 apocrypha/             # Reference-only: legacy WebView stack (not built)
-  sola-app/            # Frozen GTK4 + WebKit6 host
-  apps/agent/          # Retired WebView agent prototype
-  apps/mail/           # Reference for future crates/sola-mail
+CURRENT.md             # Living session focus (only handoff)
 docs/
-  manual/              # Architecture docs, references
-  specs/               # Design specs and implementation plans
-  vault/               # Obsidian vault — architecture docs
+  README.md            # Docs map + session boot
+  progress-model.md    # How progress docs work
+  capabilities.md      # As-built capability matrix
+  architecture.md      # As-built system map
+  roadmap.md           # Program horizon
+  open-questions.md    # Design forks + ask-human decisions
+  manual/              # Operator product docs (shipped only)
+  specs/               # Target freezes (dated)
+  plans/               # Implementation checklists
+  ideas/               # Parked thoughts
+  vault/               # Historical Obsidian notes (not authoritative)
 ```
 
 ## Development Rules
@@ -115,10 +174,14 @@ make = "run -q -p sola-make --"
 
 ## Documentation
 
-- All docs live under `docs/`.
-- Architecture and reference docs go in `docs/manual/`.
-- Design specs and implementation plans go in `docs/specs/`.
-- Superpowers specs and plans also go in `docs/specs/`.
+- Map and authority order: [`docs/README.md`](docs/README.md).
+- **Focus:** root `CURRENT.md` (only living handoff).
+- **As-built:** `docs/capabilities.md`, `docs/architecture.md`.
+- **Target freezes:** `docs/specs/` (dated). **New plans:** `docs/plans/`.
+- **Product / operator docs:** `docs/manual/` — **shipped behavior only**.
+- **Horizon / forks / ideas:** `docs/roadmap.md`, `docs/open-questions.md`,
+  `docs/ideas/`.
+- Historical vault/notes are not authoritative.
 
 ## Debugging and Logging
 
