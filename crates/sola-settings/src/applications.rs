@@ -14,19 +14,26 @@
 //! `Topic::Application` stream.
 
 use iced::widget::{button, column, container, row, scrollable};
-use iced::{Element, Length, Task};
+use iced::{Alignment, Element, Length, Padding, Task};
 use sola_kit::components::text_input::text_input;
 
 use sola_bus::topics::{Application, ApplicationsConfig, Topic, Window as BusWindow};
 use sola_kit::app::bus;
-use sola_kit::components::style::{PAD_CONTROL, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
+use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{Tone, badge, button as kit_btn, card, field, text_input as kit_input};
 
 use crate::procfs;
 
 /// Fixed width of the right-hand detail panel (px).
-const DETAIL_WIDTH: f32 = 400.0;
+const DETAIL_WIDTH: f32 = 380.0;
+/// Vertical pad inside a compact app row (graphite density).
+const ROW_PAD: Padding = Padding {
+    top: 8.0,
+    bottom: 8.0,
+    left: 12.0,
+    right: 8.0,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum AppField {
@@ -357,38 +364,69 @@ fn list_column<'a>(
     running: &'a [BusWindow],
     ui: &'a AppsState,
 ) -> Element<'a, AppsMsg> {
-    let mut col = column![
-        kit_btn::labeled("+ Add application", kit_btn::ghost).on_press(AppsMsg::StartBlank),
+    // Toolbar: one quiet add control, not a second chrome layer.
+    let toolbar = row![
+        kit_btn::labeled_sm("+ Add application", kit_btn::ghost).on_press(AppsMsg::StartBlank),
+        iced::widget::Space::new().width(Length::Fill),
+        kit_text::caption(format!("{} apps", apps.apps.len())).style(kit_text::muted),
     ]
     .spacing(SPACE_MD)
+    .align_y(Alignment::Center)
     .width(Length::Fill);
 
-    if apps.apps.is_empty() {
-        col = col.push(
-            kit_text::body(
-                "No applications configured. Click \"+ Add application\" or pick from the candidates below.",
-            )
-            .style(kit_text::muted),
-        );
-    }
-
-    let mut rows = column![].spacing(SPACE_XS).width(Length::Fill);
-    for app in sorted_apps(apps) {
-        rows = rows.push(app_row(app, ui));
-    }
-    // List scrolls independently; detail panel stays fixed height with the row.
-    col = col.push(
+    let list_body: Element<'a, AppsMsg> = if apps.apps.is_empty()
+        && matches!(ui.detail, Detail::Closed)
+    {
+        container(
+            column![
+                kit_text::body("No applications yet").style(kit_text::muted),
+                kit_text::caption("Add one above, or configure a running app below.")
+                    .style(kit_text::muted),
+            ]
+            .spacing(SPACE_SM),
+        )
+        .padding(SPACE_LG)
+        .width(Length::Fill)
+        .into()
+    } else if apps.apps.is_empty() {
+        // Draft open while catalog empty — no noisy empty copy.
+        container(iced::widget::Space::new())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        let mut rows = column![].spacing(0).width(Length::Fill);
+        for app in sorted_apps(apps) {
+            rows = rows.push(app_row(app, ui));
+        }
         scrollable(rows)
             .height(Length::Fill)
-            .width(Length::Fill),
-    );
+            .width(Length::Fill)
+            .into()
+    };
+
+    // One raised surface holds the catalog — rows share the card, not
+    // a void of free-floating pink buttons across the pane.
+    let list_card = card(
+        column![toolbar, list_body]
+            .spacing(SPACE_MD)
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    let mut col = column![list_card]
+        .spacing(SPACE_LG)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
     let candidates = collect_candidates(apps, running);
     if !candidates.is_empty() {
         col = col.push(candidates_card(candidates));
     }
 
-    col.height(Length::Fill).into()
+    col.into()
 }
 
 fn app_row<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, AppsMsg> {
@@ -398,34 +436,57 @@ fn app_row<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, AppsMsg> 
     );
     let missing = !sola_core::applications::command_exists(&app.command);
 
-    let mut hit = row![kit_text::body(display_title(app))]
-        .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Center)
-        .width(Length::Fill);
+    // Title + optional status chip — primary Select hit target.
+    let mut title_row = row![kit_text::body(display_title(app))]
+        .spacing(SPACE_SM)
+        .align_y(Alignment::Center);
     if missing {
-        hit = hit.push(badge("not found", Tone::Warning));
+        title_row = title_row.push(badge("not found", Tone::Warning));
     }
 
+    // Sibling controls (not nested buttons — iced hit-testing is reliable
+    // this way). Title strip is list_item; Remove is compact outline so it
+    // does not form a pink wall down the pane.
     row![
-        button(hit)
+        button(title_row)
             .on_press(AppsMsg::Select(app.app_id.clone()))
-            .padding(PAD_CONTROL)
+            .padding(ROW_PAD)
             .width(Length::Fill)
             .style(kit_btn::list_item(selected)),
-        kit_btn::labeled("Remove", kit_btn::danger)
+        kit_btn::labeled_sm("Remove", kit_btn::danger_outline)
             .on_press(AppsMsg::Remove(app.app_id.clone())),
     ]
-    .spacing(SPACE_MD)
-    .align_y(iced::Alignment::Center)
+    .spacing(SPACE_SM)
+    .align_y(Alignment::Center)
     .width(Length::Fill)
+    .padding(Padding {
+        top: 2.0,
+        bottom: 2.0,
+        left: 4.0,
+        right: 4.0,
+    })
     .into()
 }
 
 fn detail_panel<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, AppsMsg> {
     let body: Element<'a, AppsMsg> = match &ui.detail {
-        Detail::Closed => kit_text::body("Select an app or add one")
-            .style(kit_text::muted)
-            .into(),
+        Detail::Closed => {
+            // Centered empty state — no lonely caption glued to the top of a slab.
+            container(
+                column![
+                    kit_text::subheading("No selection").style(kit_text::muted),
+                    kit_text::caption("Select an app from the list, or add a new one.")
+                        .style(kit_text::muted),
+                ]
+                .spacing(SPACE_SM)
+                .align_x(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into()
+        }
         Detail::Edit { orig, buffer } => {
             let dirty = apps
                 .get(orig)
@@ -442,47 +503,55 @@ fn detail_panel<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<
                 title
             };
 
-            let mut footer = row![].spacing(SPACE_MD).align_y(iced::Alignment::Center);
+            let mut footer = row![].spacing(SPACE_SM).align_y(Alignment::Center);
             if dirty {
                 footer = footer
-                    .push(kit_btn::labeled("Save", kit_btn::primary).on_press(AppsMsg::Save))
+                    .push(kit_btn::labeled_sm("Save", kit_btn::primary).on_press(AppsMsg::Save))
                     .push(
-                        kit_btn::labeled("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
+                        kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
                     );
             }
             footer = footer
                 .push(iced::widget::Space::new().width(Length::Fill))
-                .push(kit_btn::labeled("Close", kit_btn::ghost).on_press(AppsMsg::CloseDetail));
+                .push(kit_btn::labeled_sm("Close", kit_btn::ghost).on_press(AppsMsg::CloseDetail));
 
             let mut col = column![
                 kit_text::subheading(title),
+                kit_text::caption(orig.as_str()).style(kit_text::muted),
                 detail_fields(buffer, /* draft placeholders */ false),
             ]
-            .spacing(SPACE_LG);
+            .spacing(SPACE_MD);
             if let Some(err) = ui.error.as_deref() {
                 col = col.push(kit_text::caption(err).style(kit_text::danger));
             }
-            col = col.push(footer);
-            col.into()
+            // Footer pinned below form with breathing room.
+            col = col
+                .push(iced::widget::Space::new().height(Length::Fill))
+                .push(footer);
+            col.height(Length::Fill).into()
         }
         Detail::Draft(buffer) => {
             let footer = row![
-                kit_btn::labeled("Add", kit_btn::primary).on_press(AppsMsg::Save),
-                kit_btn::labeled("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
+                kit_btn::labeled_sm("Add", kit_btn::primary).on_press(AppsMsg::Save),
+                kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
             ]
-            .spacing(SPACE_MD)
-            .align_y(iced::Alignment::Center);
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center);
 
             let mut col = column![
-                kit_text::subheading("New application").style(kit_text::muted),
+                kit_text::subheading("New application"),
+                kit_text::caption("Fill in identity and launch command.")
+                    .style(kit_text::muted),
                 detail_fields(buffer, /* draft placeholders */ true),
             ]
-            .spacing(SPACE_LG);
+            .spacing(SPACE_MD);
             if let Some(err) = ui.error.as_deref() {
                 col = col.push(kit_text::caption(err).style(kit_text::danger));
             }
-            col = col.push(footer);
-            col.into()
+            col = col
+                .push(iced::widget::Space::new().height(Length::Fill))
+                .push(footer);
+            col.height(Length::Fill).into()
         }
     };
 
@@ -525,10 +594,8 @@ fn field_input<'a>(
 fn candidates_card<'a>(candidates: Vec<Candidate>) -> Element<'a, AppsMsg> {
     let mut col = column![
         kit_text::subheading("Running, not configured"),
-        kit_text::caption(
-            "Pre-filled by what's currently running. Configure opens the detail panel.",
-        )
-        .style(kit_text::muted),
+        kit_text::caption("Apps open on the desktop but not in the catalog yet.")
+            .style(kit_text::muted),
     ]
     .spacing(SPACE_SM);
 
@@ -551,17 +618,25 @@ fn candidates_card<'a>(candidates: Vec<Candidate>) -> Element<'a, AppsMsg> {
             ]
             .spacing(SPACE_XS)
             .width(Length::Fill),
-            kit_btn::labeled("Configure", kit_btn::ghost).on_press(AppsMsg::StartFromCandidate {
-                app_id: c.app_id,
-                command: c.suggested_command,
-            }),
+            kit_btn::labeled_sm("Configure", kit_btn::ghost).on_press(
+                AppsMsg::StartFromCandidate {
+                    app_id: c.app_id,
+                    command: c.suggested_command,
+                },
+            ),
         ]
         .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Center);
+        .align_y(Alignment::Center)
+        .padding(Padding {
+            top: 4.0,
+            bottom: 4.0,
+            left: 0.0,
+            right: 0.0,
+        });
         col = col.push(row_el);
     }
 
-    card(col.spacing(SPACE_LG)).width(Length::Fill).into()
+    card(col.spacing(SPACE_MD)).width(Length::Fill).into()
 }
 
 // ── candidate derivation ───────────────────────────────────────────
