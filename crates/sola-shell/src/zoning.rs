@@ -154,6 +154,11 @@ impl ZoningState {
     /// Record a floating window's geometry against its app_id. Returns true if a
     /// new/changed `FloatGeometry` should be persisted. Ignores windows that are
     /// not currently floating — only floats remember their rectangle.
+    ///
+    /// Only apps with an **assigned** `Zone::Float` in `app_zone_config` (user
+    /// float key or restored float) persist geometry. Transient default-float
+    /// windows (no zone assignment) self-size on each launch and must not
+    /// pollute `FloatGeometry`.
     pub fn note_window_geometry(
         &mut self,
         app_id: &str,
@@ -164,6 +169,9 @@ impl ZoningState {
         height: i32,
     ) -> bool {
         if self.window_zones.get(&window_id) != Some(&Zone::Float) {
+            return false;
+        }
+        if self.app_zone_config.get(app_id) != Some(&Zone::Float) {
             return false;
         }
         // Never persist a 0×0 (or otherwise non-positive) rect — that is the
@@ -197,6 +205,9 @@ impl ZoningState {
     /// zone once.
     ///
     /// Caller emits `Topic::Frame` for the returned value in Task 10.
+    ///
+    /// Windows with **no** zone assignment are handled by
+    /// [`ensure_default_float`] — they float at the client-requested size.
     pub fn apply_config_zone(&mut self, app_id: &str, window_id: u32) -> Option<FrameUpdate> {
         if self.config_applied.contains(&window_id) {
             return None;
@@ -204,16 +215,16 @@ impl ZoningState {
         let zone = self.app_zone_config.get(app_id).copied()?;
         // Floating windows aren't snapped to a zone rect. Record the
         // assignment so it isn't retried each Windows event, then restore the
-        // float's remembered rectangle if we have one, else float to the
-        // default centered inset so a first launch is visibly floating.
+        // float's remembered rectangle if we have one. Without saved geometry
+        // the client keeps its requested size (sola-river centers via
+        // default placement) — no forced inset frame.
         if matches!(zone, Zone::Float) {
             self.config_applied.insert(window_id);
             self.window_zones.insert(window_id, zone);
             // The restored size rides sola-river's first-`dimensions` gate
             // (deferred until the surface initializes); position applies
             // immediately. So restore can't reproduce the resize-before-init crash.
-            // Skip non-positive saved rects (poisoned FloatGeometry) and fall
-            // through to the default centered inset.
+            // Skip non-positive saved rects (poisoned FloatGeometry).
             if let Some(g) = self.float_geometry.get(app_id) {
                 if g.width > 0 && g.height > 0 {
                     return Some(FrameUpdate {
@@ -226,10 +237,8 @@ impl ZoningState {
                     });
                 }
             }
-            // No remembered geometry: emit the default inset frame so the
-            // window is visibly floating. Needs output geometry; if it hasn't
-            // arrived a later Apps event retries once OutputGeometry is cached.
-            return self.output_size.map(|(w, h)| float_frame(window_id, w, h));
+            // No remembered geometry: float, self-size (no Frame).
+            return None;
         }
         // If geometry hasn't arrived yet we can't compute the frame. Bail
         // without mutating state so a later Apps event retries once
@@ -238,6 +247,29 @@ impl ZoningState {
         self.config_applied.insert(window_id);
         self.window_zones.insert(window_id, zone);
         Some(compute_frame(zone, window_id, w, h))
+    }
+
+    /// Mark a window with **no** zone assignment as floating at the
+    /// client-requested size.
+    ///
+    /// Runtime-only: does **not** write `Zone::Float` into `app_zone_config`
+    /// (so it is not persisted as a zone assignment). Emits no frame — size
+    /// is the client's; sola-river centers unplaced windows. Callers must
+    /// still run `take_floating_changes` → `Topic::WindowFloating` so apps
+    /// know to draw CSD and sola-river enables Meta-drag move/resize.
+    ///
+    /// No-op when the window was already processed or the app has a saved
+    /// zone (use [`apply_config_zone`] for those).
+    pub fn ensure_default_float(&mut self, app_id: &str, window_id: u32) {
+        if self.config_applied.contains(&window_id) {
+            return;
+        }
+        if self.app_zone_config.contains_key(app_id) {
+            return;
+        }
+        self.config_applied.insert(window_id);
+        self.window_zones.insert(window_id, Zone::Float);
+        info!(app_id = %app_id, window_id, "default-float (no zone assignment)");
     }
 
     /// Handle a zone snap keycode for the focused window.
@@ -263,12 +295,15 @@ impl ZoningState {
             }
         };
 
-        // Floating: record + persist the assignment, then re-center the
-        // window to the default inset frame. Explicit float always resets to
-        // the inset (predictable); relaunch restores saved geometry via
-        // apply_config_zone. Unfloat is just pressing any other Meta+Numpad
+        // Floating: record + persist the assignment, then inset from the
+        // current rect for visible feedback. Already-floating windows are a
+        // no-op (don't re-inset / re-persist). Unfloat is any other Meta+Numpad
         // zone key, which overwrites the zone here and snaps as usual.
         if matches!(zone, Zone::Float) {
+            if self.is_floating(window_id) {
+                info!(app_id = %app_id, window_id, "float key ignored — already floating");
+                return None;
+            }
             // Inset from the window's current rect (read BEFORE we overwrite
             // its zone), so an explicit float shrinks it in place. Fall back
             // to the centered output inset when the current rect is unknown,
@@ -748,25 +783,92 @@ mod tests {
     }
 
     #[test]
-    fn apply_config_zone_float_emits_inset_frame_without_saved_geometry() {
+    fn handle_key_float_is_noop_when_already_floating() {
+        let mut s = state_with_output(1920, 1080);
+        s.set_focused("sola-settings".to_string());
+        // Default-float (runtime) or prior explicit float — either is floating.
+        s.window_zones.insert(7, Zone::Float);
+        s.float_geometry.insert(
+            "sola-settings".into(),
+            FloatGeometry {
+                app_id: "sola-settings".into(),
+                x: 100,
+                y: 100,
+                width: 800,
+                height: 600,
+            },
+        );
+        assert!(s
+            .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(7))
+            .is_none());
+        // Geometry and zone map untouched; no Zones dirty bit.
+        assert_eq!(s.window_zones.get(&7).copied(), Some(Zone::Float));
+        let g = s.float_geometry.get("sola-settings").expect("kept");
+        assert_eq!((g.x, g.y, g.width, g.height), (100, 100, 800, 600));
+        assert!(s.take_zones_update().is_none());
+        // Second press after an explicit first float is also a no-op.
+        s.set_focused("UnrealEditor".to_string());
+        s.handle_key(KeyCode::KP_MULTIPLY.raw(), Some(42))
+            .expect("first float emits");
+        assert!(s
+            .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(42))
+            .is_none());
+    }
+
+    #[test]
+    fn apply_config_zone_float_self_sizes_without_saved_geometry() {
         let mut s = state_with_output(1920, 1080);
         let mut zones = std::collections::HashMap::new();
         zones.insert("UnrealEditor".to_string(), Zone::Float);
         s.set_zones(zones);
 
-        let frame = s
-            .apply_config_zone("UnrealEditor", 7)
-            .expect("Float config with no saved geometry emits the inset frame");
-        assert_eq!((frame.x, frame.y, frame.width, frame.height), (50, 78, 1820, 952));
+        // No Frame: client keeps requested size; window is still marked floating.
+        assert!(s.apply_config_zone("UnrealEditor", 7).is_none());
         assert_eq!(s.window_zones.get(&7).copied(), Some(Zone::Float));
+        assert!(s.is_floating(7));
         // Marked applied so it isn't retried every Windows event.
         assert!(s.apply_config_zone("UnrealEditor", 7).is_none());
+    }
+
+    #[test]
+    fn ensure_default_float_marks_unassigned_window_floating() {
+        let mut s = ZoningState::new();
+        s.ensure_default_float("sola-settings", 3);
+        assert_eq!(s.window_zones.get(&3).copied(), Some(Zone::Float));
+        assert!(s.is_floating(3));
+        // Runtime only — no Zones persist dirty bit.
+        assert!(s.take_zones_update().is_none());
+        // Idempotent.
+        s.ensure_default_float("sola-settings", 3);
+        assert_eq!(s.window_zones.get(&3).copied(), Some(Zone::Float));
+        // Does not steal windows that have a saved zone assignment.
+        let mut zones = std::collections::HashMap::new();
+        zones.insert("helium".to_string(), Zone::Left);
+        s.set_zones(zones);
+        s.ensure_default_float("helium", 9);
+        assert!(s.window_zones.get(&9).is_none());
+        assert!(!s.is_floating(9));
+    }
+
+    #[test]
+    fn default_float_geometry_is_not_persisted() {
+        let mut z = ZoningState::new();
+        // Runtime default float (no app_zone_config entry).
+        z.window_zones.insert(7, Zone::Float);
+        assert!(!z.note_window_geometry("sola-monitor", 7, 10, 20, 1280, 800));
+        assert!(z.float_geometry.get("sola-monitor").is_none());
+        // Assigned Float still records geometry.
+        z.app_zone_config.insert("sola-monitor".into(), Zone::Float);
+        assert!(z.note_window_geometry("sola-monitor", 7, 10, 20, 1280, 800));
+        assert!(z.float_geometry.get("sola-monitor").is_some());
     }
 
     #[test]
     fn floating_window_geometry_is_recorded_by_app() {
         let mut z = ZoningState::new();
         z.window_zones.insert(7, Zone::Float);
+        // Assigned Float (not merely default-float) is required to persist.
+        z.app_zone_config.insert("UnrealEditor".into(), Zone::Float);
         let changed = z.note_window_geometry("UnrealEditor", 7, 10, 20, 1280, 800);
         assert!(changed);
         let g = z.float_geometry.get("UnrealEditor").expect("recorded");
@@ -775,6 +877,7 @@ mod tests {
         assert!(!z.note_window_geometry("UnrealEditor", 7, 10, 20, 1280, 800));
         // A non-floating window's geometry is ignored.
         z.window_zones.insert(8, Zone::Left);
+        z.app_zone_config.insert("Helium".into(), Zone::Left);
         assert!(!z.note_window_geometry("Helium", 8, 0, 0, 100, 100));
         assert!(z.float_geometry.get("Helium").is_none());
     }
@@ -783,6 +886,7 @@ mod tests {
     fn note_window_geometry_rejects_non_positive_size() {
         let mut z = ZoningState::new();
         z.window_zones.insert(7, Zone::Float);
+        z.app_zone_config.insert("sola-monitor".into(), Zone::Float);
         z.float_geometry.insert(
             "sola-monitor".into(),
             FloatGeometry {
@@ -815,10 +919,9 @@ mod tests {
                 height: 0,
             },
         );
-        let frame = s
-            .apply_config_zone("UnrealEditor", 7)
-            .expect("poisoned save falls back to inset frame");
-        assert_eq!((frame.x, frame.y, frame.width, frame.height), (50, 78, 1820, 952));
+        // Poisoned save → self-size (no Frame), still marked floating.
+        assert!(s.apply_config_zone("UnrealEditor", 7).is_none());
+        assert_eq!(s.window_zones.get(&7).copied(), Some(Zone::Float));
     }
 
     #[test]
@@ -839,14 +942,11 @@ mod tests {
         assert_eq!((frame.x, frame.y, frame.width, frame.height), (100, 50, 1280, 800));
         assert!(!frame.fullscreen);
 
-        // A float without saved geometry now floats to the default inset
-        // (5120×2160 → 50px margins, below the 28px menubar).
-        z.set_focused("Blender".to_string());
-        z.handle_key(KeyCode::KP_MULTIPLY.raw(), Some(4));
-        let frame = z
-            .apply_config_zone("Blender", 10)
-            .expect("no saved geometry → default inset frame");
-        assert_eq!((frame.x, frame.y, frame.width, frame.height), (50, 78, 5020, 2032));
+        // A float with no saved geometry self-sizes (no Frame), still floating.
+        // Seed Zone::Float without going through handle_key (which caches geometry).
+        z.app_zone_config.insert("Blender".into(), Zone::Float);
+        assert!(z.apply_config_zone("Blender", 10).is_none());
+        assert_eq!(z.window_zones.get(&10).copied(), Some(Zone::Float));
     }
 
     #[test]

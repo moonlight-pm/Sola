@@ -9,17 +9,19 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-05 (progress-docs practice adopted; no active feature slice)
+**As of:** 2026-08-06 (initial-window-state: default-float unassigned windows)
 
 ---
 
 ## Now
 
-1. **No active feature worktree** — pick the next slice from follow-ups below
-   or from a new user ask; open a worktree before code changes.  
-2. **Progress docs** — keep this file + `docs/capabilities.md` honest when
-   shipping; do not reintroduce a second handoff.  
-3. **Follow-ups (unordered backlog, not priority):**  
+1. **Branch `naturalethic/initial-window-state`** — unassigned new windows
+   default-float at client size + `WindowFloating`; first-party kit apps draw
+   CSD titlebars while floating. Needs install + dogfood smoke (shell already
+   installed once; apps not yet).  
+2. **Follow-ups from this slice:** optional per-app default sizes in
+   `window_settings`; dogfood float chrome density across apps.  
+3. **Other backlog (unordered):**  
    - Permanent `/dev/input` ACL or udev for sola-kvm (avoid per-boot setfacl)  
    - Permission fan-out UX when TUI + sola-agent both attached (ask mode) — **D1**  
    - Remaining worktree hygiene: `libei-portal` archive/cleanup  
@@ -47,7 +49,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Compositor | River via `sola-river` |
 | UI stack | Iced 0.14 + `sola-kit` (not WebView) |
 | Grok agent | Shared leader (`grok-leader.service` / `~/.grok/leader.sock`) |
-| Branch | `master` (feature work in `.worktrees/`) |
+| Branch | `naturalethic/initial-window-state` (default-float; not merged) |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install. User installs and smokes.
@@ -98,6 +100,7 @@ Full history is git. Keep this list short (last few merges only).
 
 | Slice | Note |
 |-------|------|
+| initial-window-state | Default-float + kit CSD on monitor/settings/preview/mail/agent/terminal/kit/browser |
 | progress-docs practice | Spine: CURRENT, capabilities, architecture, roadmap, open-questions |
 | build warning cleanup | Dead code / unused surface trimmed across agent, mail, terminal |
 | bus-restart-output-geometry | Menubar stays framed across bus restart |

@@ -9,7 +9,7 @@
 
 use sola_bus::topics::TopicKind;
 use sola_core::KeyCode;
-use sola_kit::app::{BusSetup, startup, window_settings};
+use sola_kit::app::{BusSetup, startup, window_settings_transparent};
 use sola_kit::fonts::{self, INTER};
 
 mod storybook;
@@ -24,16 +24,19 @@ fn main() -> iced::Result {
         // on connect. Without subscribing here the storybook never
         // receives them, so themes created in a prior session vanish on
         // reopen even though they're still on disk.
+        // Windows + WindowFloating: float CSD tracking.
         .subscribe(&[
             TopicKind::Theme,
             TopicKind::CustomTheme,
             TopicKind::MenuAction,
+            TopicKind::Windows,
+            TopicKind::WindowFloating,
         ])
         .app_menu("Kit", [("quit", "Quit Kit", KeyCode::Q.meta())])
         .install();
 
     let app = iced::application(
-        storybook::Storybook::default,
+        storybook::Storybook::boot,
         storybook::Storybook::update,
         storybook::Storybook::view,
     )
@@ -41,6 +44,6 @@ fn main() -> iced::Result {
     .subscription(storybook::Storybook::subscription)
     .theme(storybook::Storybook::theme)
     .default_font(INTER)
-    .window(window_settings(APP_ID));
+    .window(window_settings_transparent(APP_ID));
     app.run()
 }

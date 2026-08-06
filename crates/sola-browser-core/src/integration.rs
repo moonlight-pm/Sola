@@ -48,6 +48,8 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::Theme,
     TopicKind::MenuAction,
     TopicKind::CloseApp,
+    TopicKind::Windows,
+    TopicKind::WindowFloating,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
@@ -129,6 +131,7 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
 /// Handle one bus message. Returns a `Task` so intents that need one (focus,
 /// exit) can produce it.
 pub fn handle_bus<E: Engine>(app: &mut App<E>, message: Arc<Message>, app_id: &'static str) -> Task<Msg> {
+    app.float.update(&message);
     // Theme first: restyle the chrome live (also installs the font roles).
     if sola_kit::app::apply_theme_update(&message, &mut app.theme) {
         return Task::none();

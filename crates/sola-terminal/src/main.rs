@@ -16,7 +16,10 @@ use iced::{event, keyboard, mouse};
 
 use sola_bus::topics::{PaneLayout, SplitDir, TerminalConfig, Topic, TopicKind};
 use sola_bus::Message;
-use sola_kit::app::{BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup, window_settings};
+use sola_kit::app::{
+    BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
+    window_settings_transparent,
+};
 use sola_kit::fonts;
 use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 
@@ -157,12 +160,12 @@ fn main() -> iced::Result {
         }
     }
 
-    let app = iced::application(App::new, App::update, App::view)
+    let app = iced::application(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::mono())
-        .window(window_settings(APP_ID));
+        .window(window_settings_transparent(APP_ID));
     app.run()
 }
 
@@ -196,6 +199,9 @@ struct App {
     /// while Shift is held (keydebug: Shift+Enter → plain CR; Alt+Enter works).
     /// Tracking the Shift key down/up is the reliable signal.
     keys_held_mods: keyboard::Modifiers,
+    /// Float tracker + iced window id for CSD while floating.
+    float: sola_kit::FloatState,
+    window_id: Option<iced::window::Id>,
     /// Per-pane mouse-mode wheel accumulator. High-rate touchpad events are
     /// folded here and flushed at [`WHEEL_MIN_INTERVAL`] so TUIs don't full-
     /// repaint on every iced wheel sample.
@@ -257,10 +263,14 @@ enum Msg {
     /// Result of an async tmux cwd query (PaneId, path).
     CwdResult(String, Option<String>),
     BlinkTick,
+    WindowReady(Option<iced::window::Id>),
+    TitleDrag,
+    TitleResize(iced::window::Direction),
+    TitleClose,
 }
 
 impl App {
-    fn new() -> (Self, Task<Msg>) {
+    fn boot() -> (Self, Task<Msg>) {
         let live_tmux_at_startup = tmux::list_sessions().map(|v| v.into_iter().collect());
         let app = Self {
             tabs: state::Tabs::default(),
@@ -278,9 +288,14 @@ impl App {
             pane_grids: HashMap::new(),
             keyboard_mods: keyboard::Modifiers::empty(),
             keys_held_mods: keyboard::Modifiers::empty(),
+            float: sola_kit::FloatState::new(APP_ID),
+            window_id: None,
             wheel_burst: HashMap::new(),
         };
-        (app, Task::none())
+        (
+            app,
+            sola_kit::window_ready_task(Msg::WindowReady),
+        )
     }
 
     fn title(&self) -> String {
@@ -294,7 +309,7 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        self.theme.clone()
+        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
     }
 
     fn subscription(&self) -> Subscription<Msg> {
@@ -340,6 +355,16 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(m) => self.on_bus(&m),
+            Msg::WindowReady(id) => {
+                self.window_id = id;
+                Task::none()
+            }
+            Msg::TitleDrag => sola_kit::drag(self.window_id),
+            Msg::TitleResize(dir) => sola_kit::drag_resize(self.window_id, dir),
+            Msg::TitleClose => {
+                sola_kit::close_app(APP_ID);
+                Task::none()
+            }
             Msg::Noop => Task::none(),
             Msg::PtyExit(pane_id) => self.close_pane_by_id(&pane_id),
             Msg::PtyOutput(pane_id) => {
@@ -534,14 +559,23 @@ impl App {
         .into();
 
         let bg = self.palette.bg;
-        container(body)
+        let framed: Element<'_, Msg> = container(body)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(move |_theme| container::Style {
                 background: Some(bg.into()),
                 ..container::Style::default()
             })
-            .into()
+            .into();
+
+        sola_kit::wrap_if_floating(
+            self.float.is_floating_any(),
+            "Terminal",
+            Msg::TitleDrag,
+            Msg::TitleClose,
+            Msg::TitleResize,
+            framed,
+        )
     }
 
     /// Recursively fold a pane tree into kit splits; each leaf is a `TermView`
@@ -1022,6 +1056,7 @@ impl App {
     }
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
+        self.float.update(m);
         // 1. Live theme reload — rebuild widget theme + palette + cell metrics,
         //    then reflow every pane.
         if apply_theme_update(m, &mut self.theme) {

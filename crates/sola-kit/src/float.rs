@@ -1,16 +1,34 @@
 //! Per-app float-state tracking for kit apps that draw their own titlebar.
 //!
+//! **Policy:** the shell marks every window without a zone assignment as
+//! floating and emits sticky `Topic::WindowFloating`. Kit apps should honor
+//! that bit and draw CSD ([`crate::components::titlebar`]) while floating;
+//! zoned windows stay chrome-less. Size is the client's requested size unless
+//! a zone or restored float geometry applies.
+//!
 //! An app doesn't know its own sola-river `window_id`, so we learn it by
 //! matching `(app_id, title)` from `Topic::Windows`, then track the float bit
 //! from the sticky `Topic::WindowFloating`. Feed [`update`] every bus message
 //! (from the app's `bus_subscription` fold); read [`is_floating`] /
 //! [`is_floating_any`] in `view`.
 //!
+//! Typical single-window kit app wiring:
+//! 1. `window_settings_transparent(APP_ID)`
+//! 2. `FloatState::new(APP_ID)` + `window_id: Option<window::Id>`
+//! 3. Boot: `window::latest().map(Msg::WindowReady)`
+//! 4. Bus: `float.update(&message)`
+//! 5. Theme: [`theme_for`] while floating
+//! 6. View: [`wrap_if_floating`] around content
+//! 7. Handlers: [`drag`] / [`drag_resize`] / [`close_app`]
+//!
 //! [`update`]: FloatState::update
 //! [`is_floating`]: FloatState::is_floating
 //! [`is_floating_any`]: FloatState::is_floating_any
 
 use std::collections::{HashMap, HashSet};
+
+use iced::window::Direction;
+use iced::{Element, Task, Theme};
 
 use sola_bus::Message;
 use sola_bus::topics::Topic;
@@ -70,6 +88,72 @@ impl FloatState {
     pub fn is_floating_any(&self) -> bool {
         self.ids_by_title.values().any(|id| self.floating.contains(id))
     }
+}
+
+/// Theme while floating: clear `background.base` so rounded corners show
+/// the desktop. Zoned: the live theme unchanged.
+pub fn theme_for(floating: bool, theme: &Theme) -> Theme {
+    if floating {
+        crate::theme::overlay(theme)
+    } else {
+        theme.clone()
+    }
+}
+
+/// Begin an interactive move of the app's iced window (CSD titlebar drag).
+pub fn drag<Message>(window_id: Option<iced::window::Id>) -> Task<Message> {
+    match window_id {
+        Some(id) => iced::window::drag(id),
+        None => Task::none(),
+    }
+}
+
+/// Begin an interactive edge/corner resize (floating_frame grip).
+pub fn drag_resize<Message>(
+    window_id: Option<iced::window::Id>,
+    direction: Direction,
+) -> Task<Message> {
+    match window_id {
+        Some(id) => iced::window::drag_resize(id, direction),
+        None => Task::none(),
+    }
+}
+
+/// Ask the session to close this app (`Topic::CloseApp`).
+pub fn close_app(app_id: &str) {
+    if let Ok(mut bus) = crate::app::bus().lock() {
+        let _ = bus.emit(Topic::CloseApp(app_id.into()));
+    }
+}
+
+/// Wrap `content` in [`floating_frame`] when floating; otherwise return it
+/// unchanged (zoned = no client titlebar).
+pub fn wrap_if_floating<'a, Message>(
+    floating: bool,
+    title: impl Into<String>,
+    on_drag: Message,
+    on_close: Message,
+    on_resize: impl Fn(Direction) -> Message + 'a,
+    content: Element<'a, Message, Theme>,
+) -> Element<'a, Message, Theme>
+where
+    Message: Clone + 'a,
+{
+    if floating {
+        crate::components::titlebar::floating_frame(title, on_drag, on_close, on_resize, content)
+    } else {
+        content
+    }
+}
+
+/// Boot task that resolves the app's primary iced window id.
+pub fn window_ready_task<Message>(
+    to_msg: impl Fn(Option<iced::window::Id>) -> Message + Send + 'static,
+) -> Task<Message>
+where
+    Message: Send + 'static,
+{
+    iced::window::latest().map(to_msg)
 }
 
 #[cfg(test)]

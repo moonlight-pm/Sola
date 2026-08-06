@@ -169,8 +169,8 @@ impl Shell {
             .window_zones
             .retain(|wid, _| current_wids.contains(wid));
 
-        // For newly appeared apps, apply their saved zone config to the first
-        // window. Subsequent windows of the same app are left unzoned.
+        // Per non-shell window: restore a saved zone if any; otherwise
+        // default-float (client-requested size + WindowFloating for CSD).
         let mut zone_frames = Vec::new();
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID {
@@ -178,6 +178,9 @@ impl Shell {
             }
             if let Some(frame) = self.zoning.apply_config_zone(&w.app_id, w.window_id) {
                 zone_frames.push(frame);
+            } else {
+                self.zoning
+                    .ensure_default_float(&w.app_id, w.window_id);
             }
         }
         if !zone_frames.is_empty() {
@@ -188,10 +191,10 @@ impl Shell {
             }
         }
 
-        // Tell sola-river which of these windows are floating (for move/resize).
+        // Tell sola-river / kit apps which windows are floating (move/resize + CSD).
         self.sync_window_floating();
 
-        // Emit frames for menubar and all explicitly-zoned windows.
+        // Emit frames for menubar overlays and explicitly zoned (non-float) windows.
         self.emit_all_frames();
 
         // Re-derive the switcher app list whenever windows change while active.
@@ -1026,12 +1029,18 @@ impl Shell {
             .filter(|w| w.app_id != Self::APP_ID)
             .map(|w| (w.app_id.clone(), w.window_id))
             .collect();
-        if !windows.is_empty() {
+        let mut zone_frames = Vec::new();
+        for (app_id, wid) in windows {
+            if let Some(frame) = self.zoning.apply_config_zone(&app_id, wid) {
+                zone_frames.push(frame);
+            } else {
+                self.zoning.ensure_default_float(&app_id, wid);
+            }
+        }
+        if !zone_frames.is_empty() {
             if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                for (app_id, wid) in windows {
-                    if let Some(frame) = self.zoning.apply_config_zone(&app_id, wid) {
-                        let _ = bus.emit(Topic::Frame(frame));
-                    }
+                for f in zone_frames {
+                    let _ = bus.emit(Topic::Frame(f));
                 }
             }
         }

@@ -71,6 +71,10 @@ pub enum Msg {
     UrlPasted(Option<String>),
     /// Result of an `iced::clipboard::read` for paste into page content.
     PagePasted(Option<String>),
+    WindowReady(Option<iced::window::Id>),
+    TitleDrag,
+    TitleResize(iced::window::Direction),
+    TitleClose,
 }
 
 /// Browser chrome application state, generic over the web engine.
@@ -116,6 +120,9 @@ pub struct App<E: Engine> {
     /// Index of the hovered tab row, if any — drives the float-in close
     /// button. Recomputed from `mouse_area` enter/exit each frame.
     pub hovered_tab: Option<usize>,
+    /// Float tracker + iced window id for CSD while floating.
+    pub float: sola_kit::FloatState,
+    pub window_id: Option<iced::window::Id>,
     /// The app_id string passed to `run::<E>`, stored so `Msg::Bus` can
     /// forward it to `integration::handle_bus` without a static.
     pub app_id: &'static str,
@@ -158,6 +165,8 @@ impl<E: Engine> App<E> {
             last_cursor_x: None,
             drag_anchor: None,
             hovered_tab: None,
+            float: sola_kit::FloatState::new(app_id),
+            window_id: None,
             app_id,
             url_bar_focused: false,
         }
@@ -169,6 +178,16 @@ impl<E: Engine> App<E> {
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
+            Msg::WindowReady(id) => {
+                self.window_id = id;
+                return Task::none();
+            }
+            Msg::TitleDrag => return sola_kit::drag(self.window_id),
+            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
+            Msg::TitleClose => {
+                sola_kit::close_app(self.app_id);
+                return Task::none();
+            }
             Msg::NewFrame => {}
             Msg::NavBack => {
                 let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Back));
@@ -340,7 +359,7 @@ impl<E: Engine> App<E> {
 
     /// Current iced theme (chrome styling), refreshed from `Topic::Theme`.
     pub fn theme(&self) -> iced::Theme {
-        self.theme.clone()
+        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
     }
 
     pub fn pick_new_active_after_close(&self, closing: TabId) -> Option<TabId> {
@@ -384,7 +403,7 @@ impl<E: Engine> App<E> {
 
         // While dragging, a transparent top layer holds the resize
         // cursor steady even when the pointer races ahead of the divider.
-        if self.dragging_divider {
+        let content: Element<'_, Msg> = if self.dragging_divider {
             stack![
                 body,
                 mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
@@ -393,7 +412,16 @@ impl<E: Engine> App<E> {
             .into()
         } else {
             body
-        }
+        };
+
+        sola_kit::wrap_if_floating(
+            self.float.is_floating_any(),
+            "Browser",
+            Msg::TitleDrag,
+            Msg::TitleClose,
+            Msg::TitleResize,
+            content,
+        )
     }
 
     /// Left vertical tab column, built from the kit `vertical_tabs`

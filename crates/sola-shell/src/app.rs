@@ -743,19 +743,15 @@ impl Shell {
         }
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID { continue; }
-            // A floating window is sized once when floated; re-framing it here
-            // would clobber it — Float's zone rect is 0×0, and the sola-
-            // fallback below is full-screen. Leave it at the size
-            // handle_key/apply_config_zone gave it.
+            // Floating windows (assigned Float or default-float with no zone)
+            // keep client-requested / restore size — never re-frame them.
+            // Unassigned sola-* apps used to get default_app_frame (full usable
+            // area), which treated them like a zone; they now default-float.
             if self.zoning.is_floating(w.window_id) {
                 continue;
             }
             if let Some(f) = self.zoning.window_frame(w.window_id) {
                 frames.push(f);
-            } else if w.app_id.starts_with("sola-") {
-                if let Some(f) = self.zoning.default_app_frame(w.window_id) {
-                    frames.push(f);
-                }
             }
         }
 
@@ -1433,6 +1429,7 @@ mod pending_launch_tests {
             menu_window_id: None,
             launcher_window_id: None,
             switcher_window_id: None,
+            selection_window_id: None,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -1459,6 +1456,10 @@ mod pending_launch_tests {
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
             switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
+            selection: SelectionState::default(),
+            open_preview_on_next: false,
+            screenshot_return_focus: None,
+            suppress_map_focus_for: None,
             zoning: ZoningState::new(),
             menubar: MenubarState::new(),
             pending_launch: Some(PendingLaunch {

@@ -112,7 +112,9 @@ to the bus and tolerate compositor restarts.
 | Launcher | App launch |
 | Switcher | MRU window/app switch |
 
-Zoning / floating behavior is coordinated with `sola-river` over the bus.
+Zoning / floating is coordinated with `sola-river` over the bus:
+unassigned windows **default-float** (client size + `Topic::WindowFloating`);
+saved zones restore frames; Meta+numpad snaps assign zones.
 
 ---
 

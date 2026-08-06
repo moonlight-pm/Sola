@@ -59,6 +59,10 @@ pub enum Msg {
     KeyPressed(keyboard::Key, keyboard::Modifiers),
     /// Quiet background re-fetch (IDLE + multi-client safety net).
     PollRefresh,
+    WindowReady(Option<iced::window::Id>),
+    TitleDrag,
+    TitleResize(iced::window::Direction),
+    TitleClose,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +111,8 @@ pub struct App {
     composing: bool,
     draft: ComposeDraft,
     last_move: Option<LastMove>,
+    float: sola_kit::FloatState,
+    window_id: Option<iced::window::Id>,
 }
 
 impl Default for App {
@@ -138,6 +144,8 @@ impl Default for App {
             composing: false,
             draft: empty_draft(""),
             last_move: None,
+            float: sola_kit::FloatState::new(APP_ID),
+            window_id: None,
         }
     }
 }
@@ -172,12 +180,19 @@ fn draft_with_body(
 }
 
 impl App {
+    pub fn boot() -> (Self, Task<Msg>) {
+        (
+            Self::default(),
+            sola_kit::window_ready_task(Msg::WindowReady),
+        )
+    }
+
     pub fn title(&self) -> String {
         "Mail".into()
     }
 
     pub fn theme(&self) -> Theme {
-        self.theme.clone()
+        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
@@ -204,6 +219,16 @@ impl App {
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(message) => self.on_bus(&message),
+            Msg::WindowReady(id) => {
+                self.window_id = id;
+                Task::none()
+            }
+            Msg::TitleDrag => sola_kit::drag(self.window_id),
+            Msg::TitleResize(dir) => sola_kit::drag_resize(self.window_id, dir),
+            Msg::TitleClose => {
+                sola_kit::close_app(APP_ID);
+                Task::none()
+            }
             Msg::Worker(ev) => self.on_worker(ev),
             Msg::SelectFolder(name) => {
                 self.selected_folder = name.clone();
@@ -412,6 +437,7 @@ impl App {
     }
 
     fn on_bus(&mut self, message: &Message) -> Task<Msg> {
+        self.float.update(message);
         apply_theme_update(message, &mut self.theme);
         if is_self_quit(message, APP_ID) {
             mail_send(MailCmd::Shutdown);
@@ -822,11 +848,20 @@ impl App {
         if let Some(toast) = &self.toast {
             col = col.push(self.view_toast(toast));
         }
-        container(col)
+        let body: Element<'_, Msg> = container(col)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(canvas_style)
-            .into()
+            .into();
+
+        sola_kit::wrap_if_floating(
+            self.float.is_floating_any(),
+            "Mail",
+            Msg::TitleDrag,
+            Msg::TitleClose,
+            Msg::TitleResize,
+            body,
+        )
     }
 
     fn view_toast<'a>(&'a self, toast: &'a str) -> Element<'a, Msg> {

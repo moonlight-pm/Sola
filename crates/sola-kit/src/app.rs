@@ -166,9 +166,11 @@ impl BusSetup {
     }
 }
 
-/// Window settings every sola iced app uses: no decorations
-/// (sola-shell draws chrome) + the correct `xdg_toplevel.app_id`
-/// so the shell can match `SetAppMenu` against the surface.
+/// Window settings every sola iced app uses: `decorations: false` (zoned
+/// windows are chrome-less; while floating the app draws CSD via kit
+/// titlebar when it honors `Topic::WindowFloating`) + the correct
+/// `xdg_toplevel.app_id` so the shell can match `SetAppMenu` against the
+/// surface.
 ///
 /// On Linux iced reads app_id from
 /// `window::Settings.platform_specific.application_id`, NOT from
