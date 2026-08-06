@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-06 (default-float for unassigned windows; dogfood = local TTY install)
+**As of:** 2026-08-06 (dist qcow harness + flower splash; primary desktop still local TTY)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -28,8 +28,11 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | session-mgr | sola-session spawn/close/reap | shipped | [session](specs/2026-04-17-sola-session-design.md) | local | Persistence depth varies by app | no |
 | theme-bus | Topic::Theme palette + fonts | shipped | [sidebar/theme](specs/2026-05-07-sidebar-and-theme-protocol-design.md) | local | Full theme editor UX incomplete | partial |
 | kit | sola-kit components + storybook | partial | [kit](specs/2026-04-30-sola-kit-design.md), graphite DS | storybook + apps | Storybook pages lag Open Design; not every control OD-parity | no |
-| install-make | cargo make build/install to /opt/sola | shipped | — | local | Install requires human permission; no package manager story | yes |
+| install-make | cargo make build/install to /opt/sola | shipped | — | local | Install requires human permission | yes |
 | fonts-dist | System fonts only; distribution notes | shipped | [manual/distribution](manual/distribution.md) | local | Optional families must be installed by hand | yes |
+| dist-shape1 | NixOS module + release tarball install | partial | [INSTALL.md](../INSTALL.md), freeze [distribution-image](specs/2026-08-05-distribution-image-design.md) | colleagues historically | Published tarball URL 404 for v0.1.1; needs release refresh; not a fresh-machine path | partial |
+| dist-vm-image | QEMU qcow harness (`cargo make vm`) | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md), [plan](plans/2026-08-05-distribution-qemu-image-plan.md) | QEMU splash + kiosk serial | Stages `target/release` only (no cargo in vm); engineering harness, not product media | no |
+| dist-installer | ISO + flower splash + kit wizard + disk install → loginless Sola | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) | QEMU flower splash OK; wizard dry-run | Plymouth clockwise cyan gradient shipped in image; kiosk starts; no real apply; no ISO yet | no |
 
 ---
 

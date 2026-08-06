@@ -5611,6 +5611,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-install"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "serde",
+ "serde_json",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "sola-kit"
 version = "0.1.0"
 dependencies = [

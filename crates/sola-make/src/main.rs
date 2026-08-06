@@ -10,6 +10,7 @@ mod cef;
 mod install;
 mod isolated;
 mod publish;
+mod vm;
 mod watch;
 
 use std::os::unix::process::CommandExt;
@@ -75,6 +76,40 @@ enum Commands {
         /// Explicit X.Y.Z version to release. Omit to auto-bump patch.
         version: Option<String>,
     },
+
+    /// Build or run the Sola QEMU disk image (preinstalled qcow2).
+    Vm {
+        #[command(subcommand)]
+        action: VmAction,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum VmAction {
+    /// Stage `target/release` binaries (no cargo) and `nix build` the qcow2.
+    Build {
+        /// Include the CEF Release tree (~4G) in the stage/image.
+        #[arg(long)]
+        with_cef: bool,
+
+        /// Only populate `var/images/stage/` (skip nix image build).
+        #[arg(long)]
+        stage_only: bool,
+    },
+
+    /// Boot the qcow2 under QEMU.
+    ///
+    /// Checks nix/QEMU/OVMF and may rebuild the *disk image* when missing or
+    /// stale. Does **not** run cargo — build release binaries yourself first.
+    Run {
+        /// Do not rebuild the disk image (fail if missing).
+        #[arg(long)]
+        no_build: bool,
+
+        /// Force a full disk-image rebuild even if one already exists.
+        #[arg(long)]
+        rebuild: bool,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -127,6 +162,19 @@ fn main() {
             }
         }
         Commands::Publish { version } => publish::publish(version),
+        Commands::Vm { action } => match action {
+            VmAction::Build {
+                with_cef,
+                stage_only,
+            } => vm::build(vm::BuildOpts {
+                with_cef,
+                stage_only,
+            }),
+            VmAction::Run { no_build, rebuild } => vm::run(vm::RunOpts {
+                auto_build: !no_build,
+                force_rebuild: rebuild,
+            }),
+        },
     }
 }
 
@@ -412,6 +460,48 @@ mod tests {
         assert!(matches!(
             cli.command,
             Commands::Install { ref apps, watch: true } if apps == &["terminal".to_string()]
+        ));
+    }
+
+    #[test]
+    fn cli_parses_vm_build() {
+        let cli = Cli::try_parse_from(["sola-make", "vm", "build", "--with-cef"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Vm {
+                action: VmAction::Build {
+                    with_cef: true,
+                    stage_only: false,
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_vm_run() {
+        let cli = Cli::try_parse_from(["sola-make", "vm", "run"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Vm {
+                action: VmAction::Run {
+                    no_build: false,
+                    rebuild: false,
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_vm_run_rebuild() {
+        let cli = Cli::try_parse_from(["sola-make", "vm", "run", "--rebuild"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Vm {
+                action: VmAction::Run {
+                    no_build: false,
+                    rebuild: true,
+                }
+            }
         ));
     }
 

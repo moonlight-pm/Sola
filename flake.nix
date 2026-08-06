@@ -18,19 +18,53 @@
         patches = (old.patches or [ ])
           ++ [ ./nix/patches/river-xwayland-destroy-state.patch ];
       });
+
+      # Package used inside image builds. When SOLA_VM_STAGE is set
+      # (requires `nix build --impure`), install from the local stage
+      # tree prepared by `cargo make vm build`. Otherwise fall back to
+      # the GitHub release derivation (Shape 1).
+      solaForImage =
+        let
+          stage = builtins.getEnv "SOLA_VM_STAGE";
+        in
+        if stage != "" then
+          pkgs.callPackage ./nix/image/sola-from-stage.nix {
+            stage = /. + stage;
+          }
+        else
+          pkgs.callPackage ./nix/sola.nix { };
+
+      solaNixosModule = { config, lib, pkgs, ... }@args:
+        import ./nix/module.nix (args // {
+          riverPackage = river-patched;
+        });
     in {
       packages.${system} = {
         sola = pkgs.callPackage ./nix/sola.nix { };
         river-patched = river-patched;
         default = self.packages.${system}.sola;
+
+        # Preinstalled qcow2 (EFI). Prefer building via `cargo make vm build`
+        # so SOLA_VM_STAGE is set and the image carries current binaries.
+        sola-vm-qcow2 =
+          self.nixosConfigurations.sola-vm.config.system.build.image;
       };
 
       # Pass our flake-evaluated river-patched into the module so it
       # uses the right version even when imported into a configuration
       # that itself uses a different nixpkgs (e.g. stable).
-      nixosModules.default = { config, lib, pkgs, ... }@args:
-        import ./nix/module.nix (args // {
-          riverPackage = river-patched;
-        });
+      nixosModules.default = solaNixosModule;
+
+      nixosConfigurations.sola-vm = nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          ./nix/image/configuration.nix
+          solaNixosModule
+          {
+            services.sola.enable = true;
+            services.sola.package = solaForImage;
+          }
+        ];
+      };
     };
 }

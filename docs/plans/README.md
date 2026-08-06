@@ -15,4 +15,4 @@ Not freezes (those are [`../specs/`](../specs/)). Not the capability matrix.
 
 ## Active
 
-_None_ (see root [`CURRENT.md`](../../CURRENT.md)).
+- [2026-08-05-distribution-qemu-image-plan.md](2026-08-05-distribution-qemu-image-plan.md) — ISO installer (qcow + splash dogfood; apply/ISO next)

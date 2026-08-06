@@ -69,8 +69,14 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Image preview / selection capture handoff |
 | `crates/solactl` | CLI helpers |
-| `crates/sola-make` | `cargo make` xtask (build / install) |
+| `crates/sola-install` | Installer wizard UI (kit; dry-run until real apply) |
+| `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm**) |
 | `crates/sola-assets` | Vendored icons/assets |
+| `nix/module.nix` | NixOS module (`services.sola`) — Shape 1 + images |
+| `nix/sola.nix` | Package from GitHub release tarball |
+| `nix/image/` | VM/image profile: quiet boot, Plymouth `sola`, installer kiosk, stage package |
+| `nix/image/plymouth/` | Flower splash theme (clockwise cyan petal gradient frames) |
+| `var/images/` | Local image products only (gitignored; not source) |
 | `apocrypha/` | Legacy GTK4+WebKit host — **not built** |
 | `docs/` | Engineering + operator docs (this suite) |
 
@@ -138,9 +144,24 @@ CEF: do **not** enable `accelerated_osr`; dma-buf import is via Wayland
 cargo make build              # all / subset
 cargo make install            # needs explicit user permission
 cargo make install <app>…     # targeted install
+cargo build --release         # you own Rust build before vm
+cargo make vm build           # stage target/release → nix qcow2 (no cargo)
+cargo make vm run             # QEMU; may rebuild image if stale (no cargo)
 ```
 
 Alias: `cargo make` → `cargo run -q -p sola-make --` (see `.cargo/config.toml`).
+
+### Distribution (as-built)
+
+| Path | What |
+|------|------|
+| Shape 1 | Flake `packages.sola` + `nixosModules.default`; colleague hosts import module |
+| Shape 2 | Flake `nixosConfigurations.sola-vm` + `packages.sola-vm-qcow2`; `SOLA_VM_STAGE` + `--impure` for local stage |
+| Stage source | Always `target/release` (this tree); never `/opt/sola/bin`; guest ELFs patchelf’d for image glibc |
+| Image profile | `nix/image/configuration.nix` — quiet boot, Plymouth theme `sola`, cage kiosk → `sola-install` |
+| Splash | `nix/image/plymouth/` — 5 frames, clockwise cyan shade gradient on petals |
+| Local products | `var/images/sola-vm.qcow2`, stage tree, QEMU overlay (never committed) |
+| Product ISO | Not built yet (freeze + plan Phase 3) |
 
 ---
 
