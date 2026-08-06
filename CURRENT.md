@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-06 (distribution — flower splash dogfood OK; apply/ISO next)
+**As of:** 2026-08-06 (distribution — QEMU install → loginless Sola dogfood OK)
 
 ---
 
@@ -21,14 +21,12 @@ Do not invent product policy.
      no password, timezone auto).  
    - Freeze: [`docs/specs/2026-08-05-distribution-image-design.md`](docs/specs/2026-08-05-distribution-image-design.md)  
    - Plan: [`docs/plans/2026-08-05-distribution-qemu-image-plan.md`](docs/plans/2026-08-05-distribution-qemu-image-plan.md)  
-   - **Harness:** `cargo make vm` qcow; stage from **`target/release` only**
-     (no cargo inside `vm run`/`vm build`; never `/opt/sola/bin`).  
-   - **Quiet boot + Plymouth flower:** theme `sola` — five-petal cyan gradient
-     walks **clockwise** (~300 ms/step). Dogfood: splash looks OK in QEMU.  
-   - **Installer kiosk:** cage → `sola-install` (standalone; patchelf’d guest
-     ELFs; systemd kiosk, not multi-user After deadlock). Serial: kiosk stays up.  
-   - **Wizard:** dry-run only (username + disk); no real partition/apply yet.  
-   - **Next:** confirm wizard UI in-VM; real apply pipeline; ISO product path.  
+   - **Harness:** `cargo make vm install` wipes vdb + boots live installer;
+     after apply `SOLA_VM_BOOT=target cargo make vm run --no-build`. Stage from
+     **`target/release` only** (no cargo inside vm).  
+   - **Dogfood OK:** splash → wizard → erase vdb → reboot target → loginless
+     Sola (`runuser` session; username prefill `sola`).  
+   - **Next:** polish (installer UX, splash handoff, errors); then ISO path.  
 2. **Progress docs** — keep this file + `docs/capabilities.md` honest when
    shipping; do not reintroduce a second handoff.  
 3. **Follow-ups (unordered backlog, not priority):**  
@@ -114,6 +112,7 @@ Full history is git. Keep this list short (last few merges only).
 
 | Slice | Note |
 |-------|------|
+| dist real apply | QEMU vdb install → loginless Sola; `vm install`; sola-desktop |
 | dist image + splash | `sola-install`, `cargo make vm`, Plymouth clockwise cyan flower |
 | initial-window-state | Default-float + kit CSD on monitor/settings/preview/mail/agent/terminal/kit/browser |
 | kvm Mac scroll velocity gain | CG pixel inject + rate ramp (`scroll_accel`); dogfooded on ember |

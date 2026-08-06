@@ -41,6 +41,7 @@ mod tests {
     #[test]
     fn accepts_simple() {
         assert!(validate("joshua").is_none());
+        assert!(validate("sola").is_none()); // installer default prefill
         assert!(validate("a").is_none());
         assert!(validate("user_1").is_none());
     }

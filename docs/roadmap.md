@@ -74,9 +74,9 @@ kvm input ACL permanence; preview zoom/clipboard.
 - **Product aim:** installer ISO — flower splash, username+disk wizard,
   loginless Sola ([freeze](specs/2026-08-05-distribution-image-design.md))  
 
-**Remaining:** real disk apply; ISO pipeline; Shape 1 release refresh.
-Harness + flower splash + dry-run wizard exist. Fonts story operator-documented
-under [manual/distribution](manual/distribution.md).
+**Remaining:** ISO pipeline; polish; Shape 1 release refresh. QEMU harness
+dogfoods splash → install → loginless Sola. Fonts story under
+[manual/distribution](manual/distribution.md).
 
 ---
 

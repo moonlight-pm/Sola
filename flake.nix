@@ -55,11 +55,30 @@
       # that itself uses a different nixpkgs (e.g. stable).
       nixosModules.default = solaNixosModule;
 
+      # Target system written to disk by sola-install-apply (not the live media).
+      nixosConfigurations.sola-installed = nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          ./nix/image/installed-system.nix
+          solaNixosModule
+          {
+            services.sola.enable = true;
+            services.sola.package = solaForImage;
+          }
+        ];
+      };
+
+      # Live installer / QEMU harness image.
       nixosConfigurations.sola-vm = nixpkgs.lib.nixosSystem {
         inherit system;
+        specialArgs = {
+          installSystem =
+            self.nixosConfigurations.sola-installed.config.system.build.toplevel;
+        };
         modules = [
           ./nix/image/configuration.nix
           solaNixosModule
+          ./nix/image/install-tools.nix
           {
             services.sola.enable = true;
             services.sola.package = solaForImage;

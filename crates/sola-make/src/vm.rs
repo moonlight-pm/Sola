@@ -20,6 +20,9 @@ use std::time::SystemTime;
 const STAGE_DIR: &str = "var/images/stage";
 const IMAGE_PATH: &str = "var/images/sola-vm.qcow2";
 const OVERLAY_PATH: &str = "var/images/sola-vm-overlay.qcow2";
+/// Blank second disk for install dogfood (appears as /dev/vdb in guest).
+const TARGET_DISK_PATH: &str = "var/images/sola-install-target.qcow2";
+const TARGET_DISK_SIZE: &str = "20G";
 const FLAKE_ATTR: &str = ".#sola-vm-qcow2";
 
 /// Nix / installer sources that should trigger an image refresh when newer
@@ -31,10 +34,16 @@ const IMAGE_INPUT_PATHS: &[&str] = &[
     "nix/image/configuration.nix",
     "nix/image/quiet-boot.nix",
     "nix/image/installer-session.nix",
+    "nix/image/installed-system.nix",
+    "nix/image/installed-session.nix",
+    "nix/image/install-tools.nix",
+    "nix/image/sola-install-apply.sh",
     "nix/image/sola-from-stage.nix",
     "nix/image/plymouth/default.nix",
     "crates/sola-assets/icons/sola/flower.svg",
     "crates/sola-install/src/main.rs",
+    "crates/sola-install/src/apply.rs",
+    "crates/sola-install/src/disks.rs",
     "crates/sola-install/Cargo.toml",
 ];
 
@@ -50,6 +59,9 @@ pub struct RunOpts {
     pub auto_build: bool,
     /// Force a full rebuild even if an image exists.
     pub force_rebuild: bool,
+    /// Boot only the install-target disk (`SOLA_VM_BOOT=target` also sets this).
+    /// `vm install` forces `false` (live installer + fresh vdb).
+    pub boot_target: bool,
 }
 
 pub fn build(opts: BuildOpts) {
@@ -64,6 +76,36 @@ pub fn run(opts: RunOpts) {
         eprintln!("vm run failed: {e}");
         exit(1);
     }
+}
+
+/// Wipe the install target qcow and boot the live installer (fresh `/dev/vdb`).
+pub fn install(opts: RunOpts) {
+    if let Err(e) = run_install(opts) {
+        eprintln!("vm install failed: {e}");
+        exit(1);
+    }
+}
+
+fn run_install(mut opts: RunOpts) -> Result<(), String> {
+    let root = workspace_root()?;
+    env::set_current_dir(&root).map_err(|e| format!("chdir workspace: {e}"))?;
+
+    // Always live installer + fresh vdb (never boot previous install).
+    opts.boot_target = false;
+    wipe_install_target(&root)?;
+    run_vm(opts)
+}
+
+/// Delete the previous install-target disk so the next run gets a blank vdb.
+fn wipe_install_target(root: &Path) -> Result<(), String> {
+    let target = root.join(TARGET_DISK_PATH);
+    if target.exists() {
+        println!(">>> wiping previous install target {}", target.display());
+        fs::remove_file(&target).map_err(|e| format!("remove target disk: {e}"))?;
+    } else {
+        println!(">>> no previous install target at {}", target.display());
+    }
+    Ok(())
 }
 
 fn run_build(opts: BuildOpts) -> Result<(), String> {
@@ -239,9 +281,31 @@ fn run_vm(opts: RunOpts) -> Result<(), String> {
             &format!("if=pflash,format=raw,file={}", vars_rw.display()),
         ]);
     }
+    let target = root.join(TARGET_DISK_PATH);
+    ensure_target_disk(&target)?;
+
+    // boot_target / SOLA_VM_BOOT=target — boot the install disk only (after a
+    // successful apply). Default: live installer overlay as vda + target vdb.
+    if opts.boot_target {
+        println!(
+            ">>> boot mode: installed target only ({})",
+            target.display()
+        );
+        cmd.args([
+            "-drive",
+            &format!("file={},if=virtio,format=qcow2", target.display()),
+        ]);
+    } else {
+        cmd.args([
+            // Live installer media (overlay on base qcow).
+            "-drive",
+            &format!("file={},if=virtio,format=qcow2", overlay.display()),
+            // Install target — guest /dev/vdb (live root is usually vda).
+            "-drive",
+            &format!("file={},if=virtio,format=qcow2", target.display()),
+        ]);
+    }
     cmd.args([
-        "-drive",
-        &format!("file={},if=virtio,format=qcow2", overlay.display()),
         "-device",
         "virtio-net-pci,netdev=net0",
         "-netdev",
@@ -452,6 +516,36 @@ fn ensure_overlay(base: &Path, overlay: &Path) -> Result<(), String> {
         .map_err(|e| format!("qemu-img: {e}"))?;
     if !status.success() {
         return Err("qemu-img create overlay failed".into());
+    }
+    Ok(())
+}
+
+/// Blank qcow for install-target dogfood (`/dev/vdb` in the guest).
+fn ensure_target_disk(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        println!("    target disk: {}", path.display());
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir target parent: {e}"))?;
+    }
+    let qemu_img = resolve_qemu_img()?;
+    println!(
+        ">>> creating blank install target {} ({TARGET_DISK_SIZE})",
+        path.display()
+    );
+    let status = Command::new(&qemu_img)
+        .args([
+            "create",
+            "-f",
+            "qcow2",
+            path.to_str().unwrap(),
+            TARGET_DISK_SIZE,
+        ])
+        .status()
+        .map_err(|e| format!("qemu-img target: {e}"))?;
+    if !status.success() {
+        return Err("qemu-img create target disk failed".into());
     }
     Ok(())
 }

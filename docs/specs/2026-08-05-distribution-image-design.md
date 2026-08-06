@@ -1,12 +1,11 @@
 **Date:** 2026-08-05  
 **Status:** target (freeze)  
 **Implementation:** partial  
-**Dogfood:** QEMU qcow — quiet boot + clockwise cyan flower splash OK; installer kiosk stays up (serial); wizard still dry-run  
+**Dogfood:** QEMU — splash → wizard → erase vdb → `SOLA_VM_BOOT=target` → loginless Sola  
 **Gaps:**
-- Wizard is dry-run only (no real partition/install)  
-- Full wizard visual confirm in-VM still thin  
-- No ISO output yet  
-- Same splash on *installed* system only after real apply lands  
+- No ISO output yet (harness is qcow + second disk)  
+- Timezone auto-detect still stub (UTC)  
+- Installer/desktop polish  
 - Shape 1 release tarball URL 404  
 **As-built:** [../capabilities.md](../capabilities.md) · [../architecture.md](../architecture.md)
 
@@ -181,3 +180,5 @@ Evolve toward:
 | 2026-08-05 | No password; autologin; straight to desktop (loginless) |
 | 2026-08-05 | Brand: five-petal flower through splash + installer |
 | 2026-08-06 | Splash animation: clockwise cyan shade gradient on petals (flower is spinner) |
+| 2026-08-06 | Wizard username prefill `sola` (selected for replace-on-type) |
+| 2026-08-06 | QEMU e2e: vdb apply + `SOLA_VM_BOOT=target` → loginless Sola |

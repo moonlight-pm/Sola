@@ -18,13 +18,13 @@ getty polish.
 
 ## Phase 1 — Installer app + policy wiring
 
-- [x] `crates/sola-install`: iced + sola-kit wizard (dry-run apply)  
-  - Welcome (flower) → Username → Disk confirm → Progress → Done  
-  - Dogfood: `cargo make build sola-install` then run binary under Sola  
+- [x] `crates/sola-install`: iced + sola-kit wizard  
+  - Welcome → Username → Disk → Progress → Done / Failed  
+  - Dry-run when no install image or demo disk; real apply on live media  
 - [x] Fixed policy reflected in UI copy: US EN, Mac keyboard, no password  
 - [ ] Timezone auto-detect helper (network; fallback documented)  
-- [ ] Autologin + “start sola” session unit/script for installed system  
-- [x] Apply backend stub (dry-run progress only — no disk writes)
+- [x] Loginless desktop session on installed system (`installed-session.nix`)  
+- [x] Apply backend: `sola-install-apply` (partition + nixos-install + user)
 
 ## Phase 2 — Brand splash + quiet boot
 
@@ -33,20 +33,22 @@ getty polish.
 - [x] Spinner = flower petals only (no stock throbber; ~300 ms/step)  
 - [x] Installer kiosk (`installer-session.nix` + cage + systemd)  
 - [x] QEMU dogfood: flower splash visible + uniform clockwise walk; kiosk up  
-- [ ] Same splash on installed system boot after real apply  
+- [x] Same splash modules on installed system (`installed-system` + quiet-boot)  
 - [ ] ISO live env uses the same modules
 
 ## Phase 3 — Live ISO + disk install
 
-- [ ] `nix/image` live configuration (installer session, not full desktop)  
+- [x] Installer live profile (installer-session + install-tools)  
+- [x] Whole-disk partition + install pipeline (ESP + root labels)  
+- [x] QEMU harness: second virtio disk (`sola-install-target.qcow2` → vdb)  
+- [x] QEMU dogfood: erase vdb → `SOLA_VM_BOOT=target` → loginless Sola  
+- [x] `cargo make vm install` wipes previous target + boots live installer  
 - [ ] Flake output e.g. `packages.sola-iso` / `cargo make iso build`  
-- [ ] Whole-disk partition + install pipeline (ESP + root)  
 - [ ] QEMU dogfood: ISO + blank target disk → install → reboot → Sola  
-- [ ] Optional: reuse wizard against qcow harness with second virtio disk  
 
 ## Phase 4 — Polish + ship hygiene
 
-- [ ] Error states (no disk, install fail) without raw log walls  
+- [x] Failed install screen (message + retry)  
 - [ ] Shape 1 release tarball refresh (404 today)  
 - [ ] Manual: operator install doc when ISO is dogfoodable (`docs/manual/`)  
 
@@ -55,9 +57,11 @@ getty polish.
 ```sh
 cargo build --release             # you own the Rust build
 cargo make vm build               # stage target/release → nix qcow2 (no cargo)
-cargo make vm run                 # QEMU; may rebuild *image* if missing/stale
+cargo make vm install             # wipe previous vdb + boot live installer
+cargo make vm run                 # QEMU: live + existing/blank vdb
 cargo make vm run --rebuild       # force disk-image rebuild
 cargo make vm run --no-build      # never rebuild image (fail if missing)
+SOLA_VM_BOOT=target cargo make vm run --no-build   # boot installed disk only
 ```
 
 `vm run` / `vm build` never run cargo. Stage only from `target/release`

@@ -110,6 +110,20 @@ enum VmAction {
         #[arg(long)]
         rebuild: bool,
     },
+
+    /// Wipe the previous install target disk and boot the live installer.
+    ///
+    /// Deletes `var/images/sola-install-target.qcow2` (recreated empty as
+    /// `/dev/vdb`), then same as `vm run`. Does **not** run cargo.
+    Install {
+        /// Do not rebuild the live disk image (fail if missing).
+        #[arg(long)]
+        no_build: bool,
+
+        /// Force a full live disk-image rebuild even if one already exists.
+        #[arg(long)]
+        rebuild: bool,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -173,6 +187,14 @@ fn main() {
             VmAction::Run { no_build, rebuild } => vm::run(vm::RunOpts {
                 auto_build: !no_build,
                 force_rebuild: rebuild,
+                boot_target: std::env::var("SOLA_VM_BOOT")
+                    .map(|v| v == "target" || v == "installed")
+                    .unwrap_or(false),
+            }),
+            VmAction::Install { no_build, rebuild } => vm::install(vm::RunOpts {
+                auto_build: !no_build,
+                force_rebuild: rebuild,
+                boot_target: false,
             }),
         },
     }
@@ -500,6 +522,20 @@ mod tests {
                 action: VmAction::Run {
                     no_build: false,
                     rebuild: true,
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_vm_install() {
+        let cli = Cli::try_parse_from(["sola-make", "vm", "install", "--no-build"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Vm {
+                action: VmAction::Install {
+                    no_build: true,
+                    rebuild: false,
                 }
             }
         ));

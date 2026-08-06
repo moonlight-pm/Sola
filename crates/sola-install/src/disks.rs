@@ -2,8 +2,9 @@
 //!
 //! Uses `lsblk -J` when available. Falls back to synthetic demo disks so
 //! the UI can be dogfooded without real block devices (or when `lsblk`
-//! is missing). Real apply still requires an explicit opt-in later.
+//! is missing). The live root disk is always filtered out of real lists.
 
+use std::path::PathBuf;
 use std::process::Command;
 
 use serde::Deserialize;
@@ -54,7 +55,6 @@ impl LsblkDev {
                 .map(|b| human_bytes(&b.to_string()))
                 .unwrap_or_else(|| n.to_string()),
             Some(serde_json::Value::String(s)) => {
-                // Already human from lsblk without -b, or numeric string.
                 if s.chars().all(|c| c.is_ascii_digit()) {
                     human_bytes(s)
                 } else {
@@ -66,10 +66,30 @@ impl LsblkDev {
     }
 }
 
-/// List candidate whole disks (not partitions).
+/// List candidate whole disks (not partitions), excluding the live root disk.
 pub fn list_disks() -> Vec<Disk> {
+    let live = live_root_disk();
+    if let Some(ref d) = live {
+        tracing::info!(%d, "live root disk (excluded from targets)");
+    }
     match list_lsblk() {
-        Ok(disks) if !disks.is_empty() => disks,
+        Ok(disks) if !disks.is_empty() => disks
+            .into_iter()
+            .filter(|d| {
+                if d.demo {
+                    return true;
+                }
+                if let Some(ref live) = live {
+                    let a = canonicalize_dev(&d.path);
+                    let b = canonicalize_dev(live);
+                    if a == b {
+                        tracing::info!(disk = %d.path, "skip live root disk");
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect(),
         Ok(_) => {
             tracing::warn!("lsblk returned no disks; using demo list");
             demo_disks()
@@ -81,6 +101,42 @@ pub fn list_disks() -> Vec<Disk> {
     }
 }
 
+/// Parent disk of the filesystem mounted at `/`, e.g. `/dev/vda`.
+pub fn live_root_disk() -> Option<String> {
+    let out = Command::new("findmnt")
+        .args(["-n", "-o", "SOURCE", "/"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let src = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if src.is_empty() {
+        return None;
+    }
+    let src = canonicalize_dev(&src);
+    // SOURCE is often a partition; ask lsblk for the parent disk.
+    let out = Command::new("lsblk")
+        .args(["-no", "PKNAME", &src])
+        .output()
+        .ok()?;
+    if out.status.success() {
+        let pk = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !pk.is_empty() {
+            return Some(format!("/dev/{pk}"));
+        }
+    }
+    // Already a whole disk?
+    Some(src)
+}
+
+fn canonicalize_dev(path: &str) -> String {
+    PathBuf::from(path)
+        .canonicalize()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| path.to_string())
+}
+
 fn list_lsblk() -> Result<Vec<Disk>, String> {
     let out = Command::new("lsblk")
         .args([
@@ -88,7 +144,6 @@ fn list_lsblk() -> Result<Vec<Disk>, String> {
             "-b",
             "-o",
             "NAME,PATH,SIZE,MODEL,TYPE",
-            // Top-level only; we still filter by type.
         ])
         .output()
         .map_err(|e| format!("spawn lsblk: {e}"))?;
@@ -104,12 +159,10 @@ fn list_lsblk() -> Result<Vec<Disk>, String> {
 
     let mut disks = Vec::new();
     for dev in parsed.blockdevices {
-        // Skip loop/rom; keep disk + some virtual disks (vda).
         let kind = dev.kind();
         if kind != "disk" {
             continue;
         }
-        // Skip obvious non-targets.
         if dev.name.starts_with("loop") || dev.name.starts_with("sr") {
             continue;
         }
@@ -136,7 +189,6 @@ fn list_lsblk() -> Result<Vec<Disk>, String> {
 }
 
 fn human_bytes(raw: &str) -> String {
-    // lsblk -b gives bytes as a decimal string.
     let Ok(n) = raw.trim().parse::<u64>() else {
         return raw.to_string();
     };
@@ -156,10 +208,10 @@ fn human_bytes(raw: &str) -> String {
 fn demo_disks() -> Vec<Disk> {
     vec![
         Disk {
-            name: "vda".into(),
-            path: "/dev/vda".into(),
-            size: "64G".into(),
-            model: "QEMU HARDDISK (demo)".into(),
+            name: "vdb".into(),
+            path: "/dev/vdb".into(),
+            size: "20G".into(),
+            model: "QEMU target (demo)".into(),
             demo: true,
         },
         Disk {

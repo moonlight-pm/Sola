@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-06 (dist qcow harness + flower splash; primary desktop still local TTY)
+**As of:** 2026-08-06 (dist QEMU install→Sola dogfood; primary desktop still local TTY)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -31,8 +31,8 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | install-make | cargo make build/install to /opt/sola | shipped | — | local | Install requires human permission | yes |
 | fonts-dist | System fonts only; distribution notes | shipped | [manual/distribution](manual/distribution.md) | local | Optional families must be installed by hand | yes |
 | dist-shape1 | NixOS module + release tarball install | partial | [INSTALL.md](../INSTALL.md), freeze [distribution-image](specs/2026-08-05-distribution-image-design.md) | colleagues historically | Published tarball URL 404 for v0.1.1; needs release refresh; not a fresh-machine path | partial |
-| dist-vm-image | QEMU qcow harness (`cargo make vm`) | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md), [plan](plans/2026-08-05-distribution-qemu-image-plan.md) | QEMU splash + kiosk serial | Stages `target/release` only (no cargo in vm); engineering harness, not product media | no |
-| dist-installer | ISO + flower splash + kit wizard + disk install → loginless Sola | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) | QEMU flower splash OK; wizard dry-run | Plymouth clockwise cyan gradient shipped in image; kiosk starts; no real apply; no ISO yet | no |
+| dist-vm-image | QEMU qcow harness (`cargo make vm`) | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md), [plan](plans/2026-08-05-distribution-qemu-image-plan.md) | install+boot target OK | `vm install` wipes vdb; `SOLA_VM_BOOT=target` boots installed disk; engineering harness not product media | no |
+| dist-installer | ISO + flower splash + kit wizard + disk install → loginless Sola | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) | QEMU e2e install→Sola | Splash, apply, loginless desktop dogfooded on vdb; no ISO yet; timezone stub UTC; polish open | no |
 
 ---
 

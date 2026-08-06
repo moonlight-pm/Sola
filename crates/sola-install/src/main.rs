@@ -1,8 +1,8 @@
-//! sola-install — kit-native installer wizard (visual dogfood build).
+//! sola-install — kit-native installer wizard.
 //!
 //! Product path (freeze): ISO → flower splash → username + disk → install →
-//! loginless Sola. This binary is the wizard UI; apply is **dry-run** so it
-//! is safe to click through on a dogfood desktop.
+//! loginless Sola. On live media (when `/etc/sola/install-system` exists)
+//! apply is real; under a dogfood desktop session it dry-runs.
 //!
 //! ```sh
 //! cargo make build sola-install
@@ -13,6 +13,7 @@ mod apply;
 mod disks;
 mod username;
 
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,7 +39,9 @@ use sola_kit::components::{field, icon_handle, icon_svg_colored};
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
-use apply::{HOSTNAME, KEYBOARD, LOCALE, dry_run_steps};
+use apply::{
+    ApplyEvent, HOSTNAME, KEYBOARD, LOCALE, dry_run_steps, progress_labels, real_apply_available,
+};
 use disks::{Disk, list_disks};
 
 const APP_ID: &str = "sola-install";
@@ -47,6 +50,24 @@ const WIN_H: f32 = 640.0;
 const CARD_W: f32 = 440.0;
 const FLOWER_WELCOME: u16 = 88;
 const FLOWER_CHROME: u16 = 22;
+/// Prefill so a one-user machine can Continue without typing.
+const DEFAULT_USERNAME: &str = "sola";
+
+fn username_input_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-install-username")
+}
+
+/// Focus the username field and select all so typing replaces the prefill.
+fn focus_username_field() -> Task<Msg> {
+    Task::batch([
+        iced::advanced::widget::operate(
+            iced::advanced::widget::operation::focusable::focus(username_input_id()),
+        ),
+        iced::advanced::widget::operate(
+            iced::advanced::widget::operation::text_input::select_all(username_input_id()),
+        ),
+    ])
+}
 
 fn main() -> iced::Result {
     // Install media / cage kiosk: no sola-bus, no sola-river. Kit `startup()`
@@ -104,6 +125,7 @@ enum Step {
     Disk,
     Installing,
     Done,
+    Failed,
 }
 
 struct App {
@@ -112,28 +134,40 @@ struct App {
     username_error: Option<&'static str>,
     disks: Vec<Disk>,
     selected_disk: Option<usize>,
-    /// Index into dry-run progress steps.
+    /// Index into progress steps.
     progress_i: usize,
     progress_labels: Vec<&'static str>,
+    /// Live label (real apply may send custom strings).
+    progress_label: String,
     flower: iced::widget::svg::Handle,
     theme: Theme,
-    /// Dry-run banner: never touches real disks in this build.
+    /// When true this run will not touch disks (session dogfood / demo disk).
     dry_run: bool,
+    /// Channel from the privileged apply thread (real install only).
+    apply_rx: Option<Receiver<ApplyEvent>>,
+    apply_error: Option<String>,
+    /// Image can do real install (prebuilt system path present).
+    real_capable: bool,
 }
 
 impl Default for App {
     fn default() -> Self {
+        let real_capable = real_apply_available();
         Self {
             step: Step::Welcome,
-            username: String::new(),
+            username: DEFAULT_USERNAME.into(),
             username_error: None,
             disks: list_disks(),
             selected_disk: None,
             progress_i: 0,
-            progress_labels: Vec::new(),
+            progress_labels: progress_labels(),
+            progress_label: String::new(),
             flower: icon_handle("sola/flower"),
             theme: default_theme(),
-            dry_run: true,
+            dry_run: !real_capable,
+            apply_rx: None,
+            apply_error: None,
+            real_capable,
         }
     }
 }
@@ -147,13 +181,20 @@ enum Msg {
     SelectDisk(usize),
     StartInstall,
     ProgressTick,
-    /// Fake reboot for dogfood — just quit.
+    /// Poll apply channel (real install).
+    ApplyPoll,
+    /// Reboot (real) or quit (dry-run).
     Finish,
 }
 
 impl App {
     fn boot() -> (Self, Task<Msg>) {
         let mut app = Self::default();
+        tracing::info!(
+            real_capable = app.real_capable,
+            disks = app.disks.len(),
+            "installer boot"
+        );
         if app.disks.len() == 1 {
             app.selected_disk = Some(0);
         }
@@ -169,15 +210,32 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
-        if bus_enabled() {
+        let bus = if bus_enabled() {
             bus_subscription().map(Msg::Bus)
         } else {
             Subscription::none()
-        }
+        };
+        let apply = if self.step == Step::Installing && self.apply_rx.is_some() {
+            iced::time::every(Duration::from_millis(100)).map(|_| Msg::ApplyPoll)
+        } else {
+            Subscription::none()
+        };
+        Subscription::batch([bus, apply])
     }
 
     fn selected(&self) -> Option<&Disk> {
         self.selected_disk.and_then(|i| self.disks.get(i))
+    }
+
+    /// Dry-run when image lacks install system, disk is demo, or forced.
+    fn will_dry_run(&self) -> bool {
+        if std::env::var_os("SOLA_INSTALL_DRY_RUN").is_some() {
+            return true;
+        }
+        if !self.real_capable {
+            return true;
+        }
+        self.selected().map(|d| d.demo).unwrap_or(true)
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
@@ -189,24 +247,31 @@ impl App {
                 }
             }
             Msg::Continue => match self.step {
-                Step::Welcome => self.step = Step::Username,
+                Step::Welcome => {
+                    self.step = Step::Username;
+                    return focus_username_field();
+                }
                 Step::Username => {
                     if let Some(err) = username::validate(&self.username) {
                         self.username_error = Some(err);
+                        return focus_username_field();
                     } else {
                         self.username_error = None;
                         self.step = Step::Disk;
                     }
                 }
-                Step::Disk | Step::Installing | Step::Done => {}
+                Step::Disk | Step::Installing | Step::Done | Step::Failed => {}
             },
             Msg::Back => match self.step {
                 Step::Username => self.step = Step::Welcome,
-                Step::Disk => self.step = Step::Username,
+                Step::Disk => {
+                    self.step = Step::Username;
+                    return focus_username_field();
+                }
+                Step::Failed => self.step = Step::Disk,
                 _ => {}
             },
             Msg::Username(s) => {
-                // Keep the field tidy: lowercase as they type.
                 self.username = s.to_ascii_lowercase();
                 self.username_error = None;
             }
@@ -224,34 +289,117 @@ impl App {
                     self.username_error = username::validate(&self.username);
                     return Task::none();
                 }
-                let steps = dry_run_steps(&self.username, &disk.path);
-                self.progress_labels = steps.iter().map(|s| s.label).collect();
+                self.dry_run = self.will_dry_run();
+                self.progress_labels = progress_labels();
                 self.progress_i = 0;
+                self.progress_label = self
+                    .progress_labels
+                    .first()
+                    .copied()
+                    .unwrap_or("Working…")
+                    .to_string();
+                self.apply_error = None;
+                self.apply_rx = None;
                 self.step = Step::Installing;
-                let dwell = steps.first().map(|s| s.dwell).unwrap_or(Duration::from_millis(500));
-                return Task::perform(async move {
-                    tokio::time::sleep(dwell).await;
-                }, |_| Msg::ProgressTick);
+
+                if self.dry_run {
+                    tracing::info!(disk = %disk.path, "dry-run install");
+                    let steps = dry_run_steps(&self.username, &disk.path);
+                    let dwell = steps
+                        .first()
+                        .map(|s| s.dwell)
+                        .unwrap_or(Duration::from_millis(500));
+                    return Task::perform(
+                        async move {
+                            tokio::time::sleep(dwell).await;
+                        },
+                        |_| Msg::ProgressTick,
+                    );
+                }
+
+                tracing::info!(disk = %disk.path, user = %self.username, "real install");
+                match apply::start_real_apply(self.username.clone(), disk.path.clone()) {
+                    Ok(rx) => {
+                        self.apply_rx = Some(rx);
+                    }
+                    Err(e) => {
+                        self.apply_error = Some(e);
+                        self.step = Step::Failed;
+                    }
+                }
             }
             Msg::ProgressTick => {
+                if !self.dry_run {
+                    return Task::none();
+                }
                 let steps = dry_run_steps(
                     &self.username,
                     self.selected().map(|d| d.path.as_str()).unwrap_or("/dev/?"),
                 );
                 if self.progress_i + 1 >= steps.len() {
                     self.progress_i = steps.len().saturating_sub(1);
+                    self.progress_label = steps[self.progress_i].label.to_string();
                     self.step = Step::Done;
                     return Task::none();
                 }
                 self.progress_i += 1;
+                self.progress_label = steps[self.progress_i].label.to_string();
                 let dwell = steps[self.progress_i].dwell;
-                return Task::perform(async move {
-                    tokio::time::sleep(dwell).await;
-                }, |_| Msg::ProgressTick);
+                return Task::perform(
+                    async move {
+                        tokio::time::sleep(dwell).await;
+                    },
+                    |_| Msg::ProgressTick,
+                );
+            }
+            Msg::ApplyPoll => {
+                let Some(rx) = &self.apply_rx else {
+                    return Task::none();
+                };
+                loop {
+                    match rx.try_recv() {
+                        Ok(ApplyEvent::Progress { index, label }) => {
+                            self.progress_i = index.min(
+                                self.progress_labels.len().saturating_sub(1),
+                            );
+                            self.progress_label = label;
+                        }
+                        Ok(ApplyEvent::Done) => {
+                            self.apply_rx = None;
+                            self.step = Step::Done;
+                            break;
+                        }
+                        Ok(ApplyEvent::Failed(e)) => {
+                            self.apply_rx = None;
+                            self.apply_error = Some(e);
+                            self.step = Step::Failed;
+                            break;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            self.apply_rx = None;
+                            if self.step == Step::Installing {
+                                self.apply_error =
+                                    Some("Install process ended unexpectedly".into());
+                                self.step = Step::Failed;
+                            }
+                            break;
+                        }
+                    }
+                }
             }
             Msg::Finish => {
-                // Product path reboots; dogfood quits the window.
-                return iced::exit();
+                if self.dry_run {
+                    return iced::exit();
+                }
+                if let Err(e) = apply::request_reboot() {
+                    tracing::error!(%e, "reboot failed");
+                    self.apply_error = Some(e);
+                    self.step = Step::Failed;
+                    return Task::none();
+                }
+                // Hang until the machine goes down.
+                return Task::none();
             }
         }
         Task::none()
@@ -288,10 +436,18 @@ impl App {
             .spacing(SPACE_MD)
             .align_y(Alignment::Center);
 
-        let dry: Element<'_, Msg> = if self.dry_run {
-            kit_text::caption("Preview — no disks will be modified")
-                .style(kit_text::muted)
-                .into()
+        let preview = match self.step {
+            Step::Installing | Step::Done | Step::Failed => self.dry_run,
+            _ => self.will_dry_run(),
+        };
+        let dry: Element<'_, Msg> = if preview {
+            kit_text::caption(if self.real_capable {
+                "Preview mode for this disk"
+            } else {
+                "Preview — no disks will be modified"
+            })
+            .style(kit_text::muted)
+            .into()
         } else {
             Space::new().width(0).height(0).into()
         };
@@ -313,6 +469,7 @@ impl App {
             Step::Disk => self.view_disk(),
             Step::Installing => self.view_installing(),
             Step::Done => self.view_done(),
+            Step::Failed => self.view_failed(),
         };
 
         container(card)
@@ -384,6 +541,7 @@ impl App {
         .style(kit_text::muted);
 
         let input = text_input("username", &self.username)
+            .id(username_input_id())
             .on_input(Msg::Username)
             .on_submit(Msg::Continue)
             .padding([10, 12])
@@ -423,15 +581,17 @@ impl App {
         }
 
         let warn: Element<'_, Msg> = if self.selected().is_some_and(|d| d.demo) {
-            kit_text::caption("Demo disks — install is preview-only on this build.")
+            kit_text::caption("Demo disk — Erase will only simulate install.")
                 .style(kit_text::warning)
                 .into()
-        } else if self.dry_run {
-            kit_text::caption("Preview build: Erase will simulate install only.")
+        } else if !self.real_capable {
+            kit_text::caption("This session has no install image — Erase simulates only.")
                 .style(kit_text::muted)
                 .into()
         } else {
-            Space::new().height(0).into()
+            kit_text::caption("This will erase the disk and install Sola.")
+                .style(kit_text::warning)
+                .into()
         };
 
         let back = kit_btn::labeled("Back", kit_btn::ghost).on_press(Msg::Back);
@@ -517,11 +677,14 @@ impl App {
 
     fn view_installing(&self) -> Element<'_, Msg> {
         let title = kit_text::heading("Installing");
-        let current = self
-            .progress_labels
-            .get(self.progress_i)
-            .copied()
-            .unwrap_or("Working…");
+        let current = if self.progress_label.is_empty() {
+            self.progress_labels
+                .get(self.progress_i)
+                .copied()
+                .unwrap_or("Working…")
+        } else {
+            self.progress_label.as_str()
+        };
         let status = kit_text::body(current).style(kit_text::muted);
 
         let total = self.progress_labels.len().max(1) as f32;
@@ -602,16 +765,30 @@ impl App {
     fn view_done(&self) -> Element<'_, Msg> {
         let flower = icon_svg_colored(self.flower.clone(), 64, Color::WHITE);
         let title = kit_text::heading("You're ready");
-        let sub = kit_text::body(format!(
-            "Sola is set up for “{}”.\nOn real media this would reboot into your desktop.",
-            self.username
-        ))
+        let sub = if self.dry_run {
+            kit_text::body(format!(
+                "Preview complete for “{}”.\nNo disks were modified.",
+                self.username
+            ))
+        } else {
+            kit_text::body(format!(
+                "Sola is installed for “{}”.\nReboot to start your desktop — no login screen.",
+                self.username
+            ))
+        }
         .style(kit_text::muted)
         .center();
 
-        let done = kit_btn::labeled("Close preview", kit_btn::primary)
-            .on_press(Msg::Finish)
-            .width(Length::Fill);
+        let done = kit_btn::labeled(
+            if self.dry_run {
+                "Close preview"
+            } else {
+                "Reboot"
+            },
+            kit_btn::primary,
+        )
+        .on_press(Msg::Finish)
+        .width(Length::Fill);
 
         self.card_shell(
             column![
@@ -625,6 +802,32 @@ impl App {
             ]
             .width(Length::Fill)
             .align_x(Alignment::Center)
+            .into(),
+        )
+    }
+
+    fn view_failed(&self) -> Element<'_, Msg> {
+        let title = kit_text::heading("Install failed");
+        let detail = self
+            .apply_error
+            .as_deref()
+            .unwrap_or("Unknown error");
+        let sub = kit_text::body(detail).style(kit_text::muted);
+
+        let back = kit_btn::labeled("Back", kit_btn::ghost).on_press(Msg::Back);
+        let retry = kit_btn::labeled("Try again", kit_btn::primary)
+            .on_press(Msg::StartInstall)
+            .width(Length::Fill);
+
+        self.card_shell(
+            column![
+                container(title).center_x(Length::Fill),
+                Space::new().height(SPACE_MD),
+                sub,
+                Space::new().height(SPACE_XL),
+                row![back, retry].spacing(SPACE_MD).width(Length::Fill),
+            ]
+            .width(Length::Fill)
             .into(),
         )
     }

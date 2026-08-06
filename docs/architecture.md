@@ -160,8 +160,12 @@ Alias: `cargo make` → `cargo run -q -p sola-make --` (see `.cargo/config.toml`
 | Stage source | Always `target/release` (this tree); never `/opt/sola/bin`; guest ELFs patchelf’d for image glibc |
 | Image profile | `nix/image/configuration.nix` — quiet boot, Plymouth theme `sola`, cage kiosk → `sola-install` |
 | Splash | `nix/image/plymouth/` — 5 frames, clockwise cyan shade gradient on petals |
-| Local products | `var/images/sola-vm.qcow2`, stage tree, QEMU overlay (never committed) |
-| Product ISO | Not built yet (freeze + plan Phase 3) |
+| Target system | `nixosConfigurations.sola-installed` — quiet boot + loginless sola-desktop |
+| Apply | `sola-install-apply` (sudo): GPT ESP+root, `nixos-install --system`, install-user |
+| Desktop seat | `sola-desktop` unit: ensure user → `runuser` → `/opt/sola/bin/sola` |
+| Local products | `var/images/sola-vm.qcow2`, overlay, `sola-install-target.qcow2` (never committed) |
+| vm install | Wipe target qcow + boot live installer (`cargo make vm install`) |
+| Product ISO | Not built yet |
 
 ---
 
