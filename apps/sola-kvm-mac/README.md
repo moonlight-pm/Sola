@@ -16,7 +16,7 @@ CGEvent inject must be verified on ember.**
 | Bind | UDP `0.0.0.0:4242` (override with `--bind`) |
 | `Enter` | Warp cursor to absolute Mac `(x, y)` |
 | `Motion` | Absolute warp/set in Mac screen coords |
-| `Button` / `Key` / `Scroll` | `CGEvent` inject |
+| `Button` / `Key` / `Scroll` | `CGEvent` inject (scroll: pixel units + velocity gain; CG bypasses HID accel) |
 | `Leave` | Release any keys we still think are down |
 | Session | **GUI login** LaunchAgent — not SSH |
 

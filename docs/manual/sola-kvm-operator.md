@@ -178,6 +178,10 @@ Pure logic in `crates/sola-kvm/src/server.rs` (unit tested):
 2. **Edge enter** — motion that would leave primary into the virtual Mac rect
    → `Enter` + `Motion` UDP, grab side-effect.
 3. **Remote** — scale motion → Mac-local abs `Motion`; forward button/key/scroll.
+   On the Mac agent, scroll is injected as **pixel** CG events with a simple
+   **velocity gain** (slow notches stay small; fast spins ramp distance).
+   Synthetic CG does not use macOS HID wheel acceleration — retune
+   `scroll_accel` constants in `apps/sola-kvm-mac` if the ramp feels off.
 4. **Leave** — virtual cursor exits toward primary (or `leave` / force) →
    synthetic button/key ups (stuck-modifier recovery) → `Leave` → release grab.
 

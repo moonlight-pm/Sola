@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-05 (progress-docs practice adopted; no active feature slice)
+**As of:** 2026-08-06 (kvm Mac scroll velocity gain shipped)
 
 ---
 
@@ -28,6 +28,7 @@ Do not invent product policy.
    - Clipboard follow-ups (native pasteboard, images, larger caps) —
      [`docs/specs/2026-07-30-sola-kvm-clipboard-design.md`](docs/specs/2026-07-30-sola-kvm-clipboard-design.md)  
    - Optional: further Mac warp path cost for sola-kvm  
+   - Optional: true HID scroll path (virtual HID) if CG velocity gain not enough  
 
 **Explicit holds:** none.
 
@@ -98,12 +99,12 @@ Full history is git. Keep this list short (last few merges only).
 
 | Slice | Note |
 |-------|------|
+| kvm Mac scroll velocity gain | CG pixel inject + rate ramp (`scroll_accel`); dogfooded on ember |
 | progress-docs practice | Spine: CURRENT, capabilities, architecture, roadmap, open-questions |
 | build warning cleanup | Dead code / unused surface trimmed across agent, mail, terminal |
 | bus-restart-output-geometry | Menubar stays framed across bus restart |
 | sola-mail kit | IMAP/SMTP worker, three-pane UI, Helium open, IDLE refresh |
 | preview-enhancements | Header + Copy path |
-| kvm / screenshot / opening-app | Clipboard, lag, selection capture, launcher toast |
 
 ---
 

@@ -2,10 +2,149 @@
 //!
 //! On macOS this posts synthetic mouse/keyboard events via CoreGraphics.
 //! Accessibility permission is required (see README).
+//!
+//! Scroll: synthetic CG events bypass macOS HID wheel acceleration, so we
+//! apply a simple velocity gain here (slow notches stay precise; fast spins
+//! ramp pixel distance). See [`scroll_accel`].
 
 use crate::keymap::{self, CgKeyCode};
 use crate::protocol::Packet;
 use tracing::{debug, warn};
+
+/// Velocity-based pixel gain for synthetic Mac scroll inject.
+///
+/// CG inject never hits IOHID scroll acceleration; this approximates the
+/// "slow = small, fling = large" feel with a tunable curve.
+pub mod scroll_accel {
+    use std::time::{Duration, Instant};
+
+    /// Base pixels per Linux detent at low speed (precision floor).
+    pub const BASE_PX_PER_DETENT: f32 = 8.0;
+    /// Gap longer than this resets the rate EMA (new gesture).
+    pub const IDLE_RESET: Duration = Duration::from_millis(200);
+    /// Detents/s at or below → gain 1.0.
+    pub const RATE_LO: f32 = 5.0;
+    /// Detents/s at or above → [`GAIN_MAX`].
+    /// Higher = need a harder fling before peak (softer mid-ramp).
+    pub const RATE_HI: f32 = 60.0;
+    /// Peak multiplier on a hard fling (kept modest — CG is already “loud”).
+    pub const GAIN_MAX: f32 = 4.0;
+    /// EMA blend for instantaneous notch rate (higher = snappier to fling).
+    pub const EMA_ALPHA: f32 = 0.35;
+    /// Hard cap on pixel delta per CG event (safety).
+    pub const PIXEL_CAP: i32 = 64;
+
+    /// Rolling state for one inject stream (process-wide on Mac).
+    #[derive(Debug, Clone)]
+    pub struct State {
+        last_at: Option<Instant>,
+        /// EMA of |detents| / second.
+        rate_ema: f32,
+        /// Sign of last non-zero dominant axis (−1 / 0 / +1).
+        last_sign: i8,
+    }
+
+    impl Default for State {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl State {
+        pub const fn new() -> Self {
+            Self {
+                last_at: None,
+                rate_ema: 0.0,
+                last_sign: 0,
+            }
+        }
+
+        pub fn reset(&mut self) {
+            *self = Self::new();
+        }
+
+        /// Map Linux detent deltas → pixel deltas (Linux sign convention;
+        /// caller inverts for CG axes).
+        pub fn to_pixels(&mut self, dx: f32, dy: f32, now: Instant) -> (i32, i32) {
+            let mag = dx.abs() + dy.abs();
+            if mag <= f32::EPSILON {
+                return (0, 0);
+            }
+
+            let sign = dominant_sign(dx, dy);
+            let mut gain = 1.0_f32;
+
+            if let Some(prev) = self.last_at {
+                let dt = now.saturating_duration_since(prev);
+                if dt >= IDLE_RESET || (self.last_sign != 0 && sign != 0 && sign != self.last_sign)
+                {
+                    // New gesture or reverse — start precise again.
+                    self.rate_ema = 0.0;
+                    gain = 1.0;
+                } else {
+                    let dt_s = dt.as_secs_f32().max(1e-4);
+                    let inst_rate = mag / dt_s;
+                    self.rate_ema = if self.rate_ema <= f32::EPSILON {
+                        inst_rate
+                    } else {
+                        EMA_ALPHA * inst_rate + (1.0 - EMA_ALPHA) * self.rate_ema
+                    };
+                    gain = gain_from_rate(self.rate_ema);
+                }
+            }
+            // First event after idle/reset: gain stays 1.0, EMA still cold.
+
+            self.last_at = Some(now);
+            if sign != 0 {
+                self.last_sign = sign;
+            }
+
+            let scale = BASE_PX_PER_DETENT * gain;
+            (
+                quantize_axis(dx * scale),
+                quantize_axis(dy * scale),
+            )
+        }
+    }
+
+    /// Ease-in quadratic from 1.0 @ [`RATE_LO`] to [`GAIN_MAX`] @ [`RATE_HI`].
+    pub fn gain_from_rate(rate: f32) -> f32 {
+        if rate <= RATE_LO {
+            return 1.0;
+        }
+        let t = ((rate - RATE_LO) / (RATE_HI - RATE_LO)).clamp(0.0, 1.0);
+        1.0 + (GAIN_MAX - 1.0) * t * t
+    }
+
+    fn dominant_sign(dx: f32, dy: f32) -> i8 {
+        if dy.abs() >= dx.abs() {
+            if dy > f32::EPSILON {
+                1
+            } else if dy < -f32::EPSILON {
+                -1
+            } else {
+                0
+            }
+        } else if dx > f32::EPSILON {
+            1
+        } else if dx < -f32::EPSILON {
+            -1
+        } else {
+            0
+        }
+    }
+
+    fn quantize_axis(v: f32) -> i32 {
+        if v.abs() <= f32::EPSILON {
+            return 0;
+        }
+        let mut n = v.round() as i32;
+        if n == 0 {
+            n = if v > 0.0 { 1 } else { -1 };
+        }
+        n.clamp(-PIXEL_CAP, PIXEL_CAP)
+    }
+}
 
 /// Log Accessibility trust at agent startup (and open Settings if untrusted).
 pub fn check_accessibility_at_startup() {
@@ -624,6 +763,10 @@ mod platform {
 
     /// Re-associate mouse↔cursor when leaving remote (idempotent).
     pub fn end_remote_pointer() {
+        // Fresh scroll gesture after the next enter.
+        if let Ok(mut s) = SCROLL_ACCEL.lock() {
+            s.reset();
+        }
         if REMOTE_DISSOCIATED.swap(0, Ordering::Relaxed) != 0 {
             unsafe {
                 let err = CGAssociateMouseAndMouseCursorPosition(true);
@@ -878,24 +1021,23 @@ mod platform {
         }
     }
 
+    /// Process-wide scroll velocity state (CG inject bypasses HID accel).
+    static SCROLL_ACCEL: Mutex<super::scroll_accel::State> =
+        Mutex::new(super::scroll_accel::State::new());
+
     pub fn scroll(dx: f32, dy: f32) {
         ensure_trusted_logged();
-        // Linux REL_WHEEL and macOS CG scroll axes are opposite for the usual
-        // "finger/wheel → content" direction — invert both axes on inject.
-        let dx = -dx;
-        let dy = -dy;
-        // One Linux detent as a single CG *line* tick feels glacial in Cocoa.
-        // Scale into pixel units so speed roughly matches a native Mac mouse.
-        // Tuned down from 48 → 24 → 12 after desk feedback (still half prior).
-        const PIXELS_PER_DETENT: f32 = 12.0;
-        let mut wheel1 = (dy * PIXELS_PER_DETENT).round() as i32;
-        let mut wheel2 = (dx * PIXELS_PER_DETENT).round() as i32;
-        if wheel1 == 0 && dy.abs() > f32::EPSILON {
-            wheel1 = if dy > 0.0 { 1 } else { -1 };
-        }
-        if wheel2 == 0 && dx.abs() > f32::EPSILON {
-            wheel2 = if dx > 0.0 { 1 } else { -1 };
-        }
+        // Velocity → pixel gain (slow precise / fling large). Invert after
+        // scale: Linux REL_WHEEL and macOS CG axes are opposite for content.
+        let (px, py) = match SCROLL_ACCEL.lock() {
+            Ok(mut st) => st.to_pixels(dx, dy, Instant::now()),
+            Err(poisoned) => {
+                let mut st = poisoned.into_inner();
+                st.to_pixels(dx, dy, Instant::now())
+            }
+        };
+        let wheel1 = -py;
+        let wheel2 = -px;
         if wheel1 == 0 && wheel2 == 0 {
             return;
         }
@@ -917,7 +1059,7 @@ mod platform {
                 );
                 CGEventPost(K_CG_HID_EVENT_TAP, ev);
                 release_event(ev);
-                debug!(wheel1, wheel2, "scroll");
+                debug!(wheel1, wheel2, dx, dy, "scroll");
             } else {
                 warn!("scroll event null (Accessibility?)");
             }
@@ -928,6 +1070,9 @@ mod platform {
 #[cfg(not(target_os = "macos"))]
 mod platform {
     use super::CgKeyCode;
+    use super::scroll_accel;
+    use std::sync::Mutex;
+    use std::time::Instant;
     use tracing::info;
 
     pub fn check_accessibility_at_startup() {
@@ -936,6 +1081,7 @@ mod platform {
 
     use std::sync::atomic::{AtomicBool, Ordering};
     static REMOTE: AtomicBool = AtomicBool::new(false);
+    static SCROLL_ACCEL: Mutex<scroll_accel::State> = Mutex::new(scroll_accel::State::new());
 
     /// Returns `true` on first remote entry (matches macOS semantics).
     pub fn begin_remote_pointer() -> bool {
@@ -943,6 +1089,9 @@ mod platform {
     }
 
     pub fn end_remote_pointer() {
+        if let Ok(mut s) = SCROLL_ACCEL.lock() {
+            s.reset();
+        }
         REMOTE.store(false, Ordering::Relaxed);
     }
 
@@ -979,7 +1128,15 @@ mod platform {
     }
 
     pub fn scroll(dx: f32, dy: f32) {
-        info!(dx, dy, "stub scroll (not macOS)");
+        let (px, py) = match SCROLL_ACCEL.lock() {
+            Ok(mut st) => st.to_pixels(dx, dy, Instant::now()),
+            Err(poisoned) => {
+                let mut st = poisoned.into_inner();
+                st.to_pixels(dx, dy, Instant::now())
+            }
+        };
+        // Mirror macOS axis invert in the log so dogfood on Linux can compare.
+        info!(dx, dy, wheel1 = -py, wheel2 = -px, "stub scroll (not macOS)");
     }
 }
 
@@ -1073,5 +1230,71 @@ mod tests {
                 "leave",
             ]
         );
+    }
+
+    #[test]
+    fn scroll_gain_curve_is_flat_then_ramps() {
+        use scroll_accel::{gain_from_rate, GAIN_MAX, RATE_HI, RATE_LO};
+        assert!((gain_from_rate(0.0) - 1.0).abs() < 1e-5);
+        assert!((gain_from_rate(RATE_LO) - 1.0).abs() < 1e-5);
+        let mid = gain_from_rate((RATE_LO + RATE_HI) * 0.5);
+        assert!(mid > 1.0 && mid < GAIN_MAX);
+        assert!((gain_from_rate(RATE_HI) - GAIN_MAX).abs() < 1e-5);
+        assert!((gain_from_rate(RATE_HI + 100.0) - GAIN_MAX).abs() < 1e-5);
+    }
+
+    #[test]
+    fn scroll_accel_slow_stays_near_base_fast_grows() {
+        use scroll_accel::{State, BASE_PX_PER_DETENT, IDLE_RESET};
+        use std::time::{Duration, Instant};
+
+        let t0 = Instant::now();
+        let mut st = State::new();
+
+        // First notch: precision floor (gain 1).
+        let (x0, y0) = st.to_pixels(0.0, -1.0, t0);
+        assert_eq!(x0, 0);
+        assert_eq!(y0, -(BASE_PX_PER_DETENT as i32));
+
+        // Slow cadence (~4 detents/s): still near base.
+        let (x1, y1) = st.to_pixels(0.0, -1.0, t0 + Duration::from_millis(250));
+        // 250ms ≥ IDLE_RESET → reset gesture → base again.
+        assert_eq!(x1, 0);
+        assert_eq!(y1, -(BASE_PX_PER_DETENT as i32));
+
+        // Steady moderate: 50ms gaps (~20/s) should raise |pixels| above base.
+        let mut st2 = State::new();
+        let mut t = t0;
+        let mut last_abs = 0i32;
+        for _ in 0..8 {
+            let (_, y) = st2.to_pixels(0.0, -1.0, t);
+            last_abs = y.abs();
+            t += Duration::from_millis(50);
+        }
+        assert!(
+            last_abs > BASE_PX_PER_DETENT as i32,
+            "expected ramp at ~20/s, got |y|={last_abs}"
+        );
+
+        // Fling: 15ms gaps (~67/s) → near cap/gain max.
+        let mut st3 = State::new();
+        t = t0;
+        for _ in 0..10 {
+            let (_, y) = st3.to_pixels(0.0, -1.0, t);
+            last_abs = y.abs();
+            t += Duration::from_millis(15);
+        }
+        assert!(
+            last_abs >= (BASE_PX_PER_DETENT * 2.5) as i32,
+            "expected fling gain, got |y|={last_abs}"
+        );
+
+        // Direction reverse resets to base.
+        let (_, y_rev) = st3.to_pixels(0.0, 1.0, t);
+        assert_eq!(y_rev, BASE_PX_PER_DETENT as i32);
+
+        // Idle gap resets.
+        let (_, y_idle) = st3.to_pixels(0.0, 1.0, t + IDLE_RESET + Duration::from_millis(1));
+        assert_eq!(y_idle, BASE_PX_PER_DETENT as i32);
     }
 }
