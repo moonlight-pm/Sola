@@ -25,8 +25,9 @@ or the graphite brand requires it.
 | Area | macOS default | Sola |
 |------|---------------|------|
 | Palette | System greys | **Cool graphite** (`#0c0e12` / `#151922` / …) |
-| Window layout | Freeform windows with title bars | **Tiling / zoning** is primary |
+| Window layout | Freeform windows with title bars | **New windows float** at app size; **zoning** is opt-in snap |
 | Zoned (tiled) windows | Title bar + traffic lights | **No title bars** on zoned windows |
+| Floating windows | System/CSD title bars | **Client decorations** when floating (`Topic::WindowFloating`) |
 | Primary controls | Flat system blue | Soft accent fill, **dark label**, optional glow |
 | Hairlines | Solid system separator | Soft **white@α** edges |
 | Everything else | HIG dark mode density | Follow density; prefer graphite tokens |
@@ -161,16 +162,18 @@ For Sola:
 
 This is the main intentional break from macOS chrome.
 
-### Zoning (tiling)
+### Default float + opt-in zoning
 
-- Primary window management is **zoned / tiled**, not freeform cascade.
-- **Zoned windows have no title bars.** App content meets the zone edge. Window identity and controls live in the **menu bar**, switcher, and any floating chrome — not in per-window title bars for tiled clients.
-- Floating / freeform windows (if/when present) may grow title bars later; that is a separate, explicit decision. Default mental model remains: **tiled = no title bar**.
+- **New windows without a zone assignment float** at the **client-requested size** (centered by the compositor). The shell emits `Topic::WindowFloating` so kit apps know to draw CSD (titlebar / drag / close).
+- **Zoning is opt-in** (Meta+numpad snaps). A saved zone assignment still restores on relaunch; explicit float (`Meta`+numpad `*`) persists `Zone::Float` + float geometry.
+- **Zoned windows have no title bars.** App content meets the zone edge. Window identity and controls live in the **menu bar**, switcher, and floating chrome — not in per-window title bars for tiled clients.
+- **Floating windows draw client decorations** (kit `titlebar` / `floating_frame` when floating). Mental model: **float = CSD + app size; zoned = no title bar + zone frame**.
 
 ### Implications for visual design
 
 - Do not design “traffic light” clusters into zoned client chrome.
-- Shell must make **focused app and window** obvious without title bars (menu bar app name, switcher, optional subtle focus ring at compositor level — product decisions, not freeform decoration).
+- Floating kit apps **must** honor `Topic::WindowFloating` and show title chrome when floating.
+- Shell must make **focused app and window** obvious for zoned clients without title bars (menu bar app name, switcher).
 - Launcher / switcher carry more weight as navigation affordances than on stock macOS.
 
 ---

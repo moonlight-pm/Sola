@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-05 (progress-docs spine; dogfood = local TTY install)
+**As of:** 2026-08-06 (default-float for unassigned windows; dogfood = local TTY install)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -40,8 +40,8 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | shell-menubar | Top menubar, menus, clock/stats | shipped | [shell iced](specs/2026-05-22-sola-shell-iced-port-design.md) | local | Visual polish vs macOS roadmap | no |
 | shell-launcher | App launcher | shipped | shell design | local | Search ranking / recents polish | no |
 | shell-switcher | MRU switcher | shipped | [switcher](specs/2026-04-09-switcher-design.md) | local | — | no |
-| shell-zoning | Zone assignments | partial | zones + floating freezes | local | Full floating/move-resize maturity varies by phase | no |
-| shell-float | Floating windows | partial | [floating](specs/2026-06-24-floating-windows-design.md) | local | Titlebar / move-resize phases incomplete | no |
+| shell-zoning | Zone assignments | partial | zones + floating freezes | local | Opt-in snaps + restore; unassigned windows no longer force full frame | no |
+| shell-float | Floating windows | partial | [floating](specs/2026-06-24-floating-windows-design.md) | local | **Default for unassigned windows** (app size + `WindowFloating`); Meta-drag shipped; kit CSD (`FloatState` + `floating_frame`) on monitor, settings, preview, mail, agent, terminal, kit storybook, browser | partial |
 | shell-opening-toast | “Opening …” menubar toast | shipped | — | local | — | no |
 | shell-custom | Shell chrome tokens | partial | [shell customization](specs/2026-06-06-shell-customization-design.md) | storybook Shell page | Not all chrome uses tokens | no |
 

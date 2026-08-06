@@ -17,7 +17,8 @@ use sola_bus::Message;
 use sola_bus::topics::{Topic, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{
-    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup, window_settings,
+    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup,
+    window_settings_transparent,
 };
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::style::{
@@ -49,7 +50,7 @@ fn main() -> iced::Result {
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::ui())
-        .window(window_settings(APP_ID));
+        .window(window_settings_transparent(APP_ID));
     app.run()
 }
 
@@ -63,6 +64,8 @@ struct App {
     /// Bumps on each copy so late clears from earlier clicks are ignored.
     path_copied_gen: u64,
     theme: Theme,
+    float: sola_kit::FloatState,
+    window_id: Option<iced::window::Id>,
 }
 
 impl Default for App {
@@ -73,6 +76,8 @@ impl Default for App {
             path_copied: false,
             path_copied_gen: 0,
             theme: default_theme(),
+            float: sola_kit::FloatState::new(APP_ID),
+            window_id: None,
         }
     }
 }
@@ -85,6 +90,10 @@ enum Msg {
     CopyPath,
     /// Dismiss copy feedback if `token` still matches.
     ClearPathCopied(u64),
+    WindowReady(Option<iced::window::Id>),
+    TitleDrag,
+    TitleResize(iced::window::Direction),
+    TitleClose,
 }
 
 impl App {
@@ -97,7 +106,10 @@ impl App {
             }
             app.open_path(path);
         }
-        (app, Task::none())
+        (
+            app,
+            sola_kit::window_ready_task(Msg::WindowReady),
+        )
     }
 
     fn title(&self) -> String {
@@ -108,7 +120,7 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        self.theme.clone()
+        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
     }
 
     fn subscription(&self) -> Subscription<Msg> {
@@ -129,6 +141,7 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(message) => {
+                self.float.update(&message);
                 apply_theme_update(&message, &mut self.theme);
 
                 if is_self_quit(&message, APP_ID) {
@@ -171,6 +184,10 @@ impl App {
                     self.path_copied = false;
                 }
             }
+            Msg::WindowReady(id) => self.window_id = id,
+            Msg::TitleDrag => return sola_kit::drag(self.window_id),
+            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
+            Msg::TitleClose => sola_kit::close_app(APP_ID),
         }
         Task::none()
     }
@@ -195,10 +212,19 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        row![nav, main_pane]
+        let content: Element<'_, Msg> = row![nav, main_pane]
             .width(Length::Fill)
             .height(Length::Fill)
-            .into()
+            .into();
+
+        sola_kit::wrap_if_floating(
+            self.float.is_floating_any(),
+            "Preview",
+            Msg::TitleDrag,
+            Msg::TitleClose,
+            Msg::TitleResize,
+            content,
+        )
     }
 
     /// Top chrome: filename + path meta on the left, Copy path on the right.

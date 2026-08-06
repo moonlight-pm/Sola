@@ -3,8 +3,7 @@
 //! sticky `Application` and `MailConfig` topics seed our view on
 //! connect and re-sync on every external edit.
 //!
-//! Window chrome is off — sola-shell frames + decorates every app
-//! itself via its menubar; the app surface is just content.
+//! Zoned: content-only. Floating: kit titlebar + rounded frame.
 
 use std::sync::Arc;
 
@@ -15,7 +14,8 @@ use sola_bus::Message;
 use sola_bus::topics::{ApplicationsConfig, MailConfig, Topic, TopicKind, Window as BusWindow};
 use sola_core::KeyCode;
 use sola_kit::app::{
-    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup, window_settings,
+    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup,
+    window_settings_transparent,
 };
 use sola_kit::components::style::{SPACE_XL, SPACE_MD};
 use sola_kit::components::text as kit_text;
@@ -40,12 +40,12 @@ fn main() -> iced::Result {
         .app_menu("Settings", [("quit", "Quit Settings", KeyCode::Q.meta())])
         .install();
 
-    let app = iced::application(App::default, App::update, App::view)
+    let app = iced::application(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::ui())
-        .window(window_settings(APP_ID));
+        .window(window_settings_transparent(APP_ID));
     app.run()
 }
 
@@ -73,6 +73,9 @@ struct App {
     /// Per-panel local UI state (drafts, edit buffers, errors).
     apps_ui: AppsState,
     mail_ui: MailState,
+    /// Float tracker + iced window id for CSD while floating.
+    float: sola_kit::FloatState,
+    window_id: Option<iced::window::Id>,
 }
 
 impl Default for App {
@@ -85,6 +88,8 @@ impl Default for App {
             theme: default_theme(),
             apps_ui: AppsState::default(),
             mail_ui: MailState::default(),
+            float: sola_kit::FloatState::new(APP_ID),
+            window_id: None,
         }
     }
 }
@@ -95,20 +100,32 @@ enum Msg {
     SelectPanel(Panel),
     Apps(AppsMsg),
     Mail(MailMsg),
+    WindowReady(Option<iced::window::Id>),
+    TitleDrag,
+    TitleResize(iced::window::Direction),
+    TitleClose,
 }
 
 impl App {
+    fn boot() -> (Self, Task<Msg>) {
+        (
+            Self::default(),
+            sola_kit::window_ready_task(Msg::WindowReady),
+        )
+    }
+
     fn title(&self) -> String {
         "Sola Settings".into()
     }
 
     fn theme(&self) -> Theme {
-        self.theme.clone()
+        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::BusMessage(message) => {
+                self.float.update(&message);
                 // Live theme reload: Theme + fonts + selection atoms.
                 apply_theme_update(&message, &mut self.theme);
 
@@ -149,6 +166,12 @@ impl App {
             }
             Msg::Mail(m) => {
                 return mail::update(m, &mut self.mail, &mut self.mail_ui).map(Msg::Mail);
+            }
+            Msg::WindowReady(id) => self.window_id = id,
+            Msg::TitleDrag => return sola_kit::drag(self.window_id),
+            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
+            Msg::TitleClose => {
+                sola_kit::close_app(APP_ID);
             }
         }
         Task::none()
@@ -204,10 +227,19 @@ impl App {
         // The kit's sidebar is fixed-width; pair it with the main
         // pane in a plain row (no draggable divider — settings has
         // a stable two-pane shape, not the monitor's resizable one).
-        row![nav, main_pane]
+        let content: Element<'_, Msg> = row![nav, main_pane]
             .width(Length::Fill)
             .height(Length::Fill)
-            .into()
+            .into();
+
+        sola_kit::wrap_if_floating(
+            self.float.is_floating_any(),
+            "Settings",
+            Msg::TitleDrag,
+            Msg::TitleClose,
+            Msg::TitleResize,
+            content,
+        )
     }
 
     fn subscription(&self) -> Subscription<Msg> {

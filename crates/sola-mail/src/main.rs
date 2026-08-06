@@ -7,7 +7,7 @@ mod worker;
 
 use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
 use sola_core::KeyCode;
-use sola_kit::app::{BusSetup, startup, window_settings};
+use sola_kit::app::{BusSetup, startup, window_settings_transparent};
 use sola_kit::fonts;
 
 use crate::ui::App;
@@ -72,11 +72,11 @@ fn main() -> iced::Result {
         })
         .install();
 
-    iced::application(App::default, App::update, App::view)
+    iced::application(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::ui())
-        .window(window_settings(APP_ID))
+        .window(window_settings_transparent(APP_ID))
         .run()
 }

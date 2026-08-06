@@ -225,6 +225,10 @@ pub enum Msg {
     /// `on_press` (or similar callback) message but don't model
     /// interaction in the storybook.
     Noop,
+    WindowReady(Option<iced::window::Id>),
+    TitleDrag,
+    TitleResize(iced::window::Direction),
+    TitleClose,
 }
 
 /// Identifies which slot in [`theme::FontSelection`] a `SetFont` edit
@@ -444,11 +448,23 @@ pub struct Storybook {
     /// Save/Revert buttons. A bool (not value-equality) so reverting an
     /// edit by hand still reads as dirty — "touched", not "differs".
     dirty: bool,
+    /// Float tracker + iced window id for CSD while floating.
+    float: sola_kit::FloatState,
+    window_id: Option<iced::window::Id>,
 }
 
 impl Storybook {
     /// Name of the immutable default preset that always occupies slot 0.
     pub const DEFAULT_THEME_NAME: &'static str = "Default";
+
+    const APP_ID: &'static str = "sola-kit";
+
+    pub fn boot() -> (Self, iced::Task<Msg>) {
+        (
+            Self::default(),
+            sola_kit::window_ready_task(Msg::WindowReady),
+        )
+    }
 
     pub fn default() -> Self {
         let default_preset = ThemePreset {
@@ -486,6 +502,8 @@ impl Storybook {
             last_live_theme: None,
             checkpoint,
             dirty: false,
+            float: sola_kit::FloatState::new(Self::APP_ID),
+            window_id: None,
         }
     }
 
@@ -494,7 +512,7 @@ impl Storybook {
     }
 
     pub fn theme(&self) -> iced::Theme {
-        self.theme.clone()
+        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
@@ -567,8 +585,18 @@ impl Storybook {
         Subscription::batch(subs)
     }
 
-    pub fn update(&mut self, msg: Msg) {
+    pub fn update(&mut self, msg: Msg) -> iced::Task<Msg> {
         match msg {
+            Msg::WindowReady(id) => {
+                self.window_id = id;
+                return iced::Task::none();
+            }
+            Msg::TitleDrag => return sola_kit::drag(self.window_id),
+            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
+            Msg::TitleClose => {
+                sola_kit::close_app(Self::APP_ID);
+                return iced::Task::none();
+            }
             Msg::Select(page) => {
                 self.page = page;
                 // Don't carry a half-open atom/shell picker across pages.
@@ -585,7 +613,10 @@ impl Storybook {
             Msg::Sidebar(m) => self.sidebar.update(m),
             Msg::Split(m) => self.split.update(m),
             Msg::Bus(message) => {
-                let Some(topic) = Topic::parse(&message) else { return };
+                self.float.update(&message);
+                let Some(topic) = Topic::parse(&message) else {
+                    return iced::Task::none();
+                };
                 match topic {
                     Topic::Theme(bus_theme) => {
                         // External theme delivery (sticky-replay from
@@ -631,7 +662,7 @@ impl Storybook {
             Msg::EditAtom(field) => {
                 if self.is_default_active() {
                     tracing::debug!("ignoring EditAtom — Default theme is read-only");
-                    return;
+                    return iced::Task::none();
                 }
                 self.editing_shell = None;
                 // Toggle: clicking the open atom's swatch again closes it.
@@ -647,7 +678,7 @@ impl Storybook {
             Msg::EditShellColor(field) => {
                 if self.is_default_active() {
                     tracing::debug!("ignoring EditShellColor — Default theme is read-only");
-                    return;
+                    return iced::Task::none();
                 }
                 self.editing_atom = None;
                 if self.editing_shell == Some(field) {
@@ -662,7 +693,7 @@ impl Storybook {
             Msg::SetShellSpace(field, value) => {
                 if self.is_default_active() {
                     tracing::debug!("ignoring SetShellSpace — Default theme is read-only");
-                    return;
+                    return iced::Task::none();
                 }
                 field.set(&mut self.active_mut().shell, value);
                 self.broadcast_theme();
@@ -674,7 +705,7 @@ impl Storybook {
                 self.picker = None;
             }
             Msg::Picker(m) => {
-                let Some(picker) = self.picker.as_mut() else { return };
+                let Some(picker) = self.picker.as_mut() else { return iced::Task::none(); };
                 picker.update(m);
                 let color = picker.color();
                 if let Some(field) = self.editing_atom {
@@ -686,7 +717,7 @@ impl Storybook {
             Msg::SetFont(role, family) => {
                 if self.is_default_active() {
                     tracing::debug!("ignoring SetFont — Default theme is read-only");
-                    return;
+                    return iced::Task::none();
                 }
                 let active = self.active_mut();
                 match role {
@@ -702,7 +733,7 @@ impl Storybook {
             }
             Msg::SelectTheme(name) => {
                 let Some(idx) = self.themes.iter().position(|t| t.name == name) else {
-                    return;
+                    return iced::Task::none();
                 };
                 // Manual-only commit: switching themes abandons the unsaved
                 // working set. Restore the current preset from its
@@ -739,14 +770,14 @@ impl Storybook {
                 }
             }
             Msg::NewThemeCommit => {
-                let Some(buffer) = self.naming.take() else { return };
+                let Some(buffer) = self.naming.take() else { return iced::Task::none(); };
                 let name = buffer.trim().to_string();
                 if !sola_core::theme::is_valid_theme_name(&name)
                     || self.themes.iter().any(|t| t.name == name)
                 {
                     // Keep the input open so the user can correct it.
                     self.naming = Some(buffer);
-                    return;
+                    return iced::Task::none();
                 }
                 let mut copy = self.active().clone();
                 copy.name = name;
@@ -783,7 +814,7 @@ impl Storybook {
                 self.editing_shell = None;
                 self.picker = None;
                 if self.is_default_active() {
-                    return;
+                    return iced::Task::none();
                 }
                 let removed = self.themes.remove(self.active_theme);
                 self.retract_custom_theme(&removed);
@@ -797,7 +828,7 @@ impl Storybook {
             Msg::ResetAtom(field) => {
                 if self.is_default_active() {
                     tracing::debug!("ignoring ResetAtom — Default theme is read-only");
-                    return;
+                    return iced::Task::none();
                 }
                 // Surgical: reset just this one atom to its compile-time
                 // default. A live edit like any other (apply_atom marks
@@ -806,7 +837,7 @@ impl Storybook {
             }
             Msg::SaveTheme => {
                 if self.is_default_active() {
-                    return;
+                    return iced::Task::none();
                 }
                 self.persist_active_theme();
                 self.checkpoint = self.active().clone();
@@ -814,7 +845,7 @@ impl Storybook {
             }
             Msg::RevertTheme => {
                 if !self.dirty {
-                    return;
+                    return iced::Task::none();
                 }
                 self.themes[self.active_theme] = self.checkpoint.clone();
                 self.editing_atom = None;
@@ -827,6 +858,7 @@ impl Storybook {
             }
             Msg::Noop => {}
         }
+        iced::Task::none()
     }
 
     /// Recompute the live iced theme from the active preset's atoms, and
@@ -1116,7 +1148,7 @@ impl Storybook {
 
         // Full-width theme bar across the window; nav + content below.
         // (No sidebar brand block — that lived only in the OD comp.)
-        column![
+        let body: Element<'_, Msg> = column![
             self.header(),
             row![sidebar(sections), rail, content_col]
                 .width(Length::Fill)
@@ -1124,7 +1156,16 @@ impl Storybook {
         ]
         .width(Length::Fill)
         .height(Length::Fill)
-        .into()
+        .into();
+
+        sola_kit::wrap_if_floating(
+            self.float.is_floating_any(),
+            "Kit",
+            Msg::TitleDrag,
+            Msg::TitleClose,
+            Msg::TitleResize,
+            body,
+        )
     }
 
     /// Zero-height transparent strip that lays out every family name

@@ -24,7 +24,8 @@ use sola_bus::Message;
 use sola_bus::topics::{MenuDefinition, MenuItem, Topic, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{
-    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup, window_settings,
+    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup,
+    window_settings_transparent,
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
@@ -177,12 +178,12 @@ fn main() -> iced::Result {
     let cwd = project_cwd();
     bridge::agent_send(AgentCmd::RefreshSessions { cwd: cwd.clone() });
 
-    let app = iced::application(App::new, App::update, App::view)
+    let app = iced::application(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::ui())
-        .window(window_settings(APP_ID));
+        .window(window_settings_transparent(APP_ID));
     app.run()
 }
 
@@ -276,12 +277,19 @@ pub(crate) struct App {
     /// Wayland often omits SHIFT on the Enter event itself (see sola-terminal).
     /// Track Shift key down/up so Shift+Enter = newline is reliable.
     pub(crate) shift_held: bool,
+    /// Float tracker + iced window id for CSD while floating.
+    pub(crate) float: sola_kit::FloatState,
+    pub(crate) window_id: Option<iced::window::Id>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum Msg {
     Bus(Arc<Message>),
     Acp(AgentEvent),
+    WindowReady(Option<iced::window::Id>),
+    TitleDrag,
+    TitleResize(iced::window::Direction),
+    TitleClose,
     DraftAction(text_editor::Action),
     Send,
     /// Clipboard paste result (Edit → Paste / ⌘V).
@@ -410,7 +418,16 @@ impl App {
             grok_latest: None,
             grok_update_available: false,
             shift_held: false,
+            float: sola_kit::FloatState::new(APP_ID),
+            window_id: None,
         }
+    }
+
+    fn boot() -> (Self, Task<Msg>) {
+        (
+            Self::new(),
+            sola_kit::window_ready_task(Msg::WindowReady),
+        )
     }
 
     fn title(&self) -> String {
@@ -422,7 +439,7 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        self.theme.clone()
+        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
     }
 
     fn subscription(&self) -> Subscription<Msg> {
@@ -558,6 +575,7 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(m) => {
+                self.float.update(&m);
                 if is_self_quit(&m, APP_ID) {
                     bridge::agent_send(AgentCmd::Shutdown);
                     return iced::exit();
@@ -568,6 +586,12 @@ impl App {
                         return self.on_menu_action(&p.action_id);
                     }
                 }
+            }
+            Msg::WindowReady(id) => self.window_id = id,
+            Msg::TitleDrag => return sola_kit::drag(self.window_id),
+            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
+            Msg::TitleClose => {
+                sola_kit::close_app(APP_ID);
             }
             Msg::Acp(ev) => {
                 let need_scroll = matches!(
@@ -1768,7 +1792,14 @@ impl App {
     }
 
     fn view(&self) -> Element<'_, Msg> {
-        view::screen(self)
+        sola_kit::wrap_if_floating(
+            self.float.is_floating_any(),
+            "Agent",
+            Msg::TitleDrag,
+            Msg::TitleClose,
+            Msg::TitleResize,
+            view::screen(self),
+        )
     }
 }
 

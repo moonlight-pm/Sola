@@ -1,15 +1,13 @@
 # Floating / App-Sized Windows — Design
 
 **Date:** 2026-06-24
-**Status:** Phase A implemented & committed. **The §1 root-cause claim below is
-SUPERSEDED** — Phase A did *not* fix the UnrealEditor crash (floating the window
-removed the forced resize, yet UE still crashed identically). The live
-investigation moved to
+**Status:** Phase A/B + D1 implemented. **2026-08-06 policy:** unassigned new
+windows **default-float** (client-requested size, no forced frame;
+`Topic::WindowFloating` for CSD). Explicit Meta+numpad `*` still insets for
+feedback and persists `Zone::Float` + geometry. Saved non-Float zones still
+restore. **§1 root-cause claim is SUPERSEDED** — see
 [`2026-06-24-unreal-editor-crash-investigation.md`](./2026-06-24-unreal-editor-crash-investigation.md).
-Phase A still stands as a standalone feature + robustness gate. **Phase B
-(live geometry + per-app float position/size memory) is now planned and
-implemented** — see `2026-06-24-floating-windows-phase-b-plan.md`. Phase D
-(move/resize + titlebar + window menu) remains unplanned.
+D2 kit titlebar is opt-in per app (monitor only today).
 
 **Post-B refinements (2026-06-25):**
 - **Float now resizes for visible feedback, inset from where the window is.**

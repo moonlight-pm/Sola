@@ -36,7 +36,7 @@ pub mod fonts;
 pub mod theme;
 
 pub use app::{BusSetup, QUIT_ACTION_ID, apply_theme_update, is_self_quit};
-pub use float::FloatState;
+pub use float::{FloatState, close_app, drag, drag_resize, theme_for, window_ready_task, wrap_if_floating};
 pub use theme::default_theme;
 
 /// Re-export so consumers don't need a separate `iced` direct dep

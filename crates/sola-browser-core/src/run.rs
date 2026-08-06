@@ -163,7 +163,7 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
             let engine = engine_cell
                 .take()
                 .expect("browser App init called more than once");
-            App::<E>::new(
+            let app = App::<E>::new(
                 engine,
                 slot.clone(),
                 cmd_tx.clone(),
@@ -171,6 +171,10 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
                 active_handle.clone(),
                 url.clone(),
                 app_id,
+            );
+            (
+                app,
+                sola_kit::window_ready_task(crate::app::Msg::WindowReady),
             )
         },
         App::<E>::update,
@@ -184,14 +188,7 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     .subscription(App::<E>::subscription)
     .theme(App::<E>::theme)
     .default_font(sola_kit::fonts::ui())
-    .window(iced::window::Settings {
-        decorations: false,
-        platform_specific: iced::window::settings::PlatformSpecific {
-            application_id: app_id.to_string(),
-            ..Default::default()
-        },
-        ..iced::window::Settings::default()
-    })
+    .window(sola_kit::app::window_settings_transparent(app_id))
     .run();
 
     if let Err(e) = result {
