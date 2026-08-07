@@ -101,6 +101,24 @@ let
     ${pkgs.coreutils}/bin/chown "$uid:$gid" "$runtime"
     ${pkgs.coreutils}/bin/chmod 700 "$runtime"
 
+    # Bring up systemd --user for this uid so sola-session can use
+    # `systemd-run --user --scope` (and apps get a normal user bus).
+    # Loginless seats never hit logind, so this would otherwise never start.
+    if [ ! -S "$runtime/systemd/private" ]; then
+      log "starting user@$uid.service"
+      ${pkgs.systemd}/bin/systemctl start "user@$uid.service" 2>/dev/null || true
+      ${pkgs.systemd}/bin/loginctl enable-linger "$user" 2>/dev/null || true
+      for _i in $(${pkgs.coreutils}/bin/seq 1 50); do
+        [ -S "$runtime/systemd/private" ] && break
+        ${pkgs.coreutils}/bin/sleep 0.1
+      done
+      if [ -S "$runtime/systemd/private" ]; then
+        log "user systemd ready at $runtime/systemd/private"
+      else
+        log "WARN: user systemd still missing — sola-session will direct-spawn apps"
+      fi
+    fi
+
     # Writable logs for the seat user (activation may have created this as root).
     ${pkgs.coreutils}/bin/mkdir -p /opt/sola/log
     ${pkgs.coreutils}/bin/chmod 1777 /opt/sola/log 2>/dev/null || true

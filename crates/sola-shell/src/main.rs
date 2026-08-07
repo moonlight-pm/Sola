@@ -27,13 +27,22 @@ fn main() -> iced::Result {
 
     // Flower / system menu (and the shell's own app menu when focused).
     // "Restart Shell" exits this process only — the process manager
-    // respawns `/opt/sola/bin/sola-shell`. "Quit Shell" still shuts the
-    // whole session down via `Topic::Shutdown`.
+    // respawns `/opt/sola/bin/sola-shell`. "Quit Sola" shuts the whole
+    // session down via `Topic::Shutdown`. "Launch Application…" opens
+    // the launcher overlay.
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
         .app_menu_definition(MenuDefinition {
             label: "Shell".into(),
             items: vec![
+                MenuItem::Action {
+                    id: "launch".into(),
+                    label: "Launch Application…".into(),
+                    shortcut: None,
+                    disabled: false,
+                    checked: false,
+                },
+                MenuItem::Divider,
                 MenuItem::Action {
                     id: "restart".into(),
                     label: "Restart Shell".into(),
@@ -44,7 +53,7 @@ fn main() -> iced::Result {
                 MenuItem::Divider,
                 MenuItem::Action {
                     id: "quit".into(),
-                    label: "Quit Shell".into(),
+                    label: "Quit Sola".into(),
                     shortcut: Some(KeyCode::Q.meta()),
                     disabled: false,
                     checked: false,

@@ -7,8 +7,9 @@
 //!   3. Copy the qcow2 out of the store into `var/images/sola-vm.qcow2`
 //!      (writable working copy; store path is read-only).
 //!
-//! `cargo make vm run` checks nix/QEMU/OVMF and (re)builds the *image* when
-//! missing/stale — it does **not** invoke cargo.
+//! `cargo make vm run` boots the **installed** target when one exists, else
+//! the live installer (and may rebuild the live image if missing/stale).
+//! Does **not** invoke cargo.
 
 use std::env;
 use std::fs;
@@ -20,9 +21,12 @@ use std::time::SystemTime;
 const STAGE_DIR: &str = "var/images/stage";
 const IMAGE_PATH: &str = "var/images/sola-vm.qcow2";
 const OVERLAY_PATH: &str = "var/images/sola-vm-overlay.qcow2";
-/// Blank second disk for install dogfood (appears as /dev/vdb in guest).
+/// Install target disk (guest vdb under installer; sole disk when booting installed).
 const TARGET_DISK_PATH: &str = "var/images/sola-install-target.qcow2";
 const TARGET_DISK_SIZE: &str = "20G";
+/// Blank qcow2 is a few hundred KiB; a finished install is multi‑GiB on disk.
+/// Anything larger than this is treated as “has an installed system”.
+const INSTALLED_MIN_BYTES: u64 = 64 * 1024 * 1024;
 const FLAKE_ATTR: &str = ".#sola-vm-qcow2";
 
 /// Nix / installer sources that should trigger an image refresh when newer
@@ -55,13 +59,13 @@ pub struct BuildOpts {
 }
 
 pub struct RunOpts {
-    /// When true, build/refresh the image if missing or stale.
+    /// When true, build/refresh the *live installer* image if missing or stale.
     pub auto_build: bool,
-    /// Force a full rebuild even if an image exists.
+    /// Force a full live-installer rebuild even if one exists.
     pub force_rebuild: bool,
-    /// Boot only the install-target disk (`SOLA_VM_BOOT=target` also sets this).
-    /// `vm install` forces `false` (live installer + fresh vdb).
-    pub boot_target: bool,
+    /// `vm install`: always wipe target and boot the live installer.
+    /// `vm run`: false → boot installed target if present, else installer.
+    pub force_installer: bool,
 }
 
 pub fn build(opts: BuildOpts) {
@@ -90,10 +94,18 @@ fn run_install(mut opts: RunOpts) -> Result<(), String> {
     let root = workspace_root()?;
     env::set_current_dir(&root).map_err(|e| format!("chdir workspace: {e}"))?;
 
-    // Always live installer + fresh vdb (never boot previous install).
-    opts.boot_target = false;
+    opts.force_installer = true;
     wipe_install_target(&root)?;
     run_vm(opts)
+}
+
+/// True when the target qcow looks like a completed install (not a blank disk).
+fn has_installed_image(root: &Path) -> bool {
+    let path = root.join(TARGET_DISK_PATH);
+    match fs::metadata(&path) {
+        Ok(m) => m.is_file() && m.len() >= INSTALLED_MIN_BYTES,
+        Err(_) => false,
+    }
 }
 
 /// Delete the previous install-target disk so the next run gets a blank vdb.
@@ -170,9 +182,6 @@ fn run_vm(opts: RunOpts) -> Result<(), String> {
 
     println!(">>> checking VM prerequisites");
     require_nix()?;
-    // Resolve firmware + emulator early so first-run fetches happen before
-    // a multi-minute image build when possible… but image build may still
-    // pull nixpkgs. At least fail fast if nix is broken.
     let qemu = resolve_qemu()?;
     let ovmf = resolve_ovmf()?;
     println!("    nix: ok");
@@ -194,51 +203,66 @@ fn run_vm(opts: RunOpts) -> Result<(), String> {
         );
     }
 
-    let image = root.join(IMAGE_PATH);
-    let need_build = opts.force_rebuild
-        || !image.exists()
-        || image_is_stale(&root, &image);
+    let target = root.join(TARGET_DISK_PATH);
+    // Boot installed system when present; otherwise live installer + blank/target vdb.
+    let boot_installed = !opts.force_installer && has_installed_image(&root);
 
-    if need_build {
-        if !opts.auto_build {
-            if !image.exists() {
-                return Err(format!(
-                    "missing {} — run `cargo make vm build` or `cargo make vm run` without --no-build",
-                    image.display()
-                ));
-            }
-            println!(">>> image present but may be stale; --no-build keeps it");
-        } else {
-            let reason = if opts.force_rebuild {
-                "forced (--rebuild)"
-            } else if !image.exists() {
-                "image missing"
-            } else {
-                "image stale vs nix/image or sola-install"
-            };
-            println!(">>> building image ({reason})");
-            println!("    staging from target/release (no cargo — build yourself first)");
-            run_build(BuildOpts {
-                with_cef: false,
-                stage_only: false,
-            })?;
-        }
+    if boot_installed {
+        let sz = fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+        println!(
+            ">>> boot: installed system ({}, {:.1} GiB)",
+            target.display(),
+            sz as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
+        println!("    (no installed image → installer; wipe with: cargo make vm install)");
     } else {
-        println!("    image: {} (up to date)", image.display());
-    }
+        if opts.force_installer {
+            println!(">>> boot: live installer (vm install — fresh target)");
+        } else {
+            println!(">>> boot: live installer (no installed image yet)");
+        }
+        // Live media: ensure qcow is present/fresh when allowed.
+        let image = root.join(IMAGE_PATH);
+        let need_build =
+            opts.force_rebuild || !image.exists() || image_is_stale(&root, &image);
 
-    let image = root.join(IMAGE_PATH);
-    if !image.exists() {
-        return Err(format!("image still missing at {}", image.display()));
-    }
+        if need_build {
+            if !opts.auto_build {
+                if !image.exists() {
+                    return Err(format!(
+                        "missing live installer {} — run `cargo make vm build` first",
+                        image.display()
+                    ));
+                }
+                println!(">>> live image present but may be stale; --no-build keeps it");
+            } else {
+                let reason = if opts.force_rebuild {
+                    "forced (--rebuild)"
+                } else if !image.exists() {
+                    "image missing"
+                } else {
+                    "image stale vs nix/image or sola-install"
+                };
+                println!(">>> building live installer image ({reason})");
+                println!("    staging from target/release (no cargo — build yourself first)");
+                run_build(BuildOpts {
+                    with_cef: false,
+                    stage_only: false,
+                })?;
+            }
+        } else {
+            println!("    live image: {} (up to date)", image.display());
+        }
 
-    let overlay = root.join(OVERLAY_PATH);
-    ensure_overlay(&image, &overlay)?;
+        let image = root.join(IMAGE_PATH);
+        if !image.exists() {
+            return Err(format!("live installer still missing at {}", image.display()));
+        }
+        ensure_target_disk(&target)?;
+    }
 
     let mem = env::var("SOLA_VM_MEMORY").unwrap_or_else(|_| "4096".into());
     let smp = env::var("SOLA_VM_SMP").unwrap_or_else(|_| "4".into());
-    // Guest framebuffer — default 1920×1080 so installer UI is readable.
-    // Override with SOLA_VM_WIDTH / SOLA_VM_HEIGHT.
     let width = env::var("SOLA_VM_WIDTH").unwrap_or_else(|_| "1920".into());
     let height = env::var("SOLA_VM_HEIGHT").unwrap_or_else(|_| "1080".into());
 
@@ -247,13 +271,6 @@ fn run_vm(opts: RunOpts) -> Result<(), String> {
     let cpu = if kvm { "host" } else { "max" };
     let display = display_backend(&width, &height);
 
-    println!(
-        ">>> qemu {} accel={accel} {}x{} (overlay {})",
-        qemu.display(),
-        width,
-        height,
-        overlay.display()
-    );
     let mut cmd = Command::new(&qemu);
     cmd.args([
         "-machine",
@@ -281,14 +298,13 @@ fn run_vm(opts: RunOpts) -> Result<(), String> {
             &format!("if=pflash,format=raw,file={}", vars_rw.display()),
         ]);
     }
-    let target = root.join(TARGET_DISK_PATH);
-    ensure_target_disk(&target)?;
 
-    // boot_target / SOLA_VM_BOOT=target — boot the install disk only (after a
-    // successful apply). Default: live installer overlay as vda + target vdb.
-    if opts.boot_target {
+    if boot_installed {
         println!(
-            ">>> boot mode: installed target only ({})",
+            ">>> qemu {} accel={accel} {}x{} (installed {})",
+            qemu.display(),
+            width,
+            height,
             target.display()
         );
         cmd.args([
@@ -296,11 +312,20 @@ fn run_vm(opts: RunOpts) -> Result<(), String> {
             &format!("file={},if=virtio,format=qcow2", target.display()),
         ]);
     } else {
+        let image = root.join(IMAGE_PATH);
+        let overlay = root.join(OVERLAY_PATH);
+        ensure_overlay(&image, &overlay)?;
+        println!(
+            ">>> qemu {} accel={accel} {}x{} (installer {} + target {})",
+            qemu.display(),
+            width,
+            height,
+            overlay.display(),
+            target.display()
+        );
         cmd.args([
-            // Live installer media (overlay on base qcow).
             "-drive",
             &format!("file={},if=virtio,format=qcow2", overlay.display()),
-            // Install target — guest /dev/vdb (live root is usually vda).
             "-drive",
             &format!("file={},if=virtio,format=qcow2", target.display()),
         ]);
@@ -310,15 +335,10 @@ fn run_vm(opts: RunOpts) -> Result<(), String> {
         "virtio-net-pci,netdev=net0",
         "-netdev",
         "user,id=net0,hostfwd=tcp::2222-:22",
-        // Prefer virtio-gpu with an explicit mode so the guest is not stuck
-        // on a tiny 800×600 default.
         "-device",
         &format!("virtio-vga,xres={width},yres={height}"),
         "-display",
         &display,
-        // Live guest serial + QEMU monitor on the host terminal you launched
-        // from (engineering visibility). The *product* path is the graphical
-        // window (Plymouth / installer) — console=ttyS0 keeps spam off that.
         "-serial",
         "mon:stdio",
     ]);

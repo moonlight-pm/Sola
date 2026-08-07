@@ -15,18 +15,15 @@ stays next door under `nix/`.
 ```sh
 cargo build --release        # you own the Rust build
 cargo make vm build          # stage target/release → nix qcow2 (no cargo)
-cargo make vm install        # wipe previous vdb install + boot live installer
-cargo make vm run            # QEMU: live installer + existing/blank vdb
-cargo make vm run --rebuild  # force disk-image rebuild from current target/release
-SOLA_VM_BOOT=target cargo make vm run --no-build   # boot installed target only
+cargo make vm install        # wipe target + boot live installer
+cargo make vm run            # installed system if present, else installer
 ```
 
 Binaries always come from **`target/release`** (this tree), never `/opt/sola/bin`.
 `vm run` / `vm build` / `vm install` do **not** invoke cargo.
 
-**Install dogfood:** `cargo make vm install` wipes `sola-install-target.qcow2`
-and boots the live image. Wizard: erase **vdb** → apply → Reboot, then host-side
-`SOLA_VM_BOOT=target cargo make vm run --no-build`.
+**Flow:** `vm install` → wizard erases **vdb** → finish install → quit QEMU →
+`vm run` boots the installed disk automatically.
 
 Flake outputs:
 

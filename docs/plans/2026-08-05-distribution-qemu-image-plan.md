@@ -41,7 +41,7 @@ getty polish.
 - [x] Installer live profile (installer-session + install-tools)  
 - [x] Whole-disk partition + install pipeline (ESP + root labels)  
 - [x] QEMU harness: second virtio disk (`sola-install-target.qcow2` → vdb)  
-- [x] QEMU dogfood: erase vdb → `SOLA_VM_BOOT=target` → loginless Sola  
+- [x] QEMU dogfood: erase vdb → loginless Sola; `vm run` boots installed  
 - [x] `cargo make vm install` wipes previous target + boots live installer  
 - [ ] Flake output e.g. `packages.sola-iso` / `cargo make iso build`  
 - [ ] QEMU dogfood: ISO + blank target disk → install → reboot → Sola  
@@ -57,16 +57,12 @@ getty polish.
 ```sh
 cargo build --release             # you own the Rust build
 cargo make vm build               # stage target/release → nix qcow2 (no cargo)
-cargo make vm install             # wipe previous vdb + boot live installer
-cargo make vm run                 # QEMU: live + existing/blank vdb
-cargo make vm run --rebuild       # force disk-image rebuild
-cargo make vm run --no-build      # never rebuild image (fail if missing)
-SOLA_VM_BOOT=target cargo make vm run --no-build   # boot installed disk only
+cargo make vm install             # wipe target + boot live installer
+cargo make vm run                 # installed if present, else installer
 ```
 
 `vm run` / `vm build` never run cargo. Stage only from `target/release`
-(not `/opt/sola/bin`). Image rebuild triggers: missing qcow, stale vs
-`nix/image/*` or `target/release/sola-install`.
+(not `/opt/sola/bin`).
 
 ## Commands (target)
 

@@ -97,24 +97,24 @@ enum VmAction {
         stage_only: bool,
     },
 
-    /// Boot the qcow2 under QEMU.
+    /// Boot QEMU: installed system if present, otherwise the live installer.
     ///
-    /// Checks nix/QEMU/OVMF and may rebuild the *disk image* when missing or
-    /// stale. Does **not** run cargo — build release binaries yourself first.
+    /// Does **not** run cargo. Live-installer rebuild only when falling back
+    /// to installer mode and the image is missing/stale (unless `--no-build`).
     Run {
-        /// Do not rebuild the disk image (fail if missing).
+        /// Do not rebuild the live installer image when falling back to it.
         #[arg(long)]
         no_build: bool,
 
-        /// Force a full disk-image rebuild even if one already exists.
+        /// Force a full live-installer rebuild (only matters in installer mode).
         #[arg(long)]
         rebuild: bool,
     },
 
-    /// Wipe the previous install target disk and boot the live installer.
+    /// Wipe the install target and boot the live installer (fresh install).
     ///
-    /// Deletes `var/images/sola-install-target.qcow2` (recreated empty as
-    /// `/dev/vdb`), then same as `vm run`. Does **not** run cargo.
+    /// Deletes `var/images/sola-install-target.qcow2`, then boots installer +
+    /// blank vdb. Does **not** run cargo.
     Install {
         /// Do not rebuild the live disk image (fail if missing).
         #[arg(long)]
@@ -187,14 +187,12 @@ fn main() {
             VmAction::Run { no_build, rebuild } => vm::run(vm::RunOpts {
                 auto_build: !no_build,
                 force_rebuild: rebuild,
-                boot_target: std::env::var("SOLA_VM_BOOT")
-                    .map(|v| v == "target" || v == "installed")
-                    .unwrap_or(false),
+                force_installer: false,
             }),
             VmAction::Install { no_build, rebuild } => vm::install(vm::RunOpts {
                 auto_build: !no_build,
                 force_rebuild: rebuild,
-                boot_target: false,
+                force_installer: true,
             }),
         },
     }

@@ -1,111 +1,78 @@
 #!/usr/bin/env python3
-"""Generate Plymouth frames: a cyan shade gradient walking clockwise.
+"""Generate Plymouth frames: rotating conical cyan gradient under flower mask.
 
-Five petals form a ring. Each frame paints a fixed 5-step cyan ladder onto
-the petals in clockwise order, then the peak advances one petal. Result: a
-uniform circular gradient rotating clockwise — never independent flicker.
+The five-petal mark is an alpha *mask*. Paint is a smooth circular (conic)
+gradient in neon-cyan tones that rotates clockwise. Petals show continuous
+shades, not flat per-petal fills — no chunky steps.
 """
 
 from __future__ import annotations
 
 import json
 import math
-import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-# SVG viewBox center for flower.svg (-25 -32 561 561)
-CX = -25 + 561 / 2  # 255.5
-CY = -32 + 561 / 2  # 248.5
+from PIL import Image
 
-# Neon cyan ladder assigned along the ring from the peak:
-#   clockwise_distance 0 → hottest peak
-#   clockwise_distance 4 → deepest teal (just before peak wraps)
-CYAN_LADDER = [
-    "#5cffff",  # 0 peak neon
-    "#00d4e8",  # 1
-    "#0090a0",  # 2 mid
-    "#005560",  # 3
-    "#0a1e22",  # 4 deep (high contrast so the walk is obvious)
+# SVG viewBox from flower.svg
+VIEW = "-25 -32 561 561"
+
+# Conic color stops around the ring (t=0 = peak / “noon”, increases clockwise).
+# Soft lobe: peak neon → mid cyan → *light* trough (not near-black) → back.
+# Keeps motion readable without a heavy dark wedge.
+STOPS: list[tuple[float, tuple[int, int, int]]] = [
+    (0.00, (92, 255, 255)),  # #5cffff peak neon
+    (0.12, (40, 235, 245)),
+    (0.25, (0, 212, 232)),  # #00d4e8
+    (0.38, (0, 180, 200)),
+    (0.50, (0, 130, 148)),  # light trough (was near-black; lifted)
+    (0.62, (0, 165, 184)),
+    (0.75, (0, 200, 220)),
+    (0.88, (50, 240, 250)),
+    (1.00, (92, 255, 255)),  # seamless wrap
 ]
 
 
-def petal_centroid(path_d: str) -> tuple[float, float]:
-    nums = [float(x) for x in re.findall(r"[+-]?(?:\d+\.?\d*|\.\d+)", path_d)]
-    xs, ys = nums[0::2], nums[1::2]
-    return (sum(xs) / len(xs), sum(ys) / len(ys))
+def lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
 
 
-def clockwise_order(petals: list[str]) -> list[int]:
-    """Petal indices sorted clockwise starting from the top-most petal.
+def sample_stops(t: float) -> tuple[int, int, int]:
+    t = t % 1.0
+    for i in range(len(STOPS) - 1):
+        t0, c0 = STOPS[i]
+        t1, c1 = STOPS[i + 1]
+        if t0 <= t <= t1:
+            u = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+            # Smoothstep for softer transitions between stops
+            u = u * u * (3.0 - 2.0 * u)
+            return (
+                int(lerp(c0[0], c1[0], u)),
+                int(lerp(c0[1], c1[1], u)),
+                int(lerp(c0[2], c1[2], u)),
+            )
+    return STOPS[-1][1]
 
-    Screen coords (y down): angle 0 at top, increasing clockwise via
-    atan2(east, north) = atan2(x - cx, cy - y).
-    """
-    scored: list[tuple[float, int]] = []
-    for i, d in enumerate(petals):
-        x, y = petal_centroid(d)
-        ang = math.atan2(x - CX, CY - y)  # 0 = top, + = clockwise
-        if ang < 0:
-            ang += 2 * math.pi
-        scored.append((ang, i))
-    scored.sort()
-    return [i for _, i in scored]
 
-
-def main() -> None:
-    petals_path = Path(sys.argv[1])
-    out_dir = Path(sys.argv[2])
-    # Default 5 frames = one full revolution (peak on each petal once).
-    nframes = int(sys.argv[3]) if len(sys.argv) > 3 else 5
-    size = int(sys.argv[4]) if len(sys.argv) > 4 else 360
-
-    petals: list[str] = json.loads(petals_path.read_text())
-    if len(petals) != 5:
-        raise SystemExit(f"expected 5 petals, got {len(petals)}")
-
-    order = clockwise_order(petals)
-    print(f"clockwise petal indices (from top): {order}", file=sys.stderr)
-
-    # Sanity: print which physical petal is which slot
-    labels = ["top", "top-right", "bottom-right", "bottom-left", "top-left"]
-    for slot, petal_i in enumerate(order):
-        print(f"  slot {slot} ({labels[slot]}): petal[{petal_i}]", file=sys.stderr)
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    for frame in range(nframes):
-        # Peak advances one clockwise slot per frame, wrapping after 5.
-        # With nframes != 5, still one revolution over the full sequence.
-        peak_slot = (frame * 5) // nframes  # integer 0..4 for nframes multiple of 5
-        if nframes % 5 != 0:
-            peak_slot = frame % 5
-
-        fills: list[str] = [""] * 5
-        for slot, petal_i in enumerate(order):
-            # Clockwise distance from the peak petal to this petal (0..4).
-            # slot 0 at peak → brightest; next clockwise → next shade; etc.
-            dist = (slot - peak_slot) % 5
-            fills[petal_i] = CYAN_LADDER[dist]
-
-        # Debug: shade assignment for this frame
-        ring = " → ".join(
-            f"{labels[s]}={CYAN_LADDER[(s - peak_slot) % 5]}" for s in range(5)
-        )
-        print(f"frame {frame:02d} peak=slot{peak_slot}: {ring}", file=sys.stderr)
-
-        paths = [
-            f'<path fill="{fills[p]}" d="{petals[p]}"/>' for p in range(5)
-        ]
-        svg = f"""<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-25 -32 561 561">
-{chr(10).join(paths)}
+def flower_mask_svg(petals: list[str]) -> str:
+    """White petals on black — alpha mask source for rsvg."""
+    paths = "\n".join(f'<path fill="#ffffff" d="{d}"/>' for d in petals)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="{VIEW}">
+  <rect x="-25" y="-32" width="561" height="561" fill="#000000"/>
+  {paths}
 </svg>
 """
-        svg_path = out_dir / f"frame-{frame:02d}.svg"
-        png_path = out_dir / f"frame-{frame:02d}.png"
-        svg_path.write_text(svg)
+
+
+def render_svg_png(svg_text: str, png_path: Path, size: int) -> None:
+    with tempfile.NamedTemporaryFile("w", suffix=".svg", delete=False) as f:
+        f.write(svg_text)
+        svg_path = Path(f.name)
+    try:
         subprocess.check_call(
             [
                 "rsvg-convert",
@@ -118,7 +85,70 @@ def main() -> None:
                 str(png_path),
             ]
         )
-        svg_path.unlink()
+    finally:
+        svg_path.unlink(missing_ok=True)
+
+
+def load_alpha_mask(png_path: Path) -> Image.Image:
+    """Luminance of white-on-black mask → alpha channel (L mode)."""
+    im = Image.open(png_path).convert("RGB")
+    # White petals → high L; black field → 0
+    return im.convert("L")
+
+
+def conical_gradient(size: int, rotation_rad: float) -> Image.Image:
+    """Full-frame conic gradient; angle 0 at top, + clockwise, rotated by rotation_rad."""
+    img = Image.new("RGB", (size, size))
+    px = img.load()
+    cx = (size - 1) * 0.5
+    cy = (size - 1) * 0.5
+    two_pi = 2.0 * math.pi
+    for y in range(size):
+        dy = cy - y  # screen y down → north component
+        for x in range(size):
+            dx = x - cx
+            # 0 at top, increasing clockwise
+            ang = math.atan2(dx, dy)
+            t = ((ang + rotation_rad) % two_pi) / two_pi
+            px[x, y] = sample_stops(t)
+    return img
+
+
+def main() -> None:
+    petals_path = Path(sys.argv[1])
+    out_dir = Path(sys.argv[2])
+    # Many frames → smooth rotation (not 5 petal steps).
+    nframes = int(sys.argv[3]) if len(sys.argv) > 3 else 36
+    size = int(sys.argv[4]) if len(sys.argv) > 4 else 360
+
+    petals: list[str] = json.loads(petals_path.read_text())
+    if len(petals) != 5:
+        raise SystemExit(f"expected 5 petals, got {len(petals)}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # One mask for all frames.
+    mask_path = out_dir / "_mask.png"
+    render_svg_png(flower_mask_svg(petals), mask_path, size)
+    mask = load_alpha_mask(mask_path)
+    mask_path.unlink(missing_ok=True)
+
+    print(
+        f"conical gradient under flower mask: {nframes} frames @ {size}px",
+        file=sys.stderr,
+    )
+
+    for frame in range(nframes):
+        # One full clockwise revolution over nframes.
+        rotation = (frame / nframes) * 2.0 * math.pi
+        grad = conical_gradient(size, rotation)
+        # Composite: RGB from gradient, A from flower silhouette.
+        rgba = grad.convert("RGBA")
+        rgba.putalpha(mask)
+        out = out_dir / f"frame-{frame:02d}.png"
+        rgba.save(out, "PNG")
+        if frame == 0 or frame == nframes // 4 or frame == nframes - 1:
+            print(f"  wrote {out.name} (rot={math.degrees(rotation):.1f}°)", file=sys.stderr)
 
     print(f"wrote {nframes} frames to {out_dir}", file=sys.stderr)
 

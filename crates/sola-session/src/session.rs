@@ -182,20 +182,33 @@ impl Session {
             self.launch_counter
         );
 
-        let mut cmd = Command::new("systemd-run");
-        cmd.args([
-            "--user",
-            "--scope",
-            "--quiet",
-            "--collect",
-            &format!("--unit={unit}"),
-            &format!("--description=Sola app: {app_id}"),
-            "--property=TimeoutStopSec=5s",
-            "--property=KillSignal=SIGTERM",
-            "--",
-            program,
-        ]);
-        cmd.args(&args);
+        // Prefer systemd-run --user scopes when a user manager is up (normal
+        // TTY dogfood). Loginless install seats often have no systemd --user
+        // (runuser without PAM/logind) — scopes fail immediately and apps
+        // look like they "launch then quit". Fall back to a direct spawn.
+        let use_scope = user_systemd_available();
+        let mut cmd = if use_scope {
+            let mut c = Command::new("systemd-run");
+            c.args([
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                &format!("--unit={unit}"),
+                &format!("--description=Sola app: {app_id}"),
+                "--property=TimeoutStopSec=5s",
+                "--property=KillSignal=SIGTERM",
+                "--",
+                program,
+            ]);
+            c.args(&args);
+            c
+        } else {
+            info!(%app_id, "user systemd unavailable — direct spawn (no scope)");
+            let mut c = Command::new(program);
+            c.args(&args);
+            c
+        };
 
         if let Some(name) = env::wayland_socket() {
             cmd.env("WAYLAND_DISPLAY", name);
@@ -204,6 +217,10 @@ impl Session {
         }
         if let Some(display) = env::x_display() {
             cmd.env("DISPLAY", display);
+        }
+        // Ensure seat apps inherit a runtime dir for wayland sockets, etc.
+        if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
+            cmd.env("XDG_RUNTIME_DIR", runtime);
         }
 
         // sola launches us (a MANAGED process) with SOLA_NO_SELF_WATCH=1
@@ -233,6 +250,13 @@ impl Session {
                 Err(e) => warn!(%app_id, %e, "app capture: fd clone failed, inheriting stdio"),
             }
         }
+
+        let unit = if use_scope {
+            unit
+        } else {
+            // Marker so close/shutdown kill the process instead of systemctl.
+            format!("direct-{}", sanitize_unit_segment(&app_id))
+        };
 
         match cmd.spawn() {
             Ok(child) => {
@@ -280,8 +304,8 @@ impl Session {
                 continue;
             }
             r.closing = true;
-            info!(%app_id, unit = %r.unit, "CloseApp: stopping scope");
-            stop_scope(&r.unit);
+            info!(%app_id, unit = %r.unit, "CloseApp: stopping");
+            stop_app_record(r);
         }
         // Drop the now-closing app from the persisted set so a restart
         // doesn't relaunch something the user just closed.
@@ -300,8 +324,8 @@ impl Session {
                     continue;
                 }
                 r.closing = true;
-                info!(app_id = %r.app_id, unit = %r.unit, "shutdown: stopping scope");
-                stop_scope(&r.unit);
+                info!(app_id = %r.app_id, unit = %r.unit, "shutdown: stopping");
+                stop_app_record(r);
             }
         }
 
@@ -328,10 +352,12 @@ impl Session {
         for records in self.children.values_mut() {
             for r in records.iter_mut() {
                 if let Ok(None) = r.child.try_wait() {
-                    warn!(app_id = %r.app_id, unit = %r.unit, pid = r.child.id(), "shutdown: forcing scope down");
+                    warn!(app_id = %r.app_id, unit = %r.unit, pid = r.child.id(), "shutdown: forcing down");
                     // SAFETY: kill(2) is unconditionally safe to call.
                     unsafe { libc::kill(r.child.id() as i32, libc::SIGKILL) };
-                    stop_scope(&r.unit);
+                    if !r.unit.starts_with("direct-") {
+                        stop_scope(&r.unit);
+                    }
                 }
             }
         }
@@ -368,6 +394,19 @@ impl Session {
     }
 }
 
+/// Stop a launched app: systemd scope or direct child process.
+fn stop_app_record(r: &AppRecord) {
+    if r.unit.starts_with("direct-") {
+        // Direct spawn — SIGTERM the process (and process group if possible).
+        // SAFETY: kill(2) is safe for a pid we own.
+        unsafe {
+            libc::kill(r.child.id() as i32, libc::SIGTERM);
+        }
+        return;
+    }
+    stop_scope(&r.unit);
+}
+
 /// `systemctl --user stop --no-block <unit>`. Returns immediately — we
 /// poll the systemd-run client for the scope's actual exit elsewhere.
 fn stop_scope(unit: &str) {
@@ -384,6 +423,29 @@ fn stop_scope(unit: &str) {
             let _ = child.wait();
         }
         Err(e) => warn!(%unit, %e, "failed to spawn systemctl stop"),
+    }
+}
+
+/// True when this process has a working `systemd --user` manager (needed
+/// for `systemd-run --user --scope`). Loginless install seats often do not.
+fn user_systemd_available() -> bool {
+    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+        let private = std::path::Path::new(&dir).join("systemd/private");
+        if private.exists() {
+            return true;
+        }
+    }
+    // Probe without relying on path layout (some setups use different sockets).
+    match Command::new("systemctl")
+        .args(["--user", "is-system-running"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        // 0 = running; 1 often means degraded but still usable.
+        Ok(st) => st.success() || st.code() == Some(1),
+        Err(_) => false,
     }
 }
 

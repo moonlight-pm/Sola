@@ -146,7 +146,7 @@ cargo make install            # needs explicit user permission
 cargo make install <app>…     # targeted install
 cargo build --release         # you own Rust build before vm
 cargo make vm build           # stage target/release → nix qcow2 (no cargo)
-cargo make vm run             # QEMU; may rebuild image if stale (no cargo)
+cargo make vm run             # installed if present, else installer
 ```
 
 Alias: `cargo make` → `cargo run -q -p sola-make --` (see `.cargo/config.toml`).
@@ -164,7 +164,8 @@ Alias: `cargo make` → `cargo run -q -p sola-make --` (see `.cargo/config.toml`
 | Apply | `sola-install-apply` (sudo): GPT ESP+root, `nixos-install --system`, install-user |
 | Desktop seat | `sola-desktop` unit: ensure user → `runuser` → `/opt/sola/bin/sola` |
 | Local products | `var/images/sola-vm.qcow2`, overlay, `sola-install-target.qcow2` (never committed) |
-| vm install | Wipe target qcow + boot live installer (`cargo make vm install`) |
+| vm run | Boot installed target if present; else live installer + vdb |
+| vm install | Wipe target qcow + boot live installer |
 | Product ISO | Not built yet |
 
 ---

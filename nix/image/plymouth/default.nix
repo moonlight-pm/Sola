@@ -1,5 +1,5 @@
-# Sola Plymouth theme — the five-petal mark *is* the spinner.
-# Each petal cycles neon cyan shades so a bright wave walks around the flower.
+# Sola Plymouth theme — the five-petal mark is an alpha mask over a rotating
+# conical cyan gradient (smooth circular paint, not flat per-petal fills).
 #
 # Geometry: petals.json (absolute paths from flower.svg).
 
@@ -8,24 +8,26 @@
   stdenvNoCC,
   librsvg,
   python3,
+  python3Packages,
 }:
 
 let
-  # One frame per peak position (5 petals) — discrete clockwise walk.
-  nframes = 5;
+  # Smooth rotation: 36 frames × ~50 ms ≈ 1.8 s per revolution.
+  nframes = 36;
   # Plymouth refresh is ~50 Hz; skip this many refreshes between frame advances
-  # so each petal step lasts ~300 ms (15 / 50 ≈ 0.3 s). Full rev ≈ 1.5 s.
-  refreshesPerFrame = 15;
+  # (2 / 50 ≈ 0.04 s per frame).
+  refreshesPerFrame = 2;
 in
 stdenvNoCC.mkDerivation {
   pname = "plymouth-theme-sola";
-  version = "0.3.0";
+  version = "0.4.0";
 
   src = ./.;
 
   nativeBuildInputs = [
     librsvg
     python3
+    python3Packages.pillow
   ];
 
   buildPhase = ''
@@ -48,7 +50,7 @@ stdenvNoCC.mkDerivation {
     cat > "$themeDir/sola.plymouth" <<EOF
 [Plymouth Theme]
 Name=Sola
-Description=Five-petal flower with neon cyan petal cycle
+Description=Five-petal flower mask over rotating conical cyan gradient
 ModuleName=script
 
 [script]

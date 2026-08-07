@@ -1,7 +1,7 @@
 **Date:** 2026-08-05  
 **Status:** target (freeze)  
 **Implementation:** partial  
-**Dogfood:** QEMU — splash → wizard → erase vdb → `SOLA_VM_BOOT=target` → loginless Sola  
+**Dogfood:** QEMU — splash → wizard → erase vdb → `vm run` → loginless Sola  
 **Gaps:**
 - No ISO output yet (harness is qcow + second disk)  
 - Timezone auto-detect still stub (UTC)  
@@ -33,9 +33,9 @@ Power on (installer media)
 - **Plymouth** from early initrd, with **simpledrm** +  
   `plymouth.ignore-serial-consoles` so a serial console does **not**
   suppress the graphical splash.
-- **Boot mark:** the five-petal flower *is* the spinner. A fixed neon-cyan
-  **shade gradient** walks **clockwise** petal-to-petal (~300 ms/step; full
-  rev ≈ 1.5 s). No separate stock throbber. Theme: `sola`
+- **Boot mark:** the five-petal flower is an **alpha mask** over a rotating
+  **conical cyan gradient** (smooth circular paint through the petals, not
+  flat per-petal fills). Full revolution ≈ 1.8 s (36 frames). Theme: `sola`
   (`nix/image/plymouth/` — `gen-frames.py` + `petals.json`).
 - **Firmware (OVMF/OEM)** still owns the first moments before the kernel;
   we do not reflash arbitrary board ROMs. Goal: short firmware flash →
@@ -181,4 +181,4 @@ Evolve toward:
 | 2026-08-05 | Brand: five-petal flower through splash + installer |
 | 2026-08-06 | Splash animation: clockwise cyan shade gradient on petals (flower is spinner) |
 | 2026-08-06 | Wizard username prefill `sola` (selected for replace-on-type) |
-| 2026-08-06 | QEMU e2e: vdb apply + `SOLA_VM_BOOT=target` → loginless Sola |
+| 2026-08-06 | QEMU e2e: vdb apply + `vm run` boots installed when present |

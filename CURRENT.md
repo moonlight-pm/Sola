@@ -21,9 +21,9 @@ Do not invent product policy.
      no password, timezone auto).  
    - Freeze: [`docs/specs/2026-08-05-distribution-image-design.md`](docs/specs/2026-08-05-distribution-image-design.md)  
    - Plan: [`docs/plans/2026-08-05-distribution-qemu-image-plan.md`](docs/plans/2026-08-05-distribution-qemu-image-plan.md)  
-   - **Harness:** `cargo make vm install` wipes vdb + boots live installer;
-     after apply `SOLA_VM_BOOT=target cargo make vm run --no-build`. Stage from
-     **`target/release` only** (no cargo inside vm).  
+   - **Harness:** `cargo make vm install` (wipe + installer);
+     `cargo make vm run` boots **installed** if present, else installer.
+     Stage from **`target/release` only** (no cargo inside vm).  
    - **Dogfood OK:** splash → wizard → erase vdb → reboot target → loginless
      Sola (`runuser` session; username prefill `sola`).  
    - **Next:** polish (installer UX, splash handoff, errors); then ISO path.  
