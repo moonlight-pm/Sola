@@ -67,13 +67,16 @@ kvm input ACL permanence; preview zoom/clipboard.
 
 ## Phase 4 — Distribution & packaging
 
-**Status: planned**
+**Status: partial / active**
 
-- Beyond local `/opt/sola` install: packaging, fonts story productization,
-  update channel for the desktop  
+- Shape 1: NixOS module + release tarball (`INSTALL.md`, `services.sola`)  
+- Engineering harness: qcow2 + `cargo make vm`  
+- **Product aim:** installer ISO — flower splash, username+disk wizard,
+  loginless Sola ([freeze](specs/2026-08-05-distribution-image-design.md))  
 
-**Remaining:** not scheduled; see [manual/distribution](manual/distribution.md)
-for current operator truth only.
+**Remaining:** ISO pipeline; polish; Shape 1 release refresh. QEMU harness
+dogfoods splash → install → loginless Sola. Fonts story under
+[manual/distribution](manual/distribution.md).
 
 ---
 

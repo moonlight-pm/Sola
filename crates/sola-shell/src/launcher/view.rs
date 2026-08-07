@@ -97,9 +97,13 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                     .into();
 
                 // Quiet selection via list_item (selection atom, not accent).
+                // Pass the row's app_id — Msg::Launch alone always used the
+                // keyboard `selected` index (usually 0), so clicks launched
+                // the top row instead of the one under the pointer.
                 let lp = shell.style.launcher_pad;
+                let id = app_id.clone();
                 iced::widget::button(row_content)
-                    .on_press(Msg::Launch)
+                    .on_press(Msg::LaunchApp(id))
                     .padding(Padding {
                         top: lp,
                         bottom: lp,

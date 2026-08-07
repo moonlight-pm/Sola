@@ -78,6 +78,8 @@ pub enum Msg {
     LauncherNav { up: bool },
     /// Launch the selected application and close the launcher.
     Launch,
+    /// Launch a specific app by id (row click — not the keyboard selection).
+    LaunchApp(String),
     // --- Switcher messages ---
     /// Cycle switcher selection forward (next=true) or backward (next=false).
     SwitcherNav { next: bool },
@@ -419,6 +421,33 @@ impl Shell {
         self.applications
             .get_for_window(window_app_id)
             .is_some_and(|a| a.app_id == pending_app_id)
+    }
+
+    /// Emit LaunchApp for `app_id`, show opening toast, close launcher.
+    fn launch_from_launcher(&mut self, app_id: Option<&str>) -> iced::Task<Msg> {
+        let mut opening = iced::Task::none();
+        if let Some(id) = app_id {
+            if let Some(app) = self.applications.get(id) {
+                let command = app.command.clone();
+                let label = app.label.clone();
+                if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                    let _ = bus.emit(Topic::LaunchApp(sola_bus::topics::LaunchAppPayload {
+                        app_id: id.to_string(),
+                        command,
+                    }));
+                }
+                opening = self.begin_opening(id, &label);
+            }
+        }
+        self.launcher.active = false;
+        self.emit_composition();
+        self.emit_registered_chords();
+        if let Some(wid) = self.launcher.prior_focus {
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+            }
+        }
+        opening
     }
 
     /// Push `Opening {label}…`, record pending launch state, schedule a 20s
@@ -1090,6 +1119,15 @@ impl Shell {
                     tracing::info!("restart shell requested via menu");
                     return iced::exit();
                 }
+                // Flower menu: open the app launcher (close menu first).
+                if app_id == Self::APP_ID && action_id == "launch" {
+                    self.menu_open = false;
+                    self.current_open_index = None;
+                    self.current_open_is_system = false;
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                    return iced::Task::done(Msg::OpenLauncher);
+                }
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     if app_id == Self::APP_ID && (action_id == "exit" || action_id == "quit") {
                         let _ = bus.emit(Topic::Shutdown);
@@ -1182,32 +1220,22 @@ impl Shell {
                     .filtered_ids
                     .get(self.launcher.selected)
                     .cloned();
-                let mut opening = iced::Task::none();
-                if let Some(ref id) = app_id {
-                    if let Some(app) = self.applications.get(id) {
-                        let command = app.command.clone();
-                        let label = app.label.clone();
-                        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                            let _ = bus.emit(Topic::LaunchApp(
-                                sola_bus::topics::LaunchAppPayload {
-                                    app_id: id.clone(),
-                                    command,
-                                },
-                            ));
-                        }
-                        opening = self.begin_opening(id, &label);
-                    }
+                self.launch_from_launcher(app_id.as_deref())
+            }
+            Msg::LaunchApp(app_id) => {
+                if !self.launcher.active {
+                    return iced::Task::none();
                 }
-                self.launcher.active = false;
-                self.emit_composition();
-                self.emit_registered_chords();
-                // Restore focus to the previously focused window.
-                if let Some(wid) = self.launcher.prior_focus {
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                    }
+                // Sync keyboard selection to the clicked row for consistency.
+                if let Some(i) = self
+                    .launcher
+                    .filtered_ids
+                    .iter()
+                    .position(|id| id == &app_id)
+                {
+                    self.launcher.selected = i;
                 }
-                opening
+                self.launch_from_launcher(Some(&app_id))
             }
             // --- Switcher ---
             Msg::SwitcherNav { next } => {

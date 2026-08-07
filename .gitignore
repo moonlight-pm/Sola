@@ -12,6 +12,9 @@ crates/*/Cargo.lock
 /result
 /result-*
 
+# Local distribution image products (qcow2, stage trees, QEMU overlays)
+/var/images/
+
 # Local font stash (SF Pro, etc.) — binaries only; README is tracked
 .local/fonts/**
 !.local/fonts/README.md

@@ -75,13 +75,14 @@ in
       libdrm
       mesa
       systemd
-      xorg.libX11
-      xorg.libXcomposite
-      xorg.libXdamage
-      xorg.libXext
-      xorg.libXfixes
-      xorg.libXrandr
-      xorg.libxcb
+      # Flat package names (nixpkgs dropped the `xorg.` set).
+      libx11
+      libxcomposite
+      libxdamage
+      libxext
+      libxfixes
+      libxrandr
+      libxcb
     ];
 
     # WebKit's lazy module loading needs these resolvable at the

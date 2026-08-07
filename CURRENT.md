@@ -9,14 +9,21 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-06 (initial-window-state merged: default-float + kit CSD)
+**As of:** 2026-08-06 (distribution — timezone US/Mountain; ISO path next)
 
 ---
 
 ## Now
 
-1. **No active feature worktree** — pick the next slice from follow-ups below
-   or from a new user ask; open a worktree before code changes.  
+1. **Distribution installer (active)** — branch `naturalethic/distribution`.  
+   - **Product:** ISO → flower splash → wizard (username + disk) → install →
+     reboot → **loginless Sola** (US EN, Mac kbd, hostname `sola`, no password;
+     timezone **US/Mountain** interim, auto-detect later).  
+   - Freeze: [`docs/specs/2026-08-05-distribution-image-design.md`](docs/specs/2026-08-05-distribution-image-design.md)  
+   - Plan: [`docs/plans/2026-08-05-distribution-qemu-image-plan.md`](docs/plans/2026-08-05-distribution-qemu-image-plan.md)  
+   - **Harness:** `vm install` / `vm run` (installed if present else installer).  
+   - **Dogfood OK:** QEMU vdb install → loginless Sola.  
+   - **ISO:** `cargo make iso build` / `iso run` scaffolded; dogfood pending.  
 2. **Progress docs** — keep this file + `docs/capabilities.md` honest when
    shipping; do not reintroduce a second handoff.  
 3. **Follow-ups (unordered backlog, not priority):**  
@@ -30,6 +37,7 @@ Do not invent product policy.
      [`docs/specs/2026-07-30-sola-kvm-clipboard-design.md`](docs/specs/2026-07-30-sola-kvm-clipboard-design.md)  
    - Optional: further Mac warp path cost for sola-kvm  
    - Optional: true HID scroll path (virtual HID) if CG velocity gain not enough  
+   - Shape 1 release tarball refresh (published v0.1.1 URL currently 404)
 
 **Explicit holds:** none.
 
@@ -49,7 +57,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Compositor | River via `sola-river` |
 | UI stack | Iced 0.14 + `sola-kit` (not WebView) |
 | Grok agent | Shared leader (`grok-leader.service` / `~/.grok/leader.sock`) |
-| Branch | `master` (feature work in `.worktrees/`) |
+| Branch | `naturalethic/distribution` (dist image work); else `master` + `.worktrees/` |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install. User installs and smokes.
@@ -77,6 +85,7 @@ tail -100 /opt/sola/log/sola.log
 | Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents |
 | Worktrees | Feature code only under `.worktrees/`; approval = merge + cleanup |
 | Install | Local `/opt/sola/bin/`; never install without explicit permission |
+| Dist installer v1 | ISO primary; wizard = username + disk; US EN + Mac kbd; no password; loginless → Sola; flower splash |
 
 ---
 
@@ -100,6 +109,8 @@ Full history is git. Keep this list short (last few merges only).
 
 | Slice | Note |
 |-------|------|
+| dist real apply | QEMU vdb install → loginless Sola; `vm install`; sola-desktop |
+| dist image + splash | `sola-install`, `cargo make vm`, Plymouth clockwise cyan flower |
 | initial-window-state | Default-float + kit CSD on monitor/settings/preview/mail/agent/terminal/kit/browser |
 | kvm Mac scroll velocity gain | CG pixel inject + rate ramp (`scroll_accel`); dogfooded on ember |
 | progress-docs practice | Spine: CURRENT, capabilities, architecture, roadmap, open-questions |

@@ -77,6 +77,7 @@ sites?
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
 | 2026-08-05 | — | Progress documentation practice adopted for Sola | CURRENT, progress-model, AGENTS |
+| 2026-08-05 | dist | ISO primary; wizard = username + disk only; US EN + Mac keyboard fixed; timezone auto; hostname `sola`; no password; loginless → Sola; flower brand splash | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) |
 | (earlier) | UI stack | Iced + sola-kit; WebView apocrypha | AGENTS, CURRENT locks |
 | (earlier) | Browser | WPE primary, CEF parallel | AGENTS, architecture |
 | (earlier) | Agent backend | Shared Grok leader only | AGENTS, CURRENT locks |
