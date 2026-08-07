@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read, Write};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
@@ -7,6 +7,7 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::topic::encode_payload;
 use crate::topics::TopicKind;
@@ -20,11 +21,20 @@ fn encode_identify(app_id: &str) -> Message {
     Message::with_payload(crate::CONTROL_IDENTIFY, encode_payload(&app_id.to_string()))
 }
 
+/// Sticky map key: `(topic, keys)`. Same identity the bus host uses.
+type StickyKey = (String, Vec<String>);
+
 /// A connection to the Sola Bus.
 ///
 /// Always constructable via `new()`. Messages sent before connection are
 /// queued and flushed on successful `connect()`. Callers never need to
 /// wrap this in `Option` — just call `emit()` at any time.
+///
+/// Sticky/`persistent` emits are also kept in a local **sticky outbox**.
+/// When the bus process restarts, in-memory stickies on the host are wiped;
+/// on reconnect this client re-emits its outbox so late joiners (and a
+/// restarted shell) see `SetAppMenu`, `RegisteredChords`, etc. again without
+/// every app inventing its own republish path.
 pub struct BusClient {
     app_id: String,
     writer: Option<UnixStream>,
@@ -38,6 +48,13 @@ pub struct BusClient {
     /// reader dead) so callers can reconnect.
     reader_alive: Option<Arc<AtomicBool>>,
     queue: VecDeque<Message>,
+    /// Last sticky value this client emitted, keyed by `(topic, keys)`.
+    /// Re-emitted after a mid-session reconnect (bus process replaced).
+    sticky_outbox: HashMap<StickyKey, Message>,
+    /// True once we have successfully connected at least once. Distinguishes
+    /// first connect (queue flush is enough) from reconnect (must republish
+    /// stickies the previous bus process already consumed and then wiped).
+    ever_connected: bool,
 }
 
 impl BusClient {
@@ -52,6 +69,8 @@ impl BusClient {
             notify_read: None,
             reader_alive: None,
             queue: VecDeque::new(),
+            sticky_outbox: HashMap::new(),
+            ever_connected: false,
         }
     }
 
@@ -135,7 +154,8 @@ impl BusClient {
         notify_read.set_nonblocking(true)?;
         notify_write.set_nonblocking(true)?;
 
-        info!(path = %path, "connected to bus");
+        let is_reconnect = self.ever_connected;
+        info!(path = %path, reconnect = is_reconnect, "connected to bus");
 
         let (tx, rx) = mpsc::channel();
         let alive = Arc::new(AtomicBool::new(true));
@@ -149,8 +169,29 @@ impl BusClient {
         self.rx = Some(rx);
         self.notify_read = Some(notify_read);
         self.reader_alive = Some(alive);
+        self.ever_connected = true;
+
+        // Re-assert identity on every live connection. Pre-connect
+        // `set_app_id` may already have queued an Identify (flushed next);
+        // a second Identify with the same app_id is a no-op on the host.
+        // After a bus restart the roster is empty, so this is required.
+        if !self.app_id.is_empty() {
+            let id_msg = encode_identify(&self.app_id);
+            if let Err(e) = self.write_now(&id_msg) {
+                warn!(%e, "identify on connect failed");
+            }
+        }
 
         self.flush_queue();
+
+        // sola-bus keeps stickies in memory only. After a mid-session bus
+        // restart the host map is empty; re-emit everything we still own so
+        // shell (and any other late subscriber) can rebuild menus / chords.
+        // First connect relies on `flush_queue` alone — outbox entries were
+        // never delivered to a previous host, and would only double-send.
+        if is_reconnect {
+            self.republish_sticky_outbox();
+        }
 
         Ok(())
     }
@@ -196,11 +237,20 @@ impl BusClient {
     /// Whether the message is retained as sticky is determined by the
     /// topic kind's [`Behavior`](crate::topic::Behavior): `Sticky` and
     /// `Persistent` topics are retained; `Ephemeral` topics are not.
+    ///
+    /// Sticky/persistent emits are also remembered in the sticky outbox
+    /// and re-sent automatically after a bus reconnect.
     pub fn emit(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
         let kind = topic.kind();
         let mut message = topic.to_message();
         message.sticky = kind.behavior().is_sticky();
         message.source = self.app_id.clone();
+        if message.sticky {
+            self.sticky_outbox.insert(
+                (message.topic.clone(), message.keys.clone()),
+                message.clone(),
+            );
+        }
         self.send(&message)
     }
 
@@ -210,6 +260,9 @@ impl BusClient {
     /// can drop their local copy. No-op on the wire if the topic kind is
     /// ephemeral (logs a warning) — ephemeral topics have no sticky map
     /// entry to retract.
+    ///
+    /// Also drops the entry from the local sticky outbox so a later
+    /// reconnect does not resurrect a retracted value.
     pub fn retract(&mut self, topic: crate::topics::Topic) -> io::Result<()> {
         let kind = topic.kind();
         if !kind.behavior().is_sticky() {
@@ -219,6 +272,8 @@ impl BusClient {
         let mut message = topic.to_message();
         message.sticky = false;
         message.source = self.app_id.clone();
+        self.sticky_outbox
+            .remove(&(message.topic.clone(), message.keys.clone()));
         self.send(&message)
     }
 
@@ -280,11 +335,42 @@ impl BusClient {
 
     /// Flush queued messages after a successful connection.
     fn flush_queue(&mut self) {
-        let writer = self.writer.as_mut().unwrap();
         while let Some(msg) = self.queue.pop_front() {
-            if let Err(e) = transport::write_event(writer, &msg) {
+            if let Err(e) = self.write_now(&msg) {
                 warn!("failed to flush queued message: {e}");
+                // Put the failed message back so a later reconnect can retry.
+                self.queue.push_front(msg);
                 break;
+            }
+        }
+    }
+
+    /// Write one message on the live socket (must be connected).
+    fn write_now(&mut self, message: &Message) -> io::Result<()> {
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "bus not connected"))?;
+        transport::write_event(writer, message)
+    }
+
+    /// Re-emit every sticky this client still owns. Called after reconnect
+    /// so a replaced sola-bus process rebuilds its in-memory sticky map.
+    fn republish_sticky_outbox(&mut self) {
+        if self.sticky_outbox.is_empty() {
+            return;
+        }
+        let stickies: Vec<Message> = self.sticky_outbox.values().cloned().collect();
+        info!(
+            count = stickies.len(),
+            "re-emitting sticky outbox after bus reconnect"
+        );
+        for mut msg in stickies {
+            // Fresh id for log/audit ordering; payload/keys/sticky unchanged.
+            msg.id = Uuid::now_v7();
+            msg.source = self.app_id.clone();
+            if let Err(e) = self.write_now(&msg) {
+                warn!(topic = %msg.topic, keys = ?msg.keys, %e, "sticky outbox re-emit failed");
             }
         }
     }
