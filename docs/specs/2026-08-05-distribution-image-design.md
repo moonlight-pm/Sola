@@ -33,10 +33,9 @@ Power on (installer media)
 - **Plymouth** from early initrd, with **simpledrm** +  
   `plymouth.ignore-serial-consoles` so a serial console does **not**
   suppress the graphical splash.
-- **Boot mark:** the five-petal flower is an **alpha mask** over a rotating
-  **conical cyan gradient** (smooth circular paint through the petals, not
-  flat per-petal fills). Full revolution ≈ 1.8 s (36 frames). Theme: `sola`
-  (`nix/image/plymouth/` — `gen-frames.py` + `petals.json`).
+- **Boot mark:** the five-petal flower is an **alpha mask**; paint is a soft
+  **cyan ripple expanding from the hub** (brand accent on graphite teal),
+  looping ≈ 2 s. Theme: `sola` (`nix/image/plymouth/`).
 - **Firmware (OVMF/OEM)** still owns the first moments before the kernel;
   we do not reflash arbitrary board ROMs. Goal: short firmware flash →
   brand splash for OS load → installer.

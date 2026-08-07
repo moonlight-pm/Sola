@@ -1,5 +1,5 @@
-# Sola Plymouth theme — the five-petal mark is an alpha mask over a rotating
-# conical cyan gradient (smooth circular paint, not flat per-petal fills).
+# Sola Plymouth theme — flower mask; one quiet ripple, rest, repeat.
+# Soft ink-wash expands from the hub, settles, waits, then again.
 #
 # Geometry: petals.json (absolute paths from flower.svg).
 
@@ -12,15 +12,15 @@
 }:
 
 let
-  # Smooth rotation: 36 frames × ~50 ms ≈ 1.8 s per revolution.
-  nframes = 36;
-  # Plymouth refresh is ~50 Hz; skip this many refreshes between frame advances
-  # (2 / 50 ≈ 0.04 s per frame).
-  refreshesPerFrame = 2;
+  # ~42% ripple + ~58% rest; 72 frames × 50 ms ≈ 3.6 s period
+  # (≈1.5 s wash, ≈2.1 s stillness).
+  nframes = 72;
+  # Plymouth refresh ~50 Hz; 2–3 refreshes/frame. 2.5≈ not integer → use 3.
+  refreshesPerFrame = 3;
 in
 stdenvNoCC.mkDerivation {
   pname = "plymouth-theme-sola";
-  version = "0.4.0";
+  version = "0.8.0";
 
   src = ./.;
 
@@ -50,7 +50,7 @@ stdenvNoCC.mkDerivation {
     cat > "$themeDir/sola.plymouth" <<EOF
 [Plymouth Theme]
 Name=Sola
-Description=Five-petal flower mask over rotating conical cyan gradient
+Description=Five-petal flower: soft ripple then rest
 ModuleName=script
 
 [script]

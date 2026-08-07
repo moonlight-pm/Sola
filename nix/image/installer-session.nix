@@ -101,6 +101,8 @@ let
     fi
 
     export SOLA_INSTALL_STANDALONE=1
+    # Never attach bus/shell under the kiosk (no menubar / launcher / switcher).
+    unset SOLA_INSTALL_USE_BUS || true
     export SOLA_NO_SELF_WATCH=1
     export WGPU_BACKEND="''${WGPU_BACKEND:-gl}"
     export LIBGL_ALWAYS_SOFTWARE="''${LIBGL_ALWAYS_SOFTWARE:-1}"
@@ -108,6 +110,8 @@ let
     export WINIT_UNIX_BACKEND=wayland
     export XDG_SESSION_TYPE=wayland
     export XDG_CURRENT_DESKTOP=cage
+    # Reduce accidental shell-ish shortcuts if any client inherits them.
+    export SOLA_INSTALL_KIOSK=1
     export XDG_DATA_DIRS="${packageShare}:/opt/sola/share:''${XDG_DATA_DIRS:-/run/current-system/sw/share}"
     export RUST_BACKTRACE="''${RUST_BACKTRACE:-1}"
     export RUST_LOG="''${RUST_LOG:-sola_install=info,wgpu_hal=warn,wgpu_core=warn}"
@@ -146,8 +150,11 @@ let
       attempt=$((attempt + 1))
       log "starting cage + $bin (attempt $attempt)"
       set +e
+      # cage: kiosk compositor for one app only (no shell / launcher / switcher).
+      #   -d  no client-side decorations
+      #   omit -s  so VT switching (Ctrl+Alt+F*) is not allowed
       ${pkgs.dbus}/bin/dbus-run-session -- \
-        ${pkgs.cage}/bin/cage -s -- "$bin" \
+        ${pkgs.cage}/bin/cage -d -- "$bin" \
         > /tmp/sola-install-cage.log 2>&1
       ec=$?
       set -e

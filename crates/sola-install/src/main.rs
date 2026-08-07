@@ -149,11 +149,14 @@ struct App {
     apply_error: Option<String>,
     /// Image can do real install (prebuilt system path present).
     real_capable: bool,
+    /// Live media / cage kiosk — no faux menubar chrome, no bus menus.
+    standalone: bool,
 }
 
 impl Default for App {
     fn default() -> Self {
         let real_capable = real_apply_available();
+        let standalone = !bus_enabled();
         Self {
             step: Step::Welcome,
             username: DEFAULT_USERNAME.into(),
@@ -169,6 +172,7 @@ impl Default for App {
             apply_rx: None,
             apply_error: None,
             real_capable,
+            standalone,
         }
     }
 }
@@ -408,12 +412,17 @@ impl App {
 
     fn view(&self) -> Element<'_, Msg> {
         let stage = self.stage_body();
-        let chrome = self.top_chrome();
-
-        let content = column![chrome, stage]
-            .spacing(0)
-            .width(Length::Fill)
-            .height(Length::Fill);
+        // Live installer (cage): no top chrome — it reads as a Sola menubar
+        // and the kiosk must not look like a running desktop session.
+        let content: Element<'_, Msg> = if self.standalone {
+            stage
+        } else {
+            column![self.top_chrome(), stage]
+                .spacing(0)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        };
 
         container(content)
             .width(Length::Fill)

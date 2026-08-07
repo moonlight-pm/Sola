@@ -34,3 +34,10 @@ Flake outputs:
 - `nixosConfigurations.sola-installed` — target system written by apply
 
 Local products live under `var/images/` (gitignored).
+
+### Plymouth splash (no image build)
+
+```sh
+nix/image/plymouth/preview.sh          # ~20s → /tmp/ply-preview/index.html + preview.gif
+# optional: preview.sh 32 240          # fewer / smaller frames
+```

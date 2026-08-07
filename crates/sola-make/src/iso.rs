@@ -14,8 +14,8 @@ use std::process::{Command, exit};
 use std::time::SystemTime;
 
 use crate::vm::{
-    BuildOpts, TARGET_DISK_PATH, display_backend, ensure_target_disk, make_owner_writable,
-    prepare_stage, resolve_ovmf, resolve_qemu, workspace_root,
+    BuildOpts, TARGET_DISK_PATH, display_backend, ensure_target_disk, has_installed_image,
+    make_owner_writable, prepare_stage, resolve_ovmf, resolve_qemu, workspace_root,
 };
 
 const ISO_PATH: &str = "var/images/sola.iso";
@@ -160,13 +160,25 @@ fn run_iso(opts: IsoRunOpts) -> Result<(), String> {
         return Err(format!("ISO still missing at {}", iso.display()));
     }
 
-    // Fresh blank target for each iso run so install dogfood is clean.
+    // Keep an installed target so guest "Reboot" can land on the new system.
+    // Wipe only when nothing is installed yet (fresh dogfood). Force wipe:
+    //   rm var/images/sola-install-target.qcow2 && cargo make iso run
     let target = root.join(TARGET_DISK_PATH);
-    if target.exists() {
-        println!(">>> wiping install target for ISO dogfood {}", target.display());
-        fs::remove_file(&target).map_err(|e| format!("remove target: {e}"))?;
+    let already_installed = has_installed_image(&root);
+    if already_installed {
+        let sz = fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+        println!(
+            ">>> keeping installed target ({:.1} GiB) — HD preferred on boot",
+            sz as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
+    } else {
+        if target.exists() {
+            // Tiny leftover / failed install — start clean.
+            println!(">>> replacing non-installed target {}", target.display());
+            fs::remove_file(&target).map_err(|e| format!("remove target: {e}"))?;
+        }
+        ensure_target_disk(&target)?;
     }
-    ensure_target_disk(&target)?;
 
     let mem = env::var("SOLA_VM_MEMORY").unwrap_or_else(|_| "4096".into());
     let smp = env::var("SOLA_VM_SMP").unwrap_or_else(|_| "4".into());
@@ -178,12 +190,10 @@ fn run_iso(opts: IsoRunOpts) -> Result<(), String> {
     let display = display_backend(&width, &height);
 
     println!(
-        ">>> qemu {} accel={accel} {}x{} (ISO {} + blank {})",
+        ">>> qemu {} accel={accel} {}x{} (ISO + target; HD boot first)",
         qemu.display(),
         width,
-        height,
-        iso.display(),
-        target.display()
+        height
     );
 
     let mut cmd = Command::new(&qemu);
@@ -202,24 +212,38 @@ fn run_iso(opts: IsoRunOpts) -> Result<(), String> {
             ovmf.code.display()
         ),
     ]);
+    // Fresh NVRAM so we don't inherit stale Boot#### from other dogfood runs.
+    // Prefer *disk* (bootindex=0) over ISO (bootindex=1): empty disk fails
+    // through to the ISO; after apply, reboot lands on the installed system
+    // without removing the CD (same as a real machine with install media still
+    // inserted when the new ESP is preferred).
     if let Some(vars) = &ovmf.vars_template {
-        let vars_rw = root.join("var/images/OVMF_VARS.fd");
-        if !vars_rw.exists() {
-            fs::copy(vars, &vars_rw).map_err(|e| format!("copy OVMF_VARS: {e}"))?;
-            make_owner_writable(&vars_rw)?;
-        }
+        let vars_rw = root.join("var/images/OVMF_VARS-iso.fd");
+        println!(">>> fresh OVMF NVRAM for ISO session ({})", vars_rw.display());
+        fs::copy(vars, &vars_rw).map_err(|e| format!("copy OVMF_VARS-iso: {e}"))?;
+        make_owner_writable(&vars_rw)?;
         cmd.args([
             "-drive",
             &format!("if=pflash,format=raw,file={}", vars_rw.display()),
         ]);
     }
     cmd.args([
-        "-cdrom",
-        iso.to_str().unwrap(),
-        "-boot",
-        "d",
+        "-device",
+        "virtio-scsi-pci,id=scsi0",
         "-drive",
-        &format!("file={},if=virtio,format=qcow2", target.display()),
+        &format!(
+            "if=none,id=hd0,format=qcow2,file={}",
+            target.display()
+        ),
+        "-device",
+        "virtio-blk-pci,drive=hd0,bootindex=0",
+        "-drive",
+        &format!(
+            "if=none,id=cd0,media=cdrom,readonly=on,format=raw,file={}",
+            iso.display()
+        ),
+        "-device",
+        "scsi-cd,bus=scsi0.0,drive=cd0,bootindex=1",
         "-device",
         "virtio-net-pci,netdev=net0",
         "-netdev",

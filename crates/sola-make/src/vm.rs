@@ -100,7 +100,7 @@ fn run_install(mut opts: RunOpts) -> Result<(), String> {
 }
 
 /// True when the target qcow looks like a completed install (not a blank disk).
-fn has_installed_image(root: &Path) -> bool {
+pub(crate) fn has_installed_image(root: &Path) -> bool {
     let path = root.join(TARGET_DISK_PATH);
     match fs::metadata(&path) {
         Ok(m) => m.is_file() && m.len() >= INSTALLED_MIN_BYTES,
