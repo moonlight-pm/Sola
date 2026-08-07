@@ -85,9 +85,14 @@ fn main() {
     // pick up DISPLAY. Absent XWayland → silent no-op.
     river_sup.wait_for_xwayland(Duration::from_secs(3));
 
-    // Launch managed processes
+    // Launch managed processes. sola-kvm is last in MANAGED; still wait a
+    // beat so sola-river can bind `river_layer_shell_v1` + get_output/seat.
+    // Without this, cold-start layer edge barriers are Closed immediately.
     let mut managed: HashMap<&str, ManagedProcess> = HashMap::new();
     for name in MANAGED {
+        if *name == "sola-kvm" {
+            thread::sleep(Duration::from_millis(750));
+        }
         launch(&bin_dir, name, &mut managed);
     }
 

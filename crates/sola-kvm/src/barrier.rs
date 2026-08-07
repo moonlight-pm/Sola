@@ -54,6 +54,11 @@ struct BarrierState {
     /// Coordinate along the edge when the real pointer entered the strip
     /// (y for left/right, x for top/bottom), in surface-local coords.
     pending_hit_along: Option<i32>,
+    /// River closed the layer surface (usually cold-start race before
+    /// `river_layer_shell_v1` is fully attached). Recreate on poll.
+    needs_recreate: bool,
+    /// Rate-limit recreate attempts so we don't spam the compositor.
+    last_recreate: Option<std::time::Instant>,
 }
 
 impl EdgeBarrier {
@@ -83,6 +88,8 @@ impl EdgeBarrier {
             surface_h: 0,
             active: true,
             pending_hit_along: None,
+            needs_recreate: false,
+            last_recreate: None,
         };
 
         state.compositor = Some(
@@ -118,18 +125,7 @@ impl EdgeBarrier {
             .roundtrip(&mut state)
             .map_err(|e| format!("roundtrip: {e}"))?;
 
-        if let Some((w, h)) = state
-            .output_sizes
-            .iter()
-            .copied()
-            .max_by_key(|(w, h)| (*w as i64) * (*h as i64))
-        {
-            if w > 0 && h > 0 {
-                info!(w, h, "barrier: using compositor output size");
-                state.primary_w = w;
-                state.primary_h = h;
-            }
-        }
+        apply_best_output_size(&mut state);
 
         info!(
             ?side,
@@ -137,10 +133,42 @@ impl EdgeBarrier {
             h = state.primary_h,
             "layer-shell edge barrier mapping strip (physical edge only)"
         );
-        create_strip(&mut state, &qh)?;
-        event_queue
-            .roundtrip(&mut state)
-            .map_err(|e| format!("configure: {e}"))?;
+
+        // Cold-start race: sola-kvm often launches in the same breath as
+        // sola-river. River closes layer surfaces until the WM holds
+        // `river_layer_shell_v1` with get_output/get_seat. Retry briefly
+        // so a full sola restart does not leave KVM edge-enter dead.
+        const ATTEMPTS: u32 = 20;
+        const PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
+        for attempt in 1..=ATTEMPTS {
+            create_strip(&mut state, &qh)?;
+            event_queue
+                .roundtrip(&mut state)
+                .map_err(|e| format!("configure: {e}"))?;
+            if state.configured {
+                if attempt > 1 {
+                    info!(attempt, "barrier layer configured after retry");
+                }
+                break;
+            }
+            if attempt < ATTEMPTS {
+                warn!(
+                    attempt,
+                    "barrier not configured yet (layer-shell not ready?) — retrying"
+                );
+                destroy_strip(&mut state);
+                std::thread::sleep(PAUSE);
+                // Outputs / geometry may have appeared since last try.
+                let _ = event_queue.roundtrip(&mut state);
+                apply_best_output_size(&mut state);
+            } else {
+                warn!(
+                    attempts = ATTEMPTS,
+                    "barrier still unconfigured after retries — will keep trying in poll"
+                );
+                state.needs_recreate = true;
+            }
+        }
 
         Ok(Self {
             conn,
@@ -157,6 +185,8 @@ impl EdgeBarrier {
 
     /// Non-blocking pump; `Some(y)` when the real cursor enters the strip.
     pub fn poll_hit(&mut self) -> Result<Option<i32>, String> {
+        self.maybe_recreate_strip()?;
+
         let _ = self.conn.flush();
         self.event_queue
             .dispatch_pending(&mut self.state)
@@ -178,7 +208,39 @@ impl EdgeBarrier {
                 .dispatch_pending(&mut self.state)
                 .map_err(|e| format!("dispatch2: {e}"))?;
         }
+
+        // Closed events arrive during dispatch — schedule recreate for next poll.
+        if self.state.active && !self.state.configured {
+            self.state.needs_recreate = true;
+        }
+
         Ok(self.state.pending_hit_along.take())
+    }
+
+    fn maybe_recreate_strip(&mut self) -> Result<(), String> {
+        if !self.state.active || !self.state.needs_recreate {
+            return Ok(());
+        }
+        let now = std::time::Instant::now();
+        if self
+            .state
+            .last_recreate
+            .is_some_and(|t| now.duration_since(t) < std::time::Duration::from_millis(500))
+        {
+            return Ok(());
+        }
+        self.state.last_recreate = Some(now);
+        self.state.needs_recreate = false;
+        info!("recreating barrier layer strip");
+        create_strip(&mut self.state, &self.qh)?;
+        // Flush configure if ready; Closed sets needs_recreate again.
+        self.event_queue
+            .roundtrip(&mut self.state)
+            .map_err(|e| format!("recreate: {e}"))?;
+        if !self.state.configured {
+            self.state.needs_recreate = true;
+        }
+        Ok(())
     }
 
     pub fn set_active(&mut self, active: bool) -> Result<(), String> {
@@ -199,6 +261,36 @@ impl EdgeBarrier {
 
     pub fn primary_size(&self) -> (i32, i32) {
         (self.state.primary_w, self.state.primary_h)
+    }
+}
+
+fn apply_best_output_size(state: &mut BarrierState) {
+    // Prefer the largest advertised output. Prefer config primary when it is
+    // clearly the physical desktop (e.g. 5120×2160) and the compositor only
+    // reported a half-scale logical size mid-startup.
+    if let Some((w, h)) = state
+        .output_sizes
+        .iter()
+        .copied()
+        .max_by_key(|(w, h)| (*w as i64) * (*h as i64))
+    {
+        if w > 0 && h > 0 {
+            // Keep the larger of config vs compositor so a late scale-0.5
+            // geometry does not shrink the strip before configure.
+            let use_w = w.max(state.primary_w);
+            let use_h = h.max(state.primary_h);
+            if use_w != state.primary_w || use_h != state.primary_h {
+                info!(
+                    w = use_w,
+                    h = use_h,
+                    compositor_w = w,
+                    compositor_h = h,
+                    "barrier: using output size"
+                );
+            }
+            state.primary_w = use_w;
+            state.primary_h = use_h;
+        }
     }
 }
 
@@ -545,8 +637,16 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for BarrierState {
                 }
             }
             zwlr_layer_surface_v1::Event::Closed => {
-                warn!("barrier layer surface closed");
+                warn!("barrier layer surface closed — will recreate");
+                // Drop dead proxies so recreate starts clean.
+                if let Some(ls) = state.layer_surface.take() {
+                    ls.destroy();
+                }
+                if let Some(s) = state.surface.take() {
+                    s.destroy();
+                }
                 state.configured = false;
+                state.needs_recreate = true;
             }
             _ => {}
         }
