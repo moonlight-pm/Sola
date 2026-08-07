@@ -53,6 +53,10 @@ ask the human.
 |------|------|
 | `AGENTS.md` | Contributor + agent guide |
 | `CURRENT.md` | Only living session handoff |
+| `INSTALL.md` | Shape 1 colleague install (shipped-path ops; tarball may 404) |
+| `nix/` | NixOS module + `nix/image/` ISO/qcow sources |
+| `crates/sola-install` | Installer wizard binary |
+| `var/images/` | Local ISO/qcow products (gitignored) |
 | `apocrypha/` | Legacy WebView stack — not built |
 | `.grok/skills/` | `sola-session-start`, `sola-progress-docs` |
 | `.grok/rules/active-work.md` | **Pointer** to `CURRENT.md` (auto-load reminder) |

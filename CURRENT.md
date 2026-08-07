@@ -9,35 +9,34 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-06 (distribution — timezone US/Mountain; ISO path next)
+**As of:** 2026-08-06 (`naturalethic/distribution` → **master**)
 
 ---
 
 ## Now
 
-1. **Distribution installer (active)** — branch `naturalethic/distribution`.  
-   - **Product:** ISO → flower splash → wizard (username + disk) → install →
-     reboot → **loginless Sola** (US EN, Mac kbd, hostname `sola`, no password;
-     timezone **US/Mountain** interim, auto-detect later).  
+1. **Distribution follow-through (next when resumed)** — freeze + plan still
+   open for remaining bars, not a separate branch:  
    - Freeze: [`docs/specs/2026-08-05-distribution-image-design.md`](docs/specs/2026-08-05-distribution-image-design.md)  
    - Plan: [`docs/plans/2026-08-05-distribution-qemu-image-plan.md`](docs/plans/2026-08-05-distribution-qemu-image-plan.md)  
-   - **Harness:** `vm install` / `vm run` (installed if present else installer).  
-   - **Dogfood OK:** QEMU vdb install → loginless Sola.  
-   - **ISO:** `cargo make iso build` / `iso run` scaffolded; dogfood pending.  
-2. **Progress docs** — keep this file + `docs/capabilities.md` honest when
-   shipping; do not reintroduce a second handoff.  
+   - **Done on master:** qcow harness, flower Plymouth, `sola-install` wizard,
+     real disk apply, loginless desktop, `cargo make vm` / `iso build|run`.  
+   - **Still open:** QEMU **ISO** e2e (boot ISO → erase → reboot → Sola);
+     timezone auto-detect (interim **US/Mountain** / `America/Denver`);
+     Shape 1 release tarball refresh (v0.1.1 URL 404); operator manual page
+     when ISO is dogfoodable.  
+2. **Progress docs** — keep this file + `docs/capabilities.md` honest; no
+   second handoff.  
 3. **Follow-ups (unordered backlog, not priority):**  
    - Optional per-app default sizes in `window_settings`; dogfood float chrome  
-   - Permanent `/dev/input` ACL or udev for sola-kvm (avoid per-boot setfacl)  
-   - Permission fan-out UX when TUI + sola-agent both attached (ask mode) — **D1**  
-   - Remaining worktree hygiene: `libei-portal` archive/cleanup  
+   - Permanent `/dev/input` ACL or udev for sola-kvm — **D2**  
+   - Permission fan-out UX when TUI + sola-agent both attached — **D1**  
+   - Worktree hygiene: `libei-portal` archive/cleanup  
    - sola-preview: zoom, image clipboard copy, `solactl --region`  
    - sola-mail: inline rich-text link hits (vs chips), multiline polish  
-   - Clipboard follow-ups (native pasteboard, images, larger caps) —
+   - Clipboard follow-ups —
      [`docs/specs/2026-07-30-sola-kvm-clipboard-design.md`](docs/specs/2026-07-30-sola-kvm-clipboard-design.md)  
-   - Optional: further Mac warp path cost for sola-kvm  
-   - Optional: true HID scroll path (virtual HID) if CG velocity gain not enough  
-   - Shape 1 release tarball refresh (published v0.1.1 URL currently 404)
+   - Optional: Mac warp path cost; true HID scroll if CG velocity gain not enough  
 
 **Explicit holds:** none.
 
@@ -48,16 +47,14 @@ warning cleanups; worktree hygiene the user asks for.
 
 ## Known dogfood state
 
-| | **primary (local)** |
-|--|---------------------|
-| Role | Daily dogfood desktop |
-| Launch | Physical TTY → `/opt/sola/bin/sola` (no display manager) |
-| Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` |
-| Bus state | `~/.config/sola/state.toml` (sticky topics) |
-| Compositor | River via `sola-river` |
-| UI stack | Iced 0.14 + `sola-kit` (not WebView) |
-| Grok agent | Shared leader (`grok-leader.service` / `~/.grok/leader.sock`) |
-| Branch | `naturalethic/distribution` (dist image work); else `master` + `.worktrees/` |
+| | **primary (local)** | **dist (QEMU)** |
+|--|---------------------|-----------------|
+| Role | Daily dogfood desktop | Installer / image engineering |
+| Launch | Physical TTY → `/opt/sola/bin/sola` | `cargo make vm run` / `iso run` |
+| Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
+| Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
+| Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
+| Branch | **`master`** | Feature work in `.worktrees/` |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install. User installs and smokes.
@@ -67,7 +64,10 @@ permission for that install. User installs and smokes.
 ```bash
 cargo make build
 RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
-tail -100 /opt/sola/log/sola.log
+
+# Distribution (you own `cargo build --release` first)
+cargo make vm build|install|run
+cargo make iso build|run          # products under var/images/
 ```
 
 ---
@@ -84,8 +84,9 @@ tail -100 /opt/sola/log/sola.log
 | Browser engines | **WPE primary**, CEF parallel; no `accelerated_osr` crate feature |
 | Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents |
 | Worktrees | Feature code only under `.worktrees/`; approval = merge + cleanup |
-| Install | Local `/opt/sola/bin/`; never install without explicit permission |
-| Dist installer v1 | ISO primary; wizard = username + disk; US EN + Mac kbd; no password; loginless → Sola; flower splash |
+| Dev install | Local `/opt/sola/bin/`; never install without explicit permission |
+| Dist installer v1 | **ISO primary**; wizard = username + disk; US EN + Mac kbd; no password; loginless → Sola; flower splash; interim TZ US/Mountain |
+| Dist stage | Image builds stage from **`target/release` only** (never `/opt/sola/bin`) |
 
 ---
 
@@ -109,15 +110,11 @@ Full history is git. Keep this list short (last few merges only).
 
 | Slice | Note |
 |-------|------|
-| dist real apply | QEMU vdb install → loginless Sola; `vm install`; sola-desktop |
-| dist image + splash | `sola-install`, `cargo make vm`, Plymouth clockwise cyan flower |
-| initial-window-state | Default-float + kit CSD on monitor/settings/preview/mail/agent/terminal/kit/browser |
-| kvm Mac scroll velocity gain | CG pixel inject + rate ramp (`scroll_accel`); dogfooded on ember |
-| progress-docs practice | Spine: CURRENT, capabilities, architecture, roadmap, open-questions |
-| build warning cleanup | Dead code / unused surface trimmed across agent, mail, terminal |
-| bus-restart-output-geometry | Menubar stays framed across bus restart |
-| sola-mail kit | IMAP/SMTP worker, three-pane UI, Helium open, IDLE refresh |
-| preview-enhancements | Header + Copy path |
+| **distribution → master** | ISO scaffold, qcow e2e install, splash, loginless desktop |
+| initial-window-state | Default-float + kit CSD on first-party apps |
+| kvm Mac scroll velocity gain | CG pixel inject + rate ramp |
+| progress-docs practice | CURRENT / capabilities / architecture spine |
+| settings Applications list-detail | Compact master-detail panel |
 
 ---
 
@@ -127,6 +124,7 @@ Full history is git. Keep this list short (last few merges only).
 - Architecture: [`docs/architecture.md`](docs/architecture.md)  
 - Roadmap: [`docs/roadmap.md`](docs/roadmap.md)  
 - Open questions: [`docs/open-questions.md`](docs/open-questions.md)  
-- Specs: [`docs/specs/`](docs/specs/)  
-- Plans: [`docs/plans/`](docs/plans/)  
-- Product manual: [`docs/manual/`](docs/manual/)  
+- Dist freeze: [`docs/specs/2026-08-05-distribution-image-design.md`](docs/specs/2026-08-05-distribution-image-design.md)  
+- Dist plan: [`docs/plans/2026-08-05-distribution-qemu-image-plan.md`](docs/plans/2026-08-05-distribution-qemu-image-plan.md)  
+- Shape 1 ops: [`INSTALL.md`](INSTALL.md)  
+- Product manual: [`docs/manual/`](docs/manual/) (fonts only for dist today)  

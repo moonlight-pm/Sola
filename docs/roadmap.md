@@ -67,16 +67,15 @@ kvm input ACL permanence; preview zoom/clipboard.
 
 ## Phase 4 — Distribution & packaging
 
-**Status: partial / active**
+**Status: partial** (merged to master 2026-08-06; not fully closed)
 
 - Shape 1: NixOS module + release tarball (`INSTALL.md`, `services.sola`)  
-- Engineering harness: qcow2 + `cargo make vm`  
-- **Product aim:** installer ISO — flower splash, username+disk wizard,
-  loginless Sola ([freeze](specs/2026-08-05-distribution-image-design.md))  
+- Engineering harness: qcow + `cargo make vm` — **splash → install → loginless Sola** dogfooded  
+- Installer ISO scaffold: `cargo make iso build|run` + shared live stack  
+- Product freeze: [distribution-image](specs/2026-08-05-distribution-image-design.md)  
 
-**Remaining:** ISO pipeline; polish; Shape 1 release refresh. QEMU harness
-dogfoods splash → install → loginless Sola. Fonts story under
-[manual/distribution](manual/distribution.md).
+**Remaining:** ISO e2e dogfood; timezone auto-detect; Shape 1 tarball refresh;
+ISO operator manual when dogfoodable. Fonts: [manual/distribution](manual/distribution.md).
 
 ---
 

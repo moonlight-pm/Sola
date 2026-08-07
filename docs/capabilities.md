@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-06 (dist QEMU install→Sola dogfood; primary desktop still local TTY)
+**As of:** 2026-08-06 (distribution merged to master; ISO e2e still open)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -30,9 +30,10 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | kit | sola-kit components + storybook | partial | [kit](specs/2026-04-30-sola-kit-design.md), graphite DS | storybook + apps | Storybook pages lag Open Design; not every control OD-parity | no |
 | install-make | cargo make build/install to /opt/sola | shipped | — | local | Install requires human permission | yes |
 | fonts-dist | System fonts only; distribution notes | shipped | [manual/distribution](manual/distribution.md) | local | Optional families must be installed by hand | yes |
-| dist-shape1 | NixOS module + release tarball install | partial | [INSTALL.md](../INSTALL.md), freeze [distribution-image](specs/2026-08-05-distribution-image-design.md) | colleagues historically | Published tarball URL 404 for v0.1.1; needs release refresh; not a fresh-machine path | partial |
-| dist-vm-image | QEMU qcow harness (`cargo make vm`) | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md), [plan](plans/2026-08-05-distribution-qemu-image-plan.md) | install+boot target OK | `vm install` wipes vdb; `vm run` boots installed if present else installer; not product media | no |
-| dist-installer | ISO + flower splash + kit wizard + disk install → loginless Sola | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) | QEMU qcow e2e; ISO scaffold | Splash/apply/desktop on vdb; ISO build/run wired, ISO dogfood pending; timezone America/Denver interim | no |
+| dist-shape1 | NixOS module + release tarball install | partial | [INSTALL.md](../INSTALL.md), [freeze](specs/2026-08-05-distribution-image-design.md) | colleagues historically | Published tarball URL **404** for v0.1.1; needs release refresh; not a fresh-machine path | partial |
+| dist-vm-image | QEMU qcow harness (`cargo make vm`) | shipped | [freeze](specs/2026-08-05-distribution-image-design.md), [plan](plans/2026-08-05-distribution-qemu-image-plan.md) | QEMU install+boot target | Engineering only — not product media; stage always `target/release` | no |
+| dist-installer | Flower splash + kit wizard + disk apply → loginless Sola | partial | [freeze](specs/2026-08-05-distribution-image-design.md), [plan](plans/2026-08-05-distribution-qemu-image-plan.md) | QEMU **vdb** e2e on master | **Gaps:** ISO e2e dogfood; TZ auto-detect (interim US/Mountain); polish; no `docs/manual/` ISO guide yet | no |
+| dist-iso | Installer ISO build/run (`cargo make iso`) | partial | [freeze](specs/2026-08-05-distribution-image-design.md), [plan](plans/2026-08-05-distribution-qemu-image-plan.md) | build/run scaffold | Same live stack as qcow; multi‑GiB; **Gaps:** signed-off ISO→erase→reboot→Sola pass | no |
 
 ---
 
@@ -93,7 +94,8 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| Progress docs | 2026-08-05: CURRENT + capabilities + architecture spine adopted |
-| Build hygiene | Agent/mail/terminal dead-code warning cleanup |
-| Bus restart | Output geometry / menubar frame survives bus reconnect |
+| **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |
+| Float defaults | Unassigned windows default-float + kit CSD on first-party apps |
+| Progress docs | 2026-08-05: CURRENT + capabilities + architecture spine |
+| Bus restart | Menubar frame survives bus reconnect |
 | Mail | Kit-native client on master |

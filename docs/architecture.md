@@ -69,8 +69,8 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Image preview / selection capture handoff |
 | `crates/solactl` | CLI helpers |
-| `crates/sola-install` | Installer wizard UI (kit; dry-run until real apply) |
-| `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm**) |
+| `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
+| `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
 | `crates/sola-assets` | Vendored icons/assets |
 | `nix/module.nix` | NixOS module (`services.sola`) — Shape 1 + images |
 | `nix/sola.nix` | Package from GitHub release tarball |
@@ -91,8 +91,8 @@ to the bus and tolerate compositor restarts.
 | Compositor | External **River**; bridge **sola-river** |
 | IPC control plane | **Sola Bus** over a Unix socket |
 | Surfaces / input | Wayland protocols via River |
-| Launch | User starts `/opt/sola/bin/sola` from a **physical TTY** |
-| Binaries | Install to `/opt/sola/bin/` |
+| Launch | Dev: physical TTY → `/opt/sola/bin/sola`. Dist image: loginless `sola-desktop` → Sola |
+| Binaries | Dev install `/opt/sola/bin/`; images stage from `target/release` |
 | Logs | `/opt/sola/log/` (and tracing to TTY when run interactively) |
 | Persistent stickies | Bus writes `~/.config/sola/state.toml` |
 | Agent overlay | `~/.config/sola/agent/overlay.json` (pins, titles, sidebar width) |
@@ -153,22 +153,23 @@ cargo make iso run            # QEMU: ISO + blank disk
 
 Alias: `cargo make` → `cargo run -q -p sola-make --` (see `.cargo/config.toml`).
 
-### Distribution (as-built)
+### Distribution (as-built, post-merge)
 
 | Path | What |
 |------|------|
-| Shape 1 | Flake `packages.sola` + `nixosModules.default`; colleague hosts import module |
-| Shape 2 | Flake `nixosConfigurations.sola-vm` + `packages.sola-vm-qcow2`; `SOLA_VM_STAGE` + `--impure` for local stage |
-| Stage source | Always `target/release` (this tree); never `/opt/sola/bin`; guest ELFs patchelf’d for image glibc |
-| Image profile | `nix/image/configuration.nix` — quiet boot, Plymouth theme `sola`, cage kiosk → `sola-install` |
-| Splash | `nix/image/plymouth/` — 5 frames, clockwise cyan shade gradient on petals |
-| Target system | `nixosConfigurations.sola-installed` — quiet boot + loginless sola-desktop |
-| Apply | `sola-install-apply` (sudo): GPT ESP+root, `nixos-install --system`, install-user |
-| Desktop seat | `sola-desktop` unit: ensure user → `runuser` → `/opt/sola/bin/sola` |
-| Local products | `var/images/sola-vm.qcow2`, overlay, `sola-install-target.qcow2` (never committed) |
-| vm run | Boot installed target if present; else live installer + vdb |
-| vm install | Wipe target qcow + boot live installer |
-| Product ISO | `packages.sola-iso` / `cargo make iso build` → `var/images/sola.iso` |
+| Shape 1 | Flake `packages.sola` + `nixosModules.default`; colleague ops in root [`INSTALL.md`](../INSTALL.md) |
+| Shape 2 (harness) | `nixosConfigurations.sola-vm` + `packages.sola-vm-qcow2`; `SOLA_VM_STAGE` + impure stage |
+| Shape 3 (product) | `nixosConfigurations.sola-iso` + `packages.sola-iso` → `var/images/sola.iso` |
+| Stage source | Always **`target/release`** (this tree); never `/opt/sola/bin`; guest ELFs patchelf’d |
+| Live stack | Quiet boot + Plymouth `sola` + cage kiosk → `sola-install` (`live-common` shared by qcow + ISO) |
+| Splash | `nix/image/plymouth/` — flower alpha mask, cyan ripple / clockwise petal walk |
+| Target system | `nixosConfigurations.sola-installed` — quiet boot + loginless `sola-desktop` |
+| Apply | `sola-install-apply`: GPT ESP+root, `nixos-install --system`, user (no password), autologin |
+| Policy v1 | US EN, Mac keyboard, hostname `sola`, interim TZ US/Mountain, wizard = username + disk |
+| Desktop seat | `sola-desktop`: ensure user → `runuser` → `/opt/sola/bin/sola` |
+| Local products | `var/images/` qcow/ISO/target disks (gitignored) |
+| `cargo make vm` | `build` / `install` (wipe target) / `run` (installed if present else installer) |
+| `cargo make iso` | `build` / `run` (QEMU: `-cdrom` + blank virtio disk) |
 
 ---
 

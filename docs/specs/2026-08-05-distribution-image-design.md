@@ -1,12 +1,13 @@
 **Date:** 2026-08-05  
 **Status:** target (freeze)  
 **Implementation:** partial  
-**Dogfood:** QEMU — splash → wizard → erase vdb → `vm run` → loginless Sola  
+**Dogfood:** QEMU qcow — splash → wizard → erase vdb → `vm run` → loginless Sola (on master). ISO build/run wired; ISO e2e dogfood pending.  
 **Gaps:**
-- No ISO output yet (harness is qcow + second disk)  
-- Timezone auto-detect not done (fixed America/Denver for now)  
+- QEMU ISO path e2e (boot ISO → erase → reboot target → Sola) not signed off  
+- Timezone auto-detect not done (interim fixed US/Mountain / `America/Denver`)  
 - Installer/desktop polish  
-- Shape 1 release tarball URL 404  
+- Shape 1 release tarball URL 404 (v0.1.1)  
+- Operator product manual for ISO install (hold until ISO dogfoodable)  
 **As-built:** [../capabilities.md](../capabilities.md) · [../architecture.md](../architecture.md)
 
 # Distribution images — target design
@@ -87,13 +88,12 @@ path; the session starts Sola as the chosen user.
 
 | Shape | Audience | Mechanism | Status |
 |-------|----------|-----------|--------|
-| **1 — Colleague install** | Existing NixOS host | Tarball + `services.sola.enable` | Partial (release refresh needed) |
-| **2 — Engineering harness** | Devs | Preinstalled qcow2 + `cargo make vm` | Scaffold works; **not** the product boot story |
-| **3 — Installer media (product)** | Fresh machine | **ISO** (primary aim): live env → wizard → disk install | Target |
+| **1 — Colleague install** | Existing NixOS host | Tarball + `services.sola.enable` | Partial (release refresh needed; see `INSTALL.md`) |
+| **2 — Engineering harness** | Devs | Live installer qcow + target disk + `cargo make vm` | **Works** for splash/wizard/apply e2e; **not** product media |
+| **3 — Installer media (product)** | Fresh machine | **ISO** (primary aim): live env → wizard → disk install | **Scaffold on master** (`cargo make iso`); e2e dogfood pending |
 
-**ISO is the product goal.** A temporary first-boot OOBE on the qcow harness
-is allowed only to dogfood splash + wizard + apply logic before the live ISO
-path is wired — not a shipping mode.
+**ISO is the product goal.** Qcow harness dogfoods splash + wizard + apply;
+shipping path remains ISO (not getty polish on the harness).
 
 ---
 
@@ -133,9 +133,9 @@ details; they must match `services.sola` runtime requirements.
 | `nix/sola.nix` | Package from release tarball |
 | `nix/image/` | Image / ISO Nix expressions, Plymouth theme, live config |
 | `nix/image/sola-from-stage.nix` | Local stage package for harness builds |
-| `crates/sola-install` (planned) | Kit-native installer UI + apply orchestration |
+| `crates/sola-install` | Kit-native installer UI + apply orchestration |
 | `var/images/` | Local products only (gitignored) |
-| `cargo make vm …` / later `cargo make iso …` | xtask — not ad-hoc `scripts/` |
+| `cargo make vm …` / `cargo make iso …` | xtask — not ad-hoc `scripts/` |
 
 ---
 
@@ -182,3 +182,4 @@ Evolve toward:
 | 2026-08-06 | Wizard username prefill `sola` (selected for replace-on-type) |
 | 2026-08-06 | QEMU e2e: vdb apply + `vm run` boots installed when present |
 | 2026-08-06 | Timezone interim fixed to US/Mountain (`America/Denver`) until auto-detect |
+| 2026-08-06 | Branch `naturalethic/distribution` merged to **master** |

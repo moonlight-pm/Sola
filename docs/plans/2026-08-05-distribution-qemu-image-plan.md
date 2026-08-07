@@ -1,14 +1,14 @@
 # Plan — Distribution installer (ISO-first)
 
-**Status:** open  
+**Status:** open (partial — branch merged to master 2026-08-06)  
 **Freeze:** [../specs/2026-08-05-distribution-image-design.md](../specs/2026-08-05-distribution-image-design.md)  
 **Focus:** root [`CURRENT.md`](../../CURRENT.md)
 
 Product goal: **bootable ISO** → brand splash → kit wizard (username + disk) →
 install → reboot → **loginless Sola desktop**.
 
-The existing qcow harness stays for packaging/QEMU plumbing; do not invest in
-getty polish.
+Qcow harness dogfoods splash + apply on master; remaining bar is **ISO e2e**.
+Do not invest in getty polish.
 
 ## Phase 0 — Harness (done)
 
@@ -35,7 +35,7 @@ getty polish.
 - [x] Installer kiosk (`installer-session.nix` + cage + systemd)  
 - [x] QEMU dogfood: flower splash visible + uniform clockwise walk; kiosk up  
 - [x] Same splash modules on installed system (`installed-system` + quiet-boot)  
-- [ ] ISO live env uses the same modules
+- [x] ISO live env reuses the same modules (`live-common` + iso.nix)
 
 ## Phase 3 — Live ISO + disk install
 
@@ -47,7 +47,8 @@ getty polish.
 - [x] Flake `nixosConfigurations.sola-iso` + `packages.sola-iso`  
 - [x] Shared live modules (`live-common`, quiet-boot, installer-session, install-tools)  
 - [x] `cargo make iso build` / `iso run` (QEMU: `-cdrom` + blank virtio disk)  
-- [ ] QEMU dogfood: ISO → erase disk → reboot target → Sola  
+- [ ] QEMU dogfood **signed off:** ISO → erase disk → reboot target → Sola  
+
 
 ### ISO approach (agreed direction)
 

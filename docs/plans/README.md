@@ -15,4 +15,6 @@ Not freezes (those are [`../specs/`](../specs/)). Not the capability matrix.
 
 ## Active
 
-- [2026-08-05-distribution-qemu-image-plan.md](2026-08-05-distribution-qemu-image-plan.md) — ISO installer (qcow + splash dogfood; apply/ISO next)
+- [2026-08-05-distribution-qemu-image-plan.md](2026-08-05-distribution-qemu-image-plan.md) —
+  distribution installer (qcow e2e **done** on master; **ISO e2e** + TZ auto +
+  Shape 1 refresh still open)

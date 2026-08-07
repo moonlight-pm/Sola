@@ -96,9 +96,12 @@ crates/
   sola-mail/           # Kit-native mail client
   sola-kvm/            # KVM / input bridge
   sola-preview/        # Image preview / selection capture
+  sola-install/        # Kit installer wizard (image media)
   solactl/             # CLI helpers
+nix/                   # NixOS module (Shape 1) + image/ISO profiles
 apocrypha/             # Reference-only: legacy WebView stack (not built)
 CURRENT.md             # Living session focus (only handoff)
+INSTALL.md             # Shape 1 colleague install (NixOS module + tarball)
 docs/
   README.md            # Docs map + session boot
   progress-model.md    # How progress docs work
