@@ -3,11 +3,19 @@
 //! Order: `wl-copy`/`wl-paste` (most reliable under River) → `arboard`.
 //! All CLI helpers are hard-capped so a hung compositor clipboard cannot
 //! stall the clip worker (which would block Acks and kill the TCP peer).
+//!
+//! **Stuck helpers:** `wl-copy` forks a background data-source process. If we
+//! abandon a write mid-flight (or the compositor wedges the offer), that
+//! daemon can linger and block future offers. We:
+//! 1. Put each CLI spawn in its own process group and SIGKILL the whole group
+//! 2. Use timeouts that fit **inside** the wall-clock budget (clear + write)
+//! 3. Reap leftover `wl-copy` processes after a timed-out op before the next write
 
 use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -18,11 +26,17 @@ static WL_COPY: OnceLock<Option<PathBuf>> = OnceLock::new();
 static WL_PASTE: OnceLock<Option<PathBuf>> = OnceLock::new();
 /// Bumped on every write so abandoned helper threads don't clobber a newer offer.
 static WRITE_GEN: AtomicU64 = AtomicU64::new(0);
+/// Set when a platform op is abandoned mid-flight — next write reaps orphans.
+static NEED_REAP: AtomicBool = AtomicBool::new(false);
 
-/// Hard cap for any clipboard helper (read or write).
-/// Leave-time compositor contention often makes `wl-copy` take 1–3s; budget
-/// enough room for success while still bounding a hard hang.
-const CLI_TIMEOUT: Duration = Duration::from_millis(5000);
+/// Hard cap for a single clipboard **write** (after clear).
+const WRITE_TIMEOUT: Duration = Duration::from_millis(4000);
+/// Cap for `wl-copy --clear` (should be fast; don't burn the whole budget).
+const CLEAR_TIMEOUT: Duration = Duration::from_millis(800);
+/// Cap for clipboard **read** (`wl-paste`).
+const READ_TIMEOUT: Duration = Duration::from_millis(4000);
+/// Outer wall-clock budget for the whole op (clear + write + margin).
+const OP_BUDGET: Duration = Duration::from_millis(5500);
 
 /// One-shot probe at clip worker start — logs what works.
 pub fn probe_and_log() {
@@ -124,14 +138,45 @@ fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Wait for a child with a hard deadline; kill on timeout.
-///
-/// Uses `try_wait` polling instead of blocking `wait()` so a hung compositor
-/// cannot pin the clip worker forever (that was killing Mac→Linux clipboard).
-fn wait_cli(mut child: Child, label: &str) -> Option<Output> {
+/// Spawn `cmd` in a **new process group** so we can SIGKILL the whole tree
+/// (timeout → wl-copy → any double-fork that stayed in the group).
+fn spawn_group(mut cmd: Command) -> std::io::Result<Child> {
+    // SAFETY: setpgid(0,0) only affects the child right after fork, before exec.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd.spawn()
+}
+
+/// SIGKILL the process group headed by `child`, then reap.
+fn kill_group(child: &mut Child, label: &str) {
+    let pid = child.id() as i32;
+    if pid > 1 {
+        // Negative pid = process group.
+        // SAFETY: kill(-pgid) is the standard group-kill interface.
+        let rc = unsafe { libc::kill(-pid, libc::SIGKILL) };
+        if rc != 0 {
+            let e = std::io::Error::last_os_error();
+            // ESRCH = already gone — fine.
+            if e.raw_os_error() != Some(libc::ESRCH) {
+                warn!(%e, label, pid, "clip kill process group failed; trying child only");
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Wait for a child with a hard deadline; kill the **process group** on timeout.
+fn wait_cli(mut child: Child, label: &str, limit: Duration) -> Option<Output> {
     let mut stdout_pipe = child.stdout.take();
     let mut stderr_pipe = child.stderr.take();
-    let deadline = Instant::now() + CLI_TIMEOUT;
+    let deadline = Instant::now() + limit;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -155,19 +200,43 @@ fn wait_cli(mut child: Child, label: &str) -> Option<Output> {
             Ok(None) => {
                 warn!(
                     label,
-                    timeout_ms = CLI_TIMEOUT.as_millis() as u64,
-                    "clip CLI hung — killing"
+                    timeout_ms = limit.as_millis() as u64,
+                    "clip CLI hung — killing process group"
                 );
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_group(&mut child, label);
+                NEED_REAP.store(true, Ordering::SeqCst);
                 return None;
             }
             Err(e) => {
                 warn!(%e, label, "clip child try_wait failed");
-                let _ = child.kill();
+                kill_group(&mut child, label);
+                NEED_REAP.store(true, Ordering::SeqCst);
                 return None;
             }
         }
+    }
+}
+
+/// Reap leftover `wl-copy` data-source processes for this user.
+///
+/// Safe on the desk path: sola-kvm is the only long-lived auto-clipboard
+/// client; a wedged offer blocks all subsequent sync until cleared.
+fn reap_orphaned_wl_copy() {
+    if !NEED_REAP.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let uid = unsafe { libc::getuid() };
+    // pkill -x matches exact process name; -u scopes to our uid.
+    let status = Command::new("pkill")
+        .args(["-u", &uid.to_string(), "-x", "wl-copy"])
+        .status();
+    match status {
+        Ok(s) if s.success() => info!("clip reaped orphaned wl-copy after prior hang"),
+        Ok(s) if s.code() == Some(1) => {
+            // No matches — fine.
+        }
+        Ok(s) => warn!(?s, "clip pkill wl-copy unexpected status"),
+        Err(e) => warn!(%e, "clip pkill wl-copy failed"),
     }
 }
 
@@ -179,19 +248,27 @@ fn arboard_safe() -> bool {
 
 /// Run a clipboard op on a helper thread with a hard wall-clock budget.
 /// Even if `wl-copy`/`wl-paste` ignore signals, the clip worker stays live.
-fn with_cli_budget<T: Send + 'static>(label: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+fn with_cli_budget<T: Send + 'static>(
+    label: &'static str,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     let (tx, rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
         let _ = tx.send(f());
     });
-    match rx.recv_timeout(CLI_TIMEOUT + Duration::from_millis(200)) {
+    match rx.recv_timeout(OP_BUDGET) {
         Ok(v) => Some(v),
         Err(_) => {
+            NEED_REAP.store(true, Ordering::SeqCst);
             warn!(
                 label,
-                timeout_ms = (CLI_TIMEOUT + Duration::from_millis(200)).as_millis() as u64,
-                "clip platform op exceeded budget — abandoning (helper may still run)"
+                timeout_ms = OP_BUDGET.as_millis() as u64,
+                "clip platform op exceeded budget — reaping orphans on next write"
             );
+            // Best-effort reap now (helper may still hold a wedged wl-copy).
+            reap_orphaned_wl_copy();
+            // Flag again so the next write also reaps (this call cleared NEED_REAP).
+            NEED_REAP.store(true, Ordering::SeqCst);
             None
         }
     }
@@ -299,10 +376,11 @@ pub fn clear() -> bool {
 
 fn read_text_cli() -> Option<String> {
     let bin = resolve_wl("wl-paste")?;
+    let secs = read_timeout_secs();
     let mut cmd = Command::new(timeout_bin());
     cmd.args([
         "--signal=KILL",
-        "5",
+        &secs,
         bin.to_str().unwrap_or("wl-paste"),
         "-n",
         "-t",
@@ -311,14 +389,14 @@ fn read_text_cli() -> Option<String> {
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
     pass_wayland_env(&mut cmd);
-    let child = match cmd.spawn() {
+    let child = match spawn_group(cmd) {
         Ok(c) => c,
         Err(e) => {
             warn!(%e, "wl-paste spawn failed");
             return None;
         }
     };
-    let out = wait_cli(child, "wl-paste")?;
+    let out = wait_cli(child, "wl-paste", READ_TIMEOUT)?;
     if !out.status.success() && out.stdout.is_empty() {
         let err = String::from_utf8_lossy(&out.stderr);
         info!(
@@ -356,6 +434,24 @@ fn timeout_bin() -> PathBuf {
     PathBuf::from("timeout")
 }
 
+fn secs_ceil(d: Duration) -> String {
+    // timeout(1) wants whole seconds; ceil so 800ms → 1, 4001ms → 5.
+    let s = d.as_millis().div_ceil(1000).max(1);
+    s.to_string()
+}
+
+fn read_timeout_secs() -> String {
+    secs_ceil(READ_TIMEOUT)
+}
+
+fn write_timeout_secs() -> String {
+    secs_ceil(WRITE_TIMEOUT)
+}
+
+fn clear_timeout_secs() -> String {
+    secs_ceil(CLEAR_TIMEOUT)
+}
+
 fn write_text_cli(text: &str, epoch: u64) -> bool {
     let Some(bin) = resolve_wl("wl-copy") else {
         return false;
@@ -364,14 +460,18 @@ fn write_text_cli(text: &str, epoch: u64) -> bool {
         info!(epoch, "clip write_cli skipped (superseded before start)");
         return false;
     }
+
+    // If a prior op timed out, kill any leftover data-source daemons first.
+    reap_orphaned_wl_copy();
+
     // A stuck previous `wl-copy` data-source process can block new offers for
-    // tens of seconds. Clear first (fast) then set the new payload.
+    // tens of seconds. Clear first (fast budget) then set the new payload.
     {
         let mut clear = Command::new(timeout_bin());
         clear
             .args([
                 "--signal=KILL",
-                "1",
+                &clear_timeout_secs(),
                 bin.to_str().unwrap_or("wl-copy"),
                 "--clear",
             ])
@@ -379,8 +479,8 @@ fn write_text_cli(text: &str, epoch: u64) -> bool {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         pass_wayland_env(&mut clear);
-        if let Ok(child) = clear.spawn() {
-            let _ = wait_cli(child, "wl-copy --clear");
+        if let Ok(child) = spawn_group(clear) {
+            let _ = wait_cli(child, "wl-copy --clear", CLEAR_TIMEOUT);
         }
     }
     if WRITE_GEN.load(Ordering::SeqCst) != epoch {
@@ -393,7 +493,7 @@ fn write_text_cli(text: &str, epoch: u64) -> bool {
     let mut cmd = Command::new(timeout_bin());
     cmd.args([
         "--signal=KILL",
-        "5",
+        &write_timeout_secs(),
         bin.to_str().unwrap_or("wl-copy"),
         "-t",
         "text/plain;charset=utf-8",
@@ -402,7 +502,7 @@ fn write_text_cli(text: &str, epoch: u64) -> bool {
     .stdout(Stdio::null())
     .stderr(Stdio::piped());
     pass_wayland_env(&mut cmd);
-    let mut child = match cmd.spawn() {
+    let mut child = match spawn_group(cmd) {
         Ok(c) => c,
         Err(e) => {
             warn!(%e, path = %bin.display(), "wl-copy (via timeout) spawn failed");
@@ -412,12 +512,12 @@ fn write_text_cli(text: &str, epoch: u64) -> bool {
     if let Some(mut stdin) = child.stdin.take() {
         if let Err(e) = stdin.write_all(text.as_bytes()) {
             warn!(%e, "wl-copy stdin write failed");
-            let _ = child.kill();
+            kill_group(&mut child, "wl-copy");
             return false;
         }
         // Drop stdin so wl-copy sees EOF and the parent can exit.
     }
-    match wait_cli(child, "wl-copy") {
+    match wait_cli(child, "wl-copy", WRITE_TIMEOUT) {
         Some(out) if out.status.success() => {
             if WRITE_GEN.load(Ordering::SeqCst) != epoch {
                 info!(epoch, "clip write_cli discarded (superseded after wl-copy)");
@@ -453,5 +553,23 @@ fn pass_wayland_env(cmd: &mut Command) {
     // Some compositors need this for data-device.
     if let Ok(v) = std::env::var("XDG_CURRENT_DESKTOP") {
         cmd.env("XDG_CURRENT_DESKTOP", v);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secs_ceil_rounds_up() {
+        assert_eq!(secs_ceil(Duration::from_millis(800)), "1");
+        assert_eq!(secs_ceil(Duration::from_secs(4)), "4");
+        assert_eq!(secs_ceil(Duration::from_millis(4001)), "5");
+    }
+
+    #[test]
+    fn op_budget_covers_clear_plus_write() {
+        // Outer budget must exceed clear + write poll caps (not equal).
+        assert!(OP_BUDGET > CLEAR_TIMEOUT + WRITE_TIMEOUT);
     }
 }
