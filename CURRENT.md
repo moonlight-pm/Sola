@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-06 (distribution — QEMU install → loginless Sola dogfood OK)
+**As of:** 2026-08-06 (distribution — timezone US/Mountain; ISO path next)
 
 ---
 
@@ -17,16 +17,13 @@ Do not invent product policy.
 
 1. **Distribution installer (active)** — branch `naturalethic/distribution`.  
    - **Product:** ISO → flower splash → wizard (username + disk) → install →
-     reboot → **loginless Sola** (US English, Mac keyboard, hostname `sola`,
-     no password, timezone auto).  
+     reboot → **loginless Sola** (US EN, Mac kbd, hostname `sola`, no password;
+     timezone **US/Mountain** interim, auto-detect later).  
    - Freeze: [`docs/specs/2026-08-05-distribution-image-design.md`](docs/specs/2026-08-05-distribution-image-design.md)  
    - Plan: [`docs/plans/2026-08-05-distribution-qemu-image-plan.md`](docs/plans/2026-08-05-distribution-qemu-image-plan.md)  
-   - **Harness:** `cargo make vm install` (wipe + installer);
-     `cargo make vm run` boots **installed** if present, else installer.
-     Stage from **`target/release` only** (no cargo inside vm).  
-   - **Dogfood OK:** splash → wizard → erase vdb → reboot target → loginless
-     Sola (`runuser` session; username prefill `sola`).  
-   - **Next:** polish (installer UX, splash handoff, errors); then ISO path.  
+   - **Harness:** `vm install` / `vm run` (installed if present else installer).  
+   - **Dogfood OK:** QEMU vdb install → loginless Sola.  
+   - **ISO:** `cargo make iso build` / `iso run` scaffolded; dogfood pending.  
 2. **Progress docs** — keep this file + `docs/capabilities.md` honest when
    shipping; do not reintroduce a second handoff.  
 3. **Follow-ups (unordered backlog, not priority):**  

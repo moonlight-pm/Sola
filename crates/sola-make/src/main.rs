@@ -8,6 +8,7 @@
 mod assets;
 mod cef;
 mod install;
+mod iso;
 mod isolated;
 mod publish;
 mod vm;
@@ -81,6 +82,37 @@ enum Commands {
     Vm {
         #[command(subcommand)]
         action: VmAction,
+    },
+
+    /// Build or run the Sola installer ISO.
+    Iso {
+        #[command(subcommand)]
+        action: IsoAction,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum IsoAction {
+    /// Stage `target/release` and `nix build` the installer ISO.
+    Build {
+        /// Include the CEF Release tree (~4G) in the stage.
+        #[arg(long)]
+        with_cef: bool,
+
+        /// Only populate `var/images/stage/` (skip nix ISO build).
+        #[arg(long)]
+        stage_only: bool,
+    },
+
+    /// Boot the ISO under QEMU with a blank install target disk.
+    ///
+    /// Rebuilds the ISO when missing/stale unless `--no-build`.
+    Run {
+        #[arg(long)]
+        no_build: bool,
+
+        #[arg(long)]
+        rebuild: bool,
     },
 }
 
@@ -193,6 +225,19 @@ fn main() {
                 auto_build: !no_build,
                 force_rebuild: rebuild,
                 force_installer: true,
+            }),
+        },
+        Commands::Iso { action } => match action {
+            IsoAction::Build {
+                with_cef,
+                stage_only,
+            } => iso::build(iso::IsoBuildOpts {
+                with_cef,
+                stage_only,
+            }),
+            IsoAction::Run { no_build, rebuild } => iso::run(iso::IsoRunOpts {
+                auto_build: !no_build,
+                force_rebuild: rebuild,
             }),
         },
     }
@@ -534,6 +579,34 @@ mod tests {
                 action: VmAction::Install {
                     no_build: true,
                     rebuild: false,
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_iso_build() {
+        let cli = Cli::try_parse_from(["sola-make", "iso", "build"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Iso {
+                action: IsoAction::Build {
+                    with_cef: false,
+                    stage_only: false,
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn cli_parses_iso_run() {
+        let cli = Cli::try_parse_from(["sola-make", "iso", "run", "--rebuild"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Iso {
+                action: IsoAction::Run {
+                    no_build: false,
+                    rebuild: true,
                 }
             }
         ));

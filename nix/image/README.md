@@ -17,18 +17,20 @@ cargo build --release        # you own the Rust build
 cargo make vm build          # stage target/release → nix qcow2 (no cargo)
 cargo make vm install        # wipe target + boot live installer
 cargo make vm run            # installed system if present, else installer
+cargo make iso build         # stage + nix build installer ISO → var/images/sola.iso
+cargo make iso run           # QEMU: ISO + blank target disk
 ```
 
 Binaries always come from **`target/release`** (this tree), never `/opt/sola/bin`.
-`vm run` / `vm build` / `vm install` do **not** invoke cargo.
+`vm` / `iso` commands do **not** invoke cargo.
 
-**Flow:** `vm install` → wizard erases **vdb** → finish install → quit QEMU →
-`vm run` boots the installed disk automatically.
+**Qcow flow:** `vm install` → erase **vdb** → quit → `vm run` boots installed.  
+**ISO flow:** `iso build` → `iso run` → erase blank disk → reboot to disk (`vm run`).
 
 Flake outputs:
 
-- `nixosConfigurations.sola-vm` — the system config
-- `packages.sola-vm-qcow2` — `config.system.build.image` (qcow2)
+- `nixosConfigurations.sola-vm` / `packages.sola-vm-qcow2` — live installer qcow
+- `nixosConfigurations.sola-iso` / `packages.sola-iso` — installer ISO
+- `nixosConfigurations.sola-installed` — target system written by apply
 
-Local products live under `var/images/` (gitignored). Store paths are never
-committed.
+Local products live under `var/images/` (gitignored).

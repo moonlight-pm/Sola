@@ -147,6 +147,8 @@ cargo make install <app>…     # targeted install
 cargo build --release         # you own Rust build before vm
 cargo make vm build           # stage target/release → nix qcow2 (no cargo)
 cargo make vm run             # installed if present, else installer
+cargo make iso build          # installer ISO (stage + nix)
+cargo make iso run            # QEMU: ISO + blank disk
 ```
 
 Alias: `cargo make` → `cargo run -q -p sola-make --` (see `.cargo/config.toml`).
@@ -166,7 +168,7 @@ Alias: `cargo make` → `cargo run -q -p sola-make --` (see `.cargo/config.toml`
 | Local products | `var/images/sola-vm.qcow2`, overlay, `sola-install-target.qcow2` (never committed) |
 | vm run | Boot installed target if present; else live installer + vdb |
 | vm install | Wipe target qcow + boot live installer |
-| Product ISO | Not built yet |
+| Product ISO | `packages.sola-iso` / `cargo make iso build` → `var/images/sola.iso` |
 
 ---
 

@@ -23,6 +23,8 @@ pub struct ProgressStep {
 pub const HOSTNAME: &str = "sola";
 pub const LOCALE: &str = "en_US.UTF-8";
 pub const KEYBOARD: &str = "us (Mac)";
+/// Interim fixed zone (America/Denver) until auto-detect lands.
+pub const TIMEZONE: &str = "US/Mountain";
 
 /// Path written into the installer image (see `nix/image/install-tools.nix`).
 pub const INSTALL_SYSTEM_PATH: &str = "/etc/sola/install-system";

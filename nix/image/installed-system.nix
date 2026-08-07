@@ -22,7 +22,8 @@
   networking.useDHCP = lib.mkDefault true;
   networking.networkmanager.enable = false;
 
-  time.timeZone = "UTC"; # installer may overwrite via timedatectl later
+  # Interim fixed zone until auto-detect lands (freeze: auto-detect later).
+  time.timeZone = "America/Denver"; # US/Mountain
 
   console.keyMap = "us";
   i18n.defaultLocale = "en_US.UTF-8";

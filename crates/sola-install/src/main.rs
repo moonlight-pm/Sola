@@ -40,7 +40,8 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 use apply::{
-    ApplyEvent, HOSTNAME, KEYBOARD, LOCALE, dry_run_steps, progress_labels, real_apply_available,
+    ApplyEvent, HOSTNAME, KEYBOARD, LOCALE, TIMEZONE, dry_run_steps, progress_labels,
+    real_apply_available,
 };
 use disks::{Disk, list_disks};
 
@@ -693,12 +694,13 @@ impl App {
         let bar = self.progress_bar(frac);
 
         let meta = kit_text::caption(format!(
-            "{}@{} · {} · {} · {}",
+            "{}@{} · {} · {} · {} · {}",
             self.username,
             HOSTNAME,
             self.selected().map(|d| d.path.as_str()).unwrap_or("?"),
             LOCALE,
-            KEYBOARD
+            KEYBOARD,
+            TIMEZONE
         ))
         .style(kit_text::muted);
 

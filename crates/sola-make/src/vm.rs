@@ -18,11 +18,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio, exit};
 use std::time::SystemTime;
 
-const STAGE_DIR: &str = "var/images/stage";
+pub(crate) const STAGE_DIR: &str = "var/images/stage";
 const IMAGE_PATH: &str = "var/images/sola-vm.qcow2";
 const OVERLAY_PATH: &str = "var/images/sola-vm-overlay.qcow2";
 /// Install target disk (guest vdb under installer; sole disk when booting installed).
-const TARGET_DISK_PATH: &str = "var/images/sola-install-target.qcow2";
+pub(crate) const TARGET_DISK_PATH: &str = "var/images/sola-install-target.qcow2";
 const TARGET_DISK_SIZE: &str = "20G";
 /// Blank qcow2 is a few hundred KiB; a finished install is multi‑GiB on disk.
 /// Anything larger than this is treated as “has an installed system”.
@@ -120,15 +120,19 @@ fn wipe_install_target(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_build(opts: BuildOpts) -> Result<(), String> {
+/// Stage `target/release` for image builds (shared by `vm build` and `iso build`).
+pub(crate) fn prepare_stage(opts: &BuildOpts) -> Result<(PathBuf, PathBuf), String> {
     let root = workspace_root()?;
     env::set_current_dir(&root).map_err(|e| format!("chdir workspace: {e}"))?;
-
     require_nix()?;
-
     let stage = root.join(STAGE_DIR);
     println!(">>> staging release tree at {}", stage.display());
-    stage_tree(&root, &stage, &opts)?;
+    stage_tree(&root, &stage, opts)?;
+    Ok((root, stage))
+}
+
+fn run_build(opts: BuildOpts) -> Result<(), String> {
+    let (root, stage) = prepare_stage(&opts)?;
 
     if opts.stage_only {
         println!(">>> --stage-only: skipping nix image build");
@@ -541,7 +545,7 @@ fn ensure_overlay(base: &Path, overlay: &Path) -> Result<(), String> {
 }
 
 /// Blank qcow for install-target dogfood (`/dev/vdb` in the guest).
-fn ensure_target_disk(path: &Path) -> Result<(), String> {
+pub(crate) fn ensure_target_disk(path: &Path) -> Result<(), String> {
     if path.exists() {
         println!("    target disk: {}", path.display());
         return Ok(());
@@ -623,12 +627,7 @@ fn walk_find_qcow2(dir: &Path) -> Result<PathBuf, String> {
     }
 }
 
-struct Ovmf {
-    code: PathBuf,
-    vars_template: Option<PathBuf>,
-}
-
-fn resolve_qemu() -> Result<PathBuf, String> {
+pub(crate) fn resolve_qemu() -> Result<PathBuf, String> {
     if let Ok(p) = which("qemu-system-x86_64") {
         return Ok(p);
     }
@@ -653,7 +652,7 @@ fn resolve_qemu() -> Result<PathBuf, String> {
     Ok(bin)
 }
 
-fn resolve_qemu_img() -> Result<PathBuf, String> {
+pub(crate) fn resolve_qemu_img() -> Result<PathBuf, String> {
     if let Ok(p) = which("qemu-img") {
         return Ok(p);
     }
@@ -668,7 +667,12 @@ fn resolve_qemu_img() -> Result<PathBuf, String> {
     Err("qemu-img not found (install qemu or ensure nixpkgs#qemu_kvm)".into())
 }
 
-fn resolve_ovmf() -> Result<Ovmf, String> {
+pub(crate) struct OvmfPaths {
+    pub code: PathBuf,
+    pub vars_template: Option<PathBuf>,
+}
+
+pub(crate) fn resolve_ovmf() -> Result<OvmfPaths, String> {
     let candidates = [
         "/run/libvirt/nix-ovmf/OVMF_CODE.fd",
         "/usr/share/OVMF/OVMF_CODE.fd",
@@ -679,7 +683,7 @@ fn resolve_ovmf() -> Result<Ovmf, String> {
         let code = PathBuf::from(code);
         if code.exists() {
             let vars = code.with_file_name("OVMF_VARS.fd");
-            return Ok(Ovmf {
+            return Ok(OvmfPaths {
                 code,
                 vars_template: vars.exists().then_some(vars),
             });
@@ -712,7 +716,7 @@ fn resolve_ovmf() -> Result<Ovmf, String> {
     let vars = [base.join("FV/OVMF_VARS.fd"), base.join("OVMF_VARS.fd")]
         .into_iter()
         .find(|p| p.exists());
-    Ok(Ovmf {
+    Ok(OvmfPaths {
         code,
         vars_template: vars,
     })
@@ -720,7 +724,7 @@ fn resolve_ovmf() -> Result<Ovmf, String> {
 
 /// QEMU `-display` value. Guest resolution is set on `virtio-vga`
 /// (`xres`/`yres`); GTK is left at 1:1 so text stays sharp.
-fn display_backend(_width: &str, _height: &str) -> String {
+pub(crate) fn display_backend(_width: &str, _height: &str) -> String {
     if env::var_os("DISPLAY").is_some() || env::var_os("WAYLAND_DISPLAY").is_some() {
         // zoom-to-fit=off: do not shrink a 1080p guest into a tiny window.
         "gtk,zoom-to-fit=off,gl=off".into()
@@ -729,7 +733,7 @@ fn display_backend(_width: &str, _height: &str) -> String {
     }
 }
 
-fn workspace_root() -> Result<PathBuf, String> {
+pub(crate) fn workspace_root() -> Result<PathBuf, String> {
     let mut dir = env::current_dir().map_err(|e| format!("cwd: {e}"))?;
     loop {
         if dir.join("flake.nix").exists() && dir.join("Cargo.toml").exists() {
@@ -769,7 +773,7 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn make_owner_writable(path: &Path) -> Result<(), String> {
+pub(crate) fn make_owner_writable(path: &Path) -> Result<(), String> {
     let meta = fs::metadata(path).map_err(|e| format!("stat {}: {e}", path.display()))?;
     let mut perms = meta.permissions();
     let mode = perms.mode() | 0o200;

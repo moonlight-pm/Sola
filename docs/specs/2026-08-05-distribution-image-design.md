@@ -4,7 +4,7 @@
 **Dogfood:** QEMU — splash → wizard → erase vdb → `vm run` → loginless Sola  
 **Gaps:**
 - No ISO output yet (harness is qcow + second disk)  
-- Timezone auto-detect still stub (UTC)  
+- Timezone auto-detect not done (fixed America/Denver for now)  
 - Installer/desktop polish  
 - Shape 1 release tarball URL 404  
 **As-built:** [../capabilities.md](../capabilities.md) · [../architecture.md](../architecture.md)
@@ -64,7 +64,7 @@ path; the session starts Sola as the chosen user.
 |-------|--------|
 | Language | **US English only** (no picker) |
 | Keyboard | **Mac layout only** (`us` + Mac variant / xkb as used on dogfood) — no picker |
-| Timezone | **Auto-detect** (network/IP geolocation or equivalent); silent fallback if offline (e.g. UTC) — no picker in v1 |
+| Timezone | **Interim: US/Mountain** (`America/Denver`) fixed until auto-detect lands; target remains auto-detect (network/IP) with silent fallback — no picker in v1 |
 | User | **Username only** — no display name, **no password** in installer |
 | Login | **Autologin** that user; they may set a password later on their own |
 | Hostname | Default **`sola`** — not in wizard; changeable later |
@@ -182,3 +182,4 @@ Evolve toward:
 | 2026-08-06 | Splash animation: clockwise cyan shade gradient on petals (flower is spinner) |
 | 2026-08-06 | Wizard username prefill `sola` (selected for replace-on-type) |
 | 2026-08-06 | QEMU e2e: vdb apply + `vm run` boots installed when present |
+| 2026-08-06 | Timezone interim fixed to US/Mountain (`America/Denver`) until auto-detect |

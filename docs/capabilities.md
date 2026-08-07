@@ -32,7 +32,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | fonts-dist | System fonts only; distribution notes | shipped | [manual/distribution](manual/distribution.md) | local | Optional families must be installed by hand | yes |
 | dist-shape1 | NixOS module + release tarball install | partial | [INSTALL.md](../INSTALL.md), freeze [distribution-image](specs/2026-08-05-distribution-image-design.md) | colleagues historically | Published tarball URL 404 for v0.1.1; needs release refresh; not a fresh-machine path | partial |
 | dist-vm-image | QEMU qcow harness (`cargo make vm`) | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md), [plan](plans/2026-08-05-distribution-qemu-image-plan.md) | install+boot target OK | `vm install` wipes vdb; `vm run` boots installed if present else installer; not product media | no |
-| dist-installer | ISO + flower splash + kit wizard + disk install → loginless Sola | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) | QEMU e2e install→Sola | Splash, apply, loginless desktop dogfooded on vdb; no ISO yet; timezone stub UTC; polish open | no |
+| dist-installer | ISO + flower splash + kit wizard + disk install → loginless Sola | partial | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) | QEMU qcow e2e; ISO scaffold | Splash/apply/desktop on vdb; ISO build/run wired, ISO dogfood pending; timezone America/Denver interim | no |
 
 ---
 
