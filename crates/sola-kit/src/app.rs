@@ -138,6 +138,9 @@ impl BusSetup {
     /// process — that's a setup-order bug.
     pub fn install(self) {
         let mut client = BusClient::new();
+        // Identity tags sticky `source` and re-identifies on bus reconnect
+        // so the host roster is restored after a sola-bus restart.
+        client.set_app_id(self.app_id);
         // `connect_blocking` returns `()` and loops until `connect()`
         // succeeds (it already warns once on the first failure). When
         // it returns, the bus is connected — log with app_id for
