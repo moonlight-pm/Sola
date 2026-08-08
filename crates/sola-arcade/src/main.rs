@@ -529,15 +529,19 @@ impl App {
         // gallery scrollable stays the same tree slot (Space↔caption rematch
         // was resetting scroll state on launch).
         let status: Element<'_, Msg> = {
-            let (line, style) = match (&self.status, self.status_tone) {
-                (Some(s), StatusTone::Danger) => (s.as_str(), kit_text::danger),
-                (Some(s), StatusTone::Warn) => (s.as_str(), kit_text::warning),
-                (Some(s), StatusTone::Info) => (s.as_str(), kit_text::muted),
-                _ => ("", kit_text::muted),
-            };
+            let line = self.status.as_deref().unwrap_or("");
             // Non-breaking space when empty keeps caption layout stable.
             let shown = if line.is_empty() { "\u{00a0}" } else { line };
-            container(kit_text::caption(shown).style(style))
+            let caption = match self.status_tone {
+                StatusTone::Danger if !line.is_empty() => {
+                    kit_text::caption(shown).style(kit_text::danger)
+                }
+                StatusTone::Warn if !line.is_empty() => {
+                    kit_text::caption(shown).style(kit_text::warning)
+                }
+                _ => kit_text::caption(shown).style(kit_text::muted),
+            };
+            container(caption)
                 .width(Length::Fill)
                 .height(Length::Fixed(STATUS_SLOT_H))
                 .into()
