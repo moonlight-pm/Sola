@@ -9,25 +9,23 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-08 (`windowed-gamescope` — Arcade nest dogfoodable)
+**As of:** 2026-08-08 (Arcade library UX + nest on **master**)
 
 ---
 
 ## Now
 
-1. **sola-arcade / windowed gamescope (this worktree)** — **partial, dogfoodable**  
-   - **UI:** search-only chrome; banner rows (parallel decode/cache); Play /
-     Store / Uninstall; Stop on active row; **scroll preserved** on launch/stop;
-     session stickiness via `/proc` cmdline (NUL-normalized).  
-   - **Nest:** cold Steam → `gamescope … -- sola-arcade --nested-steam <id>`
-     (no BPM; prepare/shaders in nest; **kill nested Steam when game exits**;
-     never host `-f`; no `-e`).  
-   - **River/shell:** gamescope zone/float; Cinema exits fullscreen on next
-     zone; float uses nest 16:9; Meta-resize free during drag; empty `app_id`
-     → `gamescope`; Arcade game title for menubar/switcher.  
+1. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
+   - **UI:** search + **A–Z / Recent** + **Ready to play only** (default on);
+     lazy viewport banners; Play / Store / Uninstall; **Install** + faded
+     uninstalled rows; Stop-on-row; scroll preserved.  
+   - **Library:** `~/.config/sola/arcade-library.json` cache (instant open);
+     background rescan every start; first-scan status when no cache.  
+   - **Nest / river:** `--nested-steam` (no BPM); kill nest Steam on game quit;
+     zone/float + Cinema exit; host label; `-S fit`.  
    - Manual: [`docs/manual/sola-arcade.md`](docs/manual/sola-arcade.md).  
-   - **Next polish:** Portal-class nest fails; residual flicker; title contrast
-     on bright heroes.  
+   - **Next polish (backlog):** Portal-class nest fails; residual flicker;
+     title contrast on bright heroes; never-played owned without API.  
 2. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
 3. **Progress docs** — keep this file + capabilities honest.  
 4. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
@@ -49,8 +47,8 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **`windowed-gamescope`** | Feature work in worktrees / Orca workspaces |
-| Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); nest Steam exits on game quit; some titles still flaky | — |
+| Branch | **`master`** (post–windowed-gamescope merge) | Feature work in worktrees / Orca workspaces |
+| Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 
 **Install policy:** agents never run `cargo make install` without explicit

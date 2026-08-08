@@ -4,10 +4,10 @@
 
 ## What it is
 
-Sola’s **Arcade** is a vertical list of **installed Steam titles** (on-disk
-library manifests + Steam hero banner art when cached). **Play** starts the
-title under **windowed gamescope** so the game is one normal host window
-(float, zone, Meta+Tab).
+Sola’s **Arcade** is a vertical list of Steam titles from on-disk data
+(library manifests, localconfig activity, appinfo names) plus Steam hero
+banner art when cached. **Play** starts an installed title under **windowed
+gamescope** so the game is one normal host window (float, zone, Meta+Tab).
 
 ## Requirements
 
@@ -20,22 +20,36 @@ title under **windowed gamescope** so the game is one normal host window
 ## UI
 
 1. Open **Arcade** from the launcher (Meta+Space).
-2. **Search** is the only chrome above the list (filters by name or AppID).
-   Refresh is Meta+R from the app menu.
-3. Each row uses Steam **`library_hero`** art (when cached on disk) as a faded
-   full-width background. Banners are **decoded in parallel** at open/refresh
-   (downscaled RGBA), so the list paints together instead of one-by-one.
-   Large typeface title on the left, actions on the right:
-   - **Play** — nest launch  
+2. **Search** filters by name or AppID. On the same row, icon tools (hover
+   for tooltips):
+   - **A–Z** (`arrow-down-a-z`) — alphabetical sort  
+   - **Recent** (`history`) — most recent player activity first
+     (`LastPlayed` / install `LastUpdated`)  
+   - **Ready to play only** (`circle-check`, toggle, **on by default**) —
+     Steam-style filter: only fully installed titles. Turn **off** to also
+     list uninstalled games from activity history (faded banner + **Install**).
+   Refresh is Meta+R from the app menu (re-scans Steam in the background).
+
+3. **Library cache:** opens **immediately** from
+   `~/.config/sola/arcade-library.json` when present, then always re-scans
+   Steam **in the background** and updates the cache. The first launch (no
+   cache yet) shows an **initial scan** status until the first scan finishes;
+   later opens use the cache and stay quiet while the background refresh runs.
+4. Each row uses Steam **`library_hero`** art (when cached on disk) as a faded
+   full-width background. Banners are **decoded lazily** for rows in the
+   scroll viewport (plus a small overscan), so first paint is not blocked by
+   the whole library. Large typeface title on the left, actions on the right:
+   - **Play** — nest launch (installed only)  
+   - **Install** — Steam’s install UI (`steam://install/<id>`) for uninstalled  
    - **Store** — Steam store page in the browser  
-   - **Uninstall** — Steam’s uninstall UI (`steam://uninstall/<id>`)
-4. While a title is **loading** or **playing**:
+   - **Uninstall** — Steam’s uninstall UI (`steam://uninstall/<id>`) when installed
+5. While a title is **loading** or **playing**:
    - That row’s **Play** becomes **Stop**
    - All other rows’ Play is disabled
    - List **scroll position is preserved** (Play→Stop does not jump to top)
-5. **Stop** (on the active row, or menu Meta+Shift+S) ends the session via
+6. **Stop** (on the active row, or menu Meta+Shift+S) ends the session via
    `CloseApp` on `steam-game-<id>`.
-6. **Quit from the game’s own menu** ends the game process; Arcade then
+7. **Quit from the game’s own menu** ends the game process; Arcade then
    stops the **nested** Steam client so the gamescope host closes (does not
    touch a Steam you started outside Arcade).
 
@@ -95,6 +109,9 @@ in-Arcade “Hide Steam” toggle.
 
 - Some titles fail under the nest (no host window / crash) — game-dependent.
 - Banner art only when Steam has cached `library_hero` (or header).
+- Uninstalled list (when Ready-to-play is off) is **offline** (localconfig +
+  appinfo): never-played owned titles with no local activity may be missing;
+  no Steam Web API.
 - Multi-store (GOG, Epic, …) not in this app.
 - Host resize + letterbox can still stress mouse mapping on some titles.
 

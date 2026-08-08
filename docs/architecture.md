@@ -96,6 +96,7 @@ to the bus and tolerate compositor restarts.
 | Binaries | Dev install `/opt/sola/bin/`; images stage from `target/release` |
 | Logs | `/opt/sola/log/` (and tracing to TTY when run interactively) |
 | Persistent stickies | Bus writes `~/.config/sola/state.toml` |
+| Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open) |
 | Agent overlay | `~/.config/sola/agent/overlay.json` (pins, titles, sidebar width) |
 | Grok sessions | `~/.grok/sessions/` + leader socket `~/.grok/leader.sock` |
 | Self-update of apps | Binary watch → re-exec when `/opt/sola/bin/<name>` changes (`SOLA_NO_SELF_WATCH=1` skips) |
@@ -127,7 +128,9 @@ saved zones restore frames; Meta+numpad snaps assign zones.
 
 | Piece | Role |
 |-------|------|
-| `sola-arcade` | Kit app: Steam library banner list (parallel decode), Play / Store / Uninstall, Stop-on-row |
+| `sola-arcade` | Kit app: Steam library gallery (search; A–Z / Recent; Ready-to-play filter default on; Install on uninstalled; Stop-on-row) |
+| Library data | Offline: ACF manifests + `localconfig` activity + `appinfo.vdf` names; cache `~/.config/sola/arcade-library.json`; UI opens from cache, full scan always in background |
+| Banners | Lazy viewport decode (+ overscan); paths resolved when row visible |
 | Launch | `Topic::LaunchApp` → `sola-arcade --run <id>` → `gamescope … -- sola-arcade --nested-steam <id>` → desktop Steam `-applaunch` (no BPM; kill Steam when game `AppId=` exits) |
 | Session lock | Active Play → Stop on that row; other Plays disabled; `session_alive` via `/proc` cmdline |
 | River | gamescope pre-init pin then zone/float; Cinema exit-fullscreen on next zone Frame; empty app_id → `gamescope` via pid; nest `-S fit` letterbox |

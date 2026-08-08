@@ -5528,6 +5528,8 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "image",
+ "serde",
+ "serde_json",
  "sola-bus",
  "sola-core",
  "sola-kit",
