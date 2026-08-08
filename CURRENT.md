@@ -16,9 +16,9 @@ Do not invent product policy.
 ## Now
 
 1. **sola-arcade / windowed gamescope (this worktree)** — **partial, dogfoodable**  
-   - **UI:** search-only chrome; banner rows; Play / Store / Uninstall; Stop on
-     active row; **scroll preserved** on launch/stop; session stickiness via
-     `/proc` cmdline (NUL-normalized).  
+   - **UI:** search-only chrome; banner rows (parallel decode/cache); Play /
+     Store / Uninstall; Stop on active row; **scroll preserved** on launch/stop;
+     session stickiness via `/proc` cmdline (NUL-normalized).  
    - **Nest:** cold Steam → `gamescope … -- sola-arcade --nested-steam <id>`
      (no BPM; prepare/shaders in nest; **kill nested Steam when game exits**;
      never host `-f`; no `-e`).  

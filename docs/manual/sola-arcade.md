@@ -22,8 +22,10 @@ title under **windowed gamescope** so the game is one normal host window
 1. Open **Arcade** from the launcher (Meta+Space).
 2. **Search** is the only chrome above the list (filters by name or AppID).
    Refresh is Meta+R from the app menu.
-3. Each row uses Steam **`library_hero`** art (1920×620) as a faded full-width
-   background, large typeface title on the left, and actions on the right:
+3. Each row uses Steam **`library_hero`** art (when cached on disk) as a faded
+   full-width background. Banners are **decoded in parallel** at open/refresh
+   (downscaled RGBA), so the list paints together instead of one-by-one.
+   Large typeface title on the left, actions on the right:
    - **Play** — nest launch  
    - **Store** — Steam store page in the browser  
    - **Uninstall** — Steam’s uninstall UI (`steam://uninstall/<id>`)

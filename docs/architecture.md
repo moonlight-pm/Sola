@@ -127,7 +127,7 @@ saved zones restore frames; Meta+numpad snaps assign zones.
 
 | Piece | Role |
 |-------|------|
-| `sola-arcade` | Kit app: Steam library banner list, Play / Store / Uninstall, Stop-on-row |
+| `sola-arcade` | Kit app: Steam library banner list (parallel decode), Play / Store / Uninstall, Stop-on-row |
 | Launch | `Topic::LaunchApp` → `sola-arcade --run <id>` → `gamescope … -- sola-arcade --nested-steam <id>` → desktop Steam `-applaunch` (no BPM; kill Steam when game `AppId=` exits) |
 | Session lock | Active Play → Stop on that row; other Plays disabled; `session_alive` via `/proc` cmdline |
 | River | gamescope pre-init pin then zone/float; Cinema exit-fullscreen on next zone Frame; empty app_id → `gamescope` via pid; nest `-S fit` letterbox |

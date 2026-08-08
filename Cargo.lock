@@ -5527,10 +5527,12 @@ name = "sola-arcade"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "image",
  "sola-bus",
  "sola-core",
  "sola-kit",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 
