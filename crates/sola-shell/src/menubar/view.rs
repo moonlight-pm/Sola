@@ -239,7 +239,30 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mut left = vec![system_btn, app_title];
     left.extend(menu_labels);
 
-    let mut cluster: Vec<Element<'_, Msg>> = vec![cpu_btn];
+    // Hidden apps (AppHidden sticky) — taskbar-analog chips left of stats.
+    // Click restores surfaces to composition and focuses the app.
+    let mut cluster: Vec<Element<'_, Msg>> = Vec::new();
+    for app_id in shell.hidden_app_labels() {
+        let label = shell
+            .applications
+            .get_for_window(&app_id)
+            .map(|a| a.label.as_str())
+            .unwrap_or(app_id.as_str());
+        // Title-case short label; Steam stays "Steam".
+        let chip_label = if app_id.eq_ignore_ascii_case("steam") {
+            "Steam".to_string()
+        } else {
+            label.to_string()
+        };
+        let chip: Element<'_, Msg> = bar_button(
+            text(chip_label).size(CHROME_SIZE),
+            false,
+            Msg::UnhideApp(app_id),
+        )
+        .into();
+        cluster.push(chip);
+    }
+    cluster.push(cpu_btn);
     if let Some(g) = shell.stats.gpu {
         let gpu_btn: Element<'_, Msg> = bar_button(
             stat_indicator(
@@ -310,7 +333,19 @@ fn focused_app_title(shell: &crate::app::Shell) -> String {
 
     if let Some(payload) = shell.menus.get_menu(app_id) {
         if let Some(first) = payload.menus.first() {
-            return first.label.clone();
+            if !first.label.is_empty() {
+                return first.label.clone();
+            }
+        }
+    }
+    // Empty host app_id (pre-inference gamescope) — try gamescope menu.
+    if app_id.is_empty() {
+        if let Some(payload) = shell.menus.get_menu("gamescope") {
+            if let Some(first) = payload.menus.first() {
+                if !first.label.is_empty() {
+                    return first.label.clone();
+                }
+            }
         }
     }
 
@@ -375,6 +410,23 @@ fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
 fn display_label(shell: &crate::app::Shell, app_id: &str) -> String {
     if let Some(app) = shell.applications.get_for_window(app_id) {
         return app.label.clone();
+    }
+    // gamescope sometimes maps with empty app_id before river infers it —
+    // still prefer the Arcade-published gamescope catalog label.
+    if app_id.is_empty() {
+        if let Some(app) = shell.applications.get_for_window("gamescope") {
+            return app.label.clone();
+        }
+        // Fall back to a non-empty window title if we have one.
+        if let Some(t) = shell
+            .known_windows
+            .iter()
+            .find(|w| w.app_id.is_empty() && !w.title.is_empty())
+            .map(|w| w.title.clone())
+        {
+            return t;
+        }
+        return String::new();
     }
     let mut chars = app_id.chars();
     match chars.next() {

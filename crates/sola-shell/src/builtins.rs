@@ -70,5 +70,11 @@ pub fn builtin_apps() -> Vec<Application> {
             command: "/opt/sola/bin/sola-mail".into(),
             icon: "lucide/mail".into(),
         },
+        Application {
+            app_id: "sola-arcade".into(),
+            label: "Arcade".into(),
+            command: "/opt/sola/bin/sola-arcade".into(),
+            icon: "lucide/gamepad-2".into(),
+        },
     ]
 }

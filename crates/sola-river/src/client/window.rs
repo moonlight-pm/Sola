@@ -119,12 +119,27 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 let value = app_id.unwrap_or_default();
                 info!(window_id, app_id = %value, "app_id set");
                 state.registry.set_app_id(window_id, value);
+                // Empty app_id is common for gamescope under River — fill from pid.
+                if state.registry.maybe_infer_gamescope_identity(window_id) {
+                    info!(
+                        window_id,
+                        app_id = state.registry.app_id_for(window_id).unwrap_or("?"),
+                        "inferred gamescope identity from pid"
+                    );
+                }
                 apps_dirty = true;
             }
             Event::Title { title } => {
-                state
-                    .registry
-                    .set_title(window_id, title.unwrap_or_default());
+                let value = title.unwrap_or_default();
+                state.registry.set_title(window_id, value);
+                // Title can arrive before app_id; still try gamescope fill.
+                if state.registry.maybe_infer_gamescope_identity(window_id) {
+                    info!(
+                        window_id,
+                        app_id = state.registry.app_id_for(window_id).unwrap_or("?"),
+                        "inferred gamescope identity from pid"
+                    );
+                }
                 apps_dirty = true;
             }
             Event::Closed => {
@@ -146,6 +161,8 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 state.first_dimensions.remove(&window_id);
                 state.deferred_size.remove(&window_id);
                 state.last_proposed.remove(&window_id);
+                state.gamescope_first_dim_at.remove(&window_id);
+                state.gamescope_last_size_at.remove(&window_id);
                 state.last_position.remove(&window_id);
                 state.floating.remove(&window_id);
                 crate::client::shadow::destroy_for(state, window_id);
@@ -185,6 +202,15 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             Event::UnreliablePid { unreliable_pid } => {
                 if unreliable_pid > 0 {
                     state.registry.set_pid(window_id, unreliable_pid as u32);
+                    // Pid often arrives after an empty app_id event.
+                    if state.registry.maybe_infer_gamescope_identity(window_id) {
+                        info!(
+                            window_id,
+                            pid = unreliable_pid,
+                            app_id = state.registry.app_id_for(window_id).unwrap_or("?"),
+                            "inferred gamescope identity from pid"
+                        );
+                    }
                     apps_dirty = true;
                 }
             }
@@ -210,6 +236,14 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     // turns manage_dirty into a manage cycle that proposes it.
                     state.pending.manage.insert(window_id, (w, h));
                     state.pending.manage_dirty = true;
+                }
+                if newly_initialized {
+                    let app = state.registry.app_id_for(window_id).unwrap_or("");
+                    if crate::proc_identity::is_gamescope_app_id(app) {
+                        state
+                            .gamescope_first_dim_at
+                            .insert(window_id, std::time::Instant::now());
+                    }
                 }
                 if state.registry.set_size(window_id, width, height) {
                     crate::translator::emit_geometry(state, window_id);

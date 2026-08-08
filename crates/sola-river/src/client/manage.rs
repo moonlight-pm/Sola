@@ -28,6 +28,12 @@ pub(crate) enum SizeDecision {
     Defer(i32, i32),
 }
 
+/// Default host size for nested gamescope when the shell has not framed it
+/// yet and the client self-size path yields `(0, 0)`. Matches Arcade's
+/// default nest (`-W 1920 -H 1080`).
+pub(crate) const GAMESCOPE_DEFAULT_W: i32 = 1920;
+pub(crate) const GAMESCOPE_DEFAULT_H: i32 = 1080;
+
 /// Decide what to propose for a window this manage cycle.
 ///
 /// `river-window-management-v1` guarantees a window is not displayed until
@@ -36,8 +42,34 @@ pub(crate) enum SizeDecision {
 /// (Vulkan/SDL3) dies exactly this way. So any real size requested before
 /// initialization is deferred; the window self-sizes first and takes the
 /// real size as a normal runtime resize one cycle later. A `(0, 0)` request
-/// is "client decides its own size" and is always safe.
-pub(crate) fn size_decision(requested: (i32, i32), initialized: bool) -> SizeDecision {
+/// is "client decides its own size" and is always safe **except for
+/// gamescope**: its xdg host never self-sizes from `(0, 0)` — it stays
+/// mapped with no visible surface (switcher shows "Gamescope", pixels
+/// never appear). Force a real host configure for that app_id.
+///
+/// After first dimensions, gamescope is treated like any other window:
+/// shell Frames (zone / float) set host size freely. Nested game content
+/// is letterbox-scaled by gamescope `-S fit` into that host; game-internal
+/// resolution is independent of the host size.
+pub(crate) fn size_decision(
+    requested: (i32, i32),
+    initialized: bool,
+    app_id: &str,
+) -> SizeDecision {
+    if crate::proc_identity::is_gamescope_app_id(app_id) {
+        // Pre-init: pin a real host size so the nest can commit a first
+        // buffer (self-size `(0,0)` never maps pixels under River).
+        // Post-init: honor shell Frames (zone/float) like any app.
+        if !initialized {
+            return SizeDecision::Propose(GAMESCOPE_DEFAULT_W, GAMESCOPE_DEFAULT_H);
+        }
+        let (w, h) = if requested.0 > 0 && requested.1 > 0 {
+            requested
+        } else {
+            (GAMESCOPE_DEFAULT_W, GAMESCOPE_DEFAULT_H)
+        };
+        return SizeDecision::Propose(w, h);
+    }
     if !initialized && requested != (0, 0) {
         SizeDecision::Defer(requested.0, requested.1)
     } else {
@@ -73,6 +105,63 @@ pub(crate) fn should_send(last: Option<(i32, i32)>, requested: (i32, i32)) -> bo
     last != Some(requested)
 }
 
+/// Minimum interval between **size** configures for gamescope hosts.
+///
+/// Shell zone Frames rebroadcast often; rapid host resizes under the wayland
+/// backend have been observed to abort gamescope's input thread
+/// (`CWaylandInputThread::ThreadFunc` → SIGABRT) while Steam is still in
+/// prepare/shader phases. Coalesce size proposes; position still updates.
+pub(crate) const GAMESCOPE_SIZE_DEBOUNCE: std::time::Duration =
+    std::time::Duration::from_millis(750);
+
+/// Hold the first real host size this long after first `dimensions` before
+/// accepting a different shell Frame size. Gives Steam cold-start + shader
+/// interstitial time a stable nest; zoning still applies after the hold.
+/// Keep short so float/zone after prepare are not delayed for a long time.
+pub(crate) const GAMESCOPE_SIZE_HOLD: std::time::Duration =
+    std::time::Duration::from_secs(12);
+
+/// Decide whether to apply a new gamescope host size now, or keep `last`.
+///
+/// Pure helper for unit tests — call sites pass wall-clock `now` and the
+/// instant of first dimensions / last size send.
+pub(crate) fn gamescope_size_gate(
+    requested: (i32, i32),
+    last: Option<(i32, i32)>,
+    first_dimensions_at: Option<std::time::Instant>,
+    last_size_sent_at: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> (i32, i32) {
+    // No prior size: take the request (or nest default).
+    let Some(last) = last else {
+        return if requested.0 > 0 && requested.1 > 0 {
+            requested
+        } else {
+            (GAMESCOPE_DEFAULT_W, GAMESCOPE_DEFAULT_H)
+        };
+    };
+    if requested == last {
+        return last;
+    }
+    // Hold period after first map: keep last (stable nest for Steam prepare).
+    if let Some(t0) = first_dimensions_at {
+        if now.duration_since(t0) < GAMESCOPE_SIZE_HOLD {
+            return last;
+        }
+    }
+    // Debounce rapid zone rebroadcasts.
+    if let Some(t_sent) = last_size_sent_at {
+        if now.duration_since(t_sent) < GAMESCOPE_SIZE_DEBOUNCE {
+            return last;
+        }
+    }
+    if requested.0 > 0 && requested.1 > 0 {
+        requested
+    } else {
+        last
+    }
+}
+
 pub fn handle_manage_start(state: &mut AppData) {
     let Some(wm) = state.wm.clone() else { return };
 
@@ -93,7 +182,7 @@ pub fn handle_manage_start(state: &mut AppData) {
             .unwrap_or("?")
             .to_string();
         let initialized = state.first_dimensions.contains(&window_id);
-        let propose = match size_decision((w, h), initialized) {
+        let mut propose = match size_decision((w, h), initialized, &app_id) {
             SizeDecision::Propose(pw, ph) => (pw, ph),
             SizeDecision::Defer(dw, dh) => {
                 tracing::info!(
@@ -108,6 +197,33 @@ pub fn handle_manage_start(state: &mut AppData) {
                 (0, 0)
             }
         };
+        // gamescope: hold + debounce host size so Steam prepare / shader
+        // interstitials run on a stable nest (input-thread abort under thrash).
+        // Skip entirely during interactive Meta-drag resize/move — those
+        // must apply every delta or the gesture feels axis-locked / stuck.
+        let op_on_this = state
+            .op
+            .as_ref()
+            .is_some_and(|op| op.window_id == window_id);
+        if crate::proc_identity::is_gamescope_app_id(&app_id) && initialized && !op_on_this {
+            let now = std::time::Instant::now();
+            let gated = gamescope_size_gate(
+                propose,
+                state.last_proposed.get(&window_id).copied(),
+                state.gamescope_first_dim_at.get(&window_id).copied(),
+                state.gamescope_last_size_at.get(&window_id).copied(),
+                now,
+            );
+            if gated != propose {
+                tracing::debug!(
+                    window_id,
+                    from = ?propose,
+                    keep = ?gated,
+                    "gamescope size hold/debounce"
+                );
+            }
+            propose = gated;
+        }
         // Skip re-proposing an unchanged size: re-sending an identical
         // configure only adds Wayland traffic that piles up against a busy
         // client. See `should_send`.
@@ -115,6 +231,11 @@ pub fn handle_manage_start(state: &mut AppData) {
             tracing::info!(window_id, %app_id, w = propose.0, h = propose.1, "propose_dimensions");
             proxy.propose_dimensions(propose.0, propose.1);
             state.last_proposed.insert(window_id, propose);
+            if crate::proc_identity::is_gamescope_app_id(&app_id) {
+                state
+                    .gamescope_last_size_at
+                    .insert(window_id, std::time::Instant::now());
+            }
         }
     }
     state.pending.manage_dirty = false;
@@ -241,6 +362,12 @@ pub fn handle_render_start(state: &mut AppData) {
     if let Some(order) = state.pending.composition.take() {
         // Anything in the order is visible; anything else hides. River's
         // `hide`/`show` are idempotent (no-op if already in that state).
+        //
+        // gamescope is treated like any other app: stack order is solely the
+        // shell's Composition list (MRU + overlays). We used to never-hide and
+        // re-`place_top` gamescope after the stack walk so the nest couldn't
+        // be buried during early paint races — that locked the host on top of
+        // every normal app and contributed to z-order thrash / flicker.
         let visible: std::collections::HashSet<u32> = order.iter().copied().collect();
         for (&id, proxy) in &state.windows_by_id {
             if visible.contains(&id) {
@@ -361,19 +488,78 @@ mod tests {
 
     #[test]
     fn uninitialized_real_size_is_deferred() {
-        assert_eq!(size_decision((800, 600), false), SizeDecision::Defer(800, 600));
+        assert_eq!(
+            size_decision((800, 600), false, "UnrealEditor"),
+            SizeDecision::Defer(800, 600)
+        );
     }
 
     #[test]
     fn initialized_real_size_is_proposed() {
-        assert_eq!(size_decision((800, 600), true), SizeDecision::Propose(800, 600));
+        assert_eq!(
+            size_decision((800, 600), true, "UnrealEditor"),
+            SizeDecision::Propose(800, 600)
+        );
     }
 
     #[test]
     fn self_size_is_always_proposed() {
         // (0,0) means "client decides" — safe pre-init and post-init.
-        assert_eq!(size_decision((0, 0), false), SizeDecision::Propose(0, 0));
-        assert_eq!(size_decision((0, 0), true), SizeDecision::Propose(0, 0));
+        assert_eq!(
+            size_decision((0, 0), false, "Helium"),
+            SizeDecision::Propose(0, 0)
+        );
+        assert_eq!(
+            size_decision((0, 0), true, "Helium"),
+            SizeDecision::Propose(0, 0)
+        );
+    }
+
+    #[test]
+    fn gamescope_pre_init_pins_nest_default_post_init_honors_frame() {
+        // Pre-init always 1920×1080 so the host can map.
+        assert_eq!(
+            size_decision((5020, 2032), false, "gamescope"),
+            SizeDecision::Propose(GAMESCOPE_DEFAULT_W, GAMESCOPE_DEFAULT_H)
+        );
+        assert_eq!(
+            size_decision((0, 0), false, "gamescope"),
+            SizeDecision::Propose(GAMESCOPE_DEFAULT_W, GAMESCOPE_DEFAULT_H)
+        );
+        // Post-init: zone / float Frames set host size freely (gate is separate).
+        assert_eq!(
+            size_decision((1434, 2132), true, "gamescope"),
+            SizeDecision::Propose(1434, 2132)
+        );
+        assert_eq!(
+            size_decision((1280, 720), true, "Gamescope"),
+            SizeDecision::Propose(1280, 720)
+        );
+    }
+
+    #[test]
+    fn gamescope_size_gate_holds_then_allows() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let last = (1920, 1080);
+        // During hold: keep last even if zone asks for something else.
+        let during = gamescope_size_gate(
+            (2253, 2132),
+            Some(last),
+            Some(t0),
+            Some(t0),
+            t0 + Duration::from_secs(10),
+        );
+        assert_eq!(during, last);
+        // After hold + debounce: accept zone size.
+        let after = gamescope_size_gate(
+            (2253, 2132),
+            Some(last),
+            Some(t0),
+            Some(t0),
+            t0 + GAMESCOPE_SIZE_HOLD + GAMESCOPE_SIZE_DEBOUNCE + Duration::from_millis(50),
+        );
+        assert_eq!(after, (2253, 2132));
     }
 
     #[test]

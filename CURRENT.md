@@ -9,34 +9,27 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-06 (`naturalethic/distribution` → **master**)
+**As of:** 2026-08-08 (Arcade library UX + nest on **master**)
 
 ---
 
 ## Now
 
-1. **Distribution follow-through (next when resumed)** — freeze + plan still
-   open for remaining bars, not a separate branch:  
-   - Freeze: [`docs/specs/2026-08-05-distribution-image-design.md`](docs/specs/2026-08-05-distribution-image-design.md)  
-   - Plan: [`docs/plans/2026-08-05-distribution-qemu-image-plan.md`](docs/plans/2026-08-05-distribution-qemu-image-plan.md)  
-   - **Done on master:** qcow harness, flower Plymouth, `sola-install` wizard,
-     real disk apply, loginless desktop, `cargo make vm` / `iso build|run`.  
-   - **Still open:** QEMU **ISO** e2e (boot ISO → erase → reboot → Sola);
-     timezone auto-detect (interim **US/Mountain** / `America/Denver`);
-     Shape 1 release tarball refresh (v0.1.1 URL 404); operator manual page
-     when ISO is dogfoodable.  
-2. **Progress docs** — keep this file + `docs/capabilities.md` honest; no
-   second handoff.  
-3. **Follow-ups (unordered backlog, not priority):**  
-   - Optional per-app default sizes in `window_settings`; dogfood float chrome  
-   - Permanent `/dev/input` ACL or udev for sola-kvm — **D2**  
-   - Permission fan-out UX when TUI + sola-agent both attached — **D1**  
-   - Worktree hygiene: `libei-portal` archive/cleanup  
-   - sola-preview: zoom, image clipboard copy, `solactl --region`  
-   - sola-mail: inline rich-text link hits (vs chips), multiline polish  
-   - Clipboard follow-ups —
-     [`docs/specs/2026-07-30-sola-kvm-clipboard-design.md`](docs/specs/2026-07-30-sola-kvm-clipboard-design.md)  
-   - Optional: Mac warp path cost; true HID scroll if CG velocity gain not enough  
+1. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
+   - **UI:** search + **A–Z / Recent** + **Ready to play only** (default on);
+     lazy viewport banners; Play / Store / Uninstall; **Install** + faded
+     uninstalled rows; Stop-on-row; scroll preserved.  
+   - **Library:** `~/.config/sola/arcade-library.json` cache (instant open);
+     background rescan every start; first-scan status when no cache.  
+   - **Nest / river:** `--nested-steam` (no BPM); kill nest Steam on game quit;
+     zone/float + Cinema exit; host label; `-S fit`.  
+   - Manual: [`docs/manual/sola-arcade.md`](docs/manual/sola-arcade.md).  
+   - **Next polish (backlog):** Portal-class nest fails; residual flicker;
+     title contrast on bright heroes; never-played owned without API.  
+2. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
+3. **Progress docs** — keep this file + capabilities honest.  
+4. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
+   kvm clipboard, etc.
 
 **Explicit holds:** none.
 
@@ -54,7 +47,9 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **`master`** | Feature work in `.worktrees/` |
+| Branch | **`master`** (post–windowed-gamescope merge) | Feature work in worktrees / Orca workspaces |
+| Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
+| Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install. User installs and smokes.
@@ -63,11 +58,8 @@ permission for that install. User installs and smokes.
 
 ```bash
 cargo make build
+cargo make install arcade shell river   # only with your OK
 RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
-
-# Distribution (you own `cargo build --release` first)
-cargo make vm build|install|run
-cargo make iso build|run          # products under var/images/
 ```
 
 ---
@@ -83,48 +75,4 @@ cargo make iso build|run          # products under var/images/
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
 | Browser engines | **WPE primary**, CEF parallel; no `accelerated_osr` crate feature |
 | Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents |
-| Worktrees | Feature code only under `.worktrees/`; approval = merge + cleanup |
-| Dev install | Local `/opt/sola/bin/`; never install without explicit permission |
-| Dist installer v1 | **ISO primary**; wizard = username + disk; US EN + Mac kbd; no password; loginless → Sola; flower splash; interim TZ US/Mountain |
-| Dist stage | Image builds stage from **`target/release` only** (never `/opt/sola/bin`) |
-
----
-
-## Session start checklist
-
-1. [`AGENTS.md`](AGENTS.md)  
-2. **This file** (Now + dogfood + locks)  
-3. [`docs/capabilities.md`](docs/capabilities.md) — rows for the slice  
-4. [`docs/open-questions.md`](docs/open-questions.md) — any D*?  
-5. One freeze/plan for the domain if building  
-6. [`docs/architecture.md`](docs/architecture.md) only if the map is unclear  
-
-**End of slice:** [`.grok/skills/sola-progress-docs/SKILL.md`](.grok/skills/sola-progress-docs/SKILL.md).  
-**No** one-off handoff files.
-
----
-
-## Recently completed (compact)
-
-Full history is git. Keep this list short (last few merges only).
-
-| Slice | Note |
-|-------|------|
-| **distribution → master** | ISO scaffold, qcow e2e install, splash, loginless desktop |
-| initial-window-state | Default-float + kit CSD on first-party apps |
-| kvm Mac scroll velocity gain | CG pixel inject + rate ramp |
-| progress-docs practice | CURRENT / capabilities / architecture spine |
-| settings Applications list-detail | Compact master-detail panel |
-
----
-
-## Pointers
-
-- Capabilities: [`docs/capabilities.md`](docs/capabilities.md)  
-- Architecture: [`docs/architecture.md`](docs/architecture.md)  
-- Roadmap: [`docs/roadmap.md`](docs/roadmap.md)  
-- Open questions: [`docs/open-questions.md`](docs/open-questions.md)  
-- Dist freeze: [`docs/specs/2026-08-05-distribution-image-design.md`](docs/specs/2026-08-05-distribution-image-design.md)  
-- Dist plan: [`docs/plans/2026-08-05-distribution-qemu-image-plan.md`](docs/plans/2026-08-05-distribution-qemu-image-plan.md)  
-- Shape 1 ops: [`INSTALL.md`](INSTALL.md)  
-- Product manual: [`docs/manual/`](docs/manual/) (fonts only for dist today)  
+| Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |

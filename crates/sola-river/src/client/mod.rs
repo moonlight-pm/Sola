@@ -88,6 +88,10 @@ pub struct AppData {
     /// configure isn't re-sent to the client every time the shell
     /// re-broadcasts its frames. See `manage::should_send`.
     pub last_proposed: HashMap<u32, (i32, i32)>,
+    /// Instant of first `dimensions` for gamescope hosts — size hold/debounce.
+    pub gamescope_first_dim_at: HashMap<u32, std::time::Instant>,
+    /// Instant of last size propose for gamescope hosts — size debounce.
+    pub gamescope_last_size_at: HashMap<u32, std::time::Instant>,
     /// Last position we sent River via `node.set_position` for each window.
     /// We skip repositioning a window that has not moved. See
     /// `manage::should_send`.
@@ -179,6 +183,8 @@ impl AppData {
             first_dimensions: std::collections::HashSet::new(),
             deferred_size: HashMap::new(),
             last_proposed: HashMap::new(),
+            gamescope_first_dim_at: HashMap::new(),
+            gamescope_last_size_at: HashMap::new(),
             last_position: HashMap::new(),
             currently_fullscreen: std::collections::HashSet::new(),
             output_config: output_config::OutputConfigState::default(),
@@ -306,6 +312,17 @@ pub fn bus_tick(state: &mut AppData) {
                         // path as a client-initiated request — manage_finish
                         // enters the surface into true xdg-shell fullscreen.
                         state.pending.queue_fullscreen(f.window_id);
+                    } else if state.currently_fullscreen.contains(&f.window_id) {
+                        // Leaving Cinema (or any true-fullscreen) for a normal
+                        // zone/float Frame. Without this, the surface stays in
+                        // xdg fullscreen (above everything); zone keys appear
+                        // to "stop working" until focus leaves the window.
+                        tracing::info!(
+                            window_id = f.window_id,
+                            app_id,
+                            "Frame without fullscreen — exit compositor fullscreen"
+                        );
+                        state.pending.queue_exit_fullscreen(f.window_id);
                     }
                     state
                         .registry
