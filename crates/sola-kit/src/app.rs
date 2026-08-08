@@ -16,6 +16,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+// BUS_KINDS uses std::sync::RwLock (see static below).
 
 use iced::futures::Stream;
 use iced::Subscription;
@@ -32,16 +33,37 @@ use sola_core::KeyChord;
 /// A static is the natural fit; thread-locals are the alternative.
 static BUS: OnceLock<Arc<Mutex<BusClient>>> = OnceLock::new();
 
-/// Topic kinds the process subscribed to at install time. Replayed on
-/// bus reconnect so a sola-bus restart mid-session does not leave the
-/// app connected but deaf (and so sticky replays re-fire handlers).
-static BUS_KINDS: OnceLock<&'static [TopicKind]> = OnceLock::new();
+/// Topic kinds the process subscribed to at install time (or later via
+/// [`set_bus_kinds`]). Replayed on bus reconnect so a sola-bus restart
+/// mid-session does not leave the app connected but deaf (and so sticky
+/// replays re-fire handlers). `RwLock` so apps can expand the set after
+/// iced is live (e.g. sola-terminal defers TerminalSession until the bus
+/// pump can receive sticky replay).
+static BUS_KINDS: std::sync::RwLock<Option<&'static [TopicKind]>> = std::sync::RwLock::new(None);
 
 /// Borrow the process-wide bus. Panics if [`BusSetup::install`]
 /// has not been called yet — that's a setup-order bug, not a
 /// recoverable runtime condition.
 pub fn bus() -> &'static Mutex<BusClient> {
     BUS.get().expect("sola_kit::bus: BUS not initialised").as_ref()
+}
+
+/// Remember the process's bus subscription kinds for reconnect.
+/// Safe to call more than once (e.g. expand after deferred sticky topics).
+pub fn set_bus_kinds(kinds: &'static [TopicKind]) {
+    match BUS_KINDS.write() {
+        Ok(mut slot) => *slot = Some(kinds),
+        Err(poisoned) => {
+            *poisoned.into_inner() = Some(kinds);
+        }
+    }
+}
+
+fn bus_kinds() -> Option<&'static [TopicKind]> {
+    match BUS_KINDS.read() {
+        Ok(slot) => *slot,
+        Err(poisoned) => *poisoned.into_inner(),
+    }
 }
 
 /// Convenience builder for the bus connect + subscribe + app-menu
@@ -138,6 +160,9 @@ impl BusSetup {
     /// process — that's a setup-order bug.
     pub fn install(self) {
         let mut client = BusClient::new();
+        // Identify before connect so the host roster is correct as soon as
+        // the socket is up (and so sticky provenance carries our app_id).
+        client.set_app_id(self.app_id);
         // `connect_blocking` returns `()` and loops until `connect()`
         // succeeds (it already warns once on the first failure). When
         // it returns, the bus is connected — log with app_id for
@@ -145,9 +170,7 @@ impl BusSetup {
         client.connect_blocking(self.connect_timeout);
         tracing::info!(app_id = self.app_id, "bus connected");
         if let Some(kinds) = self.subscribe {
-            // Remember for reconnect — OnceLock so a second install panics
-            // above before we get here twice.
-            let _ = BUS_KINDS.set(kinds);
+            set_bus_kinds(kinds);
             if let Err(e) = client.subscribe(kinds) {
                 tracing::warn!("bus subscribe failed: {e}");
             }
@@ -332,7 +355,66 @@ fn matches_self_quit(topic: &Option<Topic>, app_id: &str) -> bool {
 /// after screenshot / launcher toggles).
 static BUS_STREAM_TX: Mutex<Option<iced::futures::channel::mpsc::UnboundedSender<Arc<Message>>>> =
     Mutex::new(None);
+/// Messages drained while no iced subscription is attached. Without this,
+/// sticky replay that lands between `BusSetup::install` and the first
+/// `bus_stream` (or during a subscription handoff) is silently dropped —
+/// sola-terminal would boot with an empty tab strip despite live tmux
+/// sessions still being present on the bus.
+static BUS_PENDING: Mutex<std::collections::VecDeque<Arc<Message>>> =
+    Mutex::new(std::collections::VecDeque::new());
 static BUS_POLLER_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Cap pending so a permanently-detached iced loop can't grow forever.
+const BUS_PENDING_CAP: usize = 512;
+
+fn push_pending(msg: Arc<Message>) {
+    let mut q = BUS_PENDING.lock().unwrap_or_else(|p| p.into_inner());
+    if q.len() >= BUS_PENDING_CAP {
+        q.pop_front();
+        tracing::warn!("bus pending overflow; dropping oldest undelivered message");
+    }
+    q.push_back(msg);
+}
+
+fn forward_or_buffer(msg: Arc<Message>) {
+    let mut slot = BUS_STREAM_TX.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(tx) = slot.as_ref() {
+        if let Err(e) = tx.unbounded_send(msg) {
+            *slot = None;
+            drop(slot);
+            // Sender died mid-handoff — keep the message for the next stream.
+            push_pending(e.into_inner());
+        }
+    } else {
+        drop(slot);
+        push_pending(msg);
+    }
+}
+
+fn install_bus_stream_tx(
+    tx: iced::futures::channel::mpsc::UnboundedSender<Arc<Message>>,
+) {
+    // Install first so the poller stops buffering into PENDING and starts
+    // forwarding to this stream, then flush anything already buffered.
+    match BUS_STREAM_TX.lock() {
+        Ok(mut slot) => *slot = Some(tx.clone()),
+        Err(poisoned) => {
+            let mut slot = poisoned.into_inner();
+            *slot = Some(tx.clone());
+        }
+    }
+    let pending: Vec<Arc<Message>> = {
+        let mut q = BUS_PENDING.lock().unwrap_or_else(|p| p.into_inner());
+        q.drain(..).collect()
+    };
+    for msg in pending {
+        if tx.unbounded_send(msg).is_err() {
+            // Stream died immediately; remaining stay lost only if the
+            // next bus_stream reinstalls (rare). Stop flushing.
+            break;
+        }
+    }
+}
 
 fn ensure_bus_poller() {
     if BUS_POLLER_STARTED.swap(true, Ordering::AcqRel) {
@@ -349,7 +431,7 @@ fn ensure_bus_poller() {
                         match guard.connect() {
                             Ok(()) => {
                                 tracing::info!("bus reconnected");
-                                if let Some(kinds) = BUS_KINDS.get() {
+                                if let Some(kinds) = bus_kinds() {
                                     if let Err(e) = guard.subscribe(kinds) {
                                         tracing::warn!("bus resubscribe failed: {e}");
                                     }
@@ -381,18 +463,7 @@ fn ensure_bus_poller() {
                 }
             };
             match next {
-                Some(msg) => {
-                    let msg = Arc::new(msg);
-                    // Drop closed senders; a new bus_stream will install a
-                    // fresh one. Keep polling either way so we don't back
-                    // up the bus client receiver.
-                    let mut slot = BUS_STREAM_TX.lock().unwrap_or_else(|p| p.into_inner());
-                    if let Some(tx) = slot.as_ref() {
-                        if tx.unbounded_send(msg).is_err() {
-                            *slot = None;
-                        }
-                    }
-                }
+                Some(msg) => forward_or_buffer(Arc::new(msg)),
                 None => std::thread::sleep(Duration::from_millis(8)),
             }
         }
@@ -402,14 +473,10 @@ fn ensure_bus_poller() {
 fn bus_stream() -> impl Stream<Item = Arc<Message>> {
     let (tx, rx) = iced::futures::channel::mpsc::unbounded::<Arc<Message>>();
     // Point the singleton poller at this subscription's channel. Replaces
-    // any previous sender (old iced subscription is going away).
-    match BUS_STREAM_TX.lock() {
-        Ok(mut slot) => *slot = Some(tx),
-        Err(poisoned) => {
-            let mut slot = poisoned.into_inner();
-            *slot = Some(tx);
-        }
-    }
+    // any previous sender (old iced subscription is going away). Flush
+    // buffered stickies into the new channel first so a handoff cannot
+    // drop TerminalSession / Theme replay.
+    install_bus_stream_tx(tx);
     ensure_bus_poller();
     rx
 }

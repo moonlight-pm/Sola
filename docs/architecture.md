@@ -68,6 +68,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-monitor` | System monitor / bus audit |
 | `crates/sola-kvm` | KVM / input bridge (Linux ↔ Mac) |
 | `crates/sola-preview` | Image preview / selection capture handoff |
+| `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
 | `crates/solactl` | CLI helpers |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
 | `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
@@ -121,6 +122,18 @@ to the bus and tolerate compositor restarts.
 Zoning / floating is coordinated with `sola-river` over the bus:
 unassigned windows **default-float** (client size + `Topic::WindowFloating`);
 saved zones restore frames; Meta+numpad snaps assign zones.
+
+### Games / Arcade (as-built)
+
+| Piece | Role |
+|-------|------|
+| `sola-arcade` | Kit app: Steam library banner list, Play / Store / Uninstall, Stop-on-row |
+| Launch | `Topic::LaunchApp` → `sola-arcade --run <id>` → cold nest: `gamescope --backend wayland -b -S fit -W/-H -w/-h -- steam -silent -applaunch` (never host `-f`; no `-e`) |
+| Session lock | Active Play → Stop on that row; other Plays disabled; `session_alive` via `/proc` cmdline |
+| River | gamescope pre-init size pin 1920×1080; post-init honors zone Frames; normal composition stack |
+| AppHidden | Bus sticky still exists (shell hide chip path); Arcade UI does not expose hide-Steam |
+
+Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 ---
 

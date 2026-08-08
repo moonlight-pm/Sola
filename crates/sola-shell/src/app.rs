@@ -80,6 +80,8 @@ pub enum Msg {
     Launch,
     /// Launch a specific app by id (row click — not the keyboard selection).
     LaunchApp(String),
+    /// Menubar chip: unhide a composition-hidden app (AppHidden retract) and raise it.
+    UnhideApp(String),
     // --- Switcher messages ---
     /// Cycle switcher selection forward (next=true) or backward (next=false).
     SwitcherNav { next: bool },
@@ -174,6 +176,11 @@ pub struct Shell {
 
     // Application catalog (built-ins + user entries from Topic::Application)
     pub applications: ApplicationsConfig,
+
+    /// Apps omitted from composition (River `hide`). Keyed lowercased for
+    /// case-insensitive match; value is the original app_id for menubar labels
+    /// and AppHidden retract. Filled from sticky `Topic::AppHidden`.
+    pub hidden_apps: HashMap<String, String>,
 
     // Menu cache (built up from Topic::SetAppMenu replays)
     pub menus: MenuCache,
@@ -286,6 +293,7 @@ impl Shell {
             known_windows: Vec::new(),
             window_id_by_key: HashMap::new(),
             applications: ApplicationsConfig { apps: crate::builtins::builtin_apps() },
+            hidden_apps: HashMap::new(),
             menus: MenuCache::new(),
             output_size: None,
             menu_open: false,
@@ -324,6 +332,53 @@ impl Shell {
         self.window_id_by_key
             .get(&(app_id.to_string(), title.to_string()))
             .copied()
+    }
+
+    /// True when this app_id is under sticky `Topic::AppHidden` (case-insensitive).
+    pub fn is_app_hidden(&self, app_id: &str) -> bool {
+        self.hidden_apps
+            .contains_key(&app_id.to_ascii_lowercase())
+    }
+
+    /// Menubar labels for hidden apps (original app_id casing), sorted.
+    pub fn hidden_app_labels(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.hidden_apps.values().cloned().collect();
+        v.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+        v
+    }
+
+    /// Retract AppHidden, optionally focus a live window of that app, recompose.
+    pub fn unhide_app(&mut self, app_id: &str) {
+        let key = app_id.to_ascii_lowercase();
+        let original = self
+            .hidden_apps
+            .remove(&key)
+            .unwrap_or_else(|| app_id.to_string());
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.retract(Topic::AppHidden(sola_bus::topics::AppHidden {
+                app_id: original.clone(),
+            }));
+        }
+        // Raise / focus if a surface exists.
+        if let Some(wid) = self
+            .mru_window_by_app
+            .get(&original)
+            .copied()
+            .or_else(|| {
+                self.known_windows
+                    .iter()
+                    .find(|w| w.app_id.eq_ignore_ascii_case(&original))
+                    .map(|w| w.window_id)
+            })
+        {
+            self.mru_apps.retain(|id| !id.eq_ignore_ascii_case(&original));
+            self.mru_apps.insert(0, original.clone());
+            self.mru_window_by_app.insert(original.clone(), wid);
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+            }
+        }
+        self.emit_composition();
     }
 
     /// Dismiss transient shell overlays so a capture doesn't leave the
@@ -547,8 +602,12 @@ impl Shell {
         let mru_set: HashSet<&str> = self.mru_apps.iter().map(String::as_str).collect();
 
         // 2. Apps not yet in MRU — bottom of the app stack (never auto-raised).
+        //    Skip composition-hidden apps (AppHidden sticky → River hide).
         for w in &self.known_windows {
-            if w.app_id == Self::APP_ID || mru_set.contains(w.app_id.as_str()) {
+            if w.app_id == Self::APP_ID
+                || mru_set.contains(w.app_id.as_str())
+                || self.is_app_hidden(&w.app_id)
+            {
                 continue;
             }
             entries.push(CompositionEntry { window_id: w.window_id });
@@ -557,7 +616,7 @@ impl Shell {
         // 3. App windows ordered by MRU (least recent first = bottom of raised stack).
         // Within each app, the per-app MRU window sits on top of its siblings.
         for app_id in self.mru_apps.iter().rev() {
-            if app_id.as_str() == Self::APP_ID {
+            if app_id.as_str() == Self::APP_ID || self.is_app_hidden(app_id) {
                 continue;
             }
             let top_wid = self.mru_window_by_app.get(app_id).copied();
@@ -684,6 +743,12 @@ impl Shell {
         chords.sort_by_key(|c| (c.modifiers, c.keysym));
         chords.dedup();
 
+        tracing::info!(
+            count = chords.len(),
+            launcher = self.launcher.active,
+            switcher = self.switcher.active,
+            "emitting RegisteredChords"
+        );
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.emit(Topic::RegisteredChords(chords));
         }
@@ -1237,6 +1302,10 @@ impl Shell {
                 }
                 self.launch_from_launcher(Some(&app_id))
             }
+            Msg::UnhideApp(app_id) => {
+                self.unhide_app(&app_id);
+                iced::Task::none()
+            }
             // --- Switcher ---
             Msg::SwitcherNav { next } => {
                 if next {
@@ -1474,6 +1543,7 @@ mod pending_launch_tests {
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
+            hidden_apps: HashMap::new(),
             menus: MenuCache::new(),
             output_size: None,
             menu_open: false,

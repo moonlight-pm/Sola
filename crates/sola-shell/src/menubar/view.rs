@@ -239,7 +239,30 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mut left = vec![system_btn, app_title];
     left.extend(menu_labels);
 
-    let mut cluster: Vec<Element<'_, Msg>> = vec![cpu_btn];
+    // Hidden apps (AppHidden sticky) — taskbar-analog chips left of stats.
+    // Click restores surfaces to composition and focuses the app.
+    let mut cluster: Vec<Element<'_, Msg>> = Vec::new();
+    for app_id in shell.hidden_app_labels() {
+        let label = shell
+            .applications
+            .get_for_window(&app_id)
+            .map(|a| a.label.as_str())
+            .unwrap_or(app_id.as_str());
+        // Title-case short label; Steam stays "Steam".
+        let chip_label = if app_id.eq_ignore_ascii_case("steam") {
+            "Steam".to_string()
+        } else {
+            label.to_string()
+        };
+        let chip: Element<'_, Msg> = bar_button(
+            text(chip_label).size(CHROME_SIZE),
+            false,
+            Msg::UnhideApp(app_id),
+        )
+        .into();
+        cluster.push(chip);
+    }
+    cluster.push(cpu_btn);
     if let Some(g) = shell.stats.gpu {
         let gpu_btn: Element<'_, Msg> = bar_button(
             stat_indicator(

@@ -142,13 +142,16 @@ fn main() -> iced::Result {
     tmux::ensure_server_running();
     tmux::reload_config();
 
+    // Subscribe to chrome topics only here. `TerminalSession` /
+    // `TerminalConfig` stickies are expanded in `Msg::SubscribeSessions`
+    // *after* the iced bus pump is live — sticky replay at BusSetup time
+    // races the poller handoff and was dropping every tab on restart
+    // (tmux sessions still alive, UI empty).
     BusSetup::new(APP_ID)
         .subscribe(&[
             TopicKind::Theme,
             TopicKind::MenuAction,
             TopicKind::CloseApp,
-            TopicKind::TerminalConfig,
-            TopicKind::TerminalSession,
         ])
         .install();
 
@@ -264,14 +267,31 @@ enum Msg {
     CwdResult(String, Option<String>),
     BlinkTick,
     WindowReady(Option<iced::window::Id>),
+    /// Expand bus subscription to TerminalSession/TerminalConfig so sticky
+    /// tab replay lands after the iced bus pump is attached.
+    SubscribeSessions,
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,
 }
 
+/// Full topic set once the iced bus pump can receive sticky replay.
+const SESSION_TOPICS: &[TopicKind] = &[
+    TopicKind::Theme,
+    TopicKind::MenuAction,
+    TopicKind::CloseApp,
+    TopicKind::TerminalConfig,
+    TopicKind::TerminalSession,
+];
+
 impl App {
     fn boot() -> (Self, Task<Msg>) {
-        let live_tmux_at_startup = tmux::list_sessions().map(|v| v.into_iter().collect());
+        let live_tmux_at_startup: Option<HashSet<String>> =
+            tmux::list_sessions().map(|v| v.into_iter().collect());
+        match &live_tmux_at_startup {
+            Some(s) => tracing::info!(count = s.len(), "live sola-* tmux sessions at boot"),
+            None => tracing::warn!("tmux list-sessions failed at boot; admitting all stickies"),
+        }
         let app = Self {
             tabs: state::Tabs::default(),
             active: None,
@@ -294,7 +314,12 @@ impl App {
         };
         (
             app,
-            sola_kit::window_ready_task(Msg::WindowReady),
+            Task::batch([
+                sola_kit::window_ready_task(Msg::WindowReady),
+                // After the first iced frame the bus subscription is live;
+                // expand to session topics so sticky replay is not dropped.
+                Task::done(Msg::SubscribeSessions),
+            ]),
         )
     }
 
@@ -313,6 +338,10 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
+        // IMPORTANT: keep this recipe **stable**. Toggling optional arms
+        // rebuilds the whole batch and restarts `bus_subscription`, which
+        // can drop sticky TerminalSession replay mid-handoff. Always
+        // register the same set; gate ReorderTick work in update.
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             emulator::output_subscription().map(Msg::PtyOutput),
@@ -342,13 +371,8 @@ impl App {
                 }
                 _ => None,
             }),
-            // Sibling glide continues between pointer samples while a tab
-            // reorder is mid-drag.
-            if self.sidebar.reorder_dragging {
-                iced::time::every(Duration::from_millis(16)).map(|_| Msg::ReorderTick)
-            } else {
-                Subscription::none()
-            },
+            // Always registered; `update` no-ops when not dragging.
+            iced::time::every(Duration::from_millis(16)).map(|_| Msg::ReorderTick),
         ])
     }
 
@@ -357,6 +381,21 @@ impl App {
             Msg::Bus(m) => self.on_bus(&m),
             Msg::WindowReady(id) => {
                 self.window_id = id;
+                Task::none()
+            }
+            Msg::SubscribeSessions => {
+                // Expand kinds for reconnect too (kit only remembers the
+                // last set for bus restart recovery).
+                sola_kit::app::set_bus_kinds(SESSION_TOPICS);
+                if let Ok(mut client) = bus().lock() {
+                    if let Err(e) = client.subscribe(SESSION_TOPICS) {
+                        tracing::warn!("SubscribeSessions failed: {e}");
+                    } else {
+                        tracing::info!(
+                            "subscribed TerminalSession/TerminalConfig (sticky tab replay)"
+                        );
+                    }
+                }
                 Task::none()
             }
             Msg::TitleDrag => sola_kit::drag(self.window_id),
@@ -422,6 +461,9 @@ impl App {
                 Task::none()
             }
             Msg::ReorderTick => {
+                if !self.sidebar.reorder_dragging {
+                    return Task::none();
+                }
                 self.sync_reorder_anim();
                 Task::none()
             }
@@ -1147,7 +1189,11 @@ impl App {
             },
         };
         let Some(reconciled) = state::reconcile_layout(layout, &self.live_tmux_at_startup) else {
-            tracing::info!(id = %s.id, "retracting stale TerminalSession (all panes gone)");
+            tracing::info!(
+                id = %s.id,
+                tmux = %s.tmux_session,
+                "retracting stale TerminalSession (all panes gone)"
+            );
             if let Ok(mut client) = bus().lock() {
                 let _ = client.retract(Topic::TerminalSession(s));
             }
@@ -1166,6 +1212,13 @@ impl App {
             active_pane,
             ordinal: s.ordinal,
         });
+        tracing::info!(
+            id = %s.id,
+            tmux = %s.tmux_session,
+            ordinal = s.ordinal,
+            panes = metas.len(),
+            "restored TerminalSession tab"
+        );
         // Prefer the tab remembered in TerminalConfig. Until that config
         // (or a matching session) arrives, provisionally take the first
         // sticky tab so the window isn't blank during boot.

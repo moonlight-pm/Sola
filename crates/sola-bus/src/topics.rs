@@ -54,6 +54,16 @@ pub struct LaunchResultPayload {
     pub error: Option<String>,
 }
 
+/// Request that the shell omit an app's surfaces from composition
+/// (River `hide`). Sticky and keyed by `app_id`: emit to hide, retract
+/// to show again. Used by sola-arcade to park Steam's client UI while a
+/// game runs under windowed gamescope — Sola has no taskbar minimize, so
+/// the shell shows a menubar chip for each hidden app as the restore path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppHidden {
+    pub app_id: String,
+}
+
 /// Emitted by `sola` whenever a user app process exits. Exactly one of
 /// `code` or `signal` is set: `code` on normal exit, `signal` when killed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -546,6 +556,11 @@ define_topics! {
     LaunchResult(LaunchResultPayload),
     UserAppExited(UserAppExitedPayload),
     CloseApp(String),
+
+    // Hide app surfaces from composition (shell → river via Composition).
+    // Sticky + keyed by app_id; retract to show. See `AppHidden` docs.
+    #[sticky(keys = [app_id])]
+    AppHidden(AppHidden),
 
     // Lifecycle / presence
     ClientConnected(String),

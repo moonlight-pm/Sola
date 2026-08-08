@@ -5523,6 +5523,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-arcade"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "sola-assets"
 version = "0.1.0"
 

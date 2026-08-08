@@ -53,16 +53,17 @@ pub fn apply_pending_chords(state: &mut AppData, new_pairs: Vec<(u32, u32)>) {
 
     let old_pairs: Vec<(u32, u32)> = state.chords.by_chord.keys().copied().collect();
     let (added, removed) = chord_diff(&old_pairs, &new_pairs);
+    let added_n = added.len();
+    let removed_n = removed.len();
 
-    for pair in removed {
-        if let Some(b) = state.chords.by_chord.remove(&pair) {
-            state.chords.by_object.retain(|_, v| *v != pair);
+    for pair in &removed {
+        if let Some(b) = state.chords.by_chord.remove(pair) {
+            state.chords.by_object.retain(|_, v| *v != *pair);
             b.disable();
             b.destroy();
         }
     }
 
-    let added_any = !added.is_empty();
     for (keysym, modifiers) in added {
         let binding = bind_chord(&xb, &river_seat, keysym, modifiers, &qh);
         // When a layer surface holds exclusive focus (sola-kvm capture),
@@ -77,9 +78,17 @@ pub fn apply_pending_chords(state: &mut AppData, new_pairs: Vec<(u32, u32)>) {
             .insert(binding.id(), (keysym, modifiers));
         state.chords.by_chord.insert((keysym, modifiers), binding);
     }
-    if state.layer_shell.exclusive_focus && added_any {
+    if state.layer_shell.exclusive_focus && added_n > 0 {
         state.layer_shell.chords_suppressed = true;
     }
+    tracing::info!(
+        total = state.chords.by_chord.len(),
+        added = added_n,
+        removed = removed_n,
+        exclusive_focus = state.layer_shell.exclusive_focus,
+        chords_suppressed = state.layer_shell.chords_suppressed,
+        "applied RegisteredChords"
+    );
 }
 
 fn bind_chord(

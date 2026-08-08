@@ -23,6 +23,12 @@ pub const FLOAT_MARGIN: i32 = 50;
 /// a very small source rect can't collapse to a sliver (or go negative).
 const MIN_FLOAT_DIM: i32 = 100;
 
+/// Arcade default host nest for first map (`gamescope -W/-H` / default float).
+/// After paint, zoning may resize the **host** surface; nested game res is
+/// fixed by Arcade `-w/-h` + `-S fit` (letterbox scale-to-fit).
+const GAMESCOPE_NEST_W: i32 = 1920;
+const GAMESCOPE_NEST_H: i32 = 1080;
+
 pub struct ZoningState {
     pub output_size: Option<(i32, i32)>,
     pub focused_app_id: Option<String>,
@@ -253,23 +259,61 @@ impl ZoningState {
     /// client-requested size.
     ///
     /// Runtime-only: does **not** write `Zone::Float` into `app_zone_config`
-    /// (so it is not persisted as a zone assignment). Emits no frame — size
-    /// is the client's; sola-river centers unplaced windows. Callers must
-    /// still run `take_floating_changes` → `Topic::WindowFloating` so apps
-    /// know to draw CSD and sola-river enables Meta-drag move/resize.
+    /// (so it is not persisted as a zone assignment).
+    ///
+    /// Returns a [`FrameUpdate`] when the client is known not to self-size
+    /// (`gamescope` nested host) so sola-river proposes a real nest rect
+    /// instead of `(0, 0)`. Other apps get `None` — size is the client's;
+    /// sola-river centers unplaced windows. Callers must still run
+    /// `take_floating_changes` → `Topic::WindowFloating` so apps know to
+    /// draw CSD and sola-river enables Meta-drag move/resize.
     ///
     /// No-op when the window was already processed or the app has a saved
     /// zone (use [`apply_config_zone`] for those).
-    pub fn ensure_default_float(&mut self, app_id: &str, window_id: u32) {
+    pub fn ensure_default_float(
+        &mut self,
+        app_id: &str,
+        window_id: u32,
+    ) -> Option<FrameUpdate> {
         if self.config_applied.contains(&window_id) {
-            return;
+            return None;
         }
         if self.app_zone_config.contains_key(app_id) {
-            return;
+            return None;
         }
         self.config_applied.insert(window_id);
         self.window_zones.insert(window_id, Zone::Float);
         info!(app_id = %app_id, window_id, "default-float (no zone assignment)");
+
+        // gamescope: first map at Arcade nest size, centered. Must match
+        // initial `gamescope -W/-H` so the host can commit before zone resize.
+        if app_id.eq_ignore_ascii_case("gamescope") {
+            if let Some((out_w, out_h)) = self.output_size {
+                let usable_h = (out_h - MENUBAR_HEIGHT).max(MIN_FLOAT_DIM);
+                let w = GAMESCOPE_NEST_W.min(out_w).max(MIN_FLOAT_DIM);
+                let h = GAMESCOPE_NEST_H.min(usable_h).max(MIN_FLOAT_DIM);
+                let x = ((out_w - w) / 2).max(0);
+                let y = MENUBAR_HEIGHT + ((usable_h - h) / 2).max(0);
+                info!(
+                    app_id = %app_id,
+                    window_id,
+                    x,
+                    y,
+                    w,
+                    h,
+                    "default-float gamescope nest frame"
+                );
+                return Some(FrameUpdate {
+                    window_id,
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                    fullscreen: false,
+                });
+            }
+        }
+        None
     }
 
     /// Handle a zone snap keycode for the focused window.
@@ -347,6 +391,8 @@ impl ZoningState {
         };
 
         let frame = compute_frame(zone, window_id, w, h);
+        // gamescope: full zone rect for the host; Arcade `-S fit` scales the
+        // fixed nested game into it (letterbox). Do not special-case size.
         info!(
             app_id = %app_id,
             window_id,

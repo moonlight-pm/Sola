@@ -28,6 +28,12 @@ pub(crate) enum SizeDecision {
     Defer(i32, i32),
 }
 
+/// Default host size for nested gamescope when the shell has not framed it
+/// yet and the client self-size path yields `(0, 0)`. Matches Arcade's
+/// default nest (`-W 1920 -H 1080`).
+pub(crate) const GAMESCOPE_DEFAULT_W: i32 = 1920;
+pub(crate) const GAMESCOPE_DEFAULT_H: i32 = 1080;
+
 /// Decide what to propose for a window this manage cycle.
 ///
 /// `river-window-management-v1` guarantees a window is not displayed until
@@ -36,8 +42,31 @@ pub(crate) enum SizeDecision {
 /// (Vulkan/SDL3) dies exactly this way. So any real size requested before
 /// initialization is deferred; the window self-sizes first and takes the
 /// real size as a normal runtime resize one cycle later. A `(0, 0)` request
-/// is "client decides its own size" and is always safe.
-pub(crate) fn size_decision(requested: (i32, i32), initialized: bool) -> SizeDecision {
+/// is "client decides its own size" and is always safe **except for
+/// gamescope**: its xdg host never self-sizes from `(0, 0)` — it stays
+/// mapped with no visible surface (switcher shows "Gamescope", pixels
+/// never appear). Force a real host configure for that app_id.
+pub(crate) fn size_decision(
+    requested: (i32, i32),
+    initialized: bool,
+    app_id: &str,
+) -> SizeDecision {
+    if app_id.eq_ignore_ascii_case("gamescope") {
+        // Pre-init: pin Arcade nest size so the host can commit a first buffer
+        // (thrashing to full-desktop/`size=None` otherwise).
+        // Post-init: honor shell Frames so zoning can fill the zone. Nested
+        // game res stays at Arcade `-w/-h`; gamescope `-S fit` letterboxes
+        // into the host (scale-to-fit without Proton resolution thrash).
+        if !initialized {
+            return SizeDecision::Propose(GAMESCOPE_DEFAULT_W, GAMESCOPE_DEFAULT_H);
+        }
+        let (w, h) = if requested.0 > 0 && requested.1 > 0 {
+            requested
+        } else {
+            (GAMESCOPE_DEFAULT_W, GAMESCOPE_DEFAULT_H)
+        };
+        return SizeDecision::Propose(w, h);
+    }
     if !initialized && requested != (0, 0) {
         SizeDecision::Defer(requested.0, requested.1)
     } else {
@@ -93,7 +122,7 @@ pub fn handle_manage_start(state: &mut AppData) {
             .unwrap_or("?")
             .to_string();
         let initialized = state.first_dimensions.contains(&window_id);
-        let propose = match size_decision((w, h), initialized) {
+        let propose = match size_decision((w, h), initialized, &app_id) {
             SizeDecision::Propose(pw, ph) => (pw, ph),
             SizeDecision::Defer(dw, dh) => {
                 tracing::info!(
@@ -241,6 +270,12 @@ pub fn handle_render_start(state: &mut AppData) {
     if let Some(order) = state.pending.composition.take() {
         // Anything in the order is visible; anything else hides. River's
         // `hide`/`show` are idempotent (no-op if already in that state).
+        //
+        // gamescope is treated like any other app: stack order is solely the
+        // shell's Composition list (MRU + overlays). We used to never-hide and
+        // re-`place_top` gamescope after the stack walk so the nest couldn't
+        // be buried during early paint races — that locked the host on top of
+        // every normal app and contributed to z-order thrash / flicker.
         let visible: std::collections::HashSet<u32> = order.iter().copied().collect();
         for (&id, proxy) in &state.windows_by_id {
             if visible.contains(&id) {
@@ -361,19 +396,57 @@ mod tests {
 
     #[test]
     fn uninitialized_real_size_is_deferred() {
-        assert_eq!(size_decision((800, 600), false), SizeDecision::Defer(800, 600));
+        assert_eq!(
+            size_decision((800, 600), false, "UnrealEditor"),
+            SizeDecision::Defer(800, 600)
+        );
     }
 
     #[test]
     fn initialized_real_size_is_proposed() {
-        assert_eq!(size_decision((800, 600), true), SizeDecision::Propose(800, 600));
+        assert_eq!(
+            size_decision((800, 600), true, "UnrealEditor"),
+            SizeDecision::Propose(800, 600)
+        );
     }
 
     #[test]
     fn self_size_is_always_proposed() {
         // (0,0) means "client decides" — safe pre-init and post-init.
-        assert_eq!(size_decision((0, 0), false), SizeDecision::Propose(0, 0));
-        assert_eq!(size_decision((0, 0), true), SizeDecision::Propose(0, 0));
+        assert_eq!(
+            size_decision((0, 0), false, "Helium"),
+            SizeDecision::Propose(0, 0)
+        );
+        assert_eq!(
+            size_decision((0, 0), true, "Helium"),
+            SizeDecision::Propose(0, 0)
+        );
+    }
+
+    #[test]
+    fn gamescope_pre_init_sticks_to_nest_default() {
+        // Even if shell asks for a huge float rect, pre-init stays 1920×1080.
+        assert_eq!(
+            size_decision((5020, 2032), false, "gamescope"),
+            SizeDecision::Propose(GAMESCOPE_DEFAULT_W, GAMESCOPE_DEFAULT_H)
+        );
+        assert_eq!(
+            size_decision((0, 0), false, "gamescope"),
+            SizeDecision::Propose(GAMESCOPE_DEFAULT_W, GAMESCOPE_DEFAULT_H)
+        );
+    }
+
+    #[test]
+    fn gamescope_post_init_honors_zone_host_size() {
+        // After first dimensions, host may fill a zone; nested stays -w/-h.
+        assert_eq!(
+            size_decision((1434, 2132), true, "gamescope"),
+            SizeDecision::Propose(1434, 2132)
+        );
+        assert_eq!(
+            size_decision((1280, 720), true, "gamescope"),
+            SizeDecision::Propose(1280, 720)
+        );
     }
 
     #[test]

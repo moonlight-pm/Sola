@@ -530,29 +530,45 @@ fn restore_plan(
         .collect()
 }
 
+/// Topics sola-session needs. Re-applied after every bus reconnect so a
+/// mid-session `sola-bus` restart does not leave LaunchApp undelivered
+/// (launcher toast with no process — the arcade/games launch failure mode).
+const SESSION_TOPICS: &[TopicKind] = &[
+    TopicKind::LaunchApp,
+    TopicKind::CloseApp,
+    TopicKind::Shutdown,
+    // For session restore: the persisted open-app set plus the sticky
+    // current-window list (to skip apps already running).
+    TopicKind::SessionApps,
+    TopicKind::Windows,
+];
+
+fn connect_and_subscribe(bus: &mut BusClient) {
+    bus.connect_blocking(Duration::from_secs(1));
+    if let Err(e) = bus.subscribe(SESSION_TOPICS) {
+        warn!(%e, "sola-session subscribe failed");
+    }
+    info!("sola-session connected to bus");
+}
+
 pub fn run() {
     let mut session = Session::new();
 
-    // Connect (retry until up).
-    session.bus.connect_blocking(Duration::from_secs(1));
-
-    let _ = session.bus.subscribe(&[
-        TopicKind::LaunchApp,
-        TopicKind::CloseApp,
-        TopicKind::Shutdown,
-        // For session restore: the persisted open-app set plus the sticky
-        // current-window list (to skip apps already running).
-        TopicKind::SessionApps,
-        TopicKind::Windows,
-    ]);
-
-    info!("sola-session connected to bus");
+    connect_and_subscribe(&mut session.bus);
 
     // Relaunch last session's apps (once, before the steady-state loop).
     session.restore_session();
 
     let poll = Duration::from_millis(500);
     loop {
+        // sola-bus restarts drop the reader; kit apps reconnect via their
+        // poller. Session is the LaunchApp owner — must reconnect itself or
+        // launcher/arcade spawns vanish (toast only).
+        if !session.bus.is_connected() {
+            warn!("sola-session bus disconnected; reconnecting");
+            connect_and_subscribe(&mut session.bus);
+        }
+
         while let Some(msg) = session.bus.try_recv() {
             if let Some(topic) = Topic::parse(&msg) {
                 session.handle(topic);

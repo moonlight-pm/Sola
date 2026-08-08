@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use iced::Task;
 use sola_bus::topics::{
-    AppMenuPayload, Application, CaptureScreenPayload, CaptureTarget, ChordEvent, FloatGeometry,
-    FocusTarget, LaunchAppPayload, LaunchResultPayload, MouseClickedPayload, MouseEnteredPayload,
-    OpenImageRequest, OutputGeometry, ScreenshotPayload, Topic, UserAppExitedPayload, Window,
-    WindowFloating, WindowGeometry,
+    AppHidden, AppMenuPayload, Application, CaptureScreenPayload, CaptureTarget, ChordEvent,
+    FloatGeometry, FocusTarget, LaunchAppPayload, LaunchResultPayload, MouseClickedPayload,
+    MouseEnteredPayload, OpenImageRequest, OutputGeometry, ScreenshotPayload, Topic,
+    UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -37,6 +37,10 @@ impl Shell {
             }
             Topic::SetAppMenu(m) => { self.on_set_app_menu(m); Task::none() }
             Topic::Application(a) => { self.on_application(a); Task::none() }
+            Topic::AppHidden(h) => {
+                self.on_app_hidden(h, message.sticky);
+                Task::none()
+            }
             Topic::Chord(c) => self.on_chord(c),
             Topic::ChordReleased(c) => self.on_chord_released(c),
             Topic::MouseEntered(e) => self.on_mouse_entered(e),
@@ -178,9 +182,9 @@ impl Shell {
             }
             if let Some(frame) = self.zoning.apply_config_zone(&w.app_id, w.window_id) {
                 zone_frames.push(frame);
-            } else {
-                self.zoning
-                    .ensure_default_float(&w.app_id, w.window_id);
+            } else if let Some(frame) = self.zoning.ensure_default_float(&w.app_id, w.window_id)
+            {
+                zone_frames.push(frame);
             }
         }
         if !zone_frames.is_empty() {
@@ -606,6 +610,21 @@ impl Shell {
         }
     }
 
+    /// Hide or show an app's surfaces in composition (River hide/show).
+    /// Sticky emit → hide; sticky=false retract → show. Case-insensitive
+    /// match on window app_id when filtering composition.
+    fn on_app_hidden(&mut self, h: AppHidden, sticky: bool) {
+        let key = h.app_id.to_ascii_lowercase();
+        if sticky {
+            tracing::info!(app_id = %h.app_id, "AppHidden: hide");
+            self.hidden_apps.insert(key, h.app_id);
+        } else {
+            tracing::info!(app_id = %h.app_id, "AppHidden: show (retract)");
+            self.hidden_apps.remove(&key);
+        }
+        self.emit_composition();
+    }
+
     // -------------------------------------------------------------------------
     // Chord dispatch
     // -------------------------------------------------------------------------
@@ -834,6 +853,16 @@ impl Shell {
             // Start at index 1 so the second (next) app is pre-selected on
             // first press — mirrors the legacy macOS-style Alt+Tab feel.
             self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
+            // Focus the switcher surface so River exits any client-initiated
+            // exclusive fullscreen (games/steam_app). Fullscreen surfaces paint
+            // "above everything"; without this Meta+Tab only flashes on Meta
+            // release when focus finally moves. See sola-river Focus handler.
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
+                if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                    let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+                }
+                self.focused_window_id = Some(wid);
+            }
             self.emit_registered_chords();
             self.emit_composition();
             return Task::none();
@@ -1033,8 +1062,8 @@ impl Shell {
         for (app_id, wid) in windows {
             if let Some(frame) = self.zoning.apply_config_zone(&app_id, wid) {
                 zone_frames.push(frame);
-            } else {
-                self.zoning.ensure_default_float(&app_id, wid);
+            } else if let Some(frame) = self.zoning.ensure_default_float(&app_id, wid) {
+                zone_frames.push(frame);
             }
         }
         if !zone_frames.is_empty() {
