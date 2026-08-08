@@ -36,7 +36,10 @@ impl Shell {
                 Task::none()
             }
             Topic::SetAppMenu(m) => { self.on_set_app_menu(m); Task::none() }
-            Topic::Application(a) => { self.on_application(a); Task::none() }
+            Topic::Application(a) => {
+                self.on_application(a, message.sticky);
+                Task::none()
+            }
             Topic::AppHidden(h) => {
                 self.on_app_hidden(h, message.sticky);
                 Task::none()
@@ -175,6 +178,7 @@ impl Shell {
 
         // Per non-shell window: restore a saved zone if any; otherwise
         // default-float (client-requested size + WindowFloating for CSD).
+        // gamescope is framed like any other app (zone/float host size).
         let mut zone_frames = Vec::new();
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID {
@@ -597,8 +601,14 @@ impl Shell {
     /// Receive a user-defined application entry from the bus.
     /// Extends the application catalog; if the launcher is active, re-runs
     /// the filter so new entries appear immediately.
-    fn on_application(&mut self, a: Application) {
-        if self.applications.get(&a.app_id).is_some() {
+    ///
+    /// `sticky=false` is a retract (settings remove, Arcade nest label
+    /// clear) — drop the catalog entry rather than re-adding an empty one.
+    fn on_application(&mut self, a: Application, sticky: bool) {
+        if !sticky {
+            tracing::info!(app_id = %a.app_id, "Application retract");
+            self.applications.remove(&a.app_id);
+        } else if self.applications.get(&a.app_id).is_some() {
             let _ = self.applications.update(&a.app_id.clone(), a);
         } else {
             let _ = self.applications.add(a);

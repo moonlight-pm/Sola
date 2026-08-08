@@ -58,7 +58,18 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .map(|(i, app)| {
             // Window app_ids come from the compositor; catalog keys may
             // differ in case (e.g. Wayland `orca` vs launcher `Orca`).
-            let catalog_entry = shell.applications.get_for_window(&app.app_id);
+            // gamescope often maps empty until river infers — also try
+            // the Arcade-published `gamescope` catalog row.
+            let catalog_entry = shell
+                .applications
+                .get_for_window(&app.app_id)
+                .or_else(|| {
+                    if app.app_id.is_empty() {
+                        shell.applications.get_for_window("gamescope")
+                    } else {
+                        None
+                    }
+                });
             let icon_name = catalog_entry
                 .map(|a| a.icon.as_str())
                 .filter(|s| !s.is_empty())
@@ -88,7 +99,14 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
             let caption: Element<'_, Msg> = if is_selected {
                 let label = catalog_entry
                     .map(|a| a.label.as_str())
-                    .unwrap_or(app.app_id.as_str());
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| {
+                        if app.app_id.is_empty() {
+                            "Gamescope"
+                        } else {
+                            app.app_id.as_str()
+                        }
+                    });
                 container(
                     text(label)
                         .font(fonts::chrome())

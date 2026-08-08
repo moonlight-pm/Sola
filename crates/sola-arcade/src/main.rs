@@ -10,11 +10,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::widget::{column, container, image, row, scrollable, stack, text, Space};
+use iced::widget::operation;
+use iced::widget::scrollable::{AbsoluteOffset, Viewport};
+use iced::widget::Id as ScrollId;
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme};
 use iced::widget::image::Handle as ImageHandle;
 
 use sola_bus::Message;
-use sola_bus::topics::{LaunchAppPayload, Topic, TopicKind};
+use sola_bus::topics::{
+    AppMenuPayload, Application, LaunchAppPayload, MenuDefinition, Topic, TopicKind,
+};
 use sola_core::KeyCode;
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
@@ -37,14 +42,34 @@ use launch::{
 use steam::{SteamGame, scan_installed_games};
 
 const APP_ID: &str = "sola-arcade";
+/// Wayland app_id gamescope reports (after river pid inference when empty).
+const GAMESCOPE_HOST_APP_ID: &str = "gamescope";
 /// Full-width banner row height. Steam `library_hero` is 1920×620; we show a
 /// wide strip (Cover) so the hero fills the row without portrait cropping.
 const ROW_H: f32 = 168.0;
 
+fn gallery_scroll_id() -> ScrollId {
+    ScrollId::new("arcade-gallery")
+}
+
 fn main() -> iced::Result {
     // Game-runner path used by sola-session (`LaunchApp` whitespace-splits):
     //   sola-arcade --run <steam_app_id> [width] [height]
-    if let Some((app_id, w, h)) = parse_run_args(std::env::args().skip(1)) {
+    // gamescope child (desktop Steam, no BPM):
+    //   sola-arcade --nested-steam <steam_app_id>
+    let mut argv = std::env::args().skip(1).peekable();
+    if argv.peek().map(|s| s.as_str()) == Some("--nested-steam") {
+        argv.next();
+        let app_id: u32 = argv
+            .next()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| {
+                eprintln!("sola-arcade: --nested-steam requires <steam_app_id>");
+                std::process::exit(2);
+            });
+        launch::run_nested_steam_blocking(app_id);
+    }
+    if let Some((app_id, w, h)) = parse_run_args(argv) {
         launch::run_game_blocking(app_id, w, h);
     }
 
@@ -114,6 +139,9 @@ struct App {
     gamescope_ok: bool,
     steam_ok: bool,
     active: Option<ActiveSession>,
+    /// Gallery list scroll (absolute Y). Restored after launch so Play→Stop
+    /// row rebuild does not jump the list to the top.
+    scroll_y: f32,
     theme: Theme,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
@@ -141,6 +169,7 @@ impl Default for App {
             gamescope_ok,
             steam_ok,
             active: None,
+            scroll_y: 0.0,
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
@@ -158,6 +187,7 @@ enum Msg {
     OpenStore(u32),
     Uninstall(u32),
     Tick,
+    GalleryScrolled(AbsoluteOffset),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -178,16 +208,31 @@ impl App {
     fn recover_active_from_procs(&mut self) {
         for g in &self.games {
             if session_alive(g.app_id) {
+                let name = g.name.clone();
+                let steam_app_id = g.app_id;
                 self.active = Some(ActiveSession {
-                    steam_app_id: g.app_id,
-                    name: g.name.clone(),
-                    session_id: game_session_app_id(g.app_id),
+                    steam_app_id,
+                    name: name.clone(),
+                    session_id: game_session_app_id(steam_app_id),
                     running: true,
                     started: Instant::now(),
                 });
+                // Re-publish host label so menubar/switcher show the game name.
+                publish_gamescope_host_label(steam_app_id, &name);
                 return;
             }
         }
+    }
+
+    /// Publish (or clear) the gamescope host label used by shell chrome.
+    fn publish_host_label_for_active(&self) {
+        if let Some(a) = &self.active {
+            publish_gamescope_host_label(a.steam_app_id, &a.name);
+        }
+    }
+
+    fn clear_host_label(&self) {
+        retract_gamescope_host_label();
     }
 
     fn title(&self) -> String {
@@ -271,7 +316,16 @@ impl App {
             running: false,
             started: Instant::now(),
         });
-        self.status = None;
+        // Shell menubar/switcher key off gamescope's host app_id — publish
+        // the game title as Application label + app-menu name.
+        publish_gamescope_host_label(steam_app_id, &name);
+        // Steam cold-start under the nest may show prepare UI (shader cache,
+        // updates) inside gamescope before the game process starts — that is
+        // intentional and automatic (no separate Steam session required).
+        self.status = Some(format!(
+            "Starting “{name}”… Steam may prepare shaders/updates in the nest first."
+        ));
+        self.status_tone = StatusTone::Info;
         tracing::info!(
             %session_id,
             steam_app_id,
@@ -279,7 +333,15 @@ impl App {
             gamescope = plan.gamescope,
             "arcade launch"
         );
-        Task::none()
+        // Row UI swaps Play→Stop; re-apply scroll so the list does not jump.
+        let y = self.scroll_y;
+        operation::scroll_to(
+            gallery_scroll_id(),
+            AbsoluteOffset {
+                x: None,
+                y: Some(y),
+            },
+        )
     }
 
     fn stop_game(&mut self) -> Task<Msg> {
@@ -290,9 +352,17 @@ impl App {
             let _ = b.emit(Topic::CloseApp(active.session_id.clone()));
         }
         stop_nest_local(active.steam_app_id);
+        retract_gamescope_host_label();
         self.status = None;
         self.set_boot_status();
-        Task::none()
+        let y = self.scroll_y;
+        operation::scroll_to(
+            gallery_scroll_id(),
+            AbsoluteOffset {
+                x: None,
+                y: Some(y),
+            },
+        )
     }
 
     fn on_bus_topic(&mut self, topic: Topic) {
@@ -304,11 +374,14 @@ impl App {
                     if let Some(a) = self.active.as_mut() {
                         a.running = true;
                     }
+                    self.status = None;
+                    self.publish_host_label_for_active();
                 } else {
                     let err = r.error.unwrap_or_else(|| "spawn failed".into());
                     self.status = Some(format!("Launch failed: {err}"));
                     self.status_tone = StatusTone::Danger;
                     self.active = None;
+                    self.clear_host_label();
                 }
             }
             Topic::UserAppExited(e)
@@ -324,9 +397,11 @@ impl App {
                     if let Some(a) = self.active.as_mut() {
                         a.running = true;
                     }
+                    self.publish_host_label_for_active();
                     return;
                 }
                 self.active = None;
+                self.clear_host_label();
                 self.status = None;
                 self.set_boot_status();
             }
@@ -345,12 +420,15 @@ impl App {
             }
             return;
         }
-        // Grace for cold spawn; after that, no process ⇒ clear Stop state.
-        let grace = Duration::from_secs(8);
+        // Grace for cold spawn + Steam prepare (shader cache / updates can
+        // take minutes on first launch of a Proton title). After that, no
+        // process ⇒ clear Stop state.
+        let grace = Duration::from_secs(180);
         if !active.running && active.started.elapsed() < grace {
             return;
         }
         self.active = None;
+        self.clear_host_label();
         self.status = None;
         self.set_boot_status();
     }
@@ -390,6 +468,9 @@ impl App {
             }
             Msg::Launch(id) => return self.launch_game(id),
             Msg::StopGame => return self.stop_game(),
+            Msg::GalleryScrolled(off) => {
+                self.scroll_y = off.y;
+            }
             Msg::OpenStore(id) => {
                 let url = format!("https://store.steampowered.com/app/{id}");
                 sola_core::open_url_logged(&url);
@@ -428,11 +509,13 @@ impl App {
             .style(kit_input::style)
             .width(Length::Fill);
 
-        // Errors only — no top “playing” banner.
+        // Status strip: prepare/info + problems (no top “playing” banner).
         let status: Element<'_, Msg> = match &self.status {
             Some(s)
-                if self.status_tone == StatusTone::Danger
-                    || self.status_tone == StatusTone::Warn =>
+                if matches!(
+                    self.status_tone,
+                    StatusTone::Danger | StatusTone::Warn | StatusTone::Info
+                ) =>
             {
                 let style = match self.status_tone {
                     StatusTone::Warn => kit_text::warning,
@@ -475,6 +558,8 @@ impl App {
                             left: 0.0,
                         }),
                 )
+                .id(gallery_scroll_id())
+                .on_scroll(|vp: Viewport| Msg::GalleryScrolled(vp.absolute_offset()))
                 .height(Length::Fill)
                 .width(Length::Fill)
                 .into()
@@ -511,6 +596,55 @@ impl App {
         }
         bus
     }
+}
+
+/// Tell shell chrome the gamescope host should display `name` (menubar + switcher).
+///
+/// The nest surface reports `app_id=gamescope` (sometimes empty until river
+/// infers from pid). Shell looks up `Application` label and `SetAppMenu`
+/// first-menu label for that app_id.
+fn publish_gamescope_host_label(steam_app_id: u32, name: &str) {
+    let icon = steam::banner_art_path(steam_app_id)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "lucide/gamepad-2".into());
+    let app = Application {
+        app_id: GAMESCOPE_HOST_APP_ID.into(),
+        label: name.to_string(),
+        // Not a launcher entry — empty command; shell still uses label/icon
+        // for switcher/menubar while the nest is up. Retracted on stop.
+        command: String::new(),
+        icon,
+    };
+    let menu = AppMenuPayload {
+        app_id: GAMESCOPE_HOST_APP_ID.into(),
+        menus: vec![MenuDefinition {
+            label: name.to_string(),
+            items: vec![],
+        }],
+    };
+    if let Ok(mut b) = bus().lock() {
+        let _ = b.emit(Topic::Application(app));
+        let _ = b.emit(Topic::SetAppMenu(menu));
+    }
+    tracing::info!(%name, steam_app_id, "published gamescope host label");
+}
+
+fn retract_gamescope_host_label() {
+    let app = Application {
+        app_id: GAMESCOPE_HOST_APP_ID.into(),
+        label: String::new(),
+        command: String::new(),
+        icon: String::new(),
+    };
+    let menu = AppMenuPayload {
+        app_id: GAMESCOPE_HOST_APP_ID.into(),
+        menus: vec![],
+    };
+    if let Ok(mut b) = bus().lock() {
+        let _ = b.retract(Topic::Application(app));
+        let _ = b.retract(Topic::SetAppMenu(menu));
+    }
+    tracing::info!("retracted gamescope host label");
 }
 
 /// One full-width row: faded banner background, large title, actions on the right.

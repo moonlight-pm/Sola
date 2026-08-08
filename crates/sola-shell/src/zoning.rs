@@ -348,14 +348,30 @@ impl ZoningState {
                 info!(app_id = %app_id, window_id, "float key ignored — already floating");
                 return None;
             }
-            // Inset from the window's current rect (read BEFORE we overwrite
-            // its zone), so an explicit float shrinks it in place. Fall back
-            // to the centered output inset when the current rect is unknown,
-            // or to no frame at all when we lack output geometry.
-            let frame = self
-                .current_rect(window_id, &app_id)
-                .map(|(x, y, w, h)| inset_rect(window_id, x, y, w, h))
-                .or_else(|| self.output_size.map(|(w, h)| float_frame(window_id, w, h)));
+            // gamescope: always float at nest aspect (16:9), never inset the
+            // current zone rect (that kept tall letterbox columns). Match by
+            // window app_id only — this is the Wayland host for every nest.
+            let is_gamescope = app_id.eq_ignore_ascii_case("gamescope");
+            let frame = if is_gamescope {
+                let f = self
+                    .output_size
+                    .map(|(w, h)| gamescope_float_frame(window_id, w, h));
+                info!(
+                    app_id = %app_id,
+                    window_id,
+                    ?f,
+                    "gamescope float → nest aspect (not zone inset)"
+                );
+                f
+            } else {
+                // Inset from the window's current rect (read BEFORE we overwrite
+                // its zone), so an explicit float shrinks it in place. Fall back
+                // to the centered output inset when the current rect is unknown,
+                // or to no frame at all when we lack output geometry.
+                self.current_rect(window_id, &app_id)
+                    .map(|(x, y, w, h)| inset_rect(window_id, x, y, w, h))
+                    .or_else(|| self.output_size.map(|(w, h)| float_frame(window_id, w, h)))
+            };
             self.window_zones.insert(window_id, zone);
             self.app_zone_config.insert(app_id.clone(), zone);
             self.config_applied.insert(window_id);
@@ -565,6 +581,39 @@ fn float_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
     }
 }
 
+/// Float gamescope at the Arcade nest aspect (16:9), centered in the usable
+/// area. Prefer the default nest size when it fits; otherwise scale 16:9 down
+/// to the margin box. Avoids inheriting a tall zone host rect (heavy letterbox).
+fn gamescope_float_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
+    let usable_h = (output_h - MENUBAR_HEIGHT).max(MIN_FLOAT_DIM);
+    let max_w = (output_w - 2 * FLOAT_MARGIN).max(MIN_FLOAT_DIM);
+    let max_h = (usable_h - 2 * FLOAT_MARGIN).max(MIN_FLOAT_DIM);
+
+    let (w, h) = if GAMESCOPE_NEST_W <= max_w && GAMESCOPE_NEST_H <= max_h {
+        (GAMESCOPE_NEST_W, GAMESCOPE_NEST_H)
+    } else if max_w * GAMESCOPE_NEST_H <= max_h * GAMESCOPE_NEST_W {
+        // Width-limited 16:9 (or nest aspect).
+        let w = max_w;
+        let h = ((w as i64 * GAMESCOPE_NEST_H as i64) / GAMESCOPE_NEST_W as i64) as i32;
+        (w.max(MIN_FLOAT_DIM), h.max(MIN_FLOAT_DIM))
+    } else {
+        let h = max_h;
+        let w = ((h as i64 * GAMESCOPE_NEST_W as i64) / GAMESCOPE_NEST_H as i64) as i32;
+        (w.max(MIN_FLOAT_DIM), h.max(MIN_FLOAT_DIM))
+    };
+
+    let x = ((output_w - w) / 2).max(0);
+    let y = MENUBAR_HEIGHT + ((usable_h - h) / 2).max(0);
+    FrameUpdate {
+        window_id,
+        x,
+        y,
+        width: w,
+        height: h,
+        fullscreen: false,
+    }
+}
+
 /// Inset a source rectangle by `FLOAT_MARGIN` on every edge (each dimension
 /// clamped to at least `MIN_FLOAT_DIM`). This is how an explicit float
 /// shrinks a window in place rather than recentering it on the output.
@@ -726,6 +775,41 @@ mod tests {
         assert_eq!(f.width, 1920);
         assert_eq!(f.height, 1080);
         assert!(f.fullscreen, "Cinema must set fullscreen flag");
+    }
+
+    #[test]
+    fn gamescope_float_uses_nest_aspect_not_source_column() {
+        // 5120×2160 usable: default nest 1920×1080 fits and is preferred.
+        let f = gamescope_float_frame(7, 5120, 2160);
+        assert_eq!(f.width, GAMESCOPE_NEST_W);
+        assert_eq!(f.height, GAMESCOPE_NEST_H);
+        assert!(!f.fullscreen);
+        // Centered horizontally.
+        assert_eq!(f.x, (5120 - GAMESCOPE_NEST_W) / 2);
+        assert!(f.y >= MENUBAR_HEIGHT);
+    }
+
+    #[test]
+    fn handle_key_float_gamescope_ignores_tall_zone_aspect() {
+        let mut s = state_with_output(5120, 2160);
+        s.set_focused("gamescope".into());
+        // Pretend host was left-zone tall before float.
+        s.live_geometry.insert(
+            42,
+            WindowGeometry {
+                window_id: 42,
+                x: 0,
+                y: 28,
+                width: 1434,
+                height: 2132,
+            },
+        );
+        let frame = s
+            .handle_key(KeyCode::KP_MULTIPLY.raw(), Some(42))
+            .expect("gamescope float");
+        assert_eq!(frame.width, GAMESCOPE_NEST_W);
+        assert_eq!(frame.height, GAMESCOPE_NEST_H);
+        assert!(!frame.fullscreen);
     }
 
     // --- ZoningState integration ---

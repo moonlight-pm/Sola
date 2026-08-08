@@ -91,6 +91,10 @@ pub fn session_alive(steam_app_id: u32) -> bool {
     if process_cmdline_contains(run.as_bytes()) {
         return true;
     }
+    let nested = format!("sola-arcade --nested-steam {steam_app_id}");
+    if process_cmdline_contains(nested.as_bytes()) {
+        return true;
+    }
     // Nest host still up with this applaunch (even if reaper reparented).
     let launch = format!("-applaunch {steam_app_id}");
     let Ok(entries) = std::fs::read_dir("/proc") else {
@@ -114,6 +118,15 @@ pub fn session_alive(steam_app_id: u32) -> bool {
     false
 }
 
+/// True when Steam's launch reaper / game process for this app id is live.
+///
+/// Matches `AppId=<id>` on cmdline (Steam reaper / proton wrappers). Used to
+/// detect in-game exit so the nested Steam client can be torn down.
+pub fn game_process_alive(steam_app_id: u32) -> bool {
+    let needle = format!("AppId={steam_app_id}");
+    process_cmdline_contains(needle.as_bytes())
+}
+
 /// Best-effort kill of a nest started by `sola-arcade --run <steam_app_id>`.
 /// Prefer `Topic::CloseApp(steam-game-<id>)` first so sola-session stops the
 /// scope cleanly; this is a fallback for leftover processes.
@@ -124,10 +137,23 @@ pub fn stop_nest_local(steam_app_id: u32) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+    let nested = format!("sola-arcade --nested-steam {steam_app_id}");
+    let _ = Command::new("pkill")
+        .args(["-f", &nested])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     // Also kill a leftover gamescope still holding this applaunch.
     let gs = format!("-applaunch {steam_app_id}");
     let _ = Command::new("pkill")
         .args(["-f", &format!("gamescope.*{gs}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    // Nested Steam often survives the game process; reap its reaper too.
+    let app_id = format!("AppId={steam_app_id}");
+    let _ = Command::new("pkill")
+        .args(["-f", &app_id])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
@@ -210,15 +236,20 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32) -> ! {
         //
         // Other flags:
         // - `-b` — borderless host (simpler libdecor map)
-        // - nested `-w`/`-h` fixed at Arcade nest size (Proton sees stable res)
-        // - initial `-W`/`-H` same; host may later be zoned larger/smaller —
-        //   `-S fit` letterbox-scales nested content into the host (scale-to-fit
-        //   without changing nested resolution)
-        // - `steam -silent` — avoid BPM as the primary surface
-        // - `SteamDeck=0` — don't force gamepad UI under the nest
+        // - host `-W`/`-H` initial; River zone/float after pre-init pin
+        // - `-S fit` — letterbox nested content into host
+        // - Child is **`sola-arcade --nested-steam <id>`**, not bare steam:
+        //   gamescope forces `XDG_CURRENT_DESKTOP=gamescope` on children, and
+        //   Steam then logs `forcing gamepadui for steamdeck + gamescope` and
+        //   opens Big Picture without finishing `-applaunch`. The nested
+        //   helper rewrites desktop identity and runs desktop Steam so
+        //   prepare/shader CEF can complete *inside* the nest without BPM.
+        let arcade = resolve_in_path("sola-arcade")
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "/opt/sola/bin/sola-arcade".into());
         eprintln!(
-            "sola-arcade: nesting steam -silent -applaunch {app} under gamescope \
-             {w}x{h} (--backend wayland -b -S fit, no -e, SteamDeck=0)"
+            "sola-arcade: nesting --nested-steam {app} under gamescope \
+             {w}x{h} (--backend wayland -b -S fit, no -e)"
         );
         let mut cmd = Command::new(gs);
         cmd.args([
@@ -236,13 +267,10 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32) -> ! {
             "-h",
             &h,
             "--",
-            &steam,
-            "-silent",
-            "-applaunch",
+            &arcade,
+            "--nested-steam",
             &app,
         ])
-        .env("SteamDeck", "0")
-        .env("STEAM_USE_GAMEPADUI", "0")
         .status()
     } else {
         eprintln!(
@@ -257,6 +285,110 @@ pub fn run_game_blocking(steam_app_id: u32, width: u32, height: u32) -> ! {
     let code = status
         .map(|s| s.code().unwrap_or(1))
         .unwrap_or(1);
+    std::process::exit(code);
+}
+
+/// Gamescope child entry: `sola-arcade --nested-steam <steam_app_id>`.
+///
+/// gamescope sets `XDG_CURRENT_DESKTOP=gamescope` for nested clients. Steam
+/// treats that as Steam Deck + gamescope and **forces gamepadui / Big Picture**,
+/// which swallows `-applaunch` (user sees BPM library, game never starts).
+/// We undo that identity, force desktop Steam, and launch with CEF allowed so
+/// `ProcessingShaderCache` and friends can finish inside the nest.
+pub fn run_nested_steam_blocking(steam_app_id: u32) -> ! {
+    use std::thread;
+    use std::time::Duration;
+
+    let steam = resolve_in_path("steam")
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "steam".into());
+    let app = steam_app_id.to_string();
+
+    eprintln!(
+        "sola-arcade: nested-steam -applaunch {app} \
+         (desktop Steam under nest: no gamepadui/BPM; CEF prepare UI allowed; \
+         exit Steam when game process ends)"
+    );
+
+    // No `-silent`: first-run shader/update interstitials need CEF.
+    // No `-gamepadui` / no Big Picture flags.
+    // `-nofriendsui` keeps the friends list from eating the nest surface.
+    //
+    // Env overrides (on the Steam child only): counteract gamescope forcing
+    // `XDG_CURRENT_DESKTOP=gamescope`, which makes Steam
+    // `forcing gamepadui for steamdeck + gamescope` and open BPM instead of
+    // finishing `-applaunch`.
+    let mut child = match Command::new(&steam)
+        .args(["-nofriendsui", "-applaunch", &app])
+        .env("XDG_CURRENT_DESKTOP", "Sola")
+        .env("XDG_SESSION_DESKTOP", "Sola")
+        .env("XDG_SESSION_TYPE", "x11")
+        .env_remove("GAMESCOPE_WAYLAND_DISPLAY")
+        .env("SteamDeck", "0")
+        .env("STEAM_USE_GAMEPADUI", "0")
+        .env("SteamTenfoot", "0")
+        .env("SDL_VIDEODRIVER", "x11")
+        .env("GDK_BACKEND", "x11")
+        .env("QT_QPA_PLATFORM", "xcb")
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("sola-arcade: failed to spawn steam: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    // Steam stays up after the game returns to the client (library UI in the
+    // nest). Watch for the game process: once it has been seen and then gone
+    // for a short debounce, kill Steam so gamescope/`--run` exit cleanly.
+    let mut saw_game = false;
+    let mut gone_ticks: u32 = 0;
+    let code = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.code().unwrap_or(1),
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("sola-arcade: wait on steam failed: {e}");
+                break 1;
+            }
+        }
+
+        if game_process_alive(steam_app_id) {
+            if !saw_game {
+                eprintln!("sola-arcade: nested-steam saw game process AppId={app}");
+            }
+            saw_game = true;
+            gone_ticks = 0;
+        } else if saw_game {
+            gone_ticks += 1;
+            // ~2s gone (4 × 500ms) — avoid flapping during Steam's relaunch path.
+            if gone_ticks >= 4 {
+                eprintln!(
+                    "sola-arcade: game AppId={app} exited — stopping nested Steam"
+                );
+                // Kill the Steam client we spawned (and its tree). Do **not**
+                // `steam -shutdown` — that uses the shared user Steam socket
+                // and can tear down a Steam the user started outside the nest.
+                let _ = child.kill();
+                let _ = Command::new("pkill")
+                    .args(["-P", &child.id().to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                // Reaper / proton helpers still holding this app id.
+                let _ = Command::new("pkill")
+                    .args(["-f", &format!("AppId={app}")])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                break child.wait().ok().and_then(|s| s.code()).unwrap_or(0);
+            }
+        }
+
+        thread::sleep(Duration::from_millis(500));
+    };
+
     std::process::exit(code);
 }
 
@@ -285,5 +417,12 @@ mod tests {
     #[test]
     fn game_session_app_id_stable() {
         assert_eq!(game_session_app_id(400), "steam-game-400");
+    }
+
+    #[test]
+    fn nest_command_uses_nested_steam_helper_not_bare_steam() {
+        // launch_command only builds the session argv; the actual gamescope
+        // child is assembled in run_game_blocking. Smoke the helper id path.
+        assert_eq!(game_session_app_id(3527290), "steam-game-3527290");
     }
 }

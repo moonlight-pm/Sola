@@ -16,17 +16,18 @@ Do not invent product policy.
 ## Now
 
 1. **sola-arcade / windowed gamescope (this worktree)** — **partial, dogfoodable**  
-   - **UI:** search-only chrome; banner rows (`library_hero`); Play / Store /
-     Uninstall; active row → **Stop**, other Plays disabled; session stickiness
-     via `/proc` cmdline (NUL-normalized).  
-   - **Nest:** cold Steam →  
-     `gamescope --backend wayland -b -S fit -W/-H -w/-h -- steam -silent -applaunch`  
-     (never host `-f`; **no `-e`** — holds first host frame under River).  
-   - **River/shell:** gamescope pre-init pin 1920×1080; post-init zone size OK
-     (fit scale); normal composition stack (no forced place_top).  
+   - **UI:** search-only chrome; banner rows; Play / Store / Uninstall; Stop on
+     active row; **scroll preserved** on launch/stop; session stickiness via
+     `/proc` cmdline (NUL-normalized).  
+   - **Nest:** cold Steam → `gamescope … -- sola-arcade --nested-steam <id>`
+     (no BPM; prepare/shaders in nest; **kill nested Steam when game exits**;
+     never host `-f`; no `-e`).  
+   - **River/shell:** gamescope zone/float; Cinema exits fullscreen on next
+     zone; float uses nest 16:9; Meta-resize free during drag; empty `app_id`
+     → `gamescope`; Arcade game title for menubar/switcher.  
    - Manual: [`docs/manual/sola-arcade.md`](docs/manual/sola-arcade.md).  
-   - **Next polish:** Portal-class nest fails; residual present flicker; title
-     contrast on bright heroes; optional Settings hide-Steam if Steam leaks.  
+   - **Next polish:** Portal-class nest fails; residual flicker; title contrast
+     on bright heroes.  
 2. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
 3. **Progress docs** — keep this file + capabilities honest.  
 4. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
@@ -49,8 +50,8 @@ warning cleanups; worktree hygiene the user asks for.
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **`windowed-gamescope`** | Feature work in worktrees / Orca workspaces |
-| Arcade | Banner list + nest dogfooded (GoA etc.); cold Steam for nest; some titles fail | — |
-| Nest paint | wayland+`-b`+`-S fit` works after warm; SDL no switcher; **no `-e`** | — |
+| Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); nest Steam exits on game quit; some titles still flaky | — |
+| Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install. User installs and smokes.

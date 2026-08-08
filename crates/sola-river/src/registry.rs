@@ -105,6 +105,53 @@ impl WindowRegistry {
         }
     }
 
+    pub fn pid_for(&self, id: u32) -> Option<u32> {
+        self.by_id.get(&id).and_then(|e| e.pid)
+    }
+
+    /// If `app_id` is empty/missing and the window's pid looks like gamescope,
+    /// force `app_id = "gamescope"` (and a floor title when still unset).
+    ///
+    /// gamescope's wayland host often reports `app_id=""` under River even
+    /// though libdecor calls `set_app_id("gamescope")` — without this the
+    /// shell menubar/switcher show a blank name and host sizing never takes
+    /// the gamescope pin path.
+    ///
+    /// Returns true when identity was rewritten (caller should re-publish
+    /// Windows).
+    pub fn maybe_infer_gamescope_identity(&mut self, id: u32) -> bool {
+        use crate::proc_identity::{
+            GAMESCOPE_APP_ID, GAMESCOPE_DEFAULT_TITLE, process_is_gamescope,
+        };
+        let Some(e) = self.by_id.get_mut(&id) else {
+            return false;
+        };
+        let empty_app = e
+            .app_id
+            .as_deref()
+            .map(|s| s.is_empty())
+            .unwrap_or(true);
+        if !empty_app {
+            return false;
+        }
+        let Some(pid) = e.pid else {
+            return false;
+        };
+        if !process_is_gamescope(pid) {
+            return false;
+        }
+        e.app_id = Some(GAMESCOPE_APP_ID.into());
+        let title_empty = e
+            .title
+            .as_deref()
+            .map(|s| s.is_empty())
+            .unwrap_or(true);
+        if title_empty {
+            e.title = Some(GAMESCOPE_DEFAULT_TITLE.into());
+        }
+        true
+    }
+
     pub fn set_frame(&mut self, id: u32, x: i32, y: i32, w: i32, h: i32) {
         if let Some(e) = self.by_id.get_mut(&id) {
             e.frame = Some((x, y, w, h));

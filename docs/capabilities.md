@@ -56,7 +56,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | ID | Capability | Status | Spec / plan | Dogfood | Gaps | Manual |
 |----|------------|--------|-------------|---------|------|--------|
-| arcade | sola-arcade Steam library + windowed gamescope nest | partial | [manual](manual/sola-arcade.md) | unit tests; banner rows; Stop-on-row; session_alive; GoA dogfood | **Gaps:** some titles no host/crash; residual flicker; no `-e`; multi-store; host size UI | yes |
+| arcade | sola-arcade Steam library + windowed gamescope nest | partial | [manual](manual/sola-arcade.md) | unit tests; banner rows; Stop-on-row; scroll preserve; nest steam exit on game quit; host label; zone/float + Cinema exit; `-S fit` | **Gaps:** some titles no host/crash; residual flicker; no `-e`; multi-store | yes |
 | settings | Settings panel (theme, apps, mail cfg, …) | partial | [settings](specs/2026-04-19-sola-settings-design.md), apps list-detail | local | Applications UX still evolving; not all pages kit-parity | no |
 | terminal | sola-terminal panes/tabs/tmux | partial | [terminal iced](specs/2026-06-03-sola-terminal-iced-port-plan.md) | local | Tab restore defers sticky `TerminalSession` until iced bus pump live (restart was empty UI with live tmux); pane UX depth; links polish | no |
 | browser-wpe | Browser chrome + WPE engine | partial | browser freezes | local | Chrome features incomplete vs plan; engine quirks | no |
@@ -96,7 +96,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| **sola-arcade** | 2026-08-08: banner list UI; nest `gamescope --backend wayland -b -S fit` (no `-e`); river/shell gamescope sizing+stacking; session Stop stickiness |
+| **sola-arcade** | 2026-08-08: banner list + nest; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema fullscreen exit; gamescope float 16:9; free zone/float host |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |
 | Float defaults | Unassigned windows default-float + kit CSD on first-party apps |
 | Progress docs | 2026-08-05: CURRENT + capabilities + architecture spine |
