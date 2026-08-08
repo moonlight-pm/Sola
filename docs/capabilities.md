@@ -96,7 +96,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| **sola-arcade** | 2026-08-08: banner list + nest; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema fullscreen exit; gamescope float 16:9; free zone/float host |
+| **sola-arcade** | 2026-08-08: banner list + nest; parallel banner decode; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema exit; gamescope float 16:9 |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |
 | Float defaults | Unassigned windows default-float + kit CSD on first-party apps |
 | Progress docs | 2026-08-05: CURRENT + capabilities + architecture spine |
