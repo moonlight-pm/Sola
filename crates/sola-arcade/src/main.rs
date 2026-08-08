@@ -5,11 +5,12 @@
 mod launch;
 mod steam;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use iced::widget::{column, container, image, row, scrollable, stack, text, Space};
+use iced::widget::{column, container, image as iced_image, row, scrollable, stack, text, Space};
 use iced::widget::operation;
 use iced::widget::scrollable::{AbsoluteOffset, Viewport};
 use iced::widget::Id as ScrollId;
@@ -47,6 +48,8 @@ const GAMESCOPE_HOST_APP_ID: &str = "gamescope";
 /// Full-width banner row height. Steam `library_hero` is 1920×620; we show a
 /// wide strip (Cover) so the hero fills the row without portrait cropping.
 const ROW_H: f32 = 168.0;
+/// Decode height for cached banners (2× row for HiDPI; width from aspect).
+const BANNER_DECODE_H: u32 = 336;
 
 fn gallery_scroll_id() -> ScrollId {
     ScrollId::new("arcade-gallery")
@@ -161,6 +164,9 @@ struct App {
     /// Gallery list scroll (absolute Y). Restored after launch so Play→Stop
     /// row rebuild does not jump the list to the top.
     scroll_y: f32,
+    /// Pre-decoded banner handles (app_id → RGBA). Filled off-thread after
+    /// scan so iced does not load full heroes one-by-one on first paint.
+    banners: HashMap<u32, ImageHandle>,
     theme: Theme,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
@@ -189,6 +195,7 @@ impl Default for App {
             steam_ok,
             active: None,
             scroll_y: 0.0,
+            banners: HashMap::new(),
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
@@ -209,6 +216,8 @@ enum Msg {
     GalleryScrolled(AbsoluteOffset),
     /// Re-apply [`App::scroll_y`] after a view rebuild (launch/stop).
     RestoreScroll,
+    /// Parallel banner decode finished (or partial).
+    BannersReady(HashMap<u32, ImageHandle>),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -221,7 +230,15 @@ impl App {
         // Reattach UI lock if a nest survived a previous Arcade process.
         app.recover_active_from_procs();
         app.set_boot_status();
-        (app, sola_kit::window_ready_task(Msg::WindowReady))
+        let banners = preload_banners_task(&app.games);
+        (
+            app,
+            Task::batch([sola_kit::window_ready_task(Msg::WindowReady), banners]),
+        )
+    }
+
+    fn preload_banners_task_for_games(&self) -> Task<Msg> {
+        preload_banners_task(&self.games)
     }
 
     /// If `sola-arcade --run <id>` / gamescope applaunch is already live,
@@ -467,11 +484,13 @@ impl App {
             Msg::Filter(s) => self.filter = s,
             Msg::Refresh => {
                 self.games = scan_installed_games();
+                self.banners.clear();
                 self.gamescope_ok = sola_core::applications::command_exists("gamescope");
                 self.steam_ok = sola_core::applications::command_exists("steam");
                 if self.active.is_none() {
                     self.set_boot_status();
                 }
+                return self.preload_banners_task_for_games();
             }
             Msg::Launch(id) => return self.launch_game(id),
             Msg::StopGame => return self.stop_game(),
@@ -486,6 +505,9 @@ impl App {
                         y: Some(self.scroll_y),
                     },
                 );
+            }
+            Msg::BannersReady(map) => {
+                self.banners = map;
             }
             Msg::OpenStore(id) => {
                 let url = format!("https://store.steampowered.com/app/{id}");
@@ -568,7 +590,7 @@ impl App {
                 let active_id = self.active.as_ref().map(|a| a.steam_app_id);
                 let mut list = column![].spacing(SPACE_MD).width(Length::Fill);
                 for g in filtered {
-                    list = list.push(game_row(g, active_id));
+                    list = list.push(game_row(g, active_id, self.banners.get(&g.app_id)));
                 }
                 container(list)
                     .width(Length::Fill)
@@ -673,18 +695,26 @@ fn retract_gamescope_host_label() {
 ///
 /// `active_id`: currently launching/playing Steam app. That row shows **Stop**;
 /// every other row has Play disabled.
-fn game_row(g: &SteamGame, active_id: Option<u32>) -> Element<'_, Msg> {
-    let banner: Element<'_, Msg> = match g.banner_path() {
-        Some(path) => image(ImageHandle::from_path(path))
+///
+/// `banner`: pre-decoded handle when ready; until then a neutral placeholder
+/// (avoids iced's sequential path-decode of full 1920×620 heroes).
+fn game_row<'a>(
+    g: &'a SteamGame,
+    active_id: Option<u32>,
+    banner: Option<&'a ImageHandle>,
+) -> Element<'a, Msg> {
+    let banner: Element<'_, Msg> = if let Some(handle) = banner {
+        iced_image(handle.clone())
             .width(Length::Fill)
             .height(Length::Fixed(ROW_H))
             .content_fit(iced::ContentFit::Cover)
-            .into(),
-        None => container(Space::new())
+            .into()
+    } else {
+        container(Space::new())
             .width(Length::Fill)
             .height(Length::Fixed(ROW_H))
             .style(row_placeholder_style)
-            .into(),
+            .into()
     };
 
     let title = text(g.name.as_str())
@@ -817,6 +847,56 @@ fn _hairline_ref(theme: &Theme) {
 }
 
 #[allow(dead_code)]
-fn _cover_path_typecheck(p: PathBuf) -> ImageHandle {
-    ImageHandle::from_path(p)
+/// Parallel-decode all known banner files to small RGBA handles.
+fn preload_banners_task(games: &[SteamGame]) -> Task<Msg> {
+    let jobs: Vec<(u32, PathBuf)> = games
+        .iter()
+        .filter_map(|g| g.banner.clone().map(|p| (g.app_id, p)))
+        .collect();
+    if jobs.is_empty() {
+        return Task::none();
+    }
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || decode_banners_parallel(jobs))
+                .await
+                .unwrap_or_default()
+        },
+        Msg::BannersReady,
+    )
+}
+
+fn decode_banners_parallel(jobs: Vec<(u32, PathBuf)>) -> HashMap<u32, ImageHandle> {
+    use std::sync::Mutex;
+    let out = Mutex::new(HashMap::with_capacity(jobs.len()));
+    std::thread::scope(|scope| {
+        for (app_id, path) in jobs {
+            let out = &out;
+            scope.spawn(move || {
+                if let Some(handle) = decode_banner_handle(&path) {
+                    out.lock().expect("banner map").insert(app_id, handle);
+                }
+            });
+        }
+    });
+    out.into_inner().unwrap_or_default()
+}
+
+/// Load + downscale a Steam hero so GPU upload is cheap and sync for iced.
+fn decode_banner_handle(path: &std::path::Path) -> Option<ImageHandle> {
+    let img = image::open(path).ok()?.into_rgba8();
+    let (sw, sh) = img.dimensions();
+    if sw == 0 || sh == 0 {
+        return None;
+    }
+    let th = BANNER_DECODE_H;
+    let tw = ((sw as f64 / sh as f64) * th as f64).round() as u32;
+    let tw = tw.clamp(64, 1920);
+    let rgba = if sh > th || sw > tw {
+        image::imageops::resize(&img, tw, th, image::imageops::FilterType::Triangle)
+    } else {
+        img
+    };
+    let (w, h) = rgba.dimensions();
+    Some(ImageHandle::from_rgba(w, h, rgba.into_raw()))
 }

@@ -15,12 +15,14 @@ pub struct SteamGame {
     pub name: String,
     pub install_dir: Option<String>,
     pub library_path: PathBuf,
+    /// Resolved at scan time (avoids per-frame FS walks in the list view).
+    pub banner: Option<PathBuf>,
 }
 
 impl SteamGame {
     /// Wide banner art for full-width list rows (faded background).
     pub fn banner_path(&self) -> Option<PathBuf> {
-        banner_art_path(self.app_id)
+        self.banner.clone().or_else(|| banner_art_path(self.app_id))
     }
 }
 
@@ -208,11 +210,13 @@ fn parse_appmanifest(path: &Path, library_root: &Path) -> Option<SteamGame> {
         return None;
     }
     let install_dir = vdf_string(&text, "installdir");
+    let banner = banner_art_path(app_id);
     Some(SteamGame {
         app_id,
         name,
         install_dir,
         library_path: library_root.to_path_buf(),
+        banner,
     })
 }
 
@@ -335,18 +339,21 @@ mod tests {
             name: "Proton Experimental".into(),
             install_dir: None,
             library_path: PathBuf::new(),
+            banner: None,
         }));
         assert!(!is_playable(&SteamGame {
             app_id: 999,
             name: "Something Dedicated Server".into(),
             install_dir: None,
             library_path: PathBuf::new(),
+            banner: None,
         }));
         assert!(is_playable(&SteamGame {
             app_id: 400,
             name: "Portal".into(),
             install_dir: Some("Portal".into()),
             library_path: PathBuf::new(),
+            banner: None,
         }));
     }
 
