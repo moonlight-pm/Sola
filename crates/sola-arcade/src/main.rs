@@ -52,6 +52,25 @@ fn gallery_scroll_id() -> ScrollId {
     ScrollId::new("arcade-gallery")
 }
 
+/// Fixed status slot height so the gallery scrollable is always the same
+/// child index/type in the column (avoids iced tree rematch resetting scroll).
+const STATUS_SLOT_H: f32 = 22.0;
+
+fn restore_gallery_scroll(y: f32) -> Task<Msg> {
+    // Apply twice: once immediately, once after the next view pass. Launch
+    // rebuilds row content (Play→Stop); a single op can race the rematch.
+    Task::batch([
+        operation::scroll_to(
+            gallery_scroll_id(),
+            AbsoluteOffset {
+                x: None,
+                y: Some(y),
+            },
+        ),
+        Task::done(Msg::RestoreScroll),
+    ])
+}
+
 fn main() -> iced::Result {
     // Game-runner path used by sola-session (`LaunchApp` whitespace-splits):
     //   sola-arcade --run <steam_app_id> [width] [height]
@@ -188,6 +207,8 @@ enum Msg {
     Uninstall(u32),
     Tick,
     GalleryScrolled(AbsoluteOffset),
+    /// Re-apply [`App::scroll_y`] after a view rebuild (launch/stop).
+    RestoreScroll,
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -333,15 +354,8 @@ impl App {
             gamescope = plan.gamescope,
             "arcade launch"
         );
-        // Row UI swaps Play→Stop; re-apply scroll so the list does not jump.
-        let y = self.scroll_y;
-        operation::scroll_to(
-            gallery_scroll_id(),
-            AbsoluteOffset {
-                x: None,
-                y: Some(y),
-            },
-        )
+        // Row UI swaps Play→Stop; keep gallery scroll position.
+        restore_gallery_scroll(self.scroll_y)
     }
 
     fn stop_game(&mut self) -> Task<Msg> {
@@ -355,14 +369,7 @@ impl App {
         retract_gamescope_host_label();
         self.status = None;
         self.set_boot_status();
-        let y = self.scroll_y;
-        operation::scroll_to(
-            gallery_scroll_id(),
-            AbsoluteOffset {
-                x: None,
-                y: Some(y),
-            },
-        )
+        restore_gallery_scroll(self.scroll_y)
     }
 
     fn on_bus_topic(&mut self, topic: Topic) {
@@ -471,6 +478,15 @@ impl App {
             Msg::GalleryScrolled(off) => {
                 self.scroll_y = off.y;
             }
+            Msg::RestoreScroll => {
+                return operation::scroll_to(
+                    gallery_scroll_id(),
+                    AbsoluteOffset {
+                        x: None,
+                        y: Some(self.scroll_y),
+                    },
+                );
+            }
             Msg::OpenStore(id) => {
                 let url = format!("https://store.steampowered.com/app/{id}");
                 sola_core::open_url_logged(&url);
@@ -509,27 +525,29 @@ impl App {
             .style(kit_input::style)
             .width(Length::Fill);
 
-        // Status strip: prepare/info + problems (no top “playing” banner).
-        let status: Element<'_, Msg> = match &self.status {
-            Some(s)
-                if matches!(
-                    self.status_tone,
-                    StatusTone::Danger | StatusTone::Warn | StatusTone::Info
-                ) =>
-            {
-                let style = match self.status_tone {
-                    StatusTone::Warn => kit_text::warning,
-                    StatusTone::Danger => kit_text::danger,
-                    _ => kit_text::muted,
-                };
-                kit_text::caption(s.as_str()).style(style).into()
-            }
-            _ => Space::new().height(0).into(),
+        // Status strip: always the same widget type + fixed height so the
+        // gallery scrollable stays the same tree slot (Space↔caption rematch
+        // was resetting scroll state on launch).
+        let status: Element<'_, Msg> = {
+            let (line, style) = match (&self.status, self.status_tone) {
+                (Some(s), StatusTone::Danger) => (s.as_str(), kit_text::danger),
+                (Some(s), StatusTone::Warn) => (s.as_str(), kit_text::warning),
+                (Some(s), StatusTone::Info) => (s.as_str(), kit_text::muted),
+                _ => ("", kit_text::muted),
+            };
+            // Non-breaking space when empty keeps caption layout stable.
+            let shown = if line.is_empty() { "\u{00a0}" } else { line };
+            container(kit_text::caption(shown).style(style))
+                .width(Length::Fill)
+                .height(Length::Fixed(STATUS_SLOT_H))
+                .into()
         };
 
+        // Always a scrollable with a stable Id — never swap for a plain
+        // container (that destroyed scroll state on empty/filter edges too).
         let gallery: Element<'_, Msg> = {
             let filtered = self.filtered();
-            if filtered.is_empty() {
+            let body: Element<'_, Msg> = if filtered.is_empty() {
                 container(
                     kit_text::body(if self.games.is_empty() {
                         "No games found. Install titles in Steam, then Refresh (Meta+R)."
@@ -548,22 +566,22 @@ impl App {
                 for g in filtered {
                     list = list.push(game_row(g, active_id));
                 }
-                scrollable(
-                    container(list)
-                        .width(Length::Fill)
-                        .padding(Padding {
-                            top: SPACE_SM,
-                            right: SPACE_XS,
-                            bottom: SPACE_XL,
-                            left: 0.0,
-                        }),
-                )
+                container(list)
+                    .width(Length::Fill)
+                    .padding(Padding {
+                        top: SPACE_SM,
+                        right: SPACE_XS,
+                        bottom: SPACE_XL,
+                        left: 0.0,
+                    })
+                    .into()
+            };
+            scrollable(body)
                 .id(gallery_scroll_id())
                 .on_scroll(|vp: Viewport| Msg::GalleryScrolled(vp.absolute_offset()))
                 .height(Length::Fill)
                 .width(Length::Fill)
                 .into()
-            }
         };
 
         let content = column![search, status, gallery]
