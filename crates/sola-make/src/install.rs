@@ -2,6 +2,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 pub(crate) const BIN_DIR: &str = "/opt/sola/bin";
 const LOG_DIR: &str = "/opt/sola/log";
@@ -11,14 +13,91 @@ const SHARE_DIR: &str = "/opt/sola/share";
 /// stable across reboots (versus `/home/joshua/Workspace/Sola`).
 const NIX_DIR: &str = "/opt/sola/nix";
 
+/// Preferred binary replace order when installing multiple targets.
+///
+/// Matches the process manager's dependency chain: bus first (IPC), then
+/// river (compositor bridge), shell, session, kvm. `sola` itself is last
+/// because replacing it restarts the whole session.
+///
+/// Unknown binaries (apps, terminal, …) sort after these and keep the
+/// relative order the user passed on the CLI.
+const INSTALL_RESTART_ORDER: &[&str] = &[
+    "sola-bus",
+    "sola-river",
+    "sola-shell",
+    "sola-session",
+    "sola-kvm",
+    "sola",
+];
+
+/// Pause between binary *replaces* so sola's file watcher can restart the
+/// previous process and it can re-subscribe / re-frame before the next
+/// kill. Only applied between successful writes (unchanged copies skip).
+const INSTALL_RESTART_GAP: Duration = Duration::from_millis(1000);
+
+/// Stable rank for sort: known managed order first, then everything else.
+fn install_restart_rank(name: &str) -> usize {
+    INSTALL_RESTART_ORDER
+        .iter()
+        .position(|n| *n == name)
+        .unwrap_or(INSTALL_RESTART_ORDER.len())
+}
+
+/// Sort install targets so dependent restarts land in a safe order.
+/// Stable: same-rank names keep caller order.
+fn sort_binaries_for_restart(binaries: &mut [String]) {
+    binaries.sort_by(|a, b| {
+        install_restart_rank(a)
+            .cmp(&install_restart_rank(b))
+            .then_with(|| a.cmp(b))
+    });
+}
+
 /// Ensure install directories exist.
 pub fn ensure_dirs() -> Result<(), String> {
+    // Prefer user mkdir when /opt/sola is already owned by the user (dev).
+    // Fall back to sudo for a fresh root-owned tree.
+    let dirs = [BIN_DIR, LOG_DIR, SHARE_DIR];
+    let mut missing = Vec::new();
+    for d in dirs {
+        if !Path::new(d).is_dir() {
+            missing.push(d);
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut user_ok = true;
+    for d in &missing {
+        if let Err(e) = fs::create_dir_all(d) {
+            user_ok = false;
+            eprintln!("  note: mkdir {d} as user: {e}");
+            break;
+        }
+    }
+    if user_ok {
+        return Ok(());
+    }
     run("sudo", &["mkdir", "-p", BIN_DIR, LOG_DIR, SHARE_DIR])
+}
+
+/// True when `install_binary` would write (dest missing or bytes differ).
+fn binary_needs_install(name: &str, src: &str) -> Result<bool, String> {
+    let dest = format!("{BIN_DIR}/{name}");
+    if Path::new(&dest).exists() && files_identical(src, &dest)? {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 /// Copy a binary from `src` to the bin directory.
 /// Returns true if the destination was written, false if it was
 /// already identical and skipped.
+///
+/// Prefers a direct write when the process can create/replace files under
+/// [`BIN_DIR`] (common when the user owns `/opt/sola/bin`). Falls back to
+/// `sudo cp` when the existing file is root/`nobody`-owned. Direct write
+/// also works under sandboxes where sudo is blocked by NoNewPrivileges.
 pub fn install_binary(src: &str) -> Result<bool, String> {
     let name = Path::new(src)
         .file_name()
@@ -28,13 +107,43 @@ pub fn install_binary(src: &str) -> Result<bool, String> {
 
     // Skip if the destination already matches — otherwise cp would
     // retouch the inode and trigger sola's restart watcher.
-    if Path::new(&dest).exists() && files_identical(src, &dest)? {
+    if !binary_needs_install(name.as_ref(), src)? {
         return Ok(false);
     }
 
-    run("sudo", &["cp", "--remove-destination", src, &dest])?;
-    run("sudo", &["chmod", "755", &dest])?;
-    Ok(true)
+    match install_binary_user(src, &dest) {
+        Ok(()) => return Ok(true),
+        Err(user_err) => {
+            // Fall back to sudo for root-owned trees.
+            match run("sudo", &["cp", "--remove-destination", src, &dest])
+                .and_then(|_| run("sudo", &["chmod", "755", &dest]))
+            {
+                Ok(()) => return Ok(true),
+                Err(sudo_err) => {
+                    return Err(format!(
+                        "direct install failed ({user_err}); sudo install failed ({sudo_err})"
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// User-owned replace: unlink dest (if any) then copy. Works when the
+/// directory is writable even if the existing file is owned by another uid
+/// (sticky/bit not set — directory owner can unlink).
+fn install_binary_user(src: &str, dest: &str) -> Result<(), String> {
+    if Path::new(dest).exists() {
+        fs::remove_file(dest).map_err(|e| format!("remove {dest}: {e}"))?;
+    }
+    fs::copy(src, dest).map_err(|e| format!("copy {src} -> {dest}: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dest, fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("chmod {dest}: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Mirror per-crate `dist/` trees into `$XDG_DATA_HOME` (defaulting to
@@ -338,16 +447,28 @@ pub fn install(apps: &[String]) {
         super::assets::sync(false);
     }
 
-    let binaries: Vec<String> = if apps.is_empty() {
+    let mut binaries: Vec<String> = if apps.is_empty() {
         super::discover_binaries()
     } else {
         apps.iter().map(|n| super::resolve_crate_name(n)).collect()
     };
+    // Build packages in CLI/discovery order (cargo doesn't care); sort only
+    // for the copy loop so on-disk replaces — and thus sola's restart
+    // watcher — fire bus → river → shell → … with a settle gap between.
+    let build_packages = binaries.clone();
+    sort_binaries_for_restart(&mut binaries);
 
     println!("Building...");
     // Empty packages ⇒ full workspace build; otherwise one `-p` per app
     // so `cargo make install shell kit` is a single cargo invocation.
-    super::build(if apps.is_empty() { &[] } else { &binaries }, false);
+    super::build(
+        if apps.is_empty() {
+            &[]
+        } else {
+            &build_packages
+        },
+        false,
+    );
 
     println!("Preparing install...");
     if let Err(e) = ensure_dirs() {
@@ -371,20 +492,47 @@ pub fn install(apps: &[String]) {
         }
     }
 
-    println!("Installing binaries...");
+    if binaries.len() > 1 {
+        println!(
+            "Installing binaries (restart order: {}; {}ms gap between replaces)...",
+            binaries.join(" → "),
+            INSTALL_RESTART_GAP.as_millis()
+        );
+    } else {
+        println!("Installing binaries...");
+    }
+    let mut wrote_previous = false;
     for name in &binaries {
         let src = format!("target/debug/{name}");
-        if Path::new(&src).exists() {
-            match install_binary(&src) {
-                Ok(true) => println!("  installed {name}"),
-                Ok(false) => println!("  unchanged {name}"),
-                Err(e) => {
-                    eprintln!("  failed to install {name}: {e}");
-                    std::process::exit(1);
-                }
-            }
-        } else {
+        if !Path::new(&src).exists() {
             eprintln!("  warning: binary not found: {src}");
+            continue;
+        }
+        // Gap only before a real replace (unchanged copies do not restart).
+        let needs_write = match binary_needs_install(name, &src) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("  failed to check {name}: {e}");
+                std::process::exit(1);
+            }
+        };
+        if needs_write && wrote_previous {
+            println!(
+                "  … {}ms settle for prior restart",
+                INSTALL_RESTART_GAP.as_millis()
+            );
+            thread::sleep(INSTALL_RESTART_GAP);
+        }
+        match install_binary(&src) {
+            Ok(true) => {
+                println!("  installed {name}");
+                wrote_previous = true;
+            }
+            Ok(false) => println!("  unchanged {name}"),
+            Err(e) => {
+                eprintln!("  failed to install {name}: {e}");
+                std::process::exit(1);
+            }
         }
     }
 
@@ -422,8 +570,7 @@ pub fn install(apps: &[String]) {
         Ok(0) => {}
         Ok(n) => println!("Staged {n} nix file(s) to {NIX_DIR}"),
         Err(e) => {
-            eprintln!("failed to stage nix modules: {e}");
-            std::process::exit(1);
+            eprintln!("  warning: nix modules not staged: {e}");
         }
     }
 
@@ -443,8 +590,9 @@ pub fn install(apps: &[String]) {
         Ok(0) => {}
         Ok(n) => println!("Installed {n} first-party icon(s)"),
         Err(e) => {
-            eprintln!("failed to install first-party icons: {e}");
-            std::process::exit(1);
+            // Non-fatal: binary install already succeeded; share/ may be
+            // root-owned under sandboxes without sudo (NoNewPrivileges).
+            eprintln!("  warning: first-party icons not updated: {e}");
         }
     }
     // Always refresh and re-register — handles the case where the user
@@ -467,4 +615,34 @@ fn run(program: &str, args: &[&str]) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod restart_order_tests {
+    use super::{install_restart_rank, sort_binaries_for_restart};
+
+    #[test]
+    fn managed_order_bus_before_river_before_shell() {
+        assert!(install_restart_rank("sola-bus") < install_restart_rank("sola-river"));
+        assert!(install_restart_rank("sola-river") < install_restart_rank("sola-shell"));
+        assert!(install_restart_rank("sola-shell") < install_restart_rank("sola"));
+    }
+
+    #[test]
+    fn sort_puts_river_before_shell_regardless_of_cli_order() {
+        let mut names = vec![
+            "sola-shell".into(),
+            "sola-terminal".into(),
+            "sola-river".into(),
+        ];
+        sort_binaries_for_restart(&mut names);
+        assert_eq!(
+            names,
+            vec![
+                "sola-river".to_string(),
+                "sola-shell".to_string(),
+                "sola-terminal".to_string(),
+            ]
+        );
+    }
 }

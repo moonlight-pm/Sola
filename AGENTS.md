@@ -139,6 +139,12 @@ docs/
 - Install is local: binaries go to `/opt/sola/bin/`.
 - `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
 - `cargo make install <app>…` — builds and installs one or more apps (e.g. `shell kit`).
+- Multi-target installs **replace binaries in restart order** (`sola-bus` →
+  `sola-river` → `sola-shell` → `sola-session` → `sola-kvm` → `sola`, then
+  other apps) with a **1s settle gap** between actual replaces so the
+  process manager can restart each component before the next kill.
+  CLI order is ignored for that sequence (`install shell river` still
+  copies river first).
 - `cargo make install <app> --watch` — watches for changes, rebuilds, and reinstalls automatically.
 - The user launches `sola` manually from a physical TTY. Do not configure auto-start.
 

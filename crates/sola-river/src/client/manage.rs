@@ -249,14 +249,36 @@ pub fn handle_manage_start(state: &mut AppData) {
             if let Some(seat) = state.seat.as_ref() {
                 match focus {
                     FocusAction::Window(id) => {
-                        if let Some(proxy) = state.windows_by_id.get(&id) {
+                        // Re-calling focus_window on the already-focused
+                        // surface can make clients (Electron) re-enter
+                        // keyboard focus and flash. Skip when seat state
+                        // already matches the request.
+                        if state.focused_window == Some(id) {
+                            tracing::debug!(
+                                window_id = id,
+                                "skip seat.focus_window (already focused)"
+                            );
+                        } else if let Some(proxy) = state.windows_by_id.get(&id) {
+                            tracing::debug!(
+                                window_id = id,
+                                prev = ?state.focused_window,
+                                "seat.focus_window"
+                            );
                             seat.focus_window(proxy);
                             state.focused_window = Some(id);
                         }
                     }
                     FocusAction::None => {
-                        seat.clear_focus();
-                        state.focused_window = None;
+                        if state.focused_window.is_none() {
+                            tracing::debug!("skip seat.clear_focus (already clear)");
+                        } else {
+                            tracing::debug!(
+                                prev = ?state.focused_window,
+                                "seat.clear_focus"
+                            );
+                            seat.clear_focus();
+                            state.focused_window = None;
+                        }
                     }
                 }
             }

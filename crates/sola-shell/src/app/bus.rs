@@ -99,8 +99,28 @@ impl Shell {
     /// Receive the full window list from sola-river.
     /// Rebuilds the window registry, derives focus changes, emits composition
     /// and focus updates, applies zone config to newly-appeared windows.
+    ///
+    /// Title-only updates (same `(window_id, app_id)` set) only refresh the
+    /// lookup map — they used to re-emit every zone Frame, restack composition,
+    /// and re-register chords, which made focus-follows-mouse feel like a
+    /// double re-paint on chatty clients (e.g. Electron titles).
     fn on_windows(&mut self, windows: Vec<Window>) {
         tracing::info!(count = windows.len(), "shell received Windows");
+
+        // Same surfaces/apps, possibly new titles — skip the heavy path.
+        if Self::windows_identity_eq(&self.known_windows, &windows) {
+            self.window_id_by_key.clear();
+            for w in &windows {
+                self.window_id_by_key
+                    .insert((w.app_id.clone(), w.title.clone()), w.window_id);
+            }
+            self.known_windows = windows;
+            tracing::debug!(
+                count = self.known_windows.len(),
+                "Windows title-only — skip frames/composition/chords"
+            );
+            return;
+        }
 
         // Collect old and new app_id sets (excluding the shell itself) to
         // detect additions and removals.
@@ -317,6 +337,20 @@ impl Shell {
         self.emit_registered_chords();
     }
 
+    /// True when both lists describe the same set of surfaces (window_id +
+    /// app_id), ignoring title and order. Used to short-circuit title-only
+    /// `Topic::Windows` storms.
+    fn windows_identity_eq(a: &[Window], b: &[Window]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut ka: Vec<(u32, &str)> = a.iter().map(|w| (w.window_id, w.app_id.as_str())).collect();
+        let mut kb: Vec<(u32, &str)> = b.iter().map(|w| (w.window_id, w.app_id.as_str())).collect();
+        ka.sort_unstable();
+        kb.sort_unstable();
+        ka == kb
+    }
+
     /// Receive an app's menu definition. Re-emit registered chords since the
     /// chord set may have changed (new shortcuts added by the focused app).
     fn on_set_app_menu(&mut self, m: AppMenuPayload) {
@@ -382,7 +416,12 @@ impl Shell {
     }
 
     /// Emit `Topic::Focus` so sola-river routes keyboard/pointer to `window_id`.
-    fn emit_focus(&self, window_id: u32) {
+    fn emit_focus(&self, window_id: u32, prev_focused: Option<u32>) {
+        tracing::debug!(
+            window_id,
+            ?prev_focused,
+            "emit Focus"
+        );
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
         }
@@ -392,14 +431,24 @@ impl Shell {
     /// timer and by map/close resync.
     pub(crate) fn focus_window_from_pointer(&mut self, window_id: u32) {
         if self.focused_window_id == Some(window_id) {
+            tracing::debug!(window_id, "pointer focus no-op (already focused)");
             return;
         }
         let Some(app_id) = self.app_id_for_window(window_id) else {
+            tracing::debug!(window_id, "pointer focus skipped (unknown window)");
             return;
         };
+        let prev_window = self.focused_window_id;
+        tracing::debug!(
+            window_id,
+            %app_id,
+            ?prev_window,
+            prev_app = ?self.focused_app_id,
+            "pointer focus (FFM)"
+        );
         self.set_pointer_focus(&app_id);
         self.focused_window_id = Some(window_id);
-        self.emit_focus(window_id);
+        self.emit_focus(window_id, prev_window);
     }
 
     /// Re-apply keyboard focus to whatever is under the pointer.
@@ -436,10 +485,11 @@ impl Shell {
         };
         // Cancel any dwell timer — click is authoritative for focus.
         self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+        let prev_focused = self.focused_window_id;
         self.bus_set_focus(&app_id);
         self.focused_window_id = Some(window_id);
         self.mru_window_by_app.insert(app_id, window_id);
-        self.emit_focus(window_id);
+        self.emit_focus(window_id, prev_focused);
         self.emit_composition();
     }
 
@@ -978,16 +1028,26 @@ impl Shell {
             .iter()
             .any(|w| w.window_id == e.window_id && w.app_id == Self::APP_ID);
         if is_shell {
+            tracing::debug!(window_id = e.window_id, "FFM enter shell — cancel dwell");
             return Task::none();
         }
 
         // Already focused here — nothing to schedule.
         if self.focused_window_id == Some(e.window_id) {
+            tracing::debug!(window_id = e.window_id, "FFM enter already focused");
             return Task::none();
         }
 
         let focus_gen = self.pending_focus_generation;
         let wid = e.window_id;
+        let app = self.app_id_for_window(wid);
+        tracing::debug!(
+            window_id = wid,
+            app_id = app.as_deref().unwrap_or("?"),
+            generation = focus_gen,
+            delay_ms = Self::FOCUS_HOVER_DELAY.as_millis() as u64,
+            "FFM enter — schedule dwell"
+        );
         Task::perform(
             tokio::time::sleep(Self::FOCUS_HOVER_DELAY),
             move |_| Msg::FocusHoverFire {
@@ -1137,6 +1197,36 @@ impl Shell {
                 }));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod windows_identity_tests {
+    use super::Shell;
+    use sola_bus::topics::Window;
+
+    fn win(id: u32, app: &str, title: &str) -> Window {
+        Window {
+            window_id: id,
+            app_id: app.into(),
+            title: title.into(),
+            pid: None,
+        }
+    }
+
+    #[test]
+    fn identity_eq_ignores_title_and_order() {
+        let a = vec![win(1, "orca", "A"), win(2, "Helium", "x")];
+        let b = vec![win(2, "Helium", "y"), win(1, "orca", "B")];
+        assert!(Shell::windows_identity_eq(&a, &b));
+    }
+
+    #[test]
+    fn identity_neq_on_new_window_or_app_id() {
+        let a = vec![win(1, "orca", "A")];
+        assert!(!Shell::windows_identity_eq(&a, &[win(1, "orca", "A"), win(2, "zed", "")]));
+        assert!(!Shell::windows_identity_eq(&a, &[win(1, "gamescope", "A")]));
+        assert!(!Shell::windows_identity_eq(&a, &[]));
     }
 }
 

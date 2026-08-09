@@ -9,27 +9,21 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-08 (Arcade library UX + nest on **master**)
+**As of:** 2026-08-09 (shell Windows hygiene + ordered install on master)
 
 ---
 
 ## Now
 
-1. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
-   - **UI:** search + **A–Z / Recent** + **Ready to play only** (default on);
-     lazy viewport banners; Play / Store / Uninstall; **Install** + faded
-     uninstalled rows; Stop-on-row; scroll preserved.  
-   - **Library:** `~/.config/sola/arcade-library.json` cache (instant open);
-     background rescan every start; first-scan status when no cache.  
-   - **Nest / river:** `--nested-steam` (no BPM); kill nest Steam on game quit;
-     zone/float + Cinema exit; host label; `-S fit`.  
-   - Manual: [`docs/manual/sola-arcade.md`](docs/manual/sola-arcade.md).  
-   - **Next polish (backlog):** Portal-class nest fails; residual flicker;
-     title contrast on bright heroes; never-played owned without API.  
+1. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+   - Backlog: Portal-class nest fails; residual flicker; title contrast;
+     never-played owned without API.  
 2. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
-3. **Progress docs** — keep this file + capabilities honest.  
-4. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
-   kvm clipboard, etc.
+3. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
+   kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
+   unmerged), etc.  
+   Orca Grok pane flash reclassified off Sola; shell Windows/composition
+   hygiene + ordered multi-install merged from focus-flashing.
 
 **Explicit holds:** none.
 
