@@ -151,11 +151,61 @@ See [`docs/open-questions.md`](../open-questions.md) § Browser. Work in order:
 | Stop loading | Wire `NavCmd::Stop` + chrome control; Escape policy |
 | Downloads | New subsystem: WebKit download signals → chrome UI + disk paths |
 | History + restore | Persist tab list / visit history; cold-start restore |
-| Bitwarden | **Blocked on D7**; research WPE limits vs native connector |
+| Bitwarden | **Blocked on D7** — see research below (no Chrome-extension drop-in) |
 | High polish | B1–B5 engine reliability first; then chrome UX polish |
 
-**Suggested build order after D7 research spike (short):**  
-engine reliability (B1, B2) → stop → history/restore → downloads → Bitwarden.
+**Suggested build order after D7 decision:**  
+engine reliability (B1, B2) → stop → history/restore → downloads → password MVP.
+
+---
+
+## Research note (2026-08-09): Extensions on WPE
+
+**User constraint:** password manager must work **in-browser** (not a separate
+system service the user has to run).
+
+### Two different things named “web extension”
+
+| Name | What it is | Chrome/Bitwarden store? | On WPE? |
+|------|------------|-------------------------|---------|
+| **WebKitWebExtension** | C/GObject **shared library** loaded into WebKit’s **WebProcess** by the *embedder* (`webkit_web_context_set_web_extensions_directory`). DOM hooks, custom UI-process messaging. | No — not a browser store package | **Yes** (GTK and WPE both document this; sample repos target both ports) |
+| **WebExtensions (WECG)** | User-installable **manifest.json** add-ons (`chrome.*` / `browser.*` APIs) — Chrome, Firefox, Safari Web Extensions | Yes — Bitwarden ships this | **No** in WPE/WebKit engine itself |
+
+### What ships where
+
+- **WPE / sola-browser today:** no WebExtensions host. No API to load Bitwarden’s
+  Chrome/Firefox package. We never wired WebKitWebExtension either.
+- **Epiphany (GNOME Web):** implements a **browser-level** WebExtensions host
+  (Manifest V2-oriented, Igalia; MV3 still incomplete). That is **application
+  code on top of WebKitGTK**, not a free WPE feature. Partial API coverage;
+  Bitwarden is commonly cited as a desired target, not a guaranteed fit.
+- **Safari:** Bitwarden is a **Safari Web Extension** packaged via Mac App Store
+  / Apple WebExtension APIs — Apple-only, not Linux WPE.
+- **CONTENT_EXTENSIONS** in WebKit: content-blocker rule lists (Safari content
+  blockers style) — **not** a password manager runtime.
+
+### Implication for Bitwarden “as an extension”
+
+1. **Drop-in Bitwarden Chrome/Firefox extension on WPE:** **not available**.
+2. **In-browser without a user-run system service** is still possible via:
+   - **A. Build a WebExtensions host in sola-browser** (Epiphany-class project:
+     background scripts, content scripts, storage, messaging, browserAction,
+     enough APIs for Bitwarden). Multi-month; high risk; continuous API chase.
+   - **B. First-party password UX in sola-browser** using Bitwarden **SDK/API**
+     + WebKitWebExtension (or script injection) for page autofill — vault lives
+     inside the browser process/chrome, not a separate daemon the user launches.
+   - **C. Chromium embed (CEF) only if extension store parity is non-negotiable**
+     — reopens CEF cost we left for perf/dist on NVIDIA.
+
+**Honest dealbreaker line:** if the product requirement is specifically
+“install the Bitwarden package from the Chrome Web Store and have it work,”
+**WPE is the wrong engine**. If the requirement is “Bitwarden-class autofill
+and vault UX inside Sola Browser without running Helium or a side service,”
+WPE can still work via A or B.
+
+Sources (external): TingPing/Igalia Epiphany WebExtensions posts; WebKitGTK
+`WebKitWebExtension` docs; WebKit bugs on web-process extensions; Bitwarden
+Safari packaging docs; sample_webkit_extension (GTK & WPE embedder modules).
 
 ---
 

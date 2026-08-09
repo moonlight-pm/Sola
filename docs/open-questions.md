@@ -89,25 +89,31 @@ extension APIs are not WebKit/WPE). Approach is open → **D7**.
 
 ### D7 — Browser: Bitwarden / extension approach (P0 — blocks password MVP)
 
-**Context:** D4 requires Bitwarden integration at extension-level quality.
-`sola-browser` is **WPE WebKit**, not Chromium. Chrome MV2/MV3 extensions
-do **not** load. CEF was removed (`pre-cef-removal`) partly for perf/dist
-on NVIDIA; reintroducing CEF only for extensions would reopen that cost.
+**Context:** D4 requires Bitwarden at extension-class quality **in-browser**
+(no user-run system service). Research 2026-08-09 — full write-up in
+[`plans/2026-08-09-sola-browser-hardening.md`](plans/2026-08-09-sola-browser-hardening.md)
+§ *Research note: Extensions on WPE*:
 
-**Ask (when ready):** preferred integration shape?
+- WPE **does** have **WebKitWebExtension** = embedder C modules in WebProcess
+  (not store packages; not Bitwarden Chrome).
+- WPE **does not** ship a **WebExtensions** host (`chrome.*` / install
+  Bitwarden from Chrome Web Store).
+- Epiphany built WebExtensions **in the app** on WebKitGTK (partial MV2);
+  that work is not free for us.
+- Safari Bitwarden is Apple Web Extension packaging only.
 
-1. **Native bridge** — Bitwarden desktop / CLI / IPC / browser-connector style
-   (no Chromium extension runtime).  
-2. **WebKit extension surface** if/when Linux WPE supports a usable
-   WebExtensions-like API (research first).  
-3. **Revisit CEF** for extension-capable browser only (or dual path).  
-4. **Other** (inject helpers, system password API, etc.).
+**Ask:**
 
-**Until decided:** do not implement fake “extension” stubs; research notes
-go in the hardening plan; chrome can still land stop/downloads/history
-without Bitwarden.
+1. **First-party Bitwarden UX** in sola-browser (SDK/API + autofill inject;
+   vault UI ours; no Chrome store package; no separate daemon).  
+2. **Build a WebExtensions host** (Epiphany-class) aiming to load Bitwarden’s
+   real extension package.  
+3. **Revisit Chromium/CEF** because Chrome Web Store parity is required.  
+4. **Other.**
 
-**Related:** D4; engine lock (WPE-only).
+**Until decided:** no password/extension code; stop/downloads/history can proceed.
+
+**Related:** D4; engine lock; hardening plan research section.
 
 ---
 
