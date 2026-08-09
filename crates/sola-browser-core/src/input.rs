@@ -1,8 +1,7 @@
-//! Shared input scaffolding used by both engine shaders.
+//! Shared input scaffolding for the browser shader / chrome.
 //!
-//! Engine crates keep keymaps and native event constructors; this module
-//! owns the cursor vocabulary and coordinate projection helpers that are
-//! identical (or near-identical) across WPE and CEF.
+//! The engine keeps keymaps and native event constructors; this module
+//! owns the cursor vocabulary and coordinate projection helpers.
 
 use iced::{Point, Rectangle, mouse};
 
@@ -67,7 +66,7 @@ pub fn project_cursor_f64(point: Point, bounds: Rectangle, scale: f32) -> (f64, 
     (x, y)
 }
 
-/// Same as [`project_cursor_f64`] but integer pixels (CEF).
+/// Same as [`project_cursor_f64`] but integer pixels.
 pub fn project_cursor_i32(point: Point, bounds: Rectangle, scale: f32) -> (i32, i32) {
     let (x, y) = project_cursor_f64(point, bounds, scale);
     (x as i32, y as i32)

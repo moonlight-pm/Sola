@@ -214,7 +214,7 @@ impl<E: Engine> App<E> {
             }
             Msg::CloseTab(id) => {
                 // Never drop below one tab: open a blank replacement first.
-                // (Bus-integration + CEF message-loop contract.)
+                // (Bus-integration last-tab contract: never drop below one tab.)
                 if self.cached_tabs.len() <= 1 {
                     self.open_tab(BLANK_URL.to_string(), true);
                 }

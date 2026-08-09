@@ -17,7 +17,7 @@ pub struct ImportedTexture {
     pub size: (u32, u32),
 }
 
-/// Engine-specific frame import. Implemented by WPE (dma-buf) and CEF (CPU).
+/// Engine-specific frame import (WPE: dma-buf → wgpu).
 pub trait FrameImport {
     type Frame: Send + 'static;
     /// GPU resources that must stay alive while the bind group is used.

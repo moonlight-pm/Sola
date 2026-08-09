@@ -1113,7 +1113,7 @@ impl PhysicalDeviceProperties {
         }
 
         // **Sola fork addition**: enable `VK_EXT_image_drm_format_modifier`
-        // so external callers (sola-browser-wpe via `as_hal`) can
+        // so external callers (sola-browser via `as_hal`) can
         // construct VkImages with a non-LINEAR DRM modifier and import
         // DMA-BUFs the GPU writer (WPE WebProcess on NVIDIA) actually
         // produces. Without this, `texture_from_raw` can only wrap
@@ -1121,7 +1121,7 @@ impl PhysicalDeviceProperties {
         // NVIDIA proprietary the WebProcess refuses to use as a
         // framebuffer target — yielding either tile-pattern garbage
         // or a black window depending on which trade-off we pick.
-        // See crates/sola-browser-wpe/src/wgpu_import.rs for the
+        // See crates/sola-browser/src/wgpu_import.rs for the
         // consumer-side use.
         if self.supports_extension(ext::image_drm_format_modifier::NAME) {
             extensions.push(ext::image_drm_format_modifier::NAME);

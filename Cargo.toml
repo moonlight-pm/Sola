@@ -10,7 +10,7 @@ members = ["crates/*"]
 # into every binary's RUNPATH, so sola-river's runtime dlopen of
 # libwayland-client finds the system lib. WPEWebKit is staged at
 # `/opt/sola/nix/wpewebkit/` and pulled into `environment.systemPackages`
-# via configuration.nix, so sola-browser-wpe's pkg-config probes
+# via configuration.nix, so sola-browser's pkg-config probes
 # (wpe-webkit-2.0, wpe-platform-2.0, …) resolve system-wide.
 exclude = [
     "crates/wgpu-hal-patched",
@@ -34,18 +34,7 @@ lettre = { version = "0.11", default-features = false, features = ["smtp-transpo
 mail-parser = "0.9"
 html2text = "0.14"
 
-# Substitute a zero-dep stub for tauri-apps/download-cef. The upstream
-# crate is a build-dependency of cef-dll-sys (transitive via `cef`)
-# and unconditionally pulls ureq + rustls + ring + rustls-webpki +
-# bzip2 + tar into the build graph. Those crates rebuilt every time
-# we alternated between subset cargo invocations because the resolver
-# computes a different feature unification per invocation. The stub
-# lives at `crates/download-cef-stub/` and re-implements only the API
-# surface cef-dll-sys/build.rs touches; see its src/lib.rs for the
-# rationale and the OUT_DIR-symlink trick that makes -lcef resolve
-# against the pre-installed `cargo make install-cef` cache.
 [patch.crates-io]
-download-cef = { path = "crates/download-cef-stub" }
 wgpu-hal = { path = "crates/wgpu-hal-patched" }
 
 # Release builds strip DWARF debug info but keep the symbol table, so

@@ -5,10 +5,9 @@ all you want is the prebuilt binaries, see `INSTALL.md` — this doc is
 for people who want to compile from source and iterate.
 
 The Sola binaries hardcode several `/opt/sola/*` paths (`/opt/sola/bin`,
-`/opt/sola/share`, `/opt/sola/log`, the per-app CEF cache under
-`~/.cache/sola/cef-…`). The dev flow leans into that: `cargo make
-install` populates `/opt/sola/bin` and `/opt/sola/share` directly,
-mirroring what the released binaries expect.
+`/opt/sola/share`, `/opt/sola/log`). The dev flow leans into that:
+`cargo make install` populates `/opt/sola/bin` and `/opt/sola/share`
+directly, mirroring what the released binaries expect.
 
 ## Prerequisites
 
@@ -24,9 +23,8 @@ mirroring what the released binaries expect.
 
 The easiest path is to import the same `nixosModules.default` that
 release-installs use. It gives you everything Sola needs at runtime
-(patched River, nix-ld libraries for CEF's transitive deps, GStreamer
-plugins for the legacy WebKit stack, env vars, `hardware.graphics`),
-plus the FHS shim for `/opt/sola/`.
+(patched River, GStreamer plugins for WPE/WebKit media, env vars,
+`hardware.graphics`), plus the FHS shim for `/opt/sola/`.
 
 In your `/etc/nixos/flake.nix`:
 
@@ -100,17 +98,15 @@ will recreate the symlinks.
 ```sh
 git clone git@github.com:moonlight-pm/Sola
 cd Sola
-cargo make install-cef    # ~/.cache/sola/cef-<version>/ — ~1.5GB download, once
 cargo make build          # full debug build of the workspace — ~10 minutes first time
 cargo make install        # copies binaries to /opt/sola/bin (sudo)
                           # also: `cargo make assets sync` runs automatically
                           # whenever a declared pack is missing from /opt/sola/share/
 ```
 
-`cargo make install-cef` populates `~/.cache/sola/cef-<version>/Release/`
-with the patched libcef.so (the `patchelf` step that points its
-`DT_RUNPATH` at the nix-ld dispatch dir runs automatically). The CEF
-tarball is ~500MB compressed; this is the slow step on a fresh box.
+WPEWebKit for `sola-browser` is expected system-wide (vendored derivation
+staged under `/opt/sola/nix/wpewebkit/` and pulled via configuration.nix /
+module). See `nix/wpewebkit/` and `docs/vault/Distribution.md`.
 
 `cargo make build` defaults to debug. For release-mode builds (much
 smaller, more optimized, slower to compile), pass `--release`:
@@ -183,19 +179,14 @@ and project conventions. The headline pieces:
   (aggregate). `tail -F /opt/sola/log/sola.log` from a second TTY
   while iterating.
 - `RUST_LOG` accepts the standard env-filter syntax:
-  `RUST_LOG=info,sola_kit=trace,cef=warn`.
+  `RUST_LOG=info,sola_kit=trace,sola_browser=debug`.
 - `solactl apps` lists running apps + window IDs.
 - `solactl logs <app>` tails one app's log.
-- `solactl eval <app> '<js-expression>'` runs JS inside a CEF app's
-  WebView and prints the JSON result — invaluable for diagnosing
-  Remix v3 state.
 - `solactl emit <Topic> '<json-payload>'` injects bus events from
   the command line.
 - For River-side issues, look at `/opt/sola/log/river.log`.
-
-If a CEF subprocess GPU init fails (`Unable to initialize SkSurface`),
-check `__EGL_VENDOR_LIBRARY_DIRS` and `VK_ICD_FILENAMES` —
-`docs/vault/Distribution.md` has the deep dive.
+- Browser GPU/import issues: `/opt/sola/log/app-sola-browser.log` and
+  `docs/vault/Distribution.md` (WPEWebKit notes).
 
 ## 8. Commit conventions
 

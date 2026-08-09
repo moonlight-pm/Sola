@@ -1,4 +1,4 @@
-/* WPE Platform integration helpers used by sola-browser-wpe.
+/* WPE Platform integration helpers used by sola-browser.
  *
  * `WPEDisplayHeadless` (the concrete class we want to use) is
  * declared with `G_DECLARE_FINAL_TYPE` — its instance/class struct
@@ -17,7 +17,7 @@
  *    "buffer-rendered" against the WPEView base type and any subclass.
  *
  * Both tricks affect the *class* (so the whole process) — fine
- * because sola-browser-wpe hosts one display + one engine.
+ * because sola-browser hosts one display + one engine.
  *
  * `WEBKIT_FORCE_*` env vars or anything else that depends on the
  * subclassed display picking up our overrides at construction time
@@ -124,7 +124,7 @@ static void sola_view_set_cursor_from_name(WPEView *view, const char *name) {
  * UI-process preference. The override stays in place so that we
  * benefit automatically once upstream wires the hint through.
  * Today the modifier story has to be solved on the import side
- * (see crates/sola-browser-wpe/src/wgpu_import.rs). */
+ * (see crates/sola-browser/src/wgpu_import.rs). */
 static WPEBufferFormats *
 sola_get_preferred_buffer_formats(WPEDisplay *display) {
     WPEDRMDevice *drm = wpe_display_get_drm_device(display);

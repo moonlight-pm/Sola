@@ -52,8 +52,6 @@ const IMAGE_INPUT_PATHS: &[&str] = &[
 ];
 
 pub struct BuildOpts {
-    /// Include the CEF Release tree from `~/.cache/sola/cef-*` (large).
-    pub with_cef: bool,
     /// Skip the nix image build (stage only — debugging).
     pub stage_only: bool,
 }
@@ -121,18 +119,18 @@ fn wipe_install_target(root: &Path) -> Result<(), String> {
 }
 
 /// Stage `target/release` for image builds (shared by `vm build` and `iso build`).
-pub(crate) fn prepare_stage(opts: &BuildOpts) -> Result<(PathBuf, PathBuf), String> {
+pub(crate) fn prepare_stage() -> Result<(PathBuf, PathBuf), String> {
     let root = workspace_root()?;
     env::set_current_dir(&root).map_err(|e| format!("chdir workspace: {e}"))?;
     require_nix()?;
     let stage = root.join(STAGE_DIR);
     println!(">>> staging release tree at {}", stage.display());
-    stage_tree(&root, &stage, opts)?;
+    stage_tree(&root, &stage)?;
     Ok((root, stage))
 }
 
 fn run_build(opts: BuildOpts) -> Result<(), String> {
-    let (root, stage) = prepare_stage(&opts)?;
+    let (root, stage) = prepare_stage()?;
 
     if opts.stage_only {
         println!(">>> --stage-only: skipping nix image build");
@@ -249,10 +247,7 @@ fn run_vm(opts: RunOpts) -> Result<(), String> {
                 };
                 println!(">>> building live installer image ({reason})");
                 println!("    staging from target/release (no cargo — build yourself first)");
-                run_build(BuildOpts {
-                    with_cef: false,
-                    stage_only: false,
-                })?;
+                run_build(BuildOpts { stage_only: false })?;
             }
         } else {
             println!("    live image: {} (up to date)", image.display());
@@ -411,16 +406,14 @@ fn mtime(path: &Path) -> Result<SystemTime, String> {
         .map_err(|e| format!("mtime {}: {e}", path.display()))
 }
 
-fn stage_tree(root: &Path, stage: &Path, opts: &BuildOpts) -> Result<(), String> {
+fn stage_tree(root: &Path, stage: &Path) -> Result<(), String> {
     if stage.exists() {
         fs::remove_dir_all(stage).map_err(|e| format!("rm stage: {e}"))?;
     }
     let bin_dir = stage.join("bin");
     let share_dir = stage.join("share");
-    let cef_dir = stage.join("cef");
     fs::create_dir_all(&bin_dir).map_err(|e| format!("mkdir bin: {e}"))?;
     fs::create_dir_all(&share_dir).map_err(|e| format!("mkdir share: {e}"))?;
-    fs::create_dir_all(&cef_dir).map_err(|e| format!("mkdir cef: {e}"))?;
 
     // Stage pre-built release artifacts only — never cargo, never /opt/sola/bin.
     require_release_bins(root)?;
@@ -478,12 +471,6 @@ fn stage_tree(root: &Path, stage: &Path, opts: &BuildOpts) -> Result<(), String>
         }
     }
 
-    if opts.with_cef {
-        stage_cef(&cef_dir)?;
-    } else {
-        println!(">>> skipping CEF (pass --with-cef to include ~4G runtime)");
-    }
-
     let n_bins = fs::read_dir(&bin_dir)
         .map(|rd| rd.count())
         .unwrap_or(0);
@@ -494,24 +481,6 @@ fn stage_tree(root: &Path, stage: &Path, opts: &BuildOpts) -> Result<(), String>
         return Err("stage missing sola-install after inject".into());
     }
     println!("    staged {n_bins} binaries (incl. sola-install)");
-    Ok(())
-}
-
-fn stage_cef(cef_dir: &Path) -> Result<(), String> {
-    let version = fs::read_to_string("cef-version")
-        .map_err(|e| format!("read cef-version: {e}"))?
-        .trim()
-        .to_string();
-    let home = env::var("HOME").map_err(|e| format!("HOME unset: {e}"))?;
-    let cef_release = PathBuf::from(format!("{home}/.cache/sola/cef-{version}/Release"));
-    if !cef_release.is_dir() {
-        return Err(format!(
-            "CEF cache not found at {} — run `cargo make install-cef` or omit --with-cef",
-            cef_release.display()
-        ));
-    }
-    println!(">>> staging CEF from {}", cef_release.display());
-    copy_dir_contents(&cef_release, cef_dir)?;
     Ok(())
 }
 

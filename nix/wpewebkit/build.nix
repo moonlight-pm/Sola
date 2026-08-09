@@ -2,7 +2,7 @@
 # nixpkgs from the system channel, then callPackage's our derivation
 # with the right dependency set. Result symlink lands in the current
 # working directory; the output exposes `lib/libWPEWebKit-2.0.so` and
-# `share/pkgconfig/wpe-webkit-2.0.pc` (the bits sola-browser-wpe will
+# `share/pkgconfig/wpe-webkit-2.0.pc` (the bits sola-browser will
 # eventually link against).
 let
   pkgs = import <nixos> {};

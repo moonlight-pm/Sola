@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Sola Browser
-Comment=Legacy engine entry — http/https defaults go to Helium; this remains for launching sola-browser explicitly
+Comment=Sola browser (WPE) — http/https defaults may go to Helium; this launches sola-browser explicitly
 Exec=/opt/sola/bin/sola-browser %u
 Terminal=false
 Categories=Network;WebBrowser;

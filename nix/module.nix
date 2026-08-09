@@ -52,10 +52,9 @@ in
       gst_all_1.gst-libav
     ];
 
-    # CEF (sola-kit) needs ~26 transitive native libs at runtime. We
-    # collate them via nix-ld's dispatch dir and patch libcef.so's
-    # DT_RUNPATH to point at it — see docs/vault/Distribution.md for
-    # the long story. The package's libcef.so ships pre-patched.
+    # nix-ld keeps a dispatch dir of common native libs for any
+    # prebuilt/foreign ELF that needs them (historical CEF path
+    # removed; still useful for third-party helpers).
     programs.nix-ld.enable = true;
     programs.nix-ld.libraries = with pkgs; [
       glib

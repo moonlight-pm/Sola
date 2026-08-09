@@ -30,21 +30,10 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/terminal".into(),
         },
         Application {
-            // The dispatcher (`sola-browser`) selects the engine via
-            // --engine / $SOLA_BROWSER_ENGINE / default-wpe and exec()s
-            // the sibling binary. Each engine reports an engine-specific
-            // app_id ("sola-browser-wpe" / "sola-browser-cef") so the shell
-            // tracks both as distinct apps and either can run at the same time.
-            app_id: "sola-browser-wpe".into(),
-            label: "Browser (WPE)".into(),
-            command: "/opt/sola/bin/sola-browser --engine wpe".into(),
+            app_id: "sola-browser".into(),
+            label: "Browser".into(),
+            command: "/opt/sola/bin/sola-browser".into(),
             icon: "lucide/globe".into(),
-        },
-        Application {
-            app_id: "sola-browser-cef".into(),
-            label: "Browser (CEF)".into(),
-            command: "/opt/sola/bin/sola-browser --engine cef".into(),
-            icon: "lucide/earth".into(),
         },
         Application {
             app_id: "sola-kit".into(),

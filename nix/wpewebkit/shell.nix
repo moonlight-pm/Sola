@@ -1,12 +1,9 @@
-# Dev shell for sola-browser-wpe: brings our vendored wpewebkit into
+# Dev shell for sola-browser: brings our vendored wpewebkit into
 # scope alongside the WPE-platform libs (`libwpe`, `libwpe-fdo`) and
 # pkg-config. Inside this shell:
 #
 #   pkg-config --libs wpe-webkit-2.0      # resolves cleanly
-#   cargo build --bin wpe-probe           # build.rs can find headers + libs
-#
-# Used by `cargo make build sola-browser-wpe` via a sola-make wrapper
-# (TODO) that shells out into `nix-shell` before invoking cargo.
+#   cargo make build sola-browser
 let
   pkgs = import <nixos> {};
   wpewebkit = pkgs.callPackage ./default.nix {

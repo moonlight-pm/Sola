@@ -26,8 +26,7 @@ pub enum NavCmd {
 
 /// Editing commands routed to the focused web content (or, in the chrome,
 /// to the URL bar). Names map to WebKit editing-command strings via
-/// [`crate::util::editing_command_name`]; CEF maps them to `cef::Frame`
-/// methods directly.
+/// [`crate::util::editing_command_name`].
 ///
 /// Paste of system-clipboard text into page content uses
 /// [`Cmd::PasteText`] instead — headless WPE has no Wayland clipboard, so
@@ -44,14 +43,12 @@ pub enum EditCmd {
 
 /// Commands the chrome sends to the engine worker. Generic over the
 /// engine `E`: `Release` carries `E::Token` (the buffer-recycle token)
-/// and `Input` carries `E::Input` (the engine's native input shape —
-/// WPE uses GDK keyvals + f64 coords, CEF uses Windows VK codes +
-/// integer pixels), so input rides the normal command channel with no
+/// and `Input` carries `E::Input` (WPE: GDK keyvals + f64 coords), so
+/// input rides the normal command channel with no
 /// process-wide side-channel.
 pub enum Cmd<E: Engine> {
     Resize { width: u32, height: u32 },
-    /// Recycle a producer buffer (WPE dma-buf pool). CEF ignores this
-    /// (CPU OSR memcpy has no recycle token).
+    /// Recycle a producer buffer (WPE dma-buf pool).
     Release { token: E::Token },
     Input(E::Input),
     Focus(bool),
@@ -97,9 +94,9 @@ pub type FrameReceiver<F> = Arc<Mutex<Receiver<TaggedFrame<F>>>>;
 /// there's nothing pending.
 pub type ClipboardHandle = Arc<Mutex<Option<String>>>;
 
-/// A browser engine. Both `WpeEngine` and `CefEngine` expose this surface.
+/// A browser engine. Product path is `WpeEngine` in `sola-browser`.
 pub trait Engine: Sized + Send + Sync + 'static {
-    /// Engine-specific raw frame (WPE: dma-buf fd; CEF: CPU buffer).
+    /// Engine-specific raw frame (WPE: dma-buf fd + metadata).
     type Frame: Send + 'static;
     /// Opaque buffer-recycle token returned via `Cmd::Release`.
     type Token: Send + 'static;
@@ -108,9 +105,8 @@ pub trait Engine: Sized + Send + Sync + 'static {
     /// The iced shader Program that imports `Self::Frame` and samples it.
     type Program: iced::widget::shader::Program<crate::app::Msg> + 'static;
 
-    /// CEF subprocess gate; runs first in `run()`, before logging/Wayland
-    /// init. WPE returns `None`; CEF dispatches `--type=` workers and
-    /// returns `Some(exit_code)`.
+    /// Optional early-exit for engines that re-exec helper processes.
+    /// WPE always returns `None` (no subprocess re-entry).
     fn dispatch_subprocess(_app_id: &'static str) -> Option<std::process::ExitCode> {
         None
     }

@@ -9,13 +9,18 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-08 (Arcade library UX + nest on **master**)
+**As of:** 2026-08-09 (browser WPE-only; CEF removed — branch `browser-wpe-only`)
 
 ---
 
 ## Now
 
-1. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
+1. **Browser WPE-only** — **in flight on `browser-wpe-only`**  
+   - Tag `pre-cef-removal` archives dual-engine tree.  
+   - `sola-browser` = former WPE engine (app_id `sola-browser`); CEF crate,
+     `install-cef`, `download-cef-stub` removed.  
+   - **Next:** user install + smoke; then merge when approved.
+2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
    - **UI:** search + **A–Z / Recent** + **Ready to play only** (default on);
      lazy viewport banners; Play / Store / Uninstall; **Install** + faded
      uninstalled rows; Stop-on-row; scroll preserved.  
@@ -26,9 +31,9 @@ Do not invent product policy.
    - Manual: [`docs/manual/sola-arcade.md`](docs/manual/sola-arcade.md).  
    - **Next polish (backlog):** Portal-class nest fails; residual flicker;
      title contrast on bright heroes; never-played owned without API.  
-2. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
-3. **Progress docs** — keep this file + capabilities honest.  
-4. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
+3. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
+4. **Progress docs** — keep this file + capabilities honest.  
+5. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
    kvm clipboard, etc.
 
 **Explicit holds:** none.
@@ -73,6 +78,6 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | IPC | **Sola Bus** (Unix socket events) + Wayland for surfaces/input |
 | Process model | Multi-process; each app independently restartable |
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
-| Browser engines | **WPE primary**, CEF parallel; no `accelerated_osr` crate feature |
+| Browser engine | **WPE only** (`sola-browser`); CEF removed (tag `pre-cef-removal`) |
 | Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents |
 | Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |

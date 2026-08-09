@@ -126,11 +126,8 @@ similar.
   store and links them onto `PATH`.
 - Installs a **patched River** (River 0.4.5 with our carried Xwayland
   destroy-state fix — see `nix/patches/`).
-- Configures `programs.nix-ld` with the 26 native libraries
-  Chromium's `libcef.so` loads at runtime.
 - Adds GStreamer plugins + `glib-networking` + their session env
-  vars so the legacy WebKit-based apps (browser, terminal, shell,
-  mail) can play media and use HTTPS.
+  vars so WPE/WebKit media and HTTPS work for the browser.
 - Adds `xdg-utils` and `desktop-file-utils` for default-browser
   routing.
 - Enables `hardware.graphics`.
@@ -194,15 +191,10 @@ The command:
 2. `cargo build --release` (with `strip = "debuginfo"` from root
    `Cargo.toml`, so binaries shrink ~70% while keeping function-level
    stack traces).
-3. Stages `target/release/*` + the patched CEF Release tree from
-   `~/.cache/sola/cef-<version>/Release/`.
-4. Pre-patches the CEF-linking binaries' RUNPATH to `/opt/sola/cef`
-   (so the bundle works outside Nix too — the derivation re-rpaths
-   to the store path on install).
-5. tar + zstd-19 compresses to `sola-<version>-linux-x86_64.tar.zst`.
-6. Computes the SRI hash and rewrites `nix/release.nix`.
-7. Commits, tags `v<version>`, pushes to `github`, runs
+3. Stages `target/release/*` + `/opt/sola/share`.
+4. tar + zstd-19 compresses to `sola-<version>-linux-x86_64.tar.zst`.
+5. Computes the SRI hash and rewrites `nix/release.nix`.
+6. Commits, tags `v<version>`, pushes to `github`, runs
    `gh release create` with the tarball attached.
 
-Requires `gh` authenticated (`gh auth status`) and `patchelf` + `zstd`
-on PATH.
+Requires `gh` authenticated (`gh auth status`) and `zstd` on PATH.

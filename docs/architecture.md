@@ -62,7 +62,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kit` | Iced app kit + storybook |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Terminal (alacritty grid + iced) |
-| `crates/sola-browser*` | Chrome + WPE (primary) / CEF (parallel) |
+| `crates/sola-browser*` | Chrome + WPE WebKit (`sola-browser` + `sola-browser-core`) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) |
 | `crates/sola-mail` | Kit-native mail client |
 | `crates/sola-monitor` | System monitor / bus audit |
@@ -140,17 +140,16 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 ---
 
-## Browser engines (as-built)
+## Browser (as-built)
 
-| Engine | Crate | Role |
-|--------|-------|------|
-| WPE | `sola-browser-wpe` | **Primary** |
-| CEF | `sola-browser-cef` | Parallel path; CEF `147.x` via `cef` crate |
-| Shared chrome | `sola-browser-core` | Iced chrome |
-| Dispatcher | `sola-browser` | Exec WPE or CEF |
+| Piece | Crate / ref | Role |
+|-------|-------------|------|
+| Browser binary | `sola-browser` | WPE WebKit engine + iced chrome |
+| Shared chrome | `sola-browser-core` | `Engine` trait, tabs, omnibox, bus |
+| Historical CEF | git tag `pre-cef-removal` | Parallel CEF path removed 2026-08-09 |
 
-CEF: do **not** enable `accelerated_osr`; dma-buf import is via Wayland
-`zwp_linux_dmabuf_v1` and sola-river composition.
+WPE frames import as dma-buf into wgpu (`crates/sola-browser/src/wgpu_import.rs`);
+sola-river composites the iced client surface.
 
 ---
 

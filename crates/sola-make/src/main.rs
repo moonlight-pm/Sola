@@ -6,7 +6,6 @@
 ///
 /// See: https://github.com/matklad/cargo-xtask
 mod assets;
-mod cef;
 mod install;
 mod iso;
 mod isolated;
@@ -24,9 +23,8 @@ use clap::Parser;
 /// They stay buildable via explicit `cargo make build <name>` so the
 /// source is kept warm without paying for them on every full build.
 ///
-/// Currently empty — `sola-browser` (dispatcher), `sola-browser-wpe`, and
-/// `sola-browser-cef` all build normally in the workspace. The mechanism
-/// is kept for any future app that needs the same treatment.
+/// Currently empty — all workspace binaries build by default. The
+/// mechanism is kept for any future app that needs the same treatment.
 const EXCLUDED_TARGETS: &[&str] = &[];
 
 #[derive(Parser, Debug)]
@@ -67,10 +65,6 @@ enum Commands {
         watch: bool,
     },
 
-    /// Download CEF binaries to ~/.cache/sola/cef-<version>/.
-    /// Idempotent — skips if already present.
-    InstallCef,
-
     /// Build, bundle, and publish a release to GitHub Releases.
     /// Auto-bumps the patch of the latest vX.Y.Z tag if no version given.
     Publish {
@@ -95,10 +89,6 @@ enum Commands {
 enum IsoAction {
     /// Stage `target/release` and `nix build` the installer ISO.
     Build {
-        /// Include the CEF Release tree (~4G) in the stage.
-        #[arg(long)]
-        with_cef: bool,
-
         /// Only populate `var/images/stage/` (skip nix ISO build).
         #[arg(long)]
         stage_only: bool,
@@ -120,10 +110,6 @@ enum IsoAction {
 enum VmAction {
     /// Stage `target/release` binaries (no cargo) and `nix build` the qcow2.
     Build {
-        /// Include the CEF Release tree (~4G) in the stage/image.
-        #[arg(long)]
-        with_cef: bool,
-
         /// Only populate `var/images/stage/` (skip nix image build).
         #[arg(long)]
         stage_only: bool,
@@ -196,26 +182,9 @@ fn main() {
                 install::install(&apps);
             }
         }
-        Commands::InstallCef => {
-            match cef::ensure_cef() {
-                Ok(path) => {
-                    println!("CEF ready at {}", path.display());
-                }
-                Err(e) => {
-                    eprintln!("CEF install failed: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
         Commands::Publish { version } => publish::publish(version),
         Commands::Vm { action } => match action {
-            VmAction::Build {
-                with_cef,
-                stage_only,
-            } => vm::build(vm::BuildOpts {
-                with_cef,
-                stage_only,
-            }),
+            VmAction::Build { stage_only } => vm::build(vm::BuildOpts { stage_only }),
             VmAction::Run { no_build, rebuild } => vm::run(vm::RunOpts {
                 auto_build: !no_build,
                 force_rebuild: rebuild,
@@ -228,13 +197,7 @@ fn main() {
             }),
         },
         Commands::Iso { action } => match action {
-            IsoAction::Build {
-                with_cef,
-                stage_only,
-            } => iso::build(iso::IsoBuildOpts {
-                with_cef,
-                stage_only,
-            }),
+            IsoAction::Build { stage_only } => iso::build(iso::IsoBuildOpts { stage_only }),
             IsoAction::Run { no_build, rebuild } => iso::run(iso::IsoRunOpts {
                 auto_build: !no_build,
                 force_rebuild: rebuild,
@@ -530,12 +493,11 @@ mod tests {
 
     #[test]
     fn cli_parses_vm_build() {
-        let cli = Cli::try_parse_from(["sola-make", "vm", "build", "--with-cef"]).unwrap();
+        let cli = Cli::try_parse_from(["sola-make", "vm", "build"]).unwrap();
         assert!(matches!(
             cli.command,
             Commands::Vm {
                 action: VmAction::Build {
-                    with_cef: true,
                     stage_only: false,
                 }
             }
@@ -591,7 +553,6 @@ mod tests {
             cli.command,
             Commands::Iso {
                 action: IsoAction::Build {
-                    with_cef: false,
                     stage_only: false,
                 }
             }

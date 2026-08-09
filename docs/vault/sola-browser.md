@@ -1,30 +1,20 @@
 # sola-browser
 
-A standalone web browser inside Sola, implemented twice — once on
-WebKit (WPE Platform API) and once on Chromium (CEF) — so we can
-compare engines, hedge against single-engine bugs, and keep our
-shader/iced integration honest. Both live in the cargo workspace at
-`crates/sola-browser-wpe/` and `crates/sola-browser-cef/` as ordinary
-members (root `members = ["crates/*"]`; only `wgpu-hal-patched` is
-excluded). They were once held outside the workspace because their `iced`
-dependency drags in `smithay-clipboard` → `wayland-sys` with the `dlopen`
-feature, whose workspace-wide unification threatened [[sola-river]]'s
-direct-link wayland — but that was resolved by baking
-`/run/current-system/sw/lib` into every binary's RUNPATH (via
-`.cargo/config.toml`), so sola-river's runtime dlopen finds the system
-libwayland. The workspace was unified accordingly (commit 7f97004); the
-stale per-crate `Cargo.lock` files under each browser crate are leftovers
-from the isolated era and are ignored.
+> **Historical vault note.** As of 2026-08-09 the product browser is
+> **WPE-only** (`crates/sola-browser` + `sola-browser-core`). CEF and the
+> dual-engine dispatcher are gone; recover from git tag `pre-cef-removal`.
+> Living map: [`docs/architecture.md`](../architecture.md). Capability:
+> [`docs/capabilities.md`](../capabilities.md) row `browser`.
 
-**Status (2026-07-25).** WPE is primary, CEF is a **parallel engine at
-feature parity** (not an archive). Shared chrome lives in `sola-browser-core`;
-a thin `sola-browser` dispatcher `exec`s the engine binary. Both engines are
-on the Sola bus (`Topic::OpenUrl`, Browser/Edit app-menus, live theme).
-Lifecycle cleanse 2026-07-25: WPE buffer tokens release on Drop, last-tab
-never empties the list, engine shutdown on app drop, paste-into-page via
-chrome clipboard → `Cmd::PasteText`. Not yet production-grade (no profiles /
-bookmarks / downloads / history / devtools). See
-`docs/specs/2026-07-25-sola-browser-cleanup.md`.
+A standalone web browser inside Sola. Originally implemented twice —
+once on WebKit (WPE Platform API) and once on Chromium (CEF) — for
+engine comparison. That dual path is archived; the prose below still
+describes the dual-engine era for archaeology.
+
+**Status (2026-08-09).** WPE only. Shared chrome in `sola-browser-core`;
+engine body in `sola-browser`. Bus: `Topic::OpenUrl`, Browser/Edit
+app-menus, live theme. Not yet production-grade (no profiles /
+bookmarks / downloads / history / devtools).
 
 ## Architecture
 

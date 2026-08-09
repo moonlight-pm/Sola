@@ -4,14 +4,11 @@
 //!   1. Validate working tree clean.
 //!   2. Resolve version (auto-bump latest tag's patch, or use explicit arg).
 //!   3. `cargo build --release` (strip = "debuginfo" set in root Cargo.toml).
-//!   4. Stage release binaries + the patched CEF Release/ tree.
-//!   5. Pre-patch CEF-linking binaries' RUNPATH to `/opt/sola/cef`
-//!      (so the tarball is usable bare too — the Nix derivation re-rpaths
-//!      to the store path on install).
-//!   6. tar + zstd-19 compress.
-//!   7. Compute SRI hash via `nix hash file`.
-//!   8. Rewrite `nix/release.nix` with the new version + hash.
-//!   9. Commit, tag, push to `github`, create the GitHub release.
+//!   4. Stage release binaries + share tree.
+//!   5. tar + zstd-19 compress.
+//!   6. Compute SRI hash via `nix hash file`.
+//!   7. Rewrite `nix/release.nix` with the new version + hash.
+//!   8. Commit, tag, push to `github`, create the GitHub release.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,12 +17,6 @@ use std::process::Command;
 const RELEASE_REPO: &str = "moonlight-pm/Sola";
 const REMOTE: &str = "origin";
 const BRANCH: &str = "master";
-
-/// Binaries that dynamically link `libcef.so` — their RUNPATH needs
-/// updating from the build host's `~/.cache/sola/cef-…/Release` path
-/// to a stable consumer-side location. Currently empty; add any
-/// CEF-linking binary that ships in a release tarball here.
-const CEF_LINKING_BINS: &[&str] = &[];
 
 pub fn publish(explicit_version: Option<String>) {
     match run_publish(explicit_version) {
@@ -50,10 +41,8 @@ fn run_publish(explicit_version: Option<String>) -> Result<String, String> {
     let staging = mkstaging()?;
     let bundle = staging.join("sola");
     let bin_dir = bundle.join("bin");
-    let cef_dir = bundle.join("cef");
     let share_dir = bundle.join("share");
     fs::create_dir_all(&bin_dir).map_err(|e| format!("mkdir bin: {e}"))?;
-    fs::create_dir_all(&cef_dir).map_err(|e| format!("mkdir cef: {e}"))?;
     fs::create_dir_all(&share_dir).map_err(|e| format!("mkdir share: {e}"))?;
 
     println!(">>> staging binaries from target/release");
@@ -75,43 +64,6 @@ fn run_publish(explicit_version: Option<String>) -> Result<String, String> {
         "cp",
         &["-r", "/opt/sola/share/.", share_dir.to_str().unwrap()],
     )?;
-
-    println!(">>> staging CEF Release tree");
-    let cef_version = fs::read_to_string("cef-version")
-        .map_err(|e| format!("read cef-version: {e}"))?
-        .trim()
-        .to_string();
-    let home = std::env::var("HOME").map_err(|e| format!("HOME unset: {e}"))?;
-    let cef_release = format!("{home}/.cache/sola/cef-{cef_version}/Release");
-    if !Path::new(&cef_release).exists() {
-        return Err(format!(
-            "CEF cache not found at {cef_release} — run `cargo make install-cef` first"
-        ));
-    }
-    run(
-        "cp",
-        &[
-            "-r",
-            &format!("{cef_release}/."),
-            cef_dir.to_str().unwrap(),
-        ],
-    )?;
-
-    println!(">>> pre-patching CEF-linking binaries' RUNPATH");
-    for bin in CEF_LINKING_BINS {
-        let path = bin_dir.join(bin);
-        if !path.exists() {
-            continue;
-        }
-        run(
-            "patchelf",
-            &[
-                "--set-rpath",
-                "/opt/sola/cef:/run/current-system/sw/share/nix-ld/lib",
-                path.to_str().unwrap(),
-            ],
-        )?;
-    }
 
     let tarball_name = format!("sola-{version}-linux-x86_64.tar.zst");
     let tarball = staging.join(&tarball_name);

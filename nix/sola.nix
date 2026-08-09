@@ -1,4 +1,4 @@
-{ stdenv, fetchurl, patchelf, zstd, lib }:
+{ stdenv, fetchurl, zstd, lib }:
 
 let
   release = import ./release.nix;
@@ -12,7 +12,7 @@ stdenv.mkDerivation {
     hash = release.hash;
   };
 
-  nativeBuildInputs = [ patchelf zstd ];
+  nativeBuildInputs = [ zstd ];
 
   unpackPhase = ''
     runHook preUnpack
@@ -23,33 +23,19 @@ stdenv.mkDerivation {
 
   sourceRoot = "source";
 
-  # The tarball ships pre-built ELF binaries plus the CEF Release tree.
-  # We do not want nixpkgs' generic strip / patchelf to touch any of
-  # this — libcef.so already carries a DT_RUNPATH pointing at
-  # /run/current-system/sw/share/nix-ld/lib for its ~26 transitive
-  # deps, and the Sola binaries are debug-info-laden by design (so
-  # crash backtraces are meaningful).
+  # The tarball ships pre-built ELF binaries. Keep DWARF/symbol tables
+  # for meaningful crash backtraces; do not strip.
   dontStrip = true;
   dontPatchELF = true;
 
   installPhase = ''
     runHook preInstall
 
-    mkdir -p $out/bin $out/lib/cef $out/share
+    mkdir -p $out/bin $out/share
     cp -r bin/. $out/bin/
-    cp -r cef/. $out/lib/cef/
-    cp -r share/. $out/share/
-
-    # The CEF-linking binaries shipped in the tarball have their
-    # RUNPATH pre-pointed at /opt/sola/cef (so the tarball is usable
-    # outside Nix too). Re-point them at the Nix store location.
-    for bin in sola-kit sola-monitor sola-settings; do
-      if [ -e $out/bin/$bin ]; then
-        patchelf --set-rpath \
-          "$out/lib/cef:/run/current-system/sw/share/nix-ld/lib" \
-          $out/bin/$bin
-      fi
-    done
+    if [ -d share ]; then
+      cp -r share/. $out/share/
+    fi
 
     runHook postInstall
   '';

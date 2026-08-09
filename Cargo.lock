@@ -311,7 +311,7 @@ version = "0.38.0+1.3.281"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bb44936d800fea8f016d7f2311c6a4f97aebd5dc86f09906139ec848cf3a46f"
 dependencies = [
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -790,39 +790,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "camino"
-version = "1.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb1307f12aa967b5a58416e87b3653360e0fd614a016b6e970db08fecbb1b80d"
-dependencies = [
- "serde_core",
-]
-
-[[package]]
-name = "cargo-platform"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd0061da739915fae12ea00e16397555ed4371a6bb285431aab930f61b0aa4ba"
-dependencies = [
- "serde",
- "serde_core",
-]
-
-[[package]]
-name = "cargo_metadata"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
-dependencies = [
- "camino",
- "cargo-platform",
- "semver",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "cc"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -832,38 +799,6 @@ dependencies = [
  "jobserver",
  "libc",
  "shlex 2.0.1",
-]
-
-[[package]]
-name = "cef"
-version = "147.1.0+147.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58474836fdb2fe169b7c8a588d6565c0311a570cf5c79c45af666cf56c4f646f"
-dependencies = [
- "anyhow",
- "cargo_metadata",
- "cef-dll-sys",
- "clap",
- "libloading 0.9.0",
- "objc2 0.6.4",
- "plist",
- "semver",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "cef-dll-sys"
-version = "147.1.0+147.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d01681cee57f7580edbe010c5d218662f612f81065100bb8431e9089a4cfd4ae"
-dependencies = [
- "anyhow",
- "cmake",
- "download-cef",
- "serde_json",
 ]
 
 [[package]]
@@ -943,7 +878,7 @@ checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
 dependencies = [
  "glob",
  "libc",
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -1444,7 +1379,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -1461,10 +1396,6 @@ name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
-
-[[package]]
-name = "download-cef"
-version = "2.3.1"
 
 [[package]]
 name = "dpi"
@@ -3020,7 +2951,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
 dependencies = [
  "libc",
- "libloading 0.8.9",
+ "libloading",
  "pkg-config",
 ]
 
@@ -3141,16 +3072,6 @@ name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-dependencies = [
- "cfg-if",
- "windows-link",
-]
-
-[[package]]
-name = "libloading"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
 dependencies = [
  "cfg-if",
  "windows-link",
@@ -3732,7 +3653,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9bff0aa1d48904a1385ea2a8b97576fbdcbc9a3cfccd0d31fe978e1c4038c5"
 dependencies = [
  "bitflags 2.13.1",
- "libloading 0.8.9",
+ "libloading",
  "nvml-wrapper-sys",
  "static_assertions",
  "thiserror 1.0.69",
@@ -3745,7 +3666,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "698d45156f28781a4e79652b6ebe2eaa0589057d588d3aec1333f6466f13fcb5"
 dependencies = [
- "libloading 0.8.9",
+ "libloading",
 ]
 
 [[package]]
@@ -4262,19 +4183,6 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
-
-[[package]]
-name = "plist"
-version = "1.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7da1d65da6dd5d1e44199ac0f58712d241c0f439f80adea8924d832384087f85"
-dependencies = [
- "base64 0.22.1",
- "indexmap",
- "quick-xml",
- "serde",
- "time",
-]
 
 [[package]]
 name = "png"
@@ -5144,10 +5052,6 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
-dependencies = [
- "serde",
- "serde_core",
-]
 
 [[package]]
 name = "serde"
@@ -5545,38 +5449,6 @@ version = "0.1.0"
 [[package]]
 name = "sola-browser"
 version = "0.1.0"
-
-[[package]]
-name = "sola-browser-cef"
-version = "0.1.0"
-dependencies = [
- "cef",
- "iced",
- "sola-browser-core",
- "sola-bus",
- "sola-core",
- "sola-kit",
- "tracing",
- "wgpu",
-]
-
-[[package]]
-name = "sola-browser-core"
-version = "0.1.0"
-dependencies = [
- "iced",
- "iced_futures",
- "sola-bus",
- "sola-core",
- "sola-kit",
- "tokio",
- "tracing",
- "wgpu",
-]
-
-[[package]]
-name = "sola-browser-wpe"
-version = "0.1.0"
 dependencies = [
  "ash",
  "bindgen",
@@ -5591,6 +5463,20 @@ dependencies = [
  "tracing",
  "wgpu",
  "wgpu-hal",
+]
+
+[[package]]
+name = "sola-browser-core"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_futures",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "tokio",
+ "tracing",
+ "wgpu",
 ]
 
 [[package]]
@@ -7006,7 +6892,7 @@ dependencies = [
  "js-sys",
  "khronos-egl",
  "libc",
- "libloading 0.8.9",
+ "libloading",
  "log",
  "metal",
  "naga",

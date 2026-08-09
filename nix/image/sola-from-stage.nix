@@ -1,4 +1,4 @@
-# Install Sola from a locally staged release-shaped tree (bin/ + share/ + cef/).
+# Install Sola from a locally staged release-shaped tree (bin/ + share/).
 #
 # Host `cargo build` binaries embed the *build host* dynamic linker store path.
 # That path is usually absent inside the guest image → execve ENOENT
@@ -61,22 +61,19 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p $out/bin $out/lib/cef $out/share
+    mkdir -p $out/bin $out/share
     if [ -d bin ]; then
       cp -a bin/. $out/bin/
     fi
     if [ -d share ]; then
       cp -a share/. $out/share/
     fi
-    if [ -d cef ] && [ "$(ls -A cef 2>/dev/null || true)" != "" ]; then
-      cp -a cef/. $out/lib/cef/
-    fi
 
     interp="$(cat $NIX_CC/nix-support/dynamic-linker)"
-    full_rpath="${rpath}:$out/lib/cef:/run/current-system/sw/share/nix-ld/lib"
+    full_rpath="${rpath}:/run/current-system/sw/share/nix-ld/lib"
 
-    # Re-point every ELF so the guest can exec it. Browser engines may still
-    # miss CEF/WPE until those are staged; that is OK for installer dogfood.
+    # Re-point every ELF so the guest can exec it. Browser may still
+    # need WPEWebKit staged into the image for full dogfood.
     for f in $out/bin/*; do
       if [ -f "$f" ] && patchelf --print-interpreter "$f" >/dev/null 2>&1; then
         echo "patchelf $f"

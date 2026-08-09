@@ -14,7 +14,7 @@ use std::process::{Command, exit};
 use std::time::SystemTime;
 
 use crate::vm::{
-    BuildOpts, TARGET_DISK_PATH, display_backend, ensure_target_disk, has_installed_image,
+    TARGET_DISK_PATH, display_backend, ensure_target_disk, has_installed_image,
     make_owner_writable, prepare_stage, resolve_ovmf, resolve_qemu, workspace_root,
 };
 
@@ -44,7 +44,6 @@ const ISO_INPUT_PATHS: &[&str] = &[
 ];
 
 pub struct IsoBuildOpts {
-    pub with_cef: bool,
     pub stage_only: bool,
 }
 
@@ -68,10 +67,7 @@ pub fn run(opts: IsoRunOpts) {
 }
 
 fn run_build(opts: IsoBuildOpts) -> Result<(), String> {
-    let (root, stage) = prepare_stage(&BuildOpts {
-        with_cef: opts.with_cef,
-        stage_only: opts.stage_only,
-    })?;
+    let (root, stage) = prepare_stage()?;
 
     if opts.stage_only {
         println!(">>> --stage-only: skipping nix ISO build");
@@ -146,10 +142,7 @@ fn run_iso(opts: IsoRunOpts) -> Result<(), String> {
                 "ISO stale"
             };
             println!(">>> building ISO ({reason})");
-            run_build(IsoBuildOpts {
-                with_cef: false,
-                stage_only: false,
-            })?;
+            run_build(IsoBuildOpts { stage_only: false })?;
         }
     } else {
         println!("    ISO: {} (up to date)", iso.display());

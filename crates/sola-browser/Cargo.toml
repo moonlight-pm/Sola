@@ -3,10 +3,32 @@ name = "sola-browser"
 version = "0.1.0"
 edition = "2024"
 
-# Featherweight engine dispatcher. Depends on NO web engine — it only
-# selects sola-browser-{wpe,cef} and execs it. This is what keeps the
-# 1.34 GB libcef out of the WPE launch path.
+# Sola browser — WPE WebKit engine + shared iced chrome (`sola-browser-core`).
+# Product browser path is WPE only (CEF parallel engine removed; last dual-
+# engine commit is git tag `pre-cef-removal`).
 
 [[bin]]
 name = "sola-browser"
 path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+sola-browser-core = { path = "../sola-browser-core" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+sola-kit = { path = "../sola-kit" }
+tracing = "0.1"
+
+# DMA-BUF import via wgpu-hal-patched (workspace `[patch.crates-io]`).
+wgpu = { version = "27", features = ["vulkan-portability"] }
+wgpu-hal = { version = "27", features = ["vulkan"] }
+ash = "0.38"
+libc = "0.2"
+
+[build-dependencies]
+pkg-config = "0.3"
+bindgen = "0.72"
+cc = "1"

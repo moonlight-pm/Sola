@@ -1,4 +1,4 @@
-//! Build script for sola-browser-wpe.
+//! Build script for sola-browser (WPE WebKit).
 //!
 //! 1. **Per-pkg RUNPATH.** Workspace `.cargo/config.toml` bakes the
 //!    standard NixOS paths (`/run/current-system/sw/lib` +

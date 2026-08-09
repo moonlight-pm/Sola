@@ -63,22 +63,16 @@ return to the sidebar row?
 **Default until decided:** leave pins data-compatible; no new chrome without
 product ask. See agent UI backlog.
 
-### T2 — CEF default vs WPE
-
-WPE is primary; CEF is parallel. When (if ever) flip defaults for specific
-sites?
-
-**Default until decided:** WPE remains default dispatcher path.
-
 ---
 
 ## Decision log
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-09 | browser | **CEF removed**; WPE-only `sola-browser` (folded former `sola-browser-wpe`); archive tag `pre-cef-removal` | AGENTS, architecture, CURRENT locks |
 | 2026-08-06 | dist | Distribution branch merged to master; qcow e2e OK; ISO e2e still open; interim TZ US/Mountain | freeze + plan + CURRENT |
 | 2026-08-05 | — | Progress documentation practice adopted for Sola | CURRENT, progress-model, AGENTS |
 | 2026-08-05 | dist | ISO primary; wizard = username + disk only; US EN + Mac keyboard fixed; hostname `sola`; no password; loginless → Sola; flower brand splash | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) |
 | (earlier) | UI stack | Iced + sola-kit; WebView apocrypha | AGENTS, CURRENT locks |
-| (earlier) | Browser | WPE primary, CEF parallel | AGENTS, architecture |
+| (earlier) | Browser | WPE primary, CEF parallel (superseded 2026-08-09) | AGENTS, architecture |
 | (earlier) | Agent backend | Shared Grok leader only | AGENTS, CURRENT locks |
