@@ -21,10 +21,14 @@ Do not invent product policy.
    - Full review + backlog:
      [`docs/plans/2026-08-09-sola-browser-hardening.md`](docs/plans/2026-08-09-sola-browser-hardening.md).  
    - Capability row `browser` lists shipped subset vs gaps.  
-   - **D3 decided:** Helium stays system default until browser is good enough.  
-   - **Still ask human:** **D4–D6** (MVP chrome, middle-click, search).  
-   - **Safe without policy:** dogfood matrix; bg-tab frame thrash (B1);
-     lifecycle/token/GPU order (B2); engine.rs split when touching WPE.  
+   - **D3:** Helium stays system default until browser is good enough.  
+   - **D4 product bar:** stop loading · downloads · history+session restore ·
+     **Bitwarden (extension-class)** · high polish/reliability.  
+   - **Still ask:** **D5** middle-click, **D6** search, **D7** Bitwarden
+     approach (WPE cannot load Chrome extensions as-is).  
+   - **Safe without policy:** engine B1 thrash; token/GPU (B2); stop loading
+     (NavCmd exists); dogfood matrix. Downloads/history need designs;
+     Bitwarden blocked on D7.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
    - **UI:** search + **A–Z / Recent** + **Ready to play only** (default on);
      lazy viewport banners; Play / Store / Uninstall; **Install** + faded

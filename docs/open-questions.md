@@ -64,19 +64,50 @@ stays **opt-in** (launcher / explicit open); do **not** subscribe to
 
 ---
 
-### D4 — Browser: dogfood MVP chrome scope (P0 for browser polish)
+### D4 — Browser: dogfood MVP chrome scope — **decided 2026-08-09**
 
-**Context:** Chrome is tabs + omnibox + nav + Edit menu only. Missing:
-find-in-page, zoom, stop, downloads, bookmarks, history, session restore,
-devtools, context menus, error pages.
+**Decision:** Next product bar (beyond pure engine/lifecycle) includes:
 
-**Ask:** For the next hardening slice, which features are **in scope** vs
-explicitly later? (Pick a minimal dogfood bar.)
+| In scope | Notes |
+|----------|--------|
+| **Stop loading** | Button and/or Escape; wire existing `NavCmd::Stop` |
+| **Downloads** | Real download UX (not just “works somehow”) |
+| **History + session restore** | Survive restart; open recent / restore session |
+| **Bitwarden integration (extension)** | Password manager as first-class; treat as product requirement |
+| **High polish + reliability** | Bar is daily-driver quality, not spike demos |
 
-**Until decided:** do not invent bookmark/history storage or download UX;
-prefer engine lifecycle / perf fixes that need no product policy.
+**Explicitly not decided as in-scope by this answer:** find-in-page, zoom,
+bookmarks UI (history ≠ bookmarks), context menus, error pages, DevTools —
+still backlog unless later promoted.
 
-**Related:** same hardening plan § P1.
+**Implication:** Bitwarden-as-extension is **not free on WPE** (Chromium
+extension APIs are not WebKit/WPE). Approach is open → **D7**.
+
+**Related:** hardening plan; `browser` capability.
+
+---
+
+### D7 — Browser: Bitwarden / extension approach (P0 — blocks password MVP)
+
+**Context:** D4 requires Bitwarden integration at extension-level quality.
+`sola-browser` is **WPE WebKit**, not Chromium. Chrome MV2/MV3 extensions
+do **not** load. CEF was removed (`pre-cef-removal`) partly for perf/dist
+on NVIDIA; reintroducing CEF only for extensions would reopen that cost.
+
+**Ask (when ready):** preferred integration shape?
+
+1. **Native bridge** — Bitwarden desktop / CLI / IPC / browser-connector style
+   (no Chromium extension runtime).  
+2. **WebKit extension surface** if/when Linux WPE supports a usable
+   WebExtensions-like API (research first).  
+3. **Revisit CEF** for extension-capable browser only (or dual path).  
+4. **Other** (inject helpers, system password API, etc.).
+
+**Until decided:** do not implement fake “extension” stubs; research notes
+go in the hardening plan; chrome can still land stop/downloads/history
+without Bitwarden.
+
+**Related:** D4; engine lock (WPE-only).
 
 ---
 
@@ -120,6 +151,7 @@ product ask. See agent UI backlog.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-09 | D4 | Browser MVP bar: **stop loading**, **downloads**, **history+restore**, **Bitwarden (extension-class)**, high polish; find/zoom/bookmarks/devtools not auto-included | open-questions D4, plan, CURRENT |
 | 2026-08-09 | D3 | **Helium remains system default** until sola-browser is good enough to take over; OpenUrl/MIME stay Helium; browser opt-in only | open-questions D3, architecture, plan |
 | 2026-08-09 | browser | **CEF removed**; WPE-only single crate; full review → hardening plan; D3–D6 opened | plan, capabilities, CURRENT, open-questions |
 | 2026-08-09 | browser | **CEF removed**; WPE-only single crate `sola-browser` (folded wpe + core); archive tag `pre-cef-removal` | AGENTS, architecture, CURRENT locks |

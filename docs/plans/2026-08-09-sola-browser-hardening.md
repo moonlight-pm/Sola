@@ -49,7 +49,9 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | Search | Kagi for non-URL omnibox |
 | http/https system default | **Helium** until browser is ship-ready (**D3 decided 2026-08-09**; `OpenUrl` not subscribed) |
 | Last tab | never empty — replace with `about:blank` |
-| Profiles / bookmarks / history / downloads / find / zoom / devtools | **absent** |
+| Profiles / bookmarks / find / zoom / devtools | **absent** |
+| Stop / downloads / history+restore | **absent** — **D4 in-scope** |
+| Bitwarden / extensions | **absent** — **D4 in-scope**, approach **D7** |
 
 ---
 
@@ -135,10 +137,25 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 See [`docs/open-questions.md`](../open-questions.md) § Browser. Work in order:
 
 1. ~~**Default link handler**~~ — **D3:** Helium until browser is good enough.
-2. **Dogfood MVP chrome** — which of bookmarks / history / downloads / find / zoom / stop are in-scope for the next slice.
-3. **Middle-click** — background tab vs ignore.
-4. **Search provider** — keep Kagi-only or make configurable.
-5. **Profile model** — single default WebKit data dir vs multi-profile later.
+2. ~~**Dogfood MVP chrome**~~ — **D4:** stop · downloads · history+restore ·
+   Bitwarden (extension-class) · high polish. Not auto: find/zoom/bookmarks UI/devtools.
+3. **Middle-click** — background tab vs ignore (**D5**).
+4. **Search provider** — keep Kagi-only or make configurable (**D6**).
+5. **Bitwarden approach** — native bridge vs WebKit extensions vs CEF revisit (**D7**).
+6. **Profile model** — single default WebKit data dir vs multi-profile later.
+
+### Product bar (D4) → backlog mapping
+
+| Product ask | Plan IDs / work |
+|-------------|-----------------|
+| Stop loading | Wire `NavCmd::Stop` + chrome control; Escape policy |
+| Downloads | New subsystem: WebKit download signals → chrome UI + disk paths |
+| History + restore | Persist tab list / visit history; cold-start restore |
+| Bitwarden | **Blocked on D7**; research WPE limits vs native connector |
+| High polish | B1–B5 engine reliability first; then chrome UX polish |
+
+**Suggested build order after D7 research spike (short):**  
+engine reliability (B1, B2) → stop → history/restore → downloads → Bitwarden.
 
 ---
 
