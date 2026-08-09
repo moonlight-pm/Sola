@@ -52,6 +52,64 @@ install from agent sessions.
 
 ---
 
+### D3 — Browser: default link handler (P0 for browser polish)
+
+**Context:** `sola_core::open_url` / shell route `http`/`https` to **Helium**.
+`sola-browser` intentionally does **not** subscribe to `Topic::OpenUrl`
+(`integration.rs`). Launcher still has an explicit Browser entry.
+
+**Ask:**
+
+1. Keep Helium as system default and sola-browser opt-in only?  
+2. Or make sola-browser the default handler (subscribe OpenUrl + desktop MIME)?  
+3. Or dual: sola-browser default, Helium escape hatch?
+
+**Until decided:** do not change OpenUrl routing or MIME defaults.
+
+**Related:** `browser` capability;
+[`plans/2026-08-09-sola-browser-hardening.md`](plans/2026-08-09-sola-browser-hardening.md).
+
+---
+
+### D4 — Browser: dogfood MVP chrome scope (P0 for browser polish)
+
+**Context:** Chrome is tabs + omnibox + nav + Edit menu only. Missing:
+find-in-page, zoom, stop, downloads, bookmarks, history, session restore,
+devtools, context menus, error pages.
+
+**Ask:** For the next hardening slice, which features are **in scope** vs
+explicitly later? (Pick a minimal dogfood bar.)
+
+**Until decided:** do not invent bookmark/history storage or download UX;
+prefer engine lifecycle / perf fixes that need no product policy.
+
+**Related:** same hardening plan § P1.
+
+---
+
+### D5 — Browser: middle-click behavior (P1)
+
+**Context:** iced path drops Middle button (`button_to_wpe` → `None`).
+WebKit `decide-policy` still has middle-click → background tab logic that
+never fires from iced events. Cmd/Ctrl-click still works via modifiers.
+
+**Ask:** Should middle-click open a background tab (restore event path), or
+stay ignored (delete dead policy branch)?
+
+**Until decided:** leave code as-is; document as known gap **B5**.
+
+---
+
+### D6 — Browser: omnibox search provider (P2)
+
+**Context:** Non-URL omnibox queries go to **Kagi** only (`util::resolve_query`).
+
+**Ask:** Keep Kagi hardcoded, make configurable in settings, or switch default?
+
+**Until decided:** keep Kagi; no settings surface.
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface

@@ -142,13 +142,22 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 ## Browser (as-built)
 
-| Piece | Crate / ref | Role |
-|-------|-------------|------|
-| Browser | `sola-browser` | WPE WebKit + iced chrome (one crate) |
-| Historical dual-engine | git tag `pre-cef-removal` | CEF + `sola-browser-core` split removed 2026-08-09 |
+| Piece | Path / ref | Role |
+|-------|------------|------|
+| Binary + lib | `crates/sola-browser` | Single product browser |
+| Chrome | `src/{app,run,integration,engine,shader,util,input}.rs` | iced UI, bus menus, `Engine` trait |
+| WPE engine | `src/wpe/*` | GMainLoop worker, tabs, dma-buf, C hijacks |
+| Historical | tag `pre-cef-removal` | CEF + dual crate + dispatcher |
 
-WPE frames import as dma-buf into wgpu (`crates/sola-browser/src/wpe/wgpu_import.rs`);
-sola-river composites the iced client surface.
+**Runtime:** iced main thread + `wpe-engine` GLib thread. Frames: WPE
+`buffer-rendered` → mpsc → drop non-active → `FrameSlot` → Vulkan
+dma-buf import → WGSL sample. Clipboard: page selection → iced write;
+paste → `Cmd::PasteText` / InsertText (headless WPE has no Wayland
+clipboard). **System `http`/`https` still default to Helium** — browser
+does not subscribe to `Topic::OpenUrl`.
+
+**Hardening backlog:**
+[`docs/plans/2026-08-09-sola-browser-hardening.md`](plans/2026-08-09-sola-browser-hardening.md).
 
 ---
 

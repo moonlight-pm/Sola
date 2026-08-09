@@ -11,9 +11,12 @@ A standalone web browser inside Sola. Originally dual-engine (WPE + CEF)
 with a shared `sola-browser-core`; that layout is archived. The prose
 below may still describe the dual-engine era for archaeology.
 
-**Status (2026-08-09).** WPE only, one crate. Bus: `Topic::OpenUrl`,
-Browser/Edit app-menus, live theme. Not yet production-grade (no profiles /
-bookmarks / downloads / history / devtools).
+**Status (2026-08-09).** WPE only, one crate. Bus: Theme, MenuAction,
+CloseApp, Windows/Floating — **not** OpenUrl (Helium remains system
+default). Browser/Edit app-menus, live theme. Hardening backlog:
+[`docs/plans/2026-08-09-sola-browser-hardening.md`](../plans/2026-08-09-sola-browser-hardening.md).
+Not production-grade (no profiles / bookmarks / downloads / history /
+devtools).
 
 ## Architecture
 

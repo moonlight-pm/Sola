@@ -9,17 +9,22 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-09 (browser WPE-only; CEF removed — branch `browser-wpe-only`)
+**As of:** 2026-08-09 (browser review + hardening queue on `naturalethic/browser`)
 
 ---
 
 ## Now
 
-1. **Browser WPE-only (single crate)** — **on `naturalethic/browser`**  
-   - Tag `pre-cef-removal` archives dual-engine tree.  
-   - CEF removed; `sola-browser-core` folded into `sola-browser`
-     (`src/wpe/` for engine/FFI). app_id `sola-browser`.  
-   - **Next:** user install + smoke (`cargo make install browser shell`).
+1. **sola-browser hardening** — **priority**  
+   - Shape: single crate WPE (`src/` chrome + `src/wpe/`); CEF gone
+     (`pre-cef-removal`); installed to `/opt/sola/bin/sola-browser` + shell.  
+   - Full review + backlog:
+     [`docs/plans/2026-08-09-sola-browser-hardening.md`](docs/plans/2026-08-09-sola-browser-hardening.md).  
+   - Capability row `browser` lists shipped subset vs gaps.  
+   - **Blocked on human for product policy:** open-questions **D3–D6**
+     (link handler, MVP chrome, middle-click, search). Present one at a time.  
+   - **Safe without policy:** dogfood matrix; bg-tab frame thrash (B1);
+     lifecycle/token/GPU order (B2); engine.rs split when touching WPE.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
    - **UI:** search + **A–Z / Recent** + **Ready to play only** (default on);
      lazy viewport banners; Play / Store / Uninstall; **Install** + faded
