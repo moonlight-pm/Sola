@@ -57,9 +57,10 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **`master`** (post–windowed-gamescope merge) | Feature work in worktrees / Orca workspaces |
+| Branch | **`naturalethic/browser`** (WPE-only + review docs) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
+| Browser | Single `sola-browser` installed (debug); no wpe/cef sidecars; OpenUrl still Helium; polish via hardening plan | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install. User installs and smokes.
