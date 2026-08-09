@@ -52,19 +52,12 @@ install from agent sessions.
 
 ---
 
-### D3 — Browser: default link handler (P0 for browser polish)
+### D3 — Browser: default link handler — **decided 2026-08-09**
 
-**Context:** `sola_core::open_url` / shell route `http`/`https` to **Helium**.
-`sola-browser` intentionally does **not** subscribe to `Topic::OpenUrl`
-(`integration.rs`). Launcher still has an explicit Browser entry.
-
-**Ask:**
-
-1. Keep Helium as system default and sola-browser opt-in only?  
-2. Or make sola-browser the default handler (subscribe OpenUrl + desktop MIME)?  
-3. Or dual: sola-browser default, Helium escape hatch?
-
-**Until decided:** do not change OpenUrl routing or MIME defaults.
+**Decision:** Keep **Helium** as the system `http`/`https` default until
+sola-browser is good enough to become the product default. sola-browser
+stays **opt-in** (launcher / explicit open); do **not** subscribe to
+`Topic::OpenUrl` or flip MIME defaults without a later explicit ship call.
 
 **Related:** `browser` capability;
 [`plans/2026-08-09-sola-browser-hardening.md`](plans/2026-08-09-sola-browser-hardening.md).
@@ -127,6 +120,7 @@ product ask. See agent UI backlog.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-09 | D3 | **Helium remains system default** until sola-browser is good enough to take over; OpenUrl/MIME stay Helium; browser opt-in only | open-questions D3, architecture, plan |
 | 2026-08-09 | browser | **CEF removed**; WPE-only single crate; full review → hardening plan; D3–D6 opened | plan, capabilities, CURRENT, open-questions |
 | 2026-08-09 | browser | **CEF removed**; WPE-only single crate `sola-browser` (folded wpe + core); archive tag `pre-cef-removal` | AGENTS, architecture, CURRENT locks |
 | 2026-08-06 | dist | Distribution branch merged to master; qcow e2e OK; ISO e2e still open; interim TZ US/Mountain | freeze + plan + CURRENT |

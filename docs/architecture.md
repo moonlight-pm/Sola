@@ -153,8 +153,8 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 `buffer-rendered` → mpsc → drop non-active → `FrameSlot` → Vulkan
 dma-buf import → WGSL sample. Clipboard: page selection → iced write;
 paste → `Cmd::PasteText` / InsertText (headless WPE has no Wayland
-clipboard). **System `http`/`https` still default to Helium** — browser
-does not subscribe to `Topic::OpenUrl`.
+clipboard). **System `http`/`https` default to Helium** until sola-browser
+is ship-ready (**D3**); browser does not subscribe to `Topic::OpenUrl`.
 
 **Hardening backlog:**
 [`docs/plans/2026-08-09-sola-browser-hardening.md`](plans/2026-08-09-sola-browser-hardening.md).

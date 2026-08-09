@@ -47,7 +47,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | Shell launcher | one “Browser” → `/opt/sola/bin/sola-browser` |
 | Default load | Wikipedia (or argv URL) |
 | Search | Kagi for non-URL omnibox |
-| http/https system default | **Helium** (`OpenUrl` not subscribed) |
+| http/https system default | **Helium** until browser is ship-ready (**D3 decided 2026-08-09**; `OpenUrl` not subscribed) |
 | Last tab | never empty — replace with `about:blank` |
 | Profiles / bookmarks / history / downloads / find / zoom / devtools | **absent** |
 
@@ -134,7 +134,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 
 See [`docs/open-questions.md`](../open-questions.md) § Browser. Work in order:
 
-1. **Default link handler** — Helium vs sola-browser for `http`/`https`.
+1. ~~**Default link handler**~~ — **D3:** Helium until browser is good enough.
 2. **Dogfood MVP chrome** — which of bookmarks / history / downloads / find / zoom / stop are in-scope for the next slice.
 3. **Middle-click** — background tab vs ignore.
 4. **Search provider** — keep Kagi-only or make configurable.

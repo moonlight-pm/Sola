@@ -21,8 +21,8 @@ Do not invent product policy.
    - Full review + backlog:
      [`docs/plans/2026-08-09-sola-browser-hardening.md`](docs/plans/2026-08-09-sola-browser-hardening.md).  
    - Capability row `browser` lists shipped subset vs gaps.  
-   - **Blocked on human for product policy:** open-questions **D3–D6**
-     (link handler, MVP chrome, middle-click, search). Present one at a time.  
+   - **D3 decided:** Helium stays system default until browser is good enough.  
+   - **Still ask human:** **D4–D6** (MVP chrome, middle-click, search).  
    - **Safe without policy:** dogfood matrix; bg-tab frame thrash (B1);
      lifecycle/token/GPU order (B2); engine.rs split when touching WPE.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
