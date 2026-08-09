@@ -3,9 +3,8 @@ name = "sola-browser"
 version = "0.1.0"
 edition = "2024"
 
-# Sola browser — WPE WebKit engine + shared iced chrome (`sola-browser-core`).
-# Product browser path is WPE only (CEF parallel engine removed; last dual-
-# engine commit is git tag `pre-cef-removal`).
+# Sola browser — WPE WebKit + iced chrome in one crate.
+# CEF parallel engine removed (git tag `pre-cef-removal`).
 
 [[bin]]
 name = "sola-browser"
@@ -16,11 +15,12 @@ path = "src/lib.rs"
 
 [dependencies]
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
-sola-browser-core = { path = "../sola-browser-core" }
+iced_futures = { version = "0.14", features = ["tokio"] }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 sola-kit = { path = "../sola-kit" }
 tracing = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 # DMA-BUF import via wgpu-hal-patched (workspace `[patch.crates-io]`).
 wgpu = { version = "27", features = ["vulkan-portability"] }

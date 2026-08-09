@@ -1,5 +1,23 @@
+//! sola-browser — WPE WebKit engine + iced chrome.
+//!
+//! Chrome (tabs, omnibox, bus, shader scaffolding) lives at the crate root.
+//! WPE FFI / worker / dma-buf import lives under [`wpe`].
+
+pub mod app;
 pub mod engine;
-pub mod frame;
 pub mod input;
-pub mod wgpu_import;
-pub mod wpe_sys;
+pub mod integration;
+pub mod run;
+pub mod shader;
+pub mod util;
+pub mod wpe;
+
+pub use engine::{
+    ActiveHandle, ClipboardHandle, Cmd, CursorHandle, EditCmd, Engine, FrameReceiver, FrameSlot,
+    NavCmd, TabId, TabInfo, TabsHandle, TaggedFrame,
+};
+pub use app::Msg;
+pub use input::CursorKind;
+pub use run::run;
+pub use shader::{FrameImport, ImportedTexture, SamplePipeline};
+pub use wpe::engine::WpeEngine;

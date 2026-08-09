@@ -15,11 +15,11 @@ Do not invent product policy.
 
 ## Now
 
-1. **Browser WPE-only** — **in flight on `browser-wpe-only`**  
+1. **Browser WPE-only (single crate)** — **on `naturalethic/browser`**  
    - Tag `pre-cef-removal` archives dual-engine tree.  
-   - `sola-browser` = former WPE engine (app_id `sola-browser`); CEF crate,
-     `install-cef`, `download-cef-stub` removed.  
-   - **Next:** user install + smoke; then merge when approved.
+   - CEF removed; `sola-browser-core` folded into `sola-browser`
+     (`src/wpe/` for engine/FFI). app_id `sola-browser`.  
+   - **Next:** user install + smoke (`cargo make install browser shell`).
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
    - **UI:** search + **A–Z / Recent** + **Ready to play only** (default on);
      lazy viewport banners; Play / Store / Uninstall; **Install** + faded

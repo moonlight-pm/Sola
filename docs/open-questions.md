@@ -69,7 +69,7 @@ product ask. See agent UI backlog.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
-| 2026-08-09 | browser | **CEF removed**; WPE-only `sola-browser` (folded former `sola-browser-wpe`); archive tag `pre-cef-removal` | AGENTS, architecture, CURRENT locks |
+| 2026-08-09 | browser | **CEF removed**; WPE-only single crate `sola-browser` (folded wpe + core); archive tag `pre-cef-removal` | AGENTS, architecture, CURRENT locks |
 | 2026-08-06 | dist | Distribution branch merged to master; qcow e2e OK; ISO e2e still open; interim TZ US/Mountain | freeze + plan + CURRENT |
 | 2026-08-05 | — | Progress documentation practice adopted for Sola | CURRENT, progress-model, AGENTS |
 | 2026-08-05 | dist | ISO primary; wizard = username + disk only; US EN + Mac keyboard fixed; hostname `sola`; no password; loginless → Sola; flower brand splash | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) |

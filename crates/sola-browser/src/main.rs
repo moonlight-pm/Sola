@@ -1,6 +1,6 @@
-//! sola-browser — WPE WebKit engine over the shared sola-browser-core chrome.
-use sola_browser::engine::WpeEngine;
+//! sola-browser — WPE WebKit + iced chrome.
+use sola_browser::WpeEngine;
 
 fn main() -> std::process::ExitCode {
-    sola_browser_core::run::<WpeEngine>("sola-browser")
+    sola_browser::run::<WpeEngine>("sola-browser")
 }

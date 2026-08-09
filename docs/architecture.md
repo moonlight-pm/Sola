@@ -62,7 +62,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kit` | Iced app kit + storybook |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Terminal (alacritty grid + iced) |
-| `crates/sola-browser*` | Chrome + WPE WebKit (`sola-browser` + `sola-browser-core`) |
+| `crates/sola-browser` | Chrome + WPE WebKit (single crate; `src/wpe/` engine) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) |
 | `crates/sola-mail` | Kit-native mail client |
 | `crates/sola-monitor` | System monitor / bus audit |
@@ -144,11 +144,10 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 | Piece | Crate / ref | Role |
 |-------|-------------|------|
-| Browser binary | `sola-browser` | WPE WebKit engine + iced chrome |
-| Shared chrome | `sola-browser-core` | `Engine` trait, tabs, omnibox, bus |
-| Historical CEF | git tag `pre-cef-removal` | Parallel CEF path removed 2026-08-09 |
+| Browser | `sola-browser` | WPE WebKit + iced chrome (one crate) |
+| Historical dual-engine | git tag `pre-cef-removal` | CEF + `sola-browser-core` split removed 2026-08-09 |
 
-WPE frames import as dma-buf into wgpu (`crates/sola-browser/src/wgpu_import.rs`);
+WPE frames import as dma-buf into wgpu (`crates/sola-browser/src/wpe/wgpu_import.rs`);
 sola-river composites the iced client surface.
 
 ---

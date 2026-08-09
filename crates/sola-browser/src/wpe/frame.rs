@@ -1,20 +1,20 @@
 //! iced `shader::Program` that samples the currently-imported WPE
 //! frame as a fullscreen quad.
 //!
-//! Shared pipeline / WGSL live in `sola_browser_core::shader`. This
-//! module owns input translation and dma-buf import via `FrameImport`.
+//! Shared pipeline / WGSL live in `crate::shader`. This module owns
+//! input translation and dma-buf import via `FrameImport`.
 
 use std::time::Instant;
 
 use iced::widget::shader;
 use iced::{Rectangle, keyboard, mouse};
 
-use sola_browser_core::shader::{FrameImport, ImportedTexture, SamplePipeline};
-use sola_browser_core::{Cmd, FrameSlot};
+use crate::shader::{FrameImport, ImportedTexture, SamplePipeline};
+use crate::{Cmd, FrameSlot};
 
-use crate::engine::{HeldToken, InputEvent, WpeEngine, WpeFrame};
-use crate::input;
-use crate::wgpu_import::{self, DmabufMetadata, ImportedFrame};
+use super::engine::{HeldToken, InputEvent, WpeEngine, WpeFrame};
+use super::input;
+use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
 pub struct WpeProgram {
     pub slot: std::sync::Arc<FrameSlot<WpeEngine>>,
@@ -72,7 +72,7 @@ impl ProgramState {
     }
 }
 
-impl shader::Program<sola_browser_core::app::Msg> for WpeProgram {
+impl shader::Program<crate::app::Msg> for WpeProgram {
     type State = ProgramState;
     type Primitive = WpePrimitive;
 
@@ -93,10 +93,10 @@ impl shader::Program<sola_browser_core::app::Msg> for WpeProgram {
         event: &iced::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<iced::widget::shader::Action<sola_browser_core::app::Msg>> {
+    ) -> Option<iced::widget::shader::Action<crate::app::Msg>> {
         state.last_bounds = bounds;
         let (req_w, _req_h) = *self.slot.last_size.lock().unwrap();
-        let scale = sola_browser_core::input::scale_from_last_size(bounds, req_w, state.last_scale);
+        let scale = crate::input::scale_from_last_size(bounds, req_w, state.last_scale);
         state.last_scale = scale;
         let time_ms = state.now_ms();
         let mods_now = state.modifiers;
@@ -104,7 +104,7 @@ impl shader::Program<sola_browser_core::app::Msg> for WpeProgram {
         match event {
             iced::Event::Mouse(m) => {
                 let cur = cursor.position_in(bounds)?;
-                let (x, y) = sola_browser_core::input::project_cursor_f64(
+                let (x, y) = crate::input::project_cursor_f64(
                     iced::Point::new(bounds.x + cur.x, bounds.y + cur.y),
                     bounds,
                     scale,
@@ -177,7 +177,7 @@ impl shader::Program<sola_browser_core::app::Msg> for WpeProgram {
                     if is_left_press {
                         return Some(
                             iced::widget::shader::Action::publish(
-                                sola_browser_core::app::Msg::WebViewFocused,
+                                crate::app::Msg::WebViewFocused,
                             )
                             .and_capture(),
                         );
@@ -221,7 +221,7 @@ impl shader::Program<sola_browser_core::app::Msg> for WpeProgram {
             .slot
             .cursor
             .load(std::sync::atomic::Ordering::Relaxed);
-        sola_browser_core::CursorKind::from_u32(raw).to_iced()
+        crate::CursorKind::from_u32(raw).to_iced()
     }
 }
 

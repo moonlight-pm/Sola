@@ -1,19 +1,18 @@
 # sola-browser
 
 > **Historical vault note.** As of 2026-08-09 the product browser is
-> **WPE-only** (`crates/sola-browser` + `sola-browser-core`). CEF and the
-> dual-engine dispatcher are gone; recover from git tag `pre-cef-removal`.
-> Living map: [`docs/architecture.md`](../architecture.md). Capability:
-> [`docs/capabilities.md`](../capabilities.md) row `browser`.
+> **WPE-only** in a single crate `crates/sola-browser` (chrome at `src/`,
+> engine under `src/wpe/`). CEF, the dual-engine dispatcher, and
+> `sola-browser-core` are gone; recover dual-engine from git tag
+> `pre-cef-removal`. Living map: [`docs/architecture.md`](../architecture.md).
+> Capability: [`docs/capabilities.md`](../capabilities.md) row `browser`.
 
-A standalone web browser inside Sola. Originally implemented twice —
-once on WebKit (WPE Platform API) and once on Chromium (CEF) — for
-engine comparison. That dual path is archived; the prose below still
-describes the dual-engine era for archaeology.
+A standalone web browser inside Sola. Originally dual-engine (WPE + CEF)
+with a shared `sola-browser-core`; that layout is archived. The prose
+below may still describe the dual-engine era for archaeology.
 
-**Status (2026-08-09).** WPE only. Shared chrome in `sola-browser-core`;
-engine body in `sola-browser`. Bus: `Topic::OpenUrl`, Browser/Edit
-app-menus, live theme. Not yet production-grade (no profiles /
+**Status (2026-08-09).** WPE only, one crate. Bus: `Topic::OpenUrl`,
+Browser/Edit app-menus, live theme. Not yet production-grade (no profiles /
 bookmarks / downloads / history / devtools).
 
 ## Architecture

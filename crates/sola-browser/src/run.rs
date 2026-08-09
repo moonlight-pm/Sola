@@ -120,7 +120,7 @@ pub fn frame_subscription<E: Engine>(
 ///
 /// ```rust,ignore
 /// fn main() -> std::process::ExitCode {
-///     sola_browser_core::run::run::<MyEngine>("my-browser-app-id")
+///     crate::run::run::<MyEngine>("my-browser-app-id")
 /// }
 /// ```
 pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {

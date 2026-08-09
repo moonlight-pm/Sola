@@ -11,7 +11,7 @@
 //! 2. **WPE bindings.** Runs `pkg-config` against the wpe-webkit-2.0
 //!    + wpe-1.0 + wpebackend-fdo-1.0 + glib-2.0 module set, emits
 //!    `cargo:rustc-link-lib` for each, and invokes `bindgen` against
-//!    `src/wpe_wrapper.h` to produce `$OUT_DIR/wpe_bindings.rs`.
+//!    `src/wpe/wpe_wrapper.h` to produce `$OUT_DIR/wpe_bindings.rs`.
 //!
 //! WPEWebKit is exposed system-wide via `environment.systemPackages`
 //! in `/etc/nixos/configuration.nix` (it imports the vendored
@@ -25,7 +25,7 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=src/wpe_wrapper.h");
+    println!("cargo:rerun-if-changed=src/wpe/wpe_wrapper.h");
 
     // Workspace .cargo/config.toml emits --enable-new-dtags + the
     // standard NixOS RUNPATHs (/run/current-system/sw/lib +
@@ -139,7 +139,7 @@ fn main() {
     }
 
     let mut builder = bindgen::Builder::default()
-        .header("src/wpe_wrapper.h")
+        .header("src/wpe/wpe_wrapper.h")
         .derive_default(true)
         .generate_comments(false)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
@@ -188,11 +188,11 @@ fn main() {
     // Compile the small GObject subclasses we use to advertise
     // LINEAR-only buffer modifiers to WPE and to capture rendered
     // frames via the WPEView::render_buffer vmethod. See
-    // src/sola_wpe.c for the rationale.
-    println!("cargo:rerun-if-changed=src/sola_wpe.c");
-    println!("cargo:rerun-if-changed=src/sola_wpe.h");
+    // src/wpe/sola_wpe.c for the rationale.
+    println!("cargo:rerun-if-changed=src/wpe/sola_wpe.c");
+    println!("cargo:rerun-if-changed=src/wpe/sola_wpe.h");
     let mut cc_build = cc::Build::new();
-    cc_build.file("src/sola_wpe.c");
+    cc_build.file("src/wpe/sola_wpe.c");
     for p in &include_paths {
         cc_build.include(p);
     }

@@ -81,8 +81,7 @@ crates/
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
   sola-kit/            # Iced app kit + storybook binary
   sola-assets/         # Vendored icon/asset bundles
-  sola-browser/        # Browser (WPE WebKit + iced chrome)
-  sola-browser-core/   # Shared iced browser chrome (Engine trait)
+  sola-browser/        # Browser (WPE WebKit + iced chrome, single crate)
   sola-make/           # Build/install orchestration (xtask)
   sola-monitor/        # System monitor / bus audit
   sola-river/          # River compositor bridge (bus ↔ wayland)
@@ -338,7 +337,7 @@ Spec: `docs/specs/2026-05-22-sola-shell-iced-port-design.md`.
 
 ## Browser engine
 
-**WPE WebKit only** (`crates/sola-browser` + `sola-browser-core`). The parallel
-CEF path was removed; last dual-engine tree is git tag `pre-cef-removal`.
-Frames import as dma-buf into iced/wgpu; see `src/wgpu_import.rs` and the
-vendored WPE stack under `nix/wpewebkit/`.
+**WPE WebKit only** (`crates/sola-browser`). Chrome + engine live in one crate
+(`src/` chrome, `src/wpe/` engine/FFI). CEF path removed; last dual-engine tree
+is git tag `pre-cef-removal`. Frames import as dma-buf into iced/wgpu
+(`src/wpe/wgpu_import.rs`); vendored WPE under `nix/wpewebkit/`.

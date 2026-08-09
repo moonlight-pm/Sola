@@ -5454,29 +5454,16 @@ dependencies = [
  "bindgen",
  "cc",
  "iced",
+ "iced_futures",
  "libc",
  "pkg-config",
- "sola-browser-core",
- "sola-bus",
- "sola-core",
- "sola-kit",
- "tracing",
- "wgpu",
- "wgpu-hal",
-]
-
-[[package]]
-name = "sola-browser-core"
-version = "0.1.0"
-dependencies = [
- "iced",
- "iced_futures",
  "sola-bus",
  "sola-core",
  "sola-kit",
  "tokio",
  "tracing",
  "wgpu",
+ "wgpu-hal",
 ]
 
 [[package]]

@@ -124,7 +124,7 @@ static void sola_view_set_cursor_from_name(WPEView *view, const char *name) {
  * UI-process preference. The override stays in place so that we
  * benefit automatically once upstream wires the hint through.
  * Today the modifier story has to be solved on the import side
- * (see crates/sola-browser/src/wgpu_import.rs). */
+ * (see crates/sola-browser/src/wpe/wgpu_import.rs). */
 static WPEBufferFormats *
 sola_get_preferred_buffer_formats(WPEDisplay *display) {
     WPEDRMDevice *drm = wpe_display_get_drm_device(display);
