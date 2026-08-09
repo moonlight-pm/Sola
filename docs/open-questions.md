@@ -87,33 +87,23 @@ extension APIs are not WebKit/WPE). Approach is open → **D7**.
 
 ---
 
-### D7 — Browser: Bitwarden / extension approach (P0 — blocks password MVP)
+### D7 — Browser: Bitwarden / extension approach — **decided 2026-08-09**
 
-**Context:** D4 requires Bitwarden at extension-class quality **in-browser**
-(no user-run system service). Research 2026-08-09 — full write-up in
-[`plans/2026-08-09-sola-browser-hardening.md`](plans/2026-08-09-sola-browser-hardening.md)
-§ *Research note: Extensions on WPE*:
+**Decision:** **First-party Bitwarden UX inside sola-browser** (option 1).
 
-- WPE **does** have **WebKitWebExtension** = embedder C modules in WebProcess
-  (not store packages; not Bitwarden Chrome).
-- WPE **does not** ship a **WebExtensions** host (`chrome.*` / install
-  Bitwarden from Chrome Web Store).
-- Epiphany built WebExtensions **in the app** on WebKitGTK (partial MV2);
-  that work is not free for us.
-- Safari Bitwarden is Apple Web Extension packaging only.
+| Do | Don’t |
+|----|--------|
+| Vault + unlock + autofill **in** sola-browser | Chrome/Firefox store package |
+| Bitwarden **SDK/API** (or equivalent client lib) | Separate user-run system service / desktop bridge |
+| Page fill via WebKitWebExtension and/or content inject | WebExtensions host (Epiphany-class) for now |
+| Sola chrome UI for password UX | Revisit CEF solely for extensions (unless D7 reopened) |
 
-**Ask:**
+**Quality bar (D4):** extension-class polish/reliability, not a demo popup.
 
-1. **First-party Bitwarden UX** in sola-browser (SDK/API + autofill inject;
-   vault UI ours; no Chrome store package; no separate daemon).  
-2. **Build a WebExtensions host** (Epiphany-class) aiming to load Bitwarden’s
-   real extension package.  
-3. **Revisit Chromium/CEF** because Chrome Web Store parity is required.  
-4. **Other.**
+**Follow-on design (not yet decided):** account model (personal vs org),
+biometric unlock, TOTP, passkeys, offline vault path — open when implementing.
 
-**Until decided:** no password/extension code; stop/downloads/history can proceed.
-
-**Related:** D4; engine lock; hardening plan research section.
+**Related:** D4; hardening plan research §; engine stays WPE.
 
 ---
 
@@ -157,6 +147,7 @@ product ask. See agent UI backlog.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-09 | D7 | **First-party Bitwarden UX** in sola-browser (SDK/API + in-process autofill); no Chrome store package; no system service; no WebExtensions host for now | open-questions D7, plan, CURRENT |
 | 2026-08-09 | D4 | Browser MVP bar: **stop loading**, **downloads**, **history+restore**, **Bitwarden (extension-class)**, high polish; find/zoom/bookmarks/devtools not auto-included | open-questions D4, plan, CURRENT |
 | 2026-08-09 | D3 | **Helium remains system default** until sola-browser is good enough to take over; OpenUrl/MIME stay Helium; browser opt-in only | open-questions D3, architecture, plan |
 | 2026-08-09 | browser | **CEF removed**; WPE-only single crate; full review → hardening plan; D3–D6 opened | plan, capabilities, CURRENT, open-questions |

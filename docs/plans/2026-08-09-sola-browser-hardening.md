@@ -51,7 +51,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | Last tab | never empty — replace with `about:blank` |
 | Profiles / bookmarks / find / zoom / devtools | **absent** |
 | Stop / downloads / history+restore | **absent** — **D4 in-scope** |
-| Bitwarden / extensions | **absent** — **D4 in-scope**, approach **D7** |
+| Bitwarden / extensions | **absent** — **D4 in-scope**; **D7:** first-party UX (SDK + inject) |
 
 ---
 
@@ -141,7 +141,8 @@ See [`docs/open-questions.md`](../open-questions.md) § Browser. Work in order:
    Bitwarden (extension-class) · high polish. Not auto: find/zoom/bookmarks UI/devtools.
 3. **Middle-click** — background tab vs ignore (**D5**).
 4. **Search provider** — keep Kagi-only or make configurable (**D6**).
-5. **Bitwarden approach** — native bridge vs WebKit extensions vs CEF revisit (**D7**).
+5. ~~**Bitwarden approach**~~ — **D7:** first-party Bitwarden UX (SDK/API +
+   WebKitWebExtension/content inject); no store package, no system service.
 6. **Profile model** — single default WebKit data dir vs multi-profile later.
 
 ### Product bar (D4) → backlog mapping
@@ -151,11 +152,11 @@ See [`docs/open-questions.md`](../open-questions.md) § Browser. Work in order:
 | Stop loading | Wire `NavCmd::Stop` + chrome control; Escape policy |
 | Downloads | New subsystem: WebKit download signals → chrome UI + disk paths |
 | History + restore | Persist tab list / visit history; cold-start restore |
-| Bitwarden | **Blocked on D7** — see research below (no Chrome-extension drop-in) |
+| Bitwarden | **D7:** first-party vault UI + SDK + autofill inject (design freeze later) |
 | High polish | B1–B5 engine reliability first; then chrome UX polish |
 
-**Suggested build order after D7 decision:**  
-engine reliability (B1, B2) → stop → history/restore → downloads → password MVP.
+**Build order:**  
+engine reliability (B1, B2) → stop → history/restore → downloads → Bitwarden design → implement.
 
 ---
 
