@@ -89,13 +89,22 @@ pub fn frame_stream<E: Engine>(
                 // Drop: WpeFrame::Drop releases the buffer token.
                 continue;
             }
+            // Keep only the latest pending frame (prior Drop releases WPE buf).
             *slot.pending.lock().unwrap() = Some(crate::engine::PendingFrame {
                 tab_id: tagged.tab_id,
                 frame: tagged.frame,
             });
             let _ = &active;
-            if output.send(Msg::NewFrame).await.is_err() {
-                break;
+            // Coalesce wakeups: if iced hasn't processed the last NewFrame yet,
+            // don't enqueue another — keyboard/input must stay ahead of paints.
+            if slot
+                .redraw_queued
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                if output.send(Msg::NewFrame).await.is_err() {
+                    break;
+                }
             }
         }
     })
@@ -185,6 +194,7 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
         paint_tab: std::sync::atomic::AtomicU64::new(u64::MAX),
         need_park_prime: Mutex::new(std::collections::HashSet::new()),
         drop_paint_tabs: Mutex::new(Vec::new()),
+        redraw_queued: std::sync::atomic::AtomicBool::new(false),
     });
 
     sola_kit::app::BusSetup::new(app_id)

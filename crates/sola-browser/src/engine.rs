@@ -1,7 +1,7 @@
 //! Engine-agnostic types shared by every Sola browser engine, plus the
 //! `Engine` trait the shared chrome is generic over.
 
-use std::sync::atomic::{AtomicU32, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -100,6 +100,10 @@ pub struct FrameSlot<E: Engine> {
     pub need_park_prime: Mutex<std::collections::HashSet<u64>>,
     /// Tab ids whose GPU caches should be dropped (closed tabs).
     pub drop_paint_tabs: Mutex<Vec<u64>>,
+    /// Coalesce `Msg::NewFrame`: only one iced wakeup is in flight. Without
+    /// this, 60+ NewFrame/s fill the queue ahead of keyboard events (typing
+    /// lag, frozen caret, slow placeholder animation).
+    pub redraw_queued: AtomicBool,
 }
 
 pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;

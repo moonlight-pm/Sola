@@ -12,7 +12,7 @@
 //! `WPE_IS_BUFFER(buffer)` criticals. We keep a short **retire ring** of
 //! recently replaced surfaces so tokens outlive 1–2 submitted frames.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::time::Instant;
 
 use iced::widget::shader;
@@ -25,28 +25,23 @@ use super::engine::{HeldToken, InputEvent, WpeEngine};
 use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
-/// How many replaced frames to keep alive after uninstall (GPU lag).
-/// Keep short — deep retire held WPE dma-bufs past pool reuse and caused
-/// "buffer ptr already live" + invalid `buffer_released` under media.
-const RETIRE_DEPTH: usize = 1;
+/// Do **not** keep replaced frames. Each held dma-buf pins a slot in WPE's
+/// small buffer pool; active+retire+park-per-tab starved the pool so the
+/// WebProcess stalled — caret stopped blinking, placeholder animation crawled,
+/// typing lagged. One live import only; previous surface Drop releases ASAP.
+const RETIRE_DEPTH: usize = 0;
 
-/// Longest allowed physical edge for the WebKit dma-buf (pixels).
-/// Above this, DPR is reduced so CSS × scale stays in budget.
-const MAX_PHYS_EDGE: f64 = 1920.0;
+/// Longest allowed physical edge (px). Soft cap if compositor scale would
+/// exceed this for the CSS viewport.
+const MAX_PHYS_EDGE: f64 = 2560.0;
 
-/// Pick device scale for content: prefer compositor DPR (and light
-/// supersample when iced reports ~1), but never blow past [`MAX_PHYS_EDGE`].
+/// Device scale for content = compositor scale (1:1 with the iced scissor).
+/// No forced supersample — that produced 4k frames and killed input FPS.
 fn choose_content_dpr(compositor_scale: f64, css_w: u32, css_h: u32) -> f64 {
     let max_css = css_w.max(css_h).max(1) as f64;
-    // Supersample only when the window is modest — 2× of a full-height
-    // float is multi‑megapixel and kills input/animation FPS.
-    let want = if compositor_scale < 1.25 && max_css <= 1400.0 {
-        2.0
-    } else {
-        compositor_scale.max(1.0)
-    };
+    let want = compositor_scale.max(1.0);
     let cap = (MAX_PHYS_EDGE / max_css).clamp(1.0, 3.0);
-    want.min(cap).max(1.0)
+    want.min(cap)
 }
 
 pub struct WpeProgram {
@@ -142,19 +137,9 @@ fn show_surface(pipeline: &mut WpePipeline, device: &wgpu::Device, surface: &Tab
     pipeline.sample.install_bind_group(bg, surface.size);
 }
 
-/// Drop `surf` only after `RETIRE_DEPTH` newer surfaces have replaced it,
-/// so in-flight GPU work can finish sampling the dma-buf.
-fn retire(pipeline: &mut WpePipeline, surf: TabSurface) {
-    pipeline.retire.push_back(surf);
-    while pipeline.retire.len() > RETIRE_DEPTH {
-        let _ = pipeline.retire.pop_front();
-    }
-}
-
 /// Immediately free all GPU holds for `tab_id` (closed tab).
 fn purge_tab(pipeline: &mut WpePipeline, tab_id: u64) {
     pipeline.parked.remove(&tab_id);
-    pipeline.retire.retain(|s| s.tab_id != tab_id);
     if pipeline.active.as_ref().is_some_and(|a| a.tab_id == tab_id) {
         pipeline.active = None;
         pipeline.sample.clear();
@@ -317,22 +302,15 @@ impl shader::Primitive for WpePrimitive {
         bounds: &Rectangle,
         viewport: &iced::widget::shader::Viewport,
     ) {
-        // HiDPI model (matches WebKitGTK / Chromium OSR):
-        //   - WPE resize = **CSS/layout** size (logical widget bounds)
-        //   - scale_changed = device pixel ratio
-        //   - dma-buf = CSS × scale (physical)
-        //
-        // Cap physical edge length. Uncapped scale=2 on a ~2k CSS viewport
-        // produced 4090×4170 frames — import + composite every keystroke /
-        // caret blink made Google sign-in typing and placeholder animation
-        // feel molasses (caret appeared stuck).
+        // HiDPI: CSS size = logical bounds; scale = compositor DPR (1:1 with
+        // the iced scissor). No supersample — that pinned multi‑MP frames and
+        // stalled the WPE buffer pool under caret/animation load.
         let compositor_scale = (viewport.scale_factor() as f64).max(1.0);
         let logical_w = bounds.width.round().max(1.0) as u32;
         let logical_h = bounds.height.round().max(1.0) as u32;
         let dpr = choose_content_dpr(compositor_scale, logical_w, logical_h);
         let phys_w = ((logical_w as f64) * dpr).round().max(1.0) as u32;
         let phys_h = ((logical_h as f64) * dpr).round().max(1.0) as u32;
-        // last_size tracks **physical** buffer size for mismatch checks.
         let requested = (phys_w, phys_h);
         {
             let mut last = self.slot.last_size.lock().unwrap();
@@ -359,31 +337,20 @@ impl shader::Primitive for WpePrimitive {
             .paint_tab
             .load(std::sync::atomic::Ordering::Relaxed);
 
-        // Keep GPU active surface in sync with chrome `paint_tab`.
-        //
-        // After closing the active tab, `active` is None and the previous
-        // tab is usually parked — restore it. Also park-on-switch so the
-        // leave tab keeps a last-good frame.
+        // Tab switch: drop previous tab's hold immediately (return buffer to
+        // WPE). No park — parked HeldTokens starved the pool under multi-tab.
         let active_id = pipeline.active.as_ref().map(|a| a.tab_id);
         if active_id != Some(paint_tab) {
             if let Some(prev) = pipeline.active.take() {
-                // Replace any older park for this tab (retire the previous
-                // park so we do not hold unbounded buffers).
-                if let Some(old_park) = pipeline.parked.insert(prev.tab_id, prev) {
-                    retire(pipeline, old_park);
-                }
+                drop(prev); // release WPE buffer now
             }
+            pipeline.sample.clear();
+            // Drop any leftover park from older builds.
             if let Some(surf) = pipeline.parked.remove(&paint_tab) {
                 show_surface(pipeline, device, &surf);
                 pipeline.active = Some(surf);
             }
-            // No park: dark fallback until the worker emits a frame
-            // (SetActiveTab uses a 1px resize nudge for static pages).
         }
-
-        // NOTE: do **not** re-send Resize every frame when buffer size ≠
-        // scissor. That 1px-nudge heal loop blanked the view (~1 Hz steady,
-        // burst on focus). Worker may still heal once with a long cooldown.
 
         let Some(pending) = self.slot.pending.lock().unwrap().take() else {
             return;
@@ -392,12 +359,16 @@ impl shader::Primitive for WpePrimitive {
         let tab_id = pending.tab_id.0;
         let mut frame = pending.frame;
 
+        // Late frame for a tab we no longer paint: drop without import.
+        if tab_id != paint_tab {
+            return;
+        }
+
         let release_tx = frame.release_tx.clone();
         let Some(token) = frame.take_token() else {
             return;
         };
         let Some(fd) = frame.take_fd() else {
-            // Still own the token — recycle even without an fd.
             let _ = HeldToken::new(token, release_tx);
             return;
         };
@@ -428,26 +399,14 @@ impl shader::Primitive for WpePrimitive {
             size,
         };
 
-        if tab_id == paint_tab {
-            if let Some(old) = pipeline.active.take() {
-                if old.tab_id == tab_id {
-                    // Same tab, new frame: delay release (GPU may still sample).
-                    retire(pipeline, old);
-                } else {
-                    if let Some(old_park) = pipeline.parked.insert(old.tab_id, old) {
-                        retire(pipeline, old_park);
-                    }
-                }
-            }
-            show_surface(pipeline, device, &surface);
-            pipeline.active = Some(surface);
-            pipeline.sample.note_frame();
-        } else {
-            // Background prime / late frame: keep last-good park only.
-            if let Some(old_park) = pipeline.parked.insert(tab_id, surface) {
-                retire(pipeline, old_park);
-            }
+        // Replace active: Drop old immediately → buffer_released → WebProcess
+        // can paint the next caret/animation frame without stalling.
+        if let Some(old) = pipeline.active.take() {
+            drop(old);
         }
+        show_surface(pipeline, device, &surface);
+        pipeline.active = Some(surface);
+        pipeline.sample.note_frame();
     }
 
     fn render(
@@ -466,30 +425,28 @@ impl shader::Primitive for WpePrimitive {
 
 pub struct WpePipeline {
     sample: SamplePipeline,
+    /// Only the painted tab may hold a WPE dma-buf. Parking/retiring extra
+    /// frames starved WebKit's buffer pool (input + caret animations stall).
     active: Option<TabSurface>,
-    /// Last frame per inactive tab — restored on switch (no black flash).
+    /// Unused (kept empty). Left so older prepare paths compile cleanly.
     parked: HashMap<u64, TabSurface>,
-    /// Recently replaced surfaces kept alive so dma-buf release lags the GPU.
-    retire: VecDeque<TabSurface>,
 }
 
 impl std::fmt::Debug for WpePipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WpePipeline")
             .field("active_tab", &self.active.as_ref().map(|a| a.tab_id))
-            .field("parked", &self.parked.len())
-            .field("retire", &self.retire.len())
             .finish_non_exhaustive()
     }
 }
 
 impl shader::Pipeline for WpePipeline {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+        let _ = RETIRE_DEPTH;
         Self {
             sample: SamplePipeline::new(device, queue, format, "wpe"),
             active: None,
             parked: HashMap::new(),
-            retire: VecDeque::with_capacity(RETIRE_DEPTH + 1),
         }
     }
 }

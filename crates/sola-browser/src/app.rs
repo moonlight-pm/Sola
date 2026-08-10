@@ -306,7 +306,12 @@ impl<E: Engine> App<E> {
                 sola_kit::close_app(self.app_id);
                 return Task::none();
             }
-            Msg::NewFrame => {}
+            Msg::NewFrame => {
+                // Allow the next frame stream wakeup (coalesced redraw).
+                self.slot
+                    .redraw_queued
+                    .store(false, std::sync::atomic::Ordering::Release);
+            }
             Msg::NavBack => {
                 self.set_active_loading(true);
                 let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Back));
