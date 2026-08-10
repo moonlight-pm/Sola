@@ -227,6 +227,8 @@ impl<E: Engine> App<E> {
                         self.switch_active_tab(new_active);
                     }
                 }
+                // Release any parked GPU frame for this tab on next prepare.
+                self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
                 let _ = self.cmd_tx.send(Cmd::CloseTab(id));
             }
             Msg::ActivateTab(id) => {

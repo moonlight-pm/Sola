@@ -132,11 +132,24 @@ impl SamplePipeline {
         self.frame_size = Some(imported.size);
     }
 
-    /// Drop the current sample so the next render clears (black) instead
-    /// of redrawing a stale tab's texture after a tab switch.
+    /// Install an already-built bind group (e.g. restoring a parked tab frame).
+    pub fn install_bind_group(&mut self, bind_group: wgpu::BindGroup, size: (u32, u32)) {
+        self.bind_group = Some(bind_group);
+        self.frame_size = Some(size);
+    }
+
+    /// Drop the current sample so the next render clears (black).
     pub fn clear(&mut self) {
         self.bind_group = None;
         self.frame_size = None;
+    }
+
+    /// Take the active bind group + size out of the pipeline (for parking
+    /// a tab's last frame without destroying the GPU resources).
+    pub fn take_display(&mut self) -> Option<(wgpu::BindGroup, (u32, u32))> {
+        let bg = self.bind_group.take()?;
+        let size = self.frame_size.take()?;
+        Some((bg, size))
     }
 
     /// FPS counter — logs at debug every ~1s. Bench harness can enable

@@ -135,9 +135,10 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     if let Some(code) = E::dispatch_subprocess(app_id) {
         return code;
     }
-    sola_core::log::init(app_id);
-    tracing::info!("{app_id} starting");
-    let _ = sola_core::env::activate_wayland_session(10_000);
+    // Wayland/GPU env, fonts, and watch_own_binary (re-exec on
+    // /opt/sola/bin/<app> change — same as other kit apps). Without this
+    // the browser never auto-restarts after `cargo make install`.
+    let _socket = sola_kit::app::startup(app_id);
 
     let url = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_URL.to_string());
     tracing::info!(%url, "loading url");
@@ -156,6 +157,7 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
         paint_tab: std::sync::atomic::AtomicU64::new(
             active_handle.load(std::sync::atomic::Ordering::Relaxed),
         ),
+        drop_paint_tabs: Mutex::new(Vec::new()),
     });
 
     sola_kit::app::BusSetup::new(app_id)

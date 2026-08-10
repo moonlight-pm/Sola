@@ -2,17 +2,18 @@
 //! frame as a fullscreen quad.
 //!
 //! Shared pipeline / WGSL live in `crate::shader`. This module owns
-//! input translation and dma-buf import via `FrameImport`.
+//! input translation and dma-buf import.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use iced::widget::shader;
 use iced::{Rectangle, keyboard, mouse};
 
-use crate::shader::{FrameImport, ImportedTexture, SamplePipeline};
+use crate::shader::SamplePipeline;
 use crate::{Cmd, FrameSlot};
 
-use super::engine::{HeldToken, InputEvent, WpeEngine, WpeFrame};
+use super::engine::{HeldToken, InputEvent, WpeEngine};
 use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
@@ -36,31 +37,25 @@ impl std::fmt::Debug for WpePrimitive {
     }
 }
 
-/// Per-program state: modifiers, held buttons, pointer deltas, timestamps.
 #[derive(Debug)]
 pub struct ProgramState {
-    modifiers: keyboard::Modifiers,
-    started: Option<Instant>,
     last_bounds: Rectangle,
     last_scale: f32,
-    held_button_mods: u32,
     last_pointer: Option<(f64, f64)>,
+    held_button_mods: u32,
+    modifiers: keyboard::Modifiers,
+    started: Option<Instant>,
 }
 
 impl Default for ProgramState {
     fn default() -> Self {
         Self {
+            last_bounds: Rectangle::default(),
+            last_scale: 1.0,
+            last_pointer: None,
+            held_button_mods: 0,
             modifiers: keyboard::Modifiers::default(),
             started: None,
-            last_bounds: Rectangle {
-                x: 0.0,
-                y: 0.0,
-                width: 0.0,
-                height: 0.0,
-            },
-            last_scale: 1.0,
-            held_button_mods: 0,
-            last_pointer: None,
         }
     }
 }
@@ -70,6 +65,49 @@ impl ProgramState {
         let started = *self.started.get_or_insert_with(Instant::now);
         started.elapsed().as_millis() as u32
     }
+}
+
+/// Last GPU frame for one tab. Parked when the tab is inactive so
+/// switching back restores pixels without a black flash. Holds the
+/// WPE recycle token until the surface is dropped.
+struct TabSurface {
+    tab_id: u64,
+    imported: ImportedFrame,
+    _token: HeldToken,
+    size: (u32, u32),
+}
+
+fn make_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    texture: &wgpu::Texture,
+) -> wgpu::BindGroup {
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("wpe-shader bg"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+fn show_surface(pipeline: &mut WpePipeline, device: &wgpu::Device, surface: &TabSurface) {
+    let bg = make_bind_group(
+        device,
+        &pipeline.sample.bind_group_layout,
+        &pipeline.sample.sampler,
+        &surface.imported.texture,
+    );
+    pipeline.sample.install_bind_group(bg, surface.size);
 }
 
 impl shader::Program<crate::app::Msg> for WpeProgram {
@@ -126,32 +164,28 @@ impl shader::Program<crate::app::Msg> for WpeProgram {
                             time_ms,
                         })
                     }
-                    mouse::Event::ButtonPressed(b) => {
-                        input::button_to_wpe(*b).map(|button| {
-                            state.held_button_mods |= input::button_to_modifier(button);
-                            InputEvent::PointerButton {
-                                down: true,
-                                x,
-                                y,
-                                button,
-                                modifiers: kbd_mods | state.held_button_mods,
-                                time_ms,
-                            }
-                        })
-                    }
-                    mouse::Event::ButtonReleased(b) => {
-                        input::button_to_wpe(*b).map(|button| {
-                            state.held_button_mods &= !input::button_to_modifier(button);
-                            InputEvent::PointerButton {
-                                down: false,
-                                x,
-                                y,
-                                button,
-                                modifiers: kbd_mods | state.held_button_mods,
-                                time_ms,
-                            }
-                        })
-                    }
+                    mouse::Event::ButtonPressed(b) => input::button_to_wpe(*b).map(|button| {
+                        state.held_button_mods |= input::button_to_modifier(button);
+                        InputEvent::PointerButton {
+                            down: true,
+                            x,
+                            y,
+                            button,
+                            modifiers: kbd_mods | state.held_button_mods,
+                            time_ms,
+                        }
+                    }),
+                    mouse::Event::ButtonReleased(b) => input::button_to_wpe(*b).map(|button| {
+                        state.held_button_mods &= !input::button_to_modifier(button);
+                        InputEvent::PointerButton {
+                            down: false,
+                            x,
+                            y,
+                            button,
+                            modifiers: kbd_mods | state.held_button_mods,
+                            time_ms,
+                        }
+                    }),
                     mouse::Event::WheelScrolled { delta } => {
                         let (delta_x, delta_y, precise) = input::scroll_delta_to_wpe(*delta);
                         Some(InputEvent::Scroll {
@@ -170,16 +204,13 @@ impl shader::Program<crate::app::Msg> for WpeProgram {
                     }
                     _ => None,
                 };
-                let is_left_press =
-                    matches!(m, mouse::Event::ButtonPressed(mouse::Button::Left));
+                let is_left_press = matches!(m, mouse::Event::ButtonPressed(mouse::Button::Left));
                 if let Some(e) = ev {
                     let _ = self.slot.cmd_tx.send(Cmd::Input(e));
                     if is_left_press {
                         return Some(
-                            iced::widget::shader::Action::publish(
-                                crate::app::Msg::WebViewFocused,
-                            )
-                            .and_capture(),
+                            iced::widget::shader::Action::publish(crate::app::Msg::WebViewFocused)
+                                .and_capture(),
                         );
                     }
                     return Some(iced::widget::shader::Action::capture());
@@ -225,81 +256,6 @@ impl shader::Program<crate::app::Msg> for WpeProgram {
     }
 }
 
-/// Holds GPU-imported dma-buf + recycle token until the next frame or drop.
-struct CurrentHold {
-    tab_id: u64,
-    _imported: ImportedFrame,
-    _token: HeldToken,
-}
-
-struct WpeImporter;
-
-impl FrameImport for WpeImporter {
-    type Frame = WpeFrame;
-    type Hold = CurrentHold;
-
-    fn import(
-        device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        sampler: &wgpu::Sampler,
-        mut frame: WpeFrame,
-    ) -> Option<(ImportedTexture, Self::Hold)> {
-        let release_tx = frame.release_tx.clone();
-        let token = frame.take_token()?;
-        let Some(fd) = frame.take_fd() else {
-            let _ = HeldToken::new(token, release_tx);
-            return None;
-        };
-        let meta = DmabufMetadata {
-            width: frame.width,
-            height: frame.height,
-            format: frame.format,
-            modifier: frame.modifier,
-            stride: frame.stride,
-            offset: frame.offset,
-        };
-        let size = (frame.width, frame.height);
-        let imported = match unsafe { wgpu_import::import(device, fd, &meta) } {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!("wgpu_import::import failed: {e}");
-                // Import failure must not pin the pool forever.
-                let _ = HeldToken::new(token, release_tx);
-                return None;
-            }
-        };
-        // Frame has no token/fd left; Drop is a no-op.
-        drop(frame);
-
-        let view = imported
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wpe-shader bg"),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-            ],
-        });
-        Some((
-            ImportedTexture { bind_group, size },
-            CurrentHold {
-                tab_id: 0, // filled in by prepare with paint_tab
-                _imported: imported,
-                _token: HeldToken::new(token, release_tx),
-            },
-        ))
-    }
-}
-
 impl shader::Primitive for WpePrimitive {
     type Pipeline = WpePipeline;
 
@@ -307,7 +263,7 @@ impl shader::Primitive for WpePrimitive {
         &self,
         pipeline: &mut Self::Pipeline,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        _queue: &wgpu::Queue,
         bounds: &Rectangle,
         viewport: &iced::widget::shader::Viewport,
     ) {
@@ -324,20 +280,39 @@ impl shader::Primitive for WpePrimitive {
             });
         }
 
+        // Drop GPU caches for closed tabs (frees dma-buf tokens).
+        {
+            let mut drop_list = self.slot.drop_paint_tabs.lock().unwrap();
+            for id in drop_list.drain(..) {
+                pipeline.parked.remove(&id);
+                if pipeline.active.as_ref().is_some_and(|a| a.tab_id == id) {
+                    pipeline.active = None;
+                    pipeline.sample.clear();
+                }
+            }
+        }
+
         let paint_tab = self
             .slot
             .paint_tab
             .load(std::sync::atomic::Ordering::Relaxed);
 
-        // Tab switch: drop the previous tab's GPU hold immediately so we
-        // never keep drawing its pixels while waiting for the new tab.
+        // Tab switch: park current surface, restore the target tab's last
+        // frame if we have one (avoids black flicker).
         if pipeline
-            .hold
+            .active
             .as_ref()
-            .is_some_and(|h| h.tab_id != paint_tab)
+            .is_some_and(|a| a.tab_id != paint_tab)
         {
-            pipeline.hold = None;
-            pipeline.sample.clear();
+            if let Some(prev) = pipeline.active.take() {
+                pipeline.parked.insert(prev.tab_id, prev);
+            }
+            if let Some(surf) = pipeline.parked.remove(&paint_tab) {
+                show_surface(pipeline, device, &surf);
+                pipeline.active = Some(surf);
+            } else {
+                pipeline.sample.clear();
+            }
         }
 
         let mut guard = self.slot.pending.lock().unwrap();
@@ -347,11 +322,10 @@ impl shader::Primitive for WpePrimitive {
         drop(guard);
 
         if pending.tab_id.0 != paint_tab {
-            // Frame belongs to a tab we left; Drop recycles the token.
             return;
         }
         let tab_id = pending.tab_id.0;
-        let frame = pending.frame;
+        let mut frame = pending.frame;
 
         tracing::trace!(
             w = frame.width,
@@ -361,20 +335,49 @@ impl shader::Primitive for WpePrimitive {
             "shader::prepare: importing new WPE frame",
         );
 
-        if let Some((imported, mut hold)) = WpeImporter::import(
-            device,
-            queue,
-            &pipeline.sample.bind_group_layout,
-            &pipeline.sample.sampler,
-            frame,
-        ) {
-            // Previous hold Drop releases its WPE token (pool depth ≥2
-            // masks GPU still sampling previous dma-buf pages).
-            hold.tab_id = tab_id;
-            pipeline.hold = Some(hold);
-            pipeline.sample.install(imported);
-            pipeline.sample.note_frame();
+        let release_tx = frame.release_tx.clone();
+        let Some(token) = frame.take_token() else {
+            return;
+        };
+        let Some(fd) = frame.take_fd() else {
+            let _ = HeldToken::new(token, release_tx);
+            return;
+        };
+        let meta = DmabufMetadata {
+            width: frame.width,
+            height: frame.height,
+            format: frame.format,
+            modifier: frame.modifier,
+            stride: frame.stride,
+            offset: frame.offset,
+        };
+        let size = (frame.width, frame.height);
+        drop(frame);
+
+        let imported = match unsafe { wgpu_import::import(device, fd, &meta) } {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!("wgpu_import::import failed: {e}");
+                let _ = HeldToken::new(token, release_tx);
+                return;
+            }
+        };
+
+        // Supersede previous surface for this tab (drop old token).
+        if let Some(old) = pipeline.active.take() {
+            if old.tab_id != tab_id {
+                pipeline.parked.insert(old.tab_id, old);
+            }
         }
+        let surface = TabSurface {
+            tab_id,
+            imported,
+            _token: HeldToken::new(token, release_tx),
+            size,
+        };
+        show_surface(pipeline, device, &surface);
+        pipeline.active = Some(surface);
+        pipeline.sample.note_frame();
     }
 
     fn render(
@@ -391,25 +394,28 @@ impl shader::Primitive for WpePrimitive {
     }
 }
 
-#[derive(Debug)]
 pub struct WpePipeline {
     sample: SamplePipeline,
-    hold: Option<CurrentHold>,
+    active: Option<TabSurface>,
+    /// Last frame per inactive tab — restored on switch (no black flash).
+    parked: HashMap<u64, TabSurface>,
+}
+
+impl std::fmt::Debug for WpePipeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WpePipeline")
+            .field("active_tab", &self.active.as_ref().map(|a| a.tab_id))
+            .field("parked", &self.parked.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl shader::Pipeline for WpePipeline {
     fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         Self {
             sample: SamplePipeline::new(device, format, "wpe"),
-            hold: None,
+            active: None,
+            parked: HashMap::new(),
         }
     }
 }
-
-// Debug for CurrentHold
-impl std::fmt::Debug for CurrentHold {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CurrentHold").finish_non_exhaustive()
-    }
-}
-

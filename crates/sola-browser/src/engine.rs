@@ -89,6 +89,9 @@ pub struct FrameSlot<E: Engine> {
     /// tab switch; prepare drops holds/pending for any other tab so we
     /// never keep showing the previous tab's pixels.
     pub paint_tab: AtomicU64,
+    /// Tab ids whose GPU caches should be dropped (closed tabs). Drained
+    /// in shader prepare so we do not pin dma-bufs forever after CloseTab.
+    pub drop_paint_tabs: Mutex<Vec<u64>>,
 }
 
 pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;
