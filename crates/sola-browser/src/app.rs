@@ -366,9 +366,17 @@ impl<E: Engine> App<E> {
                 if !live.is_empty() {
                     self.cached_tabs = merge_tab_snapshot(&self.cached_tabs, &live);
                 }
-                let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
-                if engine_active.0 != u64::MAX {
-                    self.cached_active = engine_active;
+                // Chrome `paint_tab` is the strip/omnibox authority. The
+                // worker `active_handle` can lag a pump tick behind and was
+                // clobbering optimistic activate (new-tab had no highlight).
+                let paint = self.slot.paint_tab.load(Ordering::Relaxed);
+                if paint != u64::MAX {
+                    self.cached_active = TabId(paint);
+                } else {
+                    let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
+                    if engine_active.0 != u64::MAX {
+                        self.cached_active = engine_active;
+                    }
                 }
                 let active_url = self.active_tab_info().map(|t| t.url.clone());
                 if let Some(url) = active_url {
@@ -596,9 +604,17 @@ impl<E: Engine> App<E> {
                 } else {
                     String::from("Loading…")
                 };
+                let active_id = {
+                    let paint = self.slot.paint_tab.load(Ordering::Relaxed);
+                    if paint != u64::MAX {
+                        TabId(paint)
+                    } else {
+                        self.cached_active
+                    }
+                };
                 TabDescriptor::new(
                     label,
-                    t.id == self.cached_active,
+                    t.id == active_id,
                     Msg::ActivateTab(t.id),
                     Msg::CloseTab(t.id),
                 )

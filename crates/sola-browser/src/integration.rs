@@ -164,10 +164,13 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             // type a URL or search immediately. The blank tab's "about:blank"
             // is suppressed from the field (see `Msg::Tick`); seeding
             // `last_seen_url` here avoids a one-frame flash of it.
+            //
+            // Worker leaves the webview unfocused for about:blank so this
+            // focus sticks (otherwise wpe_view_focus_in steals the caret).
             app.url_field.clear();
             app.last_seen_url = BLANK_URL.to_string();
             app.url_bar_focused = true;
-            focus_url_bar()
+            Task::batch([focus_url_bar(), select_url_bar()])
         }
         BrowserIntent::CloseActiveTab => {
             let id = app.cached_active;

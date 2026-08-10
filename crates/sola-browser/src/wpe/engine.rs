@@ -707,8 +707,16 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 ctx.active_atomic
                     .store(id.0, std::sync::atomic::Ordering::Relaxed);
                 if !tab.wpe_view.is_null() {
-                    // Focus the view so WebKit routes input correctly.
-                    sys::wpe_view_focus_in(tab.wpe_view);
+                    // Blank / new-tab: leave focus OUT of the webview so the
+                    // omnibox caret stays visible (⌘T focuses the URL bar).
+                    // Real pages take focus so typing goes into content.
+                    let url = tab.url.lock().unwrap().clone();
+                    let blank = url.is_empty() || url == "about:blank";
+                    if blank {
+                        sys::wpe_view_focus_out(tab.wpe_view);
+                    } else {
+                        sys::wpe_view_focus_in(tab.wpe_view);
+                    }
                     // Force a new buffer even when the size is unchanged.
                     // `wpe_toplevel_resize` is idempotent for equal sizes, so
                     // a static page that stopped painting while backgrounded
@@ -853,9 +861,11 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         0,
     );
 
-    // Skip about:blank navigation — it paints opaque white. Empty view + dark
-    // background is enough for a "New Tab" until the user navigates.
-    if initial_url != "about:blank" && !initial_url.is_empty() {
+    // Always load a URI so WebKit has a complete document/state (skipping
+    // about:blank left tabs half-initialized: no strip highlight race,
+    // no reliable focus handoff). Dark background (above) prevents the
+    // default opaque-white about:blank flash.
+    if !initial_url.is_empty() {
         let url_c = CString::new(initial_url.as_str()).unwrap();
         sys::webkit_web_view_load_uri(webview as *mut _, url_c.as_ptr());
     }
@@ -863,6 +873,11 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
     // Resize the new tab to whatever iced is currently displaying.
     if !wpe_view.is_null() {
         apply_resize(wpe_view, ctx.last_size.0, ctx.last_size.1);
+        // New blank tabs start unfocused so chrome can own the omnibox caret.
+        let blank = initial_url.is_empty() || initial_url == "about:blank";
+        if blank {
+            sys::wpe_view_focus_out(wpe_view);
+        }
     }
 
     ctx.tabs.push(TabState {
