@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-09 (browser review + hardening queue on `naturalethic/browser`)
+**As of:** 2026-08-09 (`naturalethic/browser` + master merged)
 
 ---
 
@@ -29,21 +29,15 @@ Do not invent product policy.
    - **Session tabs** persist (`browser-session.json`); restore on boot.  
    - **Build order:** stop → visit history UI → downloads → Bitwarden design;
      residual tab-switch flicker polish.  
-2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
-   - **UI:** search + **A–Z / Recent** + **Ready to play only** (default on);
-     lazy viewport banners; Play / Store / Uninstall; **Install** + faded
-     uninstalled rows; Stop-on-row; scroll preserved.  
-   - **Library:** `~/.config/sola/arcade-library.json` cache (instant open);
-     background rescan every start; first-scan status when no cache.  
-   - **Nest / river:** `--nested-steam` (no BPM); kill nest Steam on game quit;
-     zone/float + Cinema exit; host label; `-S fit`.  
-   - Manual: [`docs/manual/sola-arcade.md`](docs/manual/sola-arcade.md).  
-   - **Next polish (backlog):** Portal-class nest fails; residual flicker;
-     title contrast on bright heroes; never-played owned without API.  
+2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+   - Backlog: Portal-class nest fails; residual flicker; title contrast;
+     never-played owned without API.  
 3. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
 4. **Progress docs** — keep this file + capabilities honest.  
 5. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
-   kvm clipboard, etc.
+   kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
+   unmerged), etc.  
+   Shell Windows/composition hygiene + ordered multi-install on master.
 
 **Explicit holds:** none.
 
@@ -61,7 +55,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **`naturalethic/browser`** (WPE-only + review docs) | Feature work in worktrees / Orca workspaces |
+| Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 | Browser | Single `sola-browser` installed (debug); no wpe/cef sidecars; OpenUrl still Helium; polish via hardening plan | — |

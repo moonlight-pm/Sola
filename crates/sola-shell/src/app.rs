@@ -173,6 +173,12 @@ pub struct Shell {
     pub known_windows: Vec<Window>,
     /// Maps (app_id, title) → window_id for fast lookup.
     pub window_id_by_key: HashMap<(String, String), u32>,
+    /// Last composition stack (window_ids bottom→top) we emitted on the bus.
+    /// Used to skip redundant `Topic::Composition` when only titles changed.
+    pub last_composition: Vec<u32>,
+    /// Last registered-chord set we emitted; skip identical re-emits that
+    /// still force a River manage cycle (title-only Windows storms).
+    pub last_registered_chords: Vec<RegisteredChord>,
 
     // Application catalog (built-ins + user entries from Topic::Application)
     pub applications: ApplicationsConfig,
@@ -292,6 +298,8 @@ impl Shell {
             mru_window_by_app: HashMap::new(),
             known_windows: Vec::new(),
             window_id_by_key: HashMap::new(),
+            last_composition: Vec::new(),
+            last_registered_chords: Vec::new(),
             applications: ApplicationsConfig { apps: crate::builtins::builtin_apps() },
             hidden_apps: HashMap::new(),
             menus: MenuCache::new(),
@@ -579,19 +587,8 @@ impl Shell {
     // Emit helpers — compute and push bus topics from current state
     // -------------------------------------------------------------------------
 
-    /// Build the composition list (bottom to top) and emit Topic::Composition.
-    ///
-    /// Stack order (bottom → top):
-    ///   1. Shell menubar — always at bottom.
-    ///   2. App windows not yet in MRU (never raised) — under everything raised,
-    ///      so focus-follows-mouse without a raise cannot leave an external app
-    ///      permanently stuck on top of activated windows.
-    ///   3. App windows ordered by MRU (least recent first), per-app MRU window
-    ///      on top of its siblings. Only click / switcher / map activation bumps
-    ///      MRU (raise).
-    ///   4. Shell overlays when active (menu, switcher, launcher, selection —
-    ///      selection on top while capturing).
-    pub fn emit_composition(&self) {
+    /// Build the composition list (bottom to top). See [`Self::emit_composition`].
+    fn build_composition_entries(&self) -> Vec<CompositionEntry> {
         let mut entries: Vec<CompositionEntry> = Vec::new();
 
         // 1. Menubar — always at the bottom.
@@ -658,6 +655,32 @@ impl Shell {
             }
         }
 
+        entries
+    }
+
+    /// Build the composition list (bottom to top) and emit Topic::Composition.
+    ///
+    /// Stack order (bottom → top):
+    ///   1. Shell menubar — always at bottom.
+    ///   2. App windows not yet in MRU (never raised) — under everything raised,
+    ///      so focus-follows-mouse without a raise cannot leave an external app
+    ///      permanently stuck on top of activated windows.
+    ///   3. App windows ordered by MRU (least recent first), per-app MRU window
+    ///      on top of its siblings. Only click / switcher / map activation bumps
+    ///      MRU (raise).
+    ///   4. Shell overlays when active (menu, switcher, launcher, selection —
+    ///      selection on top while capturing).
+    ///
+    /// No-op when the stack order is identical to the last emit — title-only
+    /// `Windows` storms used to re-`place_top` every surface every time.
+    pub fn emit_composition(&mut self) {
+        let entries = self.build_composition_entries();
+        let order: Vec<u32> = entries.iter().map(|e| e.window_id).collect();
+        if order == self.last_composition {
+            tracing::debug!(count = order.len(), "skip Composition (unchanged)");
+            return;
+        }
+        self.last_composition = order;
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.emit(Topic::Composition(entries));
         }
@@ -695,13 +718,8 @@ impl Shell {
         )
     }
 
-    /// Emit Topic::RegisteredChords based on current overlay state and focused app.
-    ///
-    /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+Grave,
-    /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Bare Super_L
-    /// always registered so ChordReleased fires for switcher confirm. Escape
-    /// registered only while an overlay is active.
-    pub fn emit_registered_chords(&self) {
+    /// Build the RegisteredChords payload for the current overlay + focused app.
+    fn build_registered_chords(&self) -> Vec<RegisteredChord> {
         let source = self.shell_key_chords();
         let mut chords: Vec<RegisteredChord> = Vec::with_capacity(source.len() * 2 + 2);
         for c in &source {
@@ -740,9 +758,38 @@ impl Shell {
                 modifiers: 0,
             });
         }
+        // While the switcher is up, Super is held (Meta+Tab). Grab Meta+←/→ so
+        // River delivers them; `on_chord` already maps Left/Right to SwitcherNav.
+        // Deregistered on dismiss so bare apps keep their own arrow bindings.
+        if self.switcher.active {
+            chords.push(keys::to_registered(&KeyCode::LEFT.meta()));
+            chords.push(keys::to_registered(&KeyCode::RIGHT.meta()));
+        }
         chords.sort_by_key(|c| (c.modifiers, c.keysym));
         chords.dedup();
+        chords
+    }
 
+    /// Emit Topic::RegisteredChords based on current overlay state and focused app.
+    ///
+    /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+Grave,
+    /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Bare Super_L
+    /// always registered so ChordReleased fires for switcher confirm. Escape
+    /// registered only while an overlay is active. Meta+Left/Right registered
+    /// only while the switcher is active.
+    ///
+    /// No-op when the chord set is identical to the last emit — avoids a River
+    /// manage cycle on every title-only `Windows` rebroadcast.
+    pub fn emit_registered_chords(&mut self) {
+        let chords = self.build_registered_chords();
+        if chords == self.last_registered_chords {
+            tracing::debug!(
+                count = chords.len(),
+                "skip RegisteredChords (unchanged)"
+            );
+            return;
+        }
+        self.last_registered_chords = chords.clone();
         tracing::info!(
             count = chords.len(),
             launcher = self.launcher.active,
@@ -1356,12 +1403,28 @@ impl Shell {
             Msg::FocusHoverFire { window_id, generation } => {
                 // Superseded by a later enter/leave (e.g. crossed toward menubar).
                 if generation != self.pending_focus_generation {
+                    tracing::debug!(
+                        window_id,
+                        generation,
+                        current = self.pending_focus_generation,
+                        "FFM fire superseded"
+                    );
                     return iced::Task::none();
                 }
                 // Pointer may have moved on without a leave we care about.
                 if self.pointer_window_id != Some(window_id) {
+                    tracing::debug!(
+                        window_id,
+                        pointer = ?self.pointer_window_id,
+                        "FFM fire pointer moved on"
+                    );
                     return iced::Task::none();
                 }
+                tracing::debug!(
+                    window_id,
+                    generation,
+                    "FFM fire — applying pointer focus"
+                );
                 self.focus_window_from_pointer(window_id);
                 iced::Task::none()
             }
@@ -1540,6 +1603,8 @@ mod pending_launch_tests {
                 pid: None,
             }],
             window_id_by_key: HashMap::new(),
+            last_composition: Vec::new(),
+            last_registered_chords: Vec::new(),
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
