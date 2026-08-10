@@ -20,7 +20,7 @@ sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
 sola-kit = { path = "../sola-kit" }
 tracing = "0.1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 serde = { version = "1", features = ["derive"] }
 
 # DMA-BUF import via wgpu-hal-patched (workspace `[patch.crates-io]`).

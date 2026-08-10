@@ -30,6 +30,25 @@ use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 /// "buffer ptr already live" + invalid `buffer_released` under media.
 const RETIRE_DEPTH: usize = 1;
 
+/// Longest allowed physical edge for the WebKit dma-buf (pixels).
+/// Above this, DPR is reduced so CSS × scale stays in budget.
+const MAX_PHYS_EDGE: f64 = 1920.0;
+
+/// Pick device scale for content: prefer compositor DPR (and light
+/// supersample when iced reports ~1), but never blow past [`MAX_PHYS_EDGE`].
+fn choose_content_dpr(compositor_scale: f64, css_w: u32, css_h: u32) -> f64 {
+    let max_css = css_w.max(css_h).max(1) as f64;
+    // Supersample only when the window is modest — 2× of a full-height
+    // float is multi‑megapixel and kills input/animation FPS.
+    let want = if compositor_scale < 1.25 && max_css <= 1400.0 {
+        2.0
+    } else {
+        compositor_scale.max(1.0)
+    };
+    let cap = (MAX_PHYS_EDGE / max_css).clamp(1.0, 3.0);
+    want.min(cap).max(1.0)
+}
+
 pub struct WpeProgram {
     pub slot: std::sync::Arc<FrameSlot<WpeEngine>>,
 }
@@ -302,19 +321,15 @@ impl shader::Primitive for WpePrimitive {
         //   - WPE resize = **CSS/layout** size (logical widget bounds)
         //   - scale_changed = device pixel ratio
         //   - dma-buf = CSS × scale (physical)
-        // Passing physical size *and* scale was double-scaling and soft text.
         //
-        // When iced reports scale≈1 (common on this stack) we supersample at
-        // 2× so WebKit rasterizes twice the density and we downscale in the
-        // shader — sharper than 1× glyphs stretched by the compositor.
+        // Cap physical edge length. Uncapped scale=2 on a ~2k CSS viewport
+        // produced 4090×4170 frames — import + composite every keystroke /
+        // caret blink made Google sign-in typing and placeholder animation
+        // feel molasses (caret appeared stuck).
         let compositor_scale = (viewport.scale_factor() as f64).max(1.0);
-        let dpr = if compositor_scale < 1.25 {
-            2.0
-        } else {
-            compositor_scale
-        };
         let logical_w = bounds.width.round().max(1.0) as u32;
         let logical_h = bounds.height.round().max(1.0) as u32;
+        let dpr = choose_content_dpr(compositor_scale, logical_w, logical_h);
         let phys_w = ((logical_w as f64) * dpr).round().max(1.0) as u32;
         let phys_h = ((logical_h as f64) * dpr).round().max(1.0) as u32;
         // last_size tracks **physical** buffer size for mismatch checks.

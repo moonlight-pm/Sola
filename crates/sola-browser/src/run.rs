@@ -48,16 +48,31 @@ pub fn frame_stream<E: Engine>(
     active: ActiveHandle,
 ) -> impl Stream<Item = Msg> {
     stream::channel(64, async move |mut output| {
-        loop {
-            let tagged = match tokio::task::spawn_blocking({
-                let frames = frames.clone();
-                move || frames.lock().unwrap().recv().ok()
+        // One long-lived blocking thread — NOT spawn_blocking per frame
+        // (that alone made caret blink / placeholder motion feel laggy).
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let frames_thread = frames.clone();
+        std::thread::Builder::new()
+            .name("browser-frames".into())
+            .spawn(move || {
+                loop {
+                    let tagged = {
+                        let guard = frames_thread.lock().unwrap();
+                        guard.recv()
+                    };
+                    match tagged {
+                        Ok(f) => {
+                            if tx.send(f).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
             })
-            .await
-            {
-                Ok(Some(f)) => f,
-                _ => break,
-            };
+            .expect("spawn browser-frames thread");
+
+        while let Some(tagged) = rx.recv().await {
             // Accept:
             // 1) frames for the painted tab (normal display path), or
             // 2) one prime frame per tab listed in need_park_prime so a
