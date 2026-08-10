@@ -136,6 +136,10 @@ pub struct App<E: Engine> {
     pub url_bar_focused: bool,
     /// Last written session fingerprint — skip disk when unchanged.
     session_fp: String,
+    /// Tabs to open after the iced Wayland window exists. Deferred so we can
+    /// clear `WAYLAND_DISPLAY` first — otherwise WebKit's WebProcess inherits
+    /// it and maps a real `org.webkit.*` toplevel next to our chrome.
+    pending_session: Option<(Vec<SessionTab>, usize)>,
 }
 
 impl<E: Engine> App<E> {
@@ -155,7 +159,7 @@ impl<E: Engine> App<E> {
         active_index: usize,
         sidebar_w: f32,
     ) -> Self {
-        let mut app = Self {
+        Self {
             engine,
             slot,
             cmd_tx,
@@ -176,9 +180,25 @@ impl<E: Engine> App<E> {
             app_id,
             url_bar_focused: false,
             session_fp: String::new(),
-        };
-        app.bootstrap_tabs(tabs, active_index);
-        app
+            pending_session: Some((tabs, active_index)),
+        }
+    }
+
+    /// Clear compositor env so WebKit child processes cannot open a Wayland
+    /// window. Safe after iced has already connected (WindowReady).
+    fn seal_wayland_from_webkit() {
+        // Process-wide: WebProcess is forked from this process and inherits env.
+        // Headless WPE does not need WAYLAND_DISPLAY; iced already holds its
+        // wl_display connection from before this runs.
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            tracing::info!(
+                "clearing WAYLAND_DISPLAY before creating WebViews (prevent phantom org.webkit toplevel)"
+            );
+            // SAFETY: single-threaded wrt other env writers at WindowReady.
+            unsafe {
+                std::env::remove_var("WAYLAND_DISPLAY");
+            }
+        }
     }
 
     /// Open restored tabs in order and focus `active_index`.
@@ -258,6 +278,13 @@ impl<E: Engine> App<E> {
         match msg {
             Msg::WindowReady(id) => {
                 self.window_id = id;
+                // Iced is connected to the compositor. Strip WAYLAND_DISPLAY
+                // before any WebKitWebView exists so WPEWebProcess cannot map
+                // its own xdg_toplevel (app_id org.webkit.*).
+                if let Some((tabs, active_index)) = self.pending_session.take() {
+                    Self::seal_wayland_from_webkit();
+                    self.bootstrap_tabs(tabs, active_index);
+                }
                 return Task::none();
             }
             Msg::TitleDrag => return sola_kit::drag(self.window_id),

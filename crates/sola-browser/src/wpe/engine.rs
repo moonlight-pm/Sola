@@ -167,7 +167,9 @@ impl Engine for WpeEngine {
 
         // Hide WAYLAND_DISPLAY from libWPEWebKit's init so its bundled
         // wpe-platform-wayland module doesn't open a phantom toplevel.
-        // Restored after `spawn_inner` returns; iced sees it on the main thread.
+        // Restored after `spawn_inner` so iced can connect; chrome then
+        // seals it again on WindowReady *before* creating any WebView
+        // (WebProcess inherits env and would otherwise map org.webkit.*).
         //
         // SAFETY: single-threaded between log init and spawn_inner call.
         let saved = std::env::var("WAYLAND_DISPLAY").ok();
@@ -755,6 +757,15 @@ unsafe extern "C" fn free_tab_signal_ctx(data: *mut c_void, _closure: *mut sys::
 }
 
 unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String) {
+    // Defense in depth: never let a WebProcess inherit a compositor socket.
+    // (Chrome also seals WAYLAND_DISPLAY on WindowReady before first open.)
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        tracing::warn!(
+            "WAYLAND_DISPLAY still set while opening WebView — clearing to avoid phantom toplevel"
+        );
+        std::env::remove_var("WAYLAND_DISPLAY");
+    }
+
     let webview = sys::webkit_web_view_new(ptr::null_mut());
     if webview.is_null() {
         tracing::warn!(?id, "webkit_web_view_new returned null; tab not opened");
