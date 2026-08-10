@@ -613,11 +613,14 @@ unsafe extern "C" fn on_buffer_rendered(
     }
 
     let buf_key = buffer as *mut c_void as usize;
-    // WPE reused a buffer we still hold (pool smaller than retire depth).
-    // Do not re-import — recycle immediately; old HeldToken still owns it.
+    // Still owned by a GPU HeldToken (pool reused the pointer too early, or
+    // WPE re-fired). **Do not** release here — that double-frees with the
+    // token's later Cmd::Release and SIGSEGVs in wpe_view_buffer_released.
+    // Ignore this presentation; the existing hold remains authoritative.
     if ctx.live_buffers.contains(&buf_key) {
-        tracing::debug!(?tab_id, "buffer still held; recycle without re-import");
-        release_buffer_unchecked(view, buffer_base);
+        tracing::debug!(?tab_id, "buffer still held; ignore re-presentation");
+        // Close the dup we already took — we will not import this frame.
+        drop(OwnedFd::from_raw_fd(dup_fd));
         return;
     }
     ctx.live_buffers.insert(buf_key);
@@ -639,10 +642,9 @@ unsafe extern "C" fn on_buffer_rendered(
     };
     ctx.outstanding_tokens
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // On channel death, `SendError` drops the frame → HeldToken/WpeFrame
+    // Drop sends Cmd::Release once. Do **not** also release_buffer here.
     if ctx.frame_tx.send(TaggedFrame { tab_id, frame }).is_err() {
-        // Channel dead — release ourselves (token Drop may still fire).
-        ctx.live_buffers.remove(&buf_key);
-        release_buffer_unchecked(view, buffer_base);
         tracing::info!("frame channel closed, quitting GMainLoop");
         sys::g_main_loop_quit(ctx.main_loop);
     }
@@ -1090,8 +1092,12 @@ unsafe fn close_tab(ctx: &mut WorkerCtx, id: TabId) {
     );
 }
 
-/// One-shot release for buffers we never put in `live_buffers` (skipped
-/// multi-plane, unknown view, dup failure).
+/// One-shot release for buffers **not** tracked in `live_buffers`
+/// (multi-plane skip, unknown view, dup failure).
+///
+/// Tracked buffers must only be released from `Cmd::Release` after
+/// `live_buffers.remove` succeeds. Double `wpe_view_buffer_released`
+/// SIGSEGVs (coredump 08:20 / YouTube sign-in).
 unsafe fn release_buffer_unchecked(view: *mut sys::WPEView, buffer: *mut sys::WPEBuffer) {
     if view.is_null() || buffer.is_null() {
         return;
