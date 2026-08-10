@@ -19,7 +19,8 @@
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::ffi::{CString, c_void};
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::ptr;
@@ -104,11 +105,7 @@ impl HeldToken {
 
 impl Drop for HeldToken {
     fn drop(&mut self) {
-        let token = ResourceToken {
-            tab_id: self.token.tab_id,
-            view: self.token.view,
-            buffer: self.token.buffer,
-        };
+        let token = self.token;
         let _ = self.release_tx.send(Cmd::Release { token });
     }
 }
@@ -116,15 +113,26 @@ impl Drop for HeldToken {
 /// `Send + Sync`-safe wrapper around the raw `WPEView*` +
 /// `WPEBuffer*` pair we get from the buffer-arrival callback.
 /// Tagged with `tab_id` so late releases for closed tabs are ignored.
+/// `epoch` must match the tab's `buffer_epoch` at release time or we
+/// skip `wpe_view_buffer_released` (buffer may already be destroyed
+/// after navigate — double-free / UAF SIGSEGV on Google sign-in).
 #[derive(Clone, Copy, Debug)]
 pub struct ResourceToken {
     pub tab_id: TabId,
     pub view: *mut c_void,
     pub buffer: *mut c_void,
+    pub epoch: u64,
 }
 
 unsafe impl Send for ResourceToken {}
 unsafe impl Sync for ResourceToken {}
+
+/// Claim on a buffer pointer we still owe a release for.
+#[derive(Clone, Copy, Debug)]
+struct BufferClaim {
+    tab_id: TabId,
+    epoch: u64,
+}
 
 
 
@@ -314,11 +322,9 @@ struct WorkerCtx {
     snapshot_dirty: Arc<std::sync::atomic::AtomicBool>,
     /// Outstanding buffer tokens not yet released (instrumentation).
     outstanding_tokens: std::sync::atomic::AtomicU64,
-    /// Buffers we still owe `wpe_view_buffer_released` for (ptr as usize).
-    /// Makes Release **idempotent** — double Drop / late Release after
-    /// navigate was SIGSEGVing inside `wpe_view_buffer_released` (YouTube
-    /// sign-in, media churn).
-    live_buffers: HashSet<usize>,
+    /// Buffers we still owe `wpe_view_buffer_released` for (ptr → claim).
+    /// Release only calls WPE when claim.epoch still matches the tab.
+    live_buffers: HashMap<usize, BufferClaim>,
 }
 
 /// Per-tab state living on the worker thread. The webview ptr is
@@ -347,6 +353,10 @@ struct TabState {
     applied_scale: f64,
     /// Instant of last size-mismatch heal nudge (rate-limit blank flashes).
     last_size_heal: Option<std::time::Instant>,
+    /// Bumped on each load-started so in-flight HeldTokens become stale and
+    /// must not call `wpe_view_buffer_released` after WebKit tears down the
+    /// previous document's buffers.
+    buffer_epoch: Arc<AtomicU64>,
 }
 
 unsafe fn worker_main(
@@ -397,7 +407,7 @@ unsafe fn worker_main(
         clipboard_out,
         snapshot_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         outstanding_tokens: std::sync::atomic::AtomicU64::new(0),
-        live_buffers: HashSet::new(),
+        live_buffers: HashMap::new(),
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
     sys::sola_wpe_set_cursor_callback(Some(on_cursor_changed), ctx as *mut c_void);
@@ -613,17 +623,29 @@ unsafe extern "C" fn on_buffer_rendered(
     }
 
     let buf_key = buffer as *mut c_void as usize;
-    // Still owned by a GPU HeldToken (pool reused the pointer too early, or
-    // WPE re-fired). **Do not** release here — that double-frees with the
-    // token's later Cmd::Release and SIGSEGVs in wpe_view_buffer_released.
-    // Ignore this presentation; the existing hold remains authoritative.
-    if ctx.live_buffers.contains(&buf_key) {
-        tracing::debug!(?tab_id, "buffer still held; ignore re-presentation");
-        // Close the dup we already took — we will not import this frame.
-        drop(OwnedFd::from_raw_fd(dup_fd));
-        return;
+    let epoch = ctx
+        .tabs
+        .iter()
+        .find(|t| t.id == tab_id)
+        .map(|t| t.buffer_epoch.load(AtomicOrdering::Relaxed))
+        .unwrap_or(0);
+
+    // Same pointer still claimed for this epoch → ignore (GPU still holds).
+    // Stale epoch claim → steal for the new frame; old token will no-op on Release.
+    if let Some(claim) = ctx.live_buffers.get(&buf_key) {
+        if claim.tab_id == tab_id && claim.epoch == epoch {
+            tracing::debug!(?tab_id, epoch, "buffer still held; ignore re-presentation");
+            drop(OwnedFd::from_raw_fd(dup_fd));
+            return;
+        }
     }
-    ctx.live_buffers.insert(buf_key);
+    ctx.live_buffers.insert(
+        buf_key,
+        BufferClaim {
+            tab_id,
+            epoch,
+        },
+    );
 
     let frame = WpeFrame {
         fd: Some(OwnedFd::from_raw_fd(dup_fd)),
@@ -637,6 +659,7 @@ unsafe extern "C" fn on_buffer_rendered(
             tab_id,
             view: view as *mut c_void,
             buffer: buffer as *mut c_void,
+            epoch,
         }),
         release_tx: ctx.release_tx.clone(),
     };
@@ -721,29 +744,39 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
         Cmd::Release { token } => {
             let left = ctx
                 .outstanding_tokens
-                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed)
+                .fetch_sub(1, AtomicOrdering::Relaxed)
                 .saturating_sub(1);
             let key = token.buffer as usize;
-            // Idempotent: only the first Release for a buffer pointer runs
-            // wpe_view_buffer_released. Late/double Drop after navigate was
-            // SIGSEGVing inside WPE (YouTube → Sign in).
-            if key == 0 || !ctx.live_buffers.remove(&key) {
+            // Only call WPE when this token still owns the claim *and* the
+            // tab's buffer epoch matches (no navigation since import).
+            let own_claim = ctx.live_buffers.get(&key).is_some_and(|c| {
+                c.tab_id == token.tab_id && c.epoch == token.epoch
+            });
+            if key == 0 || !own_claim {
                 tracing::debug!(
                     ?token.tab_id,
+                    epoch = token.epoch,
                     outstanding = left,
-                    "skip release (already freed or unknown buffer)"
+                    "skip release (stale/unknown claim)"
                 );
-            } else if !ctx.tabs.iter().any(|t| t.id == token.tab_id) {
-                // Tab closed — do not touch the view; claim already dropped.
-                tracing::debug!(
-                    ?token.tab_id,
-                    outstanding = left,
-                    "drop release for closed tab (claim cleared)"
-                );
-            } else if !token.view.is_null() {
-                let buf = token.buffer as *mut sys::WPEBuffer;
-                let view = token.view as *mut sys::WPEView;
-                release_buffer_unchecked(view, buf);
+            } else {
+                ctx.live_buffers.remove(&key);
+                let epoch_ok = ctx.tabs.iter().any(|t| {
+                    t.id == token.tab_id
+                        && t.buffer_epoch.load(AtomicOrdering::Relaxed) == token.epoch
+                });
+                if !epoch_ok {
+                    // Navigated or closed — buffer may already be destroyed.
+                    tracing::debug!(
+                        ?token.tab_id,
+                        epoch = token.epoch,
+                        "skip release (epoch advanced or tab gone)"
+                    );
+                } else if !token.view.is_null() {
+                    let buf = token.buffer as *mut sys::WPEBuffer;
+                    let view = token.view as *mut sys::WPEView;
+                    release_buffer_unchecked(view, buf);
+                }
             }
             if left > 16 {
                 tracing::warn!(outstanding = left, "wpe buffer tokens outstanding");
@@ -899,9 +932,11 @@ fn find_tab_by_view<'a>(ctx: &'a WorkerCtx, view: *mut sys::WPEView) -> Option<&
 /// `free_tab_signal_ctx` drops the Box when the webview is
 /// destroyed.
 struct TabSignalCtx {
+    tab_id: TabId,
     url: Arc<Mutex<String>>,
     title: Arc<Mutex<String>>,
     is_loading: Arc<std::sync::atomic::AtomicBool>,
+    buffer_epoch: Arc<AtomicU64>,
     snapshot: Arc<Mutex<Vec<TabInfo>>>,
     /// Snapshot rebuild needs *all* tabs' current url/title/loading; we
     /// can't see them from here. Set this flag and the pump-tick
@@ -947,6 +982,7 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
     let title = Arc::new(Mutex::new(initial_title));
     // Will load immediately when URL non-empty.
     let is_loading = Arc::new(std::sync::atomic::AtomicBool::new(!initial_url.is_empty()));
+    let buffer_epoch = Arc::new(AtomicU64::new(0));
 
     // Per-tab signal context for notify::uri / title / load-changed.
     // Separate Boxes so the destroy-notify on each signal frees its own.
@@ -955,11 +991,14 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
     let url_arc = url.clone();
     let title_arc = title.clone();
     let loading_arc = is_loading.clone();
+    let epoch_arc = buffer_epoch.clone();
     let make_sig_ctx = || {
         Box::into_raw(Box::new(TabSignalCtx {
+            tab_id: id,
             url: url_arc.clone(),
             title: title_arc.clone(),
             is_loading: loading_arc.clone(),
+            buffer_epoch: epoch_arc.clone(),
             snapshot: snap.clone(),
             snapshot_dirty: dirty.clone(),
         })) as *mut c_void
@@ -1046,6 +1085,7 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         last_frame_size: (0, 0),
         applied_scale: 0.0,
         last_size_heal: None,
+        buffer_epoch,
     };
 
     // Size/scale to match the active iced scissor (CSS + DPR).
@@ -1183,6 +1223,9 @@ unsafe extern "C" fn on_notify_title_tab(
 }
 
 /// `load-changed` — drive chrome reload/stop toggle via `is_loading`.
+/// On STARTED, bump `buffer_epoch` so in-flight HeldTokens become stale
+/// and must not call `wpe_view_buffer_released` after WebKit tears down
+/// the previous page's dma-bufs (Google / YouTube sign-in crash).
 unsafe extern "C" fn on_load_changed_tab(
     _object: *mut c_void,
     load_event: sys::WebKitLoadEvent,
@@ -1191,9 +1234,13 @@ unsafe extern "C" fn on_load_changed_tab(
     let cb = &*(user_data as *const TabSignalCtx);
     let loading = load_event != sys::WebKitLoadEvent_WEBKIT_LOAD_FINISHED;
     cb.is_loading
-        .store(loading, std::sync::atomic::Ordering::Relaxed);
+        .store(loading, AtomicOrdering::Relaxed);
+    if load_event == sys::WebKitLoadEvent_WEBKIT_LOAD_STARTED {
+        let new_epoch = cb.buffer_epoch.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+        tracing::debug!(?cb.tab_id, new_epoch, "buffer epoch bump (load started)");
+    }
     cb.snapshot_dirty
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+        .store(true, AtomicOrdering::Relaxed);
     let _ = &cb.snapshot;
 }
 
