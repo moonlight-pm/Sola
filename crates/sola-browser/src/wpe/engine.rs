@@ -19,6 +19,7 @@
 #![allow(non_upper_case_globals, non_camel_case_types, non_snake_case)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
+use std::collections::HashSet;
 use std::ffi::{CString, c_void};
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::ptr;
@@ -304,6 +305,11 @@ struct WorkerCtx {
     snapshot_dirty: Arc<std::sync::atomic::AtomicBool>,
     /// Outstanding buffer tokens not yet released (instrumentation).
     outstanding_tokens: std::sync::atomic::AtomicU64,
+    /// Buffers we still owe `wpe_view_buffer_released` for (ptr as usize).
+    /// Makes Release **idempotent** — double Drop / late Release after
+    /// navigate was SIGSEGVing inside `wpe_view_buffer_released` (YouTube
+    /// sign-in, media churn).
+    live_buffers: HashSet<usize>,
 }
 
 /// Per-tab state living on the worker thread. The webview ptr is
@@ -378,6 +384,7 @@ unsafe fn worker_main(
         clipboard_out,
         snapshot_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         outstanding_tokens: std::sync::atomic::AtomicU64::new(0),
+        live_buffers: HashSet::new(),
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
     sys::sola_wpe_set_cursor_callback(Some(on_cursor_changed), ctx as *mut c_void);
@@ -462,35 +469,30 @@ unsafe extern "C" fn on_selection(
     }
 }
 
-/// `decide-policy` handler: middle / ⌘ / Ctrl-click on a link opens a
-/// background tab instead of navigating in place. Returns TRUE only when it
-/// has handled (ignored) the navigation; FALSE lets WebKit apply default
-/// policy. User-data is the worker `WorkerCtx` pointer (stable for the
-/// GMainLoop's lifetime).
+/// `decide-policy` handler:
+/// - middle / ⌘ / Ctrl-click → background tab
+/// - `window.open` / target=_blank (NEW_WINDOW) → new **focused** tab
+///   (Google Sign-In etc. would otherwise spawn an unhandled webview and die)
+///
+/// Returns TRUE only when handled; FALSE lets WebKit apply default policy.
 unsafe extern "C" fn on_decide_policy(
     _web_view: *mut sys::WebKitWebView,
     decision: *mut sys::WebKitPolicyDecision,
     decision_type: sys::WebKitPolicyDecisionType,
     user_data: *mut c_void,
 ) -> sys::gboolean {
-    // Only ordinary navigations (link clicks) are interesting; let WebKit
-    // apply default policy to everything else (new-window, response, …).
-    if decision_type
-        != sys::WebKitPolicyDecisionType_WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION
-    {
-        return 0; // FALSE
+    let is_nav = decision_type
+        == sys::WebKitPolicyDecisionType_WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION;
+    let is_new_window = decision_type
+        == sys::WebKitPolicyDecisionType_WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION;
+    if !is_nav && !is_new_window {
+        return 0; // FALSE — response etc.
     }
+
     let nav = decision as *mut sys::WebKitNavigationPolicyDecision;
     let action = sys::webkit_navigation_policy_decision_get_navigation_action(nav);
     if action.is_null() {
         return 0;
-    }
-    let button = sys::webkit_navigation_action_get_mouse_button(action);
-    let mods = sys::webkit_navigation_action_get_modifiers(action);
-    let ctrl = (mods & sys::WPEModifiers_WPE_MODIFIER_KEYBOARD_CONTROL) != 0;
-    let super_key = (mods & sys::WPEModifiers_WPE_MODIFIER_KEYBOARD_META) != 0;
-    if !crate::util::is_new_tab_click(button, ctrl, super_key) {
-        return 0; // ordinary click — navigate in place.
     }
     let request = sys::webkit_navigation_action_get_request(action);
     if request.is_null() {
@@ -501,11 +503,37 @@ unsafe extern "C" fn on_decide_policy(
         return 0;
     }
     let uri = std::ffi::CStr::from_ptr(uri_ptr).to_string_lossy().into_owned();
+    if uri.is_empty() {
+        return 0;
+    }
+
+    let ctx = &mut *(user_data as *mut WorkerCtx);
+
+    if is_new_window {
+        // Popup / target=_blank (Google Sign-In often uses window.open).
+        // We have no multi-window chrome: load in the requesting tab instead
+        // of letting WebKit spawn an unhandled webview (that path died hard).
+        sys::webkit_policy_decision_ignore(decision);
+        if !_web_view.is_null() {
+            if let Ok(c) = CString::new(uri.as_str()) {
+                sys::webkit_web_view_load_uri(_web_view, c.as_ptr());
+                tracing::info!(%uri, "new-window policy → load in same tab");
+            }
+        }
+        return 1;
+    }
+
+    let button = sys::webkit_navigation_action_get_mouse_button(action);
+    let mods = sys::webkit_navigation_action_get_modifiers(action);
+    let ctrl = (mods & sys::WPEModifiers_WPE_MODIFIER_KEYBOARD_CONTROL) != 0;
+    let super_key = (mods & sys::WPEModifiers_WPE_MODIFIER_KEYBOARD_META) != 0;
+    if !crate::util::is_new_tab_click(button, ctrl, super_key) {
+        return 0; // ordinary click — navigate in place.
+    }
     // Suppress the in-place navigation; open a background tab instead.
     sys::webkit_policy_decision_ignore(decision);
-    let ctx = &mut *(user_data as *mut WorkerCtx);
     let id = TabId(ctx.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-    open_tab(ctx, id, uri, String::new()); // no SetActiveTab → background tab
+    open_tab(ctx, id, uri, String::new());
     1 // TRUE — handled.
 }
 
@@ -526,8 +554,8 @@ unsafe extern "C" fn on_buffer_rendered(
         Some(t) => t.id,
         None => {
             tracing::warn!("buffer-rendered for unknown WPEView; releasing");
-            // Must release or the producer pool stalls / WebProcess dies.
-            sys::wpe_view_buffer_released(view, buffer_base);
+            // Not tracked — release once here.
+            release_buffer_unchecked(view, buffer_base);
             return;
         }
     };
@@ -544,7 +572,7 @@ unsafe extern "C" fn on_buffer_rendered(
         // import them yet — but we **must** release or the buffer pool
         // exhausts and the browser dies under media load (B3).
         tracing::debug!(n_planes, ?tab_id, "skip multi-plane frame (released)");
-        sys::wpe_view_buffer_released(view, buffer_base);
+        release_buffer_unchecked(view, buffer_base);
         return;
     }
     let format = sys::wpe_buffer_dma_buf_get_format(buffer);
@@ -556,8 +584,15 @@ unsafe extern "C" fn on_buffer_rendered(
     let dup_fd = libc::fcntl(raw_fd, libc::F_DUPFD_CLOEXEC, 0);
     if dup_fd < 0 {
         tracing::warn!(err = ?std::io::Error::last_os_error(), "dup of dmabuf fd failed");
-        sys::wpe_view_buffer_released(view, buffer_base);
+        release_buffer_unchecked(view, buffer_base);
         return;
+    }
+
+    let buf_key = buffer as *mut c_void as usize;
+    // If we already track this pointer, a prior Release was missed and WPE
+    // reused the address — drop the stale claim so we only release once.
+    if !ctx.live_buffers.insert(buf_key) {
+        tracing::warn!(?tab_id, "buffer ptr already live; replacing claim");
     }
 
     let frame = WpeFrame {
@@ -578,6 +613,9 @@ unsafe extern "C" fn on_buffer_rendered(
     ctx.outstanding_tokens
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if ctx.frame_tx.send(TaggedFrame { tab_id, frame }).is_err() {
+        // Channel dead — release ourselves (token Drop may still fire).
+        ctx.live_buffers.remove(&buf_key);
+        release_buffer_unchecked(view, buffer_base);
         tracing::info!("frame channel closed, quitting GMainLoop");
         sys::g_main_loop_quit(ctx.main_loop);
     }
@@ -629,20 +667,27 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 .outstanding_tokens
                 .fetch_sub(1, std::sync::atomic::Ordering::Relaxed)
                 .saturating_sub(1);
-            // Closed-tab quarantine: never call into a freed view.
-            if !ctx.tabs.iter().any(|t| t.id == token.tab_id) {
+            let key = token.buffer as usize;
+            // Idempotent: only the first Release for a buffer pointer runs
+            // wpe_view_buffer_released. Late/double Drop after navigate was
+            // SIGSEGVing inside WPE (YouTube → Sign in).
+            if key == 0 || !ctx.live_buffers.remove(&key) {
                 tracing::debug!(
                     ?token.tab_id,
                     outstanding = left,
-                    "dropping release for closed tab"
+                    "skip release (already freed or unknown buffer)"
                 );
-            } else if !token.buffer.is_null() && !token.view.is_null() {
-                // Catch panics from GLib criticals in debug builds; still
-                // best-effort release. Invalid buffers were common when we
-                // multi-imported every tab under resize storm.
+            } else if !ctx.tabs.iter().any(|t| t.id == token.tab_id) {
+                // Tab closed — do not touch the view; claim already dropped.
+                tracing::debug!(
+                    ?token.tab_id,
+                    outstanding = left,
+                    "drop release for closed tab (claim cleared)"
+                );
+            } else if !token.view.is_null() {
                 let buf = token.buffer as *mut sys::WPEBuffer;
                 let view = token.view as *mut sys::WPEView;
-                sys::wpe_view_buffer_released(view, buf);
+                release_buffer_unchecked(view, buf);
             }
             if left > 16 {
                 tracing::warn!(outstanding = left, "wpe buffer tokens outstanding");
@@ -968,6 +1013,8 @@ unsafe fn close_tab(ctx: &mut WorkerCtx, id: TabId) {
     // `g_object_ref`'d it (webkit_web_view_new returns a floating
     // ref that sinks into the platform's view), so a single
     // g_object_unref balances it.
+    // Late HeldToken Releases for this tab will hit the closed-tab path
+    // and only clear live_buffers — never call into a dead view.
     if !tab.webview.is_null() {
         sys::g_object_unref(tab.webview as *mut c_void);
     }
@@ -979,8 +1026,18 @@ unsafe fn close_tab(ctx: &mut WorkerCtx, id: TabId) {
         ?id,
         remaining = ctx.tabs.len(),
         outstanding_tokens = outstanding,
+        live_buffers = ctx.live_buffers.len(),
         "closed tab"
     );
+}
+
+/// One-shot release for buffers we never put in `live_buffers` (skipped
+/// multi-plane, unknown view, dup failure).
+unsafe fn release_buffer_unchecked(view: *mut sys::WPEView, buffer: *mut sys::WPEBuffer) {
+    if view.is_null() || buffer.is_null() {
+        return;
+    }
+    sys::wpe_view_buffer_released(view, buffer);
 }
 
 /// Rewrite the shared `Vec<TabInfo>` from the current tab state.
