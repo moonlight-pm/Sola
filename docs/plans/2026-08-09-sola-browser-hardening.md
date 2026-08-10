@@ -80,6 +80,9 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | 2026-08-09 | **Tab switch painted wrong tab:** shader kept previous tab’s texture; same-size `apply_resize` on reactivate was a no-op so static pages never re-emitted. Fix: `paint_tab` + clear hold/pending on switch; `force_view_repaint` size nudge + focus_in on `SetActiveTab`. |
 | 2026-08-09 | **Self-watch:** `run` calls `sola_kit::app::startup` so install re-execs. **Parked frames** to reduce switch flicker (still some black flash; iterate). |
 | 2026-08-09 | **Session restore:** open tabs + active index + sidebar width in `browser-session.json`; restore on boot; CLI URL opens extra focused tab. |
+| 2026-08-10 | **See-through content:** transparent window + `REPLACE` + WebKit α=0 punched desktop holes. Fix: fragment forces α=1; always draw content rect with dark `#0a0a0b` fallback when no frame. |
+| 2026-08-10 | **Close active tab → blank content:** drop path set `active = None` + clear sample; park restore only ran when `active` was Some other tab. Fix: always sync GPU surface to `paint_tab` (restore park when `active` is None); clear pending/prime for closed tab. |
+| 2026-08-10 | **Omnibox lag on tab click:** URL only synced on 250 ms Tick. Fix: `switch_active_tab` sets `url_field` / `last_seen_url` from cached tab immediately. |
 
 ### P0 — correctness / dogfood blockers
 
@@ -96,9 +99,9 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | ID | Finding |
 |----|---------|
 | **P1.1** | No stop-loading control (NavCmd::Stop exists, unused in UI) |
-| **P1.2** | No find-in-page, zoom, reader, downloads, bookmarks, history, session restore |
+| **P1.2** | No find-in-page, zoom, reader, downloads, bookmarks, **visit** history UI (session tab restore shipped) |
 | **P1.3** | No cookie/profile path hardening / multi-profile UI |
-| **P1.4** | Tab titles/URLs update only on 250 ms Tick — sluggish omnibox/title sync |
+| **P1.4** | Tab **title** strip still merges on 250 ms Tick; omnibox URL on switch is now optimistic (fixed 2026-08-10) |
 | **P1.5** | URL-bar paste only **appends** (no selection replace) |
 | **P1.6** | Text sharpness / DPR soft vs Chromium (historical note; still open) |
 | **P1.7** | System links go to Helium; sola-browser is opt-in only |

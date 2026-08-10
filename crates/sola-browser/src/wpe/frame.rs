@@ -297,13 +297,16 @@ impl shader::Primitive for WpePrimitive {
             .paint_tab
             .load(std::sync::atomic::Ordering::Relaxed);
 
-        // Tab switch: park current surface, restore the target tab's last
-        // frame if we have one (avoids black flicker).
-        if pipeline
-            .active
-            .as_ref()
-            .is_some_and(|a| a.tab_id != paint_tab)
-        {
+        // Keep GPU active surface in sync with chrome `paint_tab`.
+        //
+        // Critical: after closing the active tab we set `active = None` and
+        // clear the sample above. The previous tab is usually still parked —
+        // restore it here. The old path only restored when `active` was
+        // *Some* other tab, so close→select previous left a blank content
+        // rect until a new WPE frame arrived (often never, same-size resize
+        // is a no-op).
+        let active_id = pipeline.active.as_ref().map(|a| a.tab_id);
+        if active_id != Some(paint_tab) {
             if let Some(prev) = pipeline.active.take() {
                 pipeline.parked.insert(prev.tab_id, prev);
             }
@@ -311,8 +314,9 @@ impl shader::Primitive for WpePrimitive {
                 show_surface(pipeline, device, &surf);
                 pipeline.active = Some(surf);
             }
-            // No clear-to-black: keep previous sample until park or new frame.
-            // (show_surface above replaces it when park hits.)
+            // No park yet: leave sample as-is (may still show last pixels)
+            // or the dark fallback after a close-clear; a new frame will
+            // install when the worker repaints.
         }
 
         let Some(pending) = self.slot.pending.lock().unwrap().take() else {
@@ -403,9 +407,9 @@ impl std::fmt::Debug for WpePipeline {
 }
 
 impl shader::Pipeline for WpePipeline {
-    fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         Self {
-            sample: SamplePipeline::new(device, format, "wpe"),
+            sample: SamplePipeline::new(device, queue, format, "wpe"),
             active: None,
             parked: HashMap::new(),
         }

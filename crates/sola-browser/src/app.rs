@@ -350,6 +350,15 @@ impl<E: Engine> App<E> {
                 }
                 // Release any parked GPU frame for this tab on next prepare.
                 self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
+                // Drop a queued frame for the closed tab so prepare cannot
+                // re-park a dead surface after the drop list is drained.
+                {
+                    let mut pending = self.slot.pending.lock().unwrap();
+                    if pending.as_ref().is_some_and(|p| p.tab_id == id) {
+                        *pending = None;
+                    }
+                }
+                self.slot.need_park_prime.lock().unwrap().remove(&id.0);
                 let _ = self.cmd_tx.send(Cmd::CloseTab(id));
                 // Drop from optimistic cache immediately so persist sees it.
                 self.cached_tabs.retain(|t| t.id != id);
@@ -520,8 +529,19 @@ impl<E: Engine> App<E> {
             .store(id.0, std::sync::atomic::Ordering::Relaxed);
         // Do not clear pending: background frames still update park cache.
         let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
-        // Force URL bar to pick up the new tab's url on next Tick.
-        self.last_seen_url.clear();
+        // Omnibox follows chrome optimistically — don't wait for Tick
+        // (250ms) or the worker URI notify, which feels laggy on tab click.
+        if let Some(info) = self.cached_tabs.iter().find(|t| t.id == id) {
+            self.url_field = if info.url == BLANK_URL {
+                String::new()
+            } else {
+                info.url.clone()
+            };
+            self.last_seen_url = info.url.clone();
+        } else {
+            // Unknown id (shouldn't happen): force Tick to refresh.
+            self.last_seen_url.clear();
+        }
     }
 
     /// Current iced theme (chrome styling), refreshed from `Topic::Theme`.

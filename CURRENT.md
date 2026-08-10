@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-09 (`naturalethic/browser` + master merged)
+**As of:** 2026-08-10 (`naturalethic/browser`)
 
 ---
 
@@ -27,8 +27,10 @@ Do not invent product policy.
      system service, not WebExtensions host for now.  
    - **Still ask:** **D5** middle-click, **D6** search.  
    - **Session tabs** persist (`browser-session.json`); restore on boot.  
-   - **Build order:** stop → visit history UI → downloads → Bitwarden design;
-     residual tab-switch flicker polish.  
+   - **Recent dogfood:** opaque content paint (no desktop hole); close-tab
+     restores parked frame; omnibox URL updates immediately on tab switch.  
+   - **Build order (next):** **stop loading** (chrome + Escape) → visit
+     history UI → downloads → Bitwarden design; residual flicker polish.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -58,7 +60,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Single `sola-browser` installed (debug); no wpe/cef sidecars; OpenUrl still Helium; polish via hardening plan | — |
+| Browser | Single `sola-browser` installed (debug); opaque web content (no see-through); park restore on close; optimistic omnibox; OpenUrl still Helium; next: stop loading | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install. User installs and smokes.

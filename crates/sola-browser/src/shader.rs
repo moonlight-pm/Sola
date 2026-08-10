@@ -1,10 +1,8 @@
 //! Shared fullscreen-sample shader pipeline for browser frames.
 //!
-//! Both engines import a texture (dma-buf or CPU upload) and sample it
-//! with the same WGSL. Engine crates still own `shader::Program` for
-//! input translation; they use [`SamplePipeline`] for create / render /
-//! FPS bookkeeping so the WGSL and three-state Clear/Load logic never
-//! drift.
+//! Imports a texture (dma-buf) and samples it with WGSL. The browser
+//! window is transparent (float CSD); content must always write **opaque**
+//! pixels into the webview rect or the desktop shows through.
 
 use std::time::Instant;
 
@@ -13,14 +11,13 @@ use iced::Rectangle;
 /// Result of importing one frame into a GPU texture the pipeline can sample.
 pub struct ImportedTexture {
     pub bind_group: wgpu::BindGroup,
-    /// Pixel size of the imported content (compared to last Resize).
+    /// Pixel size of the imported content.
     pub size: (u32, u32),
 }
 
 /// Engine-specific frame import (WPE: dma-buf → wgpu).
 pub trait FrameImport {
     type Frame: Send + 'static;
-    /// GPU resources that must stay alive while the bind group is used.
     type Hold;
 
     fn import(
@@ -32,21 +29,39 @@ pub trait FrameImport {
     ) -> Option<(ImportedTexture, Self::Hold)>;
 }
 
+/// Sola dark chrome (#0a0a0b) as BGRA bytes for a 1×1 fallback texel.
+const FALLBACK_BGRA: [u8; 4] = [0x0b, 0x0a, 0x0a, 0xff];
+
 /// Shared sample pipeline: WGSL fullscreen triangle + bind-group slots.
-#[derive(Debug)]
 pub struct SamplePipeline {
     pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub sampler: wgpu::Sampler,
+    /// Live web content. `None` → use [`Self::fallback_bind_group`].
     pub bind_group: Option<wgpu::BindGroup>,
-    /// Size of the frame currently bound, if any.
     pub frame_size: Option<(u32, u32)>,
+    fallback_bind_group: wgpu::BindGroup,
+    _fallback_texture: wgpu::Texture,
     fps_count: u64,
     fps_window_start: Instant,
 }
 
+impl std::fmt::Debug for SamplePipeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SamplePipeline")
+            .field("has_content", &self.bind_group.is_some())
+            .field("frame_size", &self.frame_size)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SamplePipeline {
-    pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, label: &str) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        label: &str,
+    ) -> Self {
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some(&format!("{label} sampler")),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -116,12 +131,63 @@ impl SamplePipeline {
             cache: None,
         });
 
+        let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&format!("{label} fallback")),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &fallback_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &FALLBACK_BGRA,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let fallback_view = fallback_texture.create_view(&Default::default());
+        let fallback_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{label} fallback bg")),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&fallback_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+
         Self {
             pipeline,
             bind_group_layout,
             sampler,
             bind_group: None,
             frame_size: None,
+            fallback_bind_group,
+            _fallback_texture: fallback_texture,
             fps_count: 0,
             fps_window_start: Instant::now(),
         }
@@ -132,28 +198,17 @@ impl SamplePipeline {
         self.frame_size = Some(imported.size);
     }
 
-    /// Install an already-built bind group (e.g. restoring a parked tab frame).
     pub fn install_bind_group(&mut self, bind_group: wgpu::BindGroup, size: (u32, u32)) {
         self.bind_group = Some(bind_group);
         self.frame_size = Some(size);
     }
 
-    /// Drop the current sample so the next render clears (black).
+    /// Drop live content; next render uses the opaque dark fallback.
     pub fn clear(&mut self) {
         self.bind_group = None;
         self.frame_size = None;
     }
 
-    /// Take the active bind group + size out of the pipeline (for parking
-    /// a tab's last frame without destroying the GPU resources).
-    pub fn take_display(&mut self) -> Option<(wgpu::BindGroup, (u32, u32))> {
-        let bg = self.bind_group.take()?;
-        let size = self.frame_size.take()?;
-        Some((bg, size))
-    }
-
-    /// FPS counter — logs at debug every ~1s. Bench harness can enable
-    /// `SOLA_BROWSER_FPS=1` for info-level lines.
     pub fn note_frame(&mut self) {
         self.fps_count += 1;
         let elapsed = self.fps_window_start.elapsed();
@@ -169,8 +224,8 @@ impl SamplePipeline {
         }
     }
 
-    /// Draw when we have a texture. Exact size match preferred; mismatch still
-    /// draws (stretch) so a 1px resize-nudge or parked frame cannot flash black.
+    /// Always draw into the content scissor: live frame or dark fallback.
+    /// Never leave the rect empty on a transparent window.
     pub fn render(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -180,10 +235,10 @@ impl SamplePipeline {
         pass_label: &str,
     ) {
         let _ = last_requested_size;
-        let (load_op, do_draw) = match self.frame_size {
-            None => (wgpu::LoadOp::Clear(wgpu::Color::BLACK), false),
-            Some(_) => (wgpu::LoadOp::Load, true),
-        };
+        let bg = self
+            .bind_group
+            .as_ref()
+            .unwrap_or(&self.fallback_bind_group);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(pass_label),
@@ -191,7 +246,7 @@ impl SamplePipeline {
                 view: target,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: load_op,
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -200,9 +255,6 @@ impl SamplePipeline {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        let Some(bg) = (do_draw).then_some(self.bind_group.as_ref()).flatten() else {
-            return;
-        };
 
         pass.set_viewport(
             clip_bounds.x as f32,
@@ -245,6 +297,9 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(tex, samp, in.uv);
+    // Force opaque: transparent window + REPLACE with α=0 from WebKit
+    // (blank/loading frames) punches a hole through to the desktop.
+    let c = textureSample(tex, samp, in.uv);
+    return vec4(c.rgb, 1.0);
 }
 "#;
