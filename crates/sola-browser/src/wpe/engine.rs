@@ -26,7 +26,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::ptr;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError, channel, sync_channel};
 use std::thread::{self, JoinHandle};
 
 use crate::{
@@ -263,7 +263,9 @@ impl WpeEngine {
     /// `Engine::spawn` after the env dance is done.
     fn spawn_inner(url: &str, width: u32, height: u32) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Cmd<WpeEngine>>();
-        let (frame_tx, frame_rx) = channel::<TaggedFrame<WpeFrame>>();
+        // Bound the frame pipeline hard. Unbounded + multi-plane CPU work
+        // queued multi‑MP frames until the process hit "Too many open files".
+        let (frame_tx, frame_rx) = sync_channel::<TaggedFrame<WpeFrame>>(1);
         let (ready_tx, ready_rx) = channel::<()>();
         let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let tabs_snapshot = Arc::new(Mutex::new(Vec::<TabInfo>::new()));
@@ -318,7 +320,9 @@ impl WpeEngine {
 
 struct WorkerCtx {
     main_loop: *mut sys::GMainLoop,
-    frame_tx: Sender<TaggedFrame<WpeFrame>>,
+    /// Capacity 1: under load drop new frames instead of unbounded queue
+    /// (was multi‑MB backlog → freeze + "Too many open files").
+    frame_tx: SyncSender<TaggedFrame<WpeFrame>>,
     cmd_rx: Receiver<Cmd<WpeEngine>>,
     /// Clone used when emitting frames so Drop can `Cmd::Release`.
     release_tx: Sender<Cmd<WpeEngine>>,
@@ -388,7 +392,7 @@ struct TabState {
 unsafe fn worker_main(
     width: u32,
     height: u32,
-    frame_tx: Sender<TaggedFrame<WpeFrame>>,
+    frame_tx: SyncSender<TaggedFrame<WpeFrame>>,
     cmd_rx: Receiver<Cmd<WpeEngine>>,
     release_tx: Sender<Cmd<WpeEngine>>,
     ready_tx: Sender<()>,
@@ -632,55 +636,20 @@ unsafe extern "C" fn on_buffer_rendered(
     let width_u = width as u32;
     let height_u = height as u32;
 
-    // Multi-plane YUV (YouTube etc.): CPU convert → BGRA, release buffer now.
-    // Leaving multi-plane unreleased used to kill the process; releasing
-    // without paint left a black view (B3).
-    if n_planes >= 2
-        && (format == super::yuv::DRM_FORMAT_NV12 || format == super::yuv::DRM_FORMAT_NV21)
-    {
-        static LOGGED_YUV: std::sync::Once = std::sync::Once::new();
-        LOGGED_YUV.call_once(|| {
-            tracing::info!(
-                n_planes,
-                format = format!("{:#x}", format),
-                modifier,
-                "wpe: multi-plane YUV path (CPU NV12→BGRA)"
-            );
-        });
-        if let Some(rgba) = convert_nv12_buffer(buffer, width_u, height_u, format) {
-            release_buffer_unchecked(view, buffer_base);
-            let frame = WpeFrame {
-                fd: None,
-                rgba: Some(rgba),
-                width: width_u,
-                height: height_u,
-                format: 0x3432_5241, // logical ARGB after convert
-                modifier: 0,
-                stride: width_u.saturating_mul(4),
-                offset: 0,
-                token: None,
-                release_tx: ctx.release_tx.clone(),
-            };
-            if ctx.frame_tx.send(TaggedFrame { tab_id, frame }).is_err() {
-                tracing::info!("frame channel closed, quitting GMainLoop");
-                sys::g_main_loop_quit(ctx.main_loop);
-            }
-            return;
-        }
-        tracing::warn!(?tab_id, "nv12 convert failed; releasing multi-plane buffer");
-        release_buffer_unchecked(view, buffer_base);
-        return;
-    }
-
+    // Multi-plane (NV12 video / exotic modifiers): **must** release or the
+    // WPE pool dies. We no longer CPU-convert full frames — that froze the
+    // GLib worker on ~4k×4k YouTube buffers, piled up FDs ("Too many open
+    // files"), and still looked soft. Keep the last single-plane paint
+    // (chrome/UI) until a new RGB frame arrives. GPU multi-plane import is
+    // the real B3 fix later.
     if n_planes != 1 {
-        // Unknown multi-plane (e.g. exotic modifiers). Must release.
         static LOGGED_SKIP: std::sync::Once = std::sync::Once::new();
         LOGGED_SKIP.call_once(|| {
             tracing::warn!(
                 n_planes,
                 format = format!("{:#x}", format),
                 modifier,
-                "wpe: skip unsupported multi-plane format (released)"
+                "wpe: multi-plane buffer released (no import yet; last RGB frame kept)"
             );
         });
         release_buffer_unchecked(view, buffer_base);
@@ -742,76 +711,21 @@ unsafe extern "C" fn on_buffer_rendered(
     };
     ctx.outstanding_tokens
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // On channel death, `SendError` drops the frame → HeldToken/WpeFrame
-    // Drop sends Cmd::Release once. Do **not** also release_buffer here.
-    if ctx.frame_tx.send(TaggedFrame { tab_id, frame }).is_err() {
-        tracing::info!("frame channel closed, quitting GMainLoop");
-        sys::g_main_loop_quit(ctx.main_loop);
-    }
-}
-
-/// mmap + convert NV12/NV21 dma-buf to BGRA. Returns `None` on failure.
-unsafe fn convert_nv12_buffer(
-    buffer: *mut sys::WPEBufferDMABuf,
-    width: u32,
-    height: u32,
-    format: u32,
-) -> Option<Vec<u8>> {
-    use super::yuv::{self, mmap_plane, munmap_plane, nv12_family_to_bgra};
-
-    let y_fd = sys::wpe_buffer_dma_buf_get_fd(buffer, 0);
-    let uv_fd = sys::wpe_buffer_dma_buf_get_fd(buffer, 1);
-    let y_stride = sys::wpe_buffer_dma_buf_get_stride(buffer, 0);
-    let uv_stride = sys::wpe_buffer_dma_buf_get_stride(buffer, 1);
-    let y_off = sys::wpe_buffer_dma_buf_get_offset(buffer, 0);
-    let uv_off = sys::wpe_buffer_dma_buf_get_offset(buffer, 1);
-    if y_fd < 0 || uv_fd < 0 || y_stride == 0 || uv_stride == 0 {
-        return None;
-    }
-
-    let y_len = (y_stride as usize).checked_mul(height as usize)?;
-    let uv_len = (uv_stride as usize).checked_mul(((height + 1) / 2) as usize)?;
-
-    let (y_map, y_map_len) = mmap_plane(y_fd, y_off, y_len)?;
-    let (uv_map, uv_map_len) = if uv_fd == y_fd {
-        // Same FD — second plane is an offset into the same map.
-        (y_map, y_map_len)
-    } else {
-        match mmap_plane(uv_fd, uv_off, uv_len) {
-            Some(m) => m,
-            None => {
-                munmap_plane(y_map, y_map_len);
-                return None;
-            }
+    // Bounded channel: if iced is behind, drop this frame (Drop → Release)
+    // instead of unbounded queue growth.
+    match ctx.frame_tx.try_send(TaggedFrame { tab_id, frame }) {
+        Ok(()) => {}
+        Err(TrySendError::Full(tagged)) => {
+            // Prefer the newer frame: the Full payload is the one we
+            // couldn't enqueue. Drop it (releases) and leave the older
+            // in-channel frame; under load we skip. Better than OOM.
+            drop(tagged);
         }
-    };
-
-    let y_slice = std::slice::from_raw_parts(
-        (y_map as *const u8).add(y_off as usize),
-        y_len,
-    );
-    let uv_base = if uv_fd == y_fd {
-        (y_map as *const u8).add(uv_off as usize)
-    } else {
-        (uv_map as *const u8).add(uv_off as usize)
-    };
-    let uv_slice = std::slice::from_raw_parts(uv_base, uv_len);
-
-    let rgba = nv12_family_to_bgra(
-        y_slice,
-        y_stride,
-        uv_slice,
-        uv_stride,
-        width,
-        height,
-        format == yuv::DRM_FORMAT_NV21,
-    );
-
-    if uv_fd != y_fd {
-        munmap_plane(uv_map, uv_map_len);
+        Err(TrySendError::Disconnected(_)) => {
+            tracing::info!("frame channel closed, quitting GMainLoop");
+            sys::g_main_loop_quit(ctx.main_loop);
+        }
     }
-    munmap_plane(y_map, y_map_len);
-    rgba
 }
 
 unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {

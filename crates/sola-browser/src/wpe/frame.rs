@@ -32,16 +32,19 @@ use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 const RETIRE_DEPTH: usize = 0;
 
 /// Longest allowed physical edge (px). Soft cap if compositor scale would
-/// exceed this for the CSS viewport.
-const MAX_PHYS_EDGE: f64 = 2560.0;
+/// exceed this for the CSS viewport. Keep this modest — YouTube was emitting
+/// ~4k×4k buffers and freezing the process under scroll.
+const MAX_PHYS_EDGE: f64 = 1920.0;
 
-/// Device scale for content = compositor scale (1:1 with the iced scissor).
-/// No forced supersample — that produced 4k frames and killed input FPS.
+/// Device scale for content. Prefer crisp 1:1 with iced when possible, but
+/// never let phys size explode (media sites thrash the buffer pool).
 fn choose_content_dpr(compositor_scale: f64, css_w: u32, css_h: u32) -> f64 {
     let max_css = css_w.max(css_h).max(1) as f64;
     let want = compositor_scale.max(1.0);
-    let cap = (MAX_PHYS_EDGE / max_css).clamp(1.0, 3.0);
-    want.min(cap)
+    // Cap both absolute edge and max scale so a 2× compositor on a large
+    // window does not request 4k dma-bufs.
+    let edge_cap = (MAX_PHYS_EDGE / max_css).clamp(1.0, 2.0);
+    want.min(edge_cap).min(1.5)
 }
 
 pub struct WpeProgram {
