@@ -758,6 +758,13 @@ impl Shell {
                 modifiers: 0,
             });
         }
+        // While the switcher is up, Super is held (Meta+Tab). Grab Meta+←/→ so
+        // River delivers them; `on_chord` already maps Left/Right to SwitcherNav.
+        // Deregistered on dismiss so bare apps keep their own arrow bindings.
+        if self.switcher.active {
+            chords.push(keys::to_registered(&KeyCode::LEFT.meta()));
+            chords.push(keys::to_registered(&KeyCode::RIGHT.meta()));
+        }
         chords.sort_by_key(|c| (c.modifiers, c.keysym));
         chords.dedup();
         chords
@@ -768,7 +775,8 @@ impl Shell {
     /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+Grave,
     /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Bare Super_L
     /// always registered so ChordReleased fires for switcher confirm. Escape
-    /// registered only while an overlay is active.
+    /// registered only while an overlay is active. Meta+Left/Right registered
+    /// only while the switcher is active.
     ///
     /// No-op when the chord set is identical to the last emit — avoids a River
     /// manage cycle on every title-only `Windows` rebroadcast.
