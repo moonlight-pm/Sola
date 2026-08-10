@@ -308,6 +308,7 @@ impl shader::Primitive for WpePrimitive {
                 let _ = self.slot.cmd_tx.send(Cmd::Resize {
                     width: req_w,
                     height: req_h,
+                    scale: viewport.scale_factor() as f64,
                 });
             }
         }
@@ -355,6 +356,7 @@ impl shader::Primitive for WpePrimitive {
                 let _ = self.slot.cmd_tx.send(Cmd::Resize {
                     width: req_w,
                     height: req_h,
+                    scale: viewport.scale_factor() as f64,
                 });
             }
         }

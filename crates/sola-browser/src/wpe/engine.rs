@@ -240,7 +240,11 @@ impl WpeEngine {
         // Tabs are opened by chrome after session restore (see `App::bootstrap`).
         // Only queue the initial viewport size here.
         active_atomic.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
-        let _ = cmd_tx.send(Cmd::Resize { width, height });
+        let _ = cmd_tx.send(Cmd::Resize {
+            width,
+            height,
+            scale: 1.0,
+        });
         let _ = url; // session/argv URLs applied by chrome bootstrap
 
         let cursor_w = cursor.clone();
@@ -287,6 +291,8 @@ struct WorkerCtx {
     tabs: Vec<TabState>,
     active: TabId,
     last_size: (u32, u32),
+    /// Compositor / iced scale factor last applied to the active view.
+    last_scale: f64,
     cursor: Arc<std::sync::atomic::AtomicU32>,
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
@@ -377,6 +383,7 @@ unsafe fn worker_main(
         tabs: Vec::new(),
         active: TabId(u64::MAX),
         last_size: (width, height),
+        last_scale: 1.0,
         cursor,
         tabs_snapshot,
         active_atomic,
@@ -652,13 +659,24 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
 /// both the initial drain and the GLib timer pump share logic.
 unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
     match cmd {
-        Cmd::Resize { width, height } => {
+        Cmd::Resize {
+            width,
+            height,
+            scale,
+        } => {
             ctx.last_size = (width, height);
+            let scale = if scale.is_finite() && scale > 0.0 {
+                scale
+            } else {
+                1.0
+            };
+            ctx.last_scale = scale;
             // Active tab only — resizing every tab every frame exhausted the
             // WPE buffer pool and led to invalid buffer_released / SIGSEGV.
             if let Some(tab) = active_tab_mut(ctx) {
                 if !tab.wpe_view.is_null() {
                     ensure_view_size(tab, width, height);
+                    apply_view_scale(tab, scale);
                 }
             }
         }
@@ -1322,4 +1340,17 @@ unsafe fn apply_resize_tab(tab: &mut TabState, width: u32, height: u32) {
     sys::wpe_view_resized(view, width as i32, height as i32);
     tab.view_size = (width, height);
     tracing::debug!(width, height, "view resized + notified");
+}
+
+/// Tell WPE/WebKit the compositor scale so HiDPI text is not rendered soft
+/// (layout CSS px vs buffer px). Safe to call every Resize.
+unsafe fn apply_view_scale(tab: &TabState, scale: f64) {
+    if tab.wpe_view.is_null() || !(scale.is_finite() && scale > 0.0) {
+        return;
+    }
+    let toplevel = sys::wpe_view_get_toplevel(tab.wpe_view);
+    if toplevel.is_null() {
+        return;
+    }
+    sys::wpe_toplevel_scale_changed(toplevel, scale);
 }

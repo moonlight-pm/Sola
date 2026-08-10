@@ -51,7 +51,9 @@ pub enum EditCmd {
 /// input rides the normal command channel with no
 /// process-wide side-channel.
 pub enum Cmd<E: Engine> {
-    Resize { width: u32, height: u32 },
+    /// Physical pixel size of the content scissor + compositor scale factor
+    /// (for `wpe_toplevel_scale_changed` / HiDPI text).
+    Resize { width: u32, height: u32, scale: f64 },
     /// Recycle a producer buffer (WPE dma-buf pool).
     Release { token: E::Token },
     Input(E::Input),

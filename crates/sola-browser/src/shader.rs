@@ -62,12 +62,17 @@ impl SamplePipeline {
         format: wgpu::TextureFormat,
         label: &str,
     ) -> Self {
+        // Nearest on magnify keeps UI text crisp when the buffer is 1:1 (or
+        // slightly small). Linear min avoids moiré if the buffer is larger
+        // than the scissor. Linear-on-both was soft on small labels
+        // ("Next", "Try another way") under any residual size mismatch.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some(&format!("{label} sampler")),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
