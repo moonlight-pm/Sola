@@ -26,8 +26,9 @@ Do not invent product policy.
    - **D7:** first-party Bitwarden UX (SDK + inject); not Chrome store, not
      system service, not WebExtensions host for now.  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Build order:** engine reliability (B1/B2) → stop → history/restore →
-     downloads → Bitwarden design/implement.  
+   - **Session tabs** persist (`browser-session.json`); restore on boot.  
+   - **Build order:** stop → visit history UI → downloads → Bitwarden design;
+     residual tab-switch flicker polish.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (merged)  
    - **UI:** search + **A–Z / Recent** + **Ready to play only** (default on);
      lazy viewport banners; Play / Store / Uninstall; **Install** + faded

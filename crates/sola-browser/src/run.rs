@@ -27,6 +27,8 @@ use iced::stream;
 use iced::Subscription;
 use iced_futures::subscription::{self, EventStream, Recipe};
 
+use sola_core::config::JsonConfig;
+
 use crate::app::{App, Msg, DEFAULT_URL, VIEW_H, VIEW_W};
 use crate::engine::{ActiveHandle, Engine, FrameSlot, TaggedFrame};
 
@@ -140,9 +142,17 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     // the browser never auto-restarts after `cargo make install`.
     let _socket = sola_kit::app::startup(app_id);
 
-    let url = std::env::args().nth(1).unwrap_or_else(|| DEFAULT_URL.to_string());
-    tracing::info!(%url, "loading url");
-    let engine = E::spawn(app_id, &url, VIEW_W, VIEW_H);
+    let argv = std::env::args().nth(1);
+    let (boot_tabs, boot_active, sidebar_w) =
+        crate::session::BrowserSession::load().bootstrap(argv, DEFAULT_URL);
+    tracing::info!(
+        tabs = boot_tabs.len(),
+        active_index = boot_active,
+        "bootstrapping session"
+    );
+
+    // Engine starts with no tabs; chrome opens the restored set.
+    let engine = E::spawn(app_id, "", VIEW_W, VIEW_H);
 
     let cmd_tx = engine.cmd_sender();
     let tabs_handle = engine.tabs_handle();
@@ -154,9 +164,7 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
         cmd_tx: cmd_tx.clone(),
         last_size: Mutex::new((VIEW_W, VIEW_H)),
         cursor,
-        paint_tab: std::sync::atomic::AtomicU64::new(
-            active_handle.load(std::sync::atomic::Ordering::Relaxed),
-        ),
+        paint_tab: std::sync::atomic::AtomicU64::new(u64::MAX),
         drop_paint_tabs: Mutex::new(Vec::new()),
     });
 
@@ -170,10 +178,15 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     // initializer must be `Fn`, so we wrap `engine` in `Option` and take
     // it once via `Option::take`.
     let engine_cell = std::cell::Cell::new(Some(engine));
+    let boot_tabs = std::cell::RefCell::new(Some(boot_tabs));
 
     let result = iced::application(
         move || {
             let engine = engine_cell
+                .take()
+                .expect("browser App init called more than once");
+            let tabs = boot_tabs
+                .borrow_mut()
                 .take()
                 .expect("browser App init called more than once");
             let app = App::<E>::new(
@@ -182,8 +195,10 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
                 cmd_tx.clone(),
                 tabs_handle.clone(),
                 active_handle.clone(),
-                url.clone(),
                 app_id,
+                tabs,
+                boot_active,
+                sidebar_w,
             );
             (
                 app,

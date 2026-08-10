@@ -21,6 +21,7 @@ sola-core = { path = "../sola-core" }
 sola-kit = { path = "../sola-kit" }
 tracing = "0.1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+serde = { version = "1", features = ["derive"] }
 
 # DMA-BUF import via wgpu-hal-patched (workspace `[patch.crates-io]`).
 wgpu = { version = "27", features = ["vulkan-portability"] }

@@ -234,18 +234,11 @@ impl WpeEngine {
         let next_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
         let clipboard_out: ClipboardHandle = Arc::new(Mutex::new(None));
 
-        let initial_id = TabId(next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-        active_atomic.store(initial_id.0, std::sync::atomic::Ordering::Relaxed);
-
-        // Queue: set initial size, then open the first tab, then
-        // activate it. The pump processes these in order on the
-        // worker thread.
+        // Tabs are opened by chrome after session restore (see `App::bootstrap`).
+        // Only queue the initial viewport size here.
+        active_atomic.store(u64::MAX, std::sync::atomic::Ordering::Relaxed);
         let _ = cmd_tx.send(Cmd::Resize { width, height });
-        let _ = cmd_tx.send(Cmd::OpenTab {
-            id: initial_id,
-            url: url.to_string(),
-        });
-        let _ = cmd_tx.send(Cmd::SetActiveTab(initial_id));
+        let _ = url; // session/argv URLs applied by chrome bootstrap
 
         let cursor_w = cursor.clone();
         let snapshot_w = tabs_snapshot.clone();

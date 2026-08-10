@@ -5457,6 +5457,7 @@ dependencies = [
  "iced_futures",
  "libc",
  "pkg-config",
+ "serde",
  "sola-bus",
  "sola-core",
  "sola-kit",

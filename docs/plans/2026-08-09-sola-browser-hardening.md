@@ -50,7 +50,8 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | http/https system default | **Helium** until browser is ship-ready (**D3 decided 2026-08-09**; `OpenUrl` not subscribed) |
 | Last tab | never empty — replace with `about:blank` |
 | Profiles / bookmarks / find / zoom / devtools | **absent** |
-| Stop / downloads / history+restore | **absent** — **D4 in-scope** |
+| Stop / downloads | **absent** — **D4 in-scope** |
+| Session restore (open tabs) | **partial** — `~/.config/sola/browser-session.json` (tabs+active+sidebar) |
 | Bitwarden / extensions | **absent** — **D4 in-scope**; **D7:** first-party UX (SDK + inject) |
 
 ---
@@ -77,6 +78,8 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | Date | Fix |
 |------|-----|
 | 2026-08-09 | **Tab switch painted wrong tab:** shader kept previous tab’s texture; same-size `apply_resize` on reactivate was a no-op so static pages never re-emitted. Fix: `paint_tab` + clear hold/pending on switch; `force_view_repaint` size nudge + focus_in on `SetActiveTab`. |
+| 2026-08-09 | **Self-watch:** `run` calls `sola_kit::app::startup` so install re-execs. **Parked frames** to reduce switch flicker (still some black flash; iterate). |
+| 2026-08-09 | **Session restore:** open tabs + active index + sidebar width in `browser-session.json`; restore on boot; CLI URL opens extra focused tab. |
 
 ### P0 — correctness / dogfood blockers
 

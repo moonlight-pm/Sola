@@ -16,7 +16,10 @@ use sola_kit::components::{
     vertical_tabs_sized,
 };
 
+use sola_core::config::JsonConfig;
+
 use crate::engine::{Cmd, EditCmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
+use crate::session::{self, SessionTab};
 
 pub const DEFAULT_URL: &str = "https://www.wikipedia.org";
 /// A fresh blank tab (⌘T). Loaded as an empty page; the chrome shows an empty,
@@ -131,6 +134,8 @@ pub struct App<E: Engine> {
     /// typing in the bar; cleared when a press lands in the web view.
     /// Best-effort heuristic — see the design spec's documented edge case.
     pub url_bar_focused: bool,
+    /// Last written session fingerprint — skip disk when unchanged.
+    session_fp: String,
 }
 
 impl<E: Engine> App<E> {
@@ -145,22 +150,23 @@ impl<E: Engine> App<E> {
         cmd_tx: Sender<Cmd<E>>,
         tabs_handle: TabsHandle,
         active_handle: Arc<AtomicU64>,
-        url: String,
         app_id: &'static str,
+        tabs: Vec<SessionTab>,
+        active_index: usize,
+        sidebar_w: f32,
     ) -> Self {
-        let cached_active = TabId(active_handle.load(Ordering::Relaxed));
-        Self {
+        let mut app = Self {
             engine,
             slot,
             cmd_tx,
             tabs_handle,
             active_handle,
             cached_tabs: Vec::new(),
-            cached_active,
-            url_field: url.clone(),
-            last_seen_url: url,
+            cached_active: TabId(u64::MAX),
+            url_field: String::new(),
+            last_seen_url: String::new(),
             theme: sola_kit::theme::default_theme(),
-            sidebar_w: SIDEBAR_W_DEFAULT,
+            sidebar_w,
             dragging_divider: false,
             last_cursor_x: None,
             drag_anchor: None,
@@ -169,7 +175,79 @@ impl<E: Engine> App<E> {
             window_id: None,
             app_id,
             url_bar_focused: false,
+            session_fp: String::new(),
+        };
+        app.bootstrap_tabs(tabs, active_index);
+        app
+    }
+
+    /// Open restored tabs in order and focus `active_index`.
+    fn bootstrap_tabs(&mut self, tabs: Vec<SessionTab>, active_index: usize) {
+        debug_assert!(!tabs.is_empty(), "bootstrap always has ≥1 tab");
+        let mut ids = Vec::with_capacity(tabs.len());
+        for tab in tabs {
+            let id = self.engine.alloc_tab_id();
+            let url = crate::util::normalize_url(&tab.url);
+            let url = if url.is_empty() {
+                BLANK_URL.to_string()
+            } else {
+                url
+            };
+            // Optimistic chrome snapshot so the strip isn't empty for a tick.
+            self.cached_tabs.push(TabInfo {
+                id,
+                url: url.clone(),
+                title: tab.title,
+            });
+            let _ = self.cmd_tx.send(Cmd::OpenTab { id, url });
+            ids.push(id);
         }
+        let active = ids
+            .get(active_index)
+            .copied()
+            .or_else(|| ids.first().copied())
+            .unwrap_or(TabId(0));
+        self.switch_active_tab(active);
+        if let Some(info) = self.cached_tabs.iter().find(|t| t.id == active) {
+            self.url_field = if info.url == BLANK_URL {
+                String::new()
+            } else {
+                info.url.clone()
+            };
+            self.last_seen_url = info.url.clone();
+        }
+        self.persist_session();
+        tracing::info!(
+            tabs = self.cached_tabs.len(),
+            active = active.0,
+            "session restored"
+        );
+    }
+
+    /// Write session to disk if the tab list / active / sidebar changed.
+    pub fn persist_session(&mut self) {
+        // Prefer engine snapshot when available (authoritative URLs/titles).
+        let live = self.tabs_handle.lock().unwrap().clone();
+        let tabs = if live.is_empty() {
+            self.cached_tabs.clone()
+        } else {
+            live
+        };
+        if tabs.is_empty() {
+            return;
+        }
+        let active = if tabs.iter().any(|t| t.id == self.cached_active) {
+            self.cached_active
+        } else {
+            tabs[0].id
+        };
+        let session = session::session_from_tabs(&tabs, active, self.sidebar_w);
+        let fp = session::fingerprint(&session);
+        if fp == self.session_fp {
+            return;
+        }
+        session.save();
+        self.session_fp = fp;
     }
 
     pub fn active_tab_info(&self) -> Option<&TabInfo> {
@@ -210,7 +288,16 @@ impl<E: Engine> App<E> {
                 }
                 self.url_field = url.clone();
                 self.last_seen_url = url.clone();
+                // Optimistic: update cached tab url so session persists immediately.
+                if let Some(t) = self
+                    .cached_tabs
+                    .iter_mut()
+                    .find(|t| t.id == self.cached_active)
+                {
+                    t.url = url.clone();
+                }
                 let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
+                self.persist_session();
             }
             Msg::CloseTab(id) => {
                 // Never drop below one tab: open a blank replacement first.
@@ -230,14 +317,20 @@ impl<E: Engine> App<E> {
                 // Release any parked GPU frame for this tab on next prepare.
                 self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
                 let _ = self.cmd_tx.send(Cmd::CloseTab(id));
+                // Drop from optimistic cache immediately so persist sees it.
+                self.cached_tabs.retain(|t| t.id != id);
+                self.persist_session();
             }
             Msg::ActivateTab(id) => {
                 self.switch_active_tab(id);
+                self.persist_session();
             }
             Msg::Tick => {
                 self.cached_tabs = self.tabs_handle.lock().unwrap().clone();
                 let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
-                self.cached_active = engine_active;
+                if engine_active.0 != u64::MAX {
+                    self.cached_active = engine_active;
+                }
                 let active_url = self.active_tab_info().map(|t| t.url.clone());
                 if let Some(url) = active_url {
                     if url != self.last_seen_url {
@@ -246,6 +339,7 @@ impl<E: Engine> App<E> {
                         self.url_field = if url == BLANK_URL { String::new() } else { url };
                     }
                 }
+                self.persist_session();
                 // Drain any page-selection text the engine extracted for a copy
                 // and put it on the system clipboard via iced. The engine's own
                 // clipboard can't reach Wayland (headless display); iced's can.
@@ -274,6 +368,7 @@ impl<E: Engine> App<E> {
                     }
                 }
             }
+            // sidebar width persisted on Tick / drop
             Msg::CursorReleased => {
                 if self.dragging_divider {
                     self.dragging_divider = false;
@@ -343,10 +438,16 @@ impl<E: Engine> App<E> {
     pub fn open_tab(&mut self, url: String, activate: bool) {
         let url = crate::util::normalize_url(&url);
         let id = self.engine.alloc_tab_id();
+        self.cached_tabs.push(TabInfo {
+            id,
+            url: url.clone(),
+            title: String::new(),
+        });
         let _ = self.cmd_tx.send(Cmd::OpenTab { id, url });
         if activate {
             self.switch_active_tab(id);
         }
+        self.persist_session();
     }
 
     /// Switch which tab paints: update chrome state, drop any queued
@@ -522,6 +623,8 @@ impl<E: Engine> App<E> {
 
 impl<E: Engine> Drop for App<E> {
     fn drop(&mut self) {
+        // Flush tab session before killing the worker.
+        self.persist_session();
         // Orderly engine teardown on iced exit (Cmd::Quit + join worker).
         self.engine.shutdown();
     }
