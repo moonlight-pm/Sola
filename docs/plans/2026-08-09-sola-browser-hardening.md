@@ -88,6 +88,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | 2026-08-10 | **Zoom heal:** track `last_frame_size`; if buffer ≠ request, 1px nudge once per wrong buffer; chrome re-sends Resize while painted size mismatches. |
 | 2026-08-10 | **Nav chrome:** back/forward disabled without history; fixed-width reload/stop slot. **Multi-plane buffers released** (not dropped) — YouTube/media was exhausting the WPE pool and killing the browser. |
 | 2026-08-10 | **DPR / sharpness:** resize is CSS layout size + device scale (was double-scaling physical×scale); force 2× supersample when compositor scale≈1; input in CSS coords; retire depth 1; skip re-import if buffer still held. |
+| 2026-08-10 | **Input/animation lag:** root cause = WPE buffer-pool starvation (park+retire multi-hold) + iced flooded with NewFrame + multi‑MP frames. Fix: one live hold, coalesce NewFrame, compositor DPR only. |
 
 ### P0 — correctness / dogfood blockers
 
