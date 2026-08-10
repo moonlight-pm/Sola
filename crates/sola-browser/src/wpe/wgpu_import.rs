@@ -26,7 +26,17 @@ use ash::vk;
 /// `_holder` (frees the imported VkDeviceMemory).
 pub struct ImportedFrame {
     pub texture: wgpu::Texture,
-    _holder: MemoryHolder,
+    _holder: Option<MemoryHolder>,
+}
+
+impl ImportedFrame {
+    /// Texture fully owned by wgpu (CPU upload path) — no imported memory.
+    pub fn from_owned_texture(texture: wgpu::Texture) -> Self {
+        Self {
+            texture,
+            _holder: None,
+        }
+    }
 }
 
 impl std::fmt::Debug for ImportedFrame {
@@ -256,7 +266,7 @@ pub unsafe fn import(
 
     Ok(ImportedFrame {
         texture,
-        _holder: memory,
+        _holder: Some(memory),
     })
 }
 

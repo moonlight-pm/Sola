@@ -48,6 +48,13 @@ pub enum InputEvent {
     Key { down: bool, keyval: u32, keycode: u32, modifiers: u32, time_ms: u32 },
 }
 
+/// One plane of a dma-buf (dup'd FD + layout).
+pub struct DmabufPlane {
+    pub fd: OwnedFd,
+    pub stride: u32,
+    pub offset: u32,
+}
+
 /// One frame as it crosses thread boundaries. The FD is dup'd by
 /// the worker before sending so iced can own the lifetime
 /// independent of WPE's buffer-recycle cycle.
@@ -55,10 +62,13 @@ pub enum InputEvent {
 /// **Drop recycles the buffer.** Any path that drops a `WpeFrame`
 /// without `take_token()` sends `Cmd::Release` so WPE returns the
 /// dma-buf to its pool (inactive-tab drops, pending overwrite,
-/// import failure).
+/// import failure). CPU-converted YUV frames release the buffer in
+/// the worker before send (`token` is already `None`).
 pub struct WpeFrame {
-    /// Taken by the importer; `None` after successful import handoff.
+    /// Single-plane dma-buf (ARGB8888 path). Taken by the importer.
     pub fd: Option<OwnedFd>,
+    /// Tightly packed BGRA8 when we converted multi-plane YUV on CPU.
+    pub rgba: Option<Vec<u8>>,
     pub width: u32,
     pub height: u32,
     /// DRM fourcc (e.g. `0x34325241` = ARGB8888).
@@ -81,6 +91,10 @@ impl WpeFrame {
     pub fn take_fd(&mut self) -> Option<OwnedFd> {
         self.fd.take()
     }
+
+    pub fn take_rgba(&mut self) -> Option<Vec<u8>> {
+        self.rgba.take()
+    }
 }
 
 impl Drop for WpeFrame {
@@ -93,20 +107,32 @@ impl Drop for WpeFrame {
 
 /// GPU-held buffer token: on Drop, sends `Cmd::Release` back to the worker.
 pub struct HeldToken {
-    pub token: ResourceToken,
-    release_tx: Sender<Cmd<WpeEngine>>,
+    token: Option<ResourceToken>,
+    release_tx: Option<Sender<Cmd<WpeEngine>>>,
 }
 
 impl HeldToken {
+    /// No WPE buffer to recycle (e.g. CPU-converted YUV frame).
+    pub fn none() -> Self {
+        Self {
+            token: None,
+            release_tx: None,
+        }
+    }
+
     pub fn new(token: ResourceToken, release_tx: Sender<Cmd<WpeEngine>>) -> Self {
-        Self { token, release_tx }
+        Self {
+            token: Some(token),
+            release_tx: Some(release_tx),
+        }
     }
 }
 
 impl Drop for HeldToken {
     fn drop(&mut self) {
-        let token = self.token;
-        let _ = self.release_tx.send(Cmd::Release { token });
+        if let (Some(token), Some(tx)) = (self.token.take(), self.release_tx.take()) {
+            let _ = tx.send(Cmd::Release { token });
+        }
     }
 }
 
@@ -601,16 +627,66 @@ unsafe extern "C" fn on_buffer_rendered(
         tab.last_frame_size = new_sz;
     }
     let n_planes = sys::wpe_buffer_dma_buf_get_n_planes(buffer);
-    if n_planes != 1 {
-        // YouTube / video often ship multi-plane (e.g. NV12). We cannot
-        // import them yet — but we **must** release or the buffer pool
-        // exhausts and the browser dies under media load (B3).
-        tracing::debug!(n_planes, ?tab_id, "skip multi-plane frame (released)");
+    let format = sys::wpe_buffer_dma_buf_get_format(buffer);
+    let modifier = sys::wpe_buffer_dma_buf_get_modifier(buffer);
+    let width_u = width as u32;
+    let height_u = height as u32;
+
+    // Multi-plane YUV (YouTube etc.): CPU convert → BGRA, release buffer now.
+    // Leaving multi-plane unreleased used to kill the process; releasing
+    // without paint left a black view (B3).
+    if n_planes >= 2
+        && (format == super::yuv::DRM_FORMAT_NV12 || format == super::yuv::DRM_FORMAT_NV21)
+    {
+        static LOGGED_YUV: std::sync::Once = std::sync::Once::new();
+        LOGGED_YUV.call_once(|| {
+            tracing::info!(
+                n_planes,
+                format = format!("{:#x}", format),
+                modifier,
+                "wpe: multi-plane YUV path (CPU NV12→BGRA)"
+            );
+        });
+        if let Some(rgba) = convert_nv12_buffer(buffer, width_u, height_u, format) {
+            release_buffer_unchecked(view, buffer_base);
+            let frame = WpeFrame {
+                fd: None,
+                rgba: Some(rgba),
+                width: width_u,
+                height: height_u,
+                format: 0x3432_5241, // logical ARGB after convert
+                modifier: 0,
+                stride: width_u.saturating_mul(4),
+                offset: 0,
+                token: None,
+                release_tx: ctx.release_tx.clone(),
+            };
+            if ctx.frame_tx.send(TaggedFrame { tab_id, frame }).is_err() {
+                tracing::info!("frame channel closed, quitting GMainLoop");
+                sys::g_main_loop_quit(ctx.main_loop);
+            }
+            return;
+        }
+        tracing::warn!(?tab_id, "nv12 convert failed; releasing multi-plane buffer");
         release_buffer_unchecked(view, buffer_base);
         return;
     }
-    let format = sys::wpe_buffer_dma_buf_get_format(buffer);
-    let modifier = sys::wpe_buffer_dma_buf_get_modifier(buffer);
+
+    if n_planes != 1 {
+        // Unknown multi-plane (e.g. exotic modifiers). Must release.
+        static LOGGED_SKIP: std::sync::Once = std::sync::Once::new();
+        LOGGED_SKIP.call_once(|| {
+            tracing::warn!(
+                n_planes,
+                format = format!("{:#x}", format),
+                modifier,
+                "wpe: skip unsupported multi-plane format (released)"
+            );
+        });
+        release_buffer_unchecked(view, buffer_base);
+        return;
+    }
+
     let stride = sys::wpe_buffer_dma_buf_get_stride(buffer, 0);
     let offset = sys::wpe_buffer_dma_buf_get_offset(buffer, 0);
     let raw_fd = sys::wpe_buffer_dma_buf_get_fd(buffer, 0);
@@ -649,8 +725,9 @@ unsafe extern "C" fn on_buffer_rendered(
 
     let frame = WpeFrame {
         fd: Some(OwnedFd::from_raw_fd(dup_fd)),
-        width: width as u32,
-        height: height as u32,
+        rgba: None,
+        width: width_u,
+        height: height_u,
         format,
         modifier,
         stride,
@@ -671,6 +748,70 @@ unsafe extern "C" fn on_buffer_rendered(
         tracing::info!("frame channel closed, quitting GMainLoop");
         sys::g_main_loop_quit(ctx.main_loop);
     }
+}
+
+/// mmap + convert NV12/NV21 dma-buf to BGRA. Returns `None` on failure.
+unsafe fn convert_nv12_buffer(
+    buffer: *mut sys::WPEBufferDMABuf,
+    width: u32,
+    height: u32,
+    format: u32,
+) -> Option<Vec<u8>> {
+    use super::yuv::{self, mmap_plane, munmap_plane, nv12_family_to_bgra};
+
+    let y_fd = sys::wpe_buffer_dma_buf_get_fd(buffer, 0);
+    let uv_fd = sys::wpe_buffer_dma_buf_get_fd(buffer, 1);
+    let y_stride = sys::wpe_buffer_dma_buf_get_stride(buffer, 0);
+    let uv_stride = sys::wpe_buffer_dma_buf_get_stride(buffer, 1);
+    let y_off = sys::wpe_buffer_dma_buf_get_offset(buffer, 0);
+    let uv_off = sys::wpe_buffer_dma_buf_get_offset(buffer, 1);
+    if y_fd < 0 || uv_fd < 0 || y_stride == 0 || uv_stride == 0 {
+        return None;
+    }
+
+    let y_len = (y_stride as usize).checked_mul(height as usize)?;
+    let uv_len = (uv_stride as usize).checked_mul(((height + 1) / 2) as usize)?;
+
+    let (y_map, y_map_len) = mmap_plane(y_fd, y_off, y_len)?;
+    let (uv_map, uv_map_len) = if uv_fd == y_fd {
+        // Same FD — second plane is an offset into the same map.
+        (y_map, y_map_len)
+    } else {
+        match mmap_plane(uv_fd, uv_off, uv_len) {
+            Some(m) => m,
+            None => {
+                munmap_plane(y_map, y_map_len);
+                return None;
+            }
+        }
+    };
+
+    let y_slice = std::slice::from_raw_parts(
+        (y_map as *const u8).add(y_off as usize),
+        y_len,
+    );
+    let uv_base = if uv_fd == y_fd {
+        (y_map as *const u8).add(uv_off as usize)
+    } else {
+        (uv_map as *const u8).add(uv_off as usize)
+    };
+    let uv_slice = std::slice::from_raw_parts(uv_base, uv_len);
+
+    let rgba = nv12_family_to_bgra(
+        y_slice,
+        y_stride,
+        uv_slice,
+        uv_stride,
+        width,
+        height,
+        format == yuv::DRM_FORMAT_NV21,
+    );
+
+    if uv_fd != y_fd {
+        munmap_plane(uv_map, uv_map_len);
+    }
+    munmap_plane(y_map, y_map_len);
+    rgba
 }
 
 unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {

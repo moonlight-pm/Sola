@@ -298,7 +298,7 @@ impl shader::Primitive for WpePrimitive {
         &self,
         pipeline: &mut Self::Pipeline,
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        queue: &wgpu::Queue,
         bounds: &Rectangle,
         viewport: &iced::widget::shader::Viewport,
     ) {
@@ -365,6 +365,61 @@ impl shader::Primitive for WpePrimitive {
         }
 
         let release_tx = frame.release_tx.clone();
+        let size = (frame.width, frame.height);
+        let w = frame.width;
+        let h = frame.height;
+
+        // CPU-converted multi-plane YUV (token already released in worker).
+        if let Some(rgba) = frame.take_rgba() {
+            drop(frame);
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("wpe-yuv-bgra"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w.saturating_mul(4)),
+                    rows_per_image: Some(h),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let surface = TabSurface {
+                tab_id,
+                imported: ImportedFrame::from_owned_texture(tex),
+                _token: HeldToken::none(),
+                size,
+            };
+            if let Some(old) = pipeline.active.take() {
+                drop(old);
+            }
+            show_surface(pipeline, device, &surface);
+            pipeline.active = Some(surface);
+            pipeline.sample.note_frame();
+            return;
+        }
+
         let Some(token) = frame.take_token() else {
             return;
         };
@@ -380,7 +435,6 @@ impl shader::Primitive for WpePrimitive {
             stride: frame.stride,
             offset: frame.offset,
         };
-        let size = (frame.width, frame.height);
         drop(frame);
 
         let imported = match unsafe { wgpu_import::import(device, fd, &meta) } {
