@@ -496,7 +496,7 @@ unsafe extern "C" fn on_decide_policy(
     sys::webkit_policy_decision_ignore(decision);
     let ctx = &mut *(user_data as *mut WorkerCtx);
     let id = TabId(ctx.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-    open_tab(ctx, id, uri); // no SetActiveTab → background tab
+    open_tab(ctx, id, uri, String::new()); // no SetActiveTab → background tab
     1 // TRUE — handled.
 }
 
@@ -693,8 +693,8 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 }
             }
         }
-        Cmd::OpenTab { id, url } => {
-            open_tab(ctx, id, url);
+        Cmd::OpenTab { id, url, title } => {
+            open_tab(ctx, id, url, title);
         }
         Cmd::CloseTab(id) => {
             close_tab(ctx, id);
@@ -756,7 +756,7 @@ unsafe extern "C" fn free_tab_signal_ctx(data: *mut c_void, _closure: *mut sys::
     let _ = Box::from_raw(data as *mut TabSignalCtx);
 }
 
-unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String) {
+unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_title: String) {
     // Defense in depth: never let a WebProcess inherit a compositor socket.
     // (Chrome also seals WAYLAND_DISPLAY on WindowReady before first open.)
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
@@ -776,8 +776,18 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String) {
         tracing::warn!(?id, "webkit_web_view_get_wpe_view returned null");
     }
 
+    // Match sola dark chrome (#0a0a0b) so blank / pre-paint frames are not white.
+    let mut bg = sys::WebKitColor {
+        red: 0.039_215_686,   // 0x0a
+        green: 0.039_215_686, // 0x0a
+        blue: 0.043_137_255,  // 0x0b
+        alpha: 1.0,
+    };
+    sys::webkit_web_view_set_background_color(webview as *mut _, &mut bg);
+
     let url = Arc::new(Mutex::new(initial_url.clone()));
-    let title = Arc::new(Mutex::new(String::new()));
+    // Session restore seeds title; WebKit overwrites when the page sets one.
+    let title = Arc::new(Mutex::new(initial_title));
 
     // Per-tab signal context for notify::uri and notify::title.
     // Two separate Boxes so the destroy-notify on each signal
@@ -843,8 +853,12 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String) {
         0,
     );
 
-    let url_c = CString::new(initial_url.as_str()).unwrap();
-    sys::webkit_web_view_load_uri(webview as *mut _, url_c.as_ptr());
+    // Skip about:blank navigation — it paints opaque white. Empty view + dark
+    // background is enough for a "New Tab" until the user navigates.
+    if initial_url != "about:blank" && !initial_url.is_empty() {
+        let url_c = CString::new(initial_url.as_str()).unwrap();
+        sys::webkit_web_view_load_uri(webview as *mut _, url_c.as_ptr());
+    }
 
     // Resize the new tab to whatever iced is currently displaying.
     if !wpe_view.is_null() {

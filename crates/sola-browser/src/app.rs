@@ -214,12 +214,17 @@ impl<E: Engine> App<E> {
                 url
             };
             // Optimistic chrome snapshot so the strip isn't empty for a tick.
+            // Title from session is kept until WebKit reports a non-empty one.
             self.cached_tabs.push(TabInfo {
                 id,
                 url: url.clone(),
+                title: tab.title.clone(),
+            });
+            let _ = self.cmd_tx.send(Cmd::OpenTab {
+                id,
+                url,
                 title: tab.title,
             });
-            let _ = self.cmd_tx.send(Cmd::OpenTab { id, url });
             ids.push(id);
         }
         let active = ids
@@ -353,7 +358,14 @@ impl<E: Engine> App<E> {
                 self.persist_session();
             }
             Msg::Tick => {
-                self.cached_tabs = self.tabs_handle.lock().unwrap().clone();
+                // Merge engine snapshot with prior cache: WebKit often reports
+                // empty title until the page finishes loading (esp. inactive
+                // restored tabs). Keep the last known title so the strip does
+                // not blank out after session restore.
+                let live = self.tabs_handle.lock().unwrap().clone();
+                if !live.is_empty() {
+                    self.cached_tabs = merge_tab_snapshot(&self.cached_tabs, &live);
+                }
                 let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
                 if engine_active.0 != u64::MAX {
                     self.cached_active = engine_active;
@@ -465,12 +477,17 @@ impl<E: Engine> App<E> {
     pub fn open_tab(&mut self, url: String, activate: bool) {
         let url = crate::util::normalize_url(&url);
         let id = self.engine.alloc_tab_id();
+        let title = if url == BLANK_URL {
+            "New Tab".to_string()
+        } else {
+            String::new()
+        };
         self.cached_tabs.push(TabInfo {
             id,
             url: url.clone(),
-            title: String::new(),
+            title: title.clone(),
         });
-        let _ = self.cmd_tx.send(Cmd::OpenTab { id, url });
+        let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
         if activate {
             self.switch_active_tab(id);
         }
@@ -655,4 +672,27 @@ impl<E: Engine> Drop for App<E> {
         // Orderly engine teardown on iced exit (Cmd::Quit + join worker).
         self.engine.shutdown();
     }
+}
+
+/// Prefer live engine url; keep previous title when engine still has "".
+fn merge_tab_snapshot(prev: &[TabInfo], live: &[TabInfo]) -> Vec<TabInfo> {
+    live.iter()
+        .map(|t| {
+            let kept_title = prev
+                .iter()
+                .find(|p| p.id == t.id)
+                .map(|p| p.title.as_str())
+                .unwrap_or("");
+            let title = if t.title.is_empty() && !kept_title.is_empty() {
+                kept_title.to_string()
+            } else {
+                t.title.clone()
+            };
+            TabInfo {
+                id: t.id,
+                url: t.url.clone(),
+                title,
+            }
+        })
+        .collect()
 }

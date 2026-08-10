@@ -53,7 +53,8 @@ pub enum Cmd<E: Engine> {
     Input(E::Input),
     Focus(bool),
     Nav(NavCmd),
-    OpenTab { id: TabId, url: String },
+    /// `title` seeds the tab strip before WebKit reports one (session restore).
+    OpenTab { id: TabId, url: String, title: String },
     CloseTab(TabId),
     SetActiveTab(TabId),
     /// Run an editing command against the active tab's web content.
