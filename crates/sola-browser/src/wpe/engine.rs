@@ -323,9 +323,13 @@ struct TabState {
     title: Arc<Mutex<String>>,
     /// Shared with chrome for reload/stop toggle. Updated on `load-changed`.
     is_loading: Arc<std::sync::atomic::AtomicBool>,
-    /// Last size we successfully applied to this view (skip no-op resizes;
-    /// headless `wpe_toplevel_resize` returns FALSE for equal sizes).
+    /// Last size we asked the view for (skip no-op resizes; headless
+    /// `wpe_toplevel_resize` returns FALSE for equal sizes).
     view_size: (u32, u32),
+    /// Last buffer dimensions from `on_buffer_rendered`. When this drifts
+    /// from `view_size` / chrome request, content is stretched (zoomed /
+    /// pixelated) until we force another resize.
+    last_frame_size: (u32, u32),
 }
 
 unsafe fn worker_main(
@@ -527,6 +531,10 @@ unsafe extern "C" fn on_buffer_rendered(
     let buffer_base = buffer as *mut sys::WPEBuffer;
     let width = sys::wpe_buffer_get_width(buffer_base);
     let height = sys::wpe_buffer_get_height(buffer_base);
+    // Record actual buffer size so Resize can detect stretch/zoom mismatch.
+    if let Some(tab) = ctx.tabs.iter_mut().find(|t| t.id == tab_id) {
+        tab.last_frame_size = (width as u32, height as u32);
+    }
     let n_planes = sys::wpe_buffer_dma_buf_get_n_planes(buffer);
     if n_planes != 1 {
         tracing::warn!(n_planes, "ignoring multi-plane frame");
@@ -604,7 +612,7 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
             // WPE buffer pool and led to invalid buffer_released / SIGSEGV.
             if let Some(tab) = active_tab_mut(ctx) {
                 if !tab.wpe_view.is_null() {
-                    apply_resize_tab(tab, width, height);
+                    ensure_view_size(tab, width, height);
                 }
             }
         }
@@ -924,11 +932,12 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         title,
         is_loading,
         view_size: (0, 0),
+        last_frame_size: (0, 0),
     };
 
     // Resize the new tab to whatever iced is currently displaying.
     if !wpe_view.is_null() {
-        apply_resize_tab(&mut tab, ctx.last_size.0, ctx.last_size.1);
+        ensure_view_size(&mut tab, ctx.last_size.0, ctx.last_size.1);
         // New blank tabs start unfocused so chrome can own the omnibox caret.
         let blank = initial_url.is_empty() || initial_url == "about:blank";
         if blank {
@@ -1159,23 +1168,53 @@ unsafe fn dispatch_nav(webview: *mut sys::WebKitWebView, nav: NavCmd) {
 ///
 /// Same-size `wpe_toplevel_resize` is a no-op (FALSE on headless), so a
 /// static background tab would never emit a buffer. We do a **one-shot
-/// 1px nudge** only when the target size already matches `view_size`.
-/// Continuous multi-tab resize storms are still avoided: only the active
-/// tab is resized on window changes, and the nudge runs only on
-/// `SetActiveTab`.
+/// 1px nudge** only when needed. Continuous multi-tab resize storms are
+/// still avoided: only the active tab is resized on window changes.
 unsafe fn force_view_repaint(tab: &mut TabState, width: u32, height: u32) {
-    if width == 0 || height == 0 {
-        return;
-    }
-    if tab.view_size == (width, height) {
+    ensure_view_size(tab, width, height);
+    // Always nudge once on activate so a static page that stopped painting
+    // produces a fresh buffer even when size already matched.
+    if width > 0 && height > 0 {
         let nudge_w = width.saturating_sub(1).max(1);
+        // Bypass view_size short-circuit for the nudge pair.
+        tab.view_size = (0, 0);
         apply_resize_tab(tab, nudge_w, height);
+        apply_resize_tab(tab, width, height);
     }
-    apply_resize_tab(tab, width, height);
 }
 
-/// Resize one tab's view. Skips the WPE call when size is unchanged
-/// (avoids FALSE spam + useless WebProcess churn).
+/// Bring the view to `(width, height)`. If we already *asked* for that size
+/// but buffers still arrive at a different size, force a 1px nudge so the
+/// WebProcess re-layouts (fixes stuck zoomed/pixelated content).
+unsafe fn ensure_view_size(tab: &mut TabState, width: u32, height: u32) {
+    if tab.wpe_view.is_null() || width == 0 || height == 0 {
+        return;
+    }
+    let want = (width, height);
+    if tab.view_size != want {
+        apply_resize_tab(tab, width, height);
+        return;
+    }
+    // Already requested this size — only recover when frames prove mismatch.
+    let frame = tab.last_frame_size;
+    if frame != (0, 0) && frame != want {
+        tracing::info!(
+            ?want,
+            ?frame,
+            "buffer size ≠ view size — forcing resize (was stretched/zoomed)"
+        );
+        // Clear so a Resize storm does not re-nudge until a new buffer lands.
+        tab.last_frame_size = (0, 0);
+        tab.view_size = (0, 0);
+        let nudge_w = width.saturating_sub(1).max(1);
+        apply_resize_tab(tab, nudge_w, height);
+        apply_resize_tab(tab, width, height);
+    }
+}
+
+/// Apply a new size to one tab's WPE view. No-ops only when `view_size`
+/// already equals the target (callers that need a re-apply clear
+/// `view_size` first).
 unsafe fn apply_resize_tab(tab: &mut TabState, width: u32, height: u32) {
     if tab.wpe_view.is_null() || width == 0 || height == 0 {
         return;
@@ -1191,8 +1230,6 @@ unsafe fn apply_resize_tab(tab: &mut TabState, width: u32, height: u32) {
     }
     let ok = sys::wpe_toplevel_resize(toplevel, width as i32, height as i32);
     if ok == 0 {
-        // Still notify resized — some backends reject the request but accept
-        // the size via the resized path; track size only on success-or-notify.
         tracing::debug!(
             width,
             height,

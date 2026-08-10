@@ -300,14 +300,16 @@ impl shader::Primitive for WpePrimitive {
         let scale = viewport.scale_factor() as f32;
         let req_w = (bounds.width * scale).round().max(1.0) as u32;
         let req_h = (bounds.height * scale).round().max(1.0) as u32;
-        let mut last = self.slot.last_size.lock().unwrap();
-        if *last != (req_w, req_h) {
-            *last = (req_w, req_h);
-            drop(last);
-            let _ = self.slot.cmd_tx.send(Cmd::Resize {
-                width: req_w,
-                height: req_h,
-            });
+        let requested = (req_w, req_h);
+        {
+            let mut last = self.slot.last_size.lock().unwrap();
+            if *last != requested {
+                *last = requested;
+                let _ = self.slot.cmd_tx.send(Cmd::Resize {
+                    width: req_w,
+                    height: req_h,
+                });
+            }
         }
 
         // Drop GPU caches for closed tabs (frees dma-buf tokens).
@@ -343,6 +345,18 @@ impl shader::Primitive for WpePrimitive {
             }
             // No park: dark fallback until the worker emits a frame
             // (SetActiveTab uses a 1px resize nudge for static pages).
+        }
+
+        // Self-heal wrong buffer size: shader always stretches the texture to
+        // the scissor, so a too-small dma-buf looks permanently zoomed/pixelated.
+        // Re-send Resize so the worker can 1px-nudge when last_frame ≠ request.
+        if let Some(active) = pipeline.active.as_ref() {
+            if active.tab_id == paint_tab && active.size != requested {
+                let _ = self.slot.cmd_tx.send(Cmd::Resize {
+                    width: req_w,
+                    height: req_h,
+                });
+            }
         }
 
         let Some(pending) = self.slot.pending.lock().unwrap().take() else {
