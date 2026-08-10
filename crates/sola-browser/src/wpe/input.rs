@@ -212,17 +212,27 @@ pub fn parse_cursor_name(name: &str) -> CursorKind {
 
 /// Convenience: pull the `keyboard::Event` discriminant we care
 /// about and dispatch to `keyboard_event_to_wpe`.
+///
+/// Uses **`modified_key`** (not `key`). In iced 0.14, `key` is the
+/// unshifted logical key (`Shift+2` → `"2"`) while `modified_key`
+/// applies layout modifiers except Ctrl (`Shift+2` → `"@"`). WebKit
+/// inserts text from the keysym, so unshifted keyvals make `@` and
+/// friends impossible.
 pub fn translate_keyboard(
     ev: &keyboard::Event,
     time_ms: u32,
 ) -> Option<InputEvent> {
     match ev {
         keyboard::Event::KeyPressed {
-            key, modifiers, ..
-        } => keyboard_event_to_wpe(true, key, *modifiers, time_ms),
+            modified_key,
+            modifiers,
+            ..
+        } => keyboard_event_to_wpe(true, modified_key, *modifiers, time_ms),
         keyboard::Event::KeyReleased {
-            key, modifiers, ..
-        } => keyboard_event_to_wpe(false, key, *modifiers, time_ms),
+            modified_key,
+            modifiers,
+            ..
+        } => keyboard_event_to_wpe(false, modified_key, *modifiers, time_ms),
         // Modifier-only updates don't need a synthetic event — the
         // next keyboard event will carry the current modifier set.
         keyboard::Event::ModifiersChanged(_) => None,
