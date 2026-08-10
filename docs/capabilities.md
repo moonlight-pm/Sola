@@ -96,7 +96,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| **sola-browser** | 2026-08-10: opaque paint; retire-ring; size heal; stop; history-aware back/forward; fixed reload width; multi-plane release (YouTube pool crash); session restore; CEF removed |
+| **sola-browser** | 2026-08-10: opaque paint; retire-ring; DPR CSS+scale (sharpness); stop; history nav; multi-plane release; session restore; CEF removed |
 | **sola-arcade** | 2026-08-08: banner list + nest; library cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema exit; gamescope float 16:9 |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |
 | Float defaults | Unassigned windows default-float + kit CSD on first-party apps |

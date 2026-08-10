@@ -26,7 +26,9 @@ use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
 /// How many replaced frames to keep alive after uninstall (GPU lag).
-const RETIRE_DEPTH: usize = 2;
+/// Keep short — deep retire held WPE dma-bufs past pool reuse and caused
+/// "buffer ptr already live" + invalid `buffer_released` under media.
+const RETIRE_DEPTH: usize = 1;
 
 pub struct WpeProgram {
     pub slot: std::sync::Arc<FrameSlot<WpeEngine>>,
@@ -163,9 +165,8 @@ impl shader::Program<crate::app::Msg> for WpeProgram {
         cursor: mouse::Cursor,
     ) -> Option<iced::widget::shader::Action<crate::app::Msg>> {
         state.last_bounds = bounds;
-        let (req_w, _req_h) = *self.slot.last_size.lock().unwrap();
-        let scale = crate::input::scale_from_last_size(bounds, req_w, state.last_scale);
-        state.last_scale = scale;
+        // Input is in CSS/layout pixels (WPE size is logical + device scale).
+        state.last_scale = 1.0;
         let time_ms = state.now_ms();
         let mods_now = state.modifiers;
 
@@ -175,7 +176,7 @@ impl shader::Program<crate::app::Msg> for WpeProgram {
                 let (x, y) = crate::input::project_cursor_f64(
                     iced::Point::new(bounds.x + cur.x, bounds.y + cur.y),
                     bounds,
-                    scale,
+                    1.0,
                 );
                 let kbd_mods = input::modifiers_to_wpe(mods_now);
                 let ev = match m {
@@ -297,18 +298,35 @@ impl shader::Primitive for WpePrimitive {
         bounds: &Rectangle,
         viewport: &iced::widget::shader::Viewport,
     ) {
-        let scale = viewport.scale_factor() as f32;
-        let req_w = (bounds.width * scale).round().max(1.0) as u32;
-        let req_h = (bounds.height * scale).round().max(1.0) as u32;
-        let requested = (req_w, req_h);
+        // HiDPI model (matches WebKitGTK / Chromium OSR):
+        //   - WPE resize = **CSS/layout** size (logical widget bounds)
+        //   - scale_changed = device pixel ratio
+        //   - dma-buf = CSS × scale (physical)
+        // Passing physical size *and* scale was double-scaling and soft text.
+        //
+        // When iced reports scale≈1 (common on this stack) we supersample at
+        // 2× so WebKit rasterizes twice the density and we downscale in the
+        // shader — sharper than 1× glyphs stretched by the compositor.
+        let compositor_scale = (viewport.scale_factor() as f64).max(1.0);
+        let dpr = if compositor_scale < 1.25 {
+            2.0
+        } else {
+            compositor_scale
+        };
+        let logical_w = bounds.width.round().max(1.0) as u32;
+        let logical_h = bounds.height.round().max(1.0) as u32;
+        let phys_w = ((logical_w as f64) * dpr).round().max(1.0) as u32;
+        let phys_h = ((logical_h as f64) * dpr).round().max(1.0) as u32;
+        // last_size tracks **physical** buffer size for mismatch checks.
+        let requested = (phys_w, phys_h);
         {
             let mut last = self.slot.last_size.lock().unwrap();
             if *last != requested {
                 *last = requested;
                 let _ = self.slot.cmd_tx.send(Cmd::Resize {
-                    width: req_w,
-                    height: req_h,
-                    scale: viewport.scale_factor() as f64,
+                    width: logical_w,
+                    height: logical_h,
+                    scale: dpr,
                 });
             }
         }

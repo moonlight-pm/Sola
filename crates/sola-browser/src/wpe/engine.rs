@@ -290,6 +290,9 @@ struct WorkerCtx {
     release_tx: Sender<Cmd<WpeEngine>>,
     tabs: Vec<TabState>,
     active: TabId,
+    /// Last CSS/layout size sent to WPE resize.
+    last_css: (u32, u32),
+    /// Expected physical dma-buf size (CSS × scale).
     last_size: (u32, u32),
     /// Compositor / iced scale factor last applied to the active view.
     last_scale: f64,
@@ -384,6 +387,7 @@ unsafe fn worker_main(
         release_tx,
         tabs: Vec::new(),
         active: TabId(u64::MAX),
+        last_css: (width, height),
         last_size: (width, height),
         last_scale: 1.0,
         cursor,
@@ -573,7 +577,18 @@ unsafe extern "C" fn on_buffer_rendered(
     let height = sys::wpe_buffer_get_height(buffer_base);
     // Record actual buffer size so Resize can detect stretch/zoom mismatch.
     if let Some(tab) = ctx.tabs.iter_mut().find(|t| t.id == tab_id) {
-        tab.last_frame_size = (width as u32, height as u32);
+        let new_sz = (width as u32, height as u32);
+        if tab.last_frame_size != new_sz {
+            tracing::debug!(
+                ?tab_id,
+                frame_w = new_sz.0,
+                frame_h = new_sz.1,
+                css = ?tab.view_size,
+                scale = tab.applied_scale,
+                "wpe frame size"
+            );
+        }
+        tab.last_frame_size = new_sz;
     }
     let n_planes = sys::wpe_buffer_dma_buf_get_n_planes(buffer);
     if n_planes != 1 {
@@ -598,11 +613,14 @@ unsafe extern "C" fn on_buffer_rendered(
     }
 
     let buf_key = buffer as *mut c_void as usize;
-    // If we already track this pointer, a prior Release was missed and WPE
-    // reused the address — drop the stale claim so we only release once.
-    if !ctx.live_buffers.insert(buf_key) {
-        tracing::warn!(?tab_id, "buffer ptr already live; replacing claim");
+    // WPE reused a buffer we still hold (pool smaller than retire depth).
+    // Do not re-import — recycle immediately; old HeldToken still owns it.
+    if ctx.live_buffers.contains(&buf_key) {
+        tracing::debug!(?tab_id, "buffer still held; recycle without re-import");
+        release_buffer_unchecked(view, buffer_base);
+        return;
     }
+    ctx.live_buffers.insert(buf_key);
 
     let frame = WpeFrame {
         fd: Some(OwnedFd::from_raw_fd(dup_fd)),
@@ -666,19 +684,35 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
             height,
             scale,
         } => {
-            ctx.last_size = (width, height);
+            // `width`/`height` are CSS/layout pixels; `scale` is device DPR.
+            // Expected dma-buf size is width*scale × height*scale.
             let scale = if scale.is_finite() && scale > 0.0 {
                 scale
             } else {
                 1.0
             };
+            let phys = (
+                ((width as f64) * scale).round().max(1.0) as u32,
+                ((height as f64) * scale).round().max(1.0) as u32,
+            );
+            ctx.last_css = (width, height);
+            ctx.last_size = phys;
             ctx.last_scale = scale;
             // Active tab only — resizing every tab every frame exhausted the
             // WPE buffer pool and led to invalid buffer_released / SIGSEGV.
             if let Some(tab) = active_tab_mut(ctx) {
                 if !tab.wpe_view.is_null() {
-                    ensure_view_size(tab, width, height);
+                    // Apply scale first so resize uses the new DPR for buffer alloc.
                     apply_view_scale(tab, scale);
+                    ensure_view_size(tab, width, height);
+                    tracing::debug!(
+                        css_w = width,
+                        css_h = height,
+                        ?phys,
+                        scale,
+                        frame = ?tab.last_frame_size,
+                        "resize css+scale"
+                    );
                 }
             }
         }
@@ -811,7 +845,8 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 ctx.active = id;
                 ctx.active_atomic
                     .store(id.0, std::sync::atomic::Ordering::Relaxed);
-                let (w, h) = ctx.last_size;
+                let (w, h) = ctx.last_css;
+                let scale = ctx.last_scale;
                 let tab = &mut ctx.tabs[idx];
                 if !tab.wpe_view.is_null() {
                     // Blank / new-tab: leave focus OUT of the webview so the
@@ -824,6 +859,7 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                     } else {
                         sys::wpe_view_focus_in(tab.wpe_view);
                     }
+                    apply_view_scale(tab, scale);
                     // Force a fresh buffer after backgrounding. Same-size
                     // `wpe_toplevel_resize` returns FALSE (no-op) so static
                     // pages (example.org) never repaint without a 1px nudge.
@@ -1010,9 +1046,10 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         last_size_heal: None,
     };
 
-    // Resize the new tab to whatever iced is currently displaying.
+    // Size/scale to match the active iced scissor (CSS + DPR).
     if !wpe_view.is_null() {
-        ensure_view_size(&mut tab, ctx.last_size.0, ctx.last_size.1);
+        apply_view_scale(&mut tab, ctx.last_scale);
+        ensure_view_size(&mut tab, ctx.last_css.0, ctx.last_css.1);
         // New blank tabs start unfocused so chrome can own the omnibox caret.
         let blank = initial_url.is_empty() || initial_url == "about:blank";
         if blank {
@@ -1267,14 +1304,12 @@ unsafe fn dispatch_nav(webview: *mut sys::WebKitWebView, nav: NavCmd) {
 
 /// Ask the view to present after tab reactivation.
 ///
-/// Same-size `wpe_toplevel_resize` is a no-op (FALSE on headless), so a
-/// static background tab may not emit. One 1px nudge on **activate only**
-/// (not on every Resize — that caused black flash thrash).
+/// `width`/`height` are CSS pixels (same as Resize). One 1px nudge on
+/// **activate only** — not on every Resize (that caused black flash thrash).
 unsafe fn force_view_repaint(tab: &mut TabState, width: u32, height: u32) {
     if width == 0 || height == 0 || tab.wpe_view.is_null() {
         return;
     }
-    // Single nudge pair; do not call from the steady-state Resize path.
     let nudge_w = width.saturating_sub(1).max(1);
     tab.view_size = (0, 0);
     apply_resize_tab(tab, nudge_w, height);
@@ -1282,23 +1317,26 @@ unsafe fn force_view_repaint(tab: &mut TabState, width: u32, height: u32) {
     tab.last_size_heal = Some(std::time::Instant::now());
 }
 
-/// Bring the view to `(width, height)`. Does **not** 1px-nudge on every
-/// mismatch (that blanked the page ~1 Hz). Optional rare heal: at most
-/// once per 3s if frames stay the wrong size.
+/// Bring the view to CSS size `(width, height)`. Rare heal if dma-buf
+/// physical size ≠ CSS×scale (3s cooldown).
 unsafe fn ensure_view_size(tab: &mut TabState, width: u32, height: u32) {
     if tab.wpe_view.is_null() || width == 0 || height == 0 {
         return;
     }
-    let want = (width, height);
-    if tab.view_size != want {
+    let want_css = (width, height);
+    if tab.view_size != want_css {
         apply_resize_tab(tab, width, height);
         return;
     }
+    let scale = tab.applied_scale.max(1.0);
+    let want_phys = (
+        ((width as f64) * scale).round().max(1.0) as u32,
+        ((height as f64) * scale).round().max(1.0) as u32,
+    );
     let frame = tab.last_frame_size;
-    if frame == (0, 0) || frame == want {
+    if frame == (0, 0) || frame == want_phys {
         return;
     }
-    // Rate-limited heal only — continuous nudge was black-flash hell.
     const HEAL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(3);
     let due = tab
         .last_size_heal
@@ -1308,9 +1346,11 @@ unsafe fn ensure_view_size(tab: &mut TabState, width: u32, height: u32) {
         return;
     }
     tracing::info!(
-        ?want,
+        ?want_css,
+        ?want_phys,
         ?frame,
-        "buffer size ≠ view size — one heal nudge (3s cooldown)"
+        scale,
+        "buffer size ≠ CSS×scale — one heal nudge (3s cooldown)"
     );
     tab.last_size_heal = Some(std::time::Instant::now());
     tab.last_frame_size = (0, 0);

@@ -87,6 +87,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | 2026-08-10 | **Frame pipeline rework:** retire ring (depth 2) so dma-buf release lags GPU (MSN flicker + `WPE_IS_BUFFER` criticals); per-tab `view_size` skips no-op resize spam; `SetActiveTab` 1px nudge when same size so static pages repaint; park replace retires old park. |
 | 2026-08-10 | **Zoom heal:** track `last_frame_size`; if buffer ≠ request, 1px nudge once per wrong buffer; chrome re-sends Resize while painted size mismatches. |
 | 2026-08-10 | **Nav chrome:** back/forward disabled without history; fixed-width reload/stop slot. **Multi-plane buffers released** (not dropped) — YouTube/media was exhausting the WPE pool and killing the browser. |
+| 2026-08-10 | **DPR / sharpness:** resize is CSS layout size + device scale (was double-scaling physical×scale); force 2× supersample when compositor scale≈1; input in CSS coords; retire depth 1; skip re-import if buffer still held. |
 
 ### P0 — correctness / dogfood blockers
 
@@ -107,7 +108,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | **P1.3** | No cookie/profile path hardening / multi-profile UI |
 | **P1.4** | Tab **title** strip still merges on 250 ms Tick; omnibox URL on switch is now optimistic (fixed 2026-08-10) |
 | **P1.5** | URL-bar paste only **appends** (no selection replace) |
-| **P1.6** | Text sharpness / DPR soft vs Chromium (historical note; still open) |
+| **P1.6** | Text sharpness / DPR — **partial 2026-08-10:** HiDPI model fixed (CSS size + `scale_changed`, not physical×scale double); supersample at 2× when iced scale≈1; nearest mag / linear min. Residual WebKit-vs-Chromium font stack gap may remain |
 | **P1.7** | System links go to Helium; sola-browser is opt-in only |
 | **P1.8** | No in-page context menu; no right-click menu chrome |
 | **P1.9** | Error pages / cert failures / crash recovery not productized |
