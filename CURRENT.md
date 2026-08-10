@@ -27,10 +27,10 @@ Do not invent product policy.
      system service, not WebExtensions host for now.  
    - **Still ask:** **D5** middle-click, **D6** search.  
    - **Session tabs** persist (`browser-session.json`); restore on boot.  
-   - **Recent dogfood:** opaque content paint; close-tab park restore;
-     optimistic omnibox; **stop loading** (reload↔× + Escape).  
+   - **Recent dogfood:** opaque paint; close-tab park; optimistic omnibox;
+     stop loading; **frame pipeline** (retire ring + activate 1px nudge).  
    - **Build order (next):** visit history UI → downloads → Bitwarden
-     design; residual flicker polish.  
+     design; residual flicker if any after pipeline rework.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -60,7 +60,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Single `sola-browser` installed (debug); opaque paint; park restore on close; optimistic omnibox; stop (reload↔× + Escape); OpenUrl still Helium; next: visit history UI | — |
+| Browser | Single `sola-browser` installed (debug); pipeline: opaque paint, retire-ring holds, activate repaint nudge, park restore; stop; omnibox; OpenUrl→Helium; next: visit history UI | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install. User installs and smokes.

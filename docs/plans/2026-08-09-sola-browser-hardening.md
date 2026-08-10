@@ -84,13 +84,14 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | 2026-08-10 | **Close active tab → blank content:** drop path set `active = None` + clear sample; park restore only ran when `active` was Some other tab. Fix: always sync GPU surface to `paint_tab` (restore park when `active` is None); clear pending/prime for closed tab. |
 | 2026-08-10 | **Omnibox lag on tab click:** URL only synced on 250 ms Tick. Fix: `switch_active_tab` sets `url_field` / `last_seen_url` from cached tab immediately. |
 | 2026-08-10 | **Stop loading (D4):** `load-changed` → per-tab `is_loading` in snapshot; nav bar ↻ ↔ ×; Escape → Stop; ⌘R still reload/stop; `NavCmd::Stop` wired. |
+| 2026-08-10 | **Frame pipeline rework:** retire ring (depth 2) so dma-buf release lags GPU (MSN flicker + `WPE_IS_BUFFER` criticals); per-tab `view_size` skips no-op resize spam; `SetActiveTab` 1px nudge when same size so static pages repaint; park replace retires old park. |
 
 ### P0 — correctness / dogfood blockers
 
 | ID | Finding | Evidence | Suggested direction |
 |----|---------|----------|---------------------|
 | **B1** | **Background tabs keep producing frames** that only get dropped in `frame_stream`. Wastes CPU/GPU/WebProcess for every background tab. | `run.rs` filter; no worker-side suspend | Suspend paint / throttle non-active WPE views (or stop listening) |
-| **B2** | **C3 still true:** GPU may still sample previous dma-buf when token is released on next import. | `frame.rs` prepare: `pipeline.hold = Some(hold)` drops prior | Hold previous import until GPU fence / triple-buffer; or document “pool depth ≥2 required” |
+| **B2** | **C3 mitigated 2026-08-10:** retire ring depth 2 before `HeldToken` Drop / `buffer_released`. Not a GPU fence — still best-effort. | `frame.rs` `retire` | Optional: real fence if residual tear remains |
 | **B3** | **Multi-plane dma-buf frames dropped** (`n_planes != 1`). Some content paths may never paint. | `engine.rs` `on_buffer_rendered` | Log rate-limited; support multi-plane or convert |
 | **B4** | **IME / complex text broken:** `keycode: 0`, Character keys only first codepoint, no IME bridge. CJK/emoji/composing fail. | `wpe/input.rs` | Long-term: real IM protocol; short-term: document |
 | **B5** | **Middle-click never reaches WPE** (`button_to_wpe` returns `None` for Middle). `decide-policy` new-tab path for middle-click is dead for iced-driven events. | `wpe/input.rs` + `on_decide_policy` | Product: enable middle→background tab **or** delete dead policy branch |

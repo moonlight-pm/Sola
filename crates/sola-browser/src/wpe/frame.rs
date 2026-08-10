@@ -3,8 +3,16 @@
 //!
 //! Shared pipeline / WGSL live in `crate::shader`. This module owns
 //! input translation and dma-buf import.
+//!
+//! # Frame lifetime (critical)
+//!
+//! WPE dma-bufs are released via `wpe_view_buffer_released` when
+//! [`HeldToken`] drops. Releasing the buffer the GPU is still sampling
+//! causes rapid flicker (animated sites) and
+//! `WPE_IS_BUFFER(buffer)` criticals. We keep a short **retire ring** of
+//! recently replaced surfaces so tokens outlive 1–2 submitted frames.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use iced::widget::shader;
@@ -16,6 +24,9 @@ use crate::{Cmd, FrameSlot};
 use super::engine::{HeldToken, InputEvent, WpeEngine};
 use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
+
+/// How many replaced frames to keep alive after uninstall (GPU lag).
+const RETIRE_DEPTH: usize = 2;
 
 pub struct WpeProgram {
     pub slot: std::sync::Arc<FrameSlot<WpeEngine>>,
@@ -108,6 +119,25 @@ fn show_surface(pipeline: &mut WpePipeline, device: &wgpu::Device, surface: &Tab
         &surface.imported.texture,
     );
     pipeline.sample.install_bind_group(bg, surface.size);
+}
+
+/// Drop `surf` only after `RETIRE_DEPTH` newer surfaces have replaced it,
+/// so in-flight GPU work can finish sampling the dma-buf.
+fn retire(pipeline: &mut WpePipeline, surf: TabSurface) {
+    pipeline.retire.push_back(surf);
+    while pipeline.retire.len() > RETIRE_DEPTH {
+        let _ = pipeline.retire.pop_front();
+    }
+}
+
+/// Immediately free all GPU holds for `tab_id` (closed tab).
+fn purge_tab(pipeline: &mut WpePipeline, tab_id: u64) {
+    pipeline.parked.remove(&tab_id);
+    pipeline.retire.retain(|s| s.tab_id != tab_id);
+    if pipeline.active.as_ref().is_some_and(|a| a.tab_id == tab_id) {
+        pipeline.active = None;
+        pipeline.sample.clear();
+    }
 }
 
 impl shader::Program<crate::app::Msg> for WpeProgram {
@@ -284,11 +314,7 @@ impl shader::Primitive for WpePrimitive {
         {
             let mut drop_list = self.slot.drop_paint_tabs.lock().unwrap();
             for id in drop_list.drain(..) {
-                pipeline.parked.remove(&id);
-                if pipeline.active.as_ref().is_some_and(|a| a.tab_id == id) {
-                    pipeline.active = None;
-                    pipeline.sample.clear();
-                }
+                purge_tab(pipeline, id);
             }
         }
 
@@ -299,24 +325,24 @@ impl shader::Primitive for WpePrimitive {
 
         // Keep GPU active surface in sync with chrome `paint_tab`.
         //
-        // Critical: after closing the active tab we set `active = None` and
-        // clear the sample above. The previous tab is usually still parked —
-        // restore it here. The old path only restored when `active` was
-        // *Some* other tab, so close→select previous left a blank content
-        // rect until a new WPE frame arrived (often never, same-size resize
-        // is a no-op).
+        // After closing the active tab, `active` is None and the previous
+        // tab is usually parked — restore it. Also park-on-switch so the
+        // leave tab keeps a last-good frame.
         let active_id = pipeline.active.as_ref().map(|a| a.tab_id);
         if active_id != Some(paint_tab) {
             if let Some(prev) = pipeline.active.take() {
-                pipeline.parked.insert(prev.tab_id, prev);
+                // Replace any older park for this tab (retire the previous
+                // park so we do not hold unbounded buffers).
+                if let Some(old_park) = pipeline.parked.insert(prev.tab_id, prev) {
+                    retire(pipeline, old_park);
+                }
             }
             if let Some(surf) = pipeline.parked.remove(&paint_tab) {
                 show_surface(pipeline, device, &surf);
                 pipeline.active = Some(surf);
             }
-            // No park yet: leave sample as-is (may still show last pixels)
-            // or the dark fallback after a close-clear; a new frame will
-            // install when the worker repaints.
+            // No park: dark fallback until the worker emits a frame
+            // (SetActiveTab uses a 1px resize nudge for static pages).
         }
 
         let Some(pending) = self.slot.pending.lock().unwrap().take() else {
@@ -331,6 +357,7 @@ impl shader::Primitive for WpePrimitive {
             return;
         };
         let Some(fd) = frame.take_fd() else {
+            // Still own the token — recycle even without an fd.
             let _ = HeldToken::new(token, release_tx);
             return;
         };
@@ -363,16 +390,23 @@ impl shader::Primitive for WpePrimitive {
 
         if tab_id == paint_tab {
             if let Some(old) = pipeline.active.take() {
-                if old.tab_id != tab_id {
-                    pipeline.parked.insert(old.tab_id, old);
+                if old.tab_id == tab_id {
+                    // Same tab, new frame: delay release (GPU may still sample).
+                    retire(pipeline, old);
+                } else {
+                    if let Some(old_park) = pipeline.parked.insert(old.tab_id, old) {
+                        retire(pipeline, old_park);
+                    }
                 }
             }
             show_surface(pipeline, device, &surface);
             pipeline.active = Some(surface);
             pipeline.sample.note_frame();
         } else {
-            // One-shot prime for a background/restored tab.
-            pipeline.parked.insert(tab_id, surface);
+            // Background prime / late frame: keep last-good park only.
+            if let Some(old_park) = pipeline.parked.insert(tab_id, surface) {
+                retire(pipeline, old_park);
+            }
         }
     }
 
@@ -395,6 +429,8 @@ pub struct WpePipeline {
     active: Option<TabSurface>,
     /// Last frame per inactive tab — restored on switch (no black flash).
     parked: HashMap<u64, TabSurface>,
+    /// Recently replaced surfaces kept alive so dma-buf release lags the GPU.
+    retire: VecDeque<TabSurface>,
 }
 
 impl std::fmt::Debug for WpePipeline {
@@ -402,6 +438,7 @@ impl std::fmt::Debug for WpePipeline {
         f.debug_struct("WpePipeline")
             .field("active_tab", &self.active.as_ref().map(|a| a.tab_id))
             .field("parked", &self.parked.len())
+            .field("retire", &self.retire.len())
             .finish_non_exhaustive()
     }
 }
@@ -412,6 +449,7 @@ impl shader::Pipeline for WpePipeline {
             sample: SamplePipeline::new(device, queue, format, "wpe"),
             active: None,
             parked: HashMap::new(),
+            retire: VecDeque::with_capacity(RETIRE_DEPTH + 1),
         }
     }
 }

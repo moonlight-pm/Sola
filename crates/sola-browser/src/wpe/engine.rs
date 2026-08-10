@@ -323,6 +323,9 @@ struct TabState {
     title: Arc<Mutex<String>>,
     /// Shared with chrome for reload/stop toggle. Updated on `load-changed`.
     is_loading: Arc<std::sync::atomic::AtomicBool>,
+    /// Last size we successfully applied to this view (skip no-op resizes;
+    /// headless `wpe_toplevel_resize` returns FALSE for equal sizes).
+    view_size: (u32, u32),
 }
 
 unsafe fn worker_main(
@@ -599,9 +602,9 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
             ctx.last_size = (width, height);
             // Active tab only — resizing every tab every frame exhausted the
             // WPE buffer pool and led to invalid buffer_released / SIGSEGV.
-            if let Some(tab) = active_tab(ctx) {
+            if let Some(tab) = active_tab_mut(ctx) {
                 if !tab.wpe_view.is_null() {
-                    apply_resize(tab.wpe_view, width, height);
+                    apply_resize_tab(tab, width, height);
                 }
             }
         }
@@ -723,10 +726,12 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
         Cmd::SetActiveTab(id) => {
             // Tab must exist (chrome should never send a SetActiveTab
             // for an unknown id, but tolerate it by ignoring).
-            if let Some(tab) = ctx.tabs.iter().find(|t| t.id == id) {
+            if let Some(idx) = ctx.tabs.iter().position(|t| t.id == id) {
                 ctx.active = id;
                 ctx.active_atomic
                     .store(id.0, std::sync::atomic::Ordering::Relaxed);
+                let (w, h) = ctx.last_size;
+                let tab = &mut ctx.tabs[idx];
                 if !tab.wpe_view.is_null() {
                     // Blank / new-tab: leave focus OUT of the webview so the
                     // omnibox caret stays visible (⌘T focuses the URL bar).
@@ -738,12 +743,10 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                     } else {
                         sys::wpe_view_focus_in(tab.wpe_view);
                     }
-                    // Force a new buffer even when the size is unchanged.
-                    // `wpe_toplevel_resize` is idempotent for equal sizes, so
-                    // a static page that stopped painting while backgrounded
-                    // would otherwise leave the chrome stuck on the previous
-                    // tab's last texture forever.
-                    force_view_repaint(tab.wpe_view, ctx.last_size.0, ctx.last_size.1);
+                    // Force a fresh buffer after backgrounding. Same-size
+                    // `wpe_toplevel_resize` returns FALSE (no-op) so static
+                    // pages (example.org) never repaint without a 1px nudge.
+                    force_view_repaint(tab, w, h);
                 }
             }
         }
@@ -759,6 +762,11 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
 /// count low (a handful) — no need for a HashMap.
 fn active_tab(ctx: &WorkerCtx) -> Option<&TabState> {
     ctx.tabs.iter().find(|t| t.id == ctx.active)
+}
+
+fn active_tab_mut(ctx: &mut WorkerCtx) -> Option<&mut TabState> {
+    let id = ctx.active;
+    ctx.tabs.iter_mut().find(|t| t.id == id)
 }
 
 fn find_tab_by_view<'a>(ctx: &'a WorkerCtx, view: *mut sys::WPEView) -> Option<&'a TabState> {
@@ -908,9 +916,19 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         sys::webkit_web_view_load_uri(webview as *mut _, url_c.as_ptr());
     }
 
+    let mut tab = TabState {
+        id,
+        webview,
+        wpe_view,
+        url,
+        title,
+        is_loading,
+        view_size: (0, 0),
+    };
+
     // Resize the new tab to whatever iced is currently displaying.
     if !wpe_view.is_null() {
-        apply_resize(wpe_view, ctx.last_size.0, ctx.last_size.1);
+        apply_resize_tab(&mut tab, ctx.last_size.0, ctx.last_size.1);
         // New blank tabs start unfocused so chrome can own the omnibox caret.
         let blank = initial_url.is_empty() || initial_url == "about:blank";
         if blank {
@@ -918,14 +936,7 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         }
     }
 
-    ctx.tabs.push(TabState {
-        id,
-        webview,
-        wpe_view,
-        url,
-        title,
-        is_loading,
-    });
+    ctx.tabs.push(tab);
     rebuild_snapshot(ctx);
     tracing::info!(?id, url = %initial_url, tabs = ctx.tabs.len(), "opened tab");
 }
@@ -1144,20 +1155,35 @@ unsafe fn dispatch_nav(webview: *mut sys::WebKitWebView, nav: NavCmd) {
     }
 }
 
-/// Ask the view to present at the current size after tab reactivation.
-/// Avoids the old 1px nudge (double resize) which flooded the buffer pool
-/// and triggered invalid `wpe_view_buffer_released` under multi-tab load.
-unsafe fn force_view_repaint(view: *mut sys::WPEView, width: u32, height: u32) {
-    apply_resize(view, width, height);
-}
-
-/// Resize the view's toplevel. WPE's WebProcess picks this up and
-/// produces subsequent buffers at the new size. Idempotent — calling
-/// with the same size as before is a no-op inside WPE.
-unsafe fn apply_resize(view: *mut sys::WPEView, width: u32, height: u32) {
-    if view.is_null() {
+/// Ask the view to present after tab reactivation.
+///
+/// Same-size `wpe_toplevel_resize` is a no-op (FALSE on headless), so a
+/// static background tab would never emit a buffer. We do a **one-shot
+/// 1px nudge** only when the target size already matches `view_size`.
+/// Continuous multi-tab resize storms are still avoided: only the active
+/// tab is resized on window changes, and the nudge runs only on
+/// `SetActiveTab`.
+unsafe fn force_view_repaint(tab: &mut TabState, width: u32, height: u32) {
+    if width == 0 || height == 0 {
         return;
     }
+    if tab.view_size == (width, height) {
+        let nudge_w = width.saturating_sub(1).max(1);
+        apply_resize_tab(tab, nudge_w, height);
+    }
+    apply_resize_tab(tab, width, height);
+}
+
+/// Resize one tab's view. Skips the WPE call when size is unchanged
+/// (avoids FALSE spam + useless WebProcess churn).
+unsafe fn apply_resize_tab(tab: &mut TabState, width: u32, height: u32) {
+    if tab.wpe_view.is_null() || width == 0 || height == 0 {
+        return;
+    }
+    if tab.view_size == (width, height) {
+        return;
+    }
+    let view = tab.wpe_view;
     let toplevel = sys::wpe_view_get_toplevel(view);
     if toplevel.is_null() {
         tracing::warn!("wpe_view_get_toplevel returned null; cannot resize");
@@ -1165,22 +1191,19 @@ unsafe fn apply_resize(view: *mut sys::WPEView, width: u32, height: u32) {
     }
     let ok = sys::wpe_toplevel_resize(toplevel, width as i32, height as i32);
     if ok == 0 {
-        tracing::warn!(
+        // Still notify resized — some backends reject the request but accept
+        // the size via the resized path; track size only on success-or-notify.
+        tracing::debug!(
             width,
             height,
-            "wpe_toplevel_resize returned FALSE — backend rejected the size",
+            prev = ?tab.view_size,
+            "wpe_toplevel_resize returned FALSE; notifying resized anyway",
         );
-        return;
     }
-    // On Wayland backends `wpe_toplevel_resize` requests a size from
-    // the compositor and the actual size lands later via a configure
-    // event, which then triggers `wpe_toplevel_resized` /
-    // `wpe_view_resized` internally. The headless backend has no
-    // compositor round-trip — without calling the resized notifiers
-    // ourselves, the size sticks at the WPEView level but the
-    // WebProcess never gets told to re-render at the new size, so
-    // frames keep coming at the headless default (1024x768).
+    // Headless has no compositor configure — we must fire resized ourselves
+    // or WebProcess keeps the default size.
     sys::wpe_toplevel_resized(toplevel, width as i32, height as i32);
     sys::wpe_view_resized(view, width as i32, height as i32);
-    tracing::info!(width, height, "wpe_toplevel_resize accepted + notified");
+    tab.view_size = (width, height);
+    tracing::debug!(width, height, "view resized + notified");
 }
