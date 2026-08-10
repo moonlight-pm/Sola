@@ -144,13 +144,11 @@ scissor alone clips writes but doesn't re-map UVs.
 - **Loading state / progress bar.** No visual indicator that
   a page is loading.
 - **Favicons.** Not surfaced in tabs.
-- **WPE sharpness.** WebKit-on-WPE-headless text reads a bit
-  softer than Chromium on the same display. Tried `FilterMode::Nearest`
-  and `font-hinting-style=FULL`; neither moved the needle.
-  Investigation paused; suspect device-pixel-ratio handling
-  (iced reports `scale_factor = 1.0` and we pass that through;
-  rendering at DPR=2 would supersample but requires a non-trivial
-  resize-path change).
+- **WPE sharpness.** WebKit-on-WPE-headless text can still read softer
+  than Chromium. 2026-08-10: HiDPI path fixed (CSS size +
+  `scale_changed`, not physical×scale double); nearest mag; see
+  hardening plan **P1.6** (partial). Forced supersample on large
+  windows was dropped (input lag). Residual engine/font gap may remain.
 
 ## Engine choice
 

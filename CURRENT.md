@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-10 (`naturalethic/browser`)
+**As of:** 2026-08-10 (`naturalethic/browser`) — pipeline dogfood OK
 
 ---
 
@@ -27,11 +27,13 @@ Do not invent product policy.
      system service, not WebExtensions host for now.  
    - **Still ask:** **D5** middle-click, **D6** search.  
    - **Session tabs** persist (`browser-session.json`); restore on boot.  
-   - **Recent dogfood:** opaque paint; retire-ring holds; size heal; stop;
-     back/forward history enable; fixed reload/stop width; multi-plane
-     buffer release (YouTube crash).  
-   - **Build order (next):** visit history UI → downloads → Bitwarden
-     design; multi-plane import for smooth video (B3).  
+   - **Dogfood (2026-08-10):** paint/input pipeline stable enough for
+     Google/YouTube sign-in (caret + typing + placeholder animation OK).
+     Opaque content; CSS+DPR HiDPI; one live dma-buf hold; coalesce
+     NewFrame; buffer epoch on navigate (no release-UAF crash); stop +
+     history-aware back/forward; multi-plane **released** (not imported).  
+   - **Build order (next):** **Bitwarden design** (D7) → visit history UI
+     → downloads; multi-plane import (B3) when video matters.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -61,10 +63,11 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | sola-browser installed; paint pipeline + size heal; nav history enable; multi-plane release (YT); OpenUrl→Helium; next: visit history UI; video still skips multi-plane import | — |
+| Browser | Pipeline dogfood OK (sign-in typing/caret); one-hold paint; NewFrame coalesce; CSS+DPR; buffer epoch; stop + history nav; multi-plane release only; OpenUrl→Helium; **next: Bitwarden (D7)** | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
-permission for that install. User installs and smokes.
+permission for that install — **except** standing OK to install
+`sola-browser` after each finish on this branch (user 2026-08-10).
 
 **Useful:**
 

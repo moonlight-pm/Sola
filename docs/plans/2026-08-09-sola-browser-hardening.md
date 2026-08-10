@@ -87,15 +87,16 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | 2026-08-10 | **Frame pipeline rework:** retire ring (depth 2) so dma-buf release lags GPU (MSN flicker + `WPE_IS_BUFFER` criticals); per-tab `view_size` skips no-op resize spam; `SetActiveTab` 1px nudge when same size so static pages repaint; park replace retires old park. |
 | 2026-08-10 | **Zoom heal:** track `last_frame_size`; if buffer ≠ request, 1px nudge once per wrong buffer; chrome re-sends Resize while painted size mismatches. |
 | 2026-08-10 | **Nav chrome:** back/forward disabled without history; fixed-width reload/stop slot. **Multi-plane buffers released** (not dropped) — YouTube/media was exhausting the WPE pool and killing the browser. |
-| 2026-08-10 | **DPR / sharpness:** resize is CSS layout size + device scale (was double-scaling physical×scale); force 2× supersample when compositor scale≈1; input in CSS coords; retire depth 1; skip re-import if buffer still held. |
-| 2026-08-10 | **Input/animation lag:** root cause = WPE buffer-pool starvation (park+retire multi-hold) + iced flooded with NewFrame + multi‑MP frames. Fix: one live hold, coalesce NewFrame, compositor DPR only. |
+| 2026-08-10 | **DPR / sharpness:** resize is CSS layout size + device scale (not physical×scale double); compositor DPR + 2560 edge cap; nearest mag / linear min; input in CSS coords. Forced supersample dropped for large views (lag). |
+| 2026-08-10 | **Input/animation lag:** WPE pool starvation (park+retire multi-hold) + iced NewFrame flood + multi‑MP frames. Fix: **one live hold**, **coalesce NewFrame**, compositor DPR only. Dogfood: Google sign-in caret/typing/placeholder OK. |
+| 2026-08-10 | **Release UAF on navigate:** load-started bumps `buffer_epoch`; stale HeldTokens skip `wpe_view_buffer_released` (YouTube/Google sign-in SIGSEGV). |
 
 ### P0 — correctness / dogfood blockers
 
 | ID | Finding | Evidence | Suggested direction |
 |----|---------|----------|---------------------|
 | **B1** | **Background tabs keep producing frames** that only get dropped in `frame_stream`. Wastes CPU/GPU/WebProcess for every background tab. | `run.rs` filter; no worker-side suspend | Suspend paint / throttle non-active WPE views (or stop listening) |
-| **B2** | **C3 mitigated 2026-08-10:** retire ring depth 2 before `HeldToken` Drop / `buffer_released`. Not a GPU fence — still best-effort. | `frame.rs` `retire` | Optional: real fence if residual tear remains |
+| **B2** | **C3 tradeoff 2026-08-10:** **no retire/park** — drop previous frame immediately so pool stays fed (input FPS). May tear one frame under load. | `frame.rs` one-hold | Optional GPU fence + single-frame retire if tear returns |
 | **B3** | **Multi-plane dma-buf:** still not imported (video may stutter/blank). **Release fixed 2026-08-10** — was leaking without `buffer_released` and crashing under YouTube. | `engine.rs` `on_buffer_rendered` | Import NV12/etc. or convert to RGB for media |
 | **B4** | **IME / complex text broken:** `keycode: 0`, Character keys only first codepoint, no IME bridge. CJK/emoji/composing fail. | `wpe/input.rs` | Long-term: real IM protocol; short-term: document |
 | **B5** | **Middle-click never reaches WPE** (`button_to_wpe` returns `None` for Middle). `decide-policy` new-tab path for middle-click is dead for iced-driven events. | `wpe/input.rs` + `on_decide_policy` | Product: enable middle→background tab **or** delete dead policy branch |
@@ -109,7 +110,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | **P1.3** | No cookie/profile path hardening / multi-profile UI |
 | **P1.4** | Tab **title** strip still merges on 250 ms Tick; omnibox URL on switch is now optimistic (fixed 2026-08-10) |
 | **P1.5** | URL-bar paste only **appends** (no selection replace) |
-| **P1.6** | Text sharpness / DPR — **partial 2026-08-10:** HiDPI model fixed (CSS size + `scale_changed`, not physical×scale double); supersample at 2× when iced scale≈1; nearest mag / linear min. Residual WebKit-vs-Chromium font stack gap may remain |
+| **P1.6** | Text sharpness / DPR — **partial 2026-08-10:** CSS + `scale_changed`; compositor DPR (no forced 2× on large views); nearest mag. Residual WebKit-vs-Chromium font stack gap may remain |
 | **P1.7** | System links go to Helium; sola-browser is opt-in only |
 | **P1.8** | No in-page context menu; no right-click menu chrome |
 | **P1.9** | Error pages / cert failures / crash recovery not productized |
@@ -173,8 +174,8 @@ See [`docs/open-questions.md`](../open-questions.md) § Browser. Work in order:
 | Bitwarden | **D7:** first-party vault UI + SDK + autofill inject (design freeze later) |
 | High polish | B1–B5 engine reliability first; then chrome UX polish |
 
-**Build order:**  
-engine reliability (B1, B2) → stop → history/restore → downloads → Bitwarden design → implement.
+**Build order (2026-08-10):**  
+pipeline dogfood OK → **Bitwarden design (D7)** → visit history UI → downloads → multi-plane import (B3) / residual polish.
 
 ---
 
