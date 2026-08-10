@@ -13,6 +13,8 @@ pub struct TabInfo {
     pub id: TabId,
     pub url: String,
     pub title: String,
+    /// True while WebKit is loading this tab (reload ↔ stop chrome).
+    pub is_loading: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -321,6 +321,8 @@ struct TabState {
     /// Shared with the iced chrome for the tab strip. Updated
     /// on the `notify::title` signal.
     title: Arc<Mutex<String>>,
+    /// Shared with chrome for reload/stop toggle. Updated on `load-changed`.
+    is_loading: Arc<std::sync::atomic::AtomicBool>,
 }
 
 unsafe fn worker_main(
@@ -648,6 +650,21 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
         Cmd::Nav(nav) => {
             if let Some(tab) = active_tab(ctx) {
                 if !tab.webview.is_null() {
+                    // Optimistic is_loading for reload↔stop chrome.
+                    match &nav {
+                        NavCmd::Reload | NavCmd::LoadUrl(_) | NavCmd::Back | NavCmd::Forward => {
+                            tab.is_loading
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                            ctx.snapshot_dirty
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        NavCmd::Stop => {
+                            tab.is_loading
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                            ctx.snapshot_dirty
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
                     dispatch_nav(tab.webview, nav);
                 }
             }
@@ -757,8 +774,9 @@ fn find_tab_by_view<'a>(ctx: &'a WorkerCtx, view: *mut sys::WPEView) -> Option<&
 struct TabSignalCtx {
     url: Arc<Mutex<String>>,
     title: Arc<Mutex<String>>,
+    is_loading: Arc<std::sync::atomic::AtomicBool>,
     snapshot: Arc<Mutex<Vec<TabInfo>>>,
-    /// Snapshot rebuild needs *all* tabs' current url/title; we
+    /// Snapshot rebuild needs *all* tabs' current url/title/loading; we
     /// can't see them from here. Set this flag and the pump-tick
     /// rebuilds on its next iteration.
     snapshot_dirty: Arc<std::sync::atomic::AtomicBool>,
@@ -800,18 +818,21 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
     let url = Arc::new(Mutex::new(initial_url.clone()));
     // Session restore seeds title; WebKit overwrites when the page sets one.
     let title = Arc::new(Mutex::new(initial_title));
+    // Will load immediately when URL non-empty.
+    let is_loading = Arc::new(std::sync::atomic::AtomicBool::new(!initial_url.is_empty()));
 
-    // Per-tab signal context for notify::uri and notify::title.
-    // Two separate Boxes so the destroy-notify on each signal
-    // frees its own — both can be safely dropped independently.
+    // Per-tab signal context for notify::uri / title / load-changed.
+    // Separate Boxes so the destroy-notify on each signal frees its own.
     let dirty = ctx.snapshot_dirty.clone();
     let snap = ctx.tabs_snapshot.clone();
     let url_arc = url.clone();
     let title_arc = title.clone();
+    let loading_arc = is_loading.clone();
     let make_sig_ctx = || {
         Box::into_raw(Box::new(TabSignalCtx {
             url: url_arc.clone(),
             title: title_arc.clone(),
+            is_loading: loading_arc.clone(),
             snapshot: snap.clone(),
             snapshot_dirty: dirty.clone(),
         })) as *mut c_void
@@ -838,6 +859,19 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
             unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void),
             unsafe extern "C" fn(),
         >(on_notify_title_tab)),
+        make_sig_ctx(),
+        Some(free_tab_signal_ctx),
+        0,
+    );
+
+    let load_signal = CString::new("load-changed").unwrap();
+    sys::g_signal_connect_data(
+        webview as *mut c_void,
+        load_signal.as_ptr(),
+        Some(std::mem::transmute::<
+            unsafe extern "C" fn(*mut c_void, sys::WebKitLoadEvent, *mut c_void),
+            unsafe extern "C" fn(),
+        >(on_load_changed_tab)),
         make_sig_ctx(),
         Some(free_tab_signal_ctx),
         0,
@@ -890,6 +924,7 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         wpe_view,
         url,
         title,
+        is_loading,
     });
     rebuild_snapshot(ctx);
     tracing::info!(?id, url = %initial_url, tabs = ctx.tabs.len(), "opened tab");
@@ -931,6 +966,9 @@ fn rebuild_snapshot(ctx: &WorkerCtx) {
             id: t.id,
             url: t.url.lock().unwrap().clone(),
             title: t.title.lock().unwrap().clone(),
+            is_loading: t
+                .is_loading
+                .load(std::sync::atomic::Ordering::Relaxed),
         })
         .collect();
     *ctx.tabs_snapshot.lock().unwrap() = new;
@@ -975,6 +1013,21 @@ unsafe extern "C" fn on_notify_title_tab(
             .into_owned()
     };
     *cb.title.lock().unwrap() = title;
+    cb.snapshot_dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = &cb.snapshot;
+}
+
+/// `load-changed` — drive chrome reload/stop toggle via `is_loading`.
+unsafe extern "C" fn on_load_changed_tab(
+    _object: *mut c_void,
+    load_event: sys::WebKitLoadEvent,
+    user_data: *mut c_void,
+) {
+    let cb = &*(user_data as *const TabSignalCtx);
+    let loading = load_event != sys::WebKitLoadEvent_WEBKIT_LOAD_FINISHED;
+    cb.is_loading
+        .store(loading, std::sync::atomic::Ordering::Relaxed);
     cb.snapshot_dirty
         .store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = &cb.snapshot;

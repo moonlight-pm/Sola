@@ -83,6 +83,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | 2026-08-10 | **See-through content:** transparent window + `REPLACE` + WebKit α=0 punched desktop holes. Fix: fragment forces α=1; always draw content rect with dark `#0a0a0b` fallback when no frame. |
 | 2026-08-10 | **Close active tab → blank content:** drop path set `active = None` + clear sample; park restore only ran when `active` was Some other tab. Fix: always sync GPU surface to `paint_tab` (restore park when `active` is None); clear pending/prime for closed tab. |
 | 2026-08-10 | **Omnibox lag on tab click:** URL only synced on 250 ms Tick. Fix: `switch_active_tab` sets `url_field` / `last_seen_url` from cached tab immediately. |
+| 2026-08-10 | **Stop loading (D4):** `load-changed` → per-tab `is_loading` in snapshot; nav bar ↻ ↔ ×; Escape → Stop; ⌘R still reload/stop; `NavCmd::Stop` wired. |
 
 ### P0 — correctness / dogfood blockers
 
@@ -98,7 +99,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 
 | ID | Finding |
 |----|---------|
-| **P1.1** | No stop-loading control (NavCmd::Stop exists, unused in UI) |
+| **P1.1** | ~~No stop-loading control~~ **Done 2026-08-10** (↻/× + Escape) |
 | **P1.2** | No find-in-page, zoom, reader, downloads, bookmarks, **visit** history UI (session tab restore shipped) |
 | **P1.3** | No cookie/profile path hardening / multi-profile UI |
 | **P1.4** | Tab **title** strip still merges on 250 ms Tick; omnibox URL on switch is now optimistic (fixed 2026-08-10) |
@@ -161,7 +162,7 @@ See [`docs/open-questions.md`](../open-questions.md) § Browser. Work in order:
 
 | Product ask | Plan IDs / work |
 |-------------|-----------------|
-| Stop loading | Wire `NavCmd::Stop` + chrome control; Escape policy |
+| Stop loading | **Shipped 2026-08-10** — ↻/× + Escape |
 | Downloads | New subsystem: WebKit download signals → chrome UI + disk paths |
 | History + restore | Persist tab list / visit history; cold-start restore |
 | Bitwarden | **D7:** first-party vault UI + SDK + autofill inject (design freeze later) |

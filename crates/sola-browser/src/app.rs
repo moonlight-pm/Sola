@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use iced::widget::{Shader, Space, column, container, mouse_area, row, stack};
 use sola_kit::components::text_input::text_input;
-use iced::{Element, Event, Length, Subscription, Task, event, mouse};
+use iced::{Element, Event, Length, Subscription, Task, event, keyboard, mouse};
 use sola_kit::components::{
     TabDescriptor, TabSize, horizontal_divider, toolbar_button, vertical_divider_with,
     vertical_tabs_sized,
@@ -39,7 +39,10 @@ pub enum Msg {
     NewFrame,
     NavBack,
     NavForward,
-    NavReload,
+    /// Reload when idle; stop when the active tab is loading.
+    NavReloadOrStop,
+    /// Escape / explicit stop — always `NavCmd::Stop`.
+    NavStop,
     UrlInput(String),
     UrlSubmit,
     CloseTab(TabId),
@@ -219,6 +222,7 @@ impl<E: Engine> App<E> {
                 id,
                 url: url.clone(),
                 title: tab.title.clone(),
+                is_loading: !url.is_empty(),
             });
             // One background frame may be imported to seed park cache.
             self.slot.need_park_prime.lock().unwrap().insert(id.0);
@@ -302,13 +306,25 @@ impl<E: Engine> App<E> {
             }
             Msg::NewFrame => {}
             Msg::NavBack => {
+                self.set_active_loading(true);
                 let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Back));
             }
             Msg::NavForward => {
+                self.set_active_loading(true);
                 let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Forward));
             }
-            Msg::NavReload => {
-                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Reload));
+            Msg::NavReloadOrStop => {
+                if self.active_is_loading() {
+                    self.set_active_loading(false);
+                    let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Stop));
+                } else {
+                    self.set_active_loading(true);
+                    let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Reload));
+                }
+            }
+            Msg::NavStop => {
+                self.set_active_loading(false);
+                let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Stop));
             }
             Msg::UrlInput(s) => {
                 self.url_field = s;
@@ -329,6 +345,7 @@ impl<E: Engine> App<E> {
                     .find(|t| t.id == self.cached_active)
                 {
                     t.url = url.clone();
+                    t.is_loading = true;
                 }
                 let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::LoadUrl(url)));
                 self.persist_session();
@@ -505,6 +522,7 @@ impl<E: Engine> App<E> {
             id,
             url: url.clone(),
             title: title.clone(),
+            is_loading: !url.is_empty(),
         });
         if !activate {
             // Background open (e.g. cmd-click): allow one park prime frame.
@@ -515,6 +533,22 @@ impl<E: Engine> App<E> {
             self.switch_active_tab(id);
         }
         self.persist_session();
+    }
+
+    pub fn active_is_loading(&self) -> bool {
+        self.active_tab_info()
+            .map(|t| t.is_loading)
+            .unwrap_or(false)
+    }
+
+    fn set_active_loading(&mut self, loading: bool) {
+        if let Some(t) = self
+            .cached_tabs
+            .iter_mut()
+            .find(|t| t.id == self.cached_active)
+        {
+            t.is_loading = loading;
+        }
     }
 
     /// Switch which tab paints: update chrome state, drop any queued
@@ -648,7 +682,7 @@ impl<E: Engine> App<E> {
         vertical_tabs_sized(tabs, self.hovered_tab, Msg::TabHover, TabSize::Large).into()
     }
 
-    /// Top navigation bar: back / forward / reload + the URL field. All
+    /// Top navigation bar: back / forward / reload·stop + the URL field. All
     /// widgets are kit-styled, so they track the bus theme.
     ///
     /// The URL field isn't wrapped in a `mouse_area`: `text_input` captures
@@ -658,10 +692,16 @@ impl<E: Engine> App<E> {
     /// query, which sees the press regardless of widget capture.
     pub fn view_nav_bar(&self) -> Element<'_, Msg> {
         use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+        // Reload when idle; × stops an in-flight load (Escape also stops).
+        let reload_or_stop = if self.active_is_loading() {
+            toolbar_button("×").on_press(Msg::NavReloadOrStop)
+        } else {
+            toolbar_button("↻").on_press(Msg::NavReloadOrStop)
+        };
         row![
             toolbar_button("←").on_press(Msg::NavBack),
             toolbar_button("→").on_press(Msg::NavForward),
-            toolbar_button("↻").on_press(Msg::NavReload),
+            reload_or_stop,
             // Kit body density (13) + DEFAULT_PADDING — chrome inherits tokens.
             text_input("Search or enter URL", &self.url_field)
                 .id(crate::integration::url_input_id())
@@ -686,7 +726,7 @@ impl<E: Engine> App<E> {
             crate::run::frame_subscription::<E>(frames, slot, active),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
             sola_kit::app::bus_subscription().map(Msg::Bus),
-            event::listen_with(|event, _, _| match event {
+            event::listen_with(|event, status, _| match event {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     Some(Msg::CursorMoved(position.x))
                 }
@@ -699,6 +739,13 @@ impl<E: Engine> App<E> {
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                     Some(Msg::CursorReleased)
                 }
+                // Escape stops loading (browser-standard). Only when iced did
+                // not already capture the key (e.g. a focused text field that
+                // wants Escape for its own cancel).
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                    ..
+                }) if status == event::Status::Ignored => Some(Msg::NavStop),
                 _ => None,
             }),
         ])
@@ -732,6 +779,7 @@ fn merge_tab_snapshot(prev: &[TabInfo], live: &[TabInfo]) -> Vec<TabInfo> {
                 id: t.id,
                 url: t.url.clone(),
                 title,
+                is_loading: t.is_loading,
             }
         })
         .collect()

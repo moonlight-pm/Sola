@@ -176,7 +176,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             let id = app.cached_active;
             app.update(Msg::CloseTab(id))
         }
-        BrowserIntent::Reload => app.update(Msg::NavReload),
+        BrowserIntent::Reload => app.update(Msg::NavReloadOrStop),
         BrowserIntent::Back => app.update(Msg::NavBack),
         BrowserIntent::Forward => app.update(Msg::NavForward),
         BrowserIntent::FocusUrl => {
