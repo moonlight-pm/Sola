@@ -43,5 +43,8 @@ void sola_wpe_set_selection_callback(sola_wpe_selection_cb cb, void *user_data);
 /* Async extract selection → selection callback (system clipboard bridge). */
 void sola_wpe_copy_selection(WebKitWebView *view);
 
+/* Fire-and-forget JS on the page (password fill, etc.). No result callback. */
+void sola_wpe_evaluate_js(WebKitWebView *view, const char *script);
+
 /* New headless WPEDisplay. Caller owns the reference. */
 WPEDisplay *sola_wpe_display_new(void);

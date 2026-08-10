@@ -25,6 +25,11 @@ Do not invent product policy.
    - **D4 product bar:** stop · downloads · history+restore · Bitwarden · polish.  
    - **D7:** first-party Bitwarden UX (SDK + inject); not Chrome store, not
      system service, not WebExtensions host for now.  
+   - **Bitwarden design locked:**  
+     [`docs/specs/2026-08-10-sola-browser-bitwarden-design.md`](docs/specs/2026-08-10-sola-browser-bitwarden-design.md)
+     — in-process `sdk-internal` `PasswordManagerClient` (`src/vault/` +
+     worker); official cloud only; login + match picker + page fill inject
+     (`evaluate_javascript`). **License ignored** until public dist.  
    - **Still ask:** **D5** middle-click, **D6** search.  
    - **Session tabs** persist (`browser-session.json`); restore on boot.  
    - **Dogfood (2026-08-10):** paint/input pipeline stable enough for
@@ -32,8 +37,14 @@ Do not invent product policy.
      Opaque content; CSS+DPR HiDPI; one live dma-buf hold; coalesce
      NewFrame; buffer epoch on navigate (no release-UAF crash); stop +
      history-aware back/forward; multi-plane **released** (not imported).  
-   - **Build order (next):** **Bitwarden design** (D7) → visit history UI
-     → downloads; multi-plane import (B3) when video matters.  
+   - **Bitwarden (dogfoodable):** unlock → sync into **in-memory cipher
+     repo** → fill picker (Google/YouTube equivalent domains). Email
+     prefilled; unlock closes panel. Install **`--release`** for unlock
+     speed. **Not yet:** session persist, idle lock, auto-offer,
+     sync-driven global domains.  
+   - **Build order (next):** dogfood match/fill on real sites → vault
+     session persist → visit history UI → downloads; multi-plane (B3)
+     when video matters.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -63,7 +74,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Pipeline dogfood OK (sign-in typing/caret); one-hold paint; NewFrame coalesce; CSS+DPR; buffer epoch; stop + history nav; multi-plane release only; OpenUrl→Helium; **next: Bitwarden (D7)** | — |
+| Browser | Pipeline dogfood OK; Bitwarden unlock + **match/fill** in chrome (session not persisted); OpenUrl→Helium | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install

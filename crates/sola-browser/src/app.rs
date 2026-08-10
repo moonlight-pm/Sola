@@ -8,18 +8,32 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::widget::{Shader, Space, column, container, mouse_area, row, stack};
+use iced::widget::{
+    Shader, Space, button, column, container, mouse_area, row, scrollable, stack, text,
+};
 use sola_kit::components::text_input::text_input;
-use iced::{Element, Event, Length, Subscription, Task, event, keyboard, mouse};
+use iced::{Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse};
 use sola_kit::components::{
     TabDescriptor, TabSize, horizontal_divider, toolbar_button, vertical_divider_with,
     vertical_tabs_sized,
 };
+use sola_kit::components::button as kit_button;
+use sola_kit::components::card;
+use sola_kit::components::icon::icon_handle;
+use sola_kit::components::style::PAD_CONTROL_SM;
+use sola_kit::components::toolbar as kit_toolbar;
 
 use sola_core::config::JsonConfig;
 
 use crate::engine::{Cmd, EditCmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
 use crate::session::{self, SessionTab};
+#[cfg(feature = "bitwarden")]
+use crate::vault::{
+    MatchSummary, TwoFactorKind, VaultCmd, VaultEvent, VaultHandle, VaultStatus,
+    fill_credentials_script,
+};
+#[cfg(feature = "bitwarden")]
+use zeroize::Zeroize;
 
 pub const DEFAULT_URL: &str = "https://www.wikipedia.org";
 /// A fresh blank tab (⌘T). Loaded as an empty page; the chrome shows an empty,
@@ -77,10 +91,58 @@ pub enum Msg {
     UrlPasted(Option<String>),
     /// Result of an `iced::clipboard::read` for paste into page content.
     PagePasted(Option<String>),
+    /// Clipboard paste targeted at the open vault form (⌘V via Edit menu).
+    #[cfg(feature = "bitwarden")]
+    VaultClipboardPaste(Option<String>),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,
+    // —— Bitwarden vault (feature `bitwarden`) ——
+    /// Toolbar lock: open login / status panel.
+    VaultToggle,
+    VaultEmail(String),
+    VaultPassword(String),
+    VaultOtp(String),
+    VaultLogin,
+    VaultVerifyOtp,
+    VaultResendEmailCode,
+    VaultPanelClose,
+    /// Pick a vault match and fill the active page.
+    #[cfg(feature = "bitwarden")]
+    VaultFill(String),
+    /// Re-query matches for the active tab URL.
+    #[cfg(feature = "bitwarden")]
+    VaultRefreshMatches,
+    /// Tab / Shift+Tab while vault panel is open.
+    VaultFocusNext,
+    VaultFocusPrev,
+    /// Worker → chrome (drained on Tick when bitwarden enabled).
+    #[cfg(feature = "bitwarden")]
+    VaultWorker(VaultEvent),
+}
+
+/// Which form the vault panel shows.
+#[cfg(feature = "bitwarden")]
+#[derive(Debug, Clone, Default)]
+enum VaultPanelPhase {
+    #[default]
+    Credentials,
+    /// Email new-device / 2FA or authenticator TOTP.
+    TwoFactor {
+        kind: TwoFactorKind,
+        email_hint: Option<String>,
+    },
+}
+
+/// Where shell Edit → Paste (⌘V) should land while the vault panel is open.
+#[cfg(feature = "bitwarden")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum VaultPasteTarget {
+    #[default]
+    Email,
+    Password,
+    Otp,
 }
 
 /// Browser chrome application state, generic over the web engine.
@@ -143,6 +205,43 @@ pub struct App<E: Engine> {
     /// clear `WAYLAND_DISPLAY` first — otherwise WebKit's WebProcess inherits
     /// it and maps a real `org.webkit.*` toplevel next to our chrome.
     pending_session: Option<(Vec<SessionTab>, usize)>,
+    /// Bitwarden vault worker + login panel state.
+    #[cfg(feature = "bitwarden")]
+    vault: VaultHandle,
+    #[cfg(feature = "bitwarden")]
+    vault_panel_open: bool,
+    #[cfg(feature = "bitwarden")]
+    vault_phase: VaultPanelPhase,
+    #[cfg(feature = "bitwarden")]
+    vault_email: String,
+    #[cfg(feature = "bitwarden")]
+    vault_password: String,
+    /// Held across 2FA so we can resend / complete without retyping.
+    #[cfg(feature = "bitwarden")]
+    vault_pending_password: Option<String>,
+    #[cfg(feature = "bitwarden")]
+    vault_otp: String,
+    /// Last vault field that received input — targets ⌘V paste from Edit menu.
+    #[cfg(feature = "bitwarden")]
+    vault_paste_target: VaultPasteTarget,
+    #[cfg(feature = "bitwarden")]
+    vault_error: Option<String>,
+    #[cfg(feature = "bitwarden")]
+    vault_busy: bool,
+    #[cfg(feature = "bitwarden")]
+    vault_status: VaultStatus,
+    /// URI matches for the active tab (unlocked panel).
+    #[cfg(feature = "bitwarden")]
+    vault_matches: Vec<MatchSummary>,
+    #[cfg(feature = "bitwarden")]
+    vault_matches_loading: bool,
+    /// Page URL last used for `vault_matches`.
+    #[cfg(feature = "bitwarden")]
+    vault_matches_url: String,
+    #[cfg(feature = "bitwarden")]
+    vault_icon_locked: iced::widget::svg::Handle,
+    #[cfg(feature = "bitwarden")]
+    vault_icon_unlocked: iced::widget::svg::Handle,
 }
 
 impl<E: Engine> App<E> {
@@ -162,7 +261,7 @@ impl<E: Engine> App<E> {
         active_index: usize,
         sidebar_w: f32,
     ) -> Self {
-        Self {
+        let mut app = Self {
             engine,
             slot,
             cmd_tx,
@@ -184,7 +283,108 @@ impl<E: Engine> App<E> {
             url_bar_focused: false,
             session_fp: String::new(),
             pending_session: Some((tabs, active_index)),
+            #[cfg(feature = "bitwarden")]
+            vault: VaultHandle::spawn(),
+            #[cfg(feature = "bitwarden")]
+            vault_panel_open: false,
+            #[cfg(feature = "bitwarden")]
+            vault_phase: VaultPanelPhase::Credentials,
+            #[cfg(feature = "bitwarden")]
+            vault_email: String::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_password: String::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_pending_password: None,
+            #[cfg(feature = "bitwarden")]
+            vault_otp: String::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_paste_target: VaultPasteTarget::Email,
+            #[cfg(feature = "bitwarden")]
+            vault_error: None,
+            #[cfg(feature = "bitwarden")]
+            vault_busy: false,
+            #[cfg(feature = "bitwarden")]
+            vault_status: VaultStatus::default(),
+            #[cfg(feature = "bitwarden")]
+            vault_matches: Vec::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_matches_loading: false,
+            #[cfg(feature = "bitwarden")]
+            vault_matches_url: String::new(),
+            // Distinct silhouettes: closed lock vs key (not keyhole open/closed).
+            #[cfg(feature = "bitwarden")]
+            vault_icon_locked: icon_handle("lucide/lock"),
+            #[cfg(feature = "bitwarden")]
+            vault_icon_unlocked: icon_handle("lucide/key-round"),
+        };
+        #[cfg(feature = "bitwarden")]
+        {
+            if let Some(email) = crate::vault::VaultPrefs::load_email() {
+                app.vault_email = email;
+                app.vault_paste_target = VaultPasteTarget::Password;
+            }
         }
+        app
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn set_vault_panel_open(&mut self, open: bool) {
+        self.vault_panel_open = open;
+        // Subscription Tab handling reads this (fn-pointer listen_with).
+        VAULT_PANEL_OPEN.store(open, Ordering::Relaxed);
+        // Do **not** clear form / 2FA / pending password on dismiss — accidental
+        // close must restore the same state when the lock icon is clicked again.
+    }
+
+    /// Ask the vault worker for logins matching the active tab URL.
+    #[cfg(feature = "bitwarden")]
+    fn request_vault_matches(&mut self) {
+        if !self.vault_status.unlocked {
+            self.vault_matches.clear();
+            self.vault_matches_loading = false;
+            return;
+        }
+        let url = self
+            .active_tab_info()
+            .map(|t| t.url.clone())
+            .unwrap_or_default();
+        self.vault_matches_url = url.clone();
+        if url.is_empty() || url == BLANK_URL {
+            self.vault_matches.clear();
+            self.vault_matches_loading = false;
+            return;
+        }
+        self.vault_matches_loading = true;
+        self.vault.send(VaultCmd::Matches { url });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn clear_vault_secrets(&mut self) {
+        self.vault_password.clear();
+        if let Some(ref mut p) = self.vault_pending_password {
+            p.zeroize();
+        }
+        self.vault_pending_password = None;
+        self.vault_otp.clear();
+    }
+
+    /// Reset to a clean credentials form (after successful unlock, or explicit restart).
+    #[cfg(feature = "bitwarden")]
+    fn reset_vault_form_keep_email(&mut self) {
+        self.clear_vault_secrets();
+        self.vault_phase = VaultPanelPhase::Credentials;
+        self.vault_error = None;
+        self.vault_busy = false;
+        self.vault_paste_target = if self.vault_email.trim().is_empty() {
+            VaultPasteTarget::Email
+        } else {
+            VaultPasteTarget::Password
+        };
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn persist_vault_email(&self) {
+        crate::vault::VaultPrefs::save_email(&self.vault_email);
     }
 
     /// Clear compositor env so WebKit child processes cannot open a Wayland
@@ -306,6 +506,171 @@ impl<E: Engine> App<E> {
                 sola_kit::close_app(self.app_id);
                 return Task::none();
             }
+            Msg::VaultToggle => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    let open = !self.vault_panel_open;
+                    self.set_vault_panel_open(open);
+                    if open {
+                        self.vault_error = None;
+                        if self.vault_status.unlocked {
+                            self.request_vault_matches();
+                            return Task::none();
+                        }
+                        // Prefill email when remembered; land caret on password.
+                        if !self.vault_email.trim().is_empty() {
+                            self.vault_paste_target = VaultPasteTarget::Password;
+                            return iced::widget::operation::focus(vault_password_id());
+                        }
+                        return iced::widget::operation::focus(vault_email_id());
+                    }
+                }
+            }
+            Msg::VaultFill(id) => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    if self.vault_busy || !self.vault_status.unlocked {
+                        return Task::none();
+                    }
+                    self.vault_busy = true;
+                    self.vault_error = None;
+                    self.vault.send(VaultCmd::Fill { id });
+                }
+            }
+            Msg::VaultRefreshMatches => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.request_vault_matches();
+                }
+            }
+            Msg::VaultEmail(s) => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.vault_email = s;
+                    self.vault_paste_target = VaultPasteTarget::Email;
+                }
+            }
+            Msg::VaultPassword(s) => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.vault_password = s;
+                    self.vault_paste_target = VaultPasteTarget::Password;
+                }
+            }
+            Msg::VaultOtp(s) => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.vault_otp = s;
+                    self.vault_paste_target = VaultPasteTarget::Otp;
+                }
+            }
+            Msg::VaultLogin => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    if self.vault_busy {
+                        return Task::none();
+                    }
+                    let email = self.vault_email.trim().to_string();
+                    let password = self.vault_password.clone();
+                    if email.is_empty() || password.is_empty() {
+                        self.vault_error =
+                            Some("Email and master password are required.".into());
+                        return Task::none();
+                    }
+                    self.vault_busy = true;
+                    self.vault_error = None;
+                    // Keep a copy for 2FA / resend until unlock completes.
+                    self.vault_pending_password = Some(password.clone());
+                    self.vault.send(VaultCmd::Login { email, password });
+                    self.vault_password.clear();
+                }
+            }
+            Msg::VaultVerifyOtp => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    if self.vault_busy {
+                        return Task::none();
+                    }
+                    // Strip spaces / newlines that sneak in via paste.
+                    let token: String = self
+                        .vault_otp
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .collect();
+                    if token.is_empty() {
+                        self.vault_error = Some("Enter the verification code.".into());
+                        return Task::none();
+                    }
+                    let Some(password) = self.vault_pending_password.clone() else {
+                        self.vault_error =
+                            Some("Session expired — enter your password again.".into());
+                        self.vault_phase = VaultPanelPhase::Credentials;
+                        return Task::none();
+                    };
+                    let kind = match &self.vault_phase {
+                        VaultPanelPhase::TwoFactor { kind, .. } => *kind,
+                        VaultPanelPhase::Credentials => {
+                            self.vault_error = Some("Enter email and password first.".into());
+                            return Task::none();
+                        }
+                    };
+                    let email = self.vault_email.trim().to_string();
+                    self.vault_busy = true;
+                    self.vault_error = None;
+                    self.vault.send(VaultCmd::LoginTwoFactor {
+                        email,
+                        password,
+                        token,
+                        kind,
+                        remember: true,
+                    });
+                }
+            }
+            Msg::VaultResendEmailCode => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    if self.vault_busy {
+                        return Task::none();
+                    }
+                    let Some(password) = self.vault_pending_password.clone() else {
+                        self.vault_error =
+                            Some("Session expired — enter your password again.".into());
+                        self.vault_phase = VaultPanelPhase::Credentials;
+                        return Task::none();
+                    };
+                    let kind = match &self.vault_phase {
+                        VaultPanelPhase::TwoFactor { kind, .. } => *kind,
+                        VaultPanelPhase::Credentials => {
+                            self.vault_error = Some("Enter email and password first.".into());
+                            return Task::none();
+                        }
+                    };
+                    let email = self.vault_email.trim().to_string();
+                    self.vault_busy = true;
+                    self.vault_error = None;
+                    self.vault.send(VaultCmd::ResendEmailCode {
+                        email,
+                        password,
+                        kind,
+                    });
+                }
+            }
+            Msg::VaultPanelClose => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.set_vault_panel_open(false);
+                }
+            }
+            Msg::VaultFocusNext => {
+                return iced::widget::operation::focus_next();
+            }
+            Msg::VaultFocusPrev => {
+                return iced::widget::operation::focus_previous();
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultWorker(ev) => {
+                self.handle_vault_event(ev);
+            }
             Msg::NewFrame => {
                 // Allow the next frame stream wakeup (coalesced redraw).
                 self.slot
@@ -330,6 +695,12 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::NavStop => {
+                #[cfg(feature = "bitwarden")]
+                if self.vault_panel_open {
+                    // Dismiss panel only — keep login / 2FA state for re-open.
+                    self.set_vault_panel_open(false);
+                    return Task::none();
+                }
                 self.set_active_loading(false);
                 let _ = self.cmd_tx.send(Cmd::Nav(NavCmd::Stop));
             }
@@ -393,6 +764,17 @@ impl<E: Engine> App<E> {
                 self.persist_session();
             }
             Msg::Tick => {
+                #[cfg(feature = "bitwarden")]
+                let mut focus_otp = false;
+                #[cfg(feature = "bitwarden")]
+                {
+                    while let Some(ev) = self.vault.try_recv() {
+                        if matches!(ev, VaultEvent::LoginNeedsTwoFactor { .. }) {
+                            focus_otp = true;
+                        }
+                        self.handle_vault_event(ev);
+                    }
+                }
                 // Merge engine snapshot with prior cache: WebKit often reports
                 // empty title until the page finishes loading (esp. inactive
                 // restored tabs). Keep the last known title so the strip does
@@ -427,7 +809,18 @@ impl<E: Engine> App<E> {
                 // clipboard can't reach Wayland (headless display); iced's can.
                 if let Some(text) = self.engine.clipboard_handle().lock().unwrap().take() {
                     tracing::debug!(len = text.len(), "draining page selection → system clipboard");
+                    #[cfg(feature = "bitwarden")]
+                    if focus_otp {
+                        return Task::batch([
+                            iced::clipboard::write(text),
+                            iced::widget::operation::focus(vault_otp_id()),
+                        ]);
+                    }
                     return iced::clipboard::write(text);
+                }
+                #[cfg(feature = "bitwarden")]
+                if focus_otp {
+                    return iced::widget::operation::focus(vault_otp_id());
                 }
             }
             Msg::Bus(message) => {
@@ -475,6 +868,38 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::EditRouted { cmd, url_bar_focused } => {
+                // Vault panel owns Edit shortcuts while open — shell grabs ⌘V
+                // globally and would otherwise paste into the page.
+                #[cfg(feature = "bitwarden")]
+                if self.vault_panel_open {
+                    tracing::debug!(?cmd, "edit → vault panel");
+                    return match cmd {
+                        EditCmd::Paste => {
+                            iced::clipboard::read().map(Msg::VaultClipboardPaste)
+                        }
+                        EditCmd::SelectAll => match self.vault_paste_target {
+                            VaultPasteTarget::Email => {
+                                iced::widget::operation::focus(vault_email_id())
+                            }
+                            VaultPasteTarget::Password => {
+                                iced::widget::operation::focus(vault_password_id())
+                            }
+                            VaultPasteTarget::Otp => {
+                                iced::widget::operation::focus(vault_otp_id())
+                            }
+                        },
+                        EditCmd::Copy => match self.vault_paste_target {
+                            VaultPasteTarget::Email => {
+                                iced::clipboard::write(self.vault_email.clone())
+                            }
+                            VaultPasteTarget::Password => Task::none(),
+                            VaultPasteTarget::Otp => {
+                                iced::clipboard::write(self.vault_otp.clone())
+                            }
+                        },
+                        EditCmd::Cut | EditCmd::Undo | EditCmd::Redo => Task::none(),
+                    };
+                }
                 if url_bar_focused {
                     tracing::debug!(?cmd, "edit → URL bar (iced clipboard)");
                     return match cmd {
@@ -508,6 +933,30 @@ impl<E: Engine> App<E> {
             Msg::PagePasted(text) => {
                 if let Some(s) = text {
                     let _ = self.cmd_tx.send(Cmd::PasteText(s));
+                }
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultClipboardPaste(text) => {
+                let Some(raw) = text else {
+                    return Task::none();
+                };
+                let cleaned: String = raw.chars().filter(|c| !c.is_control()).collect();
+                match self.vault_phase {
+                    VaultPanelPhase::TwoFactor { .. } => {
+                        self.vault_otp =
+                            cleaned.chars().filter(|c| !c.is_whitespace()).collect();
+                        self.vault_paste_target = VaultPasteTarget::Otp;
+                    }
+                    VaultPanelPhase::Credentials => match self.vault_paste_target {
+                        VaultPasteTarget::Email => {
+                            self.vault_email = cleaned;
+                            self.vault_paste_target = VaultPasteTarget::Email;
+                        }
+                        VaultPasteTarget::Password | VaultPasteTarget::Otp => {
+                            self.vault_password = cleaned;
+                            self.vault_paste_target = VaultPasteTarget::Password;
+                        }
+                    },
                 }
             }
         }
@@ -644,6 +1093,13 @@ impl<E: Engine> App<E> {
             body
         };
 
+        #[cfg(feature = "bitwarden")]
+        let content: Element<'_, Msg> = if self.vault_panel_open {
+            stack![content, self.view_vault_panel()].into()
+        } else {
+            content
+        };
+
         sola_kit::wrap_if_floating(
             self.float.is_floating_any(),
             "Browser",
@@ -728,6 +1184,49 @@ impl<E: Engine> App<E> {
         let reload_or_stop = toolbar_button(reload_icon)
             .width(Length::Fixed(NAV_BTN_W))
             .on_press(Msg::NavReloadOrStop);
+        // Bitwarden: locked = closed lock (muted); unlocked = key (accent).
+        // Different shapes + color so state is obvious at a glance.
+        #[cfg(feature = "bitwarden")]
+        let vault_btn = {
+            let unlocked = self.vault_status.unlocked;
+            let handle = if unlocked {
+                self.vault_icon_unlocked.clone()
+            } else {
+                self.vault_icon_locked.clone()
+            };
+            let icon = if unlocked {
+                sola_kit::components::icon::icon_svg_colored(
+                    handle,
+                    18,
+                    // Accent reads as “vault ready” against chrome.
+                    self.theme.extended_palette().primary.base.color,
+                )
+            } else {
+                sola_kit::components::icon::icon_svg_colored(
+                    handle,
+                    18,
+                    {
+                        let t = self.theme.extended_palette().background.base.text;
+                        iced::Color {
+                            a: 0.55,
+                            ..t
+                        }
+                    },
+                )
+            };
+            button(icon)
+                .padding(PAD_CONTROL_SM)
+                .width(Length::Fixed(NAV_BTN_W))
+                .style(if unlocked {
+                    vault_toolbar_btn_unlocked
+                } else {
+                    kit_toolbar::style
+                })
+                .on_press(Msg::VaultToggle)
+        };
+        #[cfg(not(feature = "bitwarden"))]
+        let vault_btn = Space::new().width(Length::Fixed(0.0));
+
         row![
             back,
             forward,
@@ -740,12 +1239,418 @@ impl<E: Engine> App<E> {
                 .size(13)
                 .style(sola_kit::components::text_input::style)
                 .width(Length::Fill),
+            vault_btn,
         ]
         .spacing(SPACE_MD)
         .padding([SPACE_SM, SPACE_MD + SPACE_SM])
         .align_y(iced::Alignment::Center)
         .height(Length::Fixed(CHROME_HEIGHT))
         .into()
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn handle_vault_event(&mut self, ev: VaultEvent) {
+        match ev {
+            VaultEvent::Status(s) => {
+                self.vault_status = s;
+            }
+            VaultEvent::LoginOk { email } => {
+                self.vault_email = email;
+                self.persist_vault_email();
+                self.reset_vault_form_keep_email();
+                // Unlock is done — dismiss the panel. User opens it again
+                // (key icon) to pick a login for the current page.
+                self.set_vault_panel_open(false);
+            }
+            VaultEvent::LoginNeedsTwoFactor {
+                email,
+                preferred,
+                email_hint,
+                email_sent,
+                ..
+            } => {
+                tracing::info!(
+                    ?preferred,
+                    email_sent,
+                    "vault ui: switching to verification code entry"
+                );
+                self.vault_busy = false;
+                self.vault_email = email;
+                self.vault_otp.clear();
+                self.vault_phase = VaultPanelPhase::TwoFactor {
+                    kind: preferred,
+                    email_hint,
+                };
+                self.vault_paste_target = VaultPasteTarget::Otp;
+                // Subtitle covers email/TOTP instructions; keep error clear.
+                let _ = email_sent;
+                self.vault_error = None;
+            }
+            VaultEvent::LoginFailed { message } => {
+                self.vault_busy = false;
+                self.vault_error = Some(message);
+            }
+            VaultEvent::EmailCodeSent => {
+                self.vault_busy = false;
+                self.vault_error = None;
+                self.vault_otp.clear();
+            }
+            VaultEvent::EmailCodeFailed { message } => {
+                self.vault_busy = false;
+                self.vault_error = Some(format!("Could not send code: {message}"));
+            }
+            VaultEvent::SyncOk { full } => {
+                tracing::info!(full, "vault: sync ok");
+                // Only refresh matches if the user has the fill panel open.
+                if self.vault_panel_open && self.vault_status.unlocked {
+                    self.request_vault_matches();
+                }
+            }
+            VaultEvent::SyncFailed { message } => {
+                tracing::warn!(%message, "vault: sync failed");
+                if self.vault_panel_open && self.vault_status.unlocked {
+                    self.vault_error = Some(format!("Signed in, but sync failed: {message}"));
+                }
+            }
+            VaultEvent::Matches(list) => {
+                self.vault_matches_loading = false;
+                tracing::info!(n = list.len(), url = %self.vault_matches_url, "vault: matches");
+                self.vault_matches = list;
+            }
+            VaultEvent::FillReady {
+                mut username,
+                mut password,
+            } => {
+                self.vault_busy = false;
+                let script =
+                    fill_credentials_script(username.as_deref(), password.as_deref());
+                if let Some(ref mut p) = password {
+                    p.zeroize();
+                }
+                if let Some(ref mut u) = username {
+                    u.zeroize();
+                }
+                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                tracing::info!("vault: fill injected into active page");
+                // Close panel so the user can submit the form immediately.
+                self.set_vault_panel_open(false);
+            }
+            VaultEvent::Error { message } => {
+                tracing::warn!(%message, "vault: error");
+                self.vault_busy = false;
+                self.vault_matches_loading = false;
+                if self.vault_panel_open {
+                    self.vault_error = Some(message);
+                }
+            }
+        }
+    }
+
+    /// Bitwarden panel anchored top-right under the toolbar vault icon.
+    #[cfg(feature = "bitwarden")]
+    fn view_vault_panel(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+
+        // Secondary.base on the modal face is near-invisible. Soften primary
+        // text instead so body copy stays readable (≥~4.5:1 intent).
+        let soft = |s: String| {
+            text(s).size(12).style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.72, ..t }),
+                }
+            })
+        };
+        let soft_sm = |s: String| {
+            text(s).size(11).style(|theme: &iced::Theme| {
+                let t = theme.extended_palette().background.base.text;
+                iced::widget::text::Style {
+                    color: Some(iced::Color { a: 0.62, ..t }),
+                }
+            })
+        };
+
+        let err_line = self.vault_error.as_ref().map(|err| {
+            text(err.clone())
+                .size(12)
+                .style(|theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(theme.extended_palette().danger.base.color),
+                })
+        });
+
+        let body: Element<'_, Msg> = if self.vault_status.unlocked {
+            // Fill picker only — not a status card. Unlock already closed the panel.
+            let title = text("Fill login")
+                .size(15)
+                .font(sola_kit::fonts::ui_medium());
+
+            let page_url = if self.vault_matches_url.is_empty() {
+                self.active_tab_info()
+                    .map(|t| t.url.as_str())
+                    .unwrap_or("")
+            } else {
+                self.vault_matches_url.as_str()
+            };
+            let host_hint = page_host_hint(page_url);
+
+            let mut col = column![title]
+                .spacing(SPACE_SM)
+                .width(Length::Fixed(300.0));
+
+            if !host_hint.is_empty() {
+                col = col.push(soft(host_hint));
+            }
+
+            if let Some(err) = err_line {
+                col = col.push(err);
+            }
+
+            if self.vault_matches_loading {
+                col = col.push(text("Looking up logins…").size(13));
+            } else if page_url.is_empty() || page_url == BLANK_URL {
+                col = col.push(text("Open a website to fill a login.").size(13));
+            } else if self.vault_matches.is_empty() {
+                col = col.push(text("No saved logins for this page.").size(13));
+                col = col.push(soft_sm(
+                    "Add one in Bitwarden, then Refresh.".into(),
+                ));
+            } else {
+                let mut list = column![].spacing(4.0);
+                for m in &self.vault_matches {
+                    let title_line = if m.name.is_empty() {
+                        "Login".to_string()
+                    } else {
+                        m.name.clone()
+                    };
+                    let sub = m
+                        .username
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("—");
+                    let row_body = column![
+                        text(title_line).size(13).font(sola_kit::fonts::ui_medium()),
+                        soft_sm(sub.to_string()),
+                    ]
+                    .spacing(2);
+                    let id = m.id.clone();
+                    let mut btn = button(row_body)
+                        .padding(Padding::from([8, 10]))
+                        .width(Length::Fill)
+                        .style(|theme: &iced::Theme, status| {
+                            let p = theme.extended_palette();
+                            let bg = match status {
+                                iced::widget::button::Status::Hovered
+                                | iced::widget::button::Status::Pressed => p.background.strong.color,
+                                _ => p.background.weak.color,
+                            };
+                            iced::widget::button::Style {
+                                background: Some(iced::Background::Color(bg)),
+                                text_color: p.background.base.text,
+                                border: iced::Border {
+                                    color: p.background.strong.color,
+                                    width: 1.0,
+                                    radius: 8.0.into(),
+                                },
+                                ..Default::default()
+                            }
+                        });
+                    if !self.vault_busy {
+                        btn = btn.on_press(Msg::VaultFill(id));
+                    }
+                    list = list.push(btn);
+                }
+                col = col.push(
+                    scrollable(list)
+                        .height(Length::Fixed(200.0))
+                        .width(Length::Fill),
+                );
+            }
+
+            let mut refresh = kit_button::labeled("Refresh", kit_button::ghost);
+            if !self.vault_busy && !self.vault_matches_loading {
+                refresh = refresh.on_press(Msg::VaultRefreshMatches);
+            }
+            let close = kit_button::labeled("Close", kit_button::secondary)
+                .on_press(Msg::VaultPanelClose);
+            col = col.push(
+                row![refresh, close]
+                    .spacing(SPACE_SM)
+                    .align_y(Alignment::Center),
+            );
+            col.into()
+        } else {
+            match &self.vault_phase {
+                VaultPanelPhase::Credentials => {
+                    // While a request is in flight, freeze the form (no on_input
+                    // ⇒ disabled). Cancel stays active so the panel can dismiss
+                    // without losing state.
+                    //
+                    // Remembered email → prefill the same Email field and focus
+                    // password on open (no alternate layout / switch-account link).
+                    let busy = self.vault_busy;
+                    let title = text("Unlock vault")
+                        .size(15)
+                        .font(sola_kit::fonts::ui_medium());
+
+                    let mut email = text_input("Email", &self.vault_email)
+                        .id(vault_email_id())
+                        .size(13)
+                        .style(sola_kit::components::text_input::style)
+                        .width(Length::Fill);
+                    let mut password = text_input("Master password", &self.vault_password)
+                        .id(vault_password_id())
+                        .secure(true)
+                        .size(13)
+                        .style(sola_kit::components::text_input::style)
+                        .width(Length::Fill);
+                    if !busy {
+                        email = email.on_input(Msg::VaultEmail).on_submit(Msg::VaultLogin);
+                        password = password
+                            .on_input(Msg::VaultPassword)
+                            .on_submit(Msg::VaultLogin);
+                    }
+
+                    let mut login_btn = kit_button::labeled(
+                        if busy { "Unlocking…" } else { "Unlock" },
+                        kit_button::primary,
+                    );
+                    if !busy {
+                        login_btn = login_btn.on_press(Msg::VaultLogin);
+                    }
+                    // Cancel always enabled — closes panel, keeps form state.
+                    let cancel = kit_button::labeled("Cancel", kit_button::ghost)
+                        .on_press(Msg::VaultPanelClose);
+
+                    let mut col = column![
+                        title,
+                        soft("Bitwarden".into()),
+                        Space::new().height(SPACE_SM),
+                        email,
+                        password,
+                    ]
+                    .spacing(SPACE_SM)
+                    .width(Length::Fixed(300.0));
+
+                    if let Some(err) = err_line {
+                        col = col.push(err);
+                    }
+                    col = col.push(
+                        row![login_btn, cancel]
+                            .spacing(SPACE_SM)
+                            .align_y(Alignment::Center),
+                    );
+                    col.into()
+                }
+                VaultPanelPhase::TwoFactor { kind, email_hint } => {
+                    let busy = self.vault_busy;
+                    let title = text("Verify")
+                        .size(15)
+                        .font(sola_kit::fonts::ui_medium());
+                    let hint = email_hint
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("your email");
+                    let (subtitle, placeholder, show_resend) = match kind {
+                        // New-device protection emails a code automatically on the
+                        // password grant; complete with form field `newDeviceOtp`.
+                        TwoFactorKind::NewDevice => (
+                            format!(
+                                "Enter the code Bitwarden emailed to {hint}."
+                            ),
+                            "Verification code",
+                            true,
+                        ),
+                        TwoFactorKind::Email => (
+                            format!("Enter the code sent to {hint}."),
+                            "Email verification code",
+                            true,
+                        ),
+                        TwoFactorKind::Authenticator => (
+                            "Enter the code from your authenticator app.".into(),
+                            "Authenticator code",
+                            false,
+                        ),
+                    };
+
+                    let mut otp = text_input(placeholder, &self.vault_otp)
+                        .id(vault_otp_id())
+                        .size(13)
+                        .style(sola_kit::components::text_input::style)
+                        .width(Length::Fill);
+                    if !busy {
+                        otp = otp.on_input(Msg::VaultOtp).on_submit(Msg::VaultVerifyOtp);
+                    }
+
+                    let mut verify_btn = kit_button::labeled(
+                        if busy { "Verifying…" } else { "Verify" },
+                        kit_button::primary,
+                    );
+                    if !busy {
+                        verify_btn = verify_btn.on_press(Msg::VaultVerifyOtp);
+                    }
+                    let cancel = kit_button::labeled("Cancel", kit_button::ghost)
+                        .on_press(Msg::VaultPanelClose);
+
+                    let mut col = column![
+                        title,
+                        soft(subtitle),
+                        Space::new().height(SPACE_SM),
+                        otp,
+                    ]
+                    .spacing(SPACE_SM)
+                    .width(Length::Fixed(300.0));
+
+                    if let Some(err) = err_line {
+                        col = col.push(err);
+                    }
+
+                    let mut actions = row![verify_btn].spacing(SPACE_SM);
+                    if show_resend {
+                        let mut resend =
+                            kit_button::labeled("Resend", kit_button::ghost);
+                        if !busy {
+                            resend = resend.on_press(Msg::VaultResendEmailCode);
+                        }
+                        actions = actions.push(resend);
+                    }
+                    actions = actions.push(cancel);
+                    col = col.push(actions.align_y(Alignment::Center));
+                    col.into()
+                }
+            }
+        };
+
+        // Fixed-width card — do not let modal face stretch to the window.
+        let panel = card::modal(container(body).padding(SPACE_MD + SPACE_SM))
+            .width(Length::Fixed(320.0));
+
+        // Light click-away (no full dim wash — popover by the icon).
+        let backdrop = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
+                container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.0, 0.0, 0.0, 0.12,
+                    ))),
+                    ..container::Style::default()
+                }
+            }),
+        )
+        .on_press(Msg::VaultPanelClose);
+
+        // Top-right under the nav bar / lock button.
+        let anchored = container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::End)
+            .align_y(Alignment::Start)
+            .padding(Padding {
+                top: CHROME_HEIGHT + 4.0,
+                right: 10.0,
+                bottom: 0.0,
+                left: 0.0,
+            });
+
+        stack![backdrop, anchored].into()
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
@@ -776,10 +1681,110 @@ impl<E: Engine> App<E> {
                     key: keyboard::Key::Named(keyboard::key::Named::Escape),
                     ..
                 }) if status == event::Status::Ignored => Some(Msg::NavStop),
+                // Tab between vault form fields while the panel is open.
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(keyboard::key::Named::Tab),
+                    modifiers,
+                    ..
+                }) if vault_panel_is_open() => Some(if modifiers.shift() {
+                    Msg::VaultFocusPrev
+                } else {
+                    Msg::VaultFocusNext
+                }),
                 _ => None,
             }),
         ])
     }
+}
+
+/// Process-wide flag so `event::listen_with` (fn pointer) can see panel state.
+#[cfg(feature = "bitwarden")]
+static VAULT_PANEL_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "bitwarden")]
+fn vault_panel_is_open() -> bool {
+    VAULT_PANEL_OPEN.load(Ordering::Relaxed)
+}
+
+#[cfg(not(feature = "bitwarden"))]
+fn vault_panel_is_open() -> bool {
+    false
+}
+
+/// Short host label for the fill panel (no full URL wall of gray text).
+#[cfg(feature = "bitwarden")]
+fn page_host_hint(page_url: &str) -> String {
+    if page_url.is_empty() || page_url == BLANK_URL {
+        return String::new();
+    }
+    url::Url::parse(page_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .map(|h| format!("For {h}"))
+        .unwrap_or_else(|| {
+            let short = if page_url.len() > 36 {
+                format!("{}…", &page_url[..35])
+            } else {
+                page_url.to_string()
+            };
+            format!("For {short}")
+        })
+}
+
+/// Unlocked vault toolbar control — subtle accent wash so “ready” ≠ locked.
+#[cfg(feature = "bitwarden")]
+fn vault_toolbar_btn_unlocked(
+    theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    use iced::{Background, Border, Color};
+    use sola_kit::components::style::RADIUS_SM;
+
+    let p = theme.extended_palette();
+    let accent = p.primary.base.color;
+    let bg = match status {
+        iced::widget::button::Status::Hovered => Color {
+            a: 0.22,
+            ..accent
+        },
+        iced::widget::button::Status::Pressed => Color {
+            a: 0.30,
+            ..accent
+        },
+        _ => Color {
+            a: 0.14,
+            ..accent
+        },
+    };
+    iced::widget::button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: accent,
+        border: Border {
+            color: Color {
+                a: 0.35,
+                ..accent
+            },
+            width: 1.0,
+            radius: RADIUS_SM.into(),
+        },
+        shadow: Default::default(),
+        snap: false,
+    }
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_email_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-browser-vault-email")
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_password_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-browser-vault-password")
+}
+
+#[cfg(feature = "bitwarden")]
+fn vault_otp_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-browser-vault-otp")
 }
 
 impl<E: Engine> Drop for App<E> {

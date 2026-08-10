@@ -100,8 +100,17 @@ extension APIs are not WebKit/WPE). Approach is open → **D7**.
 
 **Quality bar (D4):** extension-class polish/reliability, not a demo popup.
 
-**Follow-on design (not yet decided):** account model (personal vs org),
-biometric unlock, TOTP, passkeys, offline vault path — open when implementing.
+**Architecture lock (2026-08-10):** in-process
+`bitwarden/sdk-internal` `PasswordManagerClient` inside `sola-browser`
+(`src/vault/` + worker thread); **official Bitwarden cloud** for login
+(no self-host field yet); fill via WebKit `evaluate_javascript` (no
+WebExtensions host). **Do not shape architecture around license** —
+ignore until public distribution. Full freeze:
+[`specs/2026-08-10-sola-browser-bitwarden-design.md`](specs/2026-08-10-sola-browser-bitwarden-design.md).
+
+**Still deferred product detail:** account model (personal vs org),
+biometric unlock, TOTP, passkeys, offline vault path, autofill default
+(offer vs auto), shortcut chord — open when implementing.
 
 **Related:** D4; hardening plan research §; engine stays WPE.
 
@@ -147,6 +156,7 @@ product ask. See agent UI backlog.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-10 | D7 arch | **In-process** `sdk-internal` `PasswordManagerClient` (`src/vault/` + async worker); inject fill; self-host in MVP; **license out of architecture scope** until public dist | bitwarden design freeze, CURRENT, D7 |
 | 2026-08-09 | D7 | **First-party Bitwarden UX** in sola-browser (SDK/API + in-process autofill); no Chrome store package; no system service; no WebExtensions host for now | open-questions D7, plan, CURRENT |
 | 2026-08-09 | D4 | Browser MVP bar: **stop loading**, **downloads**, **history+restore**, **Bitwarden (extension-class)**, high polish; find/zoom/bookmarks/devtools not auto-included | open-questions D4, plan, CURRENT |
 | 2026-08-09 | D3 | **Helium remains system default** until sola-browser is good enough to take over; OpenUrl/MIME stay Helium; browser opt-in only | open-questions D3, architecture, plan |

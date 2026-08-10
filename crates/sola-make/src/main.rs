@@ -63,6 +63,11 @@ enum Commands {
         /// Requires exactly one app name.
         #[arg(long)]
         watch: bool,
+
+        /// Build and install release (optimized). Strongly preferred for
+        /// crypto-heavy apps (e.g. sola-browser Bitwarden KDF).
+        #[arg(long)]
+        release: bool,
     },
 
     /// Build, bundle, and publish a release to GitHub Releases.
@@ -171,15 +176,23 @@ fn main() {
         Commands::Assets { action } => match action {
             AssetsAction::Sync { refresh } => assets::sync(refresh),
         },
-        Commands::Install { apps, watch } => {
+        Commands::Install {
+            apps,
+            watch,
+            release,
+        } => {
             if watch {
                 if apps.len() != 1 {
                     eprintln!("error: --watch requires exactly one app name");
                     exit(1);
                 }
+                if release {
+                    eprintln!("error: --watch does not support --release yet");
+                    exit(1);
+                }
                 watch::watch_and_install(&apps[0]);
             } else {
-                install::install(&apps);
+                install::install(&apps, release);
             }
         }
         Commands::Publish { version } => publish::publish(version),
@@ -458,7 +471,8 @@ mod tests {
             cli.command,
             Commands::Install {
                 ref apps,
-                watch: false
+                watch: false,
+                release: false,
             } if apps.is_empty()
         ));
     }
@@ -468,7 +482,11 @@ mod tests {
         let cli = Cli::try_parse_from(["sola-make", "install", "terminal"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Install { ref apps, watch: false } if apps == &["terminal".to_string()]
+            Commands::Install {
+                ref apps,
+                watch: false,
+                release: false,
+            } if apps == &["terminal".to_string()]
         ));
     }
 
@@ -477,8 +495,24 @@ mod tests {
         let cli = Cli::try_parse_from(["sola-make", "install", "shell", "kit"]).unwrap();
         assert!(matches!(
             cli.command,
-            Commands::Install { ref apps, watch: false }
-                if apps == &["shell".to_string(), "kit".to_string()]
+            Commands::Install {
+                ref apps,
+                watch: false,
+                release: false,
+            } if apps == &["shell".to_string(), "kit".to_string()]
+        ));
+    }
+
+    #[test]
+    fn cli_parses_install_release() {
+        let cli = Cli::try_parse_from(["sola-make", "install", "browser", "--release"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Install {
+                ref apps,
+                watch: false,
+                release: true,
+            } if apps == &["browser".to_string()]
         ));
     }
 

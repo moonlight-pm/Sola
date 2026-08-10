@@ -68,6 +68,10 @@ pub enum Cmd<E: Engine> {
     /// Insert clipboard text into the page (chrome already read iced's
     /// Wayland clipboard). Preferred path for paste-into-page on WPE.
     PasteText(String),
+    /// Run JavaScript in the active tab (password fill inject, etc.).
+    /// Script is sourced from chrome; do not put untrusted page content here
+    /// without escaping — vault fill embeds secrets via JSON string literals.
+    EvaluateJs(String),
     Quit,
 }
 

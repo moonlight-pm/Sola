@@ -11,6 +11,8 @@ pub mod run;
 pub mod session;
 pub mod shader;
 pub mod util;
+#[cfg(feature = "bitwarden")]
+pub mod vault;
 pub mod wpe;
 
 pub use engine::{

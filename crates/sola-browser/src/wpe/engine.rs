@@ -867,6 +867,20 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 }
             }
         }
+        Cmd::EvaluateJs(script) => {
+            if let Some(tab) = active_tab(ctx) {
+                if !tab.webview.is_null() && !script.is_empty() {
+                    match CString::new(script) {
+                        Ok(c) => {
+                            sys::sola_wpe_evaluate_js(tab.webview as *mut _, c.as_ptr());
+                        }
+                        Err(_) => {
+                            tracing::warn!("vault fill: script contained interior NUL — skipped");
+                        }
+                    }
+                }
+            }
+        }
         Cmd::OpenTab { id, url, title } => {
             open_tab(ctx, id, url, title);
         }

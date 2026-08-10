@@ -100,6 +100,20 @@ void sola_wpe_copy_selection(WebKitWebView *view) {
         NULL); /* user_data — the result callback uses the global slot */
 }
 
+void sola_wpe_evaluate_js(WebKitWebView *view, const char *script) {
+    if (!view || !script) return;
+    /* No finish callback — fire-and-forget fill / helper scripts. */
+    webkit_web_view_evaluate_javascript(
+        view,
+        script,
+        -1,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL);
+}
+
 /* ---- vmethod hijack for set_cursor_from_name ------------------- */
 
 /* WebKit calls wpe_view_set_cursor_from_name(view, name) whenever

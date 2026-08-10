@@ -13,6 +13,27 @@ path = "src/main.rs"
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = ["bitwarden"]
+# First-party Bitwarden PM client (sdk-internal). Official cloud + chrome login.
+bitwarden = [
+    "dep:bitwarden-pm",
+    "dep:bitwarden-core",
+    "dep:bitwarden-vault",
+    "dep:bitwarden-sync",
+    "dep:bitwarden-state",
+    "dep:bitwarden-api-api",
+    "dep:bitwarden-crypto",
+    "dep:bitwarden-crypto-sync-handler",
+    "dep:async-trait",
+    "dep:thiserror",
+    "dep:zeroize",
+    "dep:url",
+    "dep:reqwest",
+    "dep:serde_json",
+    "dep:serde_qs",
+]
+
 [dependencies]
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
 iced_futures = { version = "0.14", features = ["tokio"] }
@@ -28,6 +49,23 @@ wgpu = { version = "27", features = ["vulkan-portability"] }
 wgpu-hal = { version = "27", features = ["vulkan"] }
 ash = "0.38"
 libc = "0.2"
+
+# Bitwarden Password Manager SDK (internal; pin rev). License ignored for dogfood.
+bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", features = ["internal"], optional = true }
+bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-crypto-sync-handler = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+async-trait = { version = "0.1", optional = true }
+thiserror = { version = "2", optional = true }
+zeroize = { version = "1", optional = true }
+url = { version = "2", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde_json = { version = "1", optional = true }
+serde_qs = { version = "0.13", optional = true }
 
 [build-dependencies]
 pkg-config = "0.3"
