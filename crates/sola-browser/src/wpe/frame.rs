@@ -315,64 +315,60 @@ impl shader::Primitive for WpePrimitive {
             // (show_surface above replaces it when park hits.)
         }
 
-        // Drain every pending tab frame. Active tab → display; others → park.
-        let pending_batch: Vec<_> = {
-            let mut guard = self.slot.pending.lock().unwrap();
-            guard.drain().map(|(_, p)| p).collect()
+        let Some(pending) = self.slot.pending.lock().unwrap().take() else {
+            return;
         };
 
-        for pending in pending_batch {
-            let tab_id = pending.tab_id.0;
-            let mut frame = pending.frame;
+        let tab_id = pending.tab_id.0;
+        let mut frame = pending.frame;
 
-            let release_tx = frame.release_tx.clone();
-            let Some(token) = frame.take_token() else {
-                continue;
-            };
-            let Some(fd) = frame.take_fd() else {
+        let release_tx = frame.release_tx.clone();
+        let Some(token) = frame.take_token() else {
+            return;
+        };
+        let Some(fd) = frame.take_fd() else {
+            let _ = HeldToken::new(token, release_tx);
+            return;
+        };
+        let meta = DmabufMetadata {
+            width: frame.width,
+            height: frame.height,
+            format: frame.format,
+            modifier: frame.modifier,
+            stride: frame.stride,
+            offset: frame.offset,
+        };
+        let size = (frame.width, frame.height);
+        drop(frame);
+
+        let imported = match unsafe { wgpu_import::import(device, fd, &meta) } {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::error!(tab = tab_id, "wgpu_import::import failed: {e}");
                 let _ = HeldToken::new(token, release_tx);
-                continue;
-            };
-            let meta = DmabufMetadata {
-                width: frame.width,
-                height: frame.height,
-                format: frame.format,
-                modifier: frame.modifier,
-                stride: frame.stride,
-                offset: frame.offset,
-            };
-            let size = (frame.width, frame.height);
-            drop(frame);
-
-            let imported = match unsafe { wgpu_import::import(device, fd, &meta) } {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::error!(tab = tab_id, "wgpu_import::import failed: {e}");
-                    let _ = HeldToken::new(token, release_tx);
-                    continue;
-                }
-            };
-
-            let surface = TabSurface {
-                tab_id,
-                imported,
-                _token: HeldToken::new(token, release_tx),
-                size,
-            };
-
-            if tab_id == paint_tab {
-                if let Some(old) = pipeline.active.take() {
-                    if old.tab_id != tab_id {
-                        pipeline.parked.insert(old.tab_id, old);
-                    }
-                }
-                show_surface(pipeline, device, &surface);
-                pipeline.active = Some(surface);
-                pipeline.sample.note_frame();
-            } else {
-                // Background: keep latest snapshot for instant switch-in.
-                pipeline.parked.insert(tab_id, surface);
+                return;
             }
+        };
+
+        let surface = TabSurface {
+            tab_id,
+            imported,
+            _token: HeldToken::new(token, release_tx),
+            size,
+        };
+
+        if tab_id == paint_tab {
+            if let Some(old) = pipeline.active.take() {
+                if old.tab_id != tab_id {
+                    pipeline.parked.insert(old.tab_id, old);
+                }
+            }
+            show_surface(pipeline, device, &surface);
+            pipeline.active = Some(surface);
+            pipeline.sample.note_frame();
+        } else {
+            // One-shot prime for a background/restored tab.
+            pipeline.parked.insert(tab_id, surface);
         }
     }
 

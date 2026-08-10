@@ -595,9 +595,9 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
     match cmd {
         Cmd::Resize { width, height } => {
             ctx.last_size = (width, height);
-            // Resize *all* tabs so background park snapshots stay viewport-
-            // sized (first switch after restore must not flash wrong size).
-            for tab in &ctx.tabs {
+            // Active tab only — resizing every tab every frame exhausted the
+            // WPE buffer pool and led to invalid buffer_released / SIGSEGV.
+            if let Some(tab) = active_tab(ctx) {
                 if !tab.wpe_view.is_null() {
                     apply_resize(tab.wpe_view, width, height);
                 }
@@ -615,13 +615,15 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                     outstanding = left,
                     "dropping release for closed tab"
                 );
-            } else {
-                sys::wpe_view_buffer_released(
-                    token.view as *mut sys::WPEView,
-                    token.buffer as *mut sys::WPEBuffer,
-                );
+            } else if !token.buffer.is_null() && !token.view.is_null() {
+                // Catch panics from GLib criticals in debug builds; still
+                // best-effort release. Invalid buffers were common when we
+                // multi-imported every tab under resize storm.
+                let buf = token.buffer as *mut sys::WPEBuffer;
+                let view = token.view as *mut sys::WPEView;
+                sys::wpe_view_buffer_released(view, buf);
             }
-            if left > 8 {
+            if left > 16 {
                 tracing::warn!(outstanding = left, "wpe buffer tokens outstanding");
             }
         }
@@ -1089,16 +1091,10 @@ unsafe fn dispatch_nav(webview: *mut sys::WebKitWebView, nav: NavCmd) {
     }
 }
 
-/// Nudge the view through a 1px size change and back so WebKit emits a
-/// fresh frame after tab reactivation. Same-size `apply_resize` alone is
-/// a no-op and static pages produce no further buffers while backgrounded.
+/// Ask the view to present at the current size after tab reactivation.
+/// Avoids the old 1px nudge (double resize) which flooded the buffer pool
+/// and triggered invalid `wpe_view_buffer_released` under multi-tab load.
 unsafe fn force_view_repaint(view: *mut sys::WPEView, width: u32, height: u32) {
-    if width == 0 || height == 0 {
-        apply_resize(view, width, height);
-        return;
-    }
-    let nudge_w = if width > 1 { width - 1 } else { width + 1 };
-    apply_resize(view, nudge_w, height);
     apply_resize(view, width, height);
 }
 

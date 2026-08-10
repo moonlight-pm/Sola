@@ -220,6 +220,8 @@ impl<E: Engine> App<E> {
                 url: url.clone(),
                 title: tab.title.clone(),
             });
+            // One background frame may be imported to seed park cache.
+            self.slot.need_park_prime.lock().unwrap().insert(id.0);
             let _ = self.cmd_tx.send(Cmd::OpenTab {
                 id,
                 url,
@@ -495,6 +497,10 @@ impl<E: Engine> App<E> {
             url: url.clone(),
             title: title.clone(),
         });
+        if !activate {
+            // Background open (e.g. cmd-click): allow one park prime frame.
+            self.slot.need_park_prime.lock().unwrap().insert(id.0);
+        }
         let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
         if activate {
             self.switch_active_tab(id);

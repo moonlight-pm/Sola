@@ -81,20 +81,18 @@ pub struct PendingFrame<E: Engine> {
 /// Shared between `App` (fills `pending`) and the engine's shader Program
 /// (drains it on next prepare). `cmd_tx` goes back to the engine worker.
 pub struct FrameSlot<E: Engine> {
-    /// Latest undecoded frame per tab. Background tabs are kept too so we
-    /// can park a GPU snapshot before the user ever focuses them (avoids
-    /// black flash on first switch to a restored/static tab).
-    pub pending: Mutex<std::collections::HashMap<u64, PendingFrame<E>>>,
+    /// Latest frame for the painted tab (and optional one-shot park primes).
+    pub pending: Mutex<Option<PendingFrame<E>>>,
     /// Command channel to the engine worker (input, resize, nav, release, …).
     pub cmd_tx: Sender<Cmd<E>>,
     pub last_size: Mutex<(u32, u32)>,
     pub cursor: Arc<AtomicU32>,
-    /// Tab the chrome wants painted (`TabId.0`). Written by chrome on
-    /// tab switch; prepare drops holds/pending for any other tab so we
-    /// never keep showing the previous tab's pixels.
+    /// Tab the chrome wants painted (`TabId.0`). Written by chrome on tab switch.
     pub paint_tab: AtomicU64,
-    /// Tab ids whose GPU caches should be dropped (closed tabs). Drained
-    /// in shader prepare so we do not pin dma-bufs forever after CloseTab.
+    /// Tab ids that still need a background snapshot for park-on-first-switch.
+    /// Cleared when a frame for that tab is accepted into pending.
+    pub need_park_prime: Mutex<std::collections::HashSet<u64>>,
+    /// Tab ids whose GPU caches should be dropped (closed tabs).
     pub drop_paint_tabs: Mutex<Vec<u64>>,
 }
 

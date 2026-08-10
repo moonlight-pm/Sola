@@ -18,6 +18,7 @@
 
 use std::hash::Hash;
 use std::process::ExitCode;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
@@ -57,19 +58,27 @@ pub fn frame_stream<E: Engine>(
                 Ok(Some(f)) => f,
                 _ => break,
             };
-            // Keep the latest frame for *every* tab (not only the painted
-            // one). prepare imports background frames into the parked
-            // surface cache so first switch to a static/restored tab has
-            // pixels ready. Overwrite drops the previous PendingFrame
-            // (token recycle via Drop).
+            // Accept:
+            // 1) frames for the painted tab (normal display path), or
+            // 2) one prime frame per tab listed in need_park_prime so a
+            //    restored/background tab gets a single GPU snapshot without
+            //    pinning every animated frame from every tab (that OOM/UAF'd).
+            let paint_tab = slot.paint_tab.load(Ordering::Relaxed);
+            let tid = tagged.tab_id.0;
+            let is_paint = tid == paint_tab;
+            let is_prime = {
+                let mut need = slot.need_park_prime.lock().unwrap();
+                need.remove(&tid) // true if it was present — consume one-shot
+            };
+            if !is_paint && !is_prime {
+                // Drop: WpeFrame::Drop releases the buffer token.
+                continue;
+            }
+            *slot.pending.lock().unwrap() = Some(crate::engine::PendingFrame {
+                tab_id: tagged.tab_id,
+                frame: tagged.frame,
+            });
             let _ = &active;
-            slot.pending.lock().unwrap().insert(
-                tagged.tab_id.0,
-                crate::engine::PendingFrame {
-                    tab_id: tagged.tab_id,
-                    frame: tagged.frame,
-                },
-            );
             if output.send(Msg::NewFrame).await.is_err() {
                 break;
             }
@@ -154,11 +163,12 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     let cursor = engine.cursor_handle();
 
     let slot = Arc::new(FrameSlot::<E> {
-        pending: Mutex::new(std::collections::HashMap::new()),
+        pending: Mutex::new(None),
         cmd_tx: cmd_tx.clone(),
         last_size: Mutex::new((VIEW_W, VIEW_H)),
         cursor,
         paint_tab: std::sync::atomic::AtomicU64::new(u64::MAX),
+        need_park_prime: Mutex::new(std::collections::HashSet::new()),
         drop_paint_tabs: Mutex::new(Vec::new()),
     });
 
