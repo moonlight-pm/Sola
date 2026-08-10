@@ -348,18 +348,9 @@ impl shader::Primitive for WpePrimitive {
             // (SetActiveTab uses a 1px resize nudge for static pages).
         }
 
-        // Self-heal wrong buffer size: shader always stretches the texture to
-        // the scissor, so a too-small dma-buf looks permanently zoomed/pixelated.
-        // Re-send Resize so the worker can 1px-nudge when last_frame ≠ request.
-        if let Some(active) = pipeline.active.as_ref() {
-            if active.tab_id == paint_tab && active.size != requested {
-                let _ = self.slot.cmd_tx.send(Cmd::Resize {
-                    width: req_w,
-                    height: req_h,
-                    scale: viewport.scale_factor() as f64,
-                });
-            }
-        }
+        // NOTE: do **not** re-send Resize every frame when buffer size ≠
+        // scissor. That 1px-nudge heal loop blanked the view (~1 Hz steady,
+        // burst on focus). Worker may still heal once with a long cooldown.
 
         let Some(pending) = self.slot.pending.lock().unwrap().take() else {
             return;

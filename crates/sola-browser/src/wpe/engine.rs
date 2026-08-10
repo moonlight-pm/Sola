@@ -338,10 +338,12 @@ struct TabState {
     /// Last size we asked the view for (skip no-op resizes; headless
     /// `wpe_toplevel_resize` returns FALSE for equal sizes).
     view_size: (u32, u32),
-    /// Last buffer dimensions from `on_buffer_rendered`. When this drifts
-    /// from `view_size` / chrome request, content is stretched (zoomed /
-    /// pixelated) until we force another resize.
+    /// Last buffer dimensions from `on_buffer_rendered`.
     last_frame_size: (u32, u32),
+    /// Last compositor scale we pushed to WPE (skip no-op scale_changed).
+    applied_scale: f64,
+    /// Instant of last size-mismatch heal nudge (rate-limit blank flashes).
+    last_size_heal: Option<std::time::Instant>,
 }
 
 unsafe fn worker_main(
@@ -1004,6 +1006,8 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         is_loading,
         view_size: (0, 0),
         last_frame_size: (0, 0),
+        applied_scale: 0.0,
+        last_size_heal: None,
     };
 
     // Resize the new tab to whatever iced is currently displaying.
@@ -1264,25 +1268,23 @@ unsafe fn dispatch_nav(webview: *mut sys::WebKitWebView, nav: NavCmd) {
 /// Ask the view to present after tab reactivation.
 ///
 /// Same-size `wpe_toplevel_resize` is a no-op (FALSE on headless), so a
-/// static background tab would never emit a buffer. We do a **one-shot
-/// 1px nudge** only when needed. Continuous multi-tab resize storms are
-/// still avoided: only the active tab is resized on window changes.
+/// static background tab may not emit. One 1px nudge on **activate only**
+/// (not on every Resize — that caused black flash thrash).
 unsafe fn force_view_repaint(tab: &mut TabState, width: u32, height: u32) {
-    ensure_view_size(tab, width, height);
-    // Always nudge once on activate so a static page that stopped painting
-    // produces a fresh buffer even when size already matched.
-    if width > 0 && height > 0 {
-        let nudge_w = width.saturating_sub(1).max(1);
-        // Bypass view_size short-circuit for the nudge pair.
-        tab.view_size = (0, 0);
-        apply_resize_tab(tab, nudge_w, height);
-        apply_resize_tab(tab, width, height);
+    if width == 0 || height == 0 || tab.wpe_view.is_null() {
+        return;
     }
+    // Single nudge pair; do not call from the steady-state Resize path.
+    let nudge_w = width.saturating_sub(1).max(1);
+    tab.view_size = (0, 0);
+    apply_resize_tab(tab, nudge_w, height);
+    apply_resize_tab(tab, width, height);
+    tab.last_size_heal = Some(std::time::Instant::now());
 }
 
-/// Bring the view to `(width, height)`. If we already *asked* for that size
-/// but buffers still arrive at a different size, force a 1px nudge so the
-/// WebProcess re-layouts (fixes stuck zoomed/pixelated content).
+/// Bring the view to `(width, height)`. Does **not** 1px-nudge on every
+/// mismatch (that blanked the page ~1 Hz). Optional rare heal: at most
+/// once per 3s if frames stay the wrong size.
 unsafe fn ensure_view_size(tab: &mut TabState, width: u32, height: u32) {
     if tab.wpe_view.is_null() || width == 0 || height == 0 {
         return;
@@ -1292,21 +1294,30 @@ unsafe fn ensure_view_size(tab: &mut TabState, width: u32, height: u32) {
         apply_resize_tab(tab, width, height);
         return;
     }
-    // Already requested this size — only recover when frames prove mismatch.
     let frame = tab.last_frame_size;
-    if frame != (0, 0) && frame != want {
-        tracing::info!(
-            ?want,
-            ?frame,
-            "buffer size ≠ view size — forcing resize (was stretched/zoomed)"
-        );
-        // Clear so a Resize storm does not re-nudge until a new buffer lands.
-        tab.last_frame_size = (0, 0);
-        tab.view_size = (0, 0);
-        let nudge_w = width.saturating_sub(1).max(1);
-        apply_resize_tab(tab, nudge_w, height);
-        apply_resize_tab(tab, width, height);
+    if frame == (0, 0) || frame == want {
+        return;
     }
+    // Rate-limited heal only — continuous nudge was black-flash hell.
+    const HEAL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(3);
+    let due = tab
+        .last_size_heal
+        .map(|t| t.elapsed() >= HEAL_COOLDOWN)
+        .unwrap_or(true);
+    if !due {
+        return;
+    }
+    tracing::info!(
+        ?want,
+        ?frame,
+        "buffer size ≠ view size — one heal nudge (3s cooldown)"
+    );
+    tab.last_size_heal = Some(std::time::Instant::now());
+    tab.last_frame_size = (0, 0);
+    tab.view_size = (0, 0);
+    let nudge_w = width.saturating_sub(1).max(1);
+    apply_resize_tab(tab, nudge_w, height);
+    apply_resize_tab(tab, width, height);
 }
 
 /// Apply a new size to one tab's WPE view. No-ops only when `view_size`
@@ -1342,10 +1353,13 @@ unsafe fn apply_resize_tab(tab: &mut TabState, width: u32, height: u32) {
     tracing::debug!(width, height, "view resized + notified");
 }
 
-/// Tell WPE/WebKit the compositor scale so HiDPI text is not rendered soft
-/// (layout CSS px vs buffer px). Safe to call every Resize.
-unsafe fn apply_view_scale(tab: &TabState, scale: f64) {
+/// Tell WPE/WebKit the compositor scale so HiDPI text is not rendered soft.
+/// No-ops when scale is unchanged (avoids re-layout thrash).
+unsafe fn apply_view_scale(tab: &mut TabState, scale: f64) {
     if tab.wpe_view.is_null() || !(scale.is_finite() && scale > 0.0) {
+        return;
+    }
+    if (tab.applied_scale - scale).abs() < 0.001 {
         return;
     }
     let toplevel = sys::wpe_view_get_toplevel(tab.wpe_view);
@@ -1353,4 +1367,5 @@ unsafe fn apply_view_scale(tab: &TabState, scale: f64) {
         return;
     }
     sys::wpe_toplevel_scale_changed(toplevel, scale);
+    tab.applied_scale = scale;
 }
