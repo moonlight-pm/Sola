@@ -36,15 +36,16 @@ Do not invent product policy.
      Google/YouTube sign-in (caret + typing + placeholder animation OK).
      Opaque content; CSS+DPR HiDPI; one live dma-buf hold; coalesce
      NewFrame; buffer epoch on navigate (no release-UAF crash); stop +
-     history-aware back/forward; multi-plane **released** (not imported).  
+     history-aware back/forward; multi-plane **NV12 CPU→BGRA** (YouTube path);
+     other multi-plane formats still released.  
    - **Bitwarden (dogfoodable):** unlock → sync into **in-memory cipher
      repo** → fill picker (Google/YouTube equivalent domains). Email
      prefilled; unlock closes panel. Install **`--release`** for unlock
      speed. **Not yet:** session persist, idle lock, auto-offer,
      sync-driven global domains.  
-   - **Build order (next):** dogfood match/fill on real sites → vault
-     session persist → visit history UI → downloads; multi-plane (B3)
-     when video matters.  
+   - **Build order (next):** dogfood YouTube NV12 path + vault fill →
+     vault session persist → visit history UI → downloads; GPU multi-plane
+     import if CPU path is too heavy.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
