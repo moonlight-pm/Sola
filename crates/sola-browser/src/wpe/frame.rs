@@ -227,6 +227,7 @@ impl shader::Program<crate::app::Msg> for WpeProgram {
 
 /// Holds GPU-imported dma-buf + recycle token until the next frame or drop.
 struct CurrentHold {
+    tab_id: u64,
     _imported: ImportedFrame,
     _token: HeldToken,
 }
@@ -291,15 +292,13 @@ impl FrameImport for WpeImporter {
         Some((
             ImportedTexture { bind_group, size },
             CurrentHold {
+                tab_id: 0, // filled in by prepare with paint_tab
                 _imported: imported,
                 _token: HeldToken::new(token, release_tx),
             },
         ))
     }
 }
-
-// Need release_tx accessible — it's private on WpeFrame. Expose via method.
-// Patch: add release_tx() on WpeFrame or make field pub(crate).
 
 impl shader::Primitive for WpePrimitive {
     type Pipeline = WpePipeline;
@@ -325,20 +324,44 @@ impl shader::Primitive for WpePrimitive {
             });
         }
 
+        let paint_tab = self
+            .slot
+            .paint_tab
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        // Tab switch: drop the previous tab's GPU hold immediately so we
+        // never keep drawing its pixels while waiting for the new tab.
+        if pipeline
+            .hold
+            .as_ref()
+            .is_some_and(|h| h.tab_id != paint_tab)
+        {
+            pipeline.hold = None;
+            pipeline.sample.clear();
+        }
+
         let mut guard = self.slot.pending.lock().unwrap();
-        let Some(frame) = guard.take() else {
+        let Some(pending) = guard.take() else {
             return;
         };
         drop(guard);
+
+        if pending.tab_id.0 != paint_tab {
+            // Frame belongs to a tab we left; Drop recycles the token.
+            return;
+        }
+        let tab_id = pending.tab_id.0;
+        let frame = pending.frame;
 
         tracing::trace!(
             w = frame.width,
             h = frame.height,
             stride = frame.stride,
+            tab = tab_id,
             "shader::prepare: importing new WPE frame",
         );
 
-        if let Some((imported, hold)) = WpeImporter::import(
+        if let Some((imported, mut hold)) = WpeImporter::import(
             device,
             queue,
             &pipeline.sample.bind_group_layout,
@@ -347,6 +370,7 @@ impl shader::Primitive for WpePrimitive {
         ) {
             // Previous hold Drop releases its WPE token (pool depth ≥2
             // masks GPU still sampling previous dma-buf pages).
+            hold.tab_id = tab_id;
             pipeline.hold = Some(hold);
             pipeline.sample.install(imported);
             pipeline.sample.note_frame();

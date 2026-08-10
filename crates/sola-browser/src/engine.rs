@@ -70,14 +70,25 @@ pub struct TaggedFrame<F> {
     pub frame: F,
 }
 
+/// One decoded frame waiting for the shader, tagged with its tab so a
+/// late background-tab frame cannot paint after the user switched away.
+pub struct PendingFrame<E: Engine> {
+    pub tab_id: TabId,
+    pub frame: E::Frame,
+}
+
 /// Shared between `App` (fills `pending`) and the engine's shader Program
 /// (drains it on next prepare). `cmd_tx` goes back to the engine worker.
 pub struct FrameSlot<E: Engine> {
-    pub pending: Mutex<Option<E::Frame>>,
+    pub pending: Mutex<Option<PendingFrame<E>>>,
     /// Command channel to the engine worker (input, resize, nav, release, …).
     pub cmd_tx: Sender<Cmd<E>>,
     pub last_size: Mutex<(u32, u32)>,
     pub cursor: Arc<AtomicU32>,
+    /// Tab the chrome wants painted (`TabId.0`). Written by chrome on
+    /// tab switch; prepare drops holds/pending for any other tab so we
+    /// never keep showing the previous tab's pixels.
+    pub paint_tab: AtomicU64,
 }
 
 pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;

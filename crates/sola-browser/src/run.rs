@@ -60,12 +60,20 @@ pub fn frame_stream<E: Engine>(
             // content should reach the shader. Engine frames implement
             // Drop that recycles producer buffers (WPE tokens), so a
             // plain `continue` is safe.
-            if tagged.tab_id.0 != active.load(Ordering::Relaxed) {
+            //
+            // Also require `paint_tab` (chrome-side) so a frame that
+            // races a tab switch cannot reinstall the previous tab.
+            let worker_active = active.load(Ordering::Relaxed);
+            let paint_tab = slot.paint_tab.load(Ordering::Relaxed);
+            if tagged.tab_id.0 != worker_active || tagged.tab_id.0 != paint_tab {
                 continue;
             }
             // Overwriting `pending` drops the previous frame (and its
             // recycle token) if iced hasn't prepared it yet.
-            *slot.pending.lock().unwrap() = Some(tagged.frame);
+            *slot.pending.lock().unwrap() = Some(crate::engine::PendingFrame {
+                tab_id: tagged.tab_id,
+                frame: tagged.frame,
+            });
             if output.send(Msg::NewFrame).await.is_err() {
                 break;
             }
@@ -145,6 +153,9 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
         cmd_tx: cmd_tx.clone(),
         last_size: Mutex::new((VIEW_W, VIEW_H)),
         cursor,
+        paint_tab: std::sync::atomic::AtomicU64::new(
+            active_handle.load(std::sync::atomic::Ordering::Relaxed),
+        ),
     });
 
     sola_kit::app::BusSetup::new(app_id)

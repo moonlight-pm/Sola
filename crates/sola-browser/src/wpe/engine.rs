@@ -711,15 +711,15 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 ctx.active = id;
                 ctx.active_atomic
                     .store(id.0, std::sync::atomic::Ordering::Relaxed);
-                // Force the newly-active tab to (re-)render at the
-                // current viewport size. Background tabs may have
-                // been resized to a different size during their
-                // previous turn as active, or never resized at all
-                // if they were just opened — either way the user
-                // should see a fresh, correctly-sized frame
-                // immediately.
                 if !tab.wpe_view.is_null() {
-                    apply_resize(tab.wpe_view, ctx.last_size.0, ctx.last_size.1);
+                    // Focus the view so WebKit routes input correctly.
+                    sys::wpe_view_focus_in(tab.wpe_view);
+                    // Force a new buffer even when the size is unchanged.
+                    // `wpe_toplevel_resize` is idempotent for equal sizes, so
+                    // a static page that stopped painting while backgrounded
+                    // would otherwise leave the chrome stuck on the previous
+                    // tab's last texture forever.
+                    force_view_repaint(tab.wpe_view, ctx.last_size.0, ctx.last_size.1);
                 }
             }
         }
@@ -1052,6 +1052,19 @@ unsafe fn dispatch_nav(webview: *mut sys::WebKitWebView, nav: NavCmd) {
             tracing::info!(url = %url, "Nav::LoadUrl");
         }
     }
+}
+
+/// Nudge the view through a 1px size change and back so WebKit emits a
+/// fresh frame after tab reactivation. Same-size `apply_resize` alone is
+/// a no-op and static pages produce no further buffers while backgrounded.
+unsafe fn force_view_repaint(view: *mut sys::WPEView, width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        apply_resize(view, width, height);
+        return;
+    }
+    let nudge_w = if width > 1 { width - 1 } else { width + 1 };
+    apply_resize(view, nudge_w, height);
+    apply_resize(view, width, height);
 }
 
 /// Resize the view's toplevel. WPE's WebProcess picks this up and

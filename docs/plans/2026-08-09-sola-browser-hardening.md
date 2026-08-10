@@ -72,6 +72,12 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 
 ## Findings (severity)
 
+### Dogfood fixes landed
+
+| Date | Fix |
+|------|-----|
+| 2026-08-09 | **Tab switch painted wrong tab:** shader kept previous tab’s texture; same-size `apply_resize` on reactivate was a no-op so static pages never re-emitted. Fix: `paint_tab` + clear hold/pending on switch; `force_view_repaint` size nudge + focus_in on `SetActiveTab`. |
+
 ### P0 — correctness / dogfood blockers
 
 | ID | Finding | Evidence | Suggested direction |

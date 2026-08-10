@@ -220,25 +220,17 @@ impl<E: Engine> App<E> {
                 }
                 // If closing the active tab, pick a new active tab
                 // first so the engine never sees `active` pointing
-                // at a closed tab. Optimistic cached_active only —
-                // the worker is the sole ActiveHandle writer.
+                // at a closed tab.
                 let was_active = self.cached_active == id;
                 if was_active {
                     if let Some(new_active) = self.pick_new_active_after_close(id) {
-                        let _ = self.cmd_tx.send(Cmd::SetActiveTab(new_active));
-                        self.cached_active = new_active;
+                        self.switch_active_tab(new_active);
                     }
                 }
                 let _ = self.cmd_tx.send(Cmd::CloseTab(id));
             }
             Msg::ActivateTab(id) => {
-                let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
-                // Optimistic paint only — worker owns ActiveHandle.
-                self.cached_active = id;
-                // Force the URL bar to immediately reflect the new
-                // active tab's url on the next Tick (not on next
-                // engine URL change).
-                self.last_seen_url.clear();
+                self.switch_active_tab(id);
             }
             Msg::Tick => {
                 self.cached_tabs = self.tabs_handle.lock().unwrap().clone();
@@ -351,10 +343,26 @@ impl<E: Engine> App<E> {
         let id = self.engine.alloc_tab_id();
         let _ = self.cmd_tx.send(Cmd::OpenTab { id, url });
         if activate {
-            let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
-            // Optimistic only — worker writes ActiveHandle.
-            self.cached_active = id;
+            self.switch_active_tab(id);
         }
+    }
+
+    /// Switch which tab paints: update chrome state, drop any queued
+    /// frame for the previous tab, and ask the worker to activate.
+    /// Without clearing `pending` / `paint_tab`, the shader keeps
+    /// sampling the previous tab's texture until a new frame arrives
+    /// (and static pages may never produce one).
+    pub fn switch_active_tab(&mut self, id: TabId) {
+        self.cached_active = id;
+        self.slot
+            .paint_tab
+            .store(id.0, std::sync::atomic::Ordering::Relaxed);
+        // Drop a queued frame from the tab we left so prepare cannot
+        // reinstall it after paint_tab flips.
+        *self.slot.pending.lock().unwrap() = None;
+        let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
+        // Force URL bar to pick up the new tab's url on next Tick.
+        self.last_seen_url.clear();
     }
 
     /// Current iced theme (chrome styling), refreshed from `Topic::Theme`.

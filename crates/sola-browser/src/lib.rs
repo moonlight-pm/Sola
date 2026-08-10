@@ -14,7 +14,7 @@ pub mod wpe;
 
 pub use engine::{
     ActiveHandle, ClipboardHandle, Cmd, CursorHandle, EditCmd, Engine, FrameReceiver, FrameSlot,
-    NavCmd, TabId, TabInfo, TabsHandle, TaggedFrame,
+    NavCmd, PendingFrame, TabId, TabInfo, TabsHandle, TaggedFrame,
 };
 pub use app::Msg;
 pub use input::CursorKind;

@@ -132,6 +132,13 @@ impl SamplePipeline {
         self.frame_size = Some(imported.size);
     }
 
+    /// Drop the current sample so the next render clears (black) instead
+    /// of redrawing a stale tab's texture after a tab switch.
+    pub fn clear(&mut self) {
+        self.bind_group = None;
+        self.frame_size = None;
+    }
+
     /// FPS counter — logs at debug every ~1s. Bench harness can enable
     /// `SOLA_BROWSER_FPS=1` for info-level lines.
     pub fn note_frame(&mut self) {
