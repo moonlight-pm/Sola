@@ -430,13 +430,22 @@ impl shader::Primitive for WpePrimitive {
             let _ = HeldToken::new(token, release_tx);
             return;
         };
+        let mut planes = vec![wgpu_import::DmabufPlaneLayout {
+            stride: frame.stride,
+            offset: frame.offset,
+        }];
+        for (s, o) in frame.extra_planes.drain(..) {
+            planes.push(wgpu_import::DmabufPlaneLayout {
+                stride: s,
+                offset: o,
+            });
+        }
         let meta = DmabufMetadata {
             width: frame.width,
             height: frame.height,
             format: frame.format,
             modifier: frame.modifier,
-            stride: frame.stride,
-            offset: frame.offset,
+            planes,
         };
         drop(frame);
 

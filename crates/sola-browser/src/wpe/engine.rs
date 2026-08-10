@@ -76,6 +76,9 @@ pub struct WpeFrame {
     pub modifier: u64,
     pub stride: u32,
     pub offset: u32,
+    /// Extra plane layouts (stride, offset) for multi-plane RGB modifiers
+    /// sharing the primary FD. Empty for classic single-plane.
+    pub extra_planes: Vec<(u32, u32)>,
     token: Option<ResourceToken>,
     pub(crate) release_tx: Sender<Cmd<WpeEngine>>,
 }
@@ -636,36 +639,72 @@ unsafe extern "C" fn on_buffer_rendered(
     let width_u = width as u32;
     let height_u = height as u32;
 
-    // Multi-plane (NV12 video / exotic modifiers): **must** release or the
-    // WPE pool dies. We no longer CPU-convert full frames — that froze the
-    // GLib worker on ~4k×4k YouTube buffers, piled up FDs ("Too many open
-    // files"), and still looked soft. Keep the last single-plane paint
-    // (chrome/UI) until a new RGB frame arrives. GPU multi-plane import is
-    // the real B3 fix later.
-    if n_planes != 1 {
+    // DRM ARGB/XRGB — including multi-plane modifiers (NVIDIA often reports
+    // n_planes>1 for a single logical RGB buffer). NV12/YUV still skipped
+    // (GPU YUV path not wired; CPU convert froze YouTube).
+    const AR24: u32 = 0x3432_5241;
+    const XR24: u32 = 0x3432_5258;
+    let is_rgb = format == AR24 || format == XR24;
+    let is_yuv = format == super::yuv::DRM_FORMAT_NV12 || format == super::yuv::DRM_FORMAT_NV21;
+
+    if n_planes == 0 || (!is_rgb && n_planes != 1) || (is_yuv && n_planes >= 2) {
         static LOGGED_SKIP: std::sync::Once = std::sync::Once::new();
         LOGGED_SKIP.call_once(|| {
             tracing::warn!(
                 n_planes,
                 format = format!("{:#x}", format),
                 modifier,
-                "wpe: multi-plane buffer released (no import yet; last RGB frame kept)"
+                "wpe: skip non-RGB multi-plane buffer (released; last RGB kept)"
             );
         });
         release_buffer_unchecked(view, buffer_base);
         return;
     }
 
-    let stride = sys::wpe_buffer_dma_buf_get_stride(buffer, 0);
-    let offset = sys::wpe_buffer_dma_buf_get_offset(buffer, 0);
-    let raw_fd = sys::wpe_buffer_dma_buf_get_fd(buffer, 0);
+    if n_planes > 1 && is_rgb {
+        static LOGGED_MP: std::sync::Once = std::sync::Once::new();
+        LOGGED_MP.call_once(|| {
+            tracing::info!(
+                n_planes,
+                format = format!("{:#x}", format),
+                modifier,
+                "wpe: multi-plane RGB import (plane layouts)"
+            );
+        });
+    }
 
-    let dup_fd = libc::fcntl(raw_fd, libc::F_DUPFD_CLOEXEC, 0);
+    // Collect plane layouts. Prefer a single FD (dup plane 0); if later
+    // planes use a different FD we still import plane 0 only (common for
+    // some producers that list auxiliary planes we don't need).
+    let mut planes: Vec<(i32, u32, u32)> = Vec::with_capacity(n_planes as usize);
+    for i in 0..n_planes {
+        let fd = sys::wpe_buffer_dma_buf_get_fd(buffer, i);
+        let stride = sys::wpe_buffer_dma_buf_get_stride(buffer, i);
+        let offset = sys::wpe_buffer_dma_buf_get_offset(buffer, i);
+        if fd < 0 || stride == 0 {
+            release_buffer_unchecked(view, buffer_base);
+            return;
+        }
+        planes.push((fd, stride, offset));
+    }
+    let primary_fd = planes[0].0;
+    let same_fd = planes.iter().all(|(fd, _, _)| *fd == primary_fd);
+
+    let dup_fd = libc::fcntl(primary_fd, libc::F_DUPFD_CLOEXEC, 0);
     if dup_fd < 0 {
         tracing::warn!(err = ?std::io::Error::last_os_error(), "dup of dmabuf fd failed");
         release_buffer_unchecked(view, buffer_base);
         return;
     }
+
+    // Build plane list for import: all planes if shared FD, else plane 0 only.
+    let plane_meta: Vec<(u32, u32)> = if same_fd {
+        planes.iter().map(|(_, s, o)| (*s, *o)).collect()
+    } else {
+        vec![(planes[0].1, planes[0].2)]
+    };
+    let stride = plane_meta[0].0;
+    let offset = plane_meta[0].1;
 
     let buf_key = buffer as *mut c_void as usize;
     let epoch = ctx
@@ -701,6 +740,12 @@ unsafe extern "C" fn on_buffer_rendered(
         modifier,
         stride,
         offset,
+        // Extra planes (shared FD) for multi-plane RGB modifiers.
+        extra_planes: plane_meta
+            .into_iter()
+            .skip(1)
+            .map(|(s, o)| (s, o))
+            .collect(),
         token: Some(ResourceToken {
             tab_id,
             view: view as *mut c_void,

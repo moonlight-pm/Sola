@@ -60,14 +60,32 @@ impl Drop for MemoryHolder {
     }
 }
 
+pub struct DmabufPlaneLayout {
+    pub stride: u32,
+    pub offset: u32,
+}
+
 pub struct DmabufMetadata {
     pub width: u32,
     pub height: u32,
     /// DRM fourcc. Currently only ARGB8888 (`0x34325241`) is wired.
     pub format: u32,
     pub modifier: u64,
-    pub stride: u32,
-    pub offset: u32,
+    /// Plane 0 layout (always present). Extra planes for multi-plane
+    /// DRM modifiers sharing one FD (NVIDIA etc.).
+    pub planes: Vec<DmabufPlaneLayout>,
+}
+
+impl DmabufMetadata {
+    pub fn single_plane(width: u32, height: u32, format: u32, modifier: u64, stride: u32, offset: u32) -> Self {
+        Self {
+            width,
+            height,
+            format,
+            modifier,
+            planes: vec![DmabufPlaneLayout { stride, offset }],
+        }
+    }
 }
 
 /// Import `fd` as a sampleable `wgpu::Texture`. Takes ownership of
@@ -86,6 +104,9 @@ pub unsafe fn import(
     // XRGB as BGRA just means the implicit-1.0 alpha channel comes
     // from the X bits, which is what we want.
     if meta.format != 0x3432_5241 && meta.format != 0x3432_5258 {
+        return Err(ImportError::UnsupportedFormat(meta.format));
+    }
+    if meta.planes.is_empty() {
         return Err(ImportError::UnsupportedFormat(meta.format));
     }
     // sRGB-encoded color. WPE's WebProcess renders sRGB pixels and
@@ -138,13 +159,17 @@ pub unsafe fn import(
         let mut external_info = vk::ExternalMemoryImageCreateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
 
-        let plane_layouts = [vk::SubresourceLayout {
-            offset: meta.offset as u64,
-            size: 0, /* must be 0 per VUID-VkSubresourceLayout-size-09604 */
-            row_pitch: meta.stride as u64,
-            array_pitch: 0,
-            depth_pitch: 0,
-        }];
+        let plane_layouts: Vec<vk::SubresourceLayout> = meta
+            .planes
+            .iter()
+            .map(|p| vk::SubresourceLayout {
+                offset: p.offset as u64,
+                size: 0, /* must be 0 per VUID-VkSubresourceLayout-size-09604 */
+                row_pitch: p.stride as u64,
+                array_pitch: 0,
+                depth_pitch: 0,
+            })
+            .collect();
         let mut modifier_info = vk::ImageDrmFormatModifierExplicitCreateInfoEXT::default()
             .drm_format_modifier(meta.modifier)
             .plane_layouts(&plane_layouts);
