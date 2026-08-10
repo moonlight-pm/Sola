@@ -169,7 +169,8 @@ impl SamplePipeline {
         }
     }
 
-    /// Three-state Clear/Load/draw (white-flash / black-rect / stretch fixes).
+    /// Draw when we have a texture. Exact size match preferred; mismatch still
+    /// draws (stretch) so a 1px resize-nudge or parked frame cannot flash black.
     pub fn render(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -178,10 +179,10 @@ impl SamplePipeline {
         last_requested_size: (u32, u32),
         pass_label: &str,
     ) {
+        let _ = last_requested_size;
         let (load_op, do_draw) = match self.frame_size {
             None => (wgpu::LoadOp::Clear(wgpu::Color::BLACK), false),
-            Some(size) if size == last_requested_size => (wgpu::LoadOp::Load, true),
-            Some(_) => (wgpu::LoadOp::Load, false),
+            Some(_) => (wgpu::LoadOp::Load, true),
         };
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

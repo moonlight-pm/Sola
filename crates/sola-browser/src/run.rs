@@ -18,7 +18,6 @@
 
 use std::hash::Hash;
 use std::process::ExitCode;
-use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
@@ -58,24 +57,19 @@ pub fn frame_stream<E: Engine>(
                 Ok(Some(f)) => f,
                 _ => break,
             };
-            // Drop frames from background tabs — only the active tab's
-            // content should reach the shader. Engine frames implement
-            // Drop that recycles producer buffers (WPE tokens), so a
-            // plain `continue` is safe.
-            //
-            // Also require `paint_tab` (chrome-side) so a frame that
-            // races a tab switch cannot reinstall the previous tab.
-            let worker_active = active.load(Ordering::Relaxed);
-            let paint_tab = slot.paint_tab.load(Ordering::Relaxed);
-            if tagged.tab_id.0 != worker_active || tagged.tab_id.0 != paint_tab {
-                continue;
-            }
-            // Overwriting `pending` drops the previous frame (and its
-            // recycle token) if iced hasn't prepared it yet.
-            *slot.pending.lock().unwrap() = Some(crate::engine::PendingFrame {
-                tab_id: tagged.tab_id,
-                frame: tagged.frame,
-            });
+            // Keep the latest frame for *every* tab (not only the painted
+            // one). prepare imports background frames into the parked
+            // surface cache so first switch to a static/restored tab has
+            // pixels ready. Overwrite drops the previous PendingFrame
+            // (token recycle via Drop).
+            let _ = &active;
+            slot.pending.lock().unwrap().insert(
+                tagged.tab_id.0,
+                crate::engine::PendingFrame {
+                    tab_id: tagged.tab_id,
+                    frame: tagged.frame,
+                },
+            );
             if output.send(Msg::NewFrame).await.is_err() {
                 break;
             }
@@ -160,7 +154,7 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     let cursor = engine.cursor_handle();
 
     let slot = Arc::new(FrameSlot::<E> {
-        pending: Mutex::new(None),
+        pending: Mutex::new(std::collections::HashMap::new()),
         cmd_tx: cmd_tx.clone(),
         last_size: Mutex::new((VIEW_W, VIEW_H)),
         cursor,

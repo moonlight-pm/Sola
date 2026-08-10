@@ -81,7 +81,10 @@ pub struct PendingFrame<E: Engine> {
 /// Shared between `App` (fills `pending`) and the engine's shader Program
 /// (drains it on next prepare). `cmd_tx` goes back to the engine worker.
 pub struct FrameSlot<E: Engine> {
-    pub pending: Mutex<Option<PendingFrame<E>>>,
+    /// Latest undecoded frame per tab. Background tabs are kept too so we
+    /// can park a GPU snapshot before the user ever focuses them (avoids
+    /// black flash on first switch to a restored/static tab).
+    pub pending: Mutex<std::collections::HashMap<u64, PendingFrame<E>>>,
     /// Command channel to the engine worker (input, resize, nav, release, …).
     pub cmd_tx: Sender<Cmd<E>>,
     pub last_size: Mutex<(u32, u32)>,

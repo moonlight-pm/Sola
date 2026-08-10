@@ -595,7 +595,9 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
     match cmd {
         Cmd::Resize { width, height } => {
             ctx.last_size = (width, height);
-            if let Some(tab) = active_tab(ctx) {
+            // Resize *all* tabs so background park snapshots stay viewport-
+            // sized (first switch after restore must not flash wrong size).
+            for tab in &ctx.tabs {
                 if !tab.wpe_view.is_null() {
                     apply_resize(tab.wpe_view, width, height);
                 }

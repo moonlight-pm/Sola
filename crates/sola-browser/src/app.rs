@@ -512,9 +512,7 @@ impl<E: Engine> App<E> {
         self.slot
             .paint_tab
             .store(id.0, std::sync::atomic::Ordering::Relaxed);
-        // Drop a queued frame from the tab we left so prepare cannot
-        // reinstall it after paint_tab flips.
-        *self.slot.pending.lock().unwrap() = None;
+        // Do not clear pending: background frames still update park cache.
         let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
         // Force URL bar to pick up the new tab's url on next Tick.
         self.last_seen_url.clear();
