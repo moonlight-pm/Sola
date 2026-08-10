@@ -520,15 +520,18 @@ unsafe extern "C" fn on_buffer_rendered(
     // wpe_view at tab-create time via
     // `webkit_web_view_get_wpe_view`, so the lookup is just
     // pointer-equality on a short list.
+    let buffer_base = buffer as *mut sys::WPEBuffer;
+
     let tab_id = match find_tab_by_view(ctx, view) {
         Some(t) => t.id,
         None => {
-            tracing::warn!("buffer-rendered for unknown WPEView; dropping");
+            tracing::warn!("buffer-rendered for unknown WPEView; releasing");
+            // Must release or the producer pool stalls / WebProcess dies.
+            sys::wpe_view_buffer_released(view, buffer_base);
             return;
         }
     };
 
-    let buffer_base = buffer as *mut sys::WPEBuffer;
     let width = sys::wpe_buffer_get_width(buffer_base);
     let height = sys::wpe_buffer_get_height(buffer_base);
     // Record actual buffer size so Resize can detect stretch/zoom mismatch.
@@ -537,7 +540,11 @@ unsafe extern "C" fn on_buffer_rendered(
     }
     let n_planes = sys::wpe_buffer_dma_buf_get_n_planes(buffer);
     if n_planes != 1 {
-        tracing::warn!(n_planes, "ignoring multi-plane frame");
+        // YouTube / video often ship multi-plane (e.g. NV12). We cannot
+        // import them yet — but we **must** release or the buffer pool
+        // exhausts and the browser dies under media load (B3).
+        tracing::debug!(n_planes, ?tab_id, "skip multi-plane frame (released)");
+        sys::wpe_view_buffer_released(view, buffer_base);
         return;
     }
     let format = sys::wpe_buffer_dma_buf_get_format(buffer);
@@ -549,6 +556,7 @@ unsafe extern "C" fn on_buffer_rendered(
     let dup_fd = libc::fcntl(raw_fd, libc::F_DUPFD_CLOEXEC, 0);
     if dup_fd < 0 {
         tracing::warn!(err = ?std::io::Error::last_os_error(), "dup of dmabuf fd failed");
+        sys::wpe_view_buffer_released(view, buffer_base);
         return;
     }
 
@@ -982,13 +990,27 @@ fn rebuild_snapshot(ctx: &WorkerCtx) {
     let new: Vec<TabInfo> = ctx
         .tabs
         .iter()
-        .map(|t| TabInfo {
-            id: t.id,
-            url: t.url.lock().unwrap().clone(),
-            title: t.title.lock().unwrap().clone(),
-            is_loading: t
-                .is_loading
-                .load(std::sync::atomic::Ordering::Relaxed),
+        .map(|t| {
+            let (can_back, can_fwd) = if t.webview.is_null() {
+                (false, false)
+            } else {
+                unsafe {
+                    (
+                        sys::webkit_web_view_can_go_back(t.webview) != 0,
+                        sys::webkit_web_view_can_go_forward(t.webview) != 0,
+                    )
+                }
+            };
+            TabInfo {
+                id: t.id,
+                url: t.url.lock().unwrap().clone(),
+                title: t.title.lock().unwrap().clone(),
+                is_loading: t
+                    .is_loading
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                can_go_back: can_back,
+                can_go_forward: can_fwd,
+            }
         })
         .collect();
     *ctx.tabs_snapshot.lock().unwrap() = new;

@@ -15,6 +15,8 @@ pub struct TabInfo {
     pub title: String,
     /// True while WebKit is loading this tab (reload ↔ stop chrome).
     pub is_loading: bool,
+    pub can_go_back: bool,
+    pub can_go_forward: bool,
 }
 
 #[derive(Debug, Clone)]

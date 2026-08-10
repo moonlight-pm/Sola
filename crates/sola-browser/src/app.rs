@@ -223,6 +223,8 @@ impl<E: Engine> App<E> {
                 url: url.clone(),
                 title: tab.title.clone(),
                 is_loading: !url.is_empty(),
+                can_go_back: false,
+                can_go_forward: false,
             });
             // One background frame may be imported to seed park cache.
             self.slot.need_park_prime.lock().unwrap().insert(id.0);
@@ -523,6 +525,8 @@ impl<E: Engine> App<E> {
             url: url.clone(),
             title: title.clone(),
             is_loading: !url.is_empty(),
+            can_go_back: false,
+            can_go_forward: false,
         });
         if !activate {
             // Background open (e.g. cmd-click): allow one park prime frame.
@@ -692,15 +696,36 @@ impl<E: Engine> App<E> {
     /// query, which sees the press regardless of widget capture.
     pub fn view_nav_bar(&self) -> Element<'_, Msg> {
         use sola_kit::components::style::{SPACE_MD, SPACE_SM};
-        // Reload when idle; × stops an in-flight load (Escape also stops).
-        let reload_or_stop = if self.active_is_loading() {
-            toolbar_button("×").on_press(Msg::NavReloadOrStop)
-        } else {
-            toolbar_button("↻").on_press(Msg::NavReloadOrStop)
+        // Fixed slot so ↻ ↔ × does not reflow the omnibox.
+        const NAV_BTN_W: f32 = 36.0;
+        let info = self.active_tab_info();
+        let can_back = info.map(|t| t.can_go_back).unwrap_or(false);
+        let can_fwd = info.map(|t| t.can_go_forward).unwrap_or(false);
+        // No `on_press` → iced marks Disabled (muted by toolbar style).
+        let back = {
+            let b = toolbar_button("←").width(Length::Fixed(NAV_BTN_W));
+            if can_back {
+                b.on_press(Msg::NavBack)
+            } else {
+                b
+            }
         };
+        let forward = {
+            let b = toolbar_button("→").width(Length::Fixed(NAV_BTN_W));
+            if can_fwd {
+                b.on_press(Msg::NavForward)
+            } else {
+                b
+            }
+        };
+        // Reload when idle; × stops an in-flight load (Escape also stops).
+        let reload_icon = if self.active_is_loading() { "×" } else { "↻" };
+        let reload_or_stop = toolbar_button(reload_icon)
+            .width(Length::Fixed(NAV_BTN_W))
+            .on_press(Msg::NavReloadOrStop);
         row![
-            toolbar_button("←").on_press(Msg::NavBack),
-            toolbar_button("→").on_press(Msg::NavForward),
+            back,
+            forward,
             reload_or_stop,
             // Kit body density (13) + DEFAULT_PADDING — chrome inherits tokens.
             text_input("Search or enter URL", &self.url_field)
@@ -780,6 +805,8 @@ fn merge_tab_snapshot(prev: &[TabInfo], live: &[TabInfo]) -> Vec<TabInfo> {
                 url: t.url.clone(),
                 title,
                 is_loading: t.is_loading,
+                can_go_back: t.can_go_back,
+                can_go_forward: t.can_go_forward,
             }
         })
         .collect()

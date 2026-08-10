@@ -27,10 +27,11 @@ Do not invent product policy.
      system service, not WebExtensions host for now.  
    - **Still ask:** **D5** middle-click, **D6** search.  
    - **Session tabs** persist (`browser-session.json`); restore on boot.  
-   - **Recent dogfood:** opaque paint; close-tab park; optimistic omnibox;
-     stop loading; **frame pipeline** (retire ring + activate 1px nudge).  
+   - **Recent dogfood:** opaque paint; retire-ring holds; size heal; stop;
+     back/forward history enable; fixed reload/stop width; multi-plane
+     buffer release (YouTube crash).  
    - **Build order (next):** visit history UI → downloads → Bitwarden
-     design; residual flicker if any after pipeline rework.  
+     design; multi-plane import for smooth video (B3).  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -60,7 +61,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Single `sola-browser` installed (debug); pipeline: opaque paint, retire-ring holds, activate repaint nudge, park restore; stop; omnibox; OpenUrl→Helium; next: visit history UI | — |
+| Browser | sola-browser installed; paint pipeline + size heal; nav history enable; multi-plane release (YT); OpenUrl→Helium; next: visit history UI; video still skips multi-plane import | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install. User installs and smokes.

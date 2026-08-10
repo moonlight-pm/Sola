@@ -85,6 +85,8 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | 2026-08-10 | **Omnibox lag on tab click:** URL only synced on 250 ms Tick. Fix: `switch_active_tab` sets `url_field` / `last_seen_url` from cached tab immediately. |
 | 2026-08-10 | **Stop loading (D4):** `load-changed` → per-tab `is_loading` in snapshot; nav bar ↻ ↔ ×; Escape → Stop; ⌘R still reload/stop; `NavCmd::Stop` wired. |
 | 2026-08-10 | **Frame pipeline rework:** retire ring (depth 2) so dma-buf release lags GPU (MSN flicker + `WPE_IS_BUFFER` criticals); per-tab `view_size` skips no-op resize spam; `SetActiveTab` 1px nudge when same size so static pages repaint; park replace retires old park. |
+| 2026-08-10 | **Zoom heal:** track `last_frame_size`; if buffer ≠ request, 1px nudge once per wrong buffer; chrome re-sends Resize while painted size mismatches. |
+| 2026-08-10 | **Nav chrome:** back/forward disabled without history; fixed-width reload/stop slot. **Multi-plane buffers released** (not dropped) — YouTube/media was exhausting the WPE pool and killing the browser. |
 
 ### P0 — correctness / dogfood blockers
 
@@ -92,7 +94,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 |----|---------|----------|---------------------|
 | **B1** | **Background tabs keep producing frames** that only get dropped in `frame_stream`. Wastes CPU/GPU/WebProcess for every background tab. | `run.rs` filter; no worker-side suspend | Suspend paint / throttle non-active WPE views (or stop listening) |
 | **B2** | **C3 mitigated 2026-08-10:** retire ring depth 2 before `HeldToken` Drop / `buffer_released`. Not a GPU fence — still best-effort. | `frame.rs` `retire` | Optional: real fence if residual tear remains |
-| **B3** | **Multi-plane dma-buf frames dropped** (`n_planes != 1`). Some content paths may never paint. | `engine.rs` `on_buffer_rendered` | Log rate-limited; support multi-plane or convert |
+| **B3** | **Multi-plane dma-buf:** still not imported (video may stutter/blank). **Release fixed 2026-08-10** — was leaking without `buffer_released` and crashing under YouTube. | `engine.rs` `on_buffer_rendered` | Import NV12/etc. or convert to RGB for media |
 | **B4** | **IME / complex text broken:** `keycode: 0`, Character keys only first codepoint, no IME bridge. CJK/emoji/composing fail. | `wpe/input.rs` | Long-term: real IM protocol; short-term: document |
 | **B5** | **Middle-click never reaches WPE** (`button_to_wpe` returns `None` for Middle). `decide-policy` new-tab path for middle-click is dead for iced-driven events. | `wpe/input.rs` + `on_decide_policy` | Product: enable middle→background tab **or** delete dead policy branch |
 
