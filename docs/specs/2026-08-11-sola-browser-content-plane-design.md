@@ -1,7 +1,20 @@
 # sola-browser · content plane (Wayland present)
 
 **Date:** 2026-08-11  
-**Status:** **Proposed freeze** — awaiting human lock before implementation  
+**Status:** **Frozen** — locked 2026-08-11; implement in-tree (`naturalethic/browser`)
+
+### Implementation progress (2026-08-11)
+
+| Gate | Status |
+|------|--------|
+| G1 parent handles from iced `window::run` | **Pass** (dpy/surf pointers logged) |
+| G2 subsurface create on foreign display | **Code path runs**; **pixels not yet visible** in dogfood |
+| G3 attach (SHM probe + dma-buf present) | present_ok logs; **not visible** (suspect foreign-queue / z-order / compositor import of NVIDIA modifier) |
+| G4 frame callback release | Partial (release previous on next present) |
+
+**Default remains `SOLA_BROWSER_CONTENT=import`.** Enable with `plane` for dogfood.
+
+**Next debug:** pure-rust vs libwayland display ownership; force parent commit; place_above; LINEAR re-export if NVIDIA modifier fails wlroots sample.
 **Branch context:** `naturalethic/browser`  
 **Related:**
 [paint investigation](../plans/2026-08-10-browser-paint-investigation.md);
@@ -377,16 +390,12 @@ None assumed if this freeze is accepted as written.
 **Only re-open if:** you reject subsurface-in-same-client, want CEF, or want
 sibling dual-window as the primary design.
 
-### Questions for you (optional confirm)
+### Locked confirms (2026-08-11)
 
-1. **Spike-first OK?** Phase 0 = G1–G4 only (maybe a colored hole under chrome)
-   before ripping out the iced sample default. **Recommended: yes.**  
-2. **Iced patch OK?** If G1 needs a small iced/winit surface-export patch in
-   tree (or vendor), is that acceptable? **Recommended: yes.**  
-3. **Fallback flag name** — `SOLA_BROWSER_CONTENT=plane|import` default `plane`
-   after ship; during spike default can stay `import` until dogfood passes.
-
-No other product policy needed to start Phase 0.
+1. **Spike-first:** yes — G1–G4 / plane path, then cut over.  
+2. **Iced surface export:** yes — patch iced/winit in-tree if required.  
+3. **Fallback:** `SOLA_BROWSER_CONTENT=plane|import`; default `import` until
+   dogfood passes, then `plane`.
 
 ---
 

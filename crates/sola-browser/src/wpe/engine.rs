@@ -923,6 +923,49 @@ unsafe extern "C" fn on_buffer_rendered(
         None
     };
 
+    let token = ResourceToken {
+        tab_id,
+        view: view as *mut c_void,
+        buffer: buffer as *mut c_void,
+        epoch,
+    };
+    ctx.outstanding_tokens
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    // Product path: attach dma-buf on Wayland content plane (River presents).
+    // Skip iced import mailbox entirely.
+    if crate::content_plane::mode().is_plane() {
+        if let Some(plane_tx) = crate::content_plane::global_sender() {
+            let extra: Vec<(u32, u32)> = plane_meta
+                .iter()
+                .skip(1)
+                .map(|(s, o)| (*s, *o))
+                .collect();
+            // Fence not attached on headless; FenceMonitor already waited.
+            drop(render_fence);
+            let cmd = crate::content_plane::ContentPlaneCmd::Present {
+                fd: OwnedFd::from_raw_fd(dup_fd),
+                width: width_u,
+                height: height_u,
+                format,
+                modifier,
+                stride,
+                offset,
+                extra_planes: extra,
+                token,
+                release_tx: ctx.release_tx.clone(),
+            };
+            if plane_tx.send(cmd).is_err() {
+                // Plane dead — release so pool does not pin.
+                let _ = ctx.release_tx.send(crate::engine::Cmd::Release { token });
+            }
+            return;
+        }
+        tracing::warn!(
+            "content plane mode but no plane sender; falling back to iced import"
+        );
+    }
+
     let frame = WpeFrame {
         fd: Some(OwnedFd::from_raw_fd(dup_fd)),
         render_fence,
@@ -939,16 +982,9 @@ unsafe extern "C" fn on_buffer_rendered(
             .skip(1)
             .map(|(s, o)| (s, o))
             .collect(),
-        token: Some(ResourceToken {
-            tab_id,
-            view: view as *mut c_void,
-            buffer: buffer as *mut c_void,
-            epoch,
-        }),
+        token: Some(token),
         release_tx: ctx.release_tx.clone(),
     };
-    ctx.outstanding_tokens
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // Latest-wins mailbox: if iced is behind, the *older* pending frame is
     // replaced (Drop → Release). Previously try_send(Full) dropped the
     // *newer* frame and kept a stale one — scroll blackouts.

@@ -4,6 +4,7 @@
 //! WPE FFI / worker / dma-buf import lives under [`wpe`].
 
 pub mod app;
+pub mod content_plane;
 pub mod engine;
 pub mod input;
 pub mod integration;

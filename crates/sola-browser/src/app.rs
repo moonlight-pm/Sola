@@ -190,6 +190,8 @@ pub struct App<E: Engine> {
     /// Float tracker + iced window id for CSD while floating.
     pub float: sola_kit::FloatState,
     pub window_id: Option<iced::window::Id>,
+    /// Wayland content plane worker (product paint path); `None` in import mode.
+    content_plane: Option<crate::content_plane::ContentPlane>,
     /// The app_id string passed to `run::<E>`, stored so `Msg::Bus` can
     /// forward it to `integration::handle_bus` without a static.
     pub app_id: &'static str,
@@ -278,6 +280,7 @@ impl<E: Engine> App<E> {
             hovered_tab: None,
             float: sola_kit::FloatState::new(app_id),
             window_id: None,
+            content_plane: None,
             app_id,
             url_bar_focused: false,
             session_fp: String::new(),
@@ -496,6 +499,42 @@ impl<E: Engine> App<E> {
                 if let Some((tabs, active_index)) = self.pending_session.take() {
                     Self::seal_wayland_from_webkit();
                     self.bootstrap_tabs(tabs, active_index);
+                }
+                // Content plane: attach subsurface under iced toplevel (G1–G2).
+                if crate::content_plane::mode().is_plane() {
+                    if self.content_plane.is_none() {
+                        self.content_plane =
+                            Some(crate::content_plane::ContentPlane::spawn());
+                    }
+                    if let Some(wid) = id {
+                        let plane_tx = self
+                            .content_plane
+                            .as_ref()
+                            .map(|p| p.sender());
+                        return iced::window::run(wid, move |window| {
+                            match crate::content_plane::parent_ptrs(window) {
+                                Ok((dpy, surf)) => {
+                                    if let Some(tx) = plane_tx {
+                                        let _ = tx.send(
+                                            crate::content_plane::ContentPlaneCmd::AttachParent {
+                                                display: dpy,
+                                                surface: surf,
+                                            },
+                                        );
+                                    }
+                                    tracing::info!(
+                                        dpy,
+                                        surf,
+                                        "content plane: iced parent handles captured"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!("content plane parent handles: {e}");
+                                }
+                            }
+                        })
+                        .map(|()| Msg::Tick);
+                    }
                 }
                 return Task::none();
             }

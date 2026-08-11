@@ -322,6 +322,20 @@ impl shader::Primitive for WpePrimitive {
         let phys_w = ((logical_w as f64) * dpr).round().max(1.0) as u32;
         let phys_h = ((logical_h as f64) * dpr).round().max(1.0) as u32;
         let requested = (phys_w, phys_h);
+
+        // Content plane: position subsurface in parent surface coords (physical).
+        if crate::content_plane::mode().is_plane() {
+            if let Some(tx) = crate::content_plane::global_sender() {
+                let x = (bounds.x as f64 * dpr).round() as i32;
+                let y = (bounds.y as f64 * dpr).round() as i32;
+                let _ = tx.send(crate::content_plane::ContentPlaneCmd::SetRect {
+                    x,
+                    y,
+                    width: phys_w,
+                    height: phys_h,
+                });
+            }
+        }
         {
             let mut last = self.slot.last_size.lock().unwrap();
             if *last != requested {
@@ -560,6 +574,38 @@ impl shader::Primitive for WpePrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
+        // Product content plane: transparent hole in the content scissor so
+        // the Wayland subsurface shows through (toplevel is transparent).
+        if crate::content_plane::mode().is_plane() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("wpe content hole"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_scissor_rect(
+                clip_bounds.x,
+                clip_bounds.y,
+                clip_bounds.width.max(1),
+                clip_bounds.height.max(1),
+            );
+            // No draws: scissor alone does not clear. Punch with clear via
+            // Load is whole-target — instead leave load and rely on chrome
+            // not covering this rect; first frame may need a clear. Use
+            // viewport clear by drawing nothing after optional discard:
+            // wgpu has no scissored clear; skip draws (subsurface under).
+            let _ = &mut pass;
+            return;
+        }
         let requested = *self.slot.last_size.lock().unwrap();
         pipeline
             .sample

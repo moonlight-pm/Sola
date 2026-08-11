@@ -50,6 +50,14 @@ wgpu-hal = { version = "27", features = ["vulkan"] }
 ash = "0.38"
 libc = "0.2"
 
+# Content plane (Wayland subsurface present) — freeze 2026-08-11.
+# `system` = libwayland foreign_display for parenting under iced/winit.
+wayland-client = { version = "0.31", features = ["system"] }
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-sys = { version = "0.31", features = ["client"] }
+raw-window-handle = "0.6"
+
 # Bitwarden Password Manager SDK (internal; pin rev). License ignored for dogfood.
 bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
 bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", features = ["internal"], optional = true }
