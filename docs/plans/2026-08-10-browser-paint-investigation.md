@@ -76,7 +76,31 @@ screenshot shows YouTube chrome (signed-out empty feed on clean D8 profile). No 
 - Install gdb for symbolized coredumps  
 - Cookie `"cookie"` EROFS path (separate from paint)
 
+## Paint quality telemetry (2026-08-10)
+
+After SEGV + scroll freeze fixed, remaining dogfood: **brief blackout on fast
+scroll**, **menus / top-left nav flicker** on scroll/hover.
+
+`src/wpe/paint_stats.rs` — process-wide atomics + 2s `paint telem` info lines
+while activity > 0. Immediate **warn** on present/import gap ≥ 80 ms and on
+shader `sample.clear` (true black path). Browser menu **Paint Stats** (⇧⌘I).
+
+```bash
+rg "paint telem" /opt/sola/log/app-sola-browser.log | tail -40
+```
+
+| Field | Read as |
+|-------|---------|
+| `drop_ch` / `present` | iced/channel behind → scroll lag / black |
+| `drop_cap` | live buffer cap; untracked release |
+| `ignore` | same buffer re-presented while held |
+| `prep_idle` ≫ `prep_new` | redraws without new frames |
+| `gap_present_ms` / `gap_import_ms` | freeze / black gap size |
+| `sample_clear` | bind group cleared (true black flash) |
+| `yuv_skip` | NV12/video not painted |
+
 ## Code touch
 
 - `crates/sola-browser/src/wpe/engine.rs` — claim/release/cap/trace  
+- `crates/sola-browser/src/wpe/paint_stats.rs` — quality telem  
 - Docs: this plan, CURRENT, capabilities gap notes  
