@@ -62,7 +62,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kit` | Iced app kit + storybook |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Terminal (alacritty grid + iced) |
-| `crates/sola-browser` | Chrome + WPE WebKit + content plane (`src/wpe/`, `src/content_plane/`) |
+| `crates/sola-browser` | Chrome + WPE; interim content plane; target stock Wayland + lockstep (D9) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) |
 | `crates/sola-mail` | Kit-native mail client |
 | `crates/sola-monitor` | System monitor / bus audit |

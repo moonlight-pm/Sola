@@ -18,13 +18,14 @@ This freeze remains authoritative for the **content-plane interim** and for
 | G3 attach SHM + dma-buf | **Pass** — homepage grid dogfood |
 | G4 hold until compositor `wl_buffer.release` | **Pass** (not immediate prev drop) |
 | Input (scroll/click) | **Pass** — empty input region → iced → WPE |
-| Content scale 2× + `set_buffer_scale` | **Pass** (override `SOLA_BROWSER_DPR`) |
+| Content scale + `set_buffer_scale` | **Pass** — honest compositor scale (no forced 2×); `SOLA_BROWSER_DPR` / `SUPER_SAMPLE` |
 | Frame-callback paced attach | **Pass** (code) — no force-release of attached buffers; latest-wins queue while awaiting frame |
 | FrameDone after present | **Pass** (code) — `wpe_view_buffer_rendered` on Wayland frame cb, not 60 Hz timer |
-| Stock-like wl_buffer cache | **Pass** (code) — create once per WPEBuffer; keep across Release (WPEViewWayland) |
-| Daily-driver YT hard-scroll quality | **Open** — re-dogfood after cache path; soft text residual; else option B/C |
+| Stock-like wl_buffer cache + deferred front release | **Pass** (code) — no rewrite while front |
+| Daily-driver YT hard-scroll quality | **Open on this path** — product quality → **Option A** (stock Wayland + lockstep) |
 
-**Default:** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.  
+**Default (interim):** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.  
+**Product target:** `wayland` + river lockstep (Option A freeze).  
 **Probe:** `SOLA_BROWSER_PLANE_PROBE=1` for magenta SHM visibility test.
 
 **Dogfood:** `solactl emit OpenUrl '…'` (not `solactl open` → Helium).
