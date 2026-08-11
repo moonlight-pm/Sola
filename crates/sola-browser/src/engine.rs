@@ -54,6 +54,10 @@ pub enum Cmd<E: Engine> {
     /// Physical pixel size of the content scissor + compositor scale factor
     /// (for `wpe_toplevel_scale_changed` / HiDPI text).
     Resize { width: u32, height: u32, scale: f64 },
+    /// FrameDone: UI presented this buffer (Wayland frame cb / blit done).
+    /// Must precede `Release` for correct WebKit pacing; `Release` will
+    /// FrameDone first if this was skipped.
+    FrameDone { token: E::Token },
     /// Recycle a producer buffer (WPE dma-buf pool).
     Release { token: E::Token },
     Input(E::Input),

@@ -196,11 +196,13 @@ pub struct ResourceToken {
 unsafe impl Send for ResourceToken {}
 unsafe impl Sync for ResourceToken {}
 
-/// Claim on a buffer pointer we still owe a release for.
+/// Claim on a buffer pointer we still owe FrameDone + release for.
 #[derive(Clone, Copy, Debug)]
 struct BufferClaim {
     tab_id: TabId,
     epoch: u64,
+    /// `wpe_view_buffer_rendered` already called for this claim.
+    framedone: bool,
 }
 
 /// Max simultaneous `live_buffers` claims. active+retire+park×N+pending+channel
@@ -908,6 +910,7 @@ unsafe extern "C" fn on_buffer_rendered(
         BufferClaim {
             tab_id,
             epoch,
+            framedone: false,
         },
     );
     if !had_claim {
@@ -1053,6 +1056,30 @@ fn reap_zombie_children() {
     }
 }
 
+/// Signal FrameDone for a live claim (idempotent). Clears C-side in-flight
+/// so the next buffer can be delivered from `render_buffer`.
+unsafe fn mark_framedone(ctx: &mut WorkerCtx, token: &ResourceToken) {
+    let key = token.buffer as usize;
+    if key == 0 {
+        return;
+    }
+    let Some(claim) = ctx.live_buffers.get_mut(&key) else {
+        return;
+    };
+    if claim.tab_id != token.tab_id || claim.epoch != token.epoch {
+        return;
+    }
+    if claim.framedone {
+        return;
+    }
+    claim.framedone = true;
+    let buf = token.buffer as *mut sys::WPEBuffer;
+    let view = token.view as *mut sys::WPEView;
+    if !view.is_null() && !buf.is_null() {
+        sys::sola_wpe_view_buffer_rendered_safe(view, buf);
+    }
+}
+
 /// Process one Cmd. Returns `false` to signal "stop pumping"
 /// (Quit); `true` to continue. Centralises the cmd handling so
 /// both the initial drain and the GLib timer pump share logic.
@@ -1095,6 +1122,9 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 }
             }
         }
+        Cmd::FrameDone { token } => {
+            mark_framedone(ctx, &token);
+        }
         Cmd::Release { token } => {
             let left = ctx
                 .outstanding_tokens
@@ -1118,6 +1148,9 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                     "skip release (stale/unknown claim)"
                 );
             } else {
+                // FrameDone before Release so WebKit in-flight gate clears even
+                // when the frame was dropped without a present completion.
+                mark_framedone(ctx, &token);
                 ctx.live_buffers.remove(&key);
                 let buf = token.buffer as *mut sys::WPEBuffer;
                 let view = token.view as *mut sys::WPEView;
@@ -1585,6 +1618,9 @@ unsafe fn release_untracked(
         dump_paint_trace(ctx, "refuse_claimed_release");
         return;
     }
+    // Delivered via s_buffer_cb → C in_flight is set. FrameDone first so the
+    // next pending buffer can be delivered; then return the buffer.
+    sys::sola_wpe_view_buffer_rendered_safe(view, buffer);
     sys::sola_wpe_view_buffer_released_safe(view, buffer);
 }
 

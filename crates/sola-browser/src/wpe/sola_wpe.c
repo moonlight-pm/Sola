@@ -6,13 +6,8 @@
  * 1. **Display** `get_preferred_buffer_formats` (LINEAR ARGB hint).
  * 2. **View** `set_cursor_from_name` → iced cursor.
  * 3. **ViewHeadless** `render_buffer` — **critical for paint quality**:
- *    stock headless 60 Hz timer does release(previous) then
- *    buffer_rendered — that auto-release races iced import/blit
- *    (YouTube homepage black swaths / nav flicker). Our hijack:
- *      latest-wins pending + 60 Hz timer → buffer_rendered only
- *      never auto-release presented frames (sola after blit+Wait)
- * 4. **Signal emission hook** on `"buffer-rendered"` for frame delivery
- *    to Rust (claim + mailbox).
+ *    deliver buffers to Rust for claim; FrameDone only after present
+ *    (`sola_wpe_view_buffer_rendered_safe`); never auto-release.
  *
  * Class patches are process-wide (one display + engine in sola-browser).
  * `g_type_class_ref` runs class_init first, then we overwrite slots. */
@@ -226,27 +221,7 @@ sola_get_preferred_buffer_formats(WPEDisplay *display) {
     return wpe_buffer_formats_builder_end(builder);
 }
 
-/* ---- emission hook on WPEView::buffer-rendered ------------------ */
-
-static gboolean
-on_buffer_rendered_emission(GSignalInvocationHint *hint,
-                            guint n_param_values,
-                            const GValue *param_values,
-                            gpointer user_data) {
-    (void)hint;
-    (void)user_data;
-    if (n_param_values < 2) {
-        return TRUE; /* keep the hook installed */
-    }
-    WPEView *view = (WPEView *)g_value_get_object(&param_values[0]);
-    GObject *buf_obj = g_value_get_object(&param_values[1]);
-    if (s_buffer_cb && buf_obj && WPE_IS_BUFFER_DMA_BUF(buf_obj)) {
-        s_buffer_cb(s_buffer_ud, view, WPE_BUFFER_DMA_BUF(buf_obj));
-    }
-    return TRUE;
-}
-
-/* ---- headless render_buffer: sola owns loan, 60 Hz pace ---------- */
+/* ---- headless render_buffer: claim now, FrameDone after present ---- */
 
 /*
  * Stock WPEViewHeadless (WebKit 2.52):
@@ -254,24 +229,30 @@ on_buffer_rendered_emission(GSignalInvocationHint *hint,
  *   60 Hz timer → release(committed); committed = pending;
  *                 wpe_view_buffer_rendered(committed);
  *
- * Auto-release races iced import/blit → black swaths / nav flicker.
- * Immediate buffer_rendered uncapped FrameDone → ~200 Hz present
- * storm + live_buffers cap drops.
+ * Problems we hit:
+ *   - Auto-release races present → black swaths / nav flicker
+ *   - Early buffer_rendered (= FrameDone) lets WebKit recycle tiles
+ *     while the buffer is still on the Wayland path → residual black
  *
- * Our path:
- *   - latest-wins pending per view (superseded: release without paint)
- *   - 60 Hz timer emits buffer_rendered only (FrameDone + sola claim)
- *   - never buffer_released of the presented frame here — sola after blit
+ * Protocol (matches freeze + DRM/GTK present):
+ *   1. render_buffer → latest-wins pending; deliver to sola (claim) when
+ *      no buffer is in-flight awaiting FrameDone
+ *   2. sola presents (plane frame cb / import blit)
+ *   3. sola_wpe_view_buffer_rendered_safe → FrameDone (WebKit paces)
+ *   4. sola_wpe_view_buffer_released_safe → return buffer after compositor
+ *
+ * Delivery is direct via s_buffer_cb — NOT via buffer-rendered emission
+ * (that would re-enter claim when we signal FrameDone).
  */
 
 typedef struct {
     WPEView *view;
-    WPEBuffer *pending; /* strong while waiting for tick */
+    WPEBuffer *pending;   /* strong; waiting to deliver to sola */
+    WPEBuffer *in_flight; /* strong; delivered; awaiting FrameDone */
+    gboolean framedone;   /* FrameDone already called for in_flight */
 } SolaViewPending;
 
 static GHashTable *s_pending_by_view = NULL;
-static GSource *s_frame_source = NULL;
-static gint64 s_last_frame_time = 0;
 
 static void sola_pending_free(gpointer data) {
     SolaViewPending *p = (SolaViewPending *)data;
@@ -281,60 +262,80 @@ static void sola_pending_free(gpointer data) {
         g_object_unref(p->pending);
         p->pending = NULL;
     }
+    if (p->in_flight) {
+        if (p->view && WPE_IS_VIEW(p->view) && WPE_IS_BUFFER(p->in_flight)) {
+            if (!p->framedone)
+                wpe_view_buffer_rendered(p->view, p->in_flight);
+            wpe_view_buffer_released(p->view, p->in_flight);
+        }
+        g_object_unref(p->in_flight);
+        p->in_flight = NULL;
+    }
     g_free(p);
 }
 
-static gboolean sola_frame_source_dispatch(GSource *source,
-                                           GSourceFunc callback,
-                                           gpointer user_data) {
-    if (g_source_get_ready_time(source) == -1)
-        return G_SOURCE_CONTINUE;
-    g_source_set_ready_time(source, -1);
-    return callback(user_data);
-}
-
-static GSourceFuncs s_frame_source_funcs = {
-    NULL, /* prepare */
-    NULL, /* check */
-    sola_frame_source_dispatch,
-    NULL, /* finalize */
-    NULL,
-    NULL,
-};
-
-static gboolean sola_frame_tick(gpointer user_data) {
-    (void)user_data;
-    if (!s_pending_by_view)
-        return G_SOURCE_CONTINUE;
-
-    GHashTableIter iter;
-    gpointer key, value;
-    g_hash_table_iter_init(&iter, s_pending_by_view);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        SolaViewPending *p = (SolaViewPending *)value;
-        if (!p->pending || !p->view)
-            continue;
-        WPEBuffer *buf = p->pending;
-        p->pending = NULL;
-        /* FrameDone + emission hook → sola claim. Sola owns the loan. */
-        wpe_view_buffer_rendered(p->view, buf);
-        g_object_unref(buf);
+static SolaViewPending *sola_pending_get(WPEView *view) {
+    if (!s_pending_by_view) {
+        s_pending_by_view = g_hash_table_new_full(
+            g_direct_hash, g_direct_equal, NULL, sola_pending_free);
     }
-    return G_SOURCE_CONTINUE;
+    SolaViewPending *p =
+        (SolaViewPending *)g_hash_table_lookup(s_pending_by_view, view);
+    if (!p) {
+        p = g_new0(SolaViewPending, 1);
+        p->view = view;
+        g_hash_table_insert(s_pending_by_view, view, p);
+    }
+    return p;
 }
 
-static void sola_arm_frame_timer(void) {
-    if (!s_frame_source)
+static void sola_try_deliver(SolaViewPending *p) {
+    if (!p || p->in_flight || !p->pending || !s_buffer_cb)
         return;
-    gint64 now = g_get_monotonic_time();
-    if (!s_last_frame_time)
-        s_last_frame_time = now;
-    gint64 next = s_last_frame_time + (G_USEC_PER_SEC / 60);
-    s_last_frame_time = now;
-    if (next <= now)
-        g_source_set_ready_time(s_frame_source, 0);
-    else
-        g_source_set_ready_time(s_frame_source, next);
+    if (!WPE_IS_BUFFER_DMA_BUF(p->pending)) {
+        /* Non-dmabuf: release without claim (nothing sola can present). */
+        if (p->view && WPE_IS_VIEW(p->view) && WPE_IS_BUFFER(p->pending))
+            wpe_view_buffer_released(p->view, p->pending);
+        g_object_unref(p->pending);
+        p->pending = NULL;
+        return;
+    }
+    WPEBuffer *buf = p->pending;
+    p->pending = NULL;
+    p->in_flight = buf; /* transfers pending's strong ref */
+    p->framedone = FALSE;
+    s_buffer_cb(s_buffer_ud, p->view, WPE_BUFFER_DMA_BUF(buf));
+}
+
+void sola_wpe_view_buffer_rendered_safe(WPEView *view, WPEBuffer *buffer) {
+    if (!view || !buffer)
+        return;
+    if (!WPE_IS_VIEW(view) || !WPE_IS_BUFFER(buffer)) {
+        g_warning("sola: skip buffer_rendered (stale view/buffer %p %p)",
+                  (void *)view, (void *)buffer);
+        return;
+    }
+
+    SolaViewPending *p = NULL;
+    if (s_pending_by_view)
+        p = (SolaViewPending *)g_hash_table_lookup(s_pending_by_view, view);
+
+    if (p && p->in_flight == buffer) {
+        if (!p->framedone) {
+            wpe_view_buffer_rendered(view, buffer);
+            p->framedone = TRUE;
+        }
+        /* Drop deliver ref; sola claim still holds its own ref. */
+        p->in_flight = NULL;
+        g_object_unref(buffer);
+        sola_try_deliver(p);
+        return;
+    }
+
+    /* Orphan / already cleared — still emit FrameDone if WebKit needs it. */
+    wpe_view_buffer_rendered(view, buffer);
+    if (p)
+        sola_try_deliver(p);
 }
 
 static gboolean
@@ -349,20 +350,9 @@ sola_view_render_buffer(WPEView *view,
     if (!view || !buffer)
         return FALSE;
 
-    if (!s_pending_by_view) {
-        s_pending_by_view = g_hash_table_new_full(
-            g_direct_hash, g_direct_equal, NULL, sola_pending_free);
-    }
+    SolaViewPending *p = sola_pending_get(view);
 
-    SolaViewPending *p =
-        (SolaViewPending *)g_hash_table_lookup(s_pending_by_view, view);
-    if (!p) {
-        p = g_new0(SolaViewPending, 1);
-        p->view = view;
-        g_hash_table_insert(s_pending_by_view, view, p);
-    }
-
-    /* Latest-wins: release superseded frame that never painted. */
+    /* Latest-wins for not-yet-delivered frames. */
     if (p->pending && p->pending != buffer) {
         if (WPE_IS_BUFFER(p->pending))
             wpe_view_buffer_released(view, p->pending);
@@ -372,7 +362,9 @@ sola_view_render_buffer(WPEView *view,
     if (p->pending != buffer)
         p->pending = g_object_ref(buffer);
 
-    sola_arm_frame_timer();
+    /* Deliver immediately when previous FrameDone cleared in_flight.
+     * WebKit paces further frames on our FrameDone — no 60 Hz timer. */
+    sola_try_deliver(p);
     return TRUE;
 }
 
@@ -404,27 +396,10 @@ static void sola_wpe_init_once(void) {
     WPEViewClass *view_class =
         (WPEViewClass *)g_type_class_ref(WPE_TYPE_VIEW_HEADLESS);
     view_class->set_cursor_from_name = sola_view_set_cursor_from_name;
-    /* Own loan + 60 Hz pace; no stock auto-release (see above). */
+    /* Own loan; FrameDone only after sola present (see above). */
     view_class->render_buffer = sola_view_render_buffer;
 
-    /* Process-wide frame timer (ready-time driven, like stock headless). */
-    s_frame_source = g_source_new(&s_frame_source_funcs, sizeof(GSource));
-    g_source_set_priority(s_frame_source, G_PRIORITY_DEFAULT);
-    g_source_set_name(s_frame_source, "sola headless frame timer");
-    g_source_set_callback(s_frame_source, sola_frame_tick, NULL, NULL);
-    g_source_attach(s_frame_source, NULL);
-    g_source_set_ready_time(s_frame_source, -1);
-
-    /* Ref WPEView so signals are registered, then look up the
-     * signal id we want and install our emission hook. The hook
-     * fires for every emission against any WPEView (or subclass),
-     * which is the whole point of using one. */
-    g_type_class_ref(WPE_TYPE_VIEW);
-    guint sig = g_signal_lookup("buffer-rendered", WPE_TYPE_VIEW);
-    if (sig != 0) {
-        g_signal_add_emission_hook(
-            sig, 0, on_buffer_rendered_emission, NULL, NULL);
-    }
+    /* No emission hook on buffer-rendered: FrameDone must not re-claim. */
 
     g_once_init_leave(&once_init, 1);
 }

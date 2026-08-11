@@ -15,7 +15,8 @@
 | Input (scroll/click) | **Pass** — empty input region → iced → WPE |
 | Content scale 2× + `set_buffer_scale` | **Pass** (override `SOLA_BROWSER_DPR`) |
 | Frame-callback paced attach | **Pass** (code) — no force-release of attached buffers; latest-wins queue while awaiting frame |
-| Daily-driver YT hard-scroll quality | **Open** — re-dogfood after frame-pace; soft text still open |
+| FrameDone after present | **Pass** (code) — `wpe_view_buffer_rendered` on Wayland frame cb, not 60 Hz timer |
+| Daily-driver YT hard-scroll quality | **Open** — re-dogfood black/flicker after FrameDone fix; soft text residual |
 
 **Default:** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.  
 **Probe:** `SOLA_BROWSER_PLANE_PROBE=1` for magenta SHM visibility test.

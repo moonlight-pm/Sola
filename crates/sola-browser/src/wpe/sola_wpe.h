@@ -64,5 +64,10 @@ void sola_wpe_buffer_unref(WPEBuffer *buffer);
 /* Safe release: only if still a WPEBuffer (after our ref, this should hold). */
 void sola_wpe_view_buffer_released_safe(WPEView *view, WPEBuffer *buffer);
 
+/* FrameDone after the UI has presented (Wayland frame cb / blit complete).
+ * Must run on the WPE/GLib thread. Clears the in-flight gate so the next
+ * pending buffer can be delivered. Idempotent per buffer. */
+void sola_wpe_view_buffer_rendered_safe(WPEView *view, WPEBuffer *buffer);
+
 /* New headless WPEDisplay. Caller owns the reference. */
 WPEDisplay *sola_wpe_display_new(void);

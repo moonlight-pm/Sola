@@ -167,12 +167,29 @@ Code: `crates/sola-browser/src/content_plane/plane.rs`.
 
 **Still open:** user dogfood confirm; soft text / DPR polish.
 
+### FrameDone after present (2026-08-11 later)
+
+User: blur better after frame-pace; **black swaths + flicker remain**.
+
+Root cause: `wpe_view_buffer_rendered` (= **FrameDone**) still ran on the
+old 60 Hz timer **before** Wayland present. WebKit treated the frame as
+displayed and recycled tiles while the dma-buf was still on the plane path.
+
+| Before | After |
+|--------|--------|
+| 60 Hz timer → FrameDone + claim via emission hook | `render_buffer` → claim only |
+| Release after compositor | unchanged |
+| — | **FrameDone on `wl_surface.frame` Done** (or Release if dropped) |
+
+Code: `sola_wpe.c` (no timer / no emission hook), `Cmd::FrameDone`,
+`plane.rs` frame-cb data, `mark_framedone` before Release.
+
 ## Code touch
 
-- `crates/sola-browser/src/wpe/sola_wpe.c` — render_buffer hijack  
-- `crates/sola-browser/src/wpe/engine.rs` — claim/release/cap/trace  
+- `crates/sola-browser/src/wpe/sola_wpe.c` — claim now, FrameDone after present  
+- `crates/sola-browser/src/wpe/engine.rs` — claim/release/FrameDone  
 - `crates/sola-browser/src/wpe/frame.rs` — blit+Wait; no tab-switch clear  
 - `crates/sola-browser/src/wpe/paint_stats.rs` — quality telem  
-- `crates/sola-browser/src/content_plane/plane.rs` — frame-paced present  
+- `crates/sola-browser/src/content_plane/plane.rs` — frame-paced present + FrameDone  
 - Docs: this plan, CURRENT, capabilities gap notes  
 

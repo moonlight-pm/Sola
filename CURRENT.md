@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-11 (`naturalethic/browser`) — plane frame-paced present; dogfood residual
+**As of:** 2026-08-11 (`naturalethic/browser`) — FrameDone after present; re-dogfood black
 
 ---
 
@@ -22,17 +22,17 @@ Do not invent product policy.
      [`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](docs/specs/2026-08-11-sola-browser-content-plane-design.md)
      — **implemented, partial quality**.  
    - **Paint path (as-built):** default `SOLA_BROWSER_CONTENT=plane` — iced
-     chrome + Wayland subsurface dma-buf (River presents); empty input
-     region; hold until `wl_buffer.release`; **frame-callback paced attach**
-     (no force-release of on-screen buffers); content scale **2×** default
-     (`SOLA_BROWSER_DPR` override); fallback `import`.  
-   - **User dogfood (YT homepage):** re-check black/flicker after frame-pace
-     fix; soft text / daily-driver bar still open until confirmed.  
+     chrome + Wayland subsurface dma-buf; hold until `wl_buffer.release`;
+     **frame-callback paced attach**; **FrameDone only after Wayland frame
+     cb** (not 60 Hz timer — early FrameDone recycled tiles → black/flicker);
+     content scale **2×** default (`SOLA_BROWSER_DPR`); fallback `import`.  
+   - **User dogfood (YT homepage):** blur improved; black/flicker still after
+     force-release fix — **re-check after FrameDone-after-present**.  
    - **Dogfood URLs:** `solactl emit OpenUrl` only — **never** `solactl open`
      (Helium / D3).  
    - **D8 profiles** shipped (no switcher).  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Next:** dogfood YT hard-scroll (black/flicker) → blur polish →
+   - **Next:** dogfood YT hard-scroll after FrameDone fix → remaining blur →
      cookie stickiness → vault session.  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
@@ -64,7 +64,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Content plane default; frame-paced present; **re-dogfood black/flicker**; soft text open; OpenUrl bus; D8 | — |
+| Browser | Content plane; FrameDone after present; blur better; **re-dogfood black/flicker**; OpenUrl; D8 | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install

@@ -105,6 +105,12 @@ struct BufferData {
     keep_fd: Mutex<Option<OwnedFd>>,
 }
 
+/// User data for `wl_surface.frame` — FrameDone after compositor accepts frame.
+struct FrameCbData {
+    token: ResourceToken,
+    release_tx: Sender<Cmd<WpeEngine>>,
+}
+
 /// A dma-buf frame waiting for the previous commit's `wl_surface.frame`.
 struct QueuedPresent {
     fd: OwnedFd,
@@ -153,6 +159,8 @@ struct PlaneState {
     awaiting_frame: bool,
     /// When `awaiting_frame` was set (timeout unlock if callback is late).
     awaiting_since: Option<Instant>,
+    /// Token for the commit waiting on frame cb (FrameDone on Done or timeout).
+    awaiting_framedone: Option<(ResourceToken, Sender<Cmd<WpeEngine>>)>,
     /// Latest unattached present (latest-wins while awaiting frame).
     queued: Option<QueuedPresent>,
     /// wl_surface buffer_scale (matches WebKit device scale when >1).
@@ -365,6 +373,9 @@ fn finish_live(state: &mut PlaneState) {
     if let Some(q) = state.queued.take() {
         q.release();
     }
+    if let Some((token, tx)) = state.awaiting_framedone.take() {
+        let _ = tx.send(Cmd::FrameDone { token });
+    }
     state.awaiting_frame = false;
     state.awaiting_since = None;
     // Shutdown only: force-release inflight WPE loans without compositor wait.
@@ -388,6 +399,10 @@ fn unlock_stale_frame_gate(state: &mut PlaneState) {
         return;
     };
     if since.elapsed() >= FRAME_CB_TIMEOUT {
+        // Missing frame cb must still FrameDone or WebKit stalls forever.
+        if let Some((token, tx)) = state.awaiting_framedone.take() {
+            let _ = tx.send(Cmd::FrameDone { token });
+        }
         state.awaiting_frame = false;
         state.awaiting_since = None;
     }
@@ -445,6 +460,7 @@ fn init_from_parent(
         inflight: Vec::new(),
         awaiting_frame: false,
         awaiting_since: None,
+        awaiting_framedone: None,
         queued: None,
         buffer_scale: 1,
         x: 200,
@@ -706,7 +722,10 @@ fn attach_dmabuf(
     }
 
     let data = Arc::new(BufferData {
-        release: Mutex::new(Some(PendingRelease { token, release_tx })),
+        release: Mutex::new(Some(PendingRelease {
+            token,
+            release_tx: release_tx.clone(),
+        })),
         // Own the client-side dma-buf FD until compositor Release + destroy.
         keep_fd: Mutex::new(Some(fd)),
     });
@@ -752,7 +771,15 @@ fn attach_dmabuf(
 
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, width as i32, height as i32);
-    let _ = surface.frame(&qh, ());
+    // FrameDone when compositor is ready for the next frame (not on the
+    // 60 Hz WebKit timer — that recycled tiles while still on-screen).
+    let _ = surface.frame(
+        &qh,
+        FrameCbData {
+            token,
+            release_tx: release_tx.clone(),
+        },
+    );
     surface.commit();
     let _ = inner.event_queue.flush();
     let _ = inner.conn.flush();
@@ -760,6 +787,8 @@ fn attach_dmabuf(
     // Gate the next attach on frame callback (display-rate pacing).
     inner.state.awaiting_frame = true;
     inner.state.awaiting_since = Some(Instant::now());
+    // Timeout path needs the token if frame cb never arrives.
+    inner.state.awaiting_framedone = Some((token, release_tx));
     // Keep proxy alive until Release event (do NOT destroy / release WPE yet).
     inner.state.inflight.push(buffer);
     inner.state.present_ok += 1;
@@ -904,8 +933,37 @@ impl Dispatch<wl_callback::WlCallback, ()> for PlaneState {
         _: &QueueHandle<Self>,
     ) {
         if let wl_callback::Event::Done { callback_data: _ } = event {
-            // Compositor is ready for the next commit — clear the gate so
-            // `flush_queued_after_frame` can attach the latest buffer.
+            // SHM probe / unit-data callbacks — unlock attach gate only.
+            state.awaiting_frame = false;
+            state.awaiting_since = None;
+            state.frame_done += 1;
+        }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, FrameCbData> for PlaneState {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        event: wl_callback::Event,
+        data: &FrameCbData,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { callback_data: _ } = event {
+            // Compositor accepted this commit — FrameDone so WebKit can
+            // produce the next frame; buffer stays loaned until Release.
+            let _ = data.release_tx.send(Cmd::FrameDone {
+                token: data.token,
+            });
+            // Drop timeout copy if it still points at this commit.
+            if state
+                .awaiting_framedone
+                .as_ref()
+                .is_some_and(|(t, _)| t.buffer == data.token.buffer)
+            {
+                state.awaiting_framedone = None;
+            }
             state.awaiting_frame = false;
             state.awaiting_since = None;
             state.frame_done += 1;
