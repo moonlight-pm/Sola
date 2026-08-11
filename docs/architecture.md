@@ -149,12 +149,20 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 | WPE engine | `src/wpe/*` | GMainLoop worker, tabs, dma-buf, C hijacks |
 | Historical | tag `pre-cef-removal` | CEF + dual crate + dispatcher |
 
-**Runtime:** iced main thread + `wpe-engine` GLib thread. Frames: WPE
-`buffer-rendered` → mpsc → drop non-active → `FrameSlot` → Vulkan
-dma-buf import → WGSL sample. Clipboard: page selection → iced write;
-paste → `Cmd::PasteText` / InsertText (headless WPE has no Wayland
-clipboard). **System `http`/`https` default to Helium** until sola-browser
-is ship-ready (**D3**); browser does not subscribe to `Topic::OpenUrl`.
+**Runtime:** iced main thread + `wpe-engine` GLib thread.
+
+**Paint (product path, 2026-08-11):** WPE `buffer-rendered` → claim →
+**content plane** (`src/content_plane/`) attaches dma-buf to a
+`wl_subsurface` under the iced toplevel (River presents). Empty input
+region on the content surface so pointer/scroll hit iced chrome → WPE
+input. Fallback: `SOLA_BROWSER_CONTENT=import` (Vulkan import + iced
+shader). Freeze:
+[`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](specs/2026-08-11-sola-browser-content-plane-design.md).
+
+Clipboard: page selection → iced write; paste → `Cmd::PasteText` /
+InsertText. **System `http`/`https` still Helium (D3)** via `solactl open`;
+dogfood sola-browser with `solactl emit OpenUrl` (browser **does**
+subscribe to `Topic::OpenUrl`).
 
 **State paths (D8 as-built):**
 

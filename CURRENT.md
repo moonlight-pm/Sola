@@ -61,7 +61,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Paint: headless render_buffer hijack + owned blit; YT home scroll dogfood OK metrics; OpenUrl; D8 | — |
+| Browser | **Content plane default** (subsurface + dma-buf); YT home + scroll dogfood; OpenUrl via bus; D8 | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install

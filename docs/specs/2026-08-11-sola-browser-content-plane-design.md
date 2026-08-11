@@ -11,10 +11,12 @@
 | G2 subsurface | **Pass** (main-thread Wayland only — dual display-read was the bug) |
 | G3 attach SHM + dma-buf | **Pass** — magenta probe visible; YouTube homepage full grid dogfood |
 | G4 release previous on next present | **Pass** (GTK-style) |
+| Input (scroll/click) | **Pass** — empty `wl_surface` input region so events hit iced → WPE (`scroll delta≈96` dogfood) |
 
-**Default:** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.
+**Default:** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.  
+**Probe:** `SOLA_BROWSER_PLANE_PROBE=1` for magenta SHM visibility test.
 
-**Dogfood:** Open URLs with `solactl emit OpenUrl '…'` (not `solactl open` → Helium).
+**Dogfood:** `solactl emit OpenUrl '…'` (not `solactl open` → Helium).
 **Branch context:** `naturalethic/browser`  
 **Related:**
 [paint investigation](../plans/2026-08-10-browser-paint-investigation.md);

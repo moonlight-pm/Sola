@@ -15,8 +15,8 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use wayland_backend::sys::client::Backend as SysBackend;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::{
-    wl_buffer, wl_callback, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_subcompositor,
-    wl_subsurface, wl_surface,
+    wl_buffer, wl_callback, wl_compositor, wl_region, wl_registry, wl_shm, wl_shm_pool,
+    wl_subcompositor, wl_subsurface, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -169,14 +169,18 @@ impl ContentPlane {
             ContentPlaneCmd::AttachParent { display, surface } => {
                 match init_from_parent(display, surface) {
                     Ok(inner) => {
-                        tracing::info!("content plane: G1/G2 subsurface ready (main thread)");
+                        tracing::info!(
+                            "content plane: G1/G2 subsurface ready (main thread, empty input region)"
+                        );
                         self.inner = Some(inner);
-                        // Large magenta probe at current rect (or default).
-                        self.apply(ContentPlaneCmd::ProbeColor {
-                            r: 255,
-                            g: 0,
-                            b: 255,
-                        });
+                        // Magenta SHM probe only when debugging visibility.
+                        if std::env::var_os("SOLA_BROWSER_PLANE_PROBE").is_some() {
+                            self.apply(ContentPlaneCmd::ProbeColor {
+                                r: 255,
+                                g: 0,
+                                b: 255,
+                            });
+                        }
                     }
                     Err(e) => tracing::error!("content plane attach: {e}"),
                 }
@@ -349,19 +353,24 @@ fn init_from_parent(
         .map_err(|e| PlaneError::Connect(format!("parent proxy: {e}")))?;
 
     let child = compositor.create_surface(&qh, ());
+    // Empty input region: pointer/scroll hit the iced parent (shader → WPE).
+    // Without this, place_above steals input and page scroll/click die.
+    {
+        let region = compositor.create_region(&qh, ());
+        child.set_input_region(Some(&region));
+        region.destroy();
+    }
     let sub = subcompositor.get_subsurface(&child, &parent, &qh, ());
     sub.place_above(&parent);
-    // Sync: apply with parent commits from iced (more reliable under winit).
-    sub.set_sync();
+    // Desync: content commits without waiting for iced parent commit.
+    sub.set_desync();
     sub.set_position(state.x, state.y);
 
     child.commit();
-    // Nudge parent so sync subsurface maps (safe request on same object).
     parent.commit();
 
     let _ = event_queue.flush();
     let _ = conn.flush();
-    // One dispatch of *our* queue only (no display read).
     let _ = event_queue.dispatch_pending(&mut state);
 
     state.surface = Some(child);
@@ -436,9 +445,6 @@ fn present_shm_color(inner: &mut PlaneInner, r: u8, g: u8, b: u8) -> Result<(), 
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();
-    if let Some(parent) = &inner.state.parent {
-        parent.commit();
-    }
     let _ = inner.event_queue.flush();
     let _ = inner.conn.flush();
 
@@ -527,9 +533,7 @@ fn present_dmabuf(
     surface.damage_buffer(0, 0, width as i32, height as i32);
     let _ = surface.frame(&qh, ());
     surface.commit();
-    if let Some(parent) = &inner.state.parent {
-        parent.commit();
-    }
+    // desync: no parent.commit required
     let _ = inner.event_queue.flush();
     let _ = inner.conn.flush();
 
@@ -652,6 +656,18 @@ impl Dispatch<wl_callback::WlCallback, ()> for PlaneState {
         _: &mut Self,
         _: &wl_callback::WlCallback,
         _: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_region::WlRegion, ()> for PlaneState {
+    fn event(
+        _: &mut Self,
+        _: &wl_region::WlRegion,
+        _: wl_region::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
