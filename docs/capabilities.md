@@ -96,7 +96,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| **sola-browser** | 2026-08-11: headless render_buffer hijack (YT homepage black/flicker root); owned blit+Wait; telem; D8; Bitwarden |
+| **sola-browser** | 2026-08-11: content plane default (subsurface + dma-buf, main-thread, Release-hold, 2× DPR); residual YT scroll quality; D8; Bitwarden |
 | **sola-arcade** | 2026-08-08: banner list + nest; library cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema exit; gamescope float 16:9 |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |
 | Float defaults | Unassigned windows default-float + kit CSD on first-party apps |
