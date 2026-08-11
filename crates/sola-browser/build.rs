@@ -161,6 +161,7 @@ fn main() {
         .allowlist_function("g_main_.*")
         .allowlist_function("g_timeout_.*")
         .allowlist_function("g_object_unref")
+        .allowlist_function("g_object_new")
         .allowlist_function("g_signal_connect_data")
         .allowlist_function("egl.*")
         .allowlist_function("gbm_.*")

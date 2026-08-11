@@ -117,7 +117,21 @@ pub unsafe fn import(
     let vk_format = vk::Format::B8G8R8A8_SRGB;
     let wgpu_format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
+    // `vkAllocateMemory(ImportMemoryFdInfo)` consumes the FD on success.
+    // On any failure before that call we must close it ourselves or we
+    // leak FDs under scroll ("Too many open files").
     let raw_fd = fd.into_raw_fd();
+    struct FdGuard(Option<i32>);
+    impl Drop for FdGuard {
+        fn drop(&mut self) {
+            if let Some(fd) = self.0.take() {
+                unsafe {
+                    let _ = libc::close(fd);
+                }
+            }
+        }
+    }
+    let mut fd_guard = FdGuard(Some(raw_fd));
 
     let (texture, memory) = unsafe {
         let guard = device
@@ -200,9 +214,10 @@ pub unsafe fn import(
             .push_next(&mut external_info)
             .push_next(&mut modifier_info);
 
-        let image = ash_device
-            .create_image(&image_info, None)
-            .map_err(ImportError::Vulkan)?;
+        let image = match ash_device.create_image(&image_info, None) {
+            Ok(i) => i,
+            Err(e) => return Err(ImportError::Vulkan(e)),
+        };
 
         let mem_reqs = ash_device.get_image_memory_requirements(image);
         // Memory type: a DEVICE_LOCAL type is correct for
@@ -222,8 +237,11 @@ pub unsafe fn import(
                 mem_reqs.memory_type_bits,
                 vk::MemoryPropertyFlags::empty(),
             )
-        })
-        .ok_or(ImportError::NoSuitableMemoryType)?;
+        });
+        let Some(mem_type_idx) = mem_type_idx else {
+            ash_device.destroy_image(image, None);
+            return Err(ImportError::NoSuitableMemoryType);
+        };
 
         let mut import_info = vk::ImportMemoryFdInfoKHR::default()
             .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
@@ -234,13 +252,23 @@ pub unsafe fn import(
             .memory_type_index(mem_type_idx)
             .push_next(&mut import_info);
 
-        let memory = ash_device
-            .allocate_memory(&alloc_info, None)
-            .map_err(ImportError::Vulkan)?;
+        let memory = match ash_device.allocate_memory(&alloc_info, None) {
+            Ok(m) => {
+                // Driver owns the FD now — do not close in FdGuard.
+                fd_guard.0 = None;
+                m
+            }
+            Err(e) => {
+                ash_device.destroy_image(image, None);
+                return Err(ImportError::Vulkan(e));
+            }
+        };
 
-        ash_device
-            .bind_image_memory(image, memory, 0)
-            .map_err(ImportError::Vulkan)?;
+        if let Err(e) = ash_device.bind_image_memory(image, memory, 0) {
+            ash_device.free_memory(memory, None);
+            ash_device.destroy_image(image, None);
+            return Err(ImportError::Vulkan(e));
+        }
 
         let hal_texture = guard.texture_from_raw(
             image,
@@ -288,6 +316,9 @@ pub unsafe fn import(
             },
         )
     };
+
+    // Success path: keep fd_guard empty so Drop is a no-op.
+    std::mem::forget(fd_guard);
 
     Ok(ImportedFrame {
         texture,

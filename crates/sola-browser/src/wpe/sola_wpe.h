@@ -46,5 +46,13 @@ void sola_wpe_copy_selection(WebKitWebView *view);
 /* Fire-and-forget JS on the page (password fill, etc.). No result callback. */
 void sola_wpe_evaluate_js(WebKitWebView *view, const char *script);
 
+/* Persistent profile: data + cache dirs under XDG (cookies, storage, service
+ * workers). Caller owns the returned session ref. */
+WebKitNetworkSession *sola_wpe_network_session_new(const char *data_dir,
+                                                   const char *cache_dir);
+
+/* WebView bound to a network session (or default if session is NULL). */
+WebKitWebView *sola_wpe_web_view_new(WebKitNetworkSession *session);
+
 /* New headless WPEDisplay. Caller owns the reference. */
 WPEDisplay *sola_wpe_display_new(void);

@@ -329,6 +329,8 @@ struct WorkerCtx {
     cmd_rx: Receiver<Cmd<WpeEngine>>,
     /// Clone used when emitting frames so Drop can `Cmd::Release`.
     release_tx: Sender<Cmd<WpeEngine>>,
+    /// Shared persistent profile (cookies / cache / storage). All tabs use this.
+    network_session: *mut sys::WebKitNetworkSession,
     tabs: Vec<TabState>,
     active: TabId,
     /// Last CSS/layout size sent to WPE resize.
@@ -423,11 +425,39 @@ unsafe fn worker_main(
     sys::wpe_display_set_primary(display);
     tracing::info!("WPE platform display ready (subclassed for LINEAR-only modifier)");
 
+    // Persistent WebKit profile so Google/YouTube (and everything else) stay
+    // signed in across process restarts. Without this, each launch is a fresh
+    // ephemeral session.
+    let network_session = {
+        let data = dirs_data_join("sola/browser");
+        let cache = dirs_cache_join("sola/browser");
+        let _ = std::fs::create_dir_all(&data);
+        let _ = std::fs::create_dir_all(&cache);
+        let data_c = CString::new(data.to_string_lossy().as_ref()).unwrap();
+        let cache_c = CString::new(cache.to_string_lossy().as_ref()).unwrap();
+        let session = sys::sola_wpe_network_session_new(data_c.as_ptr(), cache_c.as_ptr());
+        if session.is_null() {
+            tracing::error!(
+                data = %data.display(),
+                cache = %cache.display(),
+                "failed to create WebKitNetworkSession — cookies will not persist"
+            );
+        } else {
+            tracing::info!(
+                data = %data.display(),
+                cache = %cache.display(),
+                "WebKit network session ready (persistent cookies)"
+            );
+        }
+        session
+    };
+
     let ctx = Box::into_raw(Box::new(WorkerCtx {
         main_loop: ptr::null_mut(),
         frame_tx,
         cmd_rx,
         release_tx,
+        network_session,
         tabs: Vec::new(),
         active: TabId(u64::MAX),
         last_css: (width, height),
@@ -796,7 +826,24 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
     if ctx.snapshot_dirty.swap(false, std::sync::atomic::Ordering::Relaxed) {
         rebuild_snapshot(&*ctx);
     }
+    // Reap WebKit child zombies (WPENetworkProcess often dies without
+    // GLib child-watch draining). Leaving them piles process slots and
+    // confuses the process model under YouTube media load.
+    reap_zombie_children();
     1 /* G_SOURCE_CONTINUE */
+}
+
+/// Non-blocking wait for any exited children. Safe alongside GLib: we only
+/// collect already-dead PIDs; live WebKit process watches still fire.
+fn reap_zombie_children() {
+    loop {
+        // SAFETY: WNOHANG — never blocks the GLib pump.
+        let mut status: libc::c_int = 0;
+        let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+        if pid <= 0 {
+            break;
+        }
+    }
 }
 
 /// Process one Cmd. Returns `false` to signal "stop pumping"
@@ -890,10 +937,16 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
             }
         }
         Cmd::Focus(focused) => {
-            if let Some(tab) = active_tab(ctx) {
+            // Need mut for force_view_repaint on focus-in (black after
+            // app switch when WPE stopped presenting).
+            let (w, h) = ctx.last_css;
+            if let Some(tab) = active_tab_mut(ctx) {
                 if !tab.wpe_view.is_null() {
                     if focused {
                         sys::wpe_view_focus_in(tab.wpe_view);
+                        // Same-size resize is a no-op; nudge so static pages
+                        // and post-suspend views emit a fresh buffer.
+                        force_view_repaint(tab, w, h);
                     } else {
                         sys::wpe_view_focus_out(tab.wpe_view);
                     }
@@ -1072,9 +1125,9 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         std::env::remove_var("WAYLAND_DISPLAY");
     }
 
-    let webview = sys::webkit_web_view_new(ptr::null_mut());
+    let webview = sys::sola_wpe_web_view_new(ctx.network_session);
     if webview.is_null() {
-        tracing::warn!(?id, "webkit_web_view_new returned null; tab not opened");
+        tracing::warn!(?id, "sola_wpe_web_view_new returned null; tab not opened");
         return;
     }
     let wpe_view = sys::webkit_web_view_get_wpe_view(webview);
@@ -1244,6 +1297,26 @@ unsafe fn close_tab(ctx: &mut WorkerCtx, id: TabId) {
         live_buffers = ctx.live_buffers.len(),
         "closed tab"
     );
+}
+
+/// XDG data dir + relative path (e.g. `sola/browser`).
+fn dirs_data_join(rel: &str) -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from(".local/share"));
+    base.join(rel)
+}
+
+/// XDG cache dir + relative path.
+fn dirs_cache_join(rel: &str) -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(|| std::path::PathBuf::from(".cache"));
+    base.join(rel)
 }
 
 /// One-shot release for buffers **not** tracked in `live_buffers`

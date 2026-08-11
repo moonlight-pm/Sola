@@ -114,6 +114,68 @@ void sola_wpe_evaluate_js(WebKitWebView *view, const char *script) {
         NULL);
 }
 
+WebKitNetworkSession *sola_wpe_network_session_new(const char *data_dir,
+                                                   const char *cache_dir) {
+    if (!data_dir || !cache_dir) return NULL;
+
+    /* Network/Web processes run under bubblewrap. Custom cookie + storage
+     * paths under XDG must be explicitly allowed or opens fail with
+     * "Failed to load cookie file … Read-only file system" — cookies.db
+     * then looks full on disk but HTTP requests never carry SID/LOGIN_INFO
+     * after restart (YouTube keeps asking to sign in). */
+    WebKitWebContext *ctx = webkit_web_context_get_default();
+    if (ctx) {
+        webkit_web_context_add_path_to_sandbox(ctx, data_dir, FALSE);
+        webkit_web_context_add_path_to_sandbox(ctx, cache_dir, FALSE);
+    }
+
+    WebKitNetworkSession *session =
+        webkit_network_session_new(data_dir, cache_dir);
+    if (!session) return NULL;
+
+    /* ITP / resource-load statistics rewrites SameSite and blocks
+     * third-party Google cookies that YouTube's SSO still needs. Personal
+     * browser: prefer "stay signed in" over tracking prevention. */
+    webkit_network_session_set_itp_enabled(session, FALSE);
+
+    /* Explicit SQLite cookie jar under data_dir. NetworkSession alone
+     * does not always create a durable jar we can inspect/migrate; the
+     * old GTK sola-browser path is cookies.db. data_dir is already on
+     * the sandbox allowlist above so NetworkProcess can open it RW.
+     *
+     * ACCEPT_ALWAYS: Google/YouTube SSO sets cookies across google.* /
+     * youtube.* redirects. */
+    WebKitCookieManager *cookies =
+        webkit_network_session_get_cookie_manager(session);
+    if (cookies) {
+        char *cookie_path = g_build_filename(data_dir, "cookies.db", NULL);
+        /* Canonical absolute path — relative names become "cookie" inside
+         * bwrap cwd and fail with EROFS. */
+        char *abs_cookie = g_canonicalize_filename(cookie_path, NULL);
+        webkit_cookie_manager_set_persistent_storage(
+            cookies,
+            abs_cookie ? abs_cookie : cookie_path,
+            WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+        webkit_cookie_manager_set_accept_policy(
+            cookies, WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS);
+        g_free(abs_cookie);
+        g_free(cookie_path);
+    }
+
+    /* Keep HTTP auth / password manager credentials on disk too. */
+    webkit_network_session_set_persistent_credential_storage_enabled(session,
+                                                                     TRUE);
+    return session;
+}
+
+WebKitWebView *sola_wpe_web_view_new(WebKitNetworkSession *session) {
+    if (session) {
+        return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
+                                           "network-session", session, NULL));
+    }
+    return webkit_web_view_new(NULL);
+}
+
 /* ---- vmethod hijack for set_cursor_from_name ------------------- */
 
 /* WebKit calls wpe_view_set_cursor_from_name(view, name) whenever

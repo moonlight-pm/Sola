@@ -9,10 +9,11 @@
 //! WPE dma-bufs are released via `wpe_view_buffer_released` when
 //! [`HeldToken`] drops. Releasing the buffer the GPU is still sampling
 //! causes rapid flicker (animated sites) and
-//! `WPE_IS_BUFFER(buffer)` criticals. We keep a short **retire ring** of
-//! recently replaced surfaces so tokens outlive 1–2 submitted frames.
+//! `WPE_IS_BUFFER(buffer)` criticals. We keep a short **retire ring**
+//! (1 frame) so tokens outlive the submit that still samples them.
+//! Inactive tabs hold at most one parked snapshot (restored on switch).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use iced::widget::shader;
@@ -25,11 +26,10 @@ use super::engine::{HeldToken, InputEvent, WpeEngine};
 use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
-/// Do **not** keep replaced frames. Each held dma-buf pins a slot in WPE's
-/// small buffer pool; active+retire+park-per-tab starved the pool so the
-/// WebProcess stalled — caret stopped blinking, placeholder animation crawled,
-/// typing lagged. One live import only; previous surface Drop releases ASAP.
-const RETIRE_DEPTH: usize = 0;
+/// Keep one replaced frame alive so the GPU can finish sampling before
+/// `buffer_released`. Depth 0 = immediate release (flicker + criticals);
+/// depth 2+ starved the WPE pool under scroll. One is the sweet spot.
+const RETIRE_DEPTH: usize = 1;
 
 /// Longest allowed physical edge (px). Soft cap if compositor scale would
 /// exceed this for the CSS viewport. Keep this modest — YouTube was emitting
@@ -41,10 +41,10 @@ const MAX_PHYS_EDGE: f64 = 1920.0;
 fn choose_content_dpr(compositor_scale: f64, css_w: u32, css_h: u32) -> f64 {
     let max_css = css_w.max(css_h).max(1) as f64;
     let want = compositor_scale.max(1.0);
-    // Cap both absolute edge and max scale so a 2× compositor on a large
-    // window does not request 4k dma-bufs.
+    // Allow full compositor DPR when the edge cap still fits (crisper text);
+    // only soft-cap when a 2× window would exceed MAX_PHYS_EDGE.
     let edge_cap = (MAX_PHYS_EDGE / max_css).clamp(1.0, 2.0);
-    want.min(edge_cap).min(1.5)
+    want.min(edge_cap)
 }
 
 pub struct WpeProgram {
@@ -143,9 +143,18 @@ fn show_surface(pipeline: &mut WpePipeline, device: &wgpu::Device, surface: &Tab
 /// Immediately free all GPU holds for `tab_id` (closed tab).
 fn purge_tab(pipeline: &mut WpePipeline, tab_id: u64) {
     pipeline.parked.remove(&tab_id);
+    pipeline.retire.retain(|s| s.tab_id != tab_id);
     if pipeline.active.as_ref().is_some_and(|a| a.tab_id == tab_id) {
         pipeline.active = None;
         pipeline.sample.clear();
+    }
+}
+
+/// Delay release of a replaced surface so the GPU can finish sampling.
+fn retire(pipeline: &mut WpePipeline, surface: TabSurface) {
+    pipeline.retire.push_back(surface);
+    while pipeline.retire.len() > RETIRE_DEPTH {
+        let _ = pipeline.retire.pop_front(); // Drop → HeldToken → buffer_released
     }
 }
 
@@ -340,18 +349,22 @@ impl shader::Primitive for WpePrimitive {
             .paint_tab
             .load(std::sync::atomic::Ordering::Relaxed);
 
-        // Tab switch: drop previous tab's hold immediately (return buffer to
-        // WPE). No park — parked HeldTokens starved the pool under multi-tab.
+        // Tab switch: park leaving tab's last frame (one snapshot each) and
+        // restore the target's park so we do not flash black while waiting
+        // for SetActiveTab's 1px repaint nudge.
         let active_id = pipeline.active.as_ref().map(|a| a.tab_id);
         if active_id != Some(paint_tab) {
             if let Some(prev) = pipeline.active.take() {
-                drop(prev); // release WPE buffer now
+                if let Some(old_park) = pipeline.parked.insert(prev.tab_id, prev) {
+                    retire(pipeline, old_park);
+                }
             }
-            pipeline.sample.clear();
-            // Drop any leftover park from older builds.
             if let Some(surf) = pipeline.parked.remove(&paint_tab) {
                 show_surface(pipeline, device, &surf);
                 pipeline.active = Some(surf);
+            } else {
+                // No snapshot yet — dark fallback until a frame arrives.
+                pipeline.sample.clear();
             }
         }
 
@@ -362,8 +375,100 @@ impl shader::Primitive for WpePrimitive {
         let tab_id = pending.tab_id.0;
         let mut frame = pending.frame;
 
-        // Late frame for a tab we no longer paint: drop without import.
+        // Background prime: keep one last-good park for inactive tabs.
         if tab_id != paint_tab {
+            let release_tx = frame.release_tx.clone();
+            let size = (frame.width, frame.height);
+            if let Some(rgba) = frame.take_rgba() {
+                let w = size.0;
+                let h = size.1;
+                drop(frame);
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("wpe-yuv-bgra-park"),
+                    size: wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(w.saturating_mul(4)),
+                        rows_per_image: Some(h),
+                    },
+                    wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                let surface = TabSurface {
+                    tab_id,
+                    imported: ImportedFrame::from_owned_texture(tex),
+                    _token: HeldToken::none(),
+                    size,
+                };
+                if let Some(old) = pipeline.parked.insert(tab_id, surface) {
+                    retire(pipeline, old);
+                }
+                return;
+            }
+            let Some(token) = frame.take_token() else {
+                return;
+            };
+            let Some(fd) = frame.take_fd() else {
+                let _ = HeldToken::new(token, release_tx);
+                return;
+            };
+            let mut planes = vec![wgpu_import::DmabufPlaneLayout {
+                stride: frame.stride,
+                offset: frame.offset,
+            }];
+            for (s, o) in frame.extra_planes.drain(..) {
+                planes.push(wgpu_import::DmabufPlaneLayout {
+                    stride: s,
+                    offset: o,
+                });
+            }
+            let meta = DmabufMetadata {
+                width: frame.width,
+                height: frame.height,
+                format: frame.format,
+                modifier: frame.modifier,
+                planes,
+            };
+            drop(frame);
+            match unsafe { wgpu_import::import(device, fd, &meta) } {
+                Ok(imported) => {
+                    let surface = TabSurface {
+                        tab_id,
+                        imported,
+                        _token: HeldToken::new(token, release_tx),
+                        size,
+                    };
+                    if let Some(old) = pipeline.parked.insert(tab_id, surface) {
+                        retire(pipeline, old);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(tab = tab_id, "wgpu_import::import failed (park): {e}");
+                    let _ = HeldToken::new(token, release_tx);
+                }
+            }
             return;
         }
 
@@ -415,7 +520,7 @@ impl shader::Primitive for WpePrimitive {
                 size,
             };
             if let Some(old) = pipeline.active.take() {
-                drop(old);
+                retire(pipeline, old);
             }
             show_surface(pipeline, device, &surface);
             pipeline.active = Some(surface);
@@ -465,10 +570,9 @@ impl shader::Primitive for WpePrimitive {
             size,
         };
 
-        // Replace active: Drop old immediately → buffer_released → WebProcess
-        // can paint the next caret/animation frame without stalling.
+        // Retire previous (1-deep) so GPU finishes sampling before release.
         if let Some(old) = pipeline.active.take() {
-            drop(old);
+            retire(pipeline, old);
         }
         show_surface(pipeline, device, &surface);
         pipeline.active = Some(surface);
@@ -491,28 +595,31 @@ impl shader::Primitive for WpePrimitive {
 
 pub struct WpePipeline {
     sample: SamplePipeline,
-    /// Only the painted tab may hold a WPE dma-buf. Parking/retiring extra
-    /// frames starved WebKit's buffer pool (input + caret animations stall).
+    /// Painted tab's live frame (one dma-buf hold).
     active: Option<TabSurface>,
-    /// Unused (kept empty). Left so older prepare paths compile cleanly.
+    /// One last-good snapshot per inactive tab (restored on switch).
     parked: HashMap<u64, TabSurface>,
+    /// Recently replaced surfaces; delayed release for GPU lag.
+    retire: VecDeque<TabSurface>,
 }
 
 impl std::fmt::Debug for WpePipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WpePipeline")
             .field("active_tab", &self.active.as_ref().map(|a| a.tab_id))
+            .field("parked", &self.parked.len())
+            .field("retire", &self.retire.len())
             .finish_non_exhaustive()
     }
 }
 
 impl shader::Pipeline for WpePipeline {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let _ = RETIRE_DEPTH;
         Self {
             sample: SamplePipeline::new(device, queue, format, "wpe"),
             active: None,
             parked: HashMap::new(),
+            retire: VecDeque::with_capacity(RETIRE_DEPTH + 1),
         }
     }
 }
