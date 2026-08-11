@@ -9,28 +9,30 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-10 (`naturalethic/browser`) — scroll no crash; quality telem live
+**As of:** 2026-08-11 (`naturalethic/browser`) — content plane default; residual scroll quality
 
 ---
 
 ## Now
 
 1. **sola-browser hardening** — **priority**  
-   - Shape: single crate WPE (`src/` chrome + `src/wpe/`); CEF gone
-     (`pre-cef-removal`); installed to `/opt/sola/bin/sola-browser` + shell.  
-   - Full review + backlog:
-     [`docs/plans/2026-08-09-sola-browser-hardening.md`](docs/plans/2026-08-09-sola-browser-hardening.md).  
-   - **Paint / YouTube crash fixed (P0):**  
-     [`docs/plans/2026-08-10-browser-paint-investigation.md`](docs/plans/2026-08-10-browser-paint-investigation.md)
-     — SEGV + scroll freeze fixed (buffer ref + RLIMIT_NOFILE + lean holds).  
-   - **Paint quality (active):** content plane **dogfoodable** — main-thread
-     Wayland subsurface + dma-buf present; default `plane`
-     ([freeze](docs/specs/2026-08-11-sola-browser-content-plane-design.md)).
-     Fallback `SOLA_BROWSER_CONTENT=import`. **Dogfood URLs:**
-     `solactl emit OpenUrl` (never `solactl open` → Helium).  
+   - Shape: single crate WPE (`src/` chrome + `src/wpe/` + `src/content_plane/`);
+     CEF gone (`pre-cef-removal`).  
+   - Freeze:
+     [`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](docs/specs/2026-08-11-sola-browser-content-plane-design.md)
+     — **implemented, partial quality**.  
+   - **Paint path (as-built):** default `SOLA_BROWSER_CONTENT=plane` — iced
+     chrome + Wayland subsurface dma-buf (River presents); empty input
+     region; hold until `wl_buffer.release`; content scale **2×** default
+     (`SOLA_BROWSER_DPR` override); fallback `import`.  
+   - **User dogfood (YT homepage):** still sees **black swaths / nav flicker
+     / soft text** under scroll — metrics improved; **not daily-driver bar**.  
+   - **Dogfood URLs:** `solactl emit OpenUrl` only — **never** `solactl open`
+     (Helium / D3).  
    - **D8 profiles** shipped (no switcher).  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Next:** user scroll-feel dogfood → cookie → vault.  
+   - **Next:** residual scroll black/flicker (FrameDone pacing / tiles) →
+     blur polish → cookie stickiness → vault session.  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;

@@ -1,17 +1,20 @@
 # sola-browser · content plane (Wayland present)
 
 **Date:** 2026-08-11  
-**Status:** **Frozen** — locked 2026-08-11; implement in-tree (`naturalethic/browser`)
+**Status:** **Frozen + implemented (partial quality)** — default path on
+`naturalethic/browser`; daily-driver scroll bar **not** met yet
 
 ### Implementation progress (2026-08-11)
 
 | Gate | Status |
 |------|--------|
 | G1 parent handles from iced `window::run` | **Pass** |
-| G2 subsurface | **Pass** (main-thread Wayland only — dual display-read was the bug) |
-| G3 attach SHM + dma-buf | **Pass** — magenta probe visible; YouTube homepage full grid dogfood |
-| G4 release previous on next present | **Pass** (GTK-style) |
-| Input (scroll/click) | **Pass** — empty `wl_surface` input region so events hit iced → WPE (`scroll delta≈96` dogfood) |
+| G2 subsurface | **Pass** (main-thread Wayland only) |
+| G3 attach SHM + dma-buf | **Pass** — homepage grid dogfood |
+| G4 hold until compositor `wl_buffer.release` | **Pass** (not immediate prev drop) |
+| Input (scroll/click) | **Pass** — empty input region → iced → WPE |
+| Content scale 2× + `set_buffer_scale` | **Pass** (override `SOLA_BROWSER_DPR`) |
+| Daily-driver YT hard-scroll quality | **Open** — user still reports black swaths, nav flicker, soft text |
 
 **Default:** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.  
 **Probe:** `SOLA_BROWSER_PLANE_PROBE=1` for magenta SHM visibility test.

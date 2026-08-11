@@ -146,17 +146,20 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 |-------|------------|------|
 | Binary + lib | `crates/sola-browser` | Single product browser |
 | Chrome | `src/{app,run,integration,engine,shader,util,input}.rs` | iced UI, bus menus, `Engine` trait |
-| WPE engine | `src/wpe/*` | GMainLoop worker, tabs, dma-buf, C hijacks |
+| Content plane | `src/content_plane/` | Wayland subsurface + linux-dmabuf present (main thread) |
+| WPE engine | `src/wpe/*` | GMainLoop worker, tabs, claim/release, C hijacks |
 | Historical | tag `pre-cef-removal` | CEF + dual crate + dispatcher |
 
 **Runtime:** iced main thread + `wpe-engine` GLib thread.
 
-**Paint (product path, 2026-08-11):** WPE `buffer-rendered` → claim →
-**content plane** (`src/content_plane/`) attaches dma-buf to a
-`wl_subsurface` under the iced toplevel (River presents). Empty input
-region on the content surface so pointer/scroll hit iced chrome → WPE
-input. Fallback: `SOLA_BROWSER_CONTENT=import` (Vulkan import + iced
-shader). Freeze:
+**Paint (product path, default `plane`):** WPE `buffer-rendered` → claim →
+**content plane** attaches dma-buf to `wl_subsurface` under iced toplevel
+(River presents). Main-thread Wayland only (no dual `wl_display` reader).
+Empty input region → pointer/scroll on iced → WPE. Hold buffers until
+compositor `wl_buffer.release` before `wpe_view_buffer_released`. Content
+device scale default **2×** (`SOLA_BROWSER_DPR`, `set_buffer_scale`).
+Fallback: `SOLA_BROWSER_CONTENT=import` (Vulkan import + iced shader).
+Freeze:
 [`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](specs/2026-08-11-sola-browser-content-plane-design.md).
 
 Clipboard: page selection → iced write; paste → `Cmd::PasteText` /
