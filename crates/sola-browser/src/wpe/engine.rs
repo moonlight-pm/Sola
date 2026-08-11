@@ -691,10 +691,14 @@ unsafe extern "C" fn on_buffer_rendered(
         }
     };
 
-    // Only the active tab may claim/hold dma-bufs. Background tabs used to
-    // claim → iced drop_bg → release, which burned the pool under multi-tab
-    // load and showed up as drop_bg≈present with no imports. Release now.
-    if tab_id != ctx.active {
+    // Only the chrome-selected paint tab may claim. Use `active_atomic` (chrome
+    // writes it optimistically on switch) — not `ctx.active`, which lags until
+    // the cmd pump runs SetActiveTab. Filtering on the lagging field dropped
+    // 100% of frames as drop_bg → permanent black screen.
+    let paint_id = ctx
+        .active_atomic
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if paint_id == u64::MAX || tab_id.0 != paint_id {
         super::paint_stats::PaintStats::inc(&stats.drop_bg);
         release_untracked(ctx, view, buffer_base, "inactive_tab");
         return;

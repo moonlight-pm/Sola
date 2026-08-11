@@ -1018,6 +1018,10 @@ impl<E: Engine> App<E> {
         self.slot
             .paint_tab
             .store(id.0, std::sync::atomic::Ordering::Relaxed);
+        // Optimistic: worker frame filter reads this before SetActiveTab is
+        // pumped. Without this, every buffer-rendered is drop_bg → black page.
+        self.active_handle
+            .store(id.0, std::sync::atomic::Ordering::Relaxed);
         // Do not clear pending: background frames still update park cache.
         let _ = self.cmd_tx.send(Cmd::SetActiveTab(id));
         // Omnibox follows chrome optimistically — don't wait for Tick

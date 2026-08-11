@@ -352,26 +352,31 @@ impl shader::Primitive for WpePrimitive {
             .paint_tab
             .load(std::sync::atomic::Ordering::Relaxed);
 
-        // Tab switch: release previous hold immediately (return buffer to WPE).
-        // Parking dma-bufs per tab starved the pool under YouTube scroll → freeze.
+        // Tab switch: release previous hold. Only act when we actually leave a
+        // different tab — `active == None` used to hit this every prepare and
+        // call sample.clear() forever (permanent black until a new import).
         let active_id = pipeline.active.as_ref().map(|a| a.tab_id);
-        if active_id != Some(paint_tab) {
-            if let Some(prev) = pipeline.active.take() {
-                drop(prev); // HeldToken → Release now
+        if let Some(prev_id) = active_id {
+            if prev_id != paint_tab {
+                if let Some(prev) = pipeline.active.take() {
+                    drop(prev); // HeldToken → Release now
+                }
+                if let Some(old) = pipeline.parked.remove(&paint_tab) {
+                    show_surface(pipeline, device, &old);
+                    pipeline.active = Some(old);
+                } else {
+                    pipeline.sample.clear();
+                    crate::wpe::paint_stats::global()
+                        .note_sample_clear("paint_tab_switch_no_park");
+                }
+                for (_, surf) in pipeline.parked.drain() {
+                    drop(surf);
+                }
             }
-            // Drain any leftover park from older builds.
-            if let Some(old) = pipeline.parked.remove(&paint_tab) {
-                show_surface(pipeline, device, &old);
-                pipeline.active = Some(old);
-            } else {
-                pipeline.sample.clear();
-                crate::wpe::paint_stats::global()
-                    .note_sample_clear("paint_tab_switch_no_park");
-            }
-            // Drop parks for other tabs so we never pin multiple WPE buffers.
-            for (_, surf) in pipeline.parked.drain() {
-                drop(surf);
-            }
+        } else if let Some(old) = pipeline.parked.remove(&paint_tab) {
+            // First paint after empty: restore park if any.
+            show_surface(pipeline, device, &old);
+            pipeline.active = Some(old);
         }
 
         let Some(pending) = self.slot.pending.lock().unwrap().take() else {

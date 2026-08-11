@@ -174,10 +174,9 @@ pub struct FrameSlot<E: Engine> {
 }
 
 pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;
-/// Active-tab id. **Worker is the sole writer** after startup; chrome reads
-/// it for frame filtering and optimistic paint, and keeps a local
-/// `cached_active` for rendering. Chrome still *sends* `Cmd::SetActiveTab`
-/// so the worker can update this atomic.
+/// Active / paint-tab id (`TabId.0`). Chrome writes optimistically on
+/// `switch_active_tab` so the worker can filter frames without waiting for
+/// the cmd pump. Worker also writes on `Cmd::SetActiveTab` (focus/resize).
 pub type ActiveHandle = Arc<AtomicU64>;
 pub type CursorHandle = Arc<AtomicU32>;
 /// Engine→chrome handoff for text the engine extracted for a copy (e.g. the
