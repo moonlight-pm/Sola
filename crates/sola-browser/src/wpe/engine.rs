@@ -425,12 +425,13 @@ unsafe fn worker_main(
     sys::wpe_display_set_primary(display);
     tracing::info!("WPE platform display ready (subclassed for LINEAR-only modifier)");
 
-    // Persistent WebKit profile so Google/YouTube (and everything else) stay
-    // signed in across process restarts. Without this, each launch is a fresh
-    // ephemeral session.
+    // D8: WebKit data/cache under active profile (share/profiles/<uuid>/).
+    // ensure_active runs in run() before spawn; if tests call spawn alone,
+    // ensure again so paths exist.
     let network_session = {
-        let data = dirs_data_join("sola/browser");
-        let cache = dirs_cache_join("sola/browser");
+        let profile = crate::profiles::ensure_active();
+        let data = profile.data_dir.clone();
+        let cache = profile.cache_dir.clone();
         let _ = std::fs::create_dir_all(&data);
         let _ = std::fs::create_dir_all(&cache);
         let data_c = CString::new(data.to_string_lossy().as_ref()).unwrap();
@@ -440,13 +441,16 @@ unsafe fn worker_main(
             tracing::error!(
                 data = %data.display(),
                 cache = %cache.display(),
+                profile = %profile.id,
                 "failed to create WebKitNetworkSession — cookies will not persist"
             );
         } else {
             tracing::info!(
                 data = %data.display(),
                 cache = %cache.display(),
-                "WebKit network session ready (persistent cookies)"
+                profile = %profile.id,
+                name = %profile.name,
+                "WebKit network session ready (profile cookies)"
             );
         }
         session
@@ -1297,26 +1301,6 @@ unsafe fn close_tab(ctx: &mut WorkerCtx, id: TabId) {
         live_buffers = ctx.live_buffers.len(),
         "closed tab"
     );
-}
-
-/// XDG data dir + relative path (e.g. `sola/browser`).
-fn dirs_data_join(rel: &str) -> std::path::PathBuf {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
-        })
-        .unwrap_or_else(|| std::path::PathBuf::from(".local/share"));
-    base.join(rel)
-}
-
-/// XDG cache dir + relative path.
-fn dirs_cache_join(rel: &str) -> std::path::PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(|| std::path::PathBuf::from(".cache"));
-    base.join(rel)
 }
 
 /// One-shot release for buffers **not** tracked in `live_buffers`

@@ -1,9 +1,9 @@
 //! Non-secret vault chrome prefs (remembered email, etc.).
 //!
-//! Stored as `~/.config/sola/browser-vault.json` via [`JsonConfig`].
-//! Never put master passwords, tokens, or OTP here.
+//! D8: `~/.config/sola/browser/vault.json` via [`JsonConfigIn`] (shared
+//! across profiles). Never put master passwords, tokens, or OTP here.
 
-use sola_core::config::JsonConfig;
+use sola_core::config::JsonConfigIn;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -13,8 +13,9 @@ pub struct VaultPrefs {
     pub last_email: Option<String>,
 }
 
-impl JsonConfig for VaultPrefs {
-    const FILE_NAME: &'static str = "browser-vault.json";
+impl JsonConfigIn for VaultPrefs {
+    const APP_DIR: &'static str = "browser";
+    const FILE_NAME: &'static str = "vault.json";
 }
 
 impl VaultPrefs {

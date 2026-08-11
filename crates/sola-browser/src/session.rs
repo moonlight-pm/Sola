@@ -1,10 +1,10 @@
 //! Persistent browser session — open tabs survive process restarts.
 //!
-//! Stored as pretty JSON under `~/.config/sola/browser-session.json` via
-//! [`sola_core::config::JsonConfig`]. Tabs are durable product state (D4),
-//! not ephemeral chrome.
+//! D8: stored as `profiles/<uuid>/session.json` under the active profile's
+//! data dir (tabs are the profile workspace). Not under XDG config.
 
-use sola_core::config::JsonConfig;
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 /// One tab to restore. Title is best-effort (helps the strip before load).
@@ -42,11 +42,40 @@ impl Default for BrowserSession {
     }
 }
 
-impl JsonConfig for BrowserSession {
-    const FILE_NAME: &'static str = "browser-session.json";
-}
-
 impl BrowserSession {
+    /// Load from the active profile's `session.json` (or default if missing).
+    pub fn load() -> Self {
+        let path = crate::profiles::active().session_path();
+        Self::load_from(&path)
+    }
+
+    pub fn load_from(path: &Path) -> Self {
+        match sola_core::config::load_json_or_default::<Self>(path) {
+            Ok(s) => {
+                if path.exists() {
+                    tracing::info!(path = %path.display(), "restored session");
+                }
+                s
+            }
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "failed to load session");
+                Self::default()
+            }
+        }
+    }
+
+    /// Save to the active profile's `session.json`.
+    pub fn save(&self) {
+        let path = crate::profiles::active().session_path();
+        self.save_to(&path);
+    }
+
+    pub fn save_to(&self, path: &Path) {
+        if let Err(e) = sola_core::config::save_json_pretty(path, self) {
+            tracing::warn!(path = %path.display(), error = %e, "failed to write session");
+        }
+    }
+
     /// Build the tab list + active index for a cold start.
     ///
     /// - Non-empty session → restore those tabs.

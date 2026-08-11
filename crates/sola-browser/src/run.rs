@@ -27,7 +27,6 @@ use iced::stream;
 use iced::Subscription;
 use iced_futures::subscription::{self, EventStream, Recipe};
 
-use sola_core::config::JsonConfig;
 
 use crate::app::{App, Msg, DEFAULT_URL, VIEW_H, VIEW_W};
 use crate::engine::{ActiveHandle, Engine, FrameSlot, TaggedFrame};
@@ -168,6 +167,9 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     // /opt/sola/bin/<app> change — same as other kit apps). Without this
     // the browser never auto-restarts after `cargo make install`.
     let _socket = sola_kit::app::startup(app_id);
+
+    // D8: registry + active profile dirs; wipe pre-profile flat data.
+    let _profile = crate::profiles::ensure_active();
 
     let argv = std::env::args().nth(1);
     let (boot_tabs, boot_active, sidebar_w) =

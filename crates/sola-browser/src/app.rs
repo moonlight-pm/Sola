@@ -23,7 +23,6 @@ use sola_kit::components::icon::icon_handle;
 use sola_kit::components::style::PAD_CONTROL_SM;
 use sola_kit::components::toolbar as kit_toolbar;
 
-use sola_core::config::JsonConfig;
 
 use crate::engine::{Cmd, EditCmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
 use crate::session::{self, SessionTab};

@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-10 (`naturalethic/browser`) — profiles frozen (D8); implement next
+**As of:** 2026-08-10 (`naturalethic/browser`) — D8 profiles **implemented** (no switcher)
 
 ---
 
@@ -27,21 +27,17 @@ Do not invent product policy.
      system service, not WebExtensions host for now.  
    - **Bitwarden design locked:**  
      [`docs/specs/2026-08-10-sola-browser-bitwarden-design.md`](docs/specs/2026-08-10-sola-browser-bitwarden-design.md).  
-   - **D8 profiles locked (not implemented):**  
+   - **D8 profiles shipped (no switcher):**  
      [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](docs/specs/2026-08-10-sola-browser-profiles-design.md)
-     — UUID + name `Primary`; `share/browser/profiles/<uuid>/` + cache twin;
-     registry `profiles.json`; shared history/downloads under `share/browser/shared/`;
-     config under `~/.config/sola/browser/` (not flat `browser-*.json`); tabs per
-     profile; prefs/history/downloads/vault shared; **no migration** — wipe old
-     flat WebKit + dead config on first run; switcher later.  
+     — `profiles.rs`: UUID **Primary**, `share/…/profiles/<uuid>/` + cache twin,
+     `profiles.json`, session under profile, vault at `config/sola/browser/vault.json`,
+     first-run **wipe** of flat cookies/storage + dead `browser-*.json` / old tabs yaml.
+     Switcher later.  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Session tabs** today: `browser-session.json` → **D8:** profile `session.json`.  
-   - **Dogfood:** paint/input + multi-plane RGB import; Bitwarden match/fill;
-     cookie jar + NetworkSession WIP (sign-in still flaky across restart until
-     D8 paths + sandbox harden).  
-   - **Build order (next):** **implement D8 profiles** → re-dogfood YouTube
-     login stickiness → vault session persist → visit history under `shared/` →
-     downloads; GPU multi-plane if needed.  
+   - **Dogfood next:** fresh profile after wipe — sign into YouTube once, full quit,
+     reopen (cookies under profile data_dir). Then vault session persist → history
+     under `shared/` → downloads.  
+
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -71,7 +67,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Pipeline dogfood; Bitwarden match/fill; multi-plane RGB paint; **D8 profiles frozen** (implement next); cookies still flaky across restart; OpenUrl→Helium | — |
+| Browser | D8 profile paths live (wipe old flat data on boot); Bitwarden match/fill; multi-plane RGB; re-dogfood YouTube login stickiness; OpenUrl→Helium | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install

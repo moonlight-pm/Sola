@@ -7,6 +7,7 @@ pub mod app;
 pub mod engine;
 pub mod input;
 pub mod integration;
+pub mod profiles;
 pub mod run;
 pub mod session;
 pub mod shader;

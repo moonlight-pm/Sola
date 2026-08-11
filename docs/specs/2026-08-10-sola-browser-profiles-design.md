@@ -1,7 +1,8 @@
 # sola-browser profiles — design freeze
 
 **Date:** 2026-08-10  
-**Status:** **Frozen** (not implemented yet)  
+**Status:** **Frozen** — layout implemented on `naturalethic/browser` (2026-08-10);
+switcher UI still later  
 **Branch context:** `naturalethic/browser`  
 **Related:** [hardening plan](../plans/2026-08-09-sola-browser-hardening.md) P1.3;
 [Bitwarden D7](2026-08-10-sola-browser-bitwarden-design.md); open-questions D8.
@@ -141,9 +142,21 @@ User re-signs into sites once after the cutover.
 - Session is **data** under the profile, not config (tabs are profile state).
 - Bitwarden vault remains **process-global / shared prefs**; not per web profile.
 
+## Implementation status
+
+| Item | Status |
+|------|--------|
+| Registry + Primary + UUID | **done** (`src/profiles.rs`) |
+| WebKit data/cache under `profiles/<uuid>/` | **done** |
+| Session `session.json` under profile | **done** |
+| Vault `~/.config/sola/browser/vault.json` | **done** |
+| First-run wipe of flat/legacy paths | **done** |
+| Sandbox allow + NetworkSession cookies | **done** (with network session) |
+| Switcher UI | **not yet** |
+| History / downloads under `shared/` | **not yet** |
+
 ## Gaps (explicit)
 
-- Not implemented in code yet (paths still flat + root `browser-*.json`).
 - Multi-profile switcher, create/rename/delete profiles.
 - History / downloads storage under `shared/`.
 - Permission model if WebKit forces per-data-dir isolation.
