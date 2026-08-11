@@ -22,10 +22,10 @@
 #include <gbm.h>
 #include <fcntl.h>
 
-/* WPE Platform API (new, modifier-negotiating). The umbrella
- * `wpe/wpe.h` already pulls in the base classes; the headless impl
- * lives behind its own include. */
+/* WPE Platform API (new, modifier-negotiating). Headless + Wayland
+ * concrete displays (stock present vs sola content plane). */
 #include <wpe/headless/wpe-headless.h>
+#include <wpe/wayland/wpe-wayland.h>
 
 /* Our local GObject subclasses. Built into the binary via build.rs
  * (cc-rs). */

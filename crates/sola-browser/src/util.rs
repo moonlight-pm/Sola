@@ -33,19 +33,38 @@ pub fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// Built-in scroll/tile stress page (fixed nav + tall image grid).
+pub const SCROLL_STRESS_URL: &str = "sola:scroll-stress";
+
 /// Normalize input into a navigable URL. An explicit scheme (`https:`,
-/// `about:`, `mailto:`, `file:` …) is left intact; everything else gets a
-/// `https://` prefix. `host:port` (digits after the colon) counts as a bare
-/// host, not a scheme, so it is prefixed too.
+/// `about:`, `mailto:`, `file:`, `sola:` …) is left intact; everything else
+/// gets a `https://` prefix. `host:port` (digits after the colon) counts as a
+/// bare host, not a scheme, so it is prefixed too.
 pub fn normalize_url(s: &str) -> String {
     let trimmed = s.trim();
     if trimmed.is_empty() {
         return String::new();
     }
+    // Shortcuts → built-in stress page.
+    let lower = trimmed.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "sola:scroll-stress"
+            | "sola://scroll-stress"
+            | "about:scroll-stress"
+            | "scroll-stress"
+    ) {
+        return SCROLL_STRESS_URL.to_string();
+    }
     if explicit_scheme(trimmed).is_some() {
         return trimmed.to_string();
     }
     format!("https://{trimmed}")
+}
+
+/// HTML for [`SCROLL_STRESS_URL`] (embedded asset).
+pub fn scroll_stress_html() -> &'static str {
+    include_str!("../assets/scroll-stress.html")
 }
 
 /// Base URL for chrome input that doesn't parse as a URL — searched on Kagi.
@@ -63,6 +82,11 @@ pub fn looks_like_url(s: &str) -> bool {
         return false;
     }
     if explicit_scheme(t).is_some() {
+        return true;
+    }
+    if t.eq_ignore_ascii_case("scroll-stress")
+        || t.to_ascii_lowercase().starts_with("sola:")
+    {
         return true;
     }
     if t == "localhost" || t.starts_with("localhost:") || t.starts_with("localhost/") {

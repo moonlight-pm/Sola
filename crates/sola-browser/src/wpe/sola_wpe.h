@@ -69,5 +69,7 @@ void sola_wpe_view_buffer_released_safe(WPEView *view, WPEBuffer *buffer);
  * pending buffer can be delivered. Idempotent per buffer. */
 void sola_wpe_view_buffer_rendered_safe(WPEView *view, WPEBuffer *buffer);
 
-/* New headless WPEDisplay. Caller owns the reference. */
-WPEDisplay *sola_wpe_display_new(void);
+/* New WPEDisplay. `use_wayland` non-zero → stock WPEDisplayWayland (real
+ * present path); zero → headless + sola render_buffer hijack.
+ * Caller owns the reference. */
+WPEDisplay *sola_wpe_display_new(int use_wayland);

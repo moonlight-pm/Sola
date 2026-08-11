@@ -58,6 +58,10 @@ fn main() {
         // itself; the .pc just adds include paths.
         "wpe-platform-2.0",
         "wpe-platform-headless-2.0",
+        // Stock Wayland present path (SOLA_BROWSER_CONTENT=wayland).
+        "wpe-platform-wayland-2.0",
+        // wayland-client.h required by WPEDisplayWayland.h (bindgen + cc).
+        "wayland-client",
     ];
 
     let mut include_paths = Vec::new();

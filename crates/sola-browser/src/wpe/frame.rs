@@ -30,35 +30,13 @@ use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 /// blit+Wait). Depth 1 so the previous owned frame survives one iced frame.
 const RETIRE_DEPTH: usize = 1;
 
-/// Soft cap on physical content edge (px). Was 1920 which forced dpr=1 on
-/// large 2× windows → WebKit painted 1×, iced upscaled with linear filter
-/// → blurry text. 8k still bounds pathological sizes; hide-inactive keeps
-/// the buffer pool healthy without the old 1920 clamp.
-const MAX_PHYS_EDGE: f64 = 8192.0;
-
-/// Device scale for content — match compositor DPR for crisp text when the
-/// physical edge stays under [`MAX_PHYS_EDGE`].
+/// Device scale for content — see [`super::paint_budget`].
 ///
-/// Content-plane path defaults to **at least 2×** supersample when the
-/// compositor reports 1.0 (common on dense 1× River outputs) so WebKit
-/// paints sharp glyphs; `wl_surface.set_buffer_scale` maps buffer → surface.
-/// Override with `SOLA_BROWSER_DPR=1` / `=1.5` / `=2`.
+/// Default is **honest compositor scale** (no forced 2×). Forced supersample
+/// caused residual full-width black bands under scroll (tile paint outrun).
+/// Opt-in: `SOLA_BROWSER_SUPER_SAMPLE=1` or `SOLA_BROWSER_DPR=2`.
 fn choose_content_dpr(compositor_scale: f64, css_w: u32, css_h: u32) -> f64 {
-    let max_css = css_w.max(css_h).max(1) as f64;
-    let edge_cap = (MAX_PHYS_EDGE / max_css).clamp(1.0, 2.0);
-    let env = std::env::var("SOLA_BROWSER_DPR")
-        .ok()
-        .and_then(|s| s.parse::<f64>().ok())
-        .filter(|v| v.is_finite() && *v >= 1.0);
-    let want = if let Some(v) = env {
-        v
-    } else if crate::content_plane::mode().is_plane() {
-        // Supersample on plane path — fixes soft text when iced scale is 1.0.
-        compositor_scale.max(2.0)
-    } else {
-        compositor_scale.max(1.0)
-    };
-    want.min(edge_cap)
+    super::paint_budget::choose_dpr(compositor_scale, css_w, css_h)
 }
 
 pub struct WpeProgram {
@@ -249,6 +227,9 @@ impl shader::Program<crate::app::Msg> for WpeProgram {
                         }
                     }),
                     mouse::Event::WheelScrolled { delta } => {
+                        // Adaptive paint budget: drop supersample while flinging
+                        // so WebKit tiles keep up (anti-checkerboard).
+                        super::paint_budget::note_scroll();
                         let (delta_x, delta_y, precise) = input::scroll_delta_to_wpe(*delta);
                         Some(InputEvent::Scroll {
                             x,
@@ -596,16 +577,30 @@ impl shader::Primitive for WpePrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        // Product content plane: transparent hole in the content scissor so
-        // the Wayland subsurface shows through (toplevel is transparent).
-        if crate::content_plane::mode().is_plane() {
+        // Product content plane: transparent hole so subsurface shows through.
+        // Stock Wayland mode: solid dark placeholder (content is a separate
+        // WPE xdg_toplevel — dual-window dogfood of upstream present quality).
+        if crate::content_plane::mode().is_plane()
+            || crate::content_plane::mode().is_wayland()
+        {
+            let clear = if crate::content_plane::mode().is_wayland() {
+                // Opaque so desktop does not show through the chrome hole.
+                wgpu::LoadOp::Clear(wgpu::Color {
+                    r: 0.094,
+                    g: 0.094,
+                    b: 0.110,
+                    a: 1.0,
+                })
+            } else {
+                wgpu::LoadOp::Load
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("wpe content hole"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
+                        load: clear,
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -620,11 +615,6 @@ impl shader::Primitive for WpePrimitive {
                 clip_bounds.width.max(1),
                 clip_bounds.height.max(1),
             );
-            // No draws: scissor alone does not clear. Punch with clear via
-            // Load is whole-target — instead leave load and rely on chrome
-            // not covering this rect; first frame may need a clear. Use
-            // viewport clear by drawing nothing after optional discard:
-            // wgpu has no scissored clear; skip draws (subsurface under).
             let _ = &mut pass;
             return;
         }

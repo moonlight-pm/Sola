@@ -14,7 +14,10 @@
 
 #include "sola_wpe.h"
 
+#include <stdlib.h>
+#include <string.h>
 #include <wpe/headless/wpe-headless.h>
+#include <wpe/wayland/wpe-wayland.h>
 
 /* DRM format / modifier constants — keeping these inline avoids a
  * libdrm header dependency in the build graph. */
@@ -370,7 +373,7 @@ sola_view_render_buffer(WPEView *view,
 
 /* ---- one-time setup --------------------------------------------- */
 
-static void sola_wpe_init_once(void) {
+static void sola_wpe_init_headless_hijacks(void) {
     static gsize once_init = 0;
     if (!g_once_init_enter(&once_init)) {
         return;
@@ -404,7 +407,14 @@ static void sola_wpe_init_once(void) {
     g_once_init_leave(&once_init, 1);
 }
 
-WPEDisplay *sola_wpe_display_new(void) {
-    sola_wpe_init_once();
+WPEDisplay *sola_wpe_display_new(int use_wayland) {
+    if (use_wayland) {
+        /* Stock WPEViewWayland present — no headless hijacks.
+         * Connect with wpe_display_wayland_connect(display, name, err)
+         * from Rust (pass WAYLAND_DISPLAY socket name). */
+        g_message("sola: WPEDisplayWayland (stock present path)");
+        return wpe_display_wayland_new();
+    }
+    sola_wpe_init_headless_hijacks();
     return wpe_display_headless_new();
 }

@@ -274,19 +274,20 @@ impl Engine for WpeEngine {
         // Set the WPE helper binary path baked in at build time.
         unsafe { std::env::set_var("WEBKIT_EXEC_PATH", env!("WEBKIT_EXEC_PATH")) };
 
-        // Hide WAYLAND_DISPLAY from libWPEWebKit's init so its bundled
-        // wpe-platform-wayland module doesn't open a phantom toplevel.
-        // Restored after `spawn_inner` so iced can connect; chrome then
-        // seals it again on WindowReady *before* creating any WebView
-        // (WebProcess inherits env and would otherwise map org.webkit.*).
+        // Capture socket name for stock Wayland present *before* clearing.
+        let wl_socket = std::env::var("WAYLAND_DISPLAY").ok();
+
+        // Hide WAYLAND_DISPLAY from libWPEWebKit's default auto-init so the
+        // bundled wayland module does not open a phantom toplevel for headless
+        // mode. Restored after spawn_inner for iced; chrome seals again on
+        // WindowReady before WebViews (WebProcess inherits env).
         //
         // SAFETY: single-threaded between log init and spawn_inner call.
-        let saved = std::env::var("WAYLAND_DISPLAY").ok();
         unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
 
-        let engine = WpeEngine::spawn_inner(url, w, h);
+        let engine = WpeEngine::spawn_inner(url, w, h, wl_socket.clone());
 
-        if let Some(d) = saved {
+        if let Some(d) = wl_socket {
             unsafe { std::env::set_var("WAYLAND_DISPLAY", d) };
         }
         engine
@@ -335,7 +336,7 @@ impl Engine for WpeEngine {
 impl WpeEngine {
     /// Inner spawn — the actual WPE worker bring-up. Called from
     /// `Engine::spawn` after the env dance is done.
-    fn spawn_inner(url: &str, width: u32, height: u32) -> Self {
+    fn spawn_inner(url: &str, width: u32, height: u32, wl_socket: Option<String>) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Cmd<WpeEngine>>();
         // Latest-wins mailbox: under scroll load keep the newest frame and
         // release the older (never drop the fresh buffer while holding stale).
@@ -368,8 +369,18 @@ impl WpeEngine {
             .name("wpe-engine".into())
             .spawn(move || unsafe {
                 worker_main(
-                    width, height, frames_w, cmd_rx, release_tx, ready_tx, cursor_w, snapshot_w,
-                    active_w, next_id_w, clipboard_w,
+                    width,
+                    height,
+                    frames_w,
+                    cmd_rx,
+                    release_tx,
+                    ready_tx,
+                    cursor_w,
+                    snapshot_w,
+                    active_w,
+                    next_id_w,
+                    clipboard_w,
+                    wl_socket,
                 )
             })
             .expect("spawn wpe-engine thread");
@@ -482,13 +493,34 @@ unsafe fn worker_main(
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
     next_id: Arc<std::sync::atomic::AtomicU64>,
     clipboard_out: ClipboardHandle,
+    wl_socket: Option<String>,
 ) {
-    let display = sys::sola_wpe_display_new();
+    // Stock Wayland present vs headless+content-plane. Socket name is passed
+    // in (env is cleared before the worker starts so WebProcess stays sealed).
+    let use_wayland = crate::content_plane::mode().is_wayland();
+    let display = sys::sola_wpe_display_new(if use_wayland { 1 } else { 0 });
     if display.is_null() {
         panic!("sola_wpe_display_new returned null");
     }
     let mut err: *mut sys::GError = ptr::null_mut();
-    if sys::wpe_display_connect(display, &mut err) == 0 {
+    let connected = if use_wayland {
+        let name_c = wl_socket
+            .as_ref()
+            .and_then(|s| CString::new(s.as_str()).ok());
+        let name_ptr = name_c
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(ptr::null());
+        // SAFETY: display is WPEDisplayWayland* when use_wayland.
+        sys::wpe_display_wayland_connect(
+            display as *mut sys::WPEDisplayWayland,
+            name_ptr,
+            &mut err,
+        )
+    } else {
+        sys::wpe_display_connect(display, &mut err)
+    };
+    if connected == 0 {
         let msg = if !err.is_null() {
             std::ffi::CStr::from_ptr((*err).message)
                 .to_string_lossy()
@@ -498,8 +530,17 @@ unsafe fn worker_main(
         };
         panic!("wpe_display_connect failed: {msg}");
     }
+    // Ensure children never inherit a compositor socket.
+    std::env::remove_var("WAYLAND_DISPLAY");
     sys::wpe_display_set_primary(display);
-    tracing::info!("WPE platform display ready (subclassed for LINEAR-only modifier)");
+    if use_wayland {
+        tracing::info!(
+            socket = wl_socket.as_deref().unwrap_or("(default)"),
+            "WPEDisplayWayland ready (stock present — deepest quality path)"
+        );
+    } else {
+        tracing::info!("WPE headless display ready (content plane / import path)");
+    }
 
     // D8: WebKit data/cache under active profile (share/profiles/<uuid>/).
     // ensure_active runs in run() before spawn; if tests call spawn alone,
@@ -946,6 +987,15 @@ unsafe extern "C" fn on_buffer_rendered(
     };
     ctx.outstanding_tokens
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    // Stock WPE Wayland: platform presents; no claim/mailbox (render_buffer
+    // is stock — we should not reach here). If we do, release immediately.
+    if crate::content_plane::mode().is_wayland() {
+        drop(dup_planes);
+        drop(render_fence);
+        let _ = ctx.release_tx.send(crate::engine::Cmd::Release { token });
+        return;
+    }
 
     // Product path: attach dma-buf on Wayland content plane (River presents).
     // Skip iced import mailbox entirely.
@@ -1419,11 +1469,12 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         tracing::warn!(?id, "webkit_web_view_get_wpe_view returned null");
     }
 
-    // Match sola dark chrome (#0a0a0b) so blank / pre-paint frames are not white.
+    // Unpainted tiles clear to this color. Pure black reads as "broken swaths";
+    // match sola raised chrome so checkerboard is less catastrophic.
     let mut bg = sys::WebKitColor {
-        red: 0.039_215_686,   // 0x0a
-        green: 0.039_215_686, // 0x0a
-        blue: 0.043_137_255,  // 0x0b
+        red: 0.094,   // ~#18181c
+        green: 0.094,
+        blue: 0.110,
         alpha: 1.0,
     };
     sys::webkit_web_view_set_background_color(webview as *mut _, &mut bg);
@@ -1521,8 +1572,7 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
     // no reliable focus handoff). Dark background (above) prevents the
     // default opaque-white about:blank flash.
     if !initial_url.is_empty() {
-        let url_c = CString::new(initial_url.as_str()).unwrap();
-        sys::webkit_web_view_load_uri(webview as *mut _, url_c.as_ptr());
+        load_url_or_builtin(webview as *mut sys::WebKitWebView, &initial_url);
     }
 
     let mut tab = TabState {
@@ -1864,6 +1914,36 @@ unsafe fn dispatch_input(view: *mut sys::WPEView, ev: InputEvent) {
 }
 
 
+/// Load a URL or built-in page (`sola:scroll-stress`).
+unsafe fn load_url_or_builtin(webview: *mut sys::WebKitWebView, url: &str) {
+    if url == crate::util::SCROLL_STRESS_URL
+        || url.eq_ignore_ascii_case("sola:scroll-stress")
+        || url.eq_ignore_ascii_case("about:scroll-stress")
+    {
+        let html = crate::util::scroll_stress_html();
+        let html_c = match CString::new(html) {
+            Ok(c) => c,
+            Err(_) => {
+                tracing::warn!("scroll-stress html contains NUL");
+                return;
+            }
+        };
+        let base = CString::new("sola://scroll-stress/").unwrap();
+        sys::webkit_web_view_load_html(webview, html_c.as_ptr(), base.as_ptr());
+        tracing::info!("Nav::LoadUrl sola:scroll-stress (built-in tile stress page)");
+        return;
+    }
+    let c = match CString::new(url) {
+        Ok(c) => c,
+        Err(_) => {
+            tracing::warn!(url, "url contains NUL byte, ignoring");
+            return;
+        }
+    };
+    sys::webkit_web_view_load_uri(webview, c.as_ptr());
+    tracing::info!(url, "Nav::LoadUrl");
+}
+
 /// Dispatch a `NavCmd` to the WebKitWebView. Runs on the worker
 /// thread (the only thread allowed to touch WebKit APIs).
 unsafe fn dispatch_nav(webview: *mut sys::WebKitWebView, nav: NavCmd) {
@@ -1873,15 +1953,7 @@ unsafe fn dispatch_nav(webview: *mut sys::WebKitWebView, nav: NavCmd) {
         NavCmd::Reload => sys::webkit_web_view_reload(webview),
         NavCmd::Stop => sys::webkit_web_view_stop_loading(webview),
         NavCmd::LoadUrl(url) => {
-            let c = match CString::new(url.as_str()) {
-                Ok(c) => c,
-                Err(_) => {
-                    tracing::warn!(url = %url, "url contains NUL byte, ignoring");
-                    return;
-                }
-            };
-            sys::webkit_web_view_load_uri(webview, c.as_ptr());
-            tracing::info!(url = %url, "Nav::LoadUrl");
+            load_url_or_builtin(webview, &url);
         }
     }
 }
