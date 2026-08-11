@@ -208,7 +208,15 @@ struct BufferClaim {
 /// When at cap, refuse new claims and release the presentation untracked.
 /// With blit+Wait we release the WPE buffer before iced holds the frame.
 /// Cap only needs mailbox + in-flight claim headroom.
-const MAX_LIVE_BUFFERS: usize = 4;
+/// Import path: 4 is enough (blit releases fast). Plane path holds until
+/// compositor `wl_buffer.release` (~2–3 frames) so allow more headroom.
+fn max_live_buffers() -> usize {
+    if crate::content_plane::mode().is_plane() {
+        8
+    } else {
+        4
+    }
+}
 
 /// Paint lifecycle breadcrumb (P0 instrumentation).
 #[derive(Clone, Copy)]
@@ -866,9 +874,8 @@ unsafe extern "C" fn on_buffer_rendered(
     }
 
     // Hard cap: do not grow claims under media storm (YouTube EMFILE / pool death).
-    if ctx.live_buffers.len() >= MAX_LIVE_BUFFERS
-        && !ctx.live_buffers.contains_key(&buf_key)
-    {
+    let max_live = max_live_buffers();
+    if ctx.live_buffers.len() >= max_live && !ctx.live_buffers.contains_key(&buf_key) {
         paint_trace_push(ctx, TRACE_CAP, tab_id.0, epoch, buf_key);
         super::paint_stats::PaintStats::inc(&stats.drop_cap);
         // Rate-limit: once per second while under cap pressure.
@@ -882,7 +889,7 @@ unsafe extern "C" fn on_buffer_rendered(
         if now.saturating_sub(prev) >= 1 {
             LAST_CAP_WARN.store(now, std::sync::atomic::Ordering::Relaxed);
             tracing::warn!(
-                max = MAX_LIVE_BUFFERS,
+                max = max_live,
                 live = ctx.live_buffers.len(),
                 "paint telem: live_buffers at cap — drop frame (blackout risk)"
             );
@@ -1146,7 +1153,7 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                     sys::sola_wpe_buffer_unref(buf);
                 }
             }
-            if left > 16 || ctx.live_buffers.len() > MAX_LIVE_BUFFERS {
+            if left > 16 || ctx.live_buffers.len() > max_live_buffers() {
                 tracing::warn!(
                     outstanding = left,
                     live = ctx.live_buffers.len(),

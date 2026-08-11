@@ -38,10 +38,26 @@ const MAX_PHYS_EDGE: f64 = 8192.0;
 
 /// Device scale for content — match compositor DPR for crisp text when the
 /// physical edge stays under [`MAX_PHYS_EDGE`].
+///
+/// Content-plane path defaults to **at least 2×** supersample when the
+/// compositor reports 1.0 (common on dense 1× River outputs) so WebKit
+/// paints sharp glyphs; `wl_surface.set_buffer_scale` maps buffer → surface.
+/// Override with `SOLA_BROWSER_DPR=1` / `=1.5` / `=2`.
 fn choose_content_dpr(compositor_scale: f64, css_w: u32, css_h: u32) -> f64 {
     let max_css = css_w.max(css_h).max(1) as f64;
-    let want = compositor_scale.max(1.0);
     let edge_cap = (MAX_PHYS_EDGE / max_css).clamp(1.0, 2.0);
+    let env = std::env::var("SOLA_BROWSER_DPR")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v >= 1.0);
+    let want = if let Some(v) = env {
+        v
+    } else if crate::content_plane::mode().is_plane() {
+        // Supersample on plane path — fixes soft text when iced scale is 1.0.
+        compositor_scale.max(2.0)
+    } else {
+        compositor_scale.max(1.0)
+    };
     want.min(edge_cap)
 }
 
@@ -323,16 +339,22 @@ impl shader::Primitive for WpePrimitive {
         let phys_h = ((logical_h as f64) * dpr).round().max(1.0) as u32;
         let requested = (phys_w, phys_h);
 
-        // Content plane: position subsurface in parent surface coords (physical).
+        // Content plane: position in **parent surface coords** (iced buffer
+        // pixels = CSS × compositor_scale), not WebKit buffer pixels.
+        // width/height are CSS layout size; buffer_scale = dpr handles 2× paint.
         if crate::content_plane::mode().is_plane() {
             if let Some(tx) = crate::content_plane::global_sender() {
-                let x = (bounds.x as f64 * dpr).round() as i32;
-                let y = (bounds.y as f64 * dpr).round() as i32;
+                let parent_scale = compositor_scale;
+                let x = (bounds.x as f64 * parent_scale).round() as i32;
+                let y = (bounds.y as f64 * parent_scale).round() as i32;
+                let surf_w = ((logical_w as f64) * parent_scale).round().max(1.0) as u32;
+                let surf_h = ((logical_h as f64) * parent_scale).round().max(1.0) as u32;
                 let _ = tx.send(crate::content_plane::ContentPlaneCmd::SetRect {
                     x,
                     y,
-                    width: phys_w,
-                    height: phys_h,
+                    width: surf_w,
+                    height: surf_h,
+                    buffer_scale: dpr.round().clamp(1.0, 2.0) as i32,
                 });
             }
         }

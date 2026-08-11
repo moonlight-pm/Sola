@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use wayland_backend::sys::client::Backend as SysBackend;
@@ -34,6 +34,8 @@ pub enum ContentPlaneCmd {
         y: i32,
         width: u32,
         height: u32,
+        /// WebKit device scale → `wl_surface.set_buffer_scale`.
+        buffer_scale: i32,
     },
     Present {
         fd: OwnedFd,
@@ -95,6 +97,13 @@ struct PendingRelease {
     release_tx: Sender<Cmd<WpeEngine>>,
 }
 
+/// Per-`wl_buffer` data: release WPE only after compositor `Release`.
+struct BufferData {
+    release: Mutex<Option<PendingRelease>>,
+    /// Optional SHM memfd kept alive while buffer is live.
+    shm_fd: Mutex<Option<OwnedFd>>,
+}
+
 struct PlaneInner {
     conn: Connection,
     event_queue: EventQueue<PlaneState>,
@@ -109,10 +118,10 @@ struct PlaneState {
     surface: Option<wl_surface::WlSurface>,
     subsurface: Option<wl_subsurface::WlSubsurface>,
     parent: Option<wl_surface::WlSurface>,
-    live_buffer: Option<wl_buffer::WlBuffer>,
-    /// SHM pool backing live_buffer when probe/shm path (keep mapped fd alive).
-    _shm_keep: Option<OwnedFd>,
-    live_release: Option<PendingRelease>,
+    /// Buffers still held by us until compositor `Release` (must not Drop early).
+    inflight: Vec<wl_buffer::WlBuffer>,
+    /// wl_surface buffer_scale (matches WebKit device scale when >1).
+    buffer_scale: i32,
     x: i32,
     y: i32,
     width: u32,
@@ -147,13 +156,35 @@ impl ContentPlane {
                 Err(TryRecvError::Disconnected) => return,
             }
         }
+        // Coalesce Present: only latest is shown; drop intermediates to WPE.
+        {
+            let mut out: VecDeque<ContentPlaneCmd> = VecDeque::new();
+            let mut last_present: Option<ContentPlaneCmd> = None;
+            while let Some(cmd) = self.pending.pop_front() {
+                if matches!(cmd, ContentPlaneCmd::Present { .. }) {
+                    if let Some(old) = last_present.replace(cmd) {
+                        if let ContentPlaneCmd::Present {
+                            token, release_tx, ..
+                        } = old
+                        {
+                            let _ = release_tx.send(Cmd::Release { token });
+                        }
+                    }
+                } else {
+                    out.push_back(cmd);
+                }
+            }
+            if let Some(p) = last_present {
+                out.push_back(p);
+            }
+            self.pending = out;
+        }
+
         while let Some(cmd) = self.pending.pop_front() {
             self.apply(cmd);
         }
         if let Some(inner) = self.inner.as_mut() {
-            let _ = inner
-                .event_queue
-                .dispatch_pending(&mut inner.state);
+            let _ = inner.event_queue.dispatch_pending(&mut inner.state);
             // Do NOT prepare_read / read — iced owns the display read.
             let _ = inner.conn.flush();
         }
@@ -190,18 +221,23 @@ impl ContentPlane {
                 y,
                 width,
                 height,
+                buffer_scale,
             } => {
                 if let Some(inner) = self.inner.as_mut() {
                     inner.state.x = x;
                     inner.state.y = y;
                     inner.state.width = width.max(1);
                     inner.state.height = height.max(1);
+                    let scale = buffer_scale.clamp(1, 2);
+                    if scale != inner.state.buffer_scale {
+                        inner.state.buffer_scale = scale;
+                        if let Some(surf) = &inner.state.surface {
+                            surf.set_buffer_scale(scale);
+                        }
+                    }
                     if let Some(sub) = &inner.state.subsurface {
                         sub.set_position(x, y);
                     }
-                    // Parent commit needed for position in sync mode; desync
-                    // applies immediately but place still benefits from parent
-                    // damage on next iced frame.
                     let _ = inner.conn.flush();
                 }
             }
@@ -277,12 +313,10 @@ pub fn parent_ptrs(window: &dyn iced::window::Window) -> Result<(usize, usize), 
 }
 
 fn finish_live(state: &mut PlaneState) {
-    if let Some(buf) = state.live_buffer.take() {
+    // Force-release any inflight WPE loans (shutdown path).
+    for buf in state.inflight.drain(..) {
+        // Best-effort: destroy without waiting for compositor.
         buf.destroy();
-    }
-    state._shm_keep = None;
-    if let Some(pr) = state.live_release.take() {
-        let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
     }
 }
 
@@ -310,9 +344,8 @@ fn init_from_parent(
         surface: None,
         subsurface: None,
         parent: None,
-        live_buffer: None,
-        _shm_keep: None,
-        live_release: None,
+        inflight: Vec::new(),
+        buffer_scale: 1,
         x: 200,
         y: 120,
         width: 400,
@@ -424,7 +457,21 @@ fn present_shm_color(inner: &mut PlaneInner, r: u8, g: u8, b: u8) -> Result<(), 
         px[2] = r;
         px[3] = 0xff;
     }
-    let pool = shm.create_pool(fd.as_fd(), size as i32, &qh, ());
+    let data = Arc::new(BufferData {
+        release: Mutex::new(None),
+        shm_fd: Mutex::new(Some(fd)),
+    });
+    let pool = shm.create_pool(
+        data.shm_fd
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .as_fd(),
+        size as i32,
+        &qh,
+        (),
+    );
     let buffer = pool.create_buffer(
         0,
         w as i32,
@@ -432,33 +479,21 @@ fn present_shm_color(inner: &mut PlaneInner, r: u8, g: u8, b: u8) -> Result<(), 
         stride as i32,
         wl_shm::Format::Argb8888,
         &qh,
-        (),
+        data,
     );
     unsafe {
         libc::munmap(map, size);
     }
+    std::mem::forget(pool);
 
-    let prev_buf = inner.state.live_buffer.take();
-    let prev_rel = inner.state.live_release.take();
-    let prev_shm = inner.state._shm_keep.take();
-
+    surface.set_buffer_scale(inner.state.buffer_scale);
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();
     let _ = inner.event_queue.flush();
     let _ = inner.conn.flush();
-
-    inner.state.live_buffer = Some(buffer);
-    inner.state._shm_keep = Some(fd);
-    std::mem::forget(pool); // buffer holds pool ref via protocol
-
-    if let Some(b) = prev_buf {
-        b.destroy();
-    }
-    drop(prev_shm);
-    if let Some(pr) = prev_rel {
-        let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
-    }
+    // Keep proxy alive until compositor Release.
+    inner.state.inflight.push(buffer);
     Ok(())
 }
 
@@ -492,6 +527,11 @@ fn present_dmabuf(
         return Ok(());
     }
 
+    let data = Arc::new(BufferData {
+        release: Mutex::new(Some(PendingRelease { token, release_tx })),
+        shm_fd: Mutex::new(None),
+    });
+
     let params = dmabuf.create_params(&qh, ());
     let raw = fd.into_raw_fd();
     let borrowed = unsafe { BorrowedFd::borrow_raw(raw) };
@@ -515,48 +555,54 @@ fn present_dmabuf(
         );
     }
 
+    // User-data carries WPE release — only after compositor `Release`.
     let buffer = params.create_immed(
         width as i32,
         height as i32,
         format,
         zwp_linux_buffer_params_v1::Flags::empty(),
         &qh,
-        (),
+        data,
     );
     std::mem::forget(unsafe { OwnedFd::from_raw_fd(raw) });
 
-    let prev_buf = inner.state.live_buffer.take();
-    let prev_rel = inner.state.live_release.take();
-    let prev_shm = inner.state._shm_keep.take();
+    // Keep buffer_scale in sync (SetRect updates preferred scale).
+    surface.set_buffer_scale(inner.state.buffer_scale.max(1));
 
     surface.attach(Some(&buffer), 0, 0);
     surface.damage_buffer(0, 0, width as i32, height as i32);
     let _ = surface.frame(&qh, ());
     surface.commit();
-    // desync: no parent.commit required
     let _ = inner.event_queue.flush();
     let _ = inner.conn.flush();
 
-    inner.state.live_buffer = Some(buffer);
-    inner.state.live_release = Some(PendingRelease { token, release_tx });
+    // Keep proxy alive until Release event (do NOT destroy / release WPE yet).
+    inner.state.inflight.push(buffer);
     inner.state.present_ok += 1;
     if inner.state.present_ok == 1 || inner.state.present_ok % 60 == 0 {
         tracing::info!(
             n = inner.state.present_ok,
             width,
             height,
+            buffer_scale = inner.state.buffer_scale,
+            inflight = inner.state.inflight.len(),
             format = format!("{:#x}", format),
             modifier,
             "content plane present ok"
         );
     }
-
-    if let Some(b) = prev_buf {
-        b.destroy();
-    }
-    drop(prev_shm);
-    if let Some(pr) = prev_rel {
-        let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
+    // Cap inflight if Release events lag (still return WPE loan).
+    while inner.state.inflight.len() > 4 {
+        let old = inner.state.inflight.remove(0);
+        if let Some(data) = old.data::<Arc<BufferData>>() {
+            if let Some(pr) = data.release.lock().unwrap().take() {
+                let _ = pr
+                    .release_tx
+                    .send(Cmd::Release { token: pr.token });
+            }
+            *data.shm_fd.lock().unwrap() = None;
+        }
+        old.destroy();
     }
     Ok(())
 }
@@ -639,6 +685,29 @@ impl Dispatch<wl_subsurface::WlSubsurface, ()> for PlaneState {
     }
 }
 
+impl Dispatch<wl_buffer::WlBuffer, Arc<BufferData>> for PlaneState {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_buffer::WlBuffer,
+        event: wl_buffer::Event,
+        data: &Arc<BufferData>,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_buffer::Event::Release = event {
+            // Compositor done sampling — safe to return dma-buf to WebKit.
+            if let Some(pr) = data.release.lock().unwrap().take() {
+                let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
+            }
+            *data.shm_fd.lock().unwrap() = None;
+            // Drop our inflight hold; destroy the protocol object.
+            state.inflight.retain(|b| b.id() != proxy.id());
+            proxy.destroy();
+        }
+    }
+}
+
+/// Unused unit-udata path for any leftover creates.
 impl Dispatch<wl_buffer::WlBuffer, ()> for PlaneState {
     fn event(
         _: &mut Self,
