@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-10 (`naturalethic/browser`) — D8 profiles **implemented** (no switcher)
+**As of:** 2026-08-10 (`naturalethic/browser`) — paint P0 after YouTube SEGV
 
 ---
 
@@ -20,23 +20,17 @@ Do not invent product policy.
      (`pre-cef-removal`); installed to `/opt/sola/bin/sola-browser` + shell.  
    - Full review + backlog:
      [`docs/plans/2026-08-09-sola-browser-hardening.md`](docs/plans/2026-08-09-sola-browser-hardening.md).  
-   - Capability row `browser` lists shipped subset vs gaps.  
-   - **D3:** Helium stays system default until browser is good enough.  
-   - **D4 product bar:** stop · downloads · history+restore · Bitwarden · polish.  
-   - **D7:** first-party Bitwarden UX (SDK + inject); not Chrome store, not
-     system service, not WebExtensions host for now.  
-   - **Bitwarden design locked:**  
-     [`docs/specs/2026-08-10-sola-browser-bitwarden-design.md`](docs/specs/2026-08-10-sola-browser-bitwarden-design.md).  
+   - **Paint investigation:**  
+     [`docs/plans/2026-08-10-browser-paint-investigation.md`](docs/plans/2026-08-10-browser-paint-investigation.md)
+     — YouTube load → dual SIGSEGV after `WPE_IS_BUFFER` criticals; H1 double-release.
+     **P0 landed:** refuse release of still-claimed buffers; lifecycle trace ring;
+     `MAX_LIVE_BUFFERS=6` drop under pressure. **Dogfood:** load YouTube without
+     crash; expect possible black video (NV12 skip) until convert path.  
    - **D8 profiles shipped (no switcher):**  
-     [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](docs/specs/2026-08-10-sola-browser-profiles-design.md)
-     — `profiles.rs`: UUID **Primary**, `share/…/profiles/<uuid>/` + cache twin,
-     `profiles.json`, session under profile, vault at `config/sola/browser/vault.json`,
-     first-run **wipe** of flat cookies/storage + dead `browser-*.json` / old tabs yaml.
-     Switcher later.  
-   - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Dogfood next:** fresh profile after wipe — sign into YouTube once, full quit,
-     reopen (cookies under profile data_dir). Then vault session persist → history
-     under `shared/` → downloads.  
+     [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](docs/specs/2026-08-10-sola-browser-profiles-design.md).  
+   - **D3/D4/D7** as before; still ask **D5** middle-click, **D6** search.  
+   - **Build order:** re-dogfood YouTube (no SEGV) → cookie stickiness → vault
+     session persist → history under `shared/` → NV12/GPU multi-plane (P1).  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
@@ -67,7 +61,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | D8 profile paths live (wipe old flat data on boot); Bitwarden match/fill; multi-plane RGB; re-dogfood YouTube login stickiness; OpenUrl→Helium | — |
+| Browser | D8 profiles; paint P0 (claim-guard + live cap); **re-dogfood YouTube load** (was SEGV); Bitwarden match/fill; OpenUrl→Helium | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install

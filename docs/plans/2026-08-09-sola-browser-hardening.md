@@ -98,7 +98,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 |----|---------|----------|---------------------|
 | **B1** | **Background tabs keep producing frames** that only get dropped in `frame_stream`. Wastes CPU/GPU/WebProcess for every background tab. | `run.rs` filter; no worker-side suspend | Suspend paint / throttle non-active WPE views (or stop listening) |
 | **B2** | **C3 tradeoff 2026-08-10:** **no retire/park** — drop previous frame immediately so pool stays fed (input FPS). May tear one frame under load. | `frame.rs` one-hold | Optional GPU fence + single-frame retire if tear returns |
-| **B3** | **Multi-plane dma-buf:** still not imported (video may stutter/blank). **Release fixed 2026-08-10** — was leaking without `buffer_released` and crashing under YouTube. | `engine.rs` `on_buffer_rendered` | Import NV12/etc. or convert to RGB for media |
+| **B3** | **Multi-plane dma-buf:** RGB multi-plane import partial; **NV12 still skip+release** (video black). YouTube SEGV 2026-08-10 after `WPE_IS_BUFFER` criticals. | paint investigation plan | P0: claim-guard release + live cap (landed); P1: NV12 convert / fences |
 | **B4** | **IME / complex text broken:** `keycode: 0`, Character keys only first codepoint, no IME bridge. CJK/emoji/composing fail. | `wpe/input.rs` | Long-term: real IM protocol; short-term: document |
 | **B5** | **Middle-click never reaches WPE** (`button_to_wpe` returns `None` for Middle). `decide-policy` new-tab path for middle-click is dead for iced-driven events. | `wpe/input.rs` + `on_decide_policy` | Product: enable middle→background tab **or** delete dead policy branch |
 

@@ -163,7 +163,27 @@ struct BufferClaim {
     epoch: u64,
 }
 
+/// Max simultaneous `live_buffers` claims. active+retire+park×N+pending+channel
+/// can stack; YouTube media + multi-tab exceeded WPE's pool and EMFILE'd.
+/// When at cap, refuse new claims and release the presentation untracked.
+const MAX_LIVE_BUFFERS: usize = 6;
 
+/// Paint lifecycle breadcrumb (P0 instrumentation).
+#[derive(Clone, Copy)]
+struct PaintTrace {
+    kind: u8,
+    tab: u64,
+    epoch: u64,
+    buf: usize,
+}
+
+const TRACE_CLAIM: u8 = 1;
+const TRACE_IGNORE: u8 = 2;
+const TRACE_RELEASE: u8 = 3;
+const TRACE_SKIP: u8 = 4;
+const TRACE_REFUSE: u8 = 5;
+const TRACE_CAP: u8 = 6;
+const TRACE_RING: usize = 64;
 
 pub struct WpeEngine {
     worker: Option<JoinHandle<()>>,
@@ -360,6 +380,9 @@ struct WorkerCtx {
     /// Buffers we still owe `wpe_view_buffer_released` for (ptr → claim).
     /// Release only calls WPE when claim.epoch still matches the tab.
     live_buffers: HashMap<usize, BufferClaim>,
+    /// Ring of recent paint lifecycle events (crash diagnosis).
+    paint_trace: [PaintTrace; TRACE_RING],
+    paint_trace_i: usize,
 }
 
 /// Per-tab state living on the worker thread. The webview ptr is
@@ -475,6 +498,13 @@ unsafe fn worker_main(
         snapshot_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         outstanding_tokens: std::sync::atomic::AtomicU64::new(0),
         live_buffers: HashMap::new(),
+        paint_trace: [PaintTrace {
+            kind: 0,
+            tab: 0,
+            epoch: 0,
+            buf: 0,
+        }; TRACE_RING],
+        paint_trace_i: 0,
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
     sys::sola_wpe_set_cursor_callback(Some(on_cursor_changed), ctx as *mut c_void);
@@ -645,7 +675,7 @@ unsafe extern "C" fn on_buffer_rendered(
         None => {
             tracing::warn!("buffer-rendered for unknown WPEView; releasing");
             // Not tracked — release once here.
-            release_buffer_unchecked(view, buffer_base);
+            release_untracked(ctx, view, buffer_base, "unknown_view");
             return;
         }
     };
@@ -691,7 +721,14 @@ unsafe extern "C" fn on_buffer_rendered(
                 "wpe: skip non-RGB multi-plane buffer (released; last RGB kept)"
             );
         });
-        release_buffer_unchecked(view, buffer_base);
+        paint_trace_push(
+            ctx,
+            TRACE_SKIP,
+            tab_id.0,
+            0,
+            buffer_base as usize,
+        );
+        release_untracked(ctx, view, buffer_base, "multiplane_skip");
         return;
     }
 
@@ -716,7 +753,7 @@ unsafe extern "C" fn on_buffer_rendered(
         let stride = sys::wpe_buffer_dma_buf_get_stride(buffer, i);
         let offset = sys::wpe_buffer_dma_buf_get_offset(buffer, i);
         if fd < 0 || stride == 0 {
-            release_buffer_unchecked(view, buffer_base);
+            release_untracked(ctx, view, buffer_base, "bad_plane");
             return;
         }
         planes.push((fd, stride, offset));
@@ -727,7 +764,7 @@ unsafe extern "C" fn on_buffer_rendered(
     let dup_fd = libc::fcntl(primary_fd, libc::F_DUPFD_CLOEXEC, 0);
     if dup_fd < 0 {
         tracing::warn!(err = ?std::io::Error::last_os_error(), "dup of dmabuf fd failed");
-        release_buffer_unchecked(view, buffer_base);
+        release_untracked(ctx, view, buffer_base, "dup_fail");
         return;
     }
 
@@ -752,11 +789,32 @@ unsafe extern "C" fn on_buffer_rendered(
     // Stale epoch claim → steal for the new frame; old token will no-op on Release.
     if let Some(claim) = ctx.live_buffers.get(&buf_key) {
         if claim.tab_id == tab_id && claim.epoch == epoch {
-            tracing::debug!(?tab_id, epoch, "buffer still held; ignore re-presentation");
+            paint_trace_push(ctx, TRACE_IGNORE, tab_id.0, epoch, buf_key);
             drop(OwnedFd::from_raw_fd(dup_fd));
             return;
         }
     }
+
+    // Hard cap: do not grow claims under media storm (YouTube EMFILE / pool death).
+    if ctx.live_buffers.len() >= MAX_LIVE_BUFFERS
+        && !ctx.live_buffers.contains_key(&buf_key)
+    {
+        paint_trace_push(ctx, TRACE_CAP, tab_id.0, epoch, buf_key);
+        static LOGGED_CAP: std::sync::Once = std::sync::Once::new();
+        LOGGED_CAP.call_once(|| {
+            tracing::warn!(
+                max = MAX_LIVE_BUFFERS,
+                "wpe: live_buffers at cap — dropping frame (release untracked)"
+            );
+        });
+        if ctx.live_buffers.len() >= MAX_LIVE_BUFFERS {
+            dump_paint_trace(ctx, "live_buffers_cap");
+        }
+        drop(OwnedFd::from_raw_fd(dup_fd));
+        release_untracked(ctx, view, buffer_base, "live_cap");
+        return;
+    }
+
     ctx.live_buffers.insert(
         buf_key,
         BufferClaim {
@@ -764,6 +822,7 @@ unsafe extern "C" fn on_buffer_rendered(
             epoch,
         },
     );
+    paint_trace_push(ctx, TRACE_CLAIM, tab_id.0, epoch, buf_key);
 
     let frame = WpeFrame {
         fd: Some(OwnedFd::from_raw_fd(dup_fd)),
@@ -904,6 +963,7 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 c.tab_id == token.tab_id && c.epoch == token.epoch
             });
             if key == 0 || !own_claim {
+                paint_trace_push(ctx, TRACE_SKIP, token.tab_id.0, token.epoch, key);
                 tracing::debug!(
                     ?token.tab_id,
                     epoch = token.epoch,
@@ -918,6 +978,8 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 });
                 if !epoch_ok {
                     // Navigated or closed — buffer may already be destroyed.
+                    // Claim removed so a later re-presentation can claim cleanly.
+                    paint_trace_push(ctx, TRACE_SKIP, token.tab_id.0, token.epoch, key);
                     tracing::debug!(
                         ?token.tab_id,
                         epoch = token.epoch,
@@ -926,11 +988,18 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 } else if !token.view.is_null() {
                     let buf = token.buffer as *mut sys::WPEBuffer;
                     let view = token.view as *mut sys::WPEView;
-                    release_buffer_unchecked(view, buf);
+                    // Claim already removed — safe to tell WPE.
+                    paint_trace_push(ctx, TRACE_RELEASE, token.tab_id.0, token.epoch, key);
+                    release_owned(view, buf);
                 }
             }
-            if left > 16 {
-                tracing::warn!(outstanding = left, "wpe buffer tokens outstanding");
+            if left > 16 || ctx.live_buffers.len() > MAX_LIVE_BUFFERS {
+                tracing::warn!(
+                    outstanding = left,
+                    live = ctx.live_buffers.len(),
+                    "wpe buffer pressure"
+                );
+                dump_paint_trace(ctx, "buffer_pressure");
             }
         }
         Cmd::Input(ev) => {
@@ -1303,17 +1372,88 @@ unsafe fn close_tab(ctx: &mut WorkerCtx, id: TabId) {
     );
 }
 
-/// One-shot release for buffers **not** tracked in `live_buffers`
-/// (multi-plane skip, unknown view, dup failure).
+/// Release a buffer that is **not** (or no longer) in `live_buffers`.
 ///
-/// Tracked buffers must only be released from `Cmd::Release` after
-/// `live_buffers.remove` succeeds. Double `wpe_view_buffer_released`
-/// SIGSEGVs (coredump 08:20 / YouTube sign-in).
-unsafe fn release_buffer_unchecked(view: *mut sys::WPEView, buffer: *mut sys::WPEBuffer) {
+/// Refuses if the buffer is still claimed — double `wpe_view_buffer_released`
+/// SIGSEGVs (YouTube 19:35 coredump / sign-in history).
+unsafe fn release_untracked(
+    ctx: &mut WorkerCtx,
+    view: *mut sys::WPEView,
+    buffer: *mut sys::WPEBuffer,
+    reason: &'static str,
+) {
+    if view.is_null() || buffer.is_null() {
+        return;
+    }
+    let key = buffer as *mut c_void as usize;
+    if ctx.live_buffers.contains_key(&key) {
+        paint_trace_push(ctx, TRACE_REFUSE, 0, 0, key);
+        tracing::error!(
+            key = format!("{:#x}", key),
+            reason,
+            live = ctx.live_buffers.len(),
+            "REFUSE wpe_view_buffer_released — buffer still claimed (would SEGV)"
+        );
+        dump_paint_trace(ctx, "refuse_claimed_release");
+        return;
+    }
+    release_owned(view, buffer);
+}
+
+/// Call WPE release after claim bookkeeping is done (claim removed or never claimed).
+unsafe fn release_owned(view: *mut sys::WPEView, buffer: *mut sys::WPEBuffer) {
     if view.is_null() || buffer.is_null() {
         return;
     }
     sys::wpe_view_buffer_released(view, buffer);
+}
+
+fn paint_trace_push(ctx: &mut WorkerCtx, kind: u8, tab: u64, epoch: u64, buf: usize) {
+    let i = ctx.paint_trace_i % TRACE_RING;
+    ctx.paint_trace[i] = PaintTrace {
+        kind,
+        tab,
+        epoch,
+        buf,
+    };
+    ctx.paint_trace_i = ctx.paint_trace_i.wrapping_add(1);
+}
+
+fn dump_paint_trace(ctx: &WorkerCtx, why: &str) {
+    let n = ctx.paint_trace_i.min(TRACE_RING);
+    if n == 0 {
+        return;
+    }
+    let start = ctx.paint_trace_i.saturating_sub(n);
+    let mut parts = Vec::with_capacity(n);
+    for k in 0..n {
+        let e = ctx.paint_trace[(start + k) % TRACE_RING];
+        if e.kind == 0 {
+            continue;
+        }
+        let name = match e.kind {
+            TRACE_CLAIM => "claim",
+            TRACE_IGNORE => "ignore",
+            TRACE_RELEASE => "release",
+            TRACE_SKIP => "skip",
+            TRACE_REFUSE => "refuse",
+            TRACE_CAP => "cap",
+            _ => "?",
+        };
+        parts.push(format!(
+            "{name}:t{}:e{}:{:#x}",
+            e.tab, e.epoch, e.buf
+        ));
+    }
+    tracing::warn!(
+        why,
+        live = ctx.live_buffers.len(),
+        outstanding = ctx
+            .outstanding_tokens
+            .load(std::sync::atomic::Ordering::Relaxed),
+        ring = %parts.join(" | "),
+        "paint lifecycle dump"
+    );
 }
 
 /// Rewrite the shared `Vec<TabInfo>` from the current tab state.
