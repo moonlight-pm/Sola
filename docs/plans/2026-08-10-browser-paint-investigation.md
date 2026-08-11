@@ -130,12 +130,31 @@ fallback. Fix: `wpe_view_set_visible(false)` for inactive tabs.
 Sampling **imported dma-buf** while releasing to WebKit on the next swap
 (`RETIRE_DEPTH=0`) let WebKit rewrite memory the GPU still read → black
 swaths + chrome flicker. Fix: **blit each import into a GPU-owned texture**,
-sample only that; stage the WPE loan one frame then release.
+sample only that; release WPE after `device.poll(Wait)`.
 
-Screenshot dogfood (YouTube hard scroll): unique colors stayed ~2.7k
-(near_black ~0.1) vs ~230 unique / 0.77 near_black before.
+Still bad on **youtube.com homepage** after blit+Wait: metrics healthy,
+visuals not. Root cause (upstream `WPEViewHeadless.cpp`):
+
+```text
+timer: release(committed); committed = pending; buffer_rendered(committed)
+```
+
+Headless auto-`buffer_released` ~16 ms later races sola import/blit.
+`wpe_buffer_take_rendering_fence` is always null on headless (`fence_none`)
+— FenceMonitor already waited; fence plumbing is a red herring.
+
+**Fix (2026-08-11):** hijack `WPEViewHeadlessClass::render_buffer`:
+latest-wins pending + 60 Hz `buffer_rendered` only; **sola alone**
+releases after blit. No stock auto-release of presented frames.
+
+Dogfood (homepage hard scroll): near_black ≤2.6%, `drop_cap=0`,
+`claim≈import≈released`, `gap_*` ~35 ms (was multi-second blackout gaps).
+
 ## Code touch
 
+- `crates/sola-browser/src/wpe/sola_wpe.c` — render_buffer hijack  
 - `crates/sola-browser/src/wpe/engine.rs` — claim/release/cap/trace  
+- `crates/sola-browser/src/wpe/frame.rs` — blit+Wait; no tab-switch clear  
 - `crates/sola-browser/src/wpe/paint_stats.rs` — quality telem  
 - Docs: this plan, CURRENT, capabilities gap notes  
+

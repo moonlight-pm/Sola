@@ -259,7 +259,13 @@ impl SamplePipeline {
                     view: &dst_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        // Fullscreen triangle overwrites every pixel.
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.039,
+                            g: 0.039,
+                            b: 0.043,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,

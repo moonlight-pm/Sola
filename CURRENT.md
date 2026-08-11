@@ -23,16 +23,17 @@ Do not invent product policy.
    - **Paint / YouTube crash fixed (P0):**  
      [`docs/plans/2026-08-10-browser-paint-investigation.md`](docs/plans/2026-08-10-browser-paint-investigation.md)
      — SEGV + scroll freeze fixed (buffer ref + RLIMIT_NOFILE + lean holds).  
-   - **Paint quality (active):** telem + pipeline fix shipped:
-     latest-wins mailbox; hide inactive WPE views; **dma-buf blit→owned texture** (stops sample-after-release black/flicker); staging release
-     (was pinching 2-buffer pool → ignore deadlock). Dogfood: scroll
-     blackout / menu flicker should improve; re-check
-     `rg "paint telem" /opt/sola/log/app-sola-browser.log` for
-     `ignore≈0 claim≈import≈released live=1`. Menu **Paint Stats** (⇧⌘I).  
+   - **Paint quality (active):** telem + pipeline:
+     latest-wins mailbox; hide inactive WPE views; **dma-buf blit→owned**
+     + GPU Wait; **headless `render_buffer` hijack** (no stock auto-
+     `buffer_released` race — root of YT homepage black/nav flicker).
+     Dogfood homepage scroll: near_black ≤2.6%, `drop_cap=0`,
+     `claim≈import≈released`, gaps ~35 ms. `fence_none` expected on
+     headless. Menu **Paint Stats** (⇧⌘I).  
    - **D8 profiles** shipped (no switcher).  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Next:** dogfood scroll quality → cookie stickiness → vault session →
-     history → NV12 (P1).  
+   - **Next:** user dogfood scroll feel → cookie stickiness → vault →
+     history → NV12 (P1); DPR/blur if still soft.  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
@@ -63,7 +64,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Scroll freeze fixed; paint mailbox+retire=0 (ignore deadlock); telem live; OpenUrl; D8 | — |
+| Browser | Paint: headless render_buffer hijack + owned blit; YT home scroll dogfood OK metrics; OpenUrl; D8 | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install

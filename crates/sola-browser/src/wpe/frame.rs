@@ -369,9 +369,9 @@ impl shader::Primitive for WpePrimitive {
                     show_surface(pipeline, device, &old);
                     pipeline.active = Some(old);
                 } else {
-                    pipeline.sample.clear();
-                    crate::wpe::paint_stats::global()
-                        .note_sample_clear("paint_tab_switch_no_park");
+                    // Keep last bind group until a new frame imports —
+                    // sample.clear() flashes full black on tab switch /
+                    // OpenUrl paint_tab churn (paint_tab_switch_no_park).
                 }
                 for (_, surf) in pipeline.parked.drain() {
                     drop(surf);
@@ -476,6 +476,23 @@ impl shader::Primitive for WpePrimitive {
             let _ = HeldToken::new(token, release_tx);
             return;
         };
+        // P0: wait for WebKit GPU write fence before importing (GTK/WPE
+        // production path). Without this we blit incomplete frames → black
+        // swaths / nav flicker on YouTube homepage scroll.
+        match frame.take_render_fence() {
+            Some(fence) => {
+                if super::engine::wait_render_fence(fence, 50) {
+                    crate::wpe::paint_stats::PaintStats::inc(
+                        &crate::wpe::paint_stats::global().fence_ok,
+                    );
+                }
+            }
+            None => {
+                crate::wpe::paint_stats::PaintStats::inc(
+                    &crate::wpe::paint_stats::global().fence_none,
+                );
+            }
+        }
         let mut planes = vec![wgpu_import::DmabufPlaneLayout {
             stride: frame.stride,
             offset: frame.offset,

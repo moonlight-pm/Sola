@@ -65,6 +65,10 @@ pub struct PaintStats {
     pub newframe_sent: AtomicU64,
     /// shader sample bind group cleared (black path)
     pub sample_clear: AtomicU64,
+    /// WebKit render fence waited OK / timed out / missing
+    pub fence_ok: AtomicU64,
+    pub fence_timeout: AtomicU64,
+    pub fence_none: AtomicU64,
     /// last successful present wall time (ms since process start)
     last_present_ms: AtomicU64,
     /// last successful import wall time (ms since process start)
@@ -186,6 +190,9 @@ impl PaintStats {
         let nf_coal = self.take(&self.newframe_coalesce);
         let nf_sent = self.take(&self.newframe_sent);
         let sample_clear = self.take(&self.sample_clear);
+        let fence_timeout = self.take(&self.fence_timeout);
+        let fence_ok = self.take(&self.fence_ok);
+        let fence_none = self.take(&self.fence_none);
         let gap_present = self.take(&self.max_present_gap_ms);
         let gap_import = self.take(&self.max_import_gap_ms);
         let live_peak = self.take(&self.live_peak).max(live_now as u64);
@@ -234,6 +241,9 @@ impl PaintStats {
             nf_sent,
             nf_coal,
             sample_clear,
+            fence_ok,
+            fence_timeout,
+            fence_none,
             gap_present_ms = gap_present,
             gap_import_ms = gap_import,
             live = live_now,

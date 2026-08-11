@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::ffi::{CString, c_void};
-use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::ptr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -67,6 +67,9 @@ pub struct DmabufPlane {
 pub struct WpeFrame {
     /// Single-plane dma-buf (ARGB8888 path). Taken by the importer.
     pub fd: Option<OwnedFd>,
+    /// WebKit render-complete fence (sync_file). Wait before import/blit
+    /// or we sample incomplete GPU work → black swaths under scroll.
+    pub render_fence: Option<OwnedFd>,
     /// Tightly packed BGRA8 when we converted multi-plane YUV on CPU.
     pub rgba: Option<Vec<u8>>,
     pub width: u32,
@@ -95,9 +98,46 @@ impl WpeFrame {
         self.fd.take()
     }
 
+    pub fn take_render_fence(&mut self) -> Option<OwnedFd> {
+        self.render_fence.take()
+    }
+
     pub fn take_rgba(&mut self) -> Option<Vec<u8>> {
         self.rgba.take()
     }
+}
+
+/// Block until WebKit's rendering fence signals (or timeout).
+///
+/// Production WPE/GTK never paints until this fence fires — without it we
+/// blit incomplete dmabuf content (black bands / flicker on YouTube home).
+pub fn wait_render_fence(fence: OwnedFd, timeout_ms: i32) -> bool {
+    let raw = fence.as_raw_fd();
+    if raw < 0 {
+        return true;
+    }
+    let mut pfd = libc::pollfd {
+        fd: raw,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: poll on a single owned FD; kernel closes via OwnedFd Drop.
+    let r = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+    if r < 0 {
+        tracing::debug!(
+            err = ?std::io::Error::last_os_error(),
+            "render fence poll failed"
+        );
+        return false;
+    }
+    if r == 0 {
+        // Timeout — still proceed; better a late frame than stall forever.
+        super::paint_stats::PaintStats::inc(
+            &super::paint_stats::global().fence_timeout,
+        );
+        return false;
+    }
+    true
 }
 
 impl Drop for WpeFrame {
@@ -874,8 +914,18 @@ unsafe extern "C" fn on_buffer_rendered(
             .load(std::sync::atomic::Ordering::Relaxed),
     );
 
+    // Own the rendering fence (transfer from WPEBuffer). Iced waits before
+    // import so we never sample incomplete WebKit GPU work.
+    let fence_fd = sys::wpe_buffer_take_rendering_fence(buffer_base);
+    let render_fence = if fence_fd >= 0 {
+        Some(OwnedFd::from_raw_fd(fence_fd))
+    } else {
+        None
+    };
+
     let frame = WpeFrame {
         fd: Some(OwnedFd::from_raw_fd(dup_fd)),
+        render_fence,
         rgba: None,
         width: width_u,
         height: height_u,

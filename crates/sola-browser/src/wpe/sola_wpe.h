@@ -4,9 +4,10 @@
  *
  * WPEDisplayHeadless / WPEViewHeadless are G_DECLARE_FINAL_TYPE — there
  * is no subclass path. We hijack vmethods on the concrete classes to:
- *   1. Install a buffer-rendered emission hook (frame delivery)
- *   2. Install cursor-from-name passthrough (CSS cursors)
- *   3. Bridge page selection → Rust for system clipboard copy
+ *   1. buffer-rendered emission hook (frame delivery to Rust)
+ *   2. headless render_buffer (no auto buffer_released — sola owns loan)
+ *   3. cursor-from-name passthrough (CSS cursors)
+ *   4. Bridge page selection → Rust for system clipboard copy
  *
  * A get_preferred_buffer_formats override remains as upstream-
  * aspirational (WebKit 2.52.3 never invokes it); LINEAR dma-buf import
