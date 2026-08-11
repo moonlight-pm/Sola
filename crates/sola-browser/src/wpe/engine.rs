@@ -166,8 +166,9 @@ struct BufferClaim {
 /// Max simultaneous `live_buffers` claims. active+retire+park×N+pending+channel
 /// can stack; YouTube media + multi-tab exceeded WPE's pool and EMFILE'd.
 /// When at cap, refuse new claims and release the presentation untracked.
-/// Only the painted tab may hold buffers (active + channel + pending ≈ 3).
-const MAX_LIVE_BUFFERS: usize = 3;
+/// Painted tab: active + retire(1) + channel + pending. Cap too low → drop_cap
+/// blackouts while scrolling (telemetry).
+const MAX_LIVE_BUFFERS: usize = 5;
 
 /// Paint lifecycle breadcrumb (P0 instrumentation).
 #[derive(Clone, Copy)]
@@ -384,6 +385,8 @@ struct WorkerCtx {
     /// Ring of recent paint lifecycle events (crash diagnosis).
     paint_trace: [PaintTrace; TRACE_RING],
     paint_trace_i: usize,
+    /// Last telemetry flush.
+    stats_last_flush: std::time::Instant,
 }
 
 /// Per-tab state living on the worker thread. The webview ptr is
@@ -506,6 +509,7 @@ unsafe fn worker_main(
             buf: 0,
         }; TRACE_RING],
         paint_trace_i: 0,
+        stats_last_flush: std::time::Instant::now(),
     }));
     sys::sola_wpe_set_buffer_callback(Some(on_buffer_rendered), ctx as *mut c_void);
     sys::sola_wpe_set_cursor_callback(Some(on_cursor_changed), ctx as *mut c_void);
@@ -671,6 +675,13 @@ unsafe extern "C" fn on_buffer_rendered(
     // pointer-equality on a short list.
     let buffer_base = buffer as *mut sys::WPEBuffer;
 
+    let stats = super::paint_stats::global();
+    stats.note_present();
+    static FIRST_BUF: std::sync::Once = std::sync::Once::new();
+    FIRST_BUF.call_once(|| {
+        tracing::info!("paint telem: first buffer-rendered received");
+    });
+
     let tab_id = match find_tab_by_view(ctx, view) {
         Some(t) => t.id,
         None => {
@@ -729,11 +740,13 @@ unsafe extern "C" fn on_buffer_rendered(
             0,
             buffer_base as usize,
         );
+        super::paint_stats::PaintStats::inc(&stats.skip_yuv);
         release_untracked(ctx, view, buffer_base, "multiplane_skip");
         return;
     }
 
     if n_planes > 1 && is_rgb {
+        super::paint_stats::PaintStats::inc(&stats.multi_rgb);
         static LOGGED_MP: std::sync::Once = std::sync::Once::new();
         LOGGED_MP.call_once(|| {
             tracing::info!(
@@ -793,29 +806,34 @@ unsafe extern "C" fn on_buffer_rendered(
     if let Some(claim) = ctx.live_buffers.get(&buf_key) {
         if claim.tab_id == tab_id && claim.epoch == epoch {
             paint_trace_push(ctx, TRACE_IGNORE, tab_id.0, epoch, buf_key);
+            super::paint_stats::PaintStats::inc(&stats.ignore_repr);
             drop(OwnedFd::from_raw_fd(dup_fd));
             // Do not call buffer_released — claim still owns the loan.
             return;
         }
     }
 
-    // Only one live claim per tab: if this tab already holds another buffer,
-    // still allow the new claim (old token will Release when Drop runs). Cap
-    // is global MAX_LIVE_BUFFERS.
-
     // Hard cap: do not grow claims under media storm (YouTube EMFILE / pool death).
     if ctx.live_buffers.len() >= MAX_LIVE_BUFFERS
         && !ctx.live_buffers.contains_key(&buf_key)
     {
         paint_trace_push(ctx, TRACE_CAP, tab_id.0, epoch, buf_key);
-        static LOGGED_CAP: std::sync::Once = std::sync::Once::new();
-        LOGGED_CAP.call_once(|| {
+        super::paint_stats::PaintStats::inc(&stats.drop_cap);
+        // Rate-limit: once per second while under cap pressure.
+        static LAST_CAP_WARN: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let prev = LAST_CAP_WARN.load(std::sync::atomic::Ordering::Relaxed);
+        if now.saturating_sub(prev) >= 1 {
+            LAST_CAP_WARN.store(now, std::sync::atomic::Ordering::Relaxed);
             tracing::warn!(
                 max = MAX_LIVE_BUFFERS,
-                "wpe: live_buffers at cap — dropping frame (release untracked)"
+                live = ctx.live_buffers.len(),
+                "paint telem: live_buffers at cap — drop frame (blackout risk)"
             );
-        });
-        if ctx.live_buffers.len() >= MAX_LIVE_BUFFERS {
             dump_paint_trace(ctx, "live_buffers_cap");
         }
         drop(OwnedFd::from_raw_fd(dup_fd));
@@ -837,6 +855,12 @@ unsafe extern "C" fn on_buffer_rendered(
         sys::sola_wpe_buffer_ref(buffer_base);
     }
     paint_trace_push(ctx, TRACE_CLAIM, tab_id.0, epoch, buf_key);
+    super::paint_stats::PaintStats::inc(&stats.claimed);
+    stats.note_live(
+        ctx.live_buffers.len(),
+        ctx.outstanding_tokens
+            .load(std::sync::atomic::Ordering::Relaxed),
+    );
 
     let frame = WpeFrame {
         fd: Some(OwnedFd::from_raw_fd(dup_fd)),
@@ -871,6 +895,9 @@ unsafe extern "C" fn on_buffer_rendered(
             // Prefer the newer frame: the Full payload is the one we
             // couldn't enqueue. Drop it (releases) and leave the older
             // in-channel frame; under load we skip. Better than OOM.
+            super::paint_stats::PaintStats::inc(
+                &super::paint_stats::global().drop_channel,
+            );
             drop(tagged);
         }
         Err(TrySendError::Disconnected(_)) => {
@@ -907,6 +934,14 @@ unsafe extern "C" fn cb_pump_cmds(data: *mut c_void) -> sys::gboolean {
     // GLib child-watch draining). Leaving them piles process slots and
     // confuses the process model under YouTube media load.
     reap_zombie_children();
+
+    if ctx.stats_last_flush.elapsed() >= super::paint_stats::FLUSH_EVERY {
+        ctx.stats_last_flush = std::time::Instant::now();
+        let out = ctx
+            .outstanding_tokens
+            .load(std::sync::atomic::Ordering::Relaxed);
+        super::paint_stats::global().flush_interval(ctx.live_buffers.len(), out);
+    }
     1 /* G_SOURCE_CONTINUE */
 }
 
@@ -978,6 +1013,9 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
             });
             if key == 0 || !own_claim {
                 paint_trace_push(ctx, TRACE_SKIP, token.tab_id.0, token.epoch, key);
+                super::paint_stats::PaintStats::inc(
+                    &super::paint_stats::global().release_skip,
+                );
                 tracing::debug!(
                     ?token.tab_id,
                     epoch = token.epoch,
@@ -1012,6 +1050,9 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                     }
                 } else if !token.view.is_null() {
                     paint_trace_push(ctx, TRACE_RELEASE, token.tab_id.0, token.epoch, key);
+                    super::paint_stats::PaintStats::inc(
+                        &super::paint_stats::global().released,
+                    );
                     release_owned(view, buf);
                 } else if !buf.is_null() {
                     sys::sola_wpe_buffer_unref(buf);

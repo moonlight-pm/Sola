@@ -38,6 +38,8 @@ pub const ACTION_EDIT_CUT: &str = "edit-cut";
 pub const ACTION_EDIT_COPY: &str = "edit-copy";
 pub const ACTION_EDIT_PASTE: &str = "edit-paste";
 pub const ACTION_EDIT_SELECT_ALL: &str = "edit-select-all";
+/// Dump paint pipeline counters to the browser log (agent / dogfood).
+pub const ACTION_PAINT_STATS: &str = "paint-stats";
 
 /// Topics the browser subscribes to. Theme/MenuAction are the live inputs;
 /// CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
@@ -57,13 +59,15 @@ pub const SUBSCRIBE: &[TopicKind] = &[
 /// The "Browser" app-menu published to the shell at startup. Each entry is
 /// `(action_id, label, chord)`; chords are meta-bound. The shell binds them
 /// globally and routes `Topic::MenuAction` back when one is pressed.
-pub const MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
+pub const MENU_ITEMS: [(&str, &str, KeyChord); 8] = [
     (ACTION_NEW_TAB, "New Tab", KeyCode::T.meta()),
     (ACTION_CLOSE_TAB, "Close Tab", KeyCode::W.meta()),
     (ACTION_RELOAD, "Reload", KeyCode::R.meta()),
     (ACTION_FOCUS_URL, "Focus URL", KeyCode::L.meta()),
     (ACTION_BACK, "Back", KeyCode::LEFT.meta()),
     (ACTION_FORWARD, "Forward", KeyCode::RIGHT.meta()),
+    // Dump paint counters to log (scroll blackout / flicker debug).
+    (ACTION_PAINT_STATS, "Paint Stats", KeyCode::I.meta().shift()),
     (ACTION_QUIT, "Quit Browser", KeyCode::Q.meta()),
 ];
 
@@ -102,6 +106,8 @@ pub enum BrowserIntent {
     FocusUrl,
     /// Run an editing command, routed to the focused surface.
     Edit(EditCmd),
+    /// Log paint telemetry snapshot.
+    PaintStats,
     Quit,
     None,
 }
@@ -126,6 +132,7 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_EDIT_COPY => BrowserIntent::Edit(EditCmd::Copy),
         ACTION_EDIT_PASTE => BrowserIntent::Edit(EditCmd::Paste),
         ACTION_EDIT_SELECT_ALL => BrowserIntent::Edit(EditCmd::SelectAll),
+        ACTION_PAINT_STATS => BrowserIntent::PaintStats,
         _ => BrowserIntent::None,
     }
 }
@@ -196,6 +203,10 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             // finish the routing in `Msg::EditRouted`.
             tracing::debug!(?cmd, "edit intent — querying live URL-bar focus");
             url_bar_is_focused(move |url_bar_focused| Msg::EditRouted { cmd, url_bar_focused })
+        }
+        BrowserIntent::PaintStats => {
+            crate::wpe::paint_stats::global().log_snapshot("menu/bus", 0, 0);
+            Task::none()
         }
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),

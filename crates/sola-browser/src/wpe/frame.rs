@@ -26,10 +26,9 @@ use super::engine::{HeldToken, InputEvent, WpeEngine};
 use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
-/// Keep replaced frames alive so the GPU can finish sampling before
-/// `buffer_released`. Depth ≥1 + park starved YouTube (EMFILE / freeze).
-/// Prefer a clean pool over perfect anti-flicker until fences exist.
-const RETIRE_DEPTH: usize = 0;
+/// One-frame retire: GPU can finish sampling before release (reduces chrome
+/// flicker). No park + rlimit headroom; depth 1 should not re-EMFILE.
+const RETIRE_DEPTH: usize = 1;
 
 /// Longest allowed physical edge (px). Soft cap if compositor scale would
 /// exceed this for the CSS viewport. Keep this modest — YouTube was emitting
@@ -147,6 +146,7 @@ fn purge_tab(pipeline: &mut WpePipeline, tab_id: u64) {
     if pipeline.active.as_ref().is_some_and(|a| a.tab_id == tab_id) {
         pipeline.active = None;
         pipeline.sample.clear();
+        crate::wpe::paint_stats::global().note_sample_clear("purge_tab");
     }
 }
 
@@ -362,6 +362,8 @@ impl shader::Primitive for WpePrimitive {
                 pipeline.active = Some(old);
             } else {
                 pipeline.sample.clear();
+                crate::wpe::paint_stats::global()
+                    .note_sample_clear("paint_tab_switch_no_park");
             }
             // Drop parks for other tabs so we never pin multiple WPE buffers.
             for (_, surf) in pipeline.parked.drain() {
@@ -370,6 +372,9 @@ impl shader::Primitive for WpePrimitive {
         }
 
         let Some(pending) = self.slot.pending.lock().unwrap().take() else {
+            crate::wpe::paint_stats::PaintStats::inc(
+                &crate::wpe::paint_stats::global().prepare_idle,
+            );
             return;
         };
 
@@ -379,8 +384,15 @@ impl shader::Primitive for WpePrimitive {
         // Background tab frames: drop without import (release via WpeFrame Drop).
         // Parking held dma-bufs caused EMFILE freeze on YouTube after scroll.
         if tab_id != paint_tab {
+            crate::wpe::paint_stats::PaintStats::inc(
+                &crate::wpe::paint_stats::global().drop_bg,
+            );
             return;
         }
+
+        crate::wpe::paint_stats::PaintStats::inc(
+            &crate::wpe::paint_stats::global().prepare_new,
+        );
 
         let release_tx = frame.release_tx.clone();
         let size = (frame.width, frame.height);
@@ -465,8 +477,14 @@ impl shader::Primitive for WpePrimitive {
         drop(frame);
 
         let imported = match unsafe { wgpu_import::import(device, fd, &meta) } {
-            Ok(f) => f,
+            Ok(f) => {
+                crate::wpe::paint_stats::global().note_import_ok();
+                f
+            }
             Err(e) => {
+                crate::wpe::paint_stats::PaintStats::inc(
+                    &crate::wpe::paint_stats::global().import_err,
+                );
                 tracing::error!(tab = tab_id, "wgpu_import::import failed: {e}");
                 let _ = HeldToken::new(token, release_tx);
                 return;

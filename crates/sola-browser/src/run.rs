@@ -80,6 +80,9 @@ pub fn frame_stream<E: Engine>(
             if tid != paint_tab {
                 let mut need = slot.need_park_prime.lock().unwrap();
                 need.remove(&tid); // consume one-shot primes without holding
+                crate::wpe::paint_stats::PaintStats::inc(
+                    &crate::wpe::paint_stats::global().drop_bg,
+                );
                 continue;
             }
             // Keep only the latest pending frame (prior Drop releases WPE buf).
@@ -95,9 +98,16 @@ pub fn frame_stream<E: Engine>(
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
+                crate::wpe::paint_stats::PaintStats::inc(
+                    &crate::wpe::paint_stats::global().newframe_sent,
+                );
                 if output.send(Msg::NewFrame).await.is_err() {
                     break;
                 }
+            } else {
+                crate::wpe::paint_stats::PaintStats::inc(
+                    &crate::wpe::paint_stats::global().newframe_coalesce,
+                );
             }
         }
     })

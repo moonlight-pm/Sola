@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-10 (`naturalethic/browser`) — YouTube load **no longer SEGV**
+**As of:** 2026-08-10 (`naturalethic/browser`) — scroll no crash; quality telem live
 
 ---
 
@@ -22,14 +22,16 @@ Do not invent product policy.
      [`docs/plans/2026-08-09-sola-browser-hardening.md`](docs/plans/2026-08-09-sola-browser-hardening.md).  
    - **Paint / YouTube crash fixed (P0):**  
      [`docs/plans/2026-08-10-browser-paint-investigation.md`](docs/plans/2026-08-10-browser-paint-investigation.md)
-     — SEGV was `wpe_view_buffer_released` on freed GObject. Fix: **ref buffer on
-     claim**, safe release helper, live cap, claim refuse. **Dogfood:**
-     `solactl emit OpenUrl` → YouTube stays up; UI paints (signed-out empty feed
-     on clean D8). OpenUrl bus subscribed for agent control.  
+     — SEGV + scroll freeze fixed (buffer ref + RLIMIT_NOFILE + lean holds).  
+   - **Paint quality (active):** fast scroll still **blacks out** briefly;
+     menus / top-left nav **flicker** on scroll/hover. **Telemetry shipped**
+     (`paint_stats`): 2s `paint telem` lines + gap/sample-clear warns;
+     Browser menu **Paint Stats** (⇧⌘I). Read
+     `rg "paint telem" /opt/sola/log/app-sola-browser.log`.  
    - **D8 profiles** shipped (no switcher).  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Next:** cookie stickiness / cookie EROFS noise → vault session → history
-     under `shared/` → NV12/video path (P1).  
+   - **Next:** interpret telem under YouTube scroll → fix blackout/flicker →
+     cookie stickiness → vault session → history → NV12 (P1).  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
@@ -60,7 +62,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | YouTube scroll freeze: raised RLIMIT_NOFILE + no park/retire holds; SEGV fix kept; OpenUrl bus; D8 profiles | — |
+| Browser | Scroll no longer freezes; black flash + nav flicker remain; paint telem in log; OpenUrl bus; D8 profiles | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install
