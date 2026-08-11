@@ -166,9 +166,9 @@ struct BufferClaim {
 /// Max simultaneous `live_buffers` claims. active+retire+park×N+pending+channel
 /// can stack; YouTube media + multi-tab exceeded WPE's pool and EMFILE'd.
 /// When at cap, refuse new claims and release the presentation untracked.
-/// Painted tab: active + retire(1) + channel + pending. Cap too low → drop_cap
-/// blackouts while scrolling (telemetry).
-const MAX_LIVE_BUFFERS: usize = 5;
+/// With blit+Wait we release the WPE buffer before iced holds the frame.
+/// Cap only needs mailbox + in-flight claim headroom.
+const MAX_LIVE_BUFFERS: usize = 4;
 
 /// Paint lifecycle breadcrumb (P0 instrumentation).
 #[derive(Clone, Copy)]

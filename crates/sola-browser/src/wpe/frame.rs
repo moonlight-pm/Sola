@@ -26,24 +26,21 @@ use super::engine::{HeldToken, InputEvent, WpeEngine};
 use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
-/// Retire ring for **GPU-owned** textures (after blit). Depth 1 so the
-/// previous owned frame survives until the GPU finishes sampling it.
-/// WPE dma-bufs are held separately in `staging` for one frame only
-/// (blit source), then released — not double-held as active+retire dmabufs.
+/// Retire **owned** textures only (WPE buffers are released right after
+/// blit+Wait). Depth 1 so the previous owned frame survives one iced frame.
 const RETIRE_DEPTH: usize = 1;
 
-/// Longest allowed physical edge (px). Soft cap if compositor scale would
-/// exceed this for the CSS viewport. Keep this modest — YouTube was emitting
-/// ~4k×4k buffers and freezing the process under scroll.
-const MAX_PHYS_EDGE: f64 = 1920.0;
+/// Soft cap on physical content edge (px). Was 1920 which forced dpr=1 on
+/// large 2× windows → WebKit painted 1×, iced upscaled with linear filter
+/// → blurry text. 8k still bounds pathological sizes; hide-inactive keeps
+/// the buffer pool healthy without the old 1920 clamp.
+const MAX_PHYS_EDGE: f64 = 8192.0;
 
-/// Device scale for content. Prefer crisp 1:1 with iced when possible, but
-/// never let phys size explode (media sites thrash the buffer pool).
+/// Device scale for content — match compositor DPR for crisp text when the
+/// physical edge stays under [`MAX_PHYS_EDGE`].
 fn choose_content_dpr(compositor_scale: f64, css_w: u32, css_h: u32) -> f64 {
     let max_css = css_w.max(css_h).max(1) as f64;
     let want = compositor_scale.max(1.0);
-    // Allow full compositor DPR when the edge cap still fits (crisper text);
-    // only soft-cap when a 2× window would exceed MAX_PHYS_EDGE.
     let edge_cap = (MAX_PHYS_EDGE / max_css).clamp(1.0, 2.0);
     want.min(edge_cap)
 }
@@ -145,9 +142,6 @@ fn show_surface(pipeline: &mut WpePipeline, device: &wgpu::Device, surface: &Tab
 fn purge_tab(pipeline: &mut WpePipeline, tab_id: u64) {
     pipeline.parked.remove(&tab_id);
     pipeline.retire.retain(|s| s.tab_id != tab_id);
-    if pipeline.staging.as_ref().is_some_and(|s| s.tab_id == tab_id) {
-        pipeline.staging = None;
-    }
     if pipeline.active.as_ref().is_some_and(|a| a.tab_id == tab_id) {
         pipeline.active = None;
         pipeline.sample.clear();
@@ -319,9 +313,8 @@ impl shader::Primitive for WpePrimitive {
         bounds: &Rectangle,
         viewport: &iced::widget::shader::Viewport,
     ) {
-        // HiDPI: CSS size = logical bounds; scale = compositor DPR (1:1 with
-        // the iced scissor). No supersample — that pinned multi‑MP frames and
-        // stalled the WPE buffer pool under caret/animation load.
+        // HiDPI: CSS = logical bounds; scale = compositor DPR so text is
+        // crisp (1 CSS px → scale device px). Cap only at MAX_PHYS_EDGE.
         let compositor_scale = (viewport.scale_factor() as f64).max(1.0);
         let logical_w = bounds.width.round().max(1.0) as u32;
         let logical_h = bounds.height.round().max(1.0) as u32;
@@ -333,6 +326,15 @@ impl shader::Primitive for WpePrimitive {
             let mut last = self.slot.last_size.lock().unwrap();
             if *last != requested {
                 *last = requested;
+                tracing::info!(
+                    logical_w,
+                    logical_h,
+                    dpr,
+                    phys_w,
+                    phys_h,
+                    compositor_scale,
+                    "content resize/dpr"
+                );
                 let _ = self.slot.cmd_tx.send(Cmd::Resize {
                     width: logical_w,
                     height: logical_h,
@@ -363,7 +365,6 @@ impl shader::Primitive for WpePrimitive {
                 if let Some(prev) = pipeline.active.take() {
                     drop(prev);
                 }
-                pipeline.staging = None; // release any staged WPE buffer
                 if let Some(old) = pipeline.parked.remove(&paint_tab) {
                     show_surface(pipeline, device, &old);
                     pipeline.active = Some(old);
@@ -509,21 +510,16 @@ impl shader::Primitive for WpePrimitive {
             }
         };
 
-        // Blit dma-buf → GPU-owned texture, then only *stage* the import for
-        // one frame (so the blit submit can finish). Sampling the import
-        // while WebKit reuses memory (old RETIRE_DEPTH=0 path) caused nav
-        // flicker and black swaths under scroll.
+        // Blit → owned, Wait for GPU, then release WPE immediately.
+        // Holding active+retire dma-bufs exhausted WebKit's 2–3 buffer pool
+        // (claim=0, ignore-only after scroll). Sampling import without Wait
+        // after clear-to-black blit caused mid-scroll black flashes.
         let owned = pipeline
             .sample
             .blit_to_owned(device, queue, &imported.texture, size);
-        // Drop previous staging → releases last frame's WPE buffer now.
-        pipeline.staging = None;
-        pipeline.staging = Some(TabSurface {
-            tab_id,
-            imported,
-            _token: HeldToken::new(token, release_tx),
-            size,
-        });
+        // Blit finished (Wait): free import memory + return buffer to WPE now.
+        drop(imported);
+        drop(HeldToken::new(token, release_tx));
 
         let surface = TabSurface {
             tab_id,
@@ -532,7 +528,6 @@ impl shader::Primitive for WpePrimitive {
             size,
         };
 
-        // Retire previous owned texture (GPU may still sample it this frame).
         if let Some(old) = pipeline.active.take() {
             retire(pipeline, old);
         }
@@ -557,14 +552,12 @@ impl shader::Primitive for WpePrimitive {
 
 pub struct WpePipeline {
     sample: SamplePipeline,
-    /// Painted tab's live frame — **GPU-owned** texture (no WPE loan).
+    /// Painted tab's live frame (dma-buf import + WPE loan token).
     active: Option<TabSurface>,
-    /// Last dma-buf import + WPE token (blit source). Dropped next prepare
-    /// so buffer_released runs one frame after blit submit.
-    staging: Option<TabSurface>,
     /// One last-good snapshot per inactive tab (restored on switch).
     parked: HashMap<u64, TabSurface>,
-    /// Recently replaced **owned** surfaces; delayed drop for GPU lag.
+    /// Recently replaced surfaces; delayed drop so GPU finishes sampling
+    /// before `buffer_released`.
     retire: VecDeque<TabSurface>,
 }
 
@@ -572,7 +565,6 @@ impl std::fmt::Debug for WpePipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WpePipeline")
             .field("active_tab", &self.active.as_ref().map(|a| a.tab_id))
-            .field("staging", &self.staging.is_some())
             .field("parked", &self.parked.len())
             .field("retire", &self.retire.len())
             .finish_non_exhaustive()
@@ -584,7 +576,6 @@ impl shader::Pipeline for WpePipeline {
         Self {
             sample: SamplePipeline::new(device, queue, format, "wpe"),
             active: None,
-            staging: None,
             parked: HashMap::new(),
             retire: VecDeque::with_capacity(RETIRE_DEPTH + 1),
         }

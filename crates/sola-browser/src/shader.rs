@@ -35,7 +35,7 @@ const FALLBACK_BGRA: [u8; 4] = [0x0b, 0x0a, 0x0a, 0xff];
 /// Shared sample pipeline: WGSL fullscreen triangle + bind-group slots.
 pub struct SamplePipeline {
     pipeline: wgpu::RenderPipeline,
-    /// Offscreen blit (dmabuf import → GPU-owned texture) targets BGRA sRGB.
+    /// Blit import → owned texture (BGRA sRGB target).
     blit_pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub sampler: wgpu::Sampler,
@@ -64,15 +64,15 @@ impl SamplePipeline {
         format: wgpu::TextureFormat,
         label: &str,
     ) -> Self {
-        // Supersampled frames (DPR 2 into 1× scissor) need linear **min** to
-        // downscale cleanly. Nearest **mag** keeps 1:1 (or slight upscale) crisp.
+        // Prefer nearest for crisp UI text when content ≈ scissor (1:1 HiDPI).
+        // Linear min softens whole pages into "blurry browser" on any scale.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some(&format!("{label} sampler")),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -138,7 +138,6 @@ impl SamplePipeline {
             })
         };
         let pipeline = make_rp(format, &format!("{label} rp"));
-        // Always BGRA sRGB — matches WPE import / owned copy target.
         let blit_pipeline = make_rp(
             wgpu::TextureFormat::Bgra8UnormSrgb,
             &format!("{label} blit-rp"),
@@ -207,11 +206,11 @@ impl SamplePipeline {
         }
     }
 
-    /// Copy `src` (typically a dma-buf import) into a **GPU-owned** texture.
+    /// Copy dma-buf import into a GPU-owned texture and **wait** for the GPU.
     ///
-    /// After this submit, the owned texture no longer depends on the import's
-    /// memory. Callers can release the WPE buffer on the next frame (staging
-    /// hold) without black swaths from WebKit rewriting memory we still sample.
+    /// After this returns, the caller may free the import + release the WPE
+    /// buffer immediately. Without `Maintain::Wait`, iced can sample a
+    /// clear-black destination mid-blit (black flashes under scroll).
     pub fn blit_to_owned(
         &self,
         device: &wgpu::Device,
@@ -273,7 +272,10 @@ impl SamplePipeline {
             pass.set_bind_group(0, &bg, &[]);
             pass.draw(0..3, 0..1);
         }
-        queue.submit(Some(encoder.finish()));
+        let _idx = queue.submit(Some(encoder.finish()));
+        // Block until blit is done so we never sample a half-cleared texture
+        // and can release the WPE dma-buf without pool pin / ignore deadlock.
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
         dst
     }
 
