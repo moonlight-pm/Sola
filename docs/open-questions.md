@@ -139,6 +139,29 @@ stay ignored (delete dead policy branch)?
 
 ---
 
+### D8 — Browser: profile model — **decided 2026-08-10**
+
+**Decision:** Multi-profile-ready layout **now**; one active profile; switcher later.
+
+| Locked | Detail |
+|--------|--------|
+| Identity | UUID + friendly name (default **Primary**) |
+| WebKit paths | `~/.local/share/sola/browser/profiles/<uuid>/` + matching cache |
+| Registry | `~/.local/share/sola/browser/profiles.json` |
+| Shared data | `~/.local/share/sola/browser/shared/` (history, downloads, …) |
+| Config | `~/.config/sola/browser/` (e.g. `vault.json`) — **not** flat `browser-*.json` |
+| Per profile | WebKit data/cache, open **tabs** (tabs = bookmarks) |
+| Shared | prefs, history, downloads, vault chrome / autofill |
+| First run | Create Primary; **no migration**; delete old flat trees + dead config |
+| Switcher UI | Later |
+
+**Freeze:**
+[`specs/2026-08-10-sola-browser-profiles-design.md`](specs/2026-08-10-sola-browser-profiles-design.md).
+
+**Related:** D4 history+restore; hardening P1.3; `browser` capability.
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface
@@ -156,6 +179,7 @@ product ask. See agent UI backlog.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-10 | D8 | **Profiles:** UUID + Primary; `profiles/<id>/` data+cache; registry + `shared/`; config under `~/.config/sola/browser/`; tabs per profile; history/prefs/downloads/vault shared; no migration | profiles design freeze, CURRENT, open-questions D8 |
 | 2026-08-10 | D7 arch | **In-process** `sdk-internal` `PasswordManagerClient` (`src/vault/` + async worker); inject fill; self-host in MVP; **license out of architecture scope** until public dist | bitwarden design freeze, CURRENT, D7 |
 | 2026-08-09 | D7 | **First-party Bitwarden UX** in sola-browser (SDK/API + in-process autofill); no Chrome store package; no system service; no WebExtensions host for now | open-questions D7, plan, CURRENT |
 | 2026-08-09 | D4 | Browser MVP bar: **stop loading**, **downloads**, **history+restore**, **Bitwarden (extension-class)**, high polish; find/zoom/bookmarks/devtools not auto-included | open-questions D4, plan, CURRENT |

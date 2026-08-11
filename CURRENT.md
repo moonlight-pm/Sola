@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-10 (`naturalethic/browser`) — pipeline dogfood OK
+**As of:** 2026-08-10 (`naturalethic/browser`) — profiles frozen (D8); implement next
 
 ---
 
@@ -26,26 +26,22 @@ Do not invent product policy.
    - **D7:** first-party Bitwarden UX (SDK + inject); not Chrome store, not
      system service, not WebExtensions host for now.  
    - **Bitwarden design locked:**  
-     [`docs/specs/2026-08-10-sola-browser-bitwarden-design.md`](docs/specs/2026-08-10-sola-browser-bitwarden-design.md)
-     — in-process `sdk-internal` `PasswordManagerClient` (`src/vault/` +
-     worker); official cloud only; login + match picker + page fill inject
-     (`evaluate_javascript`). **License ignored** until public dist.  
+     [`docs/specs/2026-08-10-sola-browser-bitwarden-design.md`](docs/specs/2026-08-10-sola-browser-bitwarden-design.md).  
+   - **D8 profiles locked (not implemented):**  
+     [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](docs/specs/2026-08-10-sola-browser-profiles-design.md)
+     — UUID + name `Primary`; `share/browser/profiles/<uuid>/` + cache twin;
+     registry `profiles.json`; shared history/downloads under `share/browser/shared/`;
+     config under `~/.config/sola/browser/` (not flat `browser-*.json`); tabs per
+     profile; prefs/history/downloads/vault shared; **no migration** — wipe old
+     flat WebKit + dead config on first run; switcher later.  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Session tabs** persist (`browser-session.json`); restore on boot.  
-   - **Dogfood (2026-08-10):** paint/input pipeline stable enough for
-     Google/YouTube sign-in (caret + typing + placeholder animation OK).
-     Opaque content; CSS+DPR HiDPI; one live dma-buf hold; coalesce
-     NewFrame; buffer epoch on navigate (no release-UAF crash); stop +
-     history-aware back/forward; multi-plane **NV12 CPU→BGRA** (YouTube path);
-     other multi-plane formats still released.  
-   - **Bitwarden (dogfoodable):** unlock → sync into **in-memory cipher
-     repo** → fill picker (Google/YouTube equivalent domains). Email
-     prefilled; unlock closes panel. Install **`--release`** for unlock
-     speed. **Not yet:** session persist, idle lock, auto-offer,
-     sync-driven global domains.  
-   - **Build order (next):** dogfood YouTube NV12 path + vault fill →
-     vault session persist → visit history UI → downloads; GPU multi-plane
-     import if CPU path is too heavy.  
+   - **Session tabs** today: `browser-session.json` → **D8:** profile `session.json`.  
+   - **Dogfood:** paint/input + multi-plane RGB import; Bitwarden match/fill;
+     cookie jar + NetworkSession WIP (sign-in still flaky across restart until
+     D8 paths + sandbox harden).  
+   - **Build order (next):** **implement D8 profiles** → re-dogfood YouTube
+     login stickiness → vault session persist → visit history under `shared/` →
+     downloads; GPU multi-plane if needed.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -75,7 +71,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Pipeline dogfood OK; Bitwarden unlock + **match/fill** in chrome (session not persisted); OpenUrl→Helium | — |
+| Browser | Pipeline dogfood; Bitwarden match/fill; multi-plane RGB paint; **D8 profiles frozen** (implement next); cookies still flaky across restart; OpenUrl→Helium | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install

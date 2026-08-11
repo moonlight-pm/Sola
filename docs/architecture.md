@@ -156,6 +156,20 @@ paste → `Cmd::PasteText` / InsertText (headless WPE has no Wayland
 clipboard). **System `http`/`https` default to Helium** until sola-browser
 is ship-ready (**D3**); browser does not subscribe to `Topic::OpenUrl`.
 
+**State paths (as-built today vs freeze):**
+
+| Kind | Today (pre-D8 implement) | **Frozen (D8)** |
+|------|--------------------------|-----------------|
+| WebKit data | flat `~/.local/share/sola/browser/` | `…/browser/profiles/<uuid>/` |
+| WebKit cache | flat `~/.cache/sola/browser/` | `…/browser/profiles/<uuid>/` |
+| Open tabs | `~/.config/sola/browser-session.json` | `…/share/…/profiles/<uuid>/session.json` |
+| Vault prefs | `~/.config/sola/browser-vault.json` | `~/.config/sola/browser/vault.json` |
+| Registry | — | `~/.local/share/sola/browser/profiles.json` |
+| Shared (history/downloads) | — / dead yaml under config | `…/browser/shared/` |
+
+Profile freeze (not implemented yet):
+[`docs/specs/2026-08-10-sola-browser-profiles-design.md`](specs/2026-08-10-sola-browser-profiles-design.md).
+
 **Hardening backlog:**
 [`docs/plans/2026-08-09-sola-browser-hardening.md`](plans/2026-08-09-sola-browser-hardening.md).
 

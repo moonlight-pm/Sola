@@ -51,8 +51,9 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 | Last tab | never empty — replace with `about:blank` |
 | Profiles / bookmarks / find / zoom / devtools | **absent** |
 | Stop / downloads | **absent** — **D4 in-scope** |
-| Session restore (open tabs) | **partial** — `~/.config/sola/browser-session.json` (tabs+active+sidebar) |
-| Bitwarden / extensions | **absent** — **D4 in-scope**; **D7:** first-party UX (SDK + inject) |
+| Session restore (open tabs) | **partial** — today `~/.config/sola/browser-session.json`; **D8 freeze:** per-profile `session.json` under share |
+| Bitwarden / extensions | **partial** — D7 unlock+match+fill; no session persist; **D7** first-party UX |
+| Profiles | **spec’d** — [D8 freeze](../specs/2026-08-10-sola-browser-profiles-design.md); not implemented |
 
 ---
 
@@ -107,7 +108,7 @@ worker `on_buffer_rendered` → mpsc → frame_stream (drop non-active) →
 |----|---------|
 | **P1.1** | ~~No stop-loading control~~ **Done 2026-08-10** (↻/× + Escape) |
 | **P1.2** | No find-in-page, zoom, reader, downloads, bookmarks, **visit** history UI (session tab restore shipped) |
-| **P1.3** | No cookie/profile path hardening / multi-profile UI |
+| **P1.3** | ~~No profile model~~ **D8 frozen 2026-08-10** — implement UUID profiles + registry + config dir; switcher later |
 | **P1.4** | Tab **title** strip still merges on 250 ms Tick; omnibox URL on switch is now optimistic (fixed 2026-08-10) |
 | **P1.5** | URL-bar paste only **appends** (no selection replace) |
 | **P1.6** | Text sharpness / DPR — **partial 2026-08-10:** CSS + `scale_changed`; compositor DPR (no forced 2× on large views); nearest mag. Residual WebKit-vs-Chromium font stack gap may remain |
@@ -162,7 +163,8 @@ See [`docs/open-questions.md`](../open-questions.md) § Browser. Work in order:
 4. **Search provider** — keep Kagi-only or make configurable (**D6**).
 5. ~~**Bitwarden approach**~~ — **D7:** first-party Bitwarden UX (SDK/API +
    WebKitWebExtension/content inject); no store package, no system service.
-6. **Profile model** — single default WebKit data dir vs multi-profile later.
+6. ~~**Profile model**~~ — **D8:** multi-profile-ready layout; one active; switcher later
+   ([freeze](../specs/2026-08-10-sola-browser-profiles-design.md)).
 
 ### Product bar (D4) → backlog mapping
 
@@ -175,7 +177,8 @@ See [`docs/open-questions.md`](../open-questions.md) § Browser. Work in order:
 | High polish | B1–B5 engine reliability first; then chrome UX polish |
 
 **Build order (2026-08-10):**  
-pipeline dogfood OK → **Bitwarden design (D7)** → visit history UI → downloads → multi-plane import (B3) / residual polish.
+pipeline dogfood + Bitwarden fill → **implement D8 profiles** (paths + wipe old) →
+visit history under `shared/` → downloads → multi-plane GPU import (B3) / polish.
 
 ---
 
