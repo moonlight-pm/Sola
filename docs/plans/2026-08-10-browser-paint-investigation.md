@@ -52,12 +52,19 @@ Blogs: Carlos GC DMABUF compositing; GStreamer modifier negotiation; Mad Devs CE
 | H4 | Multi-plane import fail under load | Black band; pool churn |
 | H5 | Token lost without Release | Panic window after `take_token` |
 
-## P0 fix sprint (this change)
+## P0 fix sprint
 
 1. **Release audit:** never call `wpe_view_buffer_released` on a buffer still in `live_buffers`  
 2. **Lifecycle trace ring** (last N events) + log dump on refuse / high pressure  
 3. **Hard in-flight cap:** refuse new claims when `live_buffers` ≥ max (release untracked)  
 4. Prefer dropping under pressure over claiming more  
+5. **GObject ref on claim** (`sola_wpe_buffer_ref`) until release — root cause of SEGV:
+   `process_cmd` → `wpe_view_buffer_released` → `g_type_check_instance_is_a` on freed GObject  
+6. **`sola_wpe_view_buffer_released_safe`** + OpenUrl bus for dogfood  
+
+**Dogfood 2026-08-10 19:58:** launch → OpenUrl YouTube → **alive 15s+**, scroll stress OK,
+screenshot shows YouTube chrome (signed-out empty feed on clean D8 profile). No new
+`WPE_IS_BUFFER` criticals on that PID.
 
 **Not in this sprint:** NV12 convert, GPU fence wait, preferred-format negotiation rewrite.
 

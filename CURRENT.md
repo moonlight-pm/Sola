@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-10 (`naturalethic/browser`) — paint P0 after YouTube SEGV
+**As of:** 2026-08-10 (`naturalethic/browser`) — YouTube load **no longer SEGV**
 
 ---
 
@@ -20,17 +20,16 @@ Do not invent product policy.
      (`pre-cef-removal`); installed to `/opt/sola/bin/sola-browser` + shell.  
    - Full review + backlog:
      [`docs/plans/2026-08-09-sola-browser-hardening.md`](docs/plans/2026-08-09-sola-browser-hardening.md).  
-   - **Paint investigation:**  
+   - **Paint / YouTube crash fixed (P0):**  
      [`docs/plans/2026-08-10-browser-paint-investigation.md`](docs/plans/2026-08-10-browser-paint-investigation.md)
-     — YouTube load → dual SIGSEGV after `WPE_IS_BUFFER` criticals; H1 double-release.
-     **P0 landed:** refuse release of still-claimed buffers; lifecycle trace ring;
-     `MAX_LIVE_BUFFERS=6` drop under pressure. **Dogfood:** load YouTube without
-     crash; expect possible black video (NV12 skip) until convert path.  
-   - **D8 profiles shipped (no switcher):**  
-     [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](docs/specs/2026-08-10-sola-browser-profiles-design.md).  
-   - **D3/D4/D7** as before; still ask **D5** middle-click, **D6** search.  
-   - **Build order:** re-dogfood YouTube (no SEGV) → cookie stickiness → vault
-     session persist → history under `shared/` → NV12/GPU multi-plane (P1).  
+     — SEGV was `wpe_view_buffer_released` on freed GObject. Fix: **ref buffer on
+     claim**, safe release helper, live cap, claim refuse. **Dogfood:**
+     `solactl emit OpenUrl` → YouTube stays up; UI paints (signed-out empty feed
+     on clean D8). OpenUrl bus subscribed for agent control.  
+   - **D8 profiles** shipped (no switcher).  
+   - **Still ask:** **D5** middle-click, **D6** search.  
+   - **Next:** cookie stickiness / cookie EROFS noise → vault session → history
+     under `shared/` → NV12/video path (P1).  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;

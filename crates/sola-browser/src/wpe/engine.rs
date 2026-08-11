@@ -815,6 +815,9 @@ unsafe extern "C" fn on_buffer_rendered(
         return;
     }
 
+    // First claim for this pointer: hold a GObject ref so release is safe.
+    // Steal (same key, new epoch) already holds a ref from the prior claim.
+    let had_claim = ctx.live_buffers.contains_key(&buf_key);
     ctx.live_buffers.insert(
         buf_key,
         BufferClaim {
@@ -822,6 +825,9 @@ unsafe extern "C" fn on_buffer_rendered(
             epoch,
         },
     );
+    if !had_claim {
+        sys::sola_wpe_buffer_ref(buffer_base);
+    }
     paint_trace_push(ctx, TRACE_CLAIM, tab_id.0, epoch, buf_key);
 
     let frame = WpeFrame {
@@ -972,25 +978,35 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
                 );
             } else {
                 ctx.live_buffers.remove(&key);
+                let buf = token.buffer as *mut sys::WPEBuffer;
+                let view = token.view as *mut sys::WPEView;
                 let epoch_ok = ctx.tabs.iter().any(|t| {
                     t.id == token.tab_id
                         && t.buffer_epoch.load(AtomicOrdering::Relaxed) == token.epoch
                 });
                 if !epoch_ok {
-                    // Navigated or closed — buffer may already be destroyed.
-                    // Claim removed so a later re-presentation can claim cleanly.
+                    // Navigated or closed — still drop our GObject ref; do not
+                    // call buffer_released if we can avoid it (WebKit may have
+                    // torn down). Safe helper no-ops on dead GObjects when
+                    // possible; our ref keeps the type check valid.
                     paint_trace_push(ctx, TRACE_SKIP, token.tab_id.0, token.epoch, key);
                     tracing::debug!(
                         ?token.tab_id,
                         epoch = token.epoch,
-                        "skip release (epoch advanced or tab gone)"
+                        "skip WPE release (epoch advanced); unref held buffer"
                     );
+                    if !buf.is_null() {
+                        // Tell WPE while we still hold a ref (protocol), then unref.
+                        if !view.is_null() {
+                            sys::sola_wpe_view_buffer_released_safe(view, buf);
+                        }
+                        sys::sola_wpe_buffer_unref(buf);
+                    }
                 } else if !token.view.is_null() {
-                    let buf = token.buffer as *mut sys::WPEBuffer;
-                    let view = token.view as *mut sys::WPEView;
-                    // Claim already removed — safe to tell WPE.
                     paint_trace_push(ctx, TRACE_RELEASE, token.tab_id.0, token.epoch, key);
                     release_owned(view, buf);
+                } else if !buf.is_null() {
+                    sys::sola_wpe_buffer_unref(buf);
                 }
             }
             if left > 16 || ctx.live_buffers.len() > MAX_LIVE_BUFFERS {
@@ -1372,10 +1388,20 @@ unsafe fn close_tab(ctx: &mut WorkerCtx, id: TabId) {
     );
 }
 
-/// Release a buffer that is **not** (or no longer) in `live_buffers`.
+/// Call WPE release after claim removed; drops the GObject ref we took on claim.
+unsafe fn release_owned(view: *mut sys::WPEView, buffer: *mut sys::WPEBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+    if !view.is_null() {
+        sys::sola_wpe_view_buffer_released_safe(view, buffer);
+    }
+    sys::sola_wpe_buffer_unref(buffer);
+}
+
+/// Immediate release for never-claimed buffers (skip/dup fail). No claim-ref.
 ///
-/// Refuses if the buffer is still claimed — double `wpe_view_buffer_released`
-/// SIGSEGVs (YouTube 19:35 coredump / sign-in history).
+/// Refuses if still claimed — double release SEGV (YouTube coredumps).
 unsafe fn release_untracked(
     ctx: &mut WorkerCtx,
     view: *mut sys::WPEView,
@@ -1397,15 +1423,7 @@ unsafe fn release_untracked(
         dump_paint_trace(ctx, "refuse_claimed_release");
         return;
     }
-    release_owned(view, buffer);
-}
-
-/// Call WPE release after claim bookkeeping is done (claim removed or never claimed).
-unsafe fn release_owned(view: *mut sys::WPEView, buffer: *mut sys::WPEBuffer) {
-    if view.is_null() || buffer.is_null() {
-        return;
-    }
-    sys::wpe_view_buffer_released(view, buffer);
+    sys::sola_wpe_view_buffer_released_safe(view, buffer);
 }
 
 fn paint_trace_push(ctx: &mut WorkerCtx, kind: u8, tab: u64, epoch: u64, buf: usize) {

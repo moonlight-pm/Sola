@@ -176,6 +176,29 @@ WebKitWebView *sola_wpe_web_view_new(WebKitNetworkSession *session) {
     return webkit_web_view_new(NULL);
 }
 
+void sola_wpe_buffer_ref(WPEBuffer *buffer) {
+    if (buffer)
+        g_object_ref(buffer);
+}
+
+void sola_wpe_buffer_unref(WPEBuffer *buffer) {
+    if (buffer)
+        g_object_unref(buffer);
+}
+
+void sola_wpe_view_buffer_released_safe(WPEView *view, WPEBuffer *buffer) {
+    if (!view || !buffer)
+        return;
+    /* Our claim path holds a ref, so the GObject should still be a WPEBuffer.
+     * If not, skip — calling into freed memory SEGV'd (YouTube 19:54). */
+    if (!WPE_IS_VIEW(view) || !WPE_IS_BUFFER(buffer)) {
+        g_warning("sola: skip buffer_released (stale view/buffer %p %p)",
+                  (void *)view, (void *)buffer);
+        return;
+    }
+    wpe_view_buffer_released(view, buffer);
+}
+
 /* ---- vmethod hijack for set_cursor_from_name ------------------- */
 
 /* WebKit calls wpe_view_set_cursor_from_name(view, name) whenever

@@ -42,14 +42,16 @@ pub const ACTION_EDIT_SELECT_ALL: &str = "edit-select-all";
 /// Topics the browser subscribes to. Theme/MenuAction are the live inputs;
 /// CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
 ///
-/// `OpenUrl` is intentionally **not** subscribed: system links go to Helium
-/// via `sola_core::open_url` / shell. sola-browser remains opt-in for now.
+/// `OpenUrl` is subscribed for dogfood / `solactl emit OpenUrl` control of a
+/// running sola-browser. System http/https defaults may still prefer Helium
+/// (D3) until we flip MIME; this does not change that default by itself.
 pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::Theme,
     TopicKind::MenuAction,
     TopicKind::CloseApp,
     TopicKind::Windows,
     TopicKind::WindowFloating,
+    TopicKind::OpenUrl,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
@@ -141,9 +143,10 @@ pub fn handle_bus<E: Engine>(app: &mut App<E>, message: Arc<Message>, app_id: &'
         return iced::exit();
     }
     match Topic::parse(&message) {
-        // OpenUrl → Helium (shell / sola_core). Ignore if a stale emitter
-        // still broadcasts while this process is running.
-        Some(Topic::OpenUrl(_)) => Task::none(),
+        Some(Topic::OpenUrl(req)) => {
+            tracing::info!(url = %req.url, activate = req.activate, "OpenUrl bus");
+            run_intent(app, intent_for_open_url(&req))
+        }
         Some(Topic::MenuAction(m)) if m.app_id == app_id => {
             tracing::debug!(action_id = %m.action_id, "menu action received");
             run_intent(app, intent_for_menu_action(&m.action_id))

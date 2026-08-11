@@ -54,5 +54,14 @@ WebKitNetworkSession *sola_wpe_network_session_new(const char *data_dir,
 /* WebView bound to a network session (or default if session is NULL). */
 WebKitWebView *sola_wpe_web_view_new(WebKitNetworkSession *session);
 
+/* Keep WPEBuffer alive until we call wpe_view_buffer_released. Without this
+ * the GObject can be finalized while iced still holds a token → SEGV in
+ * g_type_check_instance_is_a inside wpe_view_buffer_released. */
+void sola_wpe_buffer_ref(WPEBuffer *buffer);
+void sola_wpe_buffer_unref(WPEBuffer *buffer);
+
+/* Safe release: only if still a WPEBuffer (after our ref, this should hold). */
+void sola_wpe_view_buffer_released_safe(WPEView *view, WPEBuffer *buffer);
+
 /* New headless WPEDisplay. Caller owns the reference. */
 WPEDisplay *sola_wpe_display_new(void);
