@@ -6,7 +6,7 @@
 //!
 //! Shares iced's display via `Backend::from_foreign_display`.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -39,14 +39,16 @@ pub enum ContentPlaneCmd {
         buffer_scale: i32,
     },
     Present {
-        fd: OwnedFd,
+        /// WPEBuffer pointer — cache key (stock WPEViewWayland reuses wl_buffer).
+        buffer_key: usize,
         width: u32,
         height: u32,
         format: u32,
         modifier: u64,
-        stride: u32,
-        offset: u32,
-        extra_planes: Vec<(u32, u32)>,
+        /// All planes: (fd, stride, offset). FDs are dups owned by this cmd.
+        planes: Vec<(OwnedFd, u32, u32)>,
+        /// WebKit render fence; wait before attach when present.
+        render_fence: Option<OwnedFd>,
         token: ResourceToken,
         release_tx: Sender<Cmd<WpeEngine>>,
     },
@@ -99,10 +101,15 @@ struct PendingRelease {
 }
 
 /// Per-`wl_buffer` data: release WPE only after compositor `Release`.
+///
+/// Matches stock WPEViewWayland: the protocol object lives across many
+/// present cycles; we only return the WPE loan on Release, we do **not**
+/// destroy the wl_buffer.
 struct BufferData {
     release: Mutex<Option<PendingRelease>>,
-    /// SHM memfd and/or dma-buf FD kept open until buffer destroy.
-    keep_fd: Mutex<Option<OwnedFd>>,
+    /// Client-side plane FDs (must stay open for wl_buffer lifetime).
+    keep_fds: Mutex<Vec<OwnedFd>>,
+    buffer_key: usize,
 }
 
 /// User data for `wl_surface.frame` — FrameDone after compositor accepts frame.
@@ -111,16 +118,25 @@ struct FrameCbData {
     release_tx: Sender<Cmd<WpeEngine>>,
 }
 
-/// A dma-buf frame waiting for the previous commit's `wl_surface.frame`.
-struct QueuedPresent {
-    fd: OwnedFd,
+/// Cached Wayland buffer for one WPE pool slot (create once, attach many).
+struct CachedWl {
+    buffer: wl_buffer::WlBuffer,
+    data: Arc<BufferData>,
     width: u32,
     height: u32,
     format: u32,
     modifier: u64,
-    stride: u32,
-    offset: u32,
-    extra_planes: Vec<(u32, u32)>,
+}
+
+/// A dma-buf frame waiting for the previous commit's `wl_surface.frame`.
+struct QueuedPresent {
+    buffer_key: usize,
+    width: u32,
+    height: u32,
+    format: u32,
+    modifier: u64,
+    planes: Vec<(OwnedFd, u32, u32)>,
+    render_fence: Option<OwnedFd>,
     token: ResourceToken,
     release_tx: Sender<Cmd<WpeEngine>>,
 }
@@ -153,8 +169,10 @@ struct PlaneState {
     surface: Option<wl_surface::WlSurface>,
     subsurface: Option<wl_subsurface::WlSubsurface>,
     parent: Option<wl_surface::WlSurface>,
-    /// Buffers still held by us until compositor `Release` (must not Drop early).
-    inflight: Vec<wl_buffer::WlBuffer>,
+    /// Buffers awaiting compositor `Release` this cycle (WPE loan not returned yet).
+    inflight_keys: Vec<usize>,
+    /// Stock WPEViewWayland: one wl_buffer per WPEBuffer pool slot, reused.
+    buffer_cache: HashMap<usize, CachedWl>,
     /// After attach+commit until `wl_callback.Done` — paces to display rate.
     awaiting_frame: bool,
     /// When `awaiting_frame` was set (timeout unlock if callback is late).
@@ -173,6 +191,9 @@ struct PlaneState {
     frame_done: u64,
     drop_queued: u64,
     drop_inflight_cap: u64,
+    cache_hit: u64,
+    cache_create: u64,
+    fence_wait: u64,
     ready: bool,
 }
 
@@ -317,28 +338,26 @@ impl ContentPlane {
                 }
             }
             ContentPlaneCmd::Present {
-                fd,
+                buffer_key,
                 width,
                 height,
                 format,
                 modifier,
-                stride,
-                offset,
-                extra_planes,
+                planes,
+                render_fence,
                 token,
                 release_tx,
             } => {
                 if let Some(inner) = self.inner.as_mut() {
                     if let Err(e) = present_dmabuf(
                         inner,
-                        fd,
+                        buffer_key,
                         width,
                         height,
                         format,
                         modifier,
-                        stride,
-                        offset,
-                        extra_planes,
+                        planes,
+                        render_fence,
                         token,
                         release_tx,
                     ) {
@@ -378,15 +397,14 @@ fn finish_live(state: &mut PlaneState) {
     }
     state.awaiting_frame = false;
     state.awaiting_since = None;
-    // Shutdown only: force-release inflight WPE loans without compositor wait.
-    for buf in state.inflight.drain(..) {
-        if let Some(data) = buf.data::<Arc<BufferData>>() {
-            if let Some(pr) = data.release.lock().unwrap().take() {
-                let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
-            }
-            *data.keep_fd.lock().unwrap() = None;
+    state.inflight_keys.clear();
+    // Shutdown: return WPE loans and destroy cached protocol objects.
+    for (_, cached) in state.buffer_cache.drain() {
+        if let Some(pr) = cached.data.release.lock().unwrap().take() {
+            let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
         }
-        buf.destroy();
+        *cached.data.keep_fds.lock().unwrap() = Vec::new();
+        cached.buffer.destroy();
     }
 }
 
@@ -418,14 +436,13 @@ fn flush_queued_after_frame(inner: &mut PlaneInner) {
     };
     if let Err(e) = attach_dmabuf(
         inner,
-        q.fd,
+        q.buffer_key,
         q.width,
         q.height,
         q.format,
         q.modifier,
-        q.stride,
-        q.offset,
-        q.extra_planes,
+        q.planes,
+        q.render_fence,
         q.token,
         q.release_tx,
     ) {
@@ -457,7 +474,8 @@ fn init_from_parent(
         surface: None,
         subsurface: None,
         parent: None,
-        inflight: Vec::new(),
+        inflight_keys: Vec::new(),
+        buffer_cache: HashMap::new(),
         awaiting_frame: false,
         awaiting_since: None,
         awaiting_framedone: None,
@@ -471,6 +489,9 @@ fn init_from_parent(
         frame_done: 0,
         drop_queued: 0,
         drop_inflight_cap: 0,
+        cache_hit: 0,
+        cache_create: 0,
+        fence_wait: 0,
         ready: false,
     };
 
@@ -579,19 +600,13 @@ fn present_shm_color(inner: &mut PlaneInner, r: u8, g: u8, b: u8) -> Result<(), 
     }
     let data = Arc::new(BufferData {
         release: Mutex::new(None),
-        keep_fd: Mutex::new(Some(fd)),
+        keep_fds: Mutex::new(vec![fd]),
+        buffer_key: 0,
     });
-    let pool = shm.create_pool(
-        data.keep_fd
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .as_fd(),
-        size as i32,
-        &qh,
-        (),
-    );
+    let pool = {
+        let keep = data.keep_fds.lock().unwrap();
+        shm.create_pool(keep[0].as_fd(), size as i32, &qh, ())
+    };
     let buffer = pool.create_buffer(
         0,
         w as i32,
@@ -612,44 +627,38 @@ fn present_shm_color(inner: &mut PlaneInner, r: u8, g: u8, b: u8) -> Result<(), 
     surface.commit();
     let _ = inner.event_queue.flush();
     let _ = inner.conn.flush();
-    // Keep proxy alive until compositor Release.
-    inner.state.inflight.push(buffer);
+    // Probe path: keep buffer alive via forget (one-shot debug only).
+    std::mem::forget(buffer);
     Ok(())
 }
 
 fn present_dmabuf(
     inner: &mut PlaneInner,
-    fd: OwnedFd,
+    buffer_key: usize,
     width: u32,
     height: u32,
     format: u32,
     modifier: u64,
-    stride: u32,
-    offset: u32,
-    extra_planes: Vec<(u32, u32)>,
+    planes: Vec<(OwnedFd, u32, u32)>,
+    render_fence: Option<OwnedFd>,
     token: ResourceToken,
     release_tx: Sender<Cmd<WpeEngine>>,
 ) -> Result<(), String> {
-    if width == 0 || height == 0 {
+    if width == 0 || height == 0 || planes.is_empty() {
         let _ = release_tx.send(Cmd::Release { token });
         return Ok(());
     }
 
-    // Pace to display: while waiting for the previous commit's frame
-    // callback, keep only the newest buffer (latest-wins queue).
-    // Attaching every WebKit frame without pacing filled inflight and
-    // the old force-release path destroyed compositor-held buffers →
-    // black swaths / nav flicker under hard scroll.
+    // Stock: only one commit until frame callback (RELEASE_ASSERT no second).
     if inner.state.awaiting_frame {
         if let Some(old) = inner.state.queued.replace(QueuedPresent {
-            fd,
+            buffer_key,
             width,
             height,
             format,
             modifier,
-            stride,
-            offset,
-            extra_planes,
+            planes,
+            render_fence,
             token,
             release_tx,
         }) {
@@ -661,58 +670,60 @@ fn present_dmabuf(
 
     attach_dmabuf(
         inner,
-        fd,
+        buffer_key,
         width,
         height,
         format,
         modifier,
-        stride,
-        offset,
-        extra_planes,
+        planes,
+        render_fence,
         token,
         release_tx,
     )
 }
 
+/// Wait for WebKit's render fence (stock UI path before paint / acquire).
+fn wait_fence(fence: OwnedFd, timeout_ms: i32) -> bool {
+    let raw = fence.as_raw_fd();
+    if raw < 0 {
+        return true;
+    }
+    let mut pfd = libc::pollfd {
+        fd: raw,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let r = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+    r > 0
+}
+
 /// Attach + commit a dma-buf. Caller must ensure `!awaiting_frame`.
+///
+/// Mirrors `WPEViewWayland::render_buffer`: cache wl_buffer per pool slot,
+/// wait fence, attach, full damage, one frame cb, FrameDone on Done, Release
+/// returns WPE loan **without destroying** the protocol object.
 fn attach_dmabuf(
     inner: &mut PlaneInner,
-    fd: OwnedFd,
+    buffer_key: usize,
     width: u32,
     height: u32,
     format: u32,
     modifier: u64,
-    stride: u32,
-    offset: u32,
-    extra_planes: Vec<(u32, u32)>,
+    planes: Vec<(OwnedFd, u32, u32)>,
+    render_fence: Option<OwnedFd>,
     token: ResourceToken,
     release_tx: Sender<Cmd<WpeEngine>>,
 ) -> Result<(), String> {
-    let dmabuf = inner
-        .state
-        .dmabuf
-        .as_ref()
-        .ok_or_else(|| "no dmabuf".to_string())?;
-    let surface = inner
-        .state
-        .surface
-        .as_ref()
-        .ok_or_else(|| "no surface".to_string())?;
-    let qh = inner.event_queue.handle();
-
-    if width == 0 || height == 0 {
+    if width == 0 || height == 0 || planes.is_empty() || buffer_key == 0 {
         let _ = release_tx.send(Cmd::Release { token });
         return Ok(());
     }
 
-    // Never destroy an already-attached buffer. If Release events lag,
-    // drop this *new* loan so WPE can recycle without rewriting on-screen
-    // memory (force-releasing old inflight caused residual black swaths).
-    if inner.state.inflight.len() >= MAX_INFLIGHT {
+    if inner.state.inflight_keys.len() >= MAX_INFLIGHT {
         inner.state.drop_inflight_cap += 1;
         if inner.state.drop_inflight_cap == 1 || inner.state.drop_inflight_cap % 30 == 0 {
             tracing::warn!(
-                inflight = inner.state.inflight.len(),
+                inflight = inner.state.inflight_keys.len(),
                 drop_cap = inner.state.drop_inflight_cap,
                 "content plane: inflight cap — drop new frame (keep displayed)"
             );
@@ -721,76 +732,129 @@ fn attach_dmabuf(
         return Ok(());
     }
 
-    let data = Arc::new(BufferData {
-        release: Mutex::new(Some(PendingRelease {
-            token,
-            release_tx: release_tx.clone(),
-        })),
-        // Own the client-side dma-buf FD until compositor Release + destroy.
-        keep_fd: Mutex::new(Some(fd)),
-    });
-
-    let params = dmabuf.create_params(&qh, ());
-    {
-        let keep = data.keep_fd.lock().unwrap();
-        let raw = keep.as_ref().unwrap().as_raw_fd();
-        let borrowed = unsafe { BorrowedFd::borrow_raw(raw) };
-        params.add(
-            borrowed,
-            0,
-            offset,
-            stride,
-            (modifier >> 32) as u32,
-            (modifier & 0xffff_ffff) as u32,
-        );
-        for (i, (s, o)) in extra_planes.iter().enumerate() {
-            let borrowed = unsafe { BorrowedFd::borrow_raw(raw) };
-            params.add(
-                borrowed,
-                (i + 1) as u32,
-                *o,
-                *s,
-                (modifier >> 32) as u32,
-                (modifier & 0xffff_ffff) as u32,
-            );
-        }
+    if let Some(fence) = render_fence {
+        let _ = wait_fence(fence, 50);
+        inner.state.fence_wait += 1;
     }
 
-    // User-data carries WPE release — only after compositor `Release`.
-    let buffer = params.create_immed(
-        width as i32,
-        height as i32,
-        format,
-        zwp_linux_buffer_params_v1::Flags::empty(),
-        &qh,
-        Arc::clone(&data),
-    );
+    let can_reuse = inner.state.buffer_cache.get(&buffer_key).is_some_and(|c| {
+        c.width == width && c.height == height && c.format == format && c.modifier == modifier
+    });
 
-    // Keep buffer_scale in sync (SetRect updates preferred scale).
-    surface.set_buffer_scale(inner.state.buffer_scale.max(1));
-
-    surface.attach(Some(&buffer), 0, 0);
-    surface.damage_buffer(0, 0, width as i32, height as i32);
-    // FrameDone when compositor is ready for the next frame (not on the
-    // 60 Hz WebKit timer — that recycled tiles while still on-screen).
-    let _ = surface.frame(
-        &qh,
-        FrameCbData {
+    if can_reuse {
+        inner.state.cache_hit += 1;
+        // Drop plane dups — cached wl_buffer already owns the mapping FDs.
+        drop(planes);
+        let cached = inner.state.buffer_cache.get_mut(&buffer_key).unwrap();
+        *cached.data.release.lock().unwrap() = Some(PendingRelease {
             token,
             release_tx: release_tx.clone(),
-        },
-    );
-    surface.commit();
+        });
+    } else {
+        // Stale geometry/format for this key — drop old protocol object.
+        if let Some(old) = inner.state.buffer_cache.remove(&buffer_key) {
+            if let Some(pr) = old.data.release.lock().unwrap().take() {
+                let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
+            }
+            *old.data.keep_fds.lock().unwrap() = Vec::new();
+            old.buffer.destroy();
+        }
+
+        let dmabuf = inner
+            .state
+            .dmabuf
+            .as_ref()
+            .ok_or_else(|| "no dmabuf".to_string())?
+            .clone();
+        let qh = inner.event_queue.handle();
+
+        let layouts: Vec<(u32, u32)> = planes.iter().map(|(_, s, o)| (*s, *o)).collect();
+        let keep_fds: Vec<OwnedFd> = planes.into_iter().map(|(fd, _, _)| fd).collect();
+
+        let data = Arc::new(BufferData {
+            release: Mutex::new(Some(PendingRelease {
+                token,
+                release_tx: release_tx.clone(),
+            })),
+            keep_fds: Mutex::new(keep_fds),
+            buffer_key,
+        });
+
+        let params = dmabuf.create_params(&qh, ());
+        {
+            let keep = data.keep_fds.lock().unwrap();
+            for (i, ((stride, offset), fd)) in layouts.iter().zip(keep.iter()).enumerate() {
+                let borrowed = unsafe { BorrowedFd::borrow_raw(fd.as_raw_fd()) };
+                params.add(
+                    borrowed,
+                    i as u32,
+                    *offset,
+                    *stride,
+                    (modifier >> 32) as u32,
+                    (modifier & 0xffff_ffff) as u32,
+                );
+            }
+        }
+
+        let buffer = params.create_immed(
+            width as i32,
+            height as i32,
+            format,
+            zwp_linux_buffer_params_v1::Flags::empty(),
+            &qh,
+            Arc::clone(&data),
+        );
+
+        inner.state.buffer_cache.insert(
+            buffer_key,
+            CachedWl {
+                buffer,
+                data,
+                width,
+                height,
+                format,
+                modifier,
+            },
+        );
+        inner.state.cache_create += 1;
+    }
+
+    // Attach cached (or just-created) buffer — same as stock re-attach.
+    {
+        let cached = inner
+            .state
+            .buffer_cache
+            .get(&buffer_key)
+            .ok_or_else(|| "cache insert failed".to_string())?;
+        let surface = inner
+            .state
+            .surface
+            .as_ref()
+            .ok_or_else(|| "no surface".to_string())?;
+        let qh = inner.event_queue.handle();
+
+        surface.set_buffer_scale(inner.state.buffer_scale.max(1));
+        surface.attach(Some(&cached.buffer), 0, 0);
+        surface.damage_buffer(0, 0, width as i32, height as i32);
+        let _ = surface.frame(
+            &qh,
+            FrameCbData {
+                token,
+                release_tx: release_tx.clone(),
+            },
+        );
+        surface.commit();
+    }
+
     let _ = inner.event_queue.flush();
     let _ = inner.conn.flush();
 
-    // Gate the next attach on frame callback (display-rate pacing).
     inner.state.awaiting_frame = true;
     inner.state.awaiting_since = Some(Instant::now());
-    // Timeout path needs the token if frame cb never arrives.
     inner.state.awaiting_framedone = Some((token, release_tx));
-    // Keep proxy alive until Release event (do NOT destroy / release WPE yet).
-    inner.state.inflight.push(buffer);
+    if !inner.state.inflight_keys.contains(&buffer_key) {
+        inner.state.inflight_keys.push(buffer_key);
+    }
     inner.state.present_ok += 1;
     if inner.state.present_ok == 1 || inner.state.present_ok % 60 == 0 {
         tracing::info!(
@@ -798,10 +862,14 @@ fn attach_dmabuf(
             frame_done = inner.state.frame_done,
             drop_queued = inner.state.drop_queued,
             drop_inflight_cap = inner.state.drop_inflight_cap,
+            cache_hit = inner.state.cache_hit,
+            cache_create = inner.state.cache_create,
+            fence_wait = inner.state.fence_wait,
             width,
             height,
             buffer_scale = inner.state.buffer_scale,
-            inflight = inner.state.inflight.len(),
+            inflight = inner.state.inflight_keys.len(),
+            cached = inner.state.buffer_cache.len(),
             format = format!("{:#x}", format),
             modifier,
             "content plane present ok"
@@ -891,21 +959,19 @@ impl Dispatch<wl_subsurface::WlSubsurface, ()> for PlaneState {
 impl Dispatch<wl_buffer::WlBuffer, Arc<BufferData>> for PlaneState {
     fn event(
         state: &mut Self,
-        proxy: &wl_buffer::WlBuffer,
+        _proxy: &wl_buffer::WlBuffer,
         event: wl_buffer::Event,
         data: &Arc<BufferData>,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            // Compositor done sampling — safe to return dma-buf to WebKit.
+            // Stock WPEViewWayland: return WPE loan, KEEP wl_buffer for reuse.
             if let Some(pr) = data.release.lock().unwrap().take() {
                 let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
             }
-            *data.keep_fd.lock().unwrap() = None;
-            // Drop our inflight hold; destroy the protocol object.
-            state.inflight.retain(|b| b.id() != proxy.id());
-            proxy.destroy();
+            state.inflight_keys.retain(|k| *k != data.buffer_key);
+            // Do NOT destroy proxy or drop keep_fds — cache owns them.
         }
     }
 }

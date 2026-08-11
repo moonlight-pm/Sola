@@ -16,7 +16,8 @@
 | Content scale 2× + `set_buffer_scale` | **Pass** (override `SOLA_BROWSER_DPR`) |
 | Frame-callback paced attach | **Pass** (code) — no force-release of attached buffers; latest-wins queue while awaiting frame |
 | FrameDone after present | **Pass** (code) — `wpe_view_buffer_rendered` on Wayland frame cb, not 60 Hz timer |
-| Daily-driver YT hard-scroll quality | **Open** — re-dogfood black/flicker after FrameDone fix; soft text residual |
+| Stock-like wl_buffer cache | **Pass** (code) — create once per WPEBuffer; keep across Release (WPEViewWayland) |
+| Daily-driver YT hard-scroll quality | **Open** — re-dogfood after cache path; soft text residual; else option B/C |
 
 **Default:** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.  
 **Probe:** `SOLA_BROWSER_PLANE_PROBE=1` for magenta SHM visibility test.

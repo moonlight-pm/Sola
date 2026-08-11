@@ -820,9 +820,8 @@ unsafe extern "C" fn on_buffer_rendered(
         });
     }
 
-    // Collect plane layouts. Prefer a single FD (dup plane 0); if later
-    // planes use a different FD we still import plane 0 only (common for
-    // some producers that list auxiliary planes we don't need).
+    // Collect every plane (stock WPEViewWayland adds all). Dup each FD —
+    // multi-plane NVIDIA often shares one FD, but multi-fd layouts exist.
     let mut planes: Vec<(i32, u32, u32)> = Vec::with_capacity(n_planes as usize);
     for i in 0..n_planes {
         let fd = sys::wpe_buffer_dma_buf_get_fd(buffer, i);
@@ -837,14 +836,19 @@ unsafe extern "C" fn on_buffer_rendered(
     let primary_fd = planes[0].0;
     let same_fd = planes.iter().all(|(fd, _, _)| *fd == primary_fd);
 
-    let dup_fd = libc::fcntl(primary_fd, libc::F_DUPFD_CLOEXEC, 0);
-    if dup_fd < 0 {
-        tracing::warn!(err = ?std::io::Error::last_os_error(), "dup of dmabuf fd failed");
-        release_untracked(ctx, view, buffer_base, "dup_fail");
-        return;
+    // Dup all distinct plane FDs for plane present; import path uses plane0 + meta.
+    let mut dup_planes: Vec<(OwnedFd, u32, u32)> = Vec::with_capacity(planes.len());
+    for (fd, stride, offset) in &planes {
+        let d = libc::fcntl(*fd, libc::F_DUPFD_CLOEXEC, 0);
+        if d < 0 {
+            tracing::warn!(err = ?std::io::Error::last_os_error(), "dup of dmabuf fd failed");
+            release_untracked(ctx, view, buffer_base, "dup_fail");
+            return;
+        }
+        dup_planes.push((OwnedFd::from_raw_fd(d), *stride, *offset));
     }
 
-    // Build plane list for import: all planes if shared FD, else plane 0 only.
+    // Import path meta: all planes if shared FD, else plane 0 only.
     let plane_meta: Vec<(u32, u32)> = if same_fd {
         planes.iter().map(|(_, s, o)| (*s, *o)).collect()
     } else {
@@ -852,6 +856,7 @@ unsafe extern "C" fn on_buffer_rendered(
     };
     let stride = plane_meta[0].0;
     let offset = plane_meta[0].1;
+    let dup_fd = dup_planes[0].0.as_raw_fd();
 
     let buf_key = buffer as *mut c_void as usize;
     let epoch = ctx
@@ -869,7 +874,7 @@ unsafe extern "C" fn on_buffer_rendered(
         if claim.tab_id == tab_id && claim.epoch == epoch {
             paint_trace_push(ctx, TRACE_IGNORE, tab_id.0, epoch, buf_key);
             super::paint_stats::PaintStats::inc(&stats.ignore_repr);
-            drop(OwnedFd::from_raw_fd(dup_fd));
+            drop(dup_planes);
             // Do not call buffer_released — claim still owns the loan.
             return;
         }
@@ -897,7 +902,7 @@ unsafe extern "C" fn on_buffer_rendered(
             );
             dump_paint_trace(ctx, "live_buffers_cap");
         }
-        drop(OwnedFd::from_raw_fd(dup_fd));
+        drop(dup_planes);
         release_untracked(ctx, view, buffer_base, "live_cap");
         return;
     }
@@ -946,22 +951,15 @@ unsafe extern "C" fn on_buffer_rendered(
     // Skip iced import mailbox entirely.
     if crate::content_plane::mode().is_plane() {
         if let Some(plane_tx) = crate::content_plane::global_sender() {
-            let extra: Vec<(u32, u32)> = plane_meta
-                .iter()
-                .skip(1)
-                .map(|(s, o)| (*s, *o))
-                .collect();
-            // Fence not attached on headless; FenceMonitor already waited.
-            drop(render_fence);
             let cmd = crate::content_plane::ContentPlaneCmd::Present {
-                fd: OwnedFd::from_raw_fd(dup_fd),
+                buffer_key: buf_key,
                 width: width_u,
                 height: height_u,
                 format,
                 modifier,
-                stride,
-                offset,
-                extra_planes: extra,
+                planes: dup_planes,
+                // Stock waits fence before paint / sets acquire fence.
+                render_fence,
                 token,
                 release_tx: ctx.release_tx.clone(),
             };
@@ -976,8 +974,14 @@ unsafe extern "C" fn on_buffer_rendered(
         );
     }
 
+    // Import path: single primary FD + layout meta (plane 0 already first in dups).
+    let primary = dup_planes
+        .into_iter()
+        .next()
+        .map(|(fd, _, _)| fd)
+        .unwrap_or_else(|| unsafe { OwnedFd::from_raw_fd(dup_fd) });
     let frame = WpeFrame {
-        fd: Some(OwnedFd::from_raw_fd(dup_fd)),
+        fd: Some(primary),
         render_fence,
         rgba: None,
         width: width_u,

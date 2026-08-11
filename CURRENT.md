@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-11 (`naturalethic/browser`) — FrameDone after present; re-dogfood black
+**As of:** 2026-08-11 (`naturalethic/browser`) — stock-aligned plane present (cache)
 
 ---
 
@@ -21,19 +21,20 @@ Do not invent product policy.
    - Freeze:
      [`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](docs/specs/2026-08-11-sola-browser-content-plane-design.md)
      — **implemented, partial quality**.  
-   - **Paint path (as-built):** default `SOLA_BROWSER_CONTENT=plane` — iced
-     chrome + Wayland subsurface dma-buf; hold until `wl_buffer.release`;
-     **frame-callback paced attach**; **FrameDone only after Wayland frame
-     cb** (not 60 Hz timer — early FrameDone recycled tiles → black/flicker);
-     content scale **2×** default (`SOLA_BROWSER_DPR`); fallback `import`.  
-   - **User dogfood (YT homepage):** blur improved; black/flicker still after
-     force-release fix — **re-check after FrameDone-after-present**.  
-   - **Dogfood URLs:** `solactl emit OpenUrl` only — **never** `solactl open`
-     (Helium / D3).  
-   - **D8 profiles** shipped (no switcher).  
+   - **Deep dive:**
+     [`docs/plans/2026-08-11-browser-present-architecture-deep-dive.md`](docs/plans/2026-08-11-browser-present-architecture-deep-dive.md)
+     — root issue was **not** another timer race; we reimplemented
+     `WPEViewWayland` wrong (create_immed every frame + destroy on Release;
+     NVIDIA 3090 Ti + non-linear modifiers).  
+   - **Paint path (as-built):** default `plane` — subsurface; **cache
+     wl_buffer per WPEBuffer** (stock); **no destroy on Release**; FrameDone
+     on frame cb; fence wait when present; all plane FDs; 2× DPR.  
+   - **Dogfood:** blur better earlier; black/flicker **re-check after cache
+     path** on YT hard scroll.  
+   - **Dogfood URLs:** `solactl emit OpenUrl` only — never `solactl open`.  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Next:** dogfood YT hard-scroll after FrameDone fix → remaining blur →
-     cookie stickiness → vault session.  
+   - **Next if still bad:** stock `WPEDisplayWayland` surface (option B) or
+     owned-linear present (C) → cookie stickiness → vault session.  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
@@ -64,7 +65,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Content plane; FrameDone after present; blur better; **re-dogfood black/flicker**; OpenUrl; D8 | — |
+| Browser | Content plane stock-aligned cache; NVIDIA; **re-dogfood black/flicker**; OpenUrl; D8 | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install
