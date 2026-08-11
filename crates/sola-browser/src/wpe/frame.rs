@@ -26,9 +26,12 @@ use super::engine::{HeldToken, InputEvent, WpeEngine};
 use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
-/// One-frame retire: GPU can finish sampling before release (reduces chrome
-/// flicker). No park + rlimit headroom; depth 1 should not re-EMFILE.
-const RETIRE_DEPTH: usize = 1;
+/// Retire ring depth. Was 1 so the GPU could finish sampling before
+/// `buffer_released`, but holding **active+retire** pinches WPE's 2-buffer
+/// pool: WebKit re-presents the same pointers → ignore forever → no new
+/// claims/imports (scroll blackout). Zero-depth releases the previous
+/// frame immediately on swap; rlimit headroom + no park keep EMFILE away.
+const RETIRE_DEPTH: usize = 0;
 
 /// Longest allowed physical edge (px). Soft cap if compositor scale would
 /// exceed this for the CSS viewport. Keep this modest — YouTube was emitting
@@ -378,11 +381,18 @@ impl shader::Primitive for WpePrimitive {
             return;
         };
 
+        // Allow the next NewFrame wakeup (in case Msg::NewFrame was coalesced
+        // away or prepare ran from a different redraw path).
+        self.slot
+            .redraw_queued
+            .store(false, std::sync::atomic::Ordering::Release);
+
         let tab_id = pending.tab_id.0;
         let mut frame = pending.frame;
 
         // Background tab frames: drop without import (release via WpeFrame Drop).
-        // Parking held dma-bufs caused EMFILE freeze on YouTube after scroll.
+        // Worker now filters inactive tabs; this is a belt-and-suspenders race
+        // guard for paint_tab vs worker active desync.
         if tab_id != paint_tab {
             crate::wpe::paint_stats::PaintStats::inc(
                 &crate::wpe::paint_stats::global().drop_bg,

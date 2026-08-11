@@ -2,7 +2,7 @@
 //! `Engine` trait the shared chrome is generic over.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -81,6 +81,69 @@ pub struct TaggedFrame<F> {
     pub frame: F,
 }
 
+/// Latest-wins handoff from the engine worker to iced.
+///
+/// A capacity-1 queue that *dropped the newer frame* under load (blackouts
+/// while scrolling). This mailbox always keeps the **newest** frame and
+/// drops the older (older `Drop` → WPE release), then pings the consumer.
+pub struct FrameMailbox<F: Send> {
+    latest: Mutex<Option<TaggedFrame<F>>>,
+    /// Capacity 1: `Full` means a wakeup is already queued.
+    notify_tx: SyncSender<()>,
+    notify_rx: Mutex<Receiver<()>>,
+}
+
+impl<F: Send> FrameMailbox<F> {
+    pub fn new() -> Arc<Self> {
+        let (notify_tx, notify_rx) = sync_channel(1);
+        Arc::new(Self {
+            latest: Mutex::new(None),
+            notify_tx,
+            notify_rx: Mutex::new(notify_rx),
+        })
+    }
+
+    /// Producer path (WPE worker). Never blocks; prefer newest frame.
+    pub fn push(&self, frame: TaggedFrame<F>) -> bool {
+        let old = {
+            let mut g = self.latest.lock().unwrap();
+            g.replace(frame)
+        };
+        let replaced = old.is_some();
+        // Release previous buffer outside the lock.
+        drop(old);
+        match self.notify_tx.try_send(()) {
+            Ok(()) | Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {}
+        }
+        replaced
+    }
+
+    /// Consumer path (browser-frames thread). Blocks until a frame arrives.
+    pub fn recv(&self) -> Result<TaggedFrame<F>, ()> {
+        loop {
+            if let Some(f) = self.latest.lock().unwrap().take() {
+                // Drain coalesced pings; a concurrent push leaves its frame
+                // in `latest` for the next `recv`.
+                if let Ok(rx) = self.notify_rx.lock() {
+                    while rx.try_recv().is_ok() {}
+                }
+                return Ok(f);
+            }
+            let ok = {
+                let rx = self.notify_rx.lock().map_err(|_| ())?;
+                rx.recv().is_ok()
+            };
+            if !ok {
+                return Err(());
+            }
+        }
+    }
+}
+
+/// Worker → chrome frame path (latest-wins mailbox).
+pub type FrameReceiver<F> = Arc<FrameMailbox<F>>;
+
 /// One decoded frame waiting for the shader, tagged with its tab so a
 /// late background-tab frame cannot paint after the user switched away.
 pub struct PendingFrame<E: Engine> {
@@ -117,7 +180,6 @@ pub type TabsHandle = Arc<Mutex<Vec<TabInfo>>>;
 /// so the worker can update this atomic.
 pub type ActiveHandle = Arc<AtomicU64>;
 pub type CursorHandle = Arc<AtomicU32>;
-pub type FrameReceiver<F> = Arc<Mutex<Receiver<TaggedFrame<F>>>>;
 /// Engine→chrome handoff for text the engine extracted for a copy (e.g. the
 /// page's selection). The engine worker sets it; the chrome drains it on the
 /// next `Tick` and writes it to the system clipboard via iced. `None` when

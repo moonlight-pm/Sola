@@ -26,7 +26,7 @@ use std::os::fd::{FromRawFd, OwnedFd};
 use std::ptr;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::mpsc::{Receiver, Sender, SyncSender, TryRecvError, TrySendError, channel, sync_channel};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::{self, JoinHandle};
 
 use crate::{
@@ -190,9 +190,8 @@ const TRACE_RING: usize = 64;
 pub struct WpeEngine {
     worker: Option<JoinHandle<()>>,
     cmd_tx: Sender<Cmd<WpeEngine>>,
-    /// Receiver of (tab_id, frame) tuples. iced filters by active
-    /// tab before importing.
-    frames: Arc<Mutex<Receiver<TaggedFrame<WpeFrame>>>>,
+    /// Latest-wins mailbox of (tab_id, frame). iced filters by paint tab.
+    frames: FrameReceiver<WpeFrame>,
     /// Latest CSS cursor name (encoded as `CursorKind`) WebKit
     /// asked us to display for the active tab.
     cursor: Arc<std::sync::atomic::AtomicU32>,
@@ -288,9 +287,9 @@ impl WpeEngine {
     /// `Engine::spawn` after the env dance is done.
     fn spawn_inner(url: &str, width: u32, height: u32) -> Self {
         let (cmd_tx, cmd_rx) = channel::<Cmd<WpeEngine>>();
-        // Bound the frame pipeline hard. Unbounded + multi-plane CPU work
-        // queued multi‑MP frames until the process hit "Too many open files".
-        let (frame_tx, frame_rx) = sync_channel::<TaggedFrame<WpeFrame>>(1);
+        // Latest-wins mailbox: under scroll load keep the newest frame and
+        // release the older (never drop the fresh buffer while holding stale).
+        let frames = crate::engine::FrameMailbox::new();
         let (ready_tx, ready_rx) = channel::<()>();
         let cursor = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let tabs_snapshot = Arc::new(Mutex::new(Vec::<TabInfo>::new()));
@@ -314,11 +313,12 @@ impl WpeEngine {
         let next_id_w = next_id.clone();
         let clipboard_w = clipboard_out.clone();
         let release_tx = cmd_tx.clone();
+        let frames_w = frames.clone();
         let worker = thread::Builder::new()
             .name("wpe-engine".into())
             .spawn(move || unsafe {
                 worker_main(
-                    width, height, frame_tx, cmd_rx, release_tx, ready_tx, cursor_w, snapshot_w,
+                    width, height, frames_w, cmd_rx, release_tx, ready_tx, cursor_w, snapshot_w,
                     active_w, next_id_w, clipboard_w,
                 )
             })
@@ -330,7 +330,7 @@ impl WpeEngine {
         Self {
             worker: Some(worker),
             cmd_tx,
-            frames: Arc::new(Mutex::new(frame_rx)),
+            frames,
             cursor,
             tabs: tabs_snapshot,
             active_tab: active_atomic,
@@ -345,9 +345,8 @@ impl WpeEngine {
 
 struct WorkerCtx {
     main_loop: *mut sys::GMainLoop,
-    /// Capacity 1: under load drop new frames instead of unbounded queue
-    /// (was multi‑MB backlog → freeze + "Too many open files").
-    frame_tx: SyncSender<TaggedFrame<WpeFrame>>,
+    /// Latest-wins mailbox to iced (prefer newest under scroll load).
+    frames: FrameReceiver<WpeFrame>,
     cmd_rx: Receiver<Cmd<WpeEngine>>,
     /// Clone used when emitting frames so Drop can `Cmd::Release`.
     release_tx: Sender<Cmd<WpeEngine>>,
@@ -424,7 +423,7 @@ struct TabState {
 unsafe fn worker_main(
     width: u32,
     height: u32,
-    frame_tx: SyncSender<TaggedFrame<WpeFrame>>,
+    frames: FrameReceiver<WpeFrame>,
     cmd_rx: Receiver<Cmd<WpeEngine>>,
     release_tx: Sender<Cmd<WpeEngine>>,
     ready_tx: Sender<()>,
@@ -485,7 +484,7 @@ unsafe fn worker_main(
 
     let ctx = Box::into_raw(Box::new(WorkerCtx {
         main_loop: ptr::null_mut(),
-        frame_tx,
+        frames,
         cmd_rx,
         release_tx,
         network_session,
@@ -692,6 +691,15 @@ unsafe extern "C" fn on_buffer_rendered(
         }
     };
 
+    // Only the active tab may claim/hold dma-bufs. Background tabs used to
+    // claim → iced drop_bg → release, which burned the pool under multi-tab
+    // load and showed up as drop_bg≈present with no imports. Release now.
+    if tab_id != ctx.active {
+        super::paint_stats::PaintStats::inc(&stats.drop_bg);
+        release_untracked(ctx, view, buffer_base, "inactive_tab");
+        return;
+    }
+
     let width = sys::wpe_buffer_get_width(buffer_base);
     let height = sys::wpe_buffer_get_height(buffer_base);
     // Record actual buffer size so Resize can detect stretch/zoom mismatch.
@@ -800,9 +808,9 @@ unsafe extern "C" fn on_buffer_rendered(
         .unwrap_or(0);
 
     // Same pointer still claimed for this epoch → WebKit re-presented while
-    // we still hold. We must not release (GPU may sample), but we also must
-    // not leave WebKit without a recycle path forever: the held token will
-    // release when iced swaps frames. Just drop the dup.
+    // we still hold. Common when the pool is fully loaned (we ignored new
+    // keys). Drop the dup; the held token releases when iced swaps/retires.
+    // Telemetry tracks this; a high ignore rate with claim=0 means pool pin.
     if let Some(claim) = ctx.live_buffers.get(&buf_key) {
         if claim.tab_id == tab_id && claim.epoch == epoch {
             paint_trace_push(ctx, TRACE_IGNORE, tab_id.0, epoch, buf_key);
@@ -887,23 +895,13 @@ unsafe extern "C" fn on_buffer_rendered(
     };
     ctx.outstanding_tokens
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // Bounded channel: if iced is behind, drop this frame (Drop → Release)
-    // instead of unbounded queue growth.
-    match ctx.frame_tx.try_send(TaggedFrame { tab_id, frame }) {
-        Ok(()) => {}
-        Err(TrySendError::Full(tagged)) => {
-            // Prefer the newer frame: the Full payload is the one we
-            // couldn't enqueue. Drop it (releases) and leave the older
-            // in-channel frame; under load we skip. Better than OOM.
-            super::paint_stats::PaintStats::inc(
-                &super::paint_stats::global().drop_channel,
-            );
-            drop(tagged);
-        }
-        Err(TrySendError::Disconnected(_)) => {
-            tracing::info!("frame channel closed, quitting GMainLoop");
-            sys::g_main_loop_quit(ctx.main_loop);
-        }
+    // Latest-wins mailbox: if iced is behind, the *older* pending frame is
+    // replaced (Drop → Release). Previously try_send(Full) dropped the
+    // *newer* frame and kept a stale one — scroll blackouts.
+    if ctx.frames.push(TaggedFrame { tab_id, frame }) {
+        super::paint_stats::PaintStats::inc(
+            &super::paint_stats::global().drop_channel,
+        );
     }
 }
 

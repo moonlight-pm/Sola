@@ -76,14 +76,15 @@ screenshot shows YouTube chrome (signed-out empty feed on clean D8 profile). No 
 - Install gdb for symbolized coredumps  
 - Cookie `"cookie"` EROFS path (separate from paint)
 
-## Paint quality telemetry (2026-08-10)
+## Paint quality telemetry + fix (2026-08-10)
 
-After SEGV + scroll freeze fixed, remaining dogfood: **brief blackout on fast
-scroll**, **menus / top-left nav flicker** on scroll/hover.
+After SEGV + scroll freeze fixed: **brief blackout on fast scroll**,
+**menus / top-left nav flicker**.
 
-`src/wpe/paint_stats.rs` — process-wide atomics + 2s `paint telem` info lines
-while activity > 0. Immediate **warn** on present/import gap ≥ 80 ms and on
-shader `sample.clear` (true black path). Browser menu **Paint Stats** (⇧⌘I).
+### Telem
+
+`src/wpe/paint_stats.rs` — 2s `paint telem` lines; warn on gap ≥ 250 ms and
+`sample.clear`. Browser menu **Paint Stats** (⇧⌘I).
 
 ```bash
 rg "paint telem" /opt/sola/log/app-sola-browser.log | tail -40
@@ -91,14 +92,25 @@ rg "paint telem" /opt/sola/log/app-sola-browser.log | tail -40
 
 | Field | Read as |
 |-------|---------|
-| `drop_ch` / `present` | iced/channel behind → scroll lag / black |
+| `drop_ch` | mailbox replaced older frame (latest-wins; healthy under load) |
+| `drop_bg` | inactive tab present released without claim |
 | `drop_cap` | live buffer cap; untracked release |
-| `ignore` | same buffer re-presented while held |
+| `ignore` | same buffer re-presented while held (pool pin if claim=0) |
 | `prep_idle` ≫ `prep_new` | redraws without new frames |
 | `gap_present_ms` / `gap_import_ms` | freeze / black gap size |
 | `sample_clear` | bind group cleared (true black flash) |
 | `yuv_skip` | NV12/video not painted |
 
+### Fix from telem (same day)
+
+| Root cause | Change |
+|------------|--------|
+| `sync_channel(1)` dropped **newer** frame on Full | **FrameMailbox** latest-wins |
+| Background tabs claimed then `drop_bg` (pool burn) | Worker **releases inactive** without claim |
+| `RETIRE_DEPTH=1` + active pin both pool slots → ignore forever | **RETIRE_DEPTH=0** |
+| Stuck `redraw_queued` | Clear on prepare when taking pending |
+
+Healthy under load: `ignore≈0`, `claim≈import_ok≈released`, `live=1`.
 ## Code touch
 
 - `crates/sola-browser/src/wpe/engine.rs` — claim/release/cap/trace  

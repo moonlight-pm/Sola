@@ -8,8 +8,9 @@
 //! on blackout-class events (large present gap, sample clear, live cap).
 //!
 //! How to read a `paint telem` line:
-//! - `drop_ch` high vs `present` → iced/channel behind (scroll lag / black)
-//! - `drop_cap` > 0 → live buffer cap; frames released untracked
+//! - `drop_ch` high → mailbox replaced an older frame (latest-wins; healthy under scroll)
+//! - `drop_bg` high → inactive-tab presents released without claim
+//! - `drop_cap` > 0 → live buffer cap; frames released untracked (blackout risk)
 //! - `ignore` high → same WPE buffer re-presented while still held
 //! - `prep_idle` ≫ `prep_new` → redraws without new imported frames
 //! - `gap_present_ms` / `gap_import_ms` large → freeze or black gap
@@ -35,7 +36,7 @@ pub struct PaintStats {
     pub presented: AtomicU64,
     /// claimed + enqueued for iced
     pub claimed: AtomicU64,
-    /// channel full — dropped newer (or older) frame
+    /// mailbox replaced an older pending frame (latest-wins under load)
     pub drop_channel: AtomicU64,
     /// not the paint tab — dropped without import
     pub drop_bg: AtomicU64,
@@ -80,8 +81,9 @@ pub struct PaintStats {
     start: OnceLock<Instant>,
 }
 
-/// Present gap (ms) that warrants an immediate warn (blackout-class).
-const BLACKOUT_GAP_MS: u64 = 80;
+/// Present/import gap (ms) that warrants an immediate warn (blackout-class).
+/// Idle pages often present ~1–2 Hz (~500–600 ms gaps); only flag real stalls.
+const BLACKOUT_GAP_MS: u64 = 250;
 
 impl PaintStats {
     pub fn new() -> Arc<Self> {

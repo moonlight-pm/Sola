@@ -19,7 +19,6 @@
 use std::hash::Hash;
 use std::process::ExitCode;
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
 use iced::futures::{SinkExt, Stream, StreamExt as _};
@@ -29,7 +28,7 @@ use iced_futures::subscription::{self, EventStream, Recipe};
 
 
 use crate::app::{App, Msg, DEFAULT_URL, VIEW_H, VIEW_W};
-use crate::engine::{ActiveHandle, Engine, FrameSlot, TaggedFrame};
+use crate::engine::{ActiveHandle, Engine, FrameReceiver, FrameSlot};
 
 // ---------------------------------------------------------------------------
 // Frame stream
@@ -42,7 +41,7 @@ use crate::engine::{ActiveHandle, Engine, FrameSlot, TaggedFrame};
 /// Parameters are owned `Arc`s cloned out of `App<E>` fields — no
 /// process-wide statics involved.
 pub fn frame_stream<E: Engine>(
-    frames: Arc<Mutex<Receiver<TaggedFrame<E::Frame>>>>,
+    frames: FrameReceiver<E::Frame>,
     slot: Arc<FrameSlot<E>>,
     active: ActiveHandle,
 ) -> impl Stream<Item = Msg> {
@@ -55,17 +54,13 @@ pub fn frame_stream<E: Engine>(
             .name("browser-frames".into())
             .spawn(move || {
                 loop {
-                    let tagged = {
-                        let guard = frames_thread.lock().unwrap();
-                        guard.recv()
-                    };
-                    match tagged {
+                    match frames_thread.recv() {
                         Ok(f) => {
                             if tx.send(f).is_err() {
                                 break;
                             }
                         }
-                        Err(_) => break,
+                        Err(()) => break,
                     }
                 }
             })
@@ -123,7 +118,7 @@ pub fn frame_stream<E: Engine>(
 /// one frame subscription per browser process, so a constant identity is
 /// correct and stable across re-renders.
 struct FrameStreamRecipe<E: Engine> {
-    frames: Arc<Mutex<Receiver<TaggedFrame<E::Frame>>>>,
+    frames: FrameReceiver<E::Frame>,
     slot: Arc<FrameSlot<E>>,
     active: ActiveHandle,
 }
@@ -191,7 +186,7 @@ fn raise_nofile_soft_limit() {
 /// Uses a custom `Recipe` via `iced_futures::subscription::from_recipe`
 /// since `Subscription::run_with_id` is not available in iced 0.14.
 pub fn frame_subscription<E: Engine>(
-    frames: Arc<Mutex<Receiver<TaggedFrame<E::Frame>>>>,
+    frames: FrameReceiver<E::Frame>,
     slot: Arc<FrameSlot<E>>,
     active: ActiveHandle,
 ) -> Subscription<Msg> {
