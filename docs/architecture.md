@@ -152,15 +152,20 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 **Runtime:** iced main thread + `wpe-engine` GLib thread.
 
-**Paint (product path, default `plane`):** WPE `buffer-rendered` → claim →
-**content plane** attaches dma-buf to `wl_subsurface` under iced toplevel
-(River presents). Main-thread Wayland only (no dual `wl_display` reader).
-Empty input region → pointer/scroll on iced → WPE. Hold buffers until
-compositor `wl_buffer.release` before `wpe_view_buffer_released`. Content
-device scale default **2×** (`SOLA_BROWSER_DPR`, `set_buffer_scale`).
-Fallback: `SOLA_BROWSER_CONTENT=import` (Vulkan import + iced shader).
-Freeze:
+**Paint (as-built interim, default `plane`):** WPE headless → claim →
+**content plane** dma-buf on `wl_subsurface` under iced (River presents).
+Honest DPR + deferred front release; `import` fallback.
+Freeze (interim):
 [`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](specs/2026-08-11-sola-browser-content-plane-design.md).
+
+**Paint (product target — Option A, locked 2026-08-11):** stock
+**`WPEDisplayWayland` / `WPEViewWayland`** presents content on a companion
+surface (`sola-browser-content`); iced chrome (`sola-browser`) keeps a
+transparent hole; **sola-river lockstep** places/sizes content under the hole
+(one visual unit). Env spike: `SOLA_BROWSER_CONTENT=wayland`.
+Freeze + plan:
+[`docs/specs/2026-08-11-sola-browser-stock-wayland-present-design.md`](specs/2026-08-11-sola-browser-stock-wayland-present-design.md),
+[`docs/plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md`](plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md).
 
 Clipboard: page selection → iced write; paste → `Cmd::PasteText` /
 InsertText. **System `http`/`https` still Helium (D3)** via `solactl open`;

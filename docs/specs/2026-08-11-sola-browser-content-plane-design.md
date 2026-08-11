@@ -1,8 +1,13 @@
 # sola-browser · content plane (Wayland present)
 
 **Date:** 2026-08-11  
-**Status:** **Frozen + implemented (partial quality)** — default path on
-`naturalethic/browser`; daily-driver scroll bar **not** met yet
+**Status:** **Frozen + implemented (partial quality)** — **interim** default
+as-built on `naturalethic/browser`. Daily-driver scroll bar **not** met.
+**Product present path re-locked 2026-08-11 → Option A** (stock WPE Wayland +
+river lockstep): see
+[`2026-08-11-sola-browser-stock-wayland-present-design.md`](2026-08-11-sola-browser-stock-wayland-present-design.md).
+This freeze remains authoritative for the **content-plane interim** and for
+§4.1 history; §4.2 is elevated to product.
 
 ### Implementation progress (2026-08-11)
 

@@ -160,6 +160,23 @@ stay ignored (delete dead policy branch)?
 
 **Related:** D4 history+restore; hardening P1.3; `browser` capability.
 
+### D9 — Browser: present architecture — **decided 2026-08-11**
+
+**Question:** Headless + content-plane hybrid vs stock WPE Wayland present for
+daily-driver scroll quality?
+
+**Decision:** **Option A locked** — product present =
+**`WPEDisplayWayland` / `WPEViewWayland`** for page pixels; iced remains chrome;
+**river lockstep sibling** under the content hole for one visual window unit.
+Content plane preferred path remains **implemented interim**; not the quality
+endgame. Phases A0–A4 in freeze + plan (A0 dual-window quality gate first).
+
+**Freeze / plan:**
+[`specs/2026-08-11-sola-browser-stock-wayland-present-design.md`](specs/2026-08-11-sola-browser-stock-wayland-present-design.md),
+[`plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md`](plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md).
+
+**Related:** content-plane freeze §4.2 elevated; D3/D4; `browser` capability.
+
 ---
 
 ## Open technical questions
@@ -179,6 +196,7 @@ product ask. See agent UI backlog.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-11 | D9 | **Present:** Option A — stock WPE Wayland content + river lockstep under iced chrome; plane interim; A0–A4 plan | stock-wayland freeze + plan, CURRENT locks, open-questions D9 |
 | 2026-08-10 | D8 | **Profiles:** UUID + Primary; `profiles/<id>/` data+cache; registry + `shared/`; config under `~/.config/sola/browser/`; tabs per profile; history/prefs/downloads/vault shared; no migration | profiles design freeze, CURRENT, open-questions D8 |
 | 2026-08-10 | D7 arch | **In-process** `sdk-internal` `PasswordManagerClient` (`src/vault/` + async worker); inject fill; self-host in MVP; **license out of architecture scope** until public dist | bitwarden design freeze, CURRENT, D7 |
 | 2026-08-09 | D7 | **First-party Bitwarden UX** in sola-browser (SDK/API + in-process autofill); no Chrome store package; no system service; no WebExtensions host for now | open-questions D7, plan, CURRENT |
