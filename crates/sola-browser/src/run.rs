@@ -72,20 +72,14 @@ pub fn frame_stream<E: Engine>(
             .expect("spawn browser-frames thread");
 
         while let Some(tagged) = rx.recv().await {
-            // Accept:
-            // 1) frames for the painted tab (normal display path), or
-            // 2) one prime frame per tab listed in need_park_prime so a
-            //    restored/background tab gets a single GPU snapshot without
-            //    pinning every animated frame from every tab (that OOM/UAF'd).
+            // Only the painted tab may pin a dma-buf. Background frames
+            // drop immediately (WpeFrame::Drop → Release) so YouTube scroll
+            // cannot EMFILE the WebProcess with parked imports.
             let paint_tab = slot.paint_tab.load(Ordering::Relaxed);
             let tid = tagged.tab_id.0;
-            let is_paint = tid == paint_tab;
-            let is_prime = {
+            if tid != paint_tab {
                 let mut need = slot.need_park_prime.lock().unwrap();
-                need.remove(&tid) // true if it was present — consume one-shot
-            };
-            if !is_paint && !is_prime {
-                // Drop: WpeFrame::Drop releases the buffer token.
+                need.remove(&tid); // consume one-shot primes without holding
                 continue;
             }
             // Keep only the latest pending frame (prior Drop releases WPE buf).
@@ -136,6 +130,52 @@ impl<E: Engine> Recipe for FrameStreamRecipe<E> {
     }
 }
 
+/// Raise `RLIMIT_NOFILE` soft limit toward the hard cap (capped at 256k).
+/// Must run before WebKit forks Network/Web/GPU processes.
+fn raise_nofile_soft_limit() {
+    #[cfg(unix)]
+    {
+        // SAFETY: getrlimit/setrlimit on RLIMIT_NOFILE are process-wide and
+        // thread-safe for this use at single-threaded startup.
+        unsafe {
+            let mut r = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut r) != 0 {
+                return;
+            }
+            let hard = r.rlim_max;
+            if hard == 0 || hard == libc::RLIM_INFINITY {
+                // Still pick a high soft target when hard is infinity.
+                let want = 262_144u64;
+                if (r.rlim_cur as u64) >= want {
+                    return;
+                }
+                r.rlim_cur = want as libc::rlim_t;
+            } else {
+                let want = (hard as u64).min(262_144);
+                if (r.rlim_cur as u64) >= want {
+                    return;
+                }
+                r.rlim_cur = want as libc::rlim_t;
+            }
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &r) == 0 {
+                tracing::info!(
+                    soft = r.rlim_cur as u64,
+                    hard = r.rlim_max as u64,
+                    "raised RLIMIT_NOFILE soft limit (YouTube FD headroom)"
+                );
+            } else {
+                tracing::warn!(
+                    err = ?std::io::Error::last_os_error(),
+                    "failed to raise RLIMIT_NOFILE"
+                );
+            }
+        }
+    }
+}
+
 /// Build the frame-stream `Subscription` from owned `Arc`s.
 ///
 /// Uses a custom `Recipe` via `iced_futures::subscription::from_recipe`
@@ -163,6 +203,11 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     if let Some(code) = E::dispatch_subprocess(app_id) {
         return code;
     }
+    // WebKit sandboxed WebProcesses inherit this. Soft 1024 is the default
+    // and YouTube exhausts it (dma-buf + GStreamer + sockets) → freeze
+    // ("Too many open files" / GWakeup pipes). Raise before any spawn.
+    raise_nofile_soft_limit();
+
     // Wayland/GPU env, fonts, and watch_own_binary (re-exec on
     // /opt/sola/bin/<app> change — same as other kit apps). Without this
     // the browser never auto-restarts after `cargo make install`.

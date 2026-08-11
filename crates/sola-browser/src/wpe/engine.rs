@@ -166,7 +166,8 @@ struct BufferClaim {
 /// Max simultaneous `live_buffers` claims. active+retire+park×N+pending+channel
 /// can stack; YouTube media + multi-tab exceeded WPE's pool and EMFILE'd.
 /// When at cap, refuse new claims and release the presentation untracked.
-const MAX_LIVE_BUFFERS: usize = 6;
+/// Only the painted tab may hold buffers (active + channel + pending ≈ 3).
+const MAX_LIVE_BUFFERS: usize = 3;
 
 /// Paint lifecycle breadcrumb (P0 instrumentation).
 #[derive(Clone, Copy)]
@@ -785,15 +786,22 @@ unsafe extern "C" fn on_buffer_rendered(
         .map(|t| t.buffer_epoch.load(AtomicOrdering::Relaxed))
         .unwrap_or(0);
 
-    // Same pointer still claimed for this epoch → ignore (GPU still holds).
-    // Stale epoch claim → steal for the new frame; old token will no-op on Release.
+    // Same pointer still claimed for this epoch → WebKit re-presented while
+    // we still hold. We must not release (GPU may sample), but we also must
+    // not leave WebKit without a recycle path forever: the held token will
+    // release when iced swaps frames. Just drop the dup.
     if let Some(claim) = ctx.live_buffers.get(&buf_key) {
         if claim.tab_id == tab_id && claim.epoch == epoch {
             paint_trace_push(ctx, TRACE_IGNORE, tab_id.0, epoch, buf_key);
             drop(OwnedFd::from_raw_fd(dup_fd));
+            // Do not call buffer_released — claim still owns the loan.
             return;
         }
     }
+
+    // Only one live claim per tab: if this tab already holds another buffer,
+    // still allow the new claim (old token will Release when Drop runs). Cap
+    // is global MAX_LIVE_BUFFERS.
 
     // Hard cap: do not grow claims under media storm (YouTube EMFILE / pool death).
     if ctx.live_buffers.len() >= MAX_LIVE_BUFFERS

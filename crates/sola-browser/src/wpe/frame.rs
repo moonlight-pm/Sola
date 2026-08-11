@@ -26,10 +26,10 @@ use super::engine::{HeldToken, InputEvent, WpeEngine};
 use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
-/// Keep one replaced frame alive so the GPU can finish sampling before
-/// `buffer_released`. Depth 0 = immediate release (flicker + criticals);
-/// depth 2+ starved the WPE pool under scroll. One is the sweet spot.
-const RETIRE_DEPTH: usize = 1;
+/// Keep replaced frames alive so the GPU can finish sampling before
+/// `buffer_released`. Depth ≥1 + park starved YouTube (EMFILE / freeze).
+/// Prefer a clean pool over perfect anti-flicker until fences exist.
+const RETIRE_DEPTH: usize = 0;
 
 /// Longest allowed physical edge (px). Soft cap if compositor scale would
 /// exceed this for the CSS viewport. Keep this modest — YouTube was emitting
@@ -349,22 +349,23 @@ impl shader::Primitive for WpePrimitive {
             .paint_tab
             .load(std::sync::atomic::Ordering::Relaxed);
 
-        // Tab switch: park leaving tab's last frame (one snapshot each) and
-        // restore the target's park so we do not flash black while waiting
-        // for SetActiveTab's 1px repaint nudge.
+        // Tab switch: release previous hold immediately (return buffer to WPE).
+        // Parking dma-bufs per tab starved the pool under YouTube scroll → freeze.
         let active_id = pipeline.active.as_ref().map(|a| a.tab_id);
         if active_id != Some(paint_tab) {
             if let Some(prev) = pipeline.active.take() {
-                if let Some(old_park) = pipeline.parked.insert(prev.tab_id, prev) {
-                    retire(pipeline, old_park);
-                }
+                drop(prev); // HeldToken → Release now
             }
-            if let Some(surf) = pipeline.parked.remove(&paint_tab) {
-                show_surface(pipeline, device, &surf);
-                pipeline.active = Some(surf);
+            // Drain any leftover park from older builds.
+            if let Some(old) = pipeline.parked.remove(&paint_tab) {
+                show_surface(pipeline, device, &old);
+                pipeline.active = Some(old);
             } else {
-                // No snapshot yet — dark fallback until a frame arrives.
                 pipeline.sample.clear();
+            }
+            // Drop parks for other tabs so we never pin multiple WPE buffers.
+            for (_, surf) in pipeline.parked.drain() {
+                drop(surf);
             }
         }
 
@@ -375,100 +376,9 @@ impl shader::Primitive for WpePrimitive {
         let tab_id = pending.tab_id.0;
         let mut frame = pending.frame;
 
-        // Background prime: keep one last-good park for inactive tabs.
+        // Background tab frames: drop without import (release via WpeFrame Drop).
+        // Parking held dma-bufs caused EMFILE freeze on YouTube after scroll.
         if tab_id != paint_tab {
-            let release_tx = frame.release_tx.clone();
-            let size = (frame.width, frame.height);
-            if let Some(rgba) = frame.take_rgba() {
-                let w = size.0;
-                let h = size.1;
-                drop(frame);
-                let tex = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("wpe-yuv-bgra-park"),
-                    size: wgpu::Extent3d {
-                        width: w,
-                        height: h,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &tex,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &rgba,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(w.saturating_mul(4)),
-                        rows_per_image: Some(h),
-                    },
-                    wgpu::Extent3d {
-                        width: w,
-                        height: h,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                let surface = TabSurface {
-                    tab_id,
-                    imported: ImportedFrame::from_owned_texture(tex),
-                    _token: HeldToken::none(),
-                    size,
-                };
-                if let Some(old) = pipeline.parked.insert(tab_id, surface) {
-                    retire(pipeline, old);
-                }
-                return;
-            }
-            let Some(token) = frame.take_token() else {
-                return;
-            };
-            let Some(fd) = frame.take_fd() else {
-                let _ = HeldToken::new(token, release_tx);
-                return;
-            };
-            let mut planes = vec![wgpu_import::DmabufPlaneLayout {
-                stride: frame.stride,
-                offset: frame.offset,
-            }];
-            for (s, o) in frame.extra_planes.drain(..) {
-                planes.push(wgpu_import::DmabufPlaneLayout {
-                    stride: s,
-                    offset: o,
-                });
-            }
-            let meta = DmabufMetadata {
-                width: frame.width,
-                height: frame.height,
-                format: frame.format,
-                modifier: frame.modifier,
-                planes,
-            };
-            drop(frame);
-            match unsafe { wgpu_import::import(device, fd, &meta) } {
-                Ok(imported) => {
-                    let surface = TabSurface {
-                        tab_id,
-                        imported,
-                        _token: HeldToken::new(token, release_tx),
-                        size,
-                    };
-                    if let Some(old) = pipeline.parked.insert(tab_id, surface) {
-                        retire(pipeline, old);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(tab = tab_id, "wgpu_import::import failed (park): {e}");
-                    let _ = HeldToken::new(token, release_tx);
-                }
-            }
             return;
         }
 

@@ -60,7 +60,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | D8 profiles; paint P0 (claim-guard + live cap); **re-dogfood YouTube load** (was SEGV); Bitwarden match/fill; OpenUrl→Helium | — |
+| Browser | YouTube scroll freeze: raised RLIMIT_NOFILE + no park/retire holds; SEGV fix kept; OpenUrl bus; D8 profiles | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install
