@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-11 (`naturalethic/browser`) — stock-aligned plane present (cache)
+**As of:** 2026-08-11 (`naturalethic/browser`) — checkerboard deep fix (paint budget + stock Wayland)
 
 ---
 
@@ -21,21 +21,20 @@ Do not invent product policy.
    - Freeze:
      [`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](docs/specs/2026-08-11-sola-browser-content-plane-design.md)
      — **implemented, partial quality**.  
-   - **Deep dive:**
-     [`docs/plans/2026-08-11-browser-present-architecture-deep-dive.md`](docs/plans/2026-08-11-browser-present-architecture-deep-dive.md)
-     — root issue was **not** another timer race; we reimplemented
-     `WPEViewWayland` wrong (create_immed every frame + destroy on Release;
-     NVIDIA 3090 Ti + non-linear modifiers).  
-   - **Paint path (as-built):** default `plane` — subsurface; **cache
-     wl_buffer per WPEBuffer** (stock); **no destroy on Release**; FrameDone
-     on frame cb; fence wait when present; all plane FDs; 2× DPR.  
-   - **Dogfood:** cache path caused **constant thumb/text flicker** (front
-     buffer returned to WebKit too early) — **deferred front release**
-     installed; re-check YT.  
+   - **Checkerboard deep fix:**
+     [`docs/plans/2026-08-11-browser-checkerboard-deep-fix.md`](docs/plans/2026-08-11-browser-checkerboard-deep-fix.md)
+     — full-width black (incl. fixed nav) = unpainted tiles; forced 2×
+     supersample was a major driver.  
+   - **Paint path:** default `plane` (cache + deferred front release);
+     **honest DPR** + **scroll budget ≤1.25×** (`paint_budget`);
+     opt-in `SOLA_BROWSER_SUPER_SAMPLE=1` / `SOLA_BROWSER_DPR=N`.  
+   - **Stock Wayland:** `SOLA_BROWSER_CONTENT=wayland` → WPEDisplayWayland
+     (upstream present; dual-window dogfood).  
+   - **Test page:** **`sola:scroll-stress`** (fixed nav + tall grid).  
    - **Dogfood URLs:** `solactl emit OpenUrl` only — never `solactl open`.  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Next if still bad:** stock `WPEDisplayWayland` surface (option B) or
-     owned-linear present (C) → cookie stickiness → vault session.  
+   - **Next:** dogfood scroll-stress + YT; if Wayland mode wins → river
+     lockstep sibling under chrome hole → cookie stickiness.  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
@@ -66,7 +65,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Content plane stock-aligned cache; NVIDIA; **re-dogfood black/flicker**; OpenUrl; D8 | — |
+| Browser | Adaptive paint budget; plane cache+defer; `sola:scroll-stress`; optional `CONTENT=wayland`; dogfood checkerboard | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install
