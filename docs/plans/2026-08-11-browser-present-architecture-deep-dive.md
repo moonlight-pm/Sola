@@ -125,6 +125,19 @@ Higher bandwidth; known-good against rewrite races.
 If dogfood still fails on NVIDIA → spike B (stock WPE Wayland surface) or
 C (owned linear present).
 
+### A.1 Dogfood regression — constant tile flicker (same day)
+
+After A: **video thumbs + text flicker constantly; sticky nav still.**
+
+Cause: cache path returned the buffer to WebKit on compositor `Release`
+while it was still the **surface front buffer**. WebKit rewrote tiles in
+place; River kept sampling → live flicker of updating tiles (nav often
+unchanged in those frames).
+
+Fix: **defer WPE `Release` until a different buffer is attached**
+(`front_key` + `deferred_wpe_release`). Refuse re-loan of front / deferred /
+still-inflight keys.
+
 ## 6. Code map for A
 
 | File | Change |

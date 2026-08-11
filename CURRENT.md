@@ -29,8 +29,9 @@ Do not invent product policy.
    - **Paint path (as-built):** default `plane` — subsurface; **cache
      wl_buffer per WPEBuffer** (stock); **no destroy on Release**; FrameDone
      on frame cb; fence wait when present; all plane FDs; 2× DPR.  
-   - **Dogfood:** blur better earlier; black/flicker **re-check after cache
-     path** on YT hard scroll.  
+   - **Dogfood:** cache path caused **constant thumb/text flicker** (front
+     buffer returned to WebKit too early) — **deferred front release**
+     installed; re-check YT.  
    - **Dogfood URLs:** `solactl emit OpenUrl` only — never `solactl open`.  
    - **Still ask:** **D5** middle-click, **D6** search.  
    - **Next if still bad:** stock `WPEDisplayWayland` surface (option B) or

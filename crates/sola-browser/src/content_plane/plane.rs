@@ -169,8 +169,15 @@ struct PlaneState {
     surface: Option<wl_surface::WlSurface>,
     subsurface: Option<wl_subsurface::WlSubsurface>,
     parent: Option<wl_surface::WlSurface>,
-    /// Buffers awaiting compositor `Release` this cycle (WPE loan not returned yet).
+    /// Buffers awaiting compositor `Release` this cycle.
     inflight_keys: Vec<usize>,
+    /// Currently attached buffer key (last successful attach+commit).
+    front_key: Option<usize>,
+    /// Compositor released these, but they are/were still the front buffer —
+    /// **do not** return to WebKit until a different buffer is attached.
+    /// Returning early lets WebKit rewrite tiles while River still samples
+    /// the surface → constant thumb/text flicker (nav often static).
+    deferred_wpe_release: HashMap<usize, PendingRelease>,
     /// Stock WPEViewWayland: one wl_buffer per WPEBuffer pool slot, reused.
     buffer_cache: HashMap<usize, CachedWl>,
     /// After attach+commit until `wl_callback.Done` — paces to display rate.
@@ -398,6 +405,10 @@ fn finish_live(state: &mut PlaneState) {
     state.awaiting_frame = false;
     state.awaiting_since = None;
     state.inflight_keys.clear();
+    state.front_key = None;
+    for (_, pr) in state.deferred_wpe_release.drain() {
+        let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
+    }
     // Shutdown: return WPE loans and destroy cached protocol objects.
     for (_, cached) in state.buffer_cache.drain() {
         if let Some(pr) = cached.data.release.lock().unwrap().take() {
@@ -405,6 +416,31 @@ fn finish_live(state: &mut PlaneState) {
         }
         *cached.data.keep_fds.lock().unwrap() = Vec::new();
         cached.buffer.destroy();
+    }
+}
+
+/// Return a WPE loan only when the buffer is not the current front buffer.
+fn send_wpe_release_if_safe(state: &mut PlaneState, key: usize, pr: PendingRelease) {
+    if state.front_key == Some(key) {
+        // Still scanout content — hold until attach of a different buffer.
+        if let Some(old) = state.deferred_wpe_release.insert(key, pr) {
+            // Duplicate: free older loan to avoid pin.
+            let _ = old.release_tx.send(Cmd::Release { token: old.token });
+        }
+    } else {
+        let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
+    }
+}
+
+/// After attaching `new_key`, flush any deferred WPE release for the previous front.
+fn on_front_swapped(state: &mut PlaneState, new_key: usize) {
+    let prev = state.front_key.replace(new_key);
+    if let Some(prev) = prev {
+        if prev != new_key {
+            if let Some(pr) = state.deferred_wpe_release.remove(&prev) {
+                let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
+            }
+        }
     }
 }
 
@@ -475,6 +511,8 @@ fn init_from_parent(
         subsurface: None,
         parent: None,
         inflight_keys: Vec::new(),
+        front_key: None,
+        deferred_wpe_release: HashMap::new(),
         buffer_cache: HashMap::new(),
         awaiting_frame: false,
         awaiting_since: None,
@@ -741,11 +779,28 @@ fn attach_dmabuf(
         c.width == width && c.height == height && c.format == format && c.modifier == modifier
     });
 
+    // Never re-loan a buffer that is still front or deferred (WebKit rewrite
+    // while River samples → constant tile flicker).
+    if inner.state.front_key == Some(buffer_key)
+        || inner.state.deferred_wpe_release.contains_key(&buffer_key)
+        || inner.state.inflight_keys.contains(&buffer_key)
+    {
+        // Still owned for display — drop this present (latest-wins will retry
+        // with a free pool slot when available).
+        let _ = release_tx.send(Cmd::Release { token });
+        return Ok(());
+    }
+
     if can_reuse {
         inner.state.cache_hit += 1;
         // Drop plane dups — cached wl_buffer already owns the mapping FDs.
         drop(planes);
         let cached = inner.state.buffer_cache.get_mut(&buffer_key).unwrap();
+        // Refuse overwrite of an outstanding compositor loan.
+        if cached.data.release.lock().unwrap().is_some() {
+            let _ = release_tx.send(Cmd::Release { token });
+            return Ok(());
+        }
         *cached.data.release.lock().unwrap() = Some(PendingRelease {
             token,
             release_tx: release_tx.clone(),
@@ -754,6 +809,9 @@ fn attach_dmabuf(
         // Stale geometry/format for this key — drop old protocol object.
         if let Some(old) = inner.state.buffer_cache.remove(&buffer_key) {
             if let Some(pr) = old.data.release.lock().unwrap().take() {
+                send_wpe_release_if_safe(&mut inner.state, buffer_key, pr);
+            }
+            if let Some(pr) = inner.state.deferred_wpe_release.remove(&buffer_key) {
                 let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
             }
             *old.data.keep_fds.lock().unwrap() = Vec::new();
@@ -848,6 +906,9 @@ fn attach_dmabuf(
 
     let _ = inner.event_queue.flush();
     let _ = inner.conn.flush();
+
+    // Swap front: flush deferred WPE release for previous front buffer.
+    on_front_swapped(&mut inner.state, buffer_key);
 
     inner.state.awaiting_frame = true;
     inner.state.awaiting_since = Some(Instant::now());
@@ -966,12 +1027,15 @@ impl Dispatch<wl_buffer::WlBuffer, Arc<BufferData>> for PlaneState {
         _: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            // Stock WPEViewWayland: return WPE loan, KEEP wl_buffer for reuse.
+            // Compositor finished this commit's use of the buffer.
+            // If it is still the surface front buffer, defer WPE return so
+            // WebKit cannot rewrite tiles while River still composites them
+            // (constant thumb/text flicker regression with naive cache).
             if let Some(pr) = data.release.lock().unwrap().take() {
-                let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
+                send_wpe_release_if_safe(state, data.buffer_key, pr);
             }
             state.inflight_keys.retain(|k| *k != data.buffer_key);
-            // Do NOT destroy proxy or drop keep_fds — cache owns them.
+            // Do NOT destroy proxy — cache reuses wl_buffer (stock).
         }
     }
 }
