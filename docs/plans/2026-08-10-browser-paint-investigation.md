@@ -111,6 +111,19 @@ rg "paint telem" /opt/sola/log/app-sola-browser.log | tail -40
 | Stuck `redraw_queued` | Clear on prepare when taking pending |
 
 Healthy under load: `ignore≈0`, `claim≈import_ok≈released`, `live=1`.
+
+### Multi-tab black screen (2026-08-11)
+
+`solactl open` opens **Helium** (by design). Drive sola-browser with:
+
+```bash
+solactl emit LaunchApp '{"app_id":"sola-browser","command":"/opt/sola/bin/sola-browser"}'
+solactl emit OpenUrl '{"url":"https://www.youtube.com/","activate":true}'
+solactl screenshot --app sola-browser -o /tmp/yt.png
+```
+
+Many open tabs kept presenting → `drop_bg=100%` on the active tab + dark
+fallback. Fix: `wpe_view_set_visible(false)` for inactive tabs.
 ## Code touch
 
 - `crates/sola-browser/src/wpe/engine.rs` — claim/release/cap/trace  
