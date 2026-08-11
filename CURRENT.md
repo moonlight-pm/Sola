@@ -23,14 +23,14 @@ Do not invent product policy.
    - **Paint / YouTube crash fixed (P0):**  
      [`docs/plans/2026-08-10-browser-paint-investigation.md`](docs/plans/2026-08-10-browser-paint-investigation.md)
      — SEGV + scroll freeze fixed (buffer ref + RLIMIT_NOFILE + lean holds).  
-   - **Paint quality (active):** content-plane freeze **locked** + code
-     scaffolding in-tree
-     [`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](docs/specs/2026-08-11-sola-browser-content-plane-design.md).
-     `SOLA_BROWSER_CONTENT=plane`: G1 OK, subsurface/present path runs,
-     **content not yet visible** (debug next). Default **import**.  
+   - **Paint quality (active):** content plane **dogfoodable** — main-thread
+     Wayland subsurface + dma-buf present; default `plane`
+     ([freeze](docs/specs/2026-08-11-sola-browser-content-plane-design.md)).
+     Fallback `SOLA_BROWSER_CONTENT=import`. **Dogfood URLs:**
+     `solactl emit OpenUrl` (never `solactl open` → Helium).  
    - **D8 profiles** shipped (no switcher).  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Next:** make plane pixels visible (G2–G3) → dogfood → cookie → vault.  
+   - **Next:** user scroll-feel dogfood → cookie → vault.  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;

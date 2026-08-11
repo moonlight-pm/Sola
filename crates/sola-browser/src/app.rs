@@ -63,6 +63,8 @@ pub enum Msg {
     /// Timer tick — refresh `cached_tabs`/`cached_active` and
     /// sync `url_field` if the active tab's URL changed.
     Tick,
+    /// Fast tick for content-plane main-thread Wayland (no-op if import mode).
+    PlanePoll,
     /// A message delivered over the Sola bus (theme, open-url, menu
     /// action, close-app). Handled by `integration::handle_bus`.
     Bus(Arc<sola_bus::Message>),
@@ -490,6 +492,11 @@ impl<E: Engine> App<E> {
     }
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
+        // Content plane must run on the iced thread (same wl_display as
+        // winit). Drain on every update so Present latency stays low.
+        if let Some(plane) = self.content_plane.as_mut() {
+            plane.poll_main();
+        }
         match msg {
             Msg::WindowReady(id) => {
                 self.window_id = id;
@@ -800,6 +807,12 @@ impl<E: Engine> App<E> {
             Msg::ActivateTab(id) => {
                 self.switch_active_tab(id);
                 self.persist_session();
+            }
+            Msg::PlanePoll => {
+                if let Some(plane) = self.content_plane.as_mut() {
+                    plane.poll_main();
+                }
+                return Task::none();
             }
             Msg::Tick => {
                 #[cfg(feature = "bitwarden")]
@@ -1702,6 +1715,8 @@ impl<E: Engine> App<E> {
         Subscription::batch(vec![
             crate::run::frame_subscription::<E>(frames, slot, active),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
+            // Plane mode: poll ~120Hz so Present/SetRect apply without dual display read.
+            iced::time::every(Duration::from_millis(8)).map(|_| Msg::PlanePoll),
             sola_kit::app::bus_subscription().map(Msg::Bus),
             event::listen_with(|event, status, _| match event {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {

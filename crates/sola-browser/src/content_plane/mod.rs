@@ -24,13 +24,15 @@ pub enum ContentMode {
 
 impl ContentMode {
     pub fn from_env() -> Self {
+        // Default **plane** after G3 dogfood (YouTube homepage visible via
+        // subsurface). Force legacy with SOLA_BROWSER_CONTENT=import.
         match std::env::var("SOLA_BROWSER_CONTENT")
-            .unwrap_or_default()
+            .unwrap_or_else(|_| "plane".into())
             .to_ascii_lowercase()
             .as_str()
         {
-            "plane" | "wayland" | "1" | "true" => Self::Plane,
-            _ => Self::Import,
+            "import" | "iced" | "legacy" | "0" | "false" => Self::Import,
+            _ => Self::Plane,
         }
     }
 

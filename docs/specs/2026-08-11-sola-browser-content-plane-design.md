@@ -7,14 +7,14 @@
 
 | Gate | Status |
 |------|--------|
-| G1 parent handles from iced `window::run` | **Pass** (dpy/surf pointers logged) |
-| G2 subsurface create on foreign display | **Code path runs**; **pixels not yet visible** in dogfood |
-| G3 attach (SHM probe + dma-buf present) | present_ok logs; **not visible** (suspect foreign-queue / z-order / compositor import of NVIDIA modifier) |
-| G4 frame callback release | Partial (release previous on next present) |
+| G1 parent handles from iced `window::run` | **Pass** |
+| G2 subsurface | **Pass** (main-thread Wayland only — dual display-read was the bug) |
+| G3 attach SHM + dma-buf | **Pass** — magenta probe visible; YouTube homepage full grid dogfood |
+| G4 release previous on next present | **Pass** (GTK-style) |
 
-**Default remains `SOLA_BROWSER_CONTENT=import`.** Enable with `plane` for dogfood.
+**Default:** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.
 
-**Next debug:** pure-rust vs libwayland display ownership; force parent commit; place_above; LINEAR re-export if NVIDIA modifier fails wlroots sample.
+**Dogfood:** Open URLs with `solactl emit OpenUrl '…'` (not `solactl open` → Helium).
 **Branch context:** `naturalethic/browser`  
 **Related:**
 [paint investigation](../plans/2026-08-10-browser-paint-investigation.md);
