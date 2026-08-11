@@ -23,17 +23,16 @@ Do not invent product policy.
    - **Paint / YouTube crash fixed (P0):**  
      [`docs/plans/2026-08-10-browser-paint-investigation.md`](docs/plans/2026-08-10-browser-paint-investigation.md)
      — SEGV + scroll freeze fixed (buffer ref + RLIMIT_NOFILE + lean holds).  
-   - **Paint quality (active):** telem + pipeline:
-     latest-wins mailbox; hide inactive WPE views; **dma-buf blit→owned**
-     + GPU Wait; **headless `render_buffer` hijack** (no stock auto-
-     `buffer_released` race — root of YT homepage black/nav flicker).
-     Dogfood homepage scroll: near_black ≤2.6%, `drop_cap=0`,
-     `claim≈import≈released`, gaps ~35 ms. `fence_none` expected on
-     headless. Menu **Paint Stats** (⇧⌘I).  
+   - **Paint quality (active):** headless→iced path improved but not
+     daily-driver. **Next architecture:** content plane freeze
+     [`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](docs/specs/2026-08-11-sola-browser-content-plane-design.md)
+     — iced chrome + Wayland content surface (River presents); **awaiting
+     human lock** then Phase 0 spike (G1–G4).  
    - **D8 profiles** shipped (no switcher).  
-   - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Next:** user dogfood scroll feel → cookie stickiness → vault →
-     history → NV12 (P1); DPR/blur if still soft.  
+   - **Still ask:** **D5** middle-click, **D6** search; **content-plane
+     freeze lock**.  
+   - **Next:** lock freeze → content-plane spike → cookie stickiness →
+     vault → history → NV12 (P1).  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
