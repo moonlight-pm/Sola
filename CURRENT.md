@@ -24,7 +24,7 @@ Do not invent product policy.
      [`docs/plans/2026-08-10-browser-paint-investigation.md`](docs/plans/2026-08-10-browser-paint-investigation.md)
      — SEGV + scroll freeze fixed (buffer ref + RLIMIT_NOFILE + lean holds).  
    - **Paint quality (active):** telem + pipeline fix shipped:
-     latest-wins mailbox, worker inactive-tab release, **RETIRE_DEPTH=0**
+     latest-wins mailbox; hide inactive WPE views; optimistic active_handle; **RETIRE_DEPTH=0**
      (was pinching 2-buffer pool → ignore deadlock). Dogfood: scroll
      blackout / menu flicker should improve; re-check
      `rg "paint telem" /opt/sola/log/app-sola-browser.log` for

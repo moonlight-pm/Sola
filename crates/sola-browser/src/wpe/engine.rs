@@ -1183,13 +1183,27 @@ unsafe fn process_cmd(ctx: &mut WorkerCtx, cmd: Cmd<WpeEngine>) -> bool {
         Cmd::SetActiveTab(id) => {
             // Tab must exist (chrome should never send a SetActiveTab
             // for an unknown id, but tolerate it by ignoring).
-            if let Some(idx) = ctx.tabs.iter().position(|t| t.id == id) {
-                ctx.active = id;
-                ctx.active_atomic
-                    .store(id.0, std::sync::atomic::Ordering::Relaxed);
-                let (w, h) = ctx.last_css;
-                let scale = ctx.last_scale;
-                let tab = &mut ctx.tabs[idx];
+            if !ctx.tabs.iter().any(|t| t.id == id) {
+                return true;
+            }
+            ctx.active = id;
+            ctx.active_atomic
+                .store(id.0, std::sync::atomic::Ordering::Relaxed);
+            let (w, h) = ctx.last_css;
+            let scale = ctx.last_scale;
+            // Hide inactive WPE views so they stop buffer-rendered storms
+            // (was drop_bg≈100% + active tab starved / black after OpenUrl).
+            for tab in ctx.tabs.iter_mut() {
+                if tab.wpe_view.is_null() {
+                    continue;
+                }
+                let on = tab.id == id;
+                sys::wpe_view_set_visible(tab.wpe_view, on as sys::gboolean);
+                if !on {
+                    sys::wpe_view_focus_out(tab.wpe_view);
+                }
+            }
+            if let Some(tab) = ctx.tabs.iter_mut().find(|t| t.id == id) {
                 if !tab.wpe_view.is_null() {
                     // Blank / new-tab: leave focus OUT of the webview so the
                     // omnibox caret stays visible (⌘T focuses the URL bar).
@@ -1399,9 +1413,13 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
     if !wpe_view.is_null() {
         apply_view_scale(&mut tab, ctx.last_scale);
         ensure_view_size(&mut tab, ctx.last_css.0, ctx.last_css.1);
+        // Only the active tab paints. Background tabs stay invisible so they
+        // do not flood buffer-rendered (multi-tab OpenUrl black-screen path).
+        let show = ctx.active == id;
+        sys::wpe_view_set_visible(wpe_view, show as sys::gboolean);
         // New blank tabs start unfocused so chrome can own the omnibox caret.
         let blank = initial_url.is_empty() || initial_url == "about:blank";
-        if blank {
+        if blank || !show {
             sys::wpe_view_focus_out(wpe_view);
         }
     }
