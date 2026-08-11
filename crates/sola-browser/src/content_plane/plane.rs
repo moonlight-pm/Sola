@@ -7,9 +7,10 @@
 //! Shares iced's display via `Backend::from_foreign_display`.
 
 use std::collections::VecDeque;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use wayland_backend::sys::client::Backend as SysBackend;
@@ -100,9 +101,37 @@ struct PendingRelease {
 /// Per-`wl_buffer` data: release WPE only after compositor `Release`.
 struct BufferData {
     release: Mutex<Option<PendingRelease>>,
-    /// Optional SHM memfd kept alive while buffer is live.
-    shm_fd: Mutex<Option<OwnedFd>>,
+    /// SHM memfd and/or dma-buf FD kept open until buffer destroy.
+    keep_fd: Mutex<Option<OwnedFd>>,
 }
+
+/// A dma-buf frame waiting for the previous commit's `wl_surface.frame`.
+struct QueuedPresent {
+    fd: OwnedFd,
+    width: u32,
+    height: u32,
+    format: u32,
+    modifier: u64,
+    stride: u32,
+    offset: u32,
+    extra_planes: Vec<(u32, u32)>,
+    token: ResourceToken,
+    release_tx: Sender<Cmd<WpeEngine>>,
+}
+
+impl QueuedPresent {
+    fn release(self) {
+        let _ = self.release_tx.send(Cmd::Release { token: self.token });
+    }
+}
+
+/// Soft cap: if compositor never sends `Release`, stop attaching new buffers
+/// (return loan to WPE) rather than destroying buffers still on screen.
+const MAX_INFLIGHT: usize = 6;
+
+/// If `wl_callback.Done` is late/missing, unlock attach so scroll does not
+/// freeze on the first committed frame (foreign-display dispatch races).
+const FRAME_CB_TIMEOUT: Duration = Duration::from_millis(32);
 
 struct PlaneInner {
     conn: Connection,
@@ -120,6 +149,12 @@ struct PlaneState {
     parent: Option<wl_surface::WlSurface>,
     /// Buffers still held by us until compositor `Release` (must not Drop early).
     inflight: Vec<wl_buffer::WlBuffer>,
+    /// After attach+commit until `wl_callback.Done` — paces to display rate.
+    awaiting_frame: bool,
+    /// When `awaiting_frame` was set (timeout unlock if callback is late).
+    awaiting_since: Option<Instant>,
+    /// Latest unattached present (latest-wins while awaiting frame).
+    queued: Option<QueuedPresent>,
     /// wl_surface buffer_scale (matches WebKit device scale when >1).
     buffer_scale: i32,
     x: i32,
@@ -127,6 +162,9 @@ struct PlaneState {
     width: u32,
     height: u32,
     present_ok: u64,
+    frame_done: u64,
+    drop_queued: u64,
+    drop_inflight_cap: u64,
     ready: bool,
 }
 
@@ -180,11 +218,22 @@ impl ContentPlane {
             self.pending = out;
         }
 
+        // Dispatch compositor events first so frame-done / Release clear
+        // `awaiting_frame` before we try to attach the next buffer.
+        if let Some(inner) = self.inner.as_mut() {
+            let _ = inner.event_queue.dispatch_pending(&mut inner.state);
+            unlock_stale_frame_gate(&mut inner.state);
+            flush_queued_after_frame(inner);
+        }
+
         while let Some(cmd) = self.pending.pop_front() {
             self.apply(cmd);
         }
         if let Some(inner) = self.inner.as_mut() {
+            // Second pass: frame-done may have arrived mid-apply; present queue.
             let _ = inner.event_queue.dispatch_pending(&mut inner.state);
+            unlock_stale_frame_gate(&mut inner.state);
+            flush_queued_after_frame(inner);
             // Do NOT prepare_read / read — iced owns the display read.
             let _ = inner.conn.flush();
         }
@@ -313,10 +362,59 @@ pub fn parent_ptrs(window: &dyn iced::window::Window) -> Result<(usize, usize), 
 }
 
 fn finish_live(state: &mut PlaneState) {
-    // Force-release any inflight WPE loans (shutdown path).
+    if let Some(q) = state.queued.take() {
+        q.release();
+    }
+    state.awaiting_frame = false;
+    state.awaiting_since = None;
+    // Shutdown only: force-release inflight WPE loans without compositor wait.
     for buf in state.inflight.drain(..) {
-        // Best-effort: destroy without waiting for compositor.
+        if let Some(data) = buf.data::<Arc<BufferData>>() {
+            if let Some(pr) = data.release.lock().unwrap().take() {
+                let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
+            }
+            *data.keep_fd.lock().unwrap() = None;
+        }
         buf.destroy();
+    }
+}
+
+fn unlock_stale_frame_gate(state: &mut PlaneState) {
+    if !state.awaiting_frame {
+        return;
+    }
+    let Some(since) = state.awaiting_since else {
+        state.awaiting_frame = false;
+        return;
+    };
+    if since.elapsed() >= FRAME_CB_TIMEOUT {
+        state.awaiting_frame = false;
+        state.awaiting_since = None;
+    }
+}
+
+/// After `wl_callback.Done` (or timeout unlock), attach the latest queued present.
+fn flush_queued_after_frame(inner: &mut PlaneInner) {
+    if inner.state.awaiting_frame {
+        return;
+    }
+    let Some(q) = inner.state.queued.take() else {
+        return;
+    };
+    if let Err(e) = attach_dmabuf(
+        inner,
+        q.fd,
+        q.width,
+        q.height,
+        q.format,
+        q.modifier,
+        q.stride,
+        q.offset,
+        q.extra_planes,
+        q.token,
+        q.release_tx,
+    ) {
+        tracing::warn!("content plane queued present: {e}");
     }
 }
 
@@ -345,12 +443,18 @@ fn init_from_parent(
         subsurface: None,
         parent: None,
         inflight: Vec::new(),
+        awaiting_frame: false,
+        awaiting_since: None,
+        queued: None,
         buffer_scale: 1,
         x: 200,
         y: 120,
         width: 400,
         height: 400,
         present_ok: 0,
+        frame_done: 0,
+        drop_queued: 0,
+        drop_inflight_cap: 0,
         ready: false,
     };
 
@@ -459,10 +563,10 @@ fn present_shm_color(inner: &mut PlaneInner, r: u8, g: u8, b: u8) -> Result<(), 
     }
     let data = Arc::new(BufferData {
         release: Mutex::new(None),
-        shm_fd: Mutex::new(Some(fd)),
+        keep_fd: Mutex::new(Some(fd)),
     });
     let pool = shm.create_pool(
-        data.shm_fd
+        data.keep_fd
             .lock()
             .unwrap()
             .as_ref()
@@ -510,6 +614,64 @@ fn present_dmabuf(
     token: ResourceToken,
     release_tx: Sender<Cmd<WpeEngine>>,
 ) -> Result<(), String> {
+    if width == 0 || height == 0 {
+        let _ = release_tx.send(Cmd::Release { token });
+        return Ok(());
+    }
+
+    // Pace to display: while waiting for the previous commit's frame
+    // callback, keep only the newest buffer (latest-wins queue).
+    // Attaching every WebKit frame without pacing filled inflight and
+    // the old force-release path destroyed compositor-held buffers →
+    // black swaths / nav flicker under hard scroll.
+    if inner.state.awaiting_frame {
+        if let Some(old) = inner.state.queued.replace(QueuedPresent {
+            fd,
+            width,
+            height,
+            format,
+            modifier,
+            stride,
+            offset,
+            extra_planes,
+            token,
+            release_tx,
+        }) {
+            old.release();
+            inner.state.drop_queued += 1;
+        }
+        return Ok(());
+    }
+
+    attach_dmabuf(
+        inner,
+        fd,
+        width,
+        height,
+        format,
+        modifier,
+        stride,
+        offset,
+        extra_planes,
+        token,
+        release_tx,
+    )
+}
+
+/// Attach + commit a dma-buf. Caller must ensure `!awaiting_frame`.
+fn attach_dmabuf(
+    inner: &mut PlaneInner,
+    fd: OwnedFd,
+    width: u32,
+    height: u32,
+    format: u32,
+    modifier: u64,
+    stride: u32,
+    offset: u32,
+    extra_planes: Vec<(u32, u32)>,
+    token: ResourceToken,
+    release_tx: Sender<Cmd<WpeEngine>>,
+) -> Result<(), String> {
     let dmabuf = inner
         .state
         .dmabuf
@@ -527,32 +689,52 @@ fn present_dmabuf(
         return Ok(());
     }
 
+    // Never destroy an already-attached buffer. If Release events lag,
+    // drop this *new* loan so WPE can recycle without rewriting on-screen
+    // memory (force-releasing old inflight caused residual black swaths).
+    if inner.state.inflight.len() >= MAX_INFLIGHT {
+        inner.state.drop_inflight_cap += 1;
+        if inner.state.drop_inflight_cap == 1 || inner.state.drop_inflight_cap % 30 == 0 {
+            tracing::warn!(
+                inflight = inner.state.inflight.len(),
+                drop_cap = inner.state.drop_inflight_cap,
+                "content plane: inflight cap — drop new frame (keep displayed)"
+            );
+        }
+        let _ = release_tx.send(Cmd::Release { token });
+        return Ok(());
+    }
+
     let data = Arc::new(BufferData {
         release: Mutex::new(Some(PendingRelease { token, release_tx })),
-        shm_fd: Mutex::new(None),
+        // Own the client-side dma-buf FD until compositor Release + destroy.
+        keep_fd: Mutex::new(Some(fd)),
     });
 
     let params = dmabuf.create_params(&qh, ());
-    let raw = fd.into_raw_fd();
-    let borrowed = unsafe { BorrowedFd::borrow_raw(raw) };
-    params.add(
-        borrowed,
-        0,
-        offset,
-        stride,
-        (modifier >> 32) as u32,
-        (modifier & 0xffff_ffff) as u32,
-    );
-    for (i, (s, o)) in extra_planes.iter().enumerate() {
+    {
+        let keep = data.keep_fd.lock().unwrap();
+        let raw = keep.as_ref().unwrap().as_raw_fd();
         let borrowed = unsafe { BorrowedFd::borrow_raw(raw) };
         params.add(
             borrowed,
-            (i + 1) as u32,
-            *o,
-            *s,
+            0,
+            offset,
+            stride,
             (modifier >> 32) as u32,
             (modifier & 0xffff_ffff) as u32,
         );
+        for (i, (s, o)) in extra_planes.iter().enumerate() {
+            let borrowed = unsafe { BorrowedFd::borrow_raw(raw) };
+            params.add(
+                borrowed,
+                (i + 1) as u32,
+                *o,
+                *s,
+                (modifier >> 32) as u32,
+                (modifier & 0xffff_ffff) as u32,
+            );
+        }
     }
 
     // User-data carries WPE release — only after compositor `Release`.
@@ -562,9 +744,8 @@ fn present_dmabuf(
         format,
         zwp_linux_buffer_params_v1::Flags::empty(),
         &qh,
-        data,
+        Arc::clone(&data),
     );
-    std::mem::forget(unsafe { OwnedFd::from_raw_fd(raw) });
 
     // Keep buffer_scale in sync (SetRect updates preferred scale).
     surface.set_buffer_scale(inner.state.buffer_scale.max(1));
@@ -576,12 +757,18 @@ fn present_dmabuf(
     let _ = inner.event_queue.flush();
     let _ = inner.conn.flush();
 
+    // Gate the next attach on frame callback (display-rate pacing).
+    inner.state.awaiting_frame = true;
+    inner.state.awaiting_since = Some(Instant::now());
     // Keep proxy alive until Release event (do NOT destroy / release WPE yet).
     inner.state.inflight.push(buffer);
     inner.state.present_ok += 1;
     if inner.state.present_ok == 1 || inner.state.present_ok % 60 == 0 {
         tracing::info!(
             n = inner.state.present_ok,
+            frame_done = inner.state.frame_done,
+            drop_queued = inner.state.drop_queued,
+            drop_inflight_cap = inner.state.drop_inflight_cap,
             width,
             height,
             buffer_scale = inner.state.buffer_scale,
@@ -590,19 +777,6 @@ fn present_dmabuf(
             modifier,
             "content plane present ok"
         );
-    }
-    // Cap inflight if Release events lag (still return WPE loan).
-    while inner.state.inflight.len() > 4 {
-        let old = inner.state.inflight.remove(0);
-        if let Some(data) = old.data::<Arc<BufferData>>() {
-            if let Some(pr) = data.release.lock().unwrap().take() {
-                let _ = pr
-                    .release_tx
-                    .send(Cmd::Release { token: pr.token });
-            }
-            *data.shm_fd.lock().unwrap() = None;
-        }
-        old.destroy();
     }
     Ok(())
 }
@@ -699,7 +873,7 @@ impl Dispatch<wl_buffer::WlBuffer, Arc<BufferData>> for PlaneState {
             if let Some(pr) = data.release.lock().unwrap().take() {
                 let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
             }
-            *data.shm_fd.lock().unwrap() = None;
+            *data.keep_fd.lock().unwrap() = None;
             // Drop our inflight hold; destroy the protocol object.
             state.inflight.retain(|b| b.id() != proxy.id());
             proxy.destroy();
@@ -722,13 +896,20 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for PlaneState {
 
 impl Dispatch<wl_callback::WlCallback, ()> for PlaneState {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         _: &wl_callback::WlCallback,
-        _: wl_callback::Event,
+        event: wl_callback::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wl_callback::Event::Done { callback_data: _ } = event {
+            // Compositor is ready for the next commit — clear the gate so
+            // `flush_queued_after_frame` can attach the latest buffer.
+            state.awaiting_frame = false;
+            state.awaiting_since = None;
+            state.frame_done += 1;
+        }
     }
 }
 

@@ -150,11 +150,29 @@ releases after blit. No stock auto-release of presented frames.
 Dogfood (homepage hard scroll): near_black ≤2.6%, `drop_cap=0`,
 `claim≈import≈released`, `gap_*` ~35 ms (was multi-second blackout gaps).
 
+### Content-plane residual scroll (2026-08-11)
+
+After plane cut-over, user still reported black swaths / nav flicker on YT
+homepage hard scroll. Plane path issues:
+
+| Cause | Fix |
+|-------|-----|
+| Attach every WebKit frame without display pacing | **`wl_surface.frame` gate** — queue latest-wins while awaiting Done |
+| Force-destroy oldest `inflight` when len > 4 | **Removed** — never release/destroy attached buffers before compositor `Release` |
+| Inflight storm / missing Release | Soft cap: **drop new** frame loan; keep displayed buffers |
+| Client dma-buf FD `mem::forget` leak | Own FD in `BufferData` until Release |
+| Missing frame callback (foreign display) | **32 ms timeout** unlock so first-frame freeze is impossible |
+
+Code: `crates/sola-browser/src/content_plane/plane.rs`.
+
+**Still open:** user dogfood confirm; soft text / DPR polish.
+
 ## Code touch
 
 - `crates/sola-browser/src/wpe/sola_wpe.c` — render_buffer hijack  
 - `crates/sola-browser/src/wpe/engine.rs` — claim/release/cap/trace  
 - `crates/sola-browser/src/wpe/frame.rs` — blit+Wait; no tab-switch clear  
 - `crates/sola-browser/src/wpe/paint_stats.rs` — quality telem  
+- `crates/sola-browser/src/content_plane/plane.rs` — frame-paced present  
 - Docs: this plan, CURRENT, capabilities gap notes  
 

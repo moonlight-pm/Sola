@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-11 (`naturalethic/browser`) — content plane default; residual scroll quality
+**As of:** 2026-08-11 (`naturalethic/browser`) — plane frame-paced present; dogfood residual
 
 ---
 
@@ -23,16 +23,17 @@ Do not invent product policy.
      — **implemented, partial quality**.  
    - **Paint path (as-built):** default `SOLA_BROWSER_CONTENT=plane` — iced
      chrome + Wayland subsurface dma-buf (River presents); empty input
-     region; hold until `wl_buffer.release`; content scale **2×** default
+     region; hold until `wl_buffer.release`; **frame-callback paced attach**
+     (no force-release of on-screen buffers); content scale **2×** default
      (`SOLA_BROWSER_DPR` override); fallback `import`.  
-   - **User dogfood (YT homepage):** still sees **black swaths / nav flicker
-     / soft text** under scroll — metrics improved; **not daily-driver bar**.  
+   - **User dogfood (YT homepage):** re-check black/flicker after frame-pace
+     fix; soft text / daily-driver bar still open until confirmed.  
    - **Dogfood URLs:** `solactl emit OpenUrl` only — **never** `solactl open`
      (Helium / D3).  
    - **D8 profiles** shipped (no switcher).  
    - **Still ask:** **D5** middle-click, **D6** search.  
-   - **Next:** residual scroll black/flicker (FrameDone pacing / tiles) →
-     blur polish → cookie stickiness → vault session.  
+   - **Next:** dogfood YT hard-scroll (black/flicker) → blur polish →
+     cookie stickiness → vault session.  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
@@ -63,7 +64,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | Content plane default; homepage paints; scroll works; **residual black/flicker/blur** on YT; OpenUrl bus; D8 | — |
+| Browser | Content plane default; frame-paced present; **re-dogfood black/flicker**; soft text open; OpenUrl bus; D8 | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install

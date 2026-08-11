@@ -14,7 +14,8 @@
 | G4 hold until compositor `wl_buffer.release` | **Pass** (not immediate prev drop) |
 | Input (scroll/click) | **Pass** — empty input region → iced → WPE |
 | Content scale 2× + `set_buffer_scale` | **Pass** (override `SOLA_BROWSER_DPR`) |
-| Daily-driver YT hard-scroll quality | **Open** — user still reports black swaths, nav flicker, soft text |
+| Frame-callback paced attach | **Pass** (code) — no force-release of attached buffers; latest-wins queue while awaiting frame |
+| Daily-driver YT hard-scroll quality | **Open** — re-dogfood after frame-pace; soft text still open |
 
 **Default:** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.  
 **Probe:** `SOLA_BROWSER_PLANE_PROBE=1` for magenta SHM visibility test.
