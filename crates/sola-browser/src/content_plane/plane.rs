@@ -806,11 +806,22 @@ fn attach_dmabuf(
             release_tx: release_tx.clone(),
         });
     } else {
-        // Stale geometry/format for this key — drop old protocol object.
+        // Stale geometry/format for this key. **Never destroy** a wl_buffer that
+        // is still front / inflight / deferred — that rewrote-on-screen path
+        // is the constant thumb/text flicker regression.
+        let still_live = inner.state.front_key == Some(buffer_key)
+            || inner.state.inflight_keys.contains(&buffer_key)
+            || inner.state.deferred_wpe_release.contains_key(&buffer_key);
+        if still_live {
+            // Keep old protocol object; drop this present (wrong size for cache).
+            let _ = release_tx.send(Cmd::Release { token });
+            return Ok(());
+        }
         if let Some(old) = inner.state.buffer_cache.remove(&buffer_key) {
             if let Some(pr) = old.data.release.lock().unwrap().take() {
                 send_wpe_release_if_safe(&mut inner.state, buffer_key, pr);
             }
+            // Only free deferred if not still front (still_live false above).
             if let Some(pr) = inner.state.deferred_wpe_release.remove(&buffer_key) {
                 let _ = pr.release_tx.send(Cmd::Release { token: pr.token });
             }

@@ -318,7 +318,8 @@ impl shader::Primitive for WpePrimitive {
         let dpr = choose_content_dpr(compositor_scale, logical_w, logical_h);
         let phys_w = ((logical_w as f64) * dpr).round().max(1.0) as u32;
         let phys_h = ((logical_h as f64) * dpr).round().max(1.0) as u32;
-        let requested = (phys_w, phys_h);
+        // Absorb 1px bound jitter so we never Resize-storm (cache destroy → flicker).
+        let requested = super::paint_budget::stabilize_phys(phys_w, phys_h);
 
         // Content plane: position in **parent surface coords** (iced buffer
         // pixels = CSS × compositor_scale), not WebKit buffer pixels.

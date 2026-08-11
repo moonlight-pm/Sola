@@ -26,13 +26,15 @@ NVIDIA + large windows (~2.5k×4k buffers in logs).
 
 ## Deep fix package (this change)
 
-### 1. Adaptive paint budget (product default)
+### 1. Stable paint budget (product default)
 
 `crates/sola-browser/src/wpe/paint_budget.rs`
 
 - Default: **honest compositor scale** (no forced 2×).
-- While scrolling (wheel within 220 ms): clamp ≤ **1.25×** so tiles keep up.
-- Opt-in old supersample: `SOLA_BROWSER_SUPER_SAMPLE=1`.
+- **No mid-scroll scale changes** — an earlier scroll clamp (≤1.25×) thrashed
+  Resize + cache destroy vs front buffer → **constant flicker regression**.
+- 1px phys-size hysteresis to avoid Resize storms.
+- Opt-in supersample: `SOLA_BROWSER_SUPER_SAMPLE=1`.
 - Force: `SOLA_BROWSER_DPR=N`.
 
 ### 2. Stock WPE Wayland present (architecture A/B)

@@ -26,7 +26,7 @@ Do not invent product policy.
      — full-width black (incl. fixed nav) = unpainted tiles; forced 2×
      supersample was a major driver.  
    - **Paint path:** default `plane` (cache + deferred front release);
-     **honest DPR** + **scroll budget ≤1.25×** (`paint_budget`);
+     **honest stable DPR** (no scroll thrash — that regressed constant flicker);
      opt-in `SOLA_BROWSER_SUPER_SAMPLE=1` / `SOLA_BROWSER_DPR=N`.  
    - **Stock Wayland:** `SOLA_BROWSER_CONTENT=wayland` → WPEDisplayWayland
      (upstream present; dual-window dogfood).  
