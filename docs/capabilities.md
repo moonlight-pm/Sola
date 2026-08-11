@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-11 (browser D9 Option A locked; interim content plane)
+**As of:** 2026-08-11 (browser Option A default: stock Wayland + lockstep)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -60,7 +60,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | arcade | sola-arcade Steam library + windowed gamescope nest | partial | [manual](manual/sola-arcade.md) | unit tests; library JSON cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; Stop-on-row; scroll preserve; nest steam exit; host label; zone/float + Cinema exit; `-S fit` | **Gaps:** some titles no host/crash; residual flicker; no `-e`; multi-store; never-played owned without local activity | yes |
 | settings | Settings panel (theme, apps, mail cfg, …) | partial | [settings](specs/2026-04-19-sola-settings-design.md), apps list-detail | local | Applications UX still evolving; not all pages kit-parity | no |
 | terminal | sola-terminal panes/tabs/tmux | partial | [terminal iced](specs/2026-06-03-sola-terminal-iced-port-plan.md) | local | Tab restore defers sticky `TerminalSession` until iced bus pump live (restart was empty UI with live tmux); pane UX depth; links polish | no |
-| browser | Browser chrome + WPE engine (single crate) | partial | [hardening](plans/2026-08-09-sola-browser-hardening.md); [Bitwarden D7](specs/2026-08-10-sola-browser-bitwarden-design.md); [profiles D8](specs/2026-08-10-sola-browser-profiles-design.md); [content plane interim](specs/2026-08-11-sola-browser-content-plane-design.md); [**Option A stock Wayland**](specs/2026-08-11-sola-browser-stock-wayland-present-design.md); [lockstep plan](plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md); [checkerboard](plans/2026-08-11-browser-checkerboard-deep-fix.md) | local; YT + `sola:scroll-stress`; NVIDIA | **Shipped subset:** multi-tab chrome, omnibox+Kagi, bus menus, float CSD, **interim content plane** (default), honest DPR, `sola:scroll-stress`, D8, Bitwarden, stop/history, copy/paste; **Wayland stock present spike** (`CONTENT=wayland`, dual-window). **Product target (D9/Option A):** stock WPE Wayland content + river lockstep under chrome hole. **Gaps:** A0 quality gate; A1–A4 lockstep cut over; daily-driver scroll; soft text; no profile switcher; cookie stickiness; vault session; downloads/history UI; NV12; B1/B4/B5; D3; no operator manual. CEF gone | no |
+| browser | Browser chrome + WPE engine (single crate) | partial | [hardening](plans/2026-08-09-sola-browser-hardening.md); [Bitwarden D7](specs/2026-08-10-sola-browser-bitwarden-design.md); [profiles D8](specs/2026-08-10-sola-browser-profiles-design.md); [content plane demoted](specs/2026-08-11-sola-browser-content-plane-design.md); [**Option A stock Wayland**](specs/2026-08-11-sola-browser-stock-wayland-present-design.md); [lockstep plan](plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md); [checkerboard](plans/2026-08-11-browser-checkerboard-deep-fix.md) | local; YT + `sola:scroll-stress`; NVIDIA | **Shipped subset:** multi-tab chrome, omnibox+Kagi, bus menus, float CSD, D8, Bitwarden, stop/history, copy/paste; **Option A default** (stock WPE Wayland + lockstep; app_id `sola.browser-content`; `BrowserContentScissor`); plane/import via env only. **Gaps:** A0 quality eye-check; A2 alignment polish; A3 lifecycle/switcher; dead plane code not deleted; soft text; no profile switcher; cookie stickiness; vault session; downloads/history UI; NV12; B1/B4/B5; D3; no operator manual. CEF gone | no |
 | agent | sola-agent ACP + Grok leader | partial | [acp runner](specs/2026-07-23-sola-agent-acp-runner-design.md), [ui backlog](specs/2026-07-23-sola-agent-ui-backlog.md) | local + leader | Pin UI missing; backlog A–I incomplete; history disk-only | no |
 | mail | sola-mail kit client | partial | [mail kit](specs/2026-07-27-sola-mail-kit-design.md) | local IMAP | Rich-text link hits; multiline polish; no full offline | no |
 | monitor | sola-monitor bus audit | partial | monitor kit port | local | UX depth | no |
@@ -96,7 +96,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| **sola-browser** | 2026-08-11: **D9 Option A locked** (stock WPE Wayland + river lockstep); interim plane; A0–A4 plan; D8; Bitwarden |
+| **sola-browser** | 2026-08-11: **Option A default** (stock WPE Wayland + river lockstep); plane/import via env; A3 open; D8; Bitwarden |
 | **sola-arcade** | 2026-08-08: banner list + nest; library cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema exit; gamescope float 16:9 |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |
 | Float defaults | Unassigned windows default-float + kit CSD on first-party apps |

@@ -130,6 +130,12 @@ pub struct AppData {
     /// interactive move/resize: only a floating window under the pointer can be
     /// Meta-dragged. Dropped when the window closes.
     pub floating: std::collections::HashSet<u32>,
+    /// Latest content scissor from browser (Option A lockstep). Applied to
+    /// every window with app_id `sola.browser-content`.
+    pub browser_content_scissor: Option<sola_bus::topics::BrowserContentScissor>,
+    /// Last Composition order (bottom→top) after lockstep injection. Used to
+    /// re-stack when content maps after shell's Composition was already applied.
+    pub last_composition: Vec<u32>,
     /// Window currently under the pointer, tracked from `river_seat_v1`
     /// `pointer_enter`/`pointer_leave`. A move/resize op targets this window at
     /// button-press time.
@@ -195,6 +201,8 @@ impl AppData {
             conn: None,
             focused_window: None,
             floating: std::collections::HashSet::new(),
+            browser_content_scissor: None,
+            last_composition: Vec::new(),
             pointer_window: None,
             pointer_pos: None,
             op: None,
@@ -265,6 +273,10 @@ pub fn bus_tick(state: &mut AppData) {
             sola_bus::topics::Topic::Composition(entries) => {
                 tracing::debug!(count = entries.len(), "got Composition");
                 let ids: Vec<u32> = entries.into_iter().map(|e| e.window_id).collect();
+                // Inject content companions immediately under sola-browser so
+                // they are not `hide()`'d and sit under the transparent hole.
+                let ids = inject_browser_content_under_chrome(state, ids);
+                state.last_composition = ids.clone();
                 state.pending.set_composition(ids);
             }
             sola_bus::topics::Topic::WindowFloating(wf) => {
@@ -277,7 +289,29 @@ pub fn bus_tick(state: &mut AppData) {
                 // attach or tear down promptly (not only on the next frame).
                 state.pending.manage_dirty = true;
             }
+            sola_bus::topics::Topic::BrowserContentScissor(sc) => {
+                tracing::info!(
+                    x = sc.x,
+                    y = sc.y,
+                    w = sc.width,
+                    h = sc.height,
+                    "got BrowserContentScissor"
+                );
+                if sc.width > 0 && sc.height > 0 {
+                    state.browser_content_scissor = Some(sc);
+                    apply_browser_content_lockstep(state);
+                }
+            }
             sola_bus::topics::Topic::Frame(f) => {
+                // Content companion is owned by lockstep — ignore shell zone/float
+                // frames so they cannot fight the scissor.
+                if is_browser_content_app(state.registry.app_id_for(f.window_id).unwrap_or("")) {
+                    tracing::debug!(
+                        window_id = f.window_id,
+                        "ignore Frame for browser content (lockstep owns geometry)"
+                    );
+                    continue;
+                }
                 let app_id = state.registry.app_id_for(f.window_id).unwrap_or("?");
                 tracing::info!(
                     window_id = f.window_id,
@@ -411,6 +445,141 @@ pub fn bus_tick(state: &mut AppData) {
                 tracing::warn!(%e, "wayland flush failed");
             }
         }
+    }
+}
+
+/// True for the stock WPE content companion (Option A).
+pub fn is_browser_content_app(app_id: &str) -> bool {
+    app_id == sola_bus::topics::BROWSER_CONTENT_APP_ID
+        // Freeze prose / older notes used hyphen form.
+        || app_id == "sola-browser-content"
+}
+
+fn is_browser_chrome_app(app_id: &str) -> bool {
+    app_id == sola_bus::topics::BROWSER_CHROME_APP_ID || app_id == "sola-browser"
+}
+
+fn browser_content_ids(state: &AppData) -> Vec<u32> {
+    state
+        .registry
+        .entries()
+        .filter(|(_, e)| {
+            e.app_id
+                .as_deref()
+                .map(is_browser_content_app)
+                .unwrap_or(false)
+        })
+        .map(|(id, _)| *id)
+        .collect()
+}
+
+fn browser_chrome_ids(state: &AppData) -> Vec<u32> {
+    state
+        .registry
+        .entries()
+        .filter(|(_, e)| {
+            e.app_id
+                .as_deref()
+                .map(is_browser_chrome_app)
+                .unwrap_or(false)
+        })
+        .map(|(id, _)| *id)
+        .collect()
+}
+
+/// Ensure every content companion sits **immediately under** each chrome
+/// window in the bottom→top Composition list (so place_top ends with chrome
+/// above content, and content is not left out / `hide()`'d).
+pub fn inject_browser_content_under_chrome(state: &AppData, order: Vec<u32>) -> Vec<u32> {
+    let content_ids = browser_content_ids(state);
+    if content_ids.is_empty() {
+        return order;
+    }
+    let chrome = browser_chrome_ids(state);
+    if chrome.is_empty() {
+        // No chrome yet — still keep content in the stack (visible) at bottom.
+        let mut out: Vec<u32> = content_ids;
+        for id in order {
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
+        return out;
+    }
+
+    let content_set: std::collections::HashSet<u32> = content_ids.iter().copied().collect();
+    // Strip any prior content entries; we'll re-insert under chrome.
+    let stripped: Vec<u32> = order
+        .into_iter()
+        .filter(|id| !content_set.contains(id))
+        .collect();
+
+    let mut out = Vec::with_capacity(stripped.len() + content_ids.len());
+    let mut inserted = false;
+    for id in stripped {
+        if chrome.contains(&id) && !inserted {
+            // First chrome surface: put all content companions just under it.
+            out.extend(content_ids.iter().copied());
+            inserted = true;
+        }
+        out.push(id);
+    }
+    if !inserted {
+        out.extend(content_ids);
+    }
+    out
+}
+
+/// Place every mapped content companion under the latest scissor + restack.
+pub fn apply_browser_content_lockstep(state: &mut AppData) {
+    let Some(sc) = state.browser_content_scissor.clone() else {
+        return;
+    };
+    if sc.width <= 0 || sc.height <= 0 {
+        return;
+    }
+    let content_ids = browser_content_ids(state);
+    if content_ids.is_empty() {
+        tracing::debug!("BrowserContentScissor held; no content window yet");
+        return;
+    }
+    for window_id in &content_ids {
+        tracing::info!(
+            window_id,
+            x = sc.x,
+            y = sc.y,
+            w = sc.width,
+            h = sc.height,
+            "lockstep place browser content"
+        );
+        state
+            .pending
+            .frame(*window_id, sc.x, sc.y, sc.width, sc.height);
+        state
+            .registry
+            .set_frame(*window_id, sc.x, sc.y, sc.width, sc.height);
+        // Content is not shell-float — clear floating so Meta-drag/CSD shadows
+        // do not treat it as a free window.
+        state.floating.remove(window_id);
+    }
+
+    // Restack: inject content under chrome into last composition (or a minimal
+    // chrome+content stack). Without this, River `hide()`s content that shell
+    // never listed → hole shows the app under the browser.
+    let base = if state.last_composition.is_empty() {
+        browser_chrome_ids(state)
+    } else {
+        state.last_composition.clone()
+    };
+    let order = inject_browser_content_under_chrome(state, base);
+    if order != state.last_composition {
+        tracing::info!(
+            count = order.len(),
+            content = content_ids.len(),
+            "lockstep restack composition (content under chrome)"
+        );
+        state.last_composition = order.clone();
+        state.pending.set_composition(order);
     }
 }
 

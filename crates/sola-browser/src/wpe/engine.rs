@@ -413,6 +413,9 @@ struct WorkerCtx {
     release_tx: Sender<Cmd<WpeEngine>>,
     /// Shared persistent profile (cookies / cache / storage). All tabs use this.
     network_session: *mut sys::WebKitNetworkSession,
+    /// Connected WPEDisplay (Wayland or headless). Must be passed into every
+    /// WebView — WebKit does not use primary for default construction.
+    display: *mut sys::WPEDisplay,
     tabs: Vec<TabState>,
     active: TabId,
     /// Last CSS/layout size sent to WPE resize.
@@ -536,10 +539,19 @@ unsafe fn worker_main(
     if use_wayland {
         tracing::info!(
             socket = wl_socket.as_deref().unwrap_or("(default)"),
-            "WPEDisplayWayland ready (stock present — deepest quality path)"
+            present = "wayland-stock",
+            content_app_id = sola_bus::topics::BROWSER_CONTENT_APP_ID,
+            "WPEDisplayWayland ready (stock present — Option A)"
         );
     } else {
-        tracing::info!("WPE headless display ready (content plane / import path)");
+        tracing::info!(
+            present = if crate::content_plane::mode().is_plane() {
+                "plane"
+            } else {
+                "import"
+            },
+            "WPE headless display ready (content plane / import path)"
+        );
     }
 
     // D8: WebKit data/cache under active profile (share/profiles/<uuid>/).
@@ -579,6 +591,7 @@ unsafe fn worker_main(
         cmd_rx,
         release_tx,
         network_session,
+        display,
         tabs: Vec::new(),
         active: TabId(u64::MAX),
         last_css: (width, height),
@@ -1459,7 +1472,7 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         std::env::remove_var("WAYLAND_DISPLAY");
     }
 
-    let webview = sys::sola_wpe_web_view_new(ctx.network_session);
+    let webview = sys::sola_wpe_web_view_new(ctx.network_session, ctx.display);
     if webview.is_null() {
         tracing::warn!(?id, "sola_wpe_web_view_new returned null; tab not opened");
         return;
@@ -1467,6 +1480,16 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
     let wpe_view = sys::webkit_web_view_get_wpe_view(webview);
     if wpe_view.is_null() {
         tracing::warn!(?id, "webkit_web_view_get_wpe_view returned null");
+    } else if crate::content_plane::mode().is_wayland() {
+        // Confirm we got a real Wayland view (not auto-default headless).
+        let toplevel = sys::wpe_view_get_toplevel(wpe_view);
+        let view_display = sys::wpe_view_get_display(wpe_view);
+        tracing::info!(
+            ?id,
+            has_toplevel = !toplevel.is_null(),
+            display_matches = view_display == ctx.display,
+            "stock Wayland content view created"
+        );
     }
 
     // Unpainted tiles clear to this color. Pure black reads as "broken swaths";
@@ -1595,8 +1618,17 @@ unsafe fn open_tab(ctx: &mut WorkerCtx, id: TabId, initial_url: String, initial_
         ensure_view_size(&mut tab, ctx.last_css.0, ctx.last_css.1);
         // Only the active tab paints. Background tabs stay invisible so they
         // do not flood buffer-rendered (multi-tab OpenUrl black-screen path).
+        // On stock Wayland, invisible views unmap their xdg_toplevel so
+        // only one content companion shows for river lockstep.
         let show = ctx.active == id;
         sys::wpe_view_set_visible(wpe_view, show as sys::gboolean);
+        if crate::content_plane::mode().is_wayland() {
+            // Stable non-empty title so river Windows/as_windows includes us
+            // (both app_id + title required). Not shown in product switcher
+            // (shell filters content companions).
+            let title = std::ffi::CString::new("content").unwrap();
+            sys::sola_wpe_view_set_toplevel_title(wpe_view, title.as_ptr());
+        }
         // New blank tabs start unfocused so chrome can own the omnibox caret.
         let blank = initial_url.is_empty() || initial_url == "about:blank";
         if blank || !show {

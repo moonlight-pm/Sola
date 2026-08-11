@@ -1,13 +1,11 @@
 # sola-browser · content plane (Wayland present)
 
 **Date:** 2026-08-11  
-**Status:** **Frozen + implemented (partial quality)** — **interim** default
-as-built on `naturalethic/browser`. Daily-driver scroll bar **not** met.
-**Product present path re-locked 2026-08-11 → Option A** (stock WPE Wayland +
-river lockstep): see
+**Status:** **Frozen + implemented (partial quality)** — **demoted** from
+default. Product present is **Option A** (stock WPE Wayland + river lockstep):
 [`2026-08-11-sola-browser-stock-wayland-present-design.md`](2026-08-11-sola-browser-stock-wayland-present-design.md).
-This freeze remains authoritative for the **content-plane interim** and for
-§4.1 history; §4.2 is elevated to product.
+This freeze remains for the content-plane path and §4.1 history; use
+`SOLA_BROWSER_CONTENT=plane` for emergency/debug only.
 
 ### Implementation progress (2026-08-11)
 
@@ -24,8 +22,8 @@ This freeze remains authoritative for the **content-plane interim** and for
 | Stock-like wl_buffer cache + deferred front release | **Pass** (code) — no rewrite while front |
 | Daily-driver YT hard-scroll quality | **Open on this path** — product quality → **Option A** (stock Wayland + lockstep) |
 
-**Default (interim):** `SOLA_BROWSER_CONTENT=plane`. Fallback: `import`.  
-**Product target:** `wayland` + river lockstep (Option A freeze).  
+**Env:** `SOLA_BROWSER_CONTENT=plane` (debug). Fallback: `import`.  
+**Product default:** stock Wayland + lockstep (no env).  
 **Probe:** `SOLA_BROWSER_PLANE_PROBE=1` for magenta SHM visibility test.
 
 **Dogfood:** `solactl emit OpenUrl '…'` (not `solactl open` → Helium).

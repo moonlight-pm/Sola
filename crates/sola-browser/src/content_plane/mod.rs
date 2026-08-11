@@ -1,11 +1,11 @@
-//! Wayland **content plane** — product paint path (freeze 2026-08-11).
+//! Browser content present modes.
 //!
-//! Web pixels are presented on a `wl_subsurface` under the iced toplevel.
-//! River composites them; iced chrome does not sample dma-bufs.
+//! **Default (product):** stock **WPEDisplayWayland** + river lockstep
+//! (`ContentMode::Wayland`). Content plane / iced import remain as
+//! emergency overrides via `SOLA_BROWSER_CONTENT=plane|import`.
 //!
-//! Mode: `SOLA_BROWSER_CONTENT=plane|import|wayland`.
-//! See `docs/specs/2026-08-11-sola-browser-content-plane-design.md` and
-//! `docs/plans/2026-08-11-browser-present-architecture-deep-dive.md`.
+//! See Option A freeze + lockstep plan, and the interim content-plane
+//! freeze for the demoted hybrid path.
 
 mod plane;
 
@@ -18,25 +18,38 @@ pub use plane::{
 pub enum ContentMode {
     /// Legacy: dma-buf → wgpu import → iced sample.
     Import,
-    /// Product: attach dma-buf to Wayland content subsurface (custom present).
+    /// Debug/emergency: headless WPE → custom content subsurface (demoted).
+    /// Env: `SOLA_BROWSER_CONTENT=plane`.
     Plane,
-    /// Stock **WPEDisplayWayland** present (upstream WPEViewWayland). Opens a
-    /// real Wayland surface for content — deepest quality path for tile/FrameDone
-    /// scheduling. Env: `SOLA_BROWSER_CONTENT=wayland`.
+    /// **Product default:** stock **WPEDisplayWayland** present + river
+    /// lockstep under iced chrome hole (`Topic::BrowserContentScissor`).
+    ///
+    /// **Input:** content surface uses the stock WPE seat when the pointer is
+    /// over the companion; chrome continues iced hit-test → WPE inject only
+    /// for chrome chrome (omnibox/tabs). Do not double-route both into the
+    /// same view.
     Wayland,
 }
 
 impl ContentMode {
     pub fn from_env() -> Self {
-        // Default **plane**. Stock Wayland: SOLA_BROWSER_CONTENT=wayland.
+        // Default **wayland** (Option A product path). Overrides:
+        // plane | import for demoted hybrids.
         match std::env::var("SOLA_BROWSER_CONTENT")
-            .unwrap_or_else(|_| "plane".into())
+            .unwrap_or_else(|_| "wayland".into())
             .to_ascii_lowercase()
             .as_str()
         {
-            "import" | "iced" | "legacy" | "0" | "false" => Self::Import,
-            "wayland" | "wpe-wayland" | "stock" => Self::Wayland,
-            _ => Self::Plane,
+            "import" | "iced" | "legacy" => Self::Import,
+            "plane" | "subsurface" | "hybrid" => Self::Plane,
+            "wayland" | "wpe-wayland" | "stock" | "1" | "true" | "" => Self::Wayland,
+            other => {
+                tracing::warn!(
+                    %other,
+                    "unknown SOLA_BROWSER_CONTENT; using wayland default"
+                );
+                Self::Wayland
+            }
         }
     }
 

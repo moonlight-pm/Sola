@@ -1133,7 +1133,23 @@ impl<E: Engine> App<E> {
         ]
         .height(Length::Fill);
 
-        let body: Element<'_, Msg> = main.into();
+        // Opaque canvas under chrome chrome (sidebar / omnibox / tabs). The
+        // window is `transparent: true` so iced's clear is α=0 — without a
+        // solid fill, every unpainted pixel shows the app under the browser.
+        // The webview shader still punches α=0 only in the content scissor.
+        let canvas = self.theme.extended_palette().background.base.color;
+        let canvas = iced::Color {
+            a: 1.0,
+            ..canvas
+        };
+        let body: Element<'_, Msg> = container(main)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(move |_t: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(canvas)),
+                ..iced::widget::container::Style::default()
+            })
+            .into();
 
         // While dragging, a transparent top layer holds the resize
         // cursor steady even when the pointer races ahead of the divider.

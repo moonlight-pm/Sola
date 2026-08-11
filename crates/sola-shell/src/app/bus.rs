@@ -199,9 +199,14 @@ impl Shell {
         // Per non-shell window: restore a saved zone if any; otherwise
         // default-float (client-requested size + WindowFloating for CSD).
         // gamescope is framed like any other app (zone/float host size).
+        // Browser content companion (Option A) is river-lockstep only —
+        // never zone/float it as a free window.
         let mut zone_frames = Vec::new();
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID {
+                continue;
+            }
+            if is_browser_content_companion(&w.app_id) {
                 continue;
             }
             if let Some(frame) = self.zoning.apply_config_zone(&w.app_id, w.window_id) {
@@ -239,8 +244,12 @@ impl Shell {
         // click-raised) used to live outside MRU and were composition-stacked
         // *above* every raised window — Helium/external apps looked "stuck"
         // on top. New maps still raise via bus_set_focus below.
+        // Content companion is not a user app (one visual unit with chrome).
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID {
+                continue;
+            }
+            if is_browser_content_companion(&w.app_id) {
                 continue;
             }
             if !self.mru_apps.iter().any(|m| m == &w.app_id) {
@@ -1198,6 +1207,11 @@ impl Shell {
             }
         }
     }
+}
+
+/// Stock WPE content companion for Option A lockstep — not a free window.
+pub(crate) fn is_browser_content_companion(app_id: &str) -> bool {
+    app_id == sola_bus::topics::BROWSER_CONTENT_APP_ID || app_id == "sola-browser-content"
 }
 
 #[cfg(test)]

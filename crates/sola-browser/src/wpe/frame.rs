@@ -175,6 +175,9 @@ impl shader::Program<crate::app::Msg> for WpeProgram {
     ) -> Option<iced::widget::shader::Action<crate::app::Msg>> {
         state.last_bounds = bounds;
         // Input is in CSS/layout pixels (WPE size is logical + device scale).
+        // Stock Wayland: pointer/scroll over the companion hit the WPE seat
+        // natively; iced only injects when the event lands on this shader
+        // (chrome chrome / dual-window click into the hole widget).
         state.last_scale = 1.0;
         let time_ms = state.now_ms();
         let mods_now = state.modifiers;
@@ -340,6 +343,16 @@ impl shader::Primitive for WpePrimitive {
                 });
             }
         }
+        // Stock Wayland: content is a sibling surface; publish global scissor
+        // for river lockstep (layout CSS coords + chrome WindowGeometry).
+        if crate::content_plane::mode().is_wayland() {
+            crate::lockstep::note_content_local(
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+            );
+        }
         {
             let mut last = self.slot.last_size.lock().unwrap();
             if *last != requested {
@@ -351,6 +364,13 @@ impl shader::Primitive for WpePrimitive {
                     phys_w,
                     phys_h,
                     compositor_scale,
+                    present = if crate::content_plane::mode().is_wayland() {
+                        "wayland-stock"
+                    } else if crate::content_plane::mode().is_plane() {
+                        "plane"
+                    } else {
+                        "import"
+                    },
                     "content resize/dpr"
                 );
                 let _ = self.slot.cmd_tx.send(Cmd::Resize {
@@ -578,19 +598,22 @@ impl shader::Primitive for WpePrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        // Product content plane: transparent hole so subsurface shows through.
-        // Stock Wayland mode: solid dark placeholder (content is a separate
-        // WPE xdg_toplevel — dual-window dogfood of upstream present quality).
+        // Transparent hole so content shows under chrome:
+        // - **plane:** subsurface is a child of iced; Load leaves parent empty
+        //   enough for the child (same surface tree).
+        // - **wayland lockstep:** companion is a *sibling below* chrome.
+        //   Load leaves opaque chrome bg in the hole → content only flashes
+        //   when chrome moves first (user dogfood). Must Clear α=0 so the
+        //   compositor composites the content window through the hole.
         if crate::content_plane::mode().is_plane()
             || crate::content_plane::mode().is_wayland()
         {
-            let clear = if crate::content_plane::mode().is_wayland() {
-                // Opaque so desktop does not show through the chrome hole.
+            let load = if crate::content_plane::mode().is_wayland() {
                 wgpu::LoadOp::Clear(wgpu::Color {
-                    r: 0.094,
-                    g: 0.094,
-                    b: 0.110,
-                    a: 1.0,
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
                 })
             } else {
                 wgpu::LoadOp::Load
@@ -601,7 +624,7 @@ impl shader::Primitive for WpePrimitive {
                     view: target,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: clear,
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,

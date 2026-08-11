@@ -53,6 +53,7 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::CloseApp,
     TopicKind::Windows,
     TopicKind::WindowFloating,
+    TopicKind::WindowGeometry,
     TopicKind::OpenUrl,
 ];
 
@@ -157,6 +158,14 @@ pub fn handle_bus<E: Engine>(app: &mut App<E>, message: Arc<Message>, app_id: &'
         Some(Topic::MenuAction(m)) if m.app_id == app_id => {
             tracing::debug!(action_id = %m.action_id, "menu action received");
             run_intent(app, intent_for_menu_action(&m.action_id))
+        }
+        Some(Topic::Windows(windows)) => {
+            crate::lockstep::note_windows(&windows, app_id);
+            Task::none()
+        }
+        Some(Topic::WindowGeometry(g)) => {
+            crate::lockstep::note_chrome_geometry(&g);
+            Task::none()
         }
         _ => Task::none(),
     }

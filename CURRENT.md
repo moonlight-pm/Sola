@@ -15,23 +15,16 @@ Do not invent product policy.
 
 ## Now
 
-1. **sola-browser · Option A (stock Wayland present)** — **priority**  
-   - **Product path locked (2026-08-11):** stock **`WPEDisplayWayland` /
-     `WPEViewWayland`** for content + **river lockstep sibling** under iced
-     chrome hole — one visual browser unit.  
-   - Freeze:
-     [`docs/specs/2026-08-11-sola-browser-stock-wayland-present-design.md`](docs/specs/2026-08-11-sola-browser-stock-wayland-present-design.md)  
-   - Plan:
-     [`docs/plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md`](docs/plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md)
-     — phases **A0→A4** (A0 quality gate first).  
-   - **Interim default (as-built):** still `SOLA_BROWSER_CONTENT=plane` until
-     A4 cut over. Plane = demoted quality endgame, not abandoned overnight.  
-   - **A0 now:** dual-window dogfood `SOLA_BROWSER_CONTENT=wayland` on
-     `sola:scroll-stress` + YT — must beat plane on full-width black before
-     heavy A2 river glue.  
-   - Test page: **`sola:scroll-stress`**. OpenUrl only (not `solactl open`).  
-   - **Still ask:** **D5** middle-click, **D6** search.  
-   - After A4: cookie stickiness → vault session.  
+1. **sola-browser · Option A parked** — **not active**  
+   - **2026-08-11 stop:** stock WPE Wayland + river lockstep **did not** beat
+     plane quality (full-width black swaths unchanged); chrome transparency /
+     stacking not shippable. Human: done with this approach.  
+   - **Archive:** git tag `archive/option-a-wayland-lockstep-2026-08-11` on
+     `naturalethic/browser` (pushed). Do not treat as product default.  
+   - **Resume browser elsewhere** from master / prior plane path as needed.  
+   - Freeze/plan kept for history only:
+     [`docs/specs/2026-08-11-sola-browser-stock-wayland-present-design.md`](docs/specs/2026-08-11-sola-browser-stock-wayland-present-design.md),
+     [`docs/plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md`](docs/plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md).  
 
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
@@ -62,7 +55,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Branch | **`naturalethic/browser`** (merged master) | Feature work in worktrees / Orca workspaces |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
-| Browser | **Option A locked** (stock Wayland + river lockstep); interim plane default; A0 dogfood next | — |
+| Browser | **Option A default** (stock Wayland + lockstep); plane/import via env; dogfood alignment next | — |
 
 **Install policy:** agents never run `cargo make install` without explicit
 permission for that install — **except** standing OK to install
@@ -88,6 +81,6 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | Process model | Multi-process; each app independently restartable |
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
 | Browser engine | **WPE only** (`sola-browser`); CEF removed (tag `pre-cef-removal`) |
-| Browser present | **Option A:** stock **WPEDisplayWayland** content + **river lockstep** under iced chrome (one visual unit). Content plane / import = interim or debug after cut over. Freeze 2026-08-11 stock-wayland-present |
+| Browser present | **Option A default:** stock **WPEDisplayWayland** content + **river lockstep** under iced chrome. `plane` / `import` via `SOLA_BROWSER_CONTENT` only. Freeze 2026-08-11 stock-wayland-present |
 | Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents |
 | Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |

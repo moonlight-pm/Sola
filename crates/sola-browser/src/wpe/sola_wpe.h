@@ -52,8 +52,13 @@ void sola_wpe_evaluate_js(WebKitWebView *view, const char *script);
 WebKitNetworkSession *sola_wpe_network_session_new(const char *data_dir,
                                                    const char *cache_dir);
 
-/* WebView bound to a network session (or default if session is NULL). */
-WebKitWebView *sola_wpe_web_view_new(WebKitNetworkSession *session);
+/* WebView bound to a network session (or default if session is NULL).
+ * `display` is CONSTRUCT_ONLY `WebKitWebView:display` — must be the
+ * connected WPEDisplay (Wayland or headless). Without this, WebKit falls
+ * back to wpe_display_get_default() which auto-picks headless when
+ * WAYLAND_DISPLAY is sealed → no content xdg_toplevel (blank hole). */
+WebKitWebView *sola_wpe_web_view_new(WebKitNetworkSession *session,
+                                     WPEDisplay *display);
 
 /* Keep WPEBuffer alive until we call wpe_view_buffer_released. Without this
  * the GObject can be finalized while iced still holds a token → SEGV in
@@ -73,3 +78,11 @@ void sola_wpe_view_buffer_rendered_safe(WPEView *view, WPEBuffer *buffer);
  * present path); zero → headless + sola render_buffer hijack.
  * Caller owns the reference. */
 WPEDisplay *sola_wpe_display_new(int use_wayland);
+
+/* Before any WPEViewWayland/toplevel is created: set process application
+ * id so xdg_toplevel.app_id becomes sola.browser-content (lockstep key).
+ * Idempotent. No-op when use_wayland is false at display_new. */
+void sola_wpe_prepare_wayland_identity(void);
+
+/* Set title on the view's toplevel (empty string hides decorative title). */
+void sola_wpe_view_set_toplevel_title(WPEView *view, const char *title);

@@ -14,10 +14,51 @@
 
 #include "sola_wpe.h"
 
+#include <gio/gio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wpe/headless/wpe-headless.h>
 #include <wpe/wayland/wpe-wayland.h>
+
+/* Wire app_id for Option A content companion (must be GLib-valid:
+ * reverse-DNS with at least one '.'). Matches sola_bus::BROWSER_CONTENT_APP_ID. */
+#define SOLA_CONTENT_APP_ID "sola.browser-content"
+
+void sola_wpe_prepare_wayland_identity(void) {
+    static gsize once = 0;
+    if (!g_once_init_enter(&once))
+        return;
+
+    /* WTF::applicationID() (WPEToplevelWayland) reads g_application_get_default()
+     * then valid g_get_prgname(). Set both before any xdg_toplevel is created. */
+    g_set_prgname(SOLA_CONTENT_APP_ID);
+    g_set_application_name("Sola Browser Content");
+
+    if (!g_application_get_default()) {
+        GApplication *app = g_application_new(
+            SOLA_CONTENT_APP_ID,
+            G_APPLICATION_NON_UNIQUE);
+        if (app) {
+            /* Hold as process default for WTF::applicationID(); do not run. */
+            g_application_set_default(app);
+            /* Intentionally leak the ref for process lifetime. */
+        } else {
+            g_warning("sola: failed to create GApplication for content app_id");
+        }
+    }
+
+    g_message("sola: wayland content identity app_id=%s", SOLA_CONTENT_APP_ID);
+    g_once_init_leave(&once, 1);
+}
+
+void sola_wpe_view_set_toplevel_title(WPEView *view, const char *title) {
+    if (!view || !WPE_IS_VIEW(view))
+        return;
+    WPEToplevel *toplevel = wpe_view_get_toplevel(view);
+    if (!toplevel)
+        return;
+    wpe_toplevel_set_title(toplevel, title ? title : "");
+}
 
 /* DRM format / modifier constants — keeping these inline avoids a
  * libdrm header dependency in the build graph. */
@@ -157,7 +198,22 @@ WebKitNetworkSession *sola_wpe_network_session_new(const char *data_dir,
     return session;
 }
 
-WebKitWebView *sola_wpe_web_view_new(WebKitNetworkSession *session) {
+WebKitWebView *sola_wpe_web_view_new(WebKitNetworkSession *session,
+                                     WPEDisplay *display) {
+    /* Always pass display when we have one. WebKit defaults to
+     * wpe_display_get_default(), which is *not* the same as primary and will
+     * invent a headless connection once WAYLAND_DISPLAY is cleared. */
+    if (session && display) {
+        return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
+                                           "network-session", session,
+                                           "display", display,
+                                           NULL));
+    }
+    if (display) {
+        return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
+                                           "display", display,
+                                           NULL));
+    }
     if (session) {
         return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
                                            "network-session", session, NULL));
@@ -412,7 +468,9 @@ WPEDisplay *sola_wpe_display_new(int use_wayland) {
         /* Stock WPEViewWayland present — no headless hijacks.
          * Connect with wpe_display_wayland_connect(display, name, err)
          * from Rust (pass WAYLAND_DISPLAY socket name). */
-        g_message("sola: WPEDisplayWayland (stock present path)");
+        sola_wpe_prepare_wayland_identity();
+        g_message("sola: WPEDisplayWayland (stock present path, app_id=%s)",
+                  SOLA_CONTENT_APP_ID);
         return wpe_display_wayland_new();
     }
     sola_wpe_init_headless_hijacks();

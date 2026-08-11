@@ -152,20 +152,17 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 **Runtime:** iced main thread + `wpe-engine` GLib thread.
 
-**Paint (as-built interim, default `plane`):** WPE headless → claim →
-**content plane** dma-buf on `wl_subsurface` under iced (River presents).
-Honest DPR + deferred front release; `import` fallback.
-Freeze (interim):
-[`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](specs/2026-08-11-sola-browser-content-plane-design.md).
-
-**Paint (product target — Option A, locked 2026-08-11):** stock
-**`WPEDisplayWayland` / `WPEViewWayland`** presents content on a companion
-surface (`sola-browser-content`); iced chrome (`sola-browser`) keeps a
-transparent hole; **sola-river lockstep** places/sizes content under the hole
-(one visual unit). Env spike: `SOLA_BROWSER_CONTENT=wayland`.
+**Paint (product default — Option A):** stock
+**`WPEDisplayWayland` / `WPEViewWayland`** presents content on companion
+`sola.browser-content`; iced chrome keeps a transparent hole; **sola-river
+lockstep** places/sizes via sticky `Topic::BrowserContentScissor`.
+Overrides: `SOLA_BROWSER_CONTENT=plane` (content subsurface) or `import`
+(iced sample). A3 lifecycle/switcher still open; dead plane code not deleted.
 Freeze + plan:
 [`docs/specs/2026-08-11-sola-browser-stock-wayland-present-design.md`](specs/2026-08-11-sola-browser-stock-wayland-present-design.md),
 [`docs/plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md`](plans/2026-08-11-sola-browser-stock-wayland-lockstep-plan.md).
+Content-plane freeze (demoted):
+[`docs/specs/2026-08-11-sola-browser-content-plane-design.md`](specs/2026-08-11-sola-browser-content-plane-design.md).
 
 Clipboard: page selection → iced write; paste → `Cmd::PasteText` /
 InsertText. **System `http`/`https` still Helium (D3)** via `solactl open`;

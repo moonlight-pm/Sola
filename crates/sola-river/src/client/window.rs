@@ -127,6 +127,13 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                         "inferred gamescope identity from pid"
                     );
                 }
+                // Option A: content companion just announced itself — apply
+                // any scissor already published by chrome.
+                if crate::client::is_browser_content_app(
+                    state.registry.app_id_for(window_id).unwrap_or(""),
+                ) {
+                    crate::client::apply_browser_content_lockstep(state);
+                }
                 apps_dirty = true;
             }
             Event::Title { title } => {

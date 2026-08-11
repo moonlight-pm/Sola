@@ -216,6 +216,11 @@ impl WindowRegistry {
         self.by_id.remove(&id);
     }
 
+    /// Iterate all known windows (including partial app_id/title).
+    pub fn entries(&self) -> impl Iterator<Item = (&u32, &Entry)> {
+        self.by_id.iter()
+    }
+
     /// Snapshot as the bus `Window` list, skipping entries that haven't yet
     /// received both their `app_id` and `title` events — those are still
     /// in flight and would produce spurious sticky transitions.

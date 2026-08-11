@@ -2,10 +2,11 @@
 
 **Date:** 2026-08-11  
 **Status:** **Frozen — product path** (human lock: “Option A … lock it in”)  
+**As-built default (2026-08-11):** stock Wayland + lockstep is process
+default (no env). Content plane / import via `SOLA_BROWSER_CONTENT` only.
 **Supersedes (for product paint quality):** preferred hybrid in
 [`2026-08-11-sola-browser-content-plane-design.md`](2026-08-11-sola-browser-content-plane-design.md)
-§4.1 as **daily-driver target**. Content plane remains implemented and may
-stay interim default until A0–A3 cut over.
+§4.1.
 
 **Related:** [content plane freeze](2026-08-11-sola-browser-content-plane-design.md)
 (§4.2 alternate elevated); [checkerboard deep fix](../plans/2026-08-11-browser-checkerboard-deep-fix.md);
@@ -92,7 +93,7 @@ display-link / present quality under YouTube-class scroll.
 | Surface | `app_id` (target) | Process |
 |---------|-------------------|---------|
 | Chrome | `sola-browser` | `sola-browser` (iced) |
-| Content | `sola-browser-content` | same process UI+WPE worker (preferred) or document if split |
+| Content | `sola.browser-content` (wire; GLib-valid) | same process UI+WPE worker |
 
 One bus app identity for session/launch where possible; river may key the
 companion by app_id or bus-published window id.
@@ -110,9 +111,9 @@ mix. Prefer **not** regressing page scroll/click.
 
 ## 7. Fallback matrix
 
-| Mode | Env | Role after A4 |
-|------|-----|----------------|
-| Stock Wayland + lockstep | default | **Product** |
+| Mode | Env | Role |
+|------|-----|------|
+| Stock Wayland + lockstep | **default** (unset or `wayland`) | **Product** |
 | Content plane | `SOLA_BROWSER_CONTENT=plane` | Debug / emergency |
 | iced import | `SOLA_BROWSER_CONTENT=import` | Debug only |
 

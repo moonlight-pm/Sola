@@ -8,6 +8,7 @@ pub mod content_plane;
 pub mod engine;
 pub mod input;
 pub mod integration;
+pub mod lockstep;
 pub mod profiles;
 pub mod run;
 pub mod session;

@@ -399,6 +399,25 @@ pub struct BrowserTab {
     pub session_state: Option<String>,
 }
 
+/// Wayland `app_id` for the stock WPE content companion (Option A lockstep).
+/// GLib-valid form (`sola.browser-content`); freeze prose may say
+/// `sola-browser-content` — treat these as the same surface role.
+pub const BROWSER_CONTENT_APP_ID: &str = "sola.browser-content";
+
+/// Chrome / bus app id for sola-browser (iced toplevel).
+pub const BROWSER_CHROME_APP_ID: &str = "sola-browser";
+
+/// Content scissor in **global/output layout coords** (same space as
+/// [`FrameUpdate`] / [`WindowGeometry`]). Browser publishes; sola-river
+/// places the content companion under the chrome hole (Option A A2).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserContentScissor {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 /// Browser-wide singleton config. Headroom for future fields (default
 /// search engine, zoom default, etc.) without breaking the schema.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -674,6 +693,11 @@ define_topics! {
     // ordinals.
     #[persistent(keys = [id])]
     TerminalSession(TerminalSession),
+
+    // Content hole geometry for stock WPE Wayland lockstep (browser → river).
+    // Sticky singleton: latest scissor wins; river places `BROWSER_CONTENT_APP_ID`.
+    #[sticky]
+    BrowserContentScissor(BrowserContentScissor),
 
     // Browser singleton config (active tab id, future browser-wide
     // settings). Lives in its own namespace file so frequent active-tab

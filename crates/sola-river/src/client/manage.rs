@@ -392,7 +392,13 @@ pub fn handle_render_start(state: &mut AppData) {
         // every normal app and contributed to z-order thrash / flicker.
         let visible: std::collections::HashSet<u32> = order.iter().copied().collect();
         for (&id, proxy) in &state.windows_by_id {
-            if visible.contains(&id) {
+            let app = state.registry.app_id_for(id).unwrap_or("");
+            // Lockstep content must never be hide()'d — shell may not list it
+            // in Composition yet; hide would leave a transparent chrome hole
+            // looking through to whatever sits under the browser.
+            let lockstep_content = crate::client::is_browser_content_app(app)
+                && state.browser_content_scissor.is_some();
+            if visible.contains(&id) || lockstep_content {
                 proxy.show();
             } else {
                 proxy.hide();

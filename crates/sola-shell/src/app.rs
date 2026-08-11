@@ -591,6 +591,15 @@ impl Shell {
     fn build_composition_entries(&self) -> Vec<CompositionEntry> {
         let mut entries: Vec<CompositionEntry> = Vec::new();
 
+        // Option A content companion: not an independent app; stack just under
+        // sola-browser chrome (inserted after the app pass).
+        let content_wids: Vec<u32> = self
+            .known_windows
+            .iter()
+            .filter(|w| bus::is_browser_content_companion(&w.app_id))
+            .map(|w| w.window_id)
+            .collect();
+
         // 1. Menubar — always at the bottom.
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
             entries.push(CompositionEntry { window_id: wid });
@@ -604,6 +613,7 @@ impl Shell {
             if w.app_id == Self::APP_ID
                 || mru_set.contains(w.app_id.as_str())
                 || self.is_app_hidden(&w.app_id)
+                || bus::is_browser_content_companion(&w.app_id)
             {
                 continue;
             }
@@ -612,11 +622,26 @@ impl Shell {
 
         // 3. App windows ordered by MRU (least recent first = bottom of raised stack).
         // Within each app, the per-app MRU window sits on top of its siblings.
+        // When we place sola-browser chrome, drop content companions just under it.
         for app_id in self.mru_apps.iter().rev() {
-            if app_id.as_str() == Self::APP_ID || self.is_app_hidden(app_id) {
+            if app_id.as_str() == Self::APP_ID
+                || self.is_app_hidden(app_id)
+                || bus::is_browser_content_companion(app_id)
+            {
                 continue;
             }
             let top_wid = self.mru_window_by_app.get(app_id).copied();
+            // Content under chrome: insert companions immediately before
+            // the first sola-browser surface we push for this app.
+            let is_browser = app_id == sola_bus::topics::BROWSER_CHROME_APP_ID
+                || app_id == "sola-browser";
+            if is_browser {
+                for wid in &content_wids {
+                    entries.push(CompositionEntry {
+                        window_id: *wid,
+                    });
+                }
+            }
             for w in &self.known_windows {
                 if w.app_id == *app_id && Some(w.window_id) != top_wid {
                     entries.push(CompositionEntry { window_id: w.window_id });
@@ -629,6 +654,22 @@ impl Shell {
                     .any(|w| w.window_id == wid && w.app_id == *app_id)
                 {
                     entries.push(CompositionEntry { window_id: wid });
+                }
+            }
+        }
+
+        // Content with chrome not yet in MRU: still show under other apps.
+        if !content_wids.is_empty()
+            && !self
+                .mru_apps
+                .iter()
+                .any(|a| a == sola_bus::topics::BROWSER_CHROME_APP_ID || a == "sola-browser")
+        {
+            for wid in &content_wids {
+                if !entries.iter().any(|e| e.window_id == *wid) {
+                    entries.push(CompositionEntry {
+                        window_id: *wid,
+                    });
                 }
             }
         }

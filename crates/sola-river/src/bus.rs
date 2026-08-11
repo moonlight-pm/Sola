@@ -20,6 +20,8 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     // sola-river restart). Without this, `floating` stays empty and every
     // Meta-drag bails at the "not floating" guard.
     TopicKind::WindowFloating,
+    // Option A: browser publishes content scissor; we place sola.browser-content.
+    TopicKind::BrowserContentScissor,
     TopicKind::RegisteredChords,
     TopicKind::CloseApp,
     TopicKind::CaptureScreen,

@@ -40,6 +40,8 @@ fn main() {
     // and not as a confusing missing-symbol at link time.
     let modules = [
         "glib-2.0",
+        // GApplication for stock Wayland content app_id (sola_wpe.c).
+        "gio-2.0",
         // xkbcommon is transitively included via WPEKeymapXKB.h —
         // bindgen needs its header path even though we don't
         // ourselves bind any xkbcommon functions.

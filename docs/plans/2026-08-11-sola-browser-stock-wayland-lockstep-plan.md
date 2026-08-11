@@ -23,23 +23,23 @@ Checklist only. Status: `[ ]` / `[~]` / `[x]`.
 
 ## A1 — Harden stock engine mode
 
-- [ ] `WPEDisplayWayland` connect via captured socket (already partially wired)
-- [ ] Content app_id `sola-browser-content` (or freeze name) on toplevel
-- [ ] Resize/scale from chrome content CSS size (bus or cmd)
-- [ ] Multi-tab: only active view mapped/visible
-- [ ] WebProcess: no phantom `org.webkit.*` (seal after connect)
-- [ ] Input path chosen and documented (inject vs seat)
-- [ ] No content-plane Present on this mode (no double present)
-- [ ] Telem: present path = `wayland-stock`
+- [x] `WPEDisplayWayland` connect via captured socket (already partially wired)
+- [x] Content app_id `sola.browser-content` (GLib-valid wire form of freeze name)
+- [x] Resize/scale from chrome content CSS size (shader prepare → Cmd::Resize)
+- [x] Multi-tab: only active view mapped/visible (`wpe_view_set_visible`)
+- [x] WebProcess: no phantom `org.webkit.*` (seal after connect)
+- [x] Input path chosen and documented (seat on companion; inject only on chrome hole)
+- [x] No content-plane Present on this mode (no double present)
+- [x] Telem: present path = `wayland-stock`
 
 ---
 
 ## A2 — Geometry + river lockstep
 
-- [ ] Browser publishes content scissor in global/output coords (bus sticky or per-move)
-- [ ] sola-river places/sizes companion window under hole
-- [ ] Z-order: content below chrome; hole transparent
-- [ ] Chrome move (CSD drag), resize, zone, output change → content follows
+- [x] Browser publishes content scissor in global/output coords (`Topic::BrowserContentScissor`)
+- [x] sola-river places/sizes companion window under hole (scissor + app_id match)
+- [x] Z-order: content below chrome; hole transparent (composition insert + Load hole)
+- [~] Chrome move (CSD drag), resize, zone, output change → content follows (via WindowGeometry + prepare; dogfood)
 - [ ] Alignment dogfood: no permanent gutter / overlap
 
 ---
@@ -55,9 +55,9 @@ Checklist only. Status: `[ ]` / `[~]` / `[x]`.
 
 ## A4 — Cut over
 
-- [ ] Default env/path = stock Wayland + lockstep
-- [ ] `plane` / `import` demoted in CURRENT + capabilities + freeze headers
-- [ ] architecture.md as-built paint section updated
+- [x] Default env/path = stock Wayland + lockstep (`ContentMode::from_env`)
+- [x] `plane` / `import` demoted in CURRENT + capabilities + freeze headers
+- [x] architecture.md as-built paint section updated
 - [ ] Optional: delete or quarantine dead present code later (not day-one)
 
 ---
