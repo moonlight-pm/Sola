@@ -124,6 +124,16 @@ solactl screenshot --app sola-browser -o /tmp/yt.png
 
 Many open tabs kept presenting → `drop_bg=100%` on the active tab + dark
 fallback. Fix: `wpe_view_set_visible(false)` for inactive tabs.
+
+### Scroll black swaths / nav flicker (2026-08-11)
+
+Sampling **imported dma-buf** while releasing to WebKit on the next swap
+(`RETIRE_DEPTH=0`) let WebKit rewrite memory the GPU still read → black
+swaths + chrome flicker. Fix: **blit each import into a GPU-owned texture**,
+sample only that; stage the WPE loan one frame then release.
+
+Screenshot dogfood (YouTube hard scroll): unique colors stayed ~2.7k
+(near_black ~0.1) vs ~230 unique / 0.77 near_black before.
 ## Code touch
 
 - `crates/sola-browser/src/wpe/engine.rs` — claim/release/cap/trace  
