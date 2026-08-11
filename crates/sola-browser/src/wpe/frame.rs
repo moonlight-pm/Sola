@@ -26,12 +26,11 @@ use super::engine::{HeldToken, InputEvent, WpeEngine};
 use super::input;
 use super::wgpu_import::{self, DmabufMetadata, ImportedFrame};
 
-/// Retire ring depth. Was 1 so the GPU could finish sampling before
-/// `buffer_released`, but holding **active+retire** pinches WPE's 2-buffer
-/// pool: WebKit re-presents the same pointers → ignore forever → no new
-/// claims/imports (scroll blackout). Zero-depth releases the previous
-/// frame immediately on swap; rlimit headroom + no park keep EMFILE away.
-const RETIRE_DEPTH: usize = 0;
+/// Retire ring for **GPU-owned** textures (after blit). Depth 1 so the
+/// previous owned frame survives until the GPU finishes sampling it.
+/// WPE dma-bufs are held separately in `staging` for one frame only
+/// (blit source), then released — not double-held as active+retire dmabufs.
+const RETIRE_DEPTH: usize = 1;
 
 /// Longest allowed physical edge (px). Soft cap if compositor scale would
 /// exceed this for the CSS viewport. Keep this modest — YouTube was emitting
@@ -146,6 +145,9 @@ fn show_surface(pipeline: &mut WpePipeline, device: &wgpu::Device, surface: &Tab
 fn purge_tab(pipeline: &mut WpePipeline, tab_id: u64) {
     pipeline.parked.remove(&tab_id);
     pipeline.retire.retain(|s| s.tab_id != tab_id);
+    if pipeline.staging.as_ref().is_some_and(|s| s.tab_id == tab_id) {
+        pipeline.staging = None;
+    }
     if pipeline.active.as_ref().is_some_and(|a| a.tab_id == tab_id) {
         pipeline.active = None;
         pipeline.sample.clear();
@@ -359,8 +361,9 @@ impl shader::Primitive for WpePrimitive {
         if let Some(prev_id) = active_id {
             if prev_id != paint_tab {
                 if let Some(prev) = pipeline.active.take() {
-                    drop(prev); // HeldToken → Release now
+                    drop(prev);
                 }
+                pipeline.staging = None; // release any staged WPE buffer
                 if let Some(old) = pipeline.parked.remove(&paint_tab) {
                     show_surface(pipeline, device, &old);
                     pipeline.active = Some(old);
@@ -506,14 +509,30 @@ impl shader::Primitive for WpePrimitive {
             }
         };
 
-        let surface = TabSurface {
+        // Blit dma-buf → GPU-owned texture, then only *stage* the import for
+        // one frame (so the blit submit can finish). Sampling the import
+        // while WebKit reuses memory (old RETIRE_DEPTH=0 path) caused nav
+        // flicker and black swaths under scroll.
+        let owned = pipeline
+            .sample
+            .blit_to_owned(device, queue, &imported.texture, size);
+        // Drop previous staging → releases last frame's WPE buffer now.
+        pipeline.staging = None;
+        pipeline.staging = Some(TabSurface {
             tab_id,
             imported,
             _token: HeldToken::new(token, release_tx),
             size,
+        });
+
+        let surface = TabSurface {
+            tab_id,
+            imported: ImportedFrame::from_owned_texture(owned),
+            _token: HeldToken::none(),
+            size,
         };
 
-        // Retire previous (1-deep) so GPU finishes sampling before release.
+        // Retire previous owned texture (GPU may still sample it this frame).
         if let Some(old) = pipeline.active.take() {
             retire(pipeline, old);
         }
@@ -538,11 +557,14 @@ impl shader::Primitive for WpePrimitive {
 
 pub struct WpePipeline {
     sample: SamplePipeline,
-    /// Painted tab's live frame (one dma-buf hold).
+    /// Painted tab's live frame — **GPU-owned** texture (no WPE loan).
     active: Option<TabSurface>,
+    /// Last dma-buf import + WPE token (blit source). Dropped next prepare
+    /// so buffer_released runs one frame after blit submit.
+    staging: Option<TabSurface>,
     /// One last-good snapshot per inactive tab (restored on switch).
     parked: HashMap<u64, TabSurface>,
-    /// Recently replaced surfaces; delayed release for GPU lag.
+    /// Recently replaced **owned** surfaces; delayed drop for GPU lag.
     retire: VecDeque<TabSurface>,
 }
 
@@ -550,6 +572,7 @@ impl std::fmt::Debug for WpePipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WpePipeline")
             .field("active_tab", &self.active.as_ref().map(|a| a.tab_id))
+            .field("staging", &self.staging.is_some())
             .field("parked", &self.parked.len())
             .field("retire", &self.retire.len())
             .finish_non_exhaustive()
@@ -561,6 +584,7 @@ impl shader::Pipeline for WpePipeline {
         Self {
             sample: SamplePipeline::new(device, queue, format, "wpe"),
             active: None,
+            staging: None,
             parked: HashMap::new(),
             retire: VecDeque::with_capacity(RETIRE_DEPTH + 1),
         }

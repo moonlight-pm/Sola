@@ -35,6 +35,8 @@ const FALLBACK_BGRA: [u8; 4] = [0x0b, 0x0a, 0x0a, 0xff];
 /// Shared sample pipeline: WGSL fullscreen triangle + bind-group slots.
 pub struct SamplePipeline {
     pipeline: wgpu::RenderPipeline,
+    /// Offscreen blit (dmabuf import → GPU-owned texture) targets BGRA sRGB.
+    blit_pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub sampler: wgpu::Sampler,
     /// Live web content. `None` → use [`Self::fallback_bind_group`].
@@ -108,31 +110,39 @@ impl SamplePipeline {
             push_constant_ranges: &[],
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(&format!("{label} rp")),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader_module,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader_module,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let make_rp = |fmt: wgpu::TextureFormat, name: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(name),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader_module,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader_module,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: fmt,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let pipeline = make_rp(format, &format!("{label} rp"));
+        // Always BGRA sRGB — matches WPE import / owned copy target.
+        let blit_pipeline = make_rp(
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+            &format!("{label} blit-rp"),
+        );
 
         let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&format!("{label} fallback")),
@@ -185,6 +195,7 @@ impl SamplePipeline {
 
         Self {
             pipeline,
+            blit_pipeline,
             bind_group_layout,
             sampler,
             bind_group: None,
@@ -194,6 +205,76 @@ impl SamplePipeline {
             fps_count: 0,
             fps_window_start: Instant::now(),
         }
+    }
+
+    /// Copy `src` (typically a dma-buf import) into a **GPU-owned** texture.
+    ///
+    /// After this submit, the owned texture no longer depends on the import's
+    /// memory. Callers can release the WPE buffer on the next frame (staging
+    /// hold) without black swaths from WebKit rewriting memory we still sample.
+    pub fn blit_to_owned(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        src: &wgpu::Texture,
+        size: (u32, u32),
+    ) -> wgpu::Texture {
+        let (w, h) = size;
+        let dst = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("wpe-owned-frame"),
+            size: wgpu::Extent3d {
+                width: w.max(1),
+                height: h.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let src_view = src.create_view(&wgpu::TextureViewDescriptor::default());
+        let dst_view = dst.create_view(&wgpu::TextureViewDescriptor::default());
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("wpe blit bg"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&src_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("wpe blit enc"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("wpe blit pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &dst_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.blit_pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        queue.submit(Some(encoder.finish()));
+        dst
     }
 
     pub fn install(&mut self, imported: ImportedTexture) {
