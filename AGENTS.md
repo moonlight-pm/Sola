@@ -66,7 +66,7 @@ Living map: [`docs/architecture.md`](docs/architecture.md).
 - **Bus (`sola-bus`):** General-purpose IPC bus. Separate process. All Sola components communicate via bus events over a Unix socket.
 - **Compositor:** River (external), bridged by `sola-river` (bus client).
 - **Shell / apps:** Iced programs via `sola-kit` — Wayland clients + bus clients. Each is a separate process.
-- **Browser:** Custom iced chrome with WPE (primary) or CEF (parallel) engines.
+- **Browser:** Custom iced chrome + CEF engine in a single `sola-browser` crate.
 - **IPC:** Sola Bus (events over Unix socket) + Wayland protocols for surfaces/input
 - **Build system:** `cargo make` (xtask pattern via `sola-make` crate)
 
@@ -81,10 +81,7 @@ crates/
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
   sola-kit/            # Iced app kit + storybook binary
   sola-assets/         # Vendored icon/asset bundles
-  sola-browser/        # Thin engine dispatcher (exec WPE or CEF)
-  sola-browser-core/   # Shared iced browser chrome
-  sola-browser-wpe/    # Primary browser engine
-  sola-browser-cef/    # Parallel CEF engine
+  sola-browser/        # Iced browser chrome + CEF engine (single crate)
   sola-make/           # Build/install orchestration (xtask)
   sola-monitor/        # System monitor / bus audit
   sola-river/          # River compositor bridge (bus ↔ wayland)
@@ -234,7 +231,7 @@ The old GTK4 + WebKit6 host (`sola-app`) and its apps live under
 Do **not** write new apps against that stack. The only remaining product
 gap from that era is a kit-native mail client (`crates/sola-mail`); use
 `apocrypha/apps/mail` as the logic/UI reference. CEF binding notes at the
-end of this file apply to `sola-browser-cef`, not to the Iced kit.
+end of this file apply to `sola-browser` (CEF engine module), not to the Iced kit.
 
 ## sola-kit (the Iced app kit)
 

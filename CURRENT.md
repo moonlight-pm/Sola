@@ -9,21 +9,29 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-09 (shell Windows hygiene + ordered install on master)
+**As of:** 2026-08-12 (browser CEF single-crate dogfood — chrome solid)
 
 ---
 
 ## Now
 
-1. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
+1. **Browser (CEF) — dogfoodable chrome; engine polish next**  
+   - Branch: **`naturalethic/cef-browser`** (this worktree).  
+   - Single crate `sola-browser`: iced chrome (tabs, omnibox, session,
+     profiles, Bitwarden vault) + CEF CPU OSR under `src/cef/`.  
+   - **Dogfood (local):** install works; multipage/chrome “very solid”;
+     tab switch fixed (hide/show + invalidate + parked last-frame).  
+   - Retired: multi-crate split + WPE content-plane (`naturalethic/browser`
+     failed dogfood).  
+   - **Next (engine quality, unordered):** loading/history flags from CEF;
+     input/scroll polish; deeper CEF OSR quirks as found.  
+2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
-2. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
-3. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
+3. **Distribution follow-through (when resumed)** — ISO e2e, TZ, tarball.  
+4. **Follow-ups (unordered backlog):** float chrome, D1/D2, preview, mail,
    kvm clipboard, switcher FFM holdoff (`naturalethic/switcher-ffm-holdoff`
-   unmerged), etc.  
-   Orca Grok pane flash reclassified off Sola; shell Windows/composition
-   hygiene + ordered multi-install merged from focus-flashing.
+   unmerged), etc.
 
 **Explicit holds:** none.
 
@@ -41,7 +49,8 @@ warning cleanups; worktree hygiene the user asks for.
 | Install root | `/opt/sola/bin/`, logs `/opt/sola/log/` | Guest image + `var/images/` products |
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
-| Branch | **`master`** (post–windowed-gamescope merge) | Feature work in worktrees / Orca workspaces |
+| Branch | **`naturalethic/cef-browser`** (browser); master for other daily | Feature work in worktrees / Orca workspaces |
+| Browser | Single-crate CEF; chrome + tab switch dogfooded solid | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 
@@ -52,7 +61,7 @@ permission for that install. User installs and smokes.
 
 ```bash
 cargo make build
-cargo make install arcade shell river   # only with your OK
+cargo make install browser shell   # only with your OK
 RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 ```
 
@@ -67,6 +76,6 @@ RUST_LOG=debug /opt/sola/bin/sola 2>&1 | tee /opt/sola/log/sola.log
 | IPC | **Sola Bus** (Unix socket events) + Wayland for surfaces/input |
 | Process model | Multi-process; each app independently restartable |
 | Theme | Bus `Topic::Theme` + kit semantic tokens/fonts; shell chrome tokens |
-| Browser engines | **WPE primary**, CEF parallel; no `accelerated_osr` crate feature |
+| Browser | **CEF** in single `sola-browser` crate; no `accelerated_osr`; WPE path retired |
 | Agent backend | Attach to **shared Grok leader** — do not spawn private turn-loop agents |
 | Gamescope host | Windowed only (`-W`/`-H`, never host `-f`); product path is Arcade nest |

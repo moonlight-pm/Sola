@@ -10,7 +10,7 @@ members = ["crates/*"]
 # into every binary's RUNPATH, so sola-river's runtime dlopen of
 # libwayland-client finds the system lib. WPEWebKit is staged at
 # `/opt/sola/nix/wpewebkit/` and pulled into `environment.systemPackages`
-# via configuration.nix, so sola-browser-wpe's pkg-config probes
+# via configuration.nix, so sola-browser's pkg-config probes
 # (wpe-webkit-2.0, wpe-platform-2.0, …) resolve system-wide.
 exclude = [
     "crates/wgpu-hal-patched",

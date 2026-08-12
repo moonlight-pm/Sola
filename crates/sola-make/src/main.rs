@@ -24,8 +24,7 @@ use clap::Parser;
 /// They stay buildable via explicit `cargo make build <name>` so the
 /// source is kept warm without paying for them on every full build.
 ///
-/// Currently empty — `sola-browser` (dispatcher), `sola-browser-wpe`, and
-/// `sola-browser-cef` all build normally in the workspace. The mechanism
+/// Currently empty — `sola-browser` builds normally in the workspace. The mechanism
 /// is kept for any future app that needs the same treatment.
 const EXCLUDED_TARGETS: &[&str] = &[];
 

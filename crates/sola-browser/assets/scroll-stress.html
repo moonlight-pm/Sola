@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Sola scroll / tile stress</title>
+<style>
+  :root {
+    --nav-w: 220px;
+    --bg: #0f0f12;
+    --nav: #16161a;
+    --fg: #e8e8ed;
+    --muted: #8b8b96;
+    --accent: #6c8cff;
+    --card: #1c1c22;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 15px/1.45 system-ui, "SF Pro Text", sans-serif; }
+  /* Fixed left nav — if this blacks with full-width bands, fixed layers failed. */
+  #nav {
+    position: fixed; left: 0; top: 0; bottom: 0; width: var(--nav-w);
+    background: var(--nav); border-right: 1px solid #2a2a32;
+    padding: 20px 16px; z-index: 10;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #nav h1 { font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+  #nav a { color: var(--fg); text-decoration: none; padding: 8px 10px;
+    border-radius: 8px; }
+  #nav a:hover, #nav a.active { background: #25252e; color: var(--accent); }
+  #nav .badge { margin-top: auto; font-size: 12px; color: var(--muted); line-height: 1.4; }
+  #main {
+    margin-left: var(--nav-w);
+    padding: 24px 28px 80px;
+  }
+  #main h2 { margin: 0 0 8px; font-size: 22px; }
+  #main .sub { color: var(--muted); margin-bottom: 20px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    background: var(--card);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #2a2a32;
+  }
+  .card .thumb {
+    width: 100%;
+    aspect-ratio: 16/10;
+    display: block;
+    /* Distinct gradients so incomplete tiles are obvious */
+    background: linear-gradient(135deg, var(--c1, #334), var(--c2, #668));
+  }
+  .card .meta { padding: 10px 12px; }
+  .card .meta strong { display: block; font-size: 13px; margin-bottom: 4px; }
+  .card .meta span { font-size: 12px; color: var(--muted); }
+  /* Sticky section header inside scroll body */
+  .sticky {
+    position: sticky; top: 0; z-index: 5;
+    background: rgba(15,15,18,0.92); backdrop-filter: blur(8px);
+    padding: 12px 0; margin: 28px 0 14px;
+    border-bottom: 1px solid #2a2a32;
+    font-weight: 600;
+  }
+  #hud {
+    position: fixed; right: 16px; bottom: 16px; z-index: 20;
+    background: rgba(0,0,0,0.75); color: #9f9; font: 12px/1.4 ui-monospace, monospace;
+    padding: 10px 12px; border-radius: 8px; max-width: 280px;
+  }
+</style>
+</head>
+<body>
+<aside id="nav">
+  <h1>Fixed nav</h1>
+  <a class="active" href="#s0">Home</a>
+  <a href="#s1">Section 1</a>
+  <a href="#s2">Section 2</a>
+  <a href="#s3">Section 3</a>
+  <a href="#s4">Section 4</a>
+  <div class="badge">
+    If a <b>full-width black band</b> covers this nav at the same Y as
+    feed holes, the compositor is clearing whole rows (not just feed tiles).
+  </div>
+</aside>
+<main id="main">
+  <h2>Scroll / tile stress</h2>
+  <p class="sub">Hard-fling this page. Prefer over YouTube for isolating checkerboard.
+    Nav must stay solid; only the feed may hole-punch.</p>
+  <div id="content"></div>
+</main>
+<div id="hud">scrollY=0</div>
+<script>
+const hues = [210, 280, 40, 160, 0, 320, 190, 60];
+const root = document.getElementById('content');
+const N = 12; // sections
+const CARDS = 24; // per section
+for (let s = 0; s < N; s++) {
+  const h = document.createElement('div');
+  h.className = 'sticky';
+  h.id = 's' + s;
+  h.textContent = 'Section ' + s + ' — sticky header (should not full-width black with nav)';
+  root.appendChild(h);
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  for (let i = 0; i < CARDS; i++) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    const h1 = hues[(s + i) % hues.length];
+    const h2 = hues[(s + i + 3) % hues.length];
+    c.innerHTML =
+      '<div class="thumb" style="--c1:hsl(' + h1 + ' 45% 32%);--c2:hsl(' + h2 + ' 55% 48%)"></div>' +
+      '<div class="meta"><strong>Card ' + s + '-' + i + '</strong>' +
+      '<span>large paint cost · fling hard</span></div>';
+    grid.appendChild(c);
+  }
+  root.appendChild(grid);
+}
+const hud = document.getElementById('hud');
+let frames = 0, last = performance.now(), fps = 0;
+function tick(t) {
+  frames++;
+  if (t - last >= 500) {
+    fps = Math.round(frames * 1000 / (t - last));
+    frames = 0; last = t;
+  }
+  hud.textContent = 'scrollY=' + Math.round(scrollY) +
+    '  fps≈' + fps +
+    '  docH=' + document.documentElement.scrollHeight;
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

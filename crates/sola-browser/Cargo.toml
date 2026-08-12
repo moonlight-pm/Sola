@@ -3,10 +3,75 @@ name = "sola-browser"
 version = "0.1.0"
 edition = "2024"
 
-# Featherweight engine dispatcher. Depends on NO web engine — it only
-# selects sola-browser-{wpe,cef} and execs it. This is what keeps the
-# 1.34 GB libcef out of the WPE launch path.
+# Sola browser — iced chrome + CEF engine in one crate.
+# Chrome (tabs, omnibox, session, profiles, vault) is engine-agnostic.
+# CEF CPU OSR lives under `src/cef/`. WPE path retired after failed
+# content-plane dogfood (see naturalethic/browser history).
 
 [[bin]]
 name = "sola-browser"
 path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["bitwarden"]
+# First-party Bitwarden PM client (sdk-internal). Official cloud + chrome login.
+bitwarden = [
+    "dep:bitwarden-pm",
+    "dep:bitwarden-core",
+    "dep:bitwarden-vault",
+    "dep:bitwarden-sync",
+    "dep:bitwarden-state",
+    "dep:bitwarden-api-api",
+    "dep:bitwarden-crypto",
+    "dep:bitwarden-crypto-sync-handler",
+    "dep:async-trait",
+    "dep:thiserror",
+    "dep:zeroize",
+    "dep:url",
+    "dep:reqwest",
+    "dep:serde_json",
+    "dep:serde_qs",
+]
+
+[dependencies]
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+iced_futures = { version = "0.14", features = ["tokio"] }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+sola-kit = { path = "../sola-kit" }
+tracing = "0.1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+serde = { version = "1", features = ["derive"] }
+
+# Shared sample pipeline (WGSL fullscreen triangle) for CEF CPU frames.
+wgpu = { version = "27", features = ["vulkan-portability"] }
+
+# CEF binding. Version pinned to match `cef-version` at workspace
+# root — sola-make's `install-cef` reads the same file and downloads
+# the matching binary distribution into `~/.cache/sola/cef-<ver>/`.
+# Do NOT enable `accelerated_osr`.
+cef = "147.1.0"
+
+# Bitwarden Password Manager SDK (internal; pin rev). License ignored for dogfood.
+bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", features = ["internal"], optional = true }
+bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-crypto-sync-handler = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+async-trait = { version = "0.1", optional = true }
+thiserror = { version = "2", optional = true }
+zeroize = { version = "1", optional = true }
+url = { version = "2", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde_json = { version = "1", optional = true }
+serde_qs = { version = "0.13", optional = true }
+
+[build-dependencies]
+# No bindgen, no pkg-config — CEF is the only system dep and it
+# comes in pre-built via sola-make.

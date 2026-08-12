@@ -62,7 +62,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kit` | Iced app kit + storybook |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Terminal (alacritty grid + iced) |
-| `crates/sola-browser*` | Chrome + WPE (primary) / CEF (parallel) |
+| `crates/sola-browser` | Iced chrome + CEF engine (single crate) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) |
 | `crates/sola-mail` | Kit-native mail client |
 | `crates/sola-monitor` | System monitor / bus audit |
@@ -140,17 +140,18 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 ---
 
-## Browser engines (as-built)
+## Browser (as-built)
 
-| Engine | Crate | Role |
-|--------|-------|------|
-| WPE | `sola-browser-wpe` | **Primary** |
-| CEF | `sola-browser-cef` | Parallel path; CEF `147.x` via `cef` crate |
-| Shared chrome | `sola-browser-core` | Iced chrome |
-| Dispatcher | `sola-browser` | Exec WPE or CEF |
+| Piece | Role |
+|-------|------|
+| `crates/sola-browser` | **Product browser** — iced chrome (tabs, omnibox, session, profiles, vault) + CEF CPU OSR under `src/cef/` |
+| App id / binary | `sola-browser` → `/opt/sola/bin/sola-browser` (shell launcher: one “Browser” entry) |
+| CEF pin | `cef` crate + workspace `cef-version`; cache under `~/.cache/sola/cef-<ver>/` via `cargo make install-cef` |
+| Tab switch | Hide inactive OSR hosts (`was_hidden`); show + `invalidate(VIEW)` active; park last CPU frame per tab for instant swap |
 
-CEF: do **not** enable `accelerated_osr`; dma-buf import is via Wayland
-`zwp_linux_dmabuf_v1` and sola-river composition.
+Former split (`sola-browser-core` / `-wpe` / `-cef` dispatcher) and the WPE
+content-plane path are **retired**. CEF: do **not** enable `accelerated_osr`
+(CPU `on_paint` path only).
 
 ---
 

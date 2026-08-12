@@ -63,12 +63,11 @@ return to the sidebar row?
 **Default until decided:** leave pins data-compatible; no new chrome without
 product ask. See agent UI backlog.
 
-### T2 — CEF default vs WPE
+### T2 — CEF default vs WPE — **closed (2026-08-11)**
 
-WPE is primary; CEF is parallel. When (if ever) flip defaults for specific
-sites?
-
-**Default until decided:** WPE remains default dispatcher path.
+WPE content-plane dogfood failed (`naturalethic/browser`). Product browser is
+**CEF-only** in single crate `sola-browser`. Reopen only if a future Mesa/dma-buf
+comparison warrants a second engine.
 
 ---
 
@@ -76,9 +75,10 @@ sites?
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-08-11 | T2 / Browser | CEF-only single crate `sola-browser`; WPE multi-crate path retired after failed dogfood | CURRENT, architecture, capabilities, AGENTS |
 | 2026-08-06 | dist | Distribution branch merged to master; qcow e2e OK; ISO e2e still open; interim TZ US/Mountain | freeze + plan + CURRENT |
 | 2026-08-05 | — | Progress documentation practice adopted for Sola | CURRENT, progress-model, AGENTS |
 | 2026-08-05 | dist | ISO primary; wizard = username + disk only; US EN + Mac keyboard fixed; hostname `sola`; no password; loginless → Sola; flower brand splash | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) |
 | (earlier) | UI stack | Iced + sola-kit; WebView apocrypha | AGENTS, CURRENT locks |
-| (earlier) | Browser | WPE primary, CEF parallel | AGENTS, architecture |
+| (earlier) | Browser | WPE primary, CEF parallel *(superseded 2026-08-11)* | — |
 | (earlier) | Agent backend | Shared Grok leader only | AGENTS, CURRENT locks |

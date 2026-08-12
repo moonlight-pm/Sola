@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 /// Pinned CEF release. Read from the workspace-root `cef-version` file
-/// so a CEF consumer's `build.rs` (e.g. `crates/sola-browser-cef/build.rs`)
+/// so a CEF consumer's `build.rs` (e.g. `crates/sola-browser/build.rs`)
 /// can read the same version without taking a `[build-dependencies]` on
 /// `sola-make` (which would pull in the whole `ureq`/`bzip2`/`tar` tree into
 /// that crate's build graph and trigger spurious rebuild cascades when
@@ -198,8 +198,8 @@ fn patch_cef_libs_for_nix_ld(release: &Path) -> io::Result<()> {
 /// `rustls` + `bzip2` + `tar` as deps. Those crates were also pulled
 /// in (at different feature unifications) by `cef-dll-sys`'s
 /// `download-cef` build-dependency, causing cargo to rebuild them on
-/// every alternation between `cargo build -p sola-browser-cef` and
-/// `cargo make build sola-browser-cef`. Shelling out drops the deps entirely.
+/// every alternation between `cargo build -p sola-browser` and
+/// `cargo make build sola-browser`. Shelling out drops the deps entirely.
 ///
 /// Both `curl` and `tar` are universally available on Linux hosts;
 /// we already require `patchelf` and other tools, so this isn't a new
