@@ -67,10 +67,18 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
     var rawIdBuf = fromB64url(j.rawId || j.id);
     // WebAuthn: id is base64url(rawId) as DOMString.
     var id = j.id || b64url(rawIdBuf);
-    var clientDataJSON = fromB64url(j.clientDataJSON);
-    var authenticatorData = fromB64url(j.authenticatorData);
-    var signature = fromB64url(j.signature);
-    var userHandle = (j.userHandle && j.userHandle.length) ? fromB64url(j.userHandle) : null;
+    // Accept both WebAuthn spelling (clientDataJSON) and accidental camelCase.
+    var cdB64 = j.clientDataJSON || j.clientDataJson || '';
+    var adB64 = j.authenticatorData || j.authenticator_data || '';
+    var sigB64 = j.signature || '';
+    var uhB64 = j.userHandle || j.user_handle || '';
+    var clientDataJSON = fromB64url(cdB64);
+    var authenticatorData = fromB64url(adB64);
+    var signature = fromB64url(sigB64);
+    var userHandle = (uhB64 && uhB64.length) ? fromB64url(uhB64) : null;
+    if (!cdB64 || clientDataJSON.byteLength === 0) {
+      throw new Error('sola webauthn: missing clientDataJSON in host payload keys=' + Object.keys(j).join(','));
+    }
 
     // Prefer real WebAuthn response object when the platform allows it.
     var response;

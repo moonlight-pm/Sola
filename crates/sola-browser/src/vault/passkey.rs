@@ -122,16 +122,22 @@ impl Fido2CredentialStore for VaultCredentialStore {
 }
 
 /// Wire form returned to the page polyfill (base64url fields).
+///
+/// Field names must match WebAuthn / our polyfill (`clientDataJSON` with
+/// capital JSON — plain camelCase would emit `clientDataJson` and the page
+/// would assemble an empty clientData buffer).
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PasskeyAssertionJson {
     pub id: String,
+    #[serde(rename = "rawId")]
     pub raw_id: String,
+    #[serde(rename = "clientDataJSON")]
     pub client_data_json: String,
+    #[serde(rename = "authenticatorData")]
     pub authenticator_data: String,
     pub signature: String,
     /// Omitted when empty — Google rejects empty userHandle ArrayBuffers.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "userHandle", skip_serializing_if = "Option::is_none")]
     pub user_handle: Option<String>,
 }
 
