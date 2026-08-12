@@ -54,3 +54,29 @@ wgpu-hal = { path = "crates/wgpu-hal-patched" }
 # the GitHub release tarball.
 [profile.release]
 strip = "debuginfo"
+
+# Bitwarden master-password KDF is PBKDF2 × ~600k. Unoptimized debug
+# makes unlock multi-second; Chrome-class clients run this in optimized
+# crypto. Prefer `cargo make install browser --release` for dogfood, but
+# also crank package-level opt for the crypto path so plain debug installs
+# are not unusable.
+[profile.dev.package.bitwarden-crypto]
+opt-level = 3
+[profile.dev.package.bitwarden-core]
+opt-level = 3
+[profile.dev.package.bitwarden-fido]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.ring]
+opt-level = 3
+[profile.dev.package.aws-lc-sys]
+opt-level = 3
+[profile.dev.package.aws-lc-rs]
+opt-level = 3

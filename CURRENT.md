@@ -26,10 +26,11 @@ Do not invent product policy.
      `profiles/<uuid>/cef/`. Manual: `docs/manual/sola-browser.md`.  
      **Dogfood next** after install.  
    - Retired: multi-crate split + WPE content-plane.  
-   - **Vault:** taller fill list (~420px); passkey **get()** via Bitwarden
-     FIDO2 intercept (unlock vault first). Registration not yet.  
-   - **Next (engine quality, unordered):** passkey dogfood / multi-cred pick;
-     loading/history flags from CEF; input/scroll polish; OSR quirks.  
+   - **Vault:** taller fill list; WebAuthn **get()** opens passkey picker
+     (unlock if needed → choose passkey → assert). Unlock: use
+     `cargo make install browser --release` (PBKDF2); dev also opts crypto
+     crates at O3. Registration not yet.  
+   - **Next:** passkey dogfood; loading/history flags; input/scroll; OSR.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  

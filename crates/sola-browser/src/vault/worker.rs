@@ -10,6 +10,7 @@ use zeroize::Zeroize;
 use super::client::{
     LoginOutcome, MatchSummary, TwoFactorKind, VaultError, VaultService, VaultStatus,
 };
+use super::passkey::PasskeyCandidate;
 
 /// Commands from chrome → vault worker.
 pub enum VaultCmd {
@@ -31,14 +32,20 @@ pub enum VaultCmd {
     Sync,
     Matches { url: String },
     Fill { id: String },
-    /// WebAuthn get() — sign with a vault passkey.
+    /// List passkeys for a WebAuthn get() RP so chrome can show a picker.
+    PasskeyList {
+        req_id: u64,
+        rp_id: String,
+    },
+    /// WebAuthn get() — sign with a vault passkey the user selected.
     PasskeyAssert {
         /// Page request id (for JS resolve).
         req_id: u64,
         origin: String,
         /// Serialized `publicKey` options (challenge etc. base64url).
         public_key_json: String,
-        preferred_cipher_id: Option<String>,
+        /// Cipher id chosen in the passkey picker (required).
+        cipher_id: String,
     },
     Status,
     Quit,
@@ -67,6 +74,11 @@ pub enum VaultEvent {
     FillReady {
         username: Option<String>,
         password: Option<String>,
+    },
+    /// Passkeys available for a pending WebAuthn get().
+    PasskeyCandidates {
+        req_id: u64,
+        candidates: Vec<PasskeyCandidate>,
     },
     /// Passkey assertion for the page polyfill (`req_id` matches intercept).
     PasskeyReady {
@@ -304,17 +316,41 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                     });
                 }
             },
+            VaultCmd::PasskeyList { req_id, rp_id } => {
+                match super::passkey::list_candidates(&svc, &rp_id).await {
+                    Ok(candidates) => {
+                        tracing::info!(
+                            req_id,
+                            %rp_id,
+                            n = candidates.len(),
+                            "vault: passkey candidates"
+                        );
+                        let _ = event_tx.send(VaultEvent::PasskeyCandidates {
+                            req_id,
+                            candidates,
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!(req_id, error = %e, "vault: passkey list failed");
+                        let _ = event_tx.send(VaultEvent::PasskeyReady {
+                            req_id,
+                            ok: false,
+                            payload: e.to_string(),
+                        });
+                    }
+                }
+            }
             VaultCmd::PasskeyAssert {
                 req_id,
                 origin,
                 public_key_json,
-                preferred_cipher_id,
+                cipher_id,
             } => {
                 match super::passkey::authenticate(
                     &svc,
                     &origin,
                     &public_key_json,
-                    preferred_cipher_id,
+                    Some(cipher_id.clone()),
                 )
                 .await
                 {
@@ -322,7 +358,7 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                         let payload = serde_json::to_string(&assertion).unwrap_or_else(|e| {
                             format!(r#"{{"error":"{e}"}}"#)
                         });
-                        tracing::info!(req_id, %origin, "vault: passkey assertion ok");
+                        tracing::info!(req_id, %origin, %cipher_id, "vault: passkey assertion ok");
                         let _ = event_tx.send(VaultEvent::PasskeyReady {
                             req_id,
                             ok: true,

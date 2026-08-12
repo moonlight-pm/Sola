@@ -28,10 +28,9 @@ use crate::engine::{Cmd, EditCmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, Tab
 use crate::session::{self, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
-    MatchSummary, TwoFactorKind, VaultCmd, VaultEvent, VaultHandle, VaultStatus,
-    fill_credentials_script,
+    MatchSummary, PasskeyCandidate, PasskeyPageRequest, TwoFactorKind, VaultCmd, VaultEvent,
+    VaultHandle, VaultStatus, fill_credentials_script,
 };
-// VaultCmd::PasskeyAssert used from Tick drain.
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
 
@@ -111,6 +110,12 @@ pub enum Msg {
     /// Pick a vault match and fill the active page.
     #[cfg(feature = "bitwarden")]
     VaultFill(String),
+    /// User picked a passkey for a pending WebAuthn get().
+    #[cfg(feature = "bitwarden")]
+    VaultPasskeyPick(String),
+    /// Cancel pending WebAuthn (reject the page promise).
+    #[cfg(feature = "bitwarden")]
+    VaultPasskeyCancel,
     /// Re-query matches for the active tab URL.
     #[cfg(feature = "bitwarden")]
     VaultRefreshMatches,
@@ -145,6 +150,18 @@ enum VaultPanelPhase {
         kind: TwoFactorKind,
         email_hint: Option<String>,
     },
+    /// Site asked for a passkey — pick one from the vault.
+    PasskeyPick,
+}
+
+/// In-flight WebAuthn get() waiting for the user to pick a passkey.
+#[cfg(feature = "bitwarden")]
+#[derive(Debug, Clone)]
+struct PendingPasskey {
+    req: PasskeyPageRequest,
+    candidates: Vec<PasskeyCandidate>,
+    loading: bool,
+    error: Option<String>,
 }
 
 /// Where shell Edit → Paste (⌘V) should land while the vault panel is open.
@@ -252,6 +269,9 @@ pub struct App<E: Engine> {
     vault_icon_locked: iced::widget::svg::Handle,
     #[cfg(feature = "bitwarden")]
     vault_icon_unlocked: iced::widget::svg::Handle,
+    /// Page WebAuthn get() waiting for passkey selection.
+    #[cfg(feature = "bitwarden")]
+    pending_passkey: Option<PendingPasskey>,
     /// Profiles menubar manage dialog (new / rename / delete confirm).
     pub profile_dialog: Option<ProfileDialog>,
     /// Name field for new/rename profile dialogs.
@@ -332,6 +352,8 @@ impl<E: Engine> App<E> {
             vault_icon_locked: icon_handle("lucide/lock"),
             #[cfg(feature = "bitwarden")]
             vault_icon_unlocked: icon_handle("lucide/key-round"),
+            #[cfg(feature = "bitwarden")]
+            pending_passkey: None,
             profile_dialog: None,
             profile_name_field: String::new(),
             profile_dialog_error: None,
@@ -630,6 +652,18 @@ impl<E: Engine> App<E> {
                     self.vault.send(VaultCmd::Fill { id });
                 }
             }
+            Msg::VaultPasskeyPick(cipher_id) => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.confirm_passkey_pick(cipher_id);
+                }
+            }
+            Msg::VaultPasskeyCancel => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    self.cancel_pending_passkey("User cancelled.");
+                }
+            }
             Msg::VaultRefreshMatches => {
                 #[cfg(feature = "bitwarden")]
                 {
@@ -702,7 +736,7 @@ impl<E: Engine> App<E> {
                     };
                     let kind = match &self.vault_phase {
                         VaultPanelPhase::TwoFactor { kind, .. } => *kind,
-                        VaultPanelPhase::Credentials => {
+                        VaultPanelPhase::Credentials | VaultPanelPhase::PasskeyPick => {
                             self.vault_error = Some("Enter email and password first.".into());
                             return Task::none();
                         }
@@ -733,7 +767,7 @@ impl<E: Engine> App<E> {
                     };
                     let kind = match &self.vault_phase {
                         VaultPanelPhase::TwoFactor { kind, .. } => *kind,
-                        VaultPanelPhase::Credentials => {
+                        VaultPanelPhase::Credentials | VaultPanelPhase::PasskeyPick => {
                             self.vault_error = Some("Enter email and password first.".into());
                             return Task::none();
                         }
@@ -751,7 +785,11 @@ impl<E: Engine> App<E> {
             Msg::VaultPanelClose => {
                 #[cfg(feature = "bitwarden")]
                 {
-                    self.set_vault_panel_open(false);
+                    if self.pending_passkey.is_some() {
+                        self.cancel_pending_passkey("User cancelled.");
+                    } else {
+                        self.set_vault_panel_open(false);
+                    }
                 }
             }
             Msg::VaultFocusNext => {
@@ -800,6 +838,11 @@ impl<E: Engine> App<E> {
             Msg::NavStop => {
                 if self.profile_dialog.is_some() {
                     self.close_profile_dialog();
+                    return Task::none();
+                }
+                #[cfg(feature = "bitwarden")]
+                if self.pending_passkey.is_some() {
+                    self.cancel_pending_passkey("User cancelled.");
                     return Task::none();
                 }
                 #[cfg(feature = "bitwarden")]
@@ -1068,6 +1111,7 @@ impl<E: Engine> App<E> {
                             self.vault_paste_target = VaultPasteTarget::Password;
                         }
                     },
+                    VaultPanelPhase::PasskeyPick => {}
                 }
             }
         }
@@ -1403,9 +1447,15 @@ impl<E: Engine> App<E> {
                 self.vault_email = email;
                 self.persist_vault_email();
                 self.reset_vault_form_keep_email();
-                // Unlock is done — dismiss the panel. User opens it again
-                // (key icon) to pick a login for the current page.
-                self.set_vault_panel_open(false);
+                // If a site asked for a passkey while locked, stay open on the
+                // picker after unlock. Otherwise dismiss (user re-opens to fill).
+                if self.pending_passkey.is_some() {
+                    self.vault_phase = VaultPanelPhase::PasskeyPick;
+                    self.set_vault_panel_open(true);
+                    self.request_passkey_candidates();
+                } else {
+                    self.set_vault_panel_open(false);
+                }
             }
             VaultEvent::LoginNeedsTwoFactor {
                 email,
@@ -1480,17 +1530,50 @@ impl<E: Engine> App<E> {
                 // Close panel so the user can submit the form immediately.
                 self.set_vault_panel_open(false);
             }
+            VaultEvent::PasskeyCandidates { req_id, candidates } => {
+                if let Some(ref mut pending) = self.pending_passkey {
+                    if pending.req.id != req_id {
+                        return;
+                    }
+                    pending.loading = false;
+                    pending.candidates = candidates;
+                    if pending.candidates.is_empty() {
+                        pending.error = Some("No passkeys in the vault for this site.".into());
+                    } else {
+                        pending.error = None;
+                    }
+                    self.vault_phase = VaultPanelPhase::PasskeyPick;
+                    self.set_vault_panel_open(true);
+                }
+            }
             VaultEvent::PasskeyReady {
                 req_id,
                 ok,
                 payload,
             } => {
+                self.vault_busy = false;
+                // Clear pending only if this is the current request.
+                if self
+                    .pending_passkey
+                    .as_ref()
+                    .map(|p| p.req.id == req_id)
+                    .unwrap_or(false)
+                {
+                    self.pending_passkey = None;
+                    if matches!(self.vault_phase, VaultPanelPhase::PasskeyPick) {
+                        self.vault_phase = VaultPanelPhase::Credentials;
+                        self.set_vault_panel_open(false);
+                    }
+                }
                 let script = crate::vault::resolve_webauthn_script(req_id, ok, &payload);
                 let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
                 if ok {
                     tracing::info!(req_id, "vault: passkey response injected");
                 } else {
                     tracing::warn!(req_id, error = %payload, "vault: passkey response error injected");
+                    if self.vault_panel_open {
+                        self.vault_error = Some(payload);
+                    }
                 }
             }
             VaultEvent::Error { message } => {
@@ -1504,32 +1587,101 @@ impl<E: Engine> App<E> {
         }
     }
 
-    /// Turn a page WebAuthn get() into a vault passkey assertion command.
+    /// Page asked for a passkey: open the vault panel picker (or unlock first).
     #[cfg(feature = "bitwarden")]
-    fn dispatch_passkey_request(&mut self, req: crate::vault::PasskeyPageRequest) {
-        if !self.vault_status.unlocked {
+    fn dispatch_passkey_request(&mut self, req: PasskeyPageRequest) {
+        // Replace any prior pending request (reject the old page promise).
+        if let Some(old) = self.pending_passkey.take() {
             let script = crate::vault::resolve_webauthn_script(
-                req.id,
+                old.req.id,
                 false,
-                "Unlock the vault to use a passkey.",
+                "Superseded by another passkey request.",
             );
             let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+        }
+
+        tracing::info!(
+            req_id = req.id,
+            origin = %req.origin,
+            rp_id = %req.rp_id,
+            "vault: page requested passkey — opening picker"
+        );
+
+        self.pending_passkey = Some(PendingPasskey {
+            req,
+            candidates: Vec::new(),
+            loading: true,
+            error: None,
+        });
+        self.vault_error = None;
+
+        if !self.vault_status.unlocked {
+            self.vault_phase = VaultPanelPhase::Credentials;
+            self.set_vault_panel_open(true);
+            // User unlocks; LoginOk continues into request_passkey_candidates.
             return;
         }
 
-        // Prefer a cipher that already matched this page in the fill list.
-        let preferred = self
-            .vault_matches
-            .iter()
-            .find(|m| m.has_passkey)
-            .map(|m| m.id.clone());
+        self.vault_phase = VaultPanelPhase::PasskeyPick;
+        self.set_vault_panel_open(true);
+        self.request_passkey_candidates();
+    }
 
+    #[cfg(feature = "bitwarden")]
+    fn request_passkey_candidates(&mut self) {
+        let Some(pending) = self.pending_passkey.as_mut() else {
+            return;
+        };
+        pending.loading = true;
+        pending.error = None;
+        let mut rp_id = pending.req.rp_id.clone();
+        if rp_id.is_empty() {
+            if let Some(host) = pending
+                .req
+                .origin
+                .strip_prefix("https://")
+                .or_else(|| pending.req.origin.strip_prefix("http://"))
+            {
+                rp_id = host.split('/').next().unwrap_or(host).to_string();
+            }
+        }
+        let req_id = pending.req.id;
+        self.vault.send(VaultCmd::PasskeyList { req_id, rp_id });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn confirm_passkey_pick(&mut self, cipher_id: String) {
+        let Some(pending) = self.pending_passkey.clone() else {
+            return;
+        };
+        if self.vault_busy {
+            return;
+        }
+        self.vault_busy = true;
+        self.vault_error = None;
+        if let Some(p) = self.pending_passkey.as_mut() {
+            p.error = None;
+        }
         self.vault.send(VaultCmd::PasskeyAssert {
-            req_id: req.id,
-            origin: req.origin,
-            public_key_json: req.public_key_json,
-            preferred_cipher_id: preferred,
+            req_id: pending.req.id,
+            origin: pending.req.origin,
+            public_key_json: pending.req.public_key_json,
+            cipher_id,
         });
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn cancel_pending_passkey(&mut self, reason: &str) {
+        if let Some(pending) = self.pending_passkey.take() {
+            let script =
+                crate::vault::resolve_webauthn_script(pending.req.id, false, reason);
+            let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+        }
+        if matches!(self.vault_phase, VaultPanelPhase::PasskeyPick) {
+            self.vault_phase = VaultPanelPhase::Credentials;
+            self.set_vault_panel_open(false);
+        }
+        self.vault_busy = false;
     }
 
     /// Centered modal for Profiles menubar manage actions.
@@ -1699,7 +1851,108 @@ impl<E: Engine> App<E> {
                 })
         });
 
-        let body: Element<'_, Msg> = if self.vault_status.unlocked {
+        let body: Element<'_, Msg> = if matches!(self.vault_phase, VaultPanelPhase::PasskeyPick)
+            || (self.pending_passkey.is_some() && self.vault_status.unlocked)
+        {
+            // Site asked for a passkey — pick one.
+            const MATCH_LIST_H: f32 = 420.0;
+            let title = text("Choose a passkey")
+                .size(15)
+                .font(sola_kit::fonts::ui_medium());
+            let pending = self.pending_passkey.as_ref();
+            let host = pending
+                .map(|p| page_host_hint(&p.req.origin))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "this site".into());
+
+            let mut col = column![title, soft(format!("Sign in to {host}"))]
+                .spacing(SPACE_SM)
+                .width(Length::Fixed(340.0));
+
+            if let Some(err) = err_line {
+                col = col.push(err);
+            }
+            if let Some(pending) = pending {
+                if let Some(err) = pending.error.as_ref() {
+                    col = col.push(
+                        text(err.clone())
+                            .size(12)
+                            .style(|theme: &iced::Theme| iced::widget::text::Style {
+                                color: Some(theme.extended_palette().danger.base.color),
+                            }),
+                    );
+                }
+                if pending.loading {
+                    col = col.push(text("Looking up passkeys…").size(13));
+                } else if pending.candidates.is_empty() {
+                    col = col.push(text("No passkeys saved for this site.").size(13));
+                    col = col.push(soft_sm(
+                        "Add a passkey in Bitwarden, then try again.".into(),
+                    ));
+                } else {
+                    let mut list = column![].spacing(4.0);
+                    for c in &pending.candidates {
+                        let title_line = if c.name.is_empty() {
+                            "Passkey".to_string()
+                        } else {
+                            c.name.clone()
+                        };
+                        let sub = c
+                            .user_display_name
+                            .as_deref()
+                            .or(c.username.as_deref())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or(c.rp_id.as_str());
+                        let row_body = column![
+                            text(title_line).size(13).font(sola_kit::fonts::ui_medium()),
+                            soft_sm(sub.to_string()),
+                        ]
+                        .spacing(2);
+                        let id = c.cipher_id.clone();
+                        let mut btn = button(row_body)
+                            .padding(Padding::from([8, 10]))
+                            .width(Length::Fill)
+                            .style(|theme: &iced::Theme, status| {
+                                let p = theme.extended_palette();
+                                let bg = match status {
+                                    iced::widget::button::Status::Hovered
+                                    | iced::widget::button::Status::Pressed => {
+                                        p.background.strong.color
+                                    }
+                                    _ => p.background.weak.color,
+                                };
+                                iced::widget::button::Style {
+                                    background: Some(iced::Background::Color(bg)),
+                                    text_color: p.background.base.text,
+                                    border: iced::Border {
+                                        color: p.background.strong.color,
+                                        width: 1.0,
+                                        radius: 8.0.into(),
+                                    },
+                                    ..Default::default()
+                                }
+                            });
+                        if !self.vault_busy {
+                            btn = btn.on_press(Msg::VaultPasskeyPick(id));
+                        }
+                        list = list.push(btn);
+                    }
+                    col = col.push(
+                        scrollable(list)
+                            .height(Length::Fixed(MATCH_LIST_H))
+                            .width(Length::Fill),
+                    );
+                }
+            }
+
+            let cancel = kit_button::labeled(
+                if self.vault_busy { "Signing…" } else { "Cancel" },
+                kit_button::ghost,
+            )
+            .on_press(Msg::VaultPasskeyCancel);
+            col = col.push(cancel);
+            col.into()
+        } else if self.vault_status.unlocked {
             // Fill picker only — not a status card. Unlock already closed the panel.
             let title = text("Fill login")
                 .size(15)
@@ -1820,6 +2073,10 @@ impl<E: Engine> App<E> {
             col.into()
         } else {
             match &self.vault_phase {
+                VaultPanelPhase::PasskeyPick => {
+                    // Locked but phase stuck — fall through to credentials.
+                    text("Unlock the vault to use a passkey.").size(13).into()
+                }
                 VaultPanelPhase::Credentials => {
                     // While a request is in flight, freeze the form (no on_input
                     // ⇒ disabled). Cancel stays active so the panel can dismiss
@@ -1864,12 +2121,18 @@ impl<E: Engine> App<E> {
                     let mut col = column![
                         title,
                         soft("Bitwarden".into()),
-                        Space::new().height(SPACE_SM),
-                        email,
-                        password,
                     ]
                     .spacing(SPACE_SM)
                     .width(Length::Fixed(300.0));
+                    if self.pending_passkey.is_some() {
+                        col = col.push(soft(
+                            "A site asked for a passkey — unlock to choose one.".into(),
+                        ));
+                    }
+                    col = col
+                        .push(Space::new().height(SPACE_SM))
+                        .push(email)
+                        .push(password);
 
                     if let Some(err) = err_line {
                         col = col.push(err);

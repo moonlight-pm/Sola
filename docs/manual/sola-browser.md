@@ -51,10 +51,21 @@ Toolbar lock icon opens the vault panel.
 - **Fill login** lists URI-matching items for the active page (tall list;
   items with a passkey show a **passkey** badge). Click to fill username /
   password into the page.
-- **Passkeys:** with the vault unlocked, WebAuthn `navigator.credentials.get`
-  is intercepted and signed from Bitwarden FIDO2 credentials (auto-picks the
-  first matching passkey). **Registration** (`credentials.create`) is not
-  supported yet.
+- **Passkeys:** when a site calls WebAuthn `navigator.credentials.get`, the
+  vault panel opens (unlock first if needed) with a **list of matching
+  passkeys** — pick one to complete sign-in. **Registration**
+  (`credentials.create`) is not supported yet.
+
+### Unlock speed
+
+Bitwarden’s master-password KDF is expensive (~600k PBKDF2). Prefer:
+
+```bash
+cargo make install browser --release
+```
+
+Debug installs also compile crypto crates at opt-level 3 (faster than plain
+debug, still slower than full release).
 
 Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 (shared across profiles).

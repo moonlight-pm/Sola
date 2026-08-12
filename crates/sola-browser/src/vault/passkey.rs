@@ -17,6 +17,16 @@ use serde::Serialize;
 
 use super::client::{VaultError, VaultService};
 
+/// One passkey the user can pick for a WebAuthn get() (no secrets).
+#[derive(Debug, Clone)]
+pub struct PasskeyCandidate {
+    pub cipher_id: String,
+    pub name: String,
+    pub username: Option<String>,
+    pub rp_id: String,
+    pub user_display_name: Option<String>,
+}
+
 struct AutoUserInterface {
     preferred_cipher_id: Option<String>,
 }
@@ -149,6 +159,79 @@ fn b64url(data: &[u8]) -> String {
         }
     }
     out
+}
+
+/// List passkeys that can answer a WebAuthn get() for `rp_id`.
+pub async fn list_candidates(
+    svc: &VaultService,
+    rp_id: &str,
+) -> Result<Vec<PasskeyCandidate>, VaultError> {
+    if !svc.is_ready_for_passkey() {
+        return Err(VaultError::Locked);
+    }
+
+    let listed = svc
+        .client
+        .vault()
+        .ciphers()
+        .get_all()
+        .await
+        .map_err(|e| VaultError::Other(e.to_string()))?;
+
+    let fido = svc.client.0.fido2();
+    let mut out = Vec::new();
+    let rp_lower = rp_id.to_ascii_lowercase();
+
+    for cipher in listed.successes {
+        if cipher.r#type != CipherType::Login || cipher.deleted_date.is_some() {
+            continue;
+        }
+        let Some(login) = cipher.login.as_ref() else {
+            continue;
+        };
+        if login
+            .fido2_credentials
+            .as_ref()
+            .map(|c| c.is_empty())
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        let cipher_id = match cipher.id {
+            Some(id) => id.to_string(),
+            None => continue,
+        };
+        let views = match fido.decrypt_fido2_autofill_credentials(cipher.clone()) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!(error = %e, cipher_id = %cipher_id, "passkey: decrypt autofill skip");
+                continue;
+            }
+        };
+        for v in views {
+            let cand_rp = v.rp_id.to_ascii_lowercase();
+            // Exact or suffix match (rp_id "google.com" vs "accounts.google.com").
+            let rp_ok = cand_rp == rp_lower
+                || rp_lower.ends_with(&format!(".{cand_rp}"))
+                || cand_rp.ends_with(&format!(".{rp_lower}"));
+            if !rp_ok && !rp_id.is_empty() {
+                continue;
+            }
+            out.push(PasskeyCandidate {
+                cipher_id: cipher_id.clone(),
+                name: cipher.name.clone(),
+                username: login.username.clone().or(v.user_name_for_ui.clone()),
+                rp_id: v.rp_id.clone(),
+                user_display_name: v.user_name_for_ui.clone(),
+            });
+            // One row per cipher is enough for the picker.
+            break;
+        }
+    }
+
+    // Stable sort by name.
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(out)
 }
 
 /// Authenticate with a vault passkey.
