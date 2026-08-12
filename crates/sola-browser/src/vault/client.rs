@@ -30,6 +30,8 @@ pub struct MatchSummary {
     pub name: String,
     pub username: Option<String>,
     pub uri: Option<String>,
+    /// Cipher has at least one FIDO2 / passkey credential.
+    pub has_passkey: bool,
 }
 
 /// Credentials for page fill — zeroize on drop.
@@ -96,7 +98,7 @@ pub enum VaultError {
 
 /// In-process Bitwarden password-manager client (official cloud).
 pub struct VaultService {
-    client: PasswordManagerClient,
+    pub(crate) client: PasswordManagerClient,
     /// Long-lived sync client with cipher/folder/crypto handlers registered.
     sync: SyncClient,
     tokens: Arc<TokenCell>,
@@ -289,6 +291,11 @@ impl VaultService {
         Ok(out)
     }
 
+    /// Unlocked session ready for fill / passkey.
+    pub fn is_ready_for_passkey(&self) -> bool {
+        self.session_authenticated && self.client.is_unlocked()
+    }
+
     pub async fn fill_fields(&self, cipher_id: &str) -> Result<FillMaterial, VaultError> {
         if !self.session_authenticated {
             return Err(VaultError::NotLoggedIn);
@@ -346,10 +353,17 @@ fn match_summary_if_login(view: &CipherView, page_url: &str) -> Option<MatchSumm
         return None;
     }
 
+    let has_passkey = login
+        .fido2_credentials
+        .as_ref()
+        .map(|c| !c.is_empty())
+        .unwrap_or(false);
+
     Some(MatchSummary {
         id,
         name: view.name.clone(),
         username: login.username.clone(),
         uri: matched_uri,
+        has_passkey,
     })
 }

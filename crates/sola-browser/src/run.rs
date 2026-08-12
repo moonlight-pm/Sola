@@ -161,6 +161,9 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
     // D8: registry + active profile dirs; wipe pre-profile flat data.
     let _profile = crate::profiles::ensure_active();
 
+    #[cfg(feature = "bitwarden")]
+    crate::vault::passkey_bridge::install();
+
     let argv = std::env::args().nth(1);
     let (boot_tabs, boot_active, sidebar_w) =
         crate::session::BrowserSession::load().bootstrap(argv, DEFAULT_URL);

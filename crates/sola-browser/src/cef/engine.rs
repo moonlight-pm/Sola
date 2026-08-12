@@ -640,6 +640,80 @@ cef::wrap_display_handler! {
                 state.snapshot_dirty.set(true);
             }
         }
+
+        fn on_console_message(
+            &self,
+            _browser: Option<&mut cef::Browser>,
+            _level: cef::LogSeverity,
+            message: Option<&cef::CefString>,
+            _source: Option<&cef::CefString>,
+            _line: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            #[cfg(feature = "bitwarden")]
+            {
+                let msg = message.map(|m| m.to_string()).unwrap_or_default();
+                const PREFIX: &str = "__sola_webauthn__";
+                if let Some(rest) = msg.strip_prefix(PREFIX) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) {
+                        let id = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
+                        let origin = v
+                            .get("origin")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let rp_id = v
+                            .get("rpId")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let public_key_json = v
+                            .get("publicKey")
+                            .cloned()
+                            .map(|pk| pk.to_string())
+                            .unwrap_or_else(|| "{}".into());
+                        tracing::info!(id, %origin, %rp_id, "webauthn intercept from page");
+                        crate::vault::passkey_bridge::push_from_page(
+                            crate::vault::PasskeyPageRequest {
+                                id,
+                                origin,
+                                rp_id,
+                                public_key_json,
+                            },
+                        );
+                    }
+                    return 1; // suppress console noise
+                }
+            }
+            0
+        }
+    }
+}
+
+// ── LoadHandler (inject WebAuthn intercept when bitwarden enabled) ─
+
+cef::wrap_load_handler! {
+    pub struct BrowserLoadHandler {}
+
+    impl LoadHandler {
+        fn on_load_end(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            frame: Option<&mut cef::Frame>,
+            _http_status_code: ::std::os::raw::c_int,
+        ) {
+            #[cfg(feature = "bitwarden")]
+            {
+                let is_main = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false);
+                if !is_main {
+                    return;
+                }
+                let Some(frame) = frame else { return };
+                let code: cef::CefString =
+                    crate::vault::inject_webauthn_intercept_script().into();
+                frame.execute_java_script(Some(&code), None, 0);
+            }
+            let _ = browser;
+        }
     }
 }
 
@@ -650,6 +724,7 @@ cef::wrap_client! {
         pub render_handler: cef::RenderHandler,
         pub life_span_handler: cef::LifeSpanHandler,
         pub display_handler: cef::DisplayHandler,
+        pub load_handler: cef::LoadHandler,
     }
 
     impl Client {
@@ -663,6 +738,10 @@ cef::wrap_client! {
 
         fn display_handler(&self) -> Option<cef::DisplayHandler> {
             Some(self.display_handler.clone())
+        }
+
+        fn load_handler(&self) -> Option<cef::LoadHandler> {
+            Some(self.load_handler.clone())
         }
     }
 }
@@ -892,7 +971,9 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
     let render_handler = BrowserRenderHandler::new();
     let life_span_handler = BrowserLifeSpanHandler::new();
     let display_handler = BrowserDisplayHandler::new();
-    let mut client = BrowserClient::new(render_handler, life_span_handler, display_handler);
+    let load_handler = BrowserLoadHandler::new();
+    let mut client =
+        BrowserClient::new(render_handler, life_span_handler, display_handler, load_handler);
 
     let url_c = cef::CefString::from(initial_url.as_str());
     let browser = match cef::browser_host_create_browser_sync(

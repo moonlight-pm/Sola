@@ -27,6 +27,7 @@ bitwarden = [
     "dep:bitwarden-api-api",
     "dep:bitwarden-crypto",
     "dep:bitwarden-crypto-sync-handler",
+    "dep:bitwarden-fido",
     "dep:async-trait",
     "dep:thiserror",
     "dep:zeroize",
@@ -64,6 +65,7 @@ bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c
 bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
 bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
 bitwarden-crypto-sync-handler = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
+bitwarden-fido = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
 async-trait = { version = "0.1", optional = true }
 thiserror = { version = "2", optional = true }
 zeroize = { version = "1", optional = true }

@@ -31,6 +31,7 @@ use crate::vault::{
     MatchSummary, TwoFactorKind, VaultCmd, VaultEvent, VaultHandle, VaultStatus,
     fill_credentials_script,
 };
+// VaultCmd::PasskeyAssert used from Tick drain.
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
 
@@ -880,6 +881,10 @@ impl<E: Engine> App<E> {
                         }
                         self.handle_vault_event(ev);
                     }
+                    // WebAuthn intercepts from CEF console → vault passkey sign.
+                    while let Some(req) = crate::vault::passkey_bridge::try_recv() {
+                        self.dispatch_passkey_request(req);
+                    }
                 }
                 // Merge engine snapshot with prior cache: WebKit often reports
                 // empty title until the page finishes loading (esp. inactive
@@ -1475,6 +1480,19 @@ impl<E: Engine> App<E> {
                 // Close panel so the user can submit the form immediately.
                 self.set_vault_panel_open(false);
             }
+            VaultEvent::PasskeyReady {
+                req_id,
+                ok,
+                payload,
+            } => {
+                let script = crate::vault::resolve_webauthn_script(req_id, ok, &payload);
+                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                if ok {
+                    tracing::info!(req_id, "vault: passkey response injected");
+                } else {
+                    tracing::warn!(req_id, error = %payload, "vault: passkey response error injected");
+                }
+            }
             VaultEvent::Error { message } => {
                 tracing::warn!(%message, "vault: error");
                 self.vault_busy = false;
@@ -1484,6 +1502,34 @@ impl<E: Engine> App<E> {
                 }
             }
         }
+    }
+
+    /// Turn a page WebAuthn get() into a vault passkey assertion command.
+    #[cfg(feature = "bitwarden")]
+    fn dispatch_passkey_request(&mut self, req: crate::vault::PasskeyPageRequest) {
+        if !self.vault_status.unlocked {
+            let script = crate::vault::resolve_webauthn_script(
+                req.id,
+                false,
+                "Unlock the vault to use a passkey.",
+            );
+            let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+            return;
+        }
+
+        // Prefer a cipher that already matched this page in the fill list.
+        let preferred = self
+            .vault_matches
+            .iter()
+            .find(|m| m.has_passkey)
+            .map(|m| m.id.clone());
+
+        self.vault.send(VaultCmd::PasskeyAssert {
+            req_id: req.id,
+            origin: req.origin,
+            public_key_json: req.public_key_json,
+            preferred_cipher_id: preferred,
+        });
     }
 
     /// Centered modal for Profiles menubar manage actions.
@@ -1668,9 +1714,11 @@ impl<E: Engine> App<E> {
             };
             let host_hint = page_host_hint(page_url);
 
+            // Wide enough for emails; tall enough that ~10–12 logins rarely scroll.
+            const MATCH_LIST_H: f32 = 420.0;
             let mut col = column![title]
                 .spacing(SPACE_SM)
-                .width(Length::Fixed(300.0));
+                .width(Length::Fixed(340.0));
 
             if !host_hint.is_empty() {
                 col = col.push(soft(host_hint));
@@ -1702,11 +1750,28 @@ impl<E: Engine> App<E> {
                         .as_deref()
                         .filter(|s| !s.is_empty())
                         .unwrap_or("—");
-                    let row_body = column![
-                        text(title_line).size(13).font(sola_kit::fonts::ui_medium()),
-                        soft_sm(sub.to_string()),
-                    ]
-                    .spacing(2);
+                    let title_row: Element<'_, Msg> = if m.has_passkey {
+                        row![
+                            text(title_line)
+                                .size(13)
+                                .font(sola_kit::fonts::ui_medium()),
+                            text("passkey")
+                                .size(10)
+                                .font(sola_kit::fonts::ui_medium())
+                                .style(|theme: &iced::Theme| iced::widget::text::Style {
+                                    color: Some(theme.extended_palette().primary.base.color),
+                                }),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .into()
+                    } else {
+                        text(title_line)
+                            .size(13)
+                            .font(sola_kit::fonts::ui_medium())
+                            .into()
+                    };
+                    let row_body = column![title_row, soft_sm(sub.to_string())].spacing(2);
                     let id = m.id.clone();
                     let mut btn = button(row_body)
                         .padding(Padding::from([8, 10]))
@@ -1736,7 +1801,7 @@ impl<E: Engine> App<E> {
                 }
                 col = col.push(
                     scrollable(list)
-                        .height(Length::Fixed(200.0))
+                        .height(Length::Fixed(MATCH_LIST_H))
                         .width(Length::Fill),
                 );
             }
@@ -1896,8 +1961,9 @@ impl<E: Engine> App<E> {
         };
 
         // Fixed-width card — do not let modal face stretch to the window.
+        // Slightly wider than the old 320 so fill list + passkey badge fit.
         let panel = card::modal(container(body).padding(SPACE_MD + SPACE_SM))
-            .width(Length::Fixed(320.0));
+            .width(Length::Fixed(360.0));
 
         // Light click-away (no full dim wash — popover by the icon).
         let backdrop = mouse_area(

@@ -8201,6 +8201,7 @@ dependencies = [
  "bitwarden-core",
  "bitwarden-crypto",
  "bitwarden-crypto-sync-handler",
+ "bitwarden-fido",
  "bitwarden-pm",
  "bitwarden-state",
  "bitwarden-sync",

@@ -26,8 +26,10 @@ Do not invent product policy.
      `profiles/<uuid>/cef/`. Manual: `docs/manual/sola-browser.md`.  
      **Dogfood next** after install.  
    - Retired: multi-crate split + WPE content-plane.  
-   - **Next (engine quality, unordered):** loading/history flags from CEF;
-     input/scroll polish; deeper CEF OSR quirks as found.  
+   - **Vault:** taller fill list (~420px); passkey **get()** via Bitwarden
+     FIDO2 intercept (unlock vault first). Registration not yet.  
+   - **Next (engine quality, unordered):** passkey dogfood / multi-cred pick;
+     loading/history flags from CEF; input/scroll polish; OSR quirks.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  

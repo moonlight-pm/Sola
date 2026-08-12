@@ -43,11 +43,27 @@ under the new id. Open tabs for the previous profile stay in that profile’s
 that cutover may look like a fresh login for sites (no migration of the old
 global CEF runtime tree).
 
+## Bitwarden vault
+
+Toolbar lock icon opens the vault panel.
+
+- **Unlock** with Bitwarden email + master password (and 2FA when required).
+- **Fill login** lists URI-matching items for the active page (tall list;
+  items with a passkey show a **passkey** badge). Click to fill username /
+  password into the page.
+- **Passkeys:** with the vault unlocked, WebAuthn `navigator.credentials.get`
+  is intercepted and signed from Bitwarden FIDO2 credentials (auto-picks the
+  first matching passkey). **Registration** (`credentials.create`) is not
+  supported yet.
+
+Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
+(shared across profiles).
+
 ## Not in this manual yet
 
 - Full keyboard chrome reference  
 - Engine quirks (loading flags, OSR input/scroll)  
-- Bitwarden vault detail  
+- Passkey registration / multi-credential picker UI  
 
 See capability row **browser** in [`docs/capabilities.md`](../capabilities.md)
 and freeze [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](../specs/2026-08-10-sola-browser-profiles-design.md).

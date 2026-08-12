@@ -31,6 +31,15 @@ pub enum VaultCmd {
     Sync,
     Matches { url: String },
     Fill { id: String },
+    /// WebAuthn get() — sign with a vault passkey.
+    PasskeyAssert {
+        /// Page request id (for JS resolve).
+        req_id: u64,
+        origin: String,
+        /// Serialized `publicKey` options (challenge etc. base64url).
+        public_key_json: String,
+        preferred_cipher_id: Option<String>,
+    },
     Status,
     Quit,
 }
@@ -58,6 +67,13 @@ pub enum VaultEvent {
     FillReady {
         username: Option<String>,
         password: Option<String>,
+    },
+    /// Passkey assertion for the page polyfill (`req_id` matches intercept).
+    PasskeyReady {
+        req_id: u64,
+        ok: bool,
+        /// On ok: assertion JSON string; on err: error message.
+        payload: String,
     },
     Error { message: String },
 }
@@ -288,6 +304,41 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                     });
                 }
             },
+            VaultCmd::PasskeyAssert {
+                req_id,
+                origin,
+                public_key_json,
+                preferred_cipher_id,
+            } => {
+                match super::passkey::authenticate(
+                    &svc,
+                    &origin,
+                    &public_key_json,
+                    preferred_cipher_id,
+                )
+                .await
+                {
+                    Ok(assertion) => {
+                        let payload = serde_json::to_string(&assertion).unwrap_or_else(|e| {
+                            format!(r#"{{"error":"{e}"}}"#)
+                        });
+                        tracing::info!(req_id, %origin, "vault: passkey assertion ok");
+                        let _ = event_tx.send(VaultEvent::PasskeyReady {
+                            req_id,
+                            ok: true,
+                            payload,
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!(req_id, error = %e, "vault: passkey assertion failed");
+                        let _ = event_tx.send(VaultEvent::PasskeyReady {
+                            req_id,
+                            ok: false,
+                            payload: e.to_string(),
+                        });
+                    }
+                }
+            }
         }
     }
 }
