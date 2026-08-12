@@ -9,28 +9,23 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-12 (browser Profiles menubar; CEF under profile dirs)
+**As of:** 2026-08-12 (browser passkey get dogfooded on Google; vault unlock OK)
 
 ---
 
 ## Now
 
-1. **Browser (CEF) — dogfoodable chrome; engine polish next**  
+1. **Browser (CEF) — engine polish next**  
    - Branch: **`naturalethic/cef-browser`** (this worktree).  
-   - Single crate `sola-browser`: iced chrome (tabs, omnibox, session,
-     profiles, Bitwarden vault) + CEF CPU OSR under `src/cef/`.  
-   - **Dogfood (local):** install works; multipage/chrome “very solid”;
-     tab switch fixed (hide/show + invalidate + parked last-frame).  
-   - **Profiles:** menubar **Profiles** — switch (✓ active), New / Rename /
-     Delete…; switch/create re-exec; CEF `root_cache_path` =
-     `profiles/<uuid>/cef/`. Manual: `docs/manual/sola-browser.md`.  
-     **Dogfood next** after install.  
-   - Retired: multi-crate split + WPE content-plane.  
-   - **Vault:** taller fill list; WebAuthn **get()** opens passkey picker
-     (unlock if needed → choose passkey → assert). Unlock: use
-     `cargo make install browser --release` (PBKDF2); dev also opts crypto
-     crates at O3. Registration not yet.  
-   - **Next:** passkey dogfood; loading/history flags; input/scroll; OSR.  
+   - Single crate `sola-browser`: iced chrome + CEF CPU OSR.  
+   - **Dogfood (local):** multipage/chrome + tab switch solid; Profiles
+     menubar; Bitwarden unlock (prefer **`--release` install**); fill list
+     after unlock; **passkey get()** picker dogfooded on Google accounts.  
+   - Manual: `docs/manual/sola-browser.md`.  
+   - **Not shipped:** passkey **registration**; loading/history flags from
+     CEF; input/scroll / OSR polish.  
+   - **Next (unordered):** loading/history flags from CEF; input/scroll
+     polish; deeper OSR quirks; passkey create if needed.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -56,7 +51,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **`naturalethic/cef-browser`** (browser); master for other daily | Feature work in worktrees / Orca workspaces |
-| Browser | Single-crate CEF; chrome + tab switch solid; Profiles menubar installed with this slice — dogfood switch/new/rename/delete | — |
+| Browser | Single-crate CEF; chrome + tab switch + Profiles solid; Bitwarden unlock + fill after unlock; passkey **get** dogfooded (Google) with release install | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

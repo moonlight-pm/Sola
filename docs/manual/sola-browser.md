@@ -1,7 +1,7 @@
 # sola-browser
 
-**Status:** partial dogfood — iced chrome + CEF; Profiles menubar shipped in
-code; engine polish still open.
+**Status:** partial dogfood — iced chrome + CEF; Profiles + Bitwarden unlock /
+fill / passkey **get** dogfooded.
 
 ## What it is
 
@@ -39,22 +39,19 @@ Switching or creating a profile **re-execs** the process so CEF and tabs load
 under the new id. Open tabs for the previous profile stay in that profile’s
 `session.json`.
 
-**Note:** Moving CEF user data under the profile path means the first run after
-that cutover may look like a fresh login for sites (no migration of the old
-global CEF runtime tree).
-
 ## Bitwarden vault
 
-Toolbar lock icon opens the vault panel.
+Toolbar lock / key icon opens the vault panel.
 
 - **Unlock** with Bitwarden email + master password (and 2FA when required).
-- **Fill login** lists URI-matching items for the active page (tall list;
-  items with a passkey show a **passkey** badge). Click to fill username /
-  password into the page.
-- **Passkeys:** when a site calls WebAuthn `navigator.credentials.get`, the
-  vault panel opens (unlock first if needed) with a **list of matching
-  passkeys** — pick one to complete sign-in. **Registration**
-  (`credentials.create`) is not supported yet.
+  After unlock, the panel opens the **fill login** list for the active page
+  (unless a passkey ceremony is already waiting).
+- **Fill login** lists URI-matching items (tall list; items with a passkey show
+  a **passkey** badge). Click to fill username / password into the page.
+- **Passkeys (get):** when a site calls WebAuthn `navigator.credentials.get`,
+  the vault panel opens (unlock first if needed) with a **list of matching
+  passkeys** — pick one to complete sign-in. Dogfooded on Google accounts.
+  **Registration** (`credentials.create`) is not supported yet.
 
 ### Unlock speed
 
@@ -74,7 +71,7 @@ Vault prefs (remembered email) live at `~/.config/sola/browser/vault.json`
 
 - Full keyboard chrome reference  
 - Engine quirks (loading flags, OSR input/scroll)  
-- Passkey registration / multi-credential picker UI  
+- Passkey **registration**  
 
 See capability row **browser** in [`docs/capabilities.md`](../capabilities.md)
 and freeze [`docs/specs/2026-08-10-sola-browser-profiles-design.md`](../specs/2026-08-10-sola-browser-profiles-design.md).
