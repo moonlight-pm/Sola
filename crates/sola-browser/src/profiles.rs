@@ -1,18 +1,19 @@
 //! Browser profiles (D8) — registry, paths, first-run wipe, switch/manage.
 //!
 //! Freeze: `docs/specs/2026-08-10-sola-browser-profiles-design.md`.
-//! One active profile per process; switching rewrites the registry and
-//! re-execs the browser so engine storage + tabs reload under the new id.
+//! One active profile in the process; switching updates the registry and
+//! in-memory active handle so chrome can replace tabs + CEF request context
+//! without tearing down the window.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
 const REGISTRY_VERSION: u32 = 1;
 const DEFAULT_NAME: &str = "Primary";
 
-static ACTIVE: OnceLock<ActiveProfile> = OnceLock::new();
+static ACTIVE: OnceLock<RwLock<ActiveProfile>> = OnceLock::new();
 
 /// Resolved active profile for this process.
 #[derive(Debug, Clone)]
@@ -30,8 +31,9 @@ impl ActiveProfile {
         self.data_dir.join("session.json")
     }
 
-    /// CEF `root_cache_path` (user data) — under the profile data dir so
-    /// cookies/storage follow the profile, not a process-global CEF tree.
+    /// CEF request-context cache path (cookies/storage) for this profile.
+    /// Must stay under [`browser_data_root`] so it is a child of the process
+    /// `root_cache_path`.
     pub fn cef_user_data_dir(&self) -> PathBuf {
         self.data_dir.join("cef")
     }
@@ -52,9 +54,9 @@ struct ProfilesRegistry {
 }
 
 /// Ensure registry + active profile dirs exist, wipe legacy paths once,
-/// and return the process-wide active profile.
-pub fn ensure_active() -> &'static ActiveProfile {
-    ACTIVE.get_or_init(|| {
+/// and install the process-wide active profile.
+pub fn ensure_active() -> ActiveProfile {
+    let lock = ACTIVE.get_or_init(|| {
         let profile = load_or_create_active();
         wipe_legacy_paths();
         tracing::info!(
@@ -64,15 +66,19 @@ pub fn ensure_active() -> &'static ActiveProfile {
             cache = %profile.cache_dir.display(),
             "browser profile active (D8)"
         );
-        profile
-    })
+        RwLock::new(profile)
+    });
+    lock.read().expect("profile lock").clone()
 }
 
 /// Active profile (panics if [`ensure_active`] was never called).
-pub fn active() -> &'static ActiveProfile {
+pub fn active() -> ActiveProfile {
     ACTIVE
         .get()
         .expect("profiles::ensure_active() must run before profiles::active()")
+        .read()
+        .expect("profile lock")
+        .clone()
 }
 
 /// All registered profiles in registry order (re-read from disk).
@@ -83,9 +89,8 @@ pub fn list() -> Vec<ProfileEntry> {
 }
 
 /// Create a new profile with a friendly `name`, make it active in the
-/// registry, create data/cache dirs. Caller must re-exec the process to
-/// load the new active profile into the engine.
-pub fn create_and_activate(name: &str) -> Result<ProfileEntry, String> {
+/// registry and in this process. Caller reloads session / CEF context.
+pub fn create_and_activate(name: &str) -> Result<ActiveProfile, String> {
     let name = sanitize_name(name)?;
     let mut reg = load_registry_or_empty();
     let id = new_profile_id();
@@ -98,10 +103,10 @@ pub fn create_and_activate(name: &str) -> Result<ProfileEntry, String> {
     ensure_profile_dirs(&entry.id);
     write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
     tracing::info!(id = %entry.id, name = %entry.name, "created and activated profile");
-    Ok(entry)
+    set_process_active(resolve_entry(&entry))
 }
 
-/// Rename a profile by id. Does not require re-exec.
+/// Rename a profile by id.
 pub fn rename(id: &str, name: &str) -> Result<(), String> {
     let name = sanitize_name(name)?;
     let mut reg = load_registry_or_empty();
@@ -112,33 +117,42 @@ pub fn rename(id: &str, name: &str) -> Result<(), String> {
         entry.name = name.clone();
     }
     write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
+    // Keep in-memory name in sync if this is the active profile.
+    if let Some(lock) = ACTIVE.get() {
+        let mut g = lock.write().expect("profile lock");
+        if g.id == id {
+            g.name = name.clone();
+        }
+    }
     tracing::info!(id, name = %name, "renamed profile");
     Ok(())
 }
 
-/// Set the active profile id in the registry. Caller must re-exec.
-pub fn set_active(id: &str) -> Result<(), String> {
+/// Set the active profile in the registry and this process.
+pub fn activate(id: &str) -> Result<ActiveProfile, String> {
     let mut reg = load_registry_or_empty();
-    if !reg.profiles.iter().any(|p| p.id == id) {
-        return Err("profile not found".into());
+    let entry = reg
+        .profiles
+        .iter()
+        .find(|p| p.id == id)
+        .cloned()
+        .ok_or_else(|| "profile not found".to_string())?;
+    if reg.active != id {
+        reg.active = id.to_string();
+        write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
     }
-    if reg.active == id {
-        return Ok(());
-    }
-    reg.active = id.to_string();
-    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
-    tracing::info!(id, "set active profile (re-exec required)");
-    Ok(())
+    ensure_profile_dirs(&entry.id);
+    let profile = resolve_entry(&entry);
+    set_process_active(profile)
 }
 
 /// Delete a profile. Removes registry entry and data/cache dirs.
 ///
 /// - Cannot delete the last remaining profile.
-/// - If deleting the active profile, activates another first (caller must
-///   re-exec when the deleted id was active).
-///
-/// Returns whether the active profile changed (re-exec needed).
-pub fn delete(id: &str) -> Result<bool, String> {
+/// - If deleting the active profile, activates another and returns
+///   `Some(new_active)` so the caller can reload the workspace.
+/// - If deleting a non-active profile, returns `None`.
+pub fn delete(id: &str) -> Result<Option<ActiveProfile>, String> {
     let mut reg = load_registry_or_empty();
     if reg.profiles.len() <= 1 {
         return Err("cannot delete the only profile".into());
@@ -157,7 +171,43 @@ pub fn delete(id: &str) -> Result<bool, String> {
     remove_path(&profile_data_dir(id));
     remove_path(&profile_cache_dir(id));
     tracing::info!(id, was_active, "deleted profile");
-    Ok(was_active)
+
+    if was_active {
+        let entry = reg.profiles[0].clone();
+        ensure_profile_dirs(&entry.id);
+        Ok(Some(set_process_active(resolve_entry(&entry))?))
+    } else {
+        Ok(None)
+    }
+}
+
+fn set_process_active(profile: ActiveProfile) -> Result<ActiveProfile, String> {
+    let lock = ACTIVE.get_or_init(|| RwLock::new(profile.clone()));
+    {
+        let mut g = lock.write().map_err(|_| "profile lock poisoned".to_string())?;
+        *g = profile.clone();
+    }
+    tracing::info!(
+        id = %profile.id,
+        name = %profile.name,
+        data = %profile.data_dir.display(),
+        "browser profile activated"
+    );
+    Ok(profile)
+}
+
+fn resolve_entry(entry: &ProfileEntry) -> ActiveProfile {
+    let data_dir = profile_data_dir(&entry.id);
+    let cache_dir = profile_cache_dir(&entry.id);
+    let _ = std::fs::create_dir_all(&data_dir);
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let _ = std::fs::create_dir_all(data_dir.join("cef"));
+    ActiveProfile {
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        data_dir,
+        cache_dir,
+    }
 }
 
 fn sanitize_name(name: &str) -> Result<String, String> {
@@ -228,18 +278,7 @@ fn load_or_create_active() -> ActiveProfile {
             e
         });
 
-    let data_dir = profile_data_dir(&entry.id);
-    let cache_dir = profile_cache_dir(&entry.id);
-    let _ = std::fs::create_dir_all(&data_dir);
-    let _ = std::fs::create_dir_all(&cache_dir);
-    let _ = std::fs::create_dir_all(data_dir.join("cef"));
-
-    ActiveProfile {
-        id: entry.id,
-        name: entry.name,
-        data_dir,
-        cache_dir,
-    }
+    resolve_entry(&entry)
 }
 
 fn load_registry_or_empty() -> ProfilesRegistry {

@@ -15,9 +15,9 @@ A **profile** is a separate **web identity + workspace**:
 - Distinct **open tabs** (tabs *are* bookmarks — no classic bookmark or reading-list UI)
 - **Not** a full second browser for every preference
 
-**Runtime:** one active profile per process. Switch / create / delete active
-rewrites the registry and **re-execs** the browser so engine storage + tabs
-reload under the new id.
+**Runtime:** one active profile at a time. Switch / create / delete-active
+rewrites the registry, then **replaces tabs + CEF request context in-process**
+(window stays up).
 
 ## Identity
 

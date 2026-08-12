@@ -147,7 +147,7 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 | `crates/sola-browser` | **Product browser** — iced chrome (tabs, omnibox, session, profiles, vault) + CEF CPU OSR under `src/cef/` |
 | App id / binary | `sola-browser` → `/opt/sola/bin/sola-browser` (shell launcher: one “Browser” entry) |
 | CEF pin | `cef` crate + workspace `cef-version`; install tarball under `~/.cache/sola/cef-<ver>/` via `cargo make install-cef` |
-| Profiles (D8) | Registry `~/.local/share/sola/browser/profiles.json`; per-id data/cache under `profiles/<uuid>/`; session `session.json`; CEF user data `profiles/<uuid>/cef/`; menubar Profiles switch re-execs |
+| Profiles (D8) | Registry `~/.local/share/sola/browser/profiles.json`; per-id data/cache under `profiles/<uuid>/`; session `session.json`; CEF request-context cache `profiles/<uuid>/cef/` (process `root_cache_path` = share root); menubar Profiles switch replaces workspace in-process |
 | Tab switch | Hide inactive OSR hosts (`was_hidden`); show + `invalidate(VIEW)` active; park last CPU frame per tab for instant swap |
 
 Former split (`sola-browser-core` / `-wpe` / `-cef` dispatcher) and the WPE

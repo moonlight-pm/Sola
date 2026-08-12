@@ -28,16 +28,18 @@ A **profile** is a separate web identity + tab workspace (D8).
 
 1. **Profile list** — click a name to switch. The active profile shows a
    checkmark (requires shell that draws `MenuItem.checked`).
-2. **New Profile…** — name dialog; creates dirs, makes the profile active,
-   restarts the browser process.
-3. **Rename Profile…** — renames the active profile (no restart).
+2. **New Profile…** — name dialog; creates dirs and switches to it in the
+   same window.
+3. **Rename Profile…** — renames the active profile.
 4. **Delete Profile…** — confirms deletion of the **active** profile (blocked
-   if it is the only one). Data dirs are removed; browser restarts on another
-   profile.
+   if it is the only one). Data dirs are removed; the window reloads the
+   next profile’s tabs.
 
-Switching or creating a profile **re-execs** the process so CEF and tabs load
-under the new id. Open tabs for the previous profile stay in that profile’s
-`session.json`.
+Switching or creating a profile **keeps the window open**: the previous
+profile’s tabs are saved to its `session.json`, then tabs and site data
+(cookies/storage via CEF request context) are replaced for the new profile.
+
+**Cold start** with an empty session opens a single **blank** tab.
 
 ## Bitwarden vault
 

@@ -170,10 +170,9 @@ mod tests {
 
     #[test]
     fn bootstrap_empty_uses_default() {
-        let (tabs, active, _) =
-            BrowserSession::default().bootstrap(None, "https://www.wikipedia.org");
+        let (tabs, active, _) = BrowserSession::default().bootstrap(None, "about:blank");
         assert_eq!(tabs.len(), 1);
-        assert_eq!(tabs[0].url, "https://www.wikipedia.org");
+        assert_eq!(tabs[0].url, "about:blank");
         assert_eq!(active, 0);
     }
 

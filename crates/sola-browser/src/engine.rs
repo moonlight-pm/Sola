@@ -76,6 +76,14 @@ pub enum Cmd<E: Engine> {
     /// Script is sourced from chrome; do not put untrusted page content here
     /// without escaping — vault fill embeds secrets via JSON string literals.
     EvaluateJs(String),
+    /// Close every tab, switch CEF request-context to `cef_cache_path`, then
+    /// open `tabs` and activate `active`. Keeps the iced window alive across
+    /// browser profile switches.
+    ReplaceWorkspace {
+        cef_cache_path: String,
+        tabs: Vec<(TabId, String, String)>,
+        active: TabId,
+    },
     Quit,
 }
 

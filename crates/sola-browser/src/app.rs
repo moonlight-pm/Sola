@@ -34,7 +34,8 @@ use crate::vault::{
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
 
-pub const DEFAULT_URL: &str = "https://www.wikipedia.org";
+/// Cold-start default when the profile session is empty (and for new profiles).
+pub const DEFAULT_URL: &str = "about:blank";
 /// A fresh blank tab (⌘T). Loaded as an empty page; the chrome shows an empty,
 /// focused URL bar rather than the literal "about:blank".
 pub const BLANK_URL: &str = "about:blank";
@@ -444,11 +445,16 @@ impl<E: Engine> App<E> {
             };
             // Optimistic chrome snapshot so the strip isn't empty for a tick.
             // Title from session is kept until WebKit reports a non-empty one.
+            let title = if url == BLANK_URL && tab.title.is_empty() {
+                "New Tab".to_string()
+            } else {
+                tab.title.clone()
+            };
             self.cached_tabs.push(TabInfo {
                 id,
                 url: url.clone(),
-                title: tab.title.clone(),
-                is_loading: !url.is_empty(),
+                title: title.clone(),
+                is_loading: url != BLANK_URL && !url.is_empty(),
                 can_go_back: false,
                 can_go_forward: false,
             });
@@ -457,7 +463,7 @@ impl<E: Engine> App<E> {
             let _ = self.cmd_tx.send(Cmd::OpenTab {
                 id,
                 url,
-                title: tab.title,
+                title,
             });
             ids.push(id);
         }
@@ -512,28 +518,112 @@ impl<E: Engine> App<E> {
         self.profile_dialog_error = None;
     }
 
-    /// Switch to another profile: persist tabs, set registry active, re-exec.
+    /// Switch to another profile in-process: save session, flip active, replace
+    /// tabs + CEF storage context. Window stays up.
     pub fn switch_profile(&mut self, id: &str) {
         if id == crate::profiles::active().id {
             return;
         }
         self.persist_session();
-        if let Err(e) = crate::profiles::set_active(id) {
-            tracing::warn!(error = %e, id, "switch profile failed");
-            return;
+        match crate::profiles::activate(id) {
+            Ok(profile) => {
+                tracing::info!(id = %profile.id, name = %profile.name, "switching profile in-process");
+                self.reload_workspace_for_active_profile();
+            }
+            Err(e) => tracing::warn!(error = %e, id, "switch profile failed"),
         }
-        tracing::info!(id, "switching profile — re-exec");
-        sola_core::watcher::exec_self();
+    }
+
+    /// Load session for the active profile and replace chrome + CEF tabs.
+    fn reload_workspace_for_active_profile(&mut self) {
+        let profile = crate::profiles::active();
+        let (tabs, active_index, sidebar_w) =
+            crate::session::BrowserSession::load().bootstrap(None, BLANK_URL);
+        self.sidebar_w = sidebar_w;
+        self.session_fp.clear();
+
+        // Build new tab set with fresh ids, then ask the engine to swap.
+        let mut new_cached = Vec::with_capacity(tabs.len().max(1));
+        let mut open_list = Vec::with_capacity(tabs.len().max(1));
+        for tab in &tabs {
+            let id = self.engine.alloc_tab_id();
+            let url = crate::util::normalize_url(&tab.url);
+            let url = if url.is_empty() {
+                BLANK_URL.to_string()
+            } else {
+                url
+            };
+            let title = if url == BLANK_URL {
+                "New Tab".to_string()
+            } else {
+                tab.title.clone()
+            };
+            new_cached.push(TabInfo {
+                id,
+                url: url.clone(),
+                title: title.clone(),
+                is_loading: url != BLANK_URL && !url.is_empty(),
+                can_go_back: false,
+                can_go_forward: false,
+            });
+            open_list.push((id, url, title));
+        }
+        if open_list.is_empty() {
+            let id = self.engine.alloc_tab_id();
+            new_cached.push(TabInfo {
+                id,
+                url: BLANK_URL.to_string(),
+                title: "New Tab".into(),
+                is_loading: false,
+                can_go_back: false,
+                can_go_forward: false,
+            });
+            open_list.push((id, BLANK_URL.to_string(), "New Tab".into()));
+        }
+        let active = open_list
+            .get(active_index.min(open_list.len() - 1))
+            .map(|(id, _, _)| *id)
+            .unwrap_or(open_list[0].0);
+
+        self.cached_tabs = new_cached;
+        self.cached_active = active;
+        self.slot
+            .paint_tab
+            .store(active.0, std::sync::atomic::Ordering::Relaxed);
+        self.active_handle
+            .store(active.0, std::sync::atomic::Ordering::Relaxed);
+        *self.slot.pending.lock().unwrap() = None;
+        self.slot.need_park_prime.lock().unwrap().clear();
+        self.slot.drop_paint_tabs.lock().unwrap().clear();
+
+        if let Some(info) = self.cached_tabs.iter().find(|t| t.id == active) {
+            self.url_field = if info.url == BLANK_URL {
+                String::new()
+            } else {
+                info.url.clone()
+            };
+            self.last_seen_url = info.url.clone();
+        }
+
+        let cef_path = profile.cef_user_data_dir().to_string_lossy().into_owned();
+        let _ = self.cmd_tx.send(Cmd::ReplaceWorkspace {
+            cef_cache_path: cef_path,
+            tabs: open_list,
+            active,
+        });
+        crate::integration::republish_menus(self.app_id);
+        self.persist_session();
     }
 
     fn submit_profile_dialog(&mut self) -> Task<Msg> {
         match self.profile_dialog.clone() {
             Some(ProfileDialog::New) => {
+                self.persist_session();
                 match crate::profiles::create_and_activate(&self.profile_name_field) {
-                    Ok(entry) => {
-                        self.persist_session();
-                        tracing::info!(id = %entry.id, name = %entry.name, "new profile — re-exec");
-                        sola_core::watcher::exec_self();
+                    Ok(profile) => {
+                        tracing::info!(id = %profile.id, name = %profile.name, "new profile");
+                        self.close_profile_dialog();
+                        self.reload_workspace_for_active_profile();
                     }
                     Err(e) => {
                         self.profile_dialog_error = Some(e);
@@ -555,15 +645,14 @@ impl<E: Engine> App<E> {
             Some(ProfileDialog::DeleteConfirm) => {
                 let id = crate::profiles::active().id.clone();
                 match crate::profiles::delete(&id) {
-                    Ok(was_active) => {
+                    Ok(Some(_new_active)) => {
                         self.close_profile_dialog();
-                        if was_active {
-                            // Active profile gone — load the new active after re-exec.
-                            tracing::info!("deleted active profile — re-exec");
-                            sola_core::watcher::exec_self();
-                        } else {
-                            crate::integration::republish_menus(self.app_id);
-                        }
+                        tracing::info!("deleted active profile — reloading workspace");
+                        self.reload_workspace_for_active_profile();
+                    }
+                    Ok(None) => {
+                        self.close_profile_dialog();
+                        crate::integration::republish_menus(self.app_id);
                     }
                     Err(e) => {
                         self.profile_dialog_error = Some(e);
@@ -1133,7 +1222,7 @@ impl<E: Engine> App<E> {
             id,
             url: url.clone(),
             title: title.clone(),
-            is_loading: !url.is_empty(),
+            is_loading: url != BLANK_URL && !url.is_empty(),
             can_go_back: false,
             can_go_forward: false,
         });

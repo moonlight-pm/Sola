@@ -261,6 +261,9 @@ struct CefThreadState {
     /// Set by on_address_change / on_title_change; checked at
     /// the next cmd-pump tick to rebuild the shared snapshot.
     snapshot_dirty: std::cell::Cell<bool>,
+    /// Per-browser-profile request context (cookies/storage). Rebuilt
+    /// on profile switch without tearing down the iced window.
+    request_context: RefCell<Option<cef::RequestContext>>,
 }
 
 /// Per-tab state. The Browser handle outlives until close;
@@ -310,12 +313,16 @@ fn worker_main(
         active_atomic,
         next_id,
         snapshot_dirty: std::cell::Cell::new(false),
+        request_context: RefCell::new(None),
     });
     CEF_STATE.with(|s| {
         s.set(state.clone()).map_err(|_| ()).expect("CEF_STATE set twice");
     });
 
     initialize_cef(app_id);
+    // Initial profile storage context (cookies/local storage).
+    let cef_path = crate::profiles::active().cef_user_data_dir();
+    *state.request_context.borrow_mut() = Some(make_profile_request_context(&cef_path));
 
     let mut pump = CmdPumpTask::new();
     cef::post_delayed_task(
@@ -882,6 +889,13 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         Cmd::SetActiveTab(id) => {
             activate_tab(state, id);
         }
+        Cmd::ReplaceWorkspace {
+            cef_cache_path,
+            tabs,
+            active,
+        } => {
+            replace_workspace(state, &cef_cache_path, tabs, active);
+        }
         Cmd::Quit => {
             cef::quit_message_loop();
             return false;
@@ -965,6 +979,38 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
     tracing::debug!(?id, prev = ?prev, "CEF active tab");
 }
 
+fn make_profile_request_context(cache_path: &std::path::Path) -> cef::RequestContext {
+    let _ = std::fs::create_dir_all(cache_path);
+    let mut settings = cef::RequestContextSettings::default();
+    settings.cache_path = cef::CefString::from(&*cache_path.to_string_lossy());
+    settings.persist_session_cookies = 1;
+    tracing::info!(path = %cache_path.display(), "CEF request context (profile)");
+    cef::request_context_create_context(Some(&settings), None)
+        .expect("cef request_context_create_context failed")
+}
+
+fn replace_workspace(
+    state: &CefThreadState,
+    cef_cache_path: &str,
+    tabs: Vec<(TabId, String, String)>,
+    active: TabId,
+) {
+    // Close every live CEF browser (window stays — this is chrome-side only).
+    let ids: Vec<TabId> = state.tabs.borrow().iter().map(|t| t.id).collect();
+    for id in ids {
+        close_tab(state, id);
+    }
+    // New storage / cookies for the target profile.
+    *state.request_context.borrow_mut() =
+        Some(make_profile_request_context(std::path::Path::new(cef_cache_path)));
+    // Open restored tabs under the new context.
+    for (id, url, title) in tabs {
+        open_tab(state, id, url, title);
+    }
+    activate_tab(state, active);
+    tracing::info!(?active, "CEF workspace replaced for profile switch");
+}
+
 fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_title: String) {
     let mut window_info = cef::WindowInfo::default();
     window_info.windowless_rendering_enabled = 1;
@@ -985,13 +1031,16 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
         BrowserClient::new(render_handler, life_span_handler, display_handler, load_handler);
 
     let url_c = cef::CefString::from(initial_url.as_str());
+    // Per-profile RequestContext so cookies follow the active profile without
+    // re-execing the process (window stays up on switch).
+    let mut ctx_slot = state.request_context.borrow_mut();
     let browser = match cef::browser_host_create_browser_sync(
         Some(&window_info),
         Some(&mut client),
         Some(&url_c),
         Some(&browser_settings),
         None,
-        None,
+        ctx_slot.as_mut(),
     ) {
         Some(b) => b,
         None => {
@@ -999,6 +1048,7 @@ fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_titl
             return;
         }
     };
+    drop(ctx_slot);
     let browser_id = browser.identifier();
 
     let url = Arc::new(Mutex::new(initial_url.clone()));
@@ -1161,15 +1211,14 @@ fn initialize_cef(app_id: &'static str) {
     let locales = resources.join("locales");
     let exe = std::env::current_exe().expect("current_exe");
 
-    // Per-profile CEF user data (cookies/storage). Requires
-    // `profiles::ensure_active()` before engine spawn (see `run`).
-    // Scoped by profile so switching identities is real, not tab-only.
-    let cache_root = crate::profiles::active().cef_user_data_dir();
+    // Process-wide CEF root. Per-profile cookies/storage live in request
+    // contexts under `profiles/<uuid>/cef/` (must be children of this root).
+    // Requires `profiles::ensure_active()` before engine spawn (see `run`).
+    let cache_root = crate::profiles::browser_data_root();
     let _ = std::fs::create_dir_all(&cache_root);
     tracing::info!(
         path = %cache_root.display(),
-        profile = %crate::profiles::active().name,
-        "CEF root_cache_path (profile)"
+        "CEF root_cache_path (process; profiles use request contexts)"
     );
 
     let mut settings = cef::Settings::default();
