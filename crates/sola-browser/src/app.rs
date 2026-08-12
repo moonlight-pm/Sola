@@ -279,6 +279,8 @@ pub struct App<E: Engine> {
     pub profile_name_field: String,
     /// Inline error under the profile dialog (empty name, last profile, …).
     pub profile_dialog_error: Option<String>,
+    /// Parked chrome snapshots per profile (mirrors CEF parks; same eviction).
+    workspace_cache: std::collections::HashMap<String, crate::tab_cache::WorkspaceSnapshot>,
 }
 
 impl<E: Engine> App<E> {
@@ -358,6 +360,7 @@ impl<E: Engine> App<E> {
             profile_dialog: None,
             profile_name_field: String::new(),
             profile_dialog_error: None,
+            workspace_cache: std::collections::HashMap::new(),
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -518,31 +521,89 @@ impl<E: Engine> App<E> {
         self.profile_dialog_error = None;
     }
 
-    /// Switch to another profile in-process: save session, flip active, replace
-    /// tabs + CEF storage context. Window stays up.
+    /// Switch profile: park live workspace (keep CEF pages warm), resume
+    /// target park or cold-load from session — window stays up.
     pub fn switch_profile(&mut self, id: &str) {
         if id == crate::profiles::active().id {
             return;
         }
         self.persist_session();
+        let from = crate::profiles::active().id.clone();
         match crate::profiles::activate(id) {
             Ok(profile) => {
-                tracing::info!(id = %profile.id, name = %profile.name, "switching profile in-process");
-                self.reload_workspace_for_active_profile();
+                tracing::info!(id = %profile.id, name = %profile.name, "switching profile (park/resume)");
+                self.enter_profile_workspace(from, false);
             }
             Err(e) => tracing::warn!(error = %e, id, "switch profile failed"),
         }
     }
 
-    /// Load session for the active profile and replace chrome + CEF tabs.
-    fn reload_workspace_for_active_profile(&mut self) {
+    /// Park current chrome snapshot, then resume park or create from session.
+    /// `force_cold` skips resume (e.g. brand-new profile with empty session).
+    fn enter_profile_workspace(&mut self, park_as_profile_id: String, force_cold: bool) {
+        use crate::tab_cache::WorkspaceSnapshot;
+        use std::time::Instant;
+
+        // Snapshot chrome for the profile we're leaving.
+        if !park_as_profile_id.is_empty() && !self.cached_tabs.is_empty() {
+            self.workspace_cache.insert(
+                park_as_profile_id.clone(),
+                WorkspaceSnapshot {
+                    tabs: self.cached_tabs.clone(),
+                    active: self.cached_active,
+                    sidebar_w: self.sidebar_w,
+                    last_used: Instant::now(),
+                },
+            );
+        }
+
         let profile = crate::profiles::active();
+        let resume_id = profile.id.clone();
+        let cef_path = profile.cef_user_data_dir().to_string_lossy().into_owned();
+
+        if !force_cold {
+            if let Some(snap) = self.workspace_cache.remove(&resume_id) {
+                let active = snap.active;
+                self.sidebar_w = snap.sidebar_w;
+                self.cached_tabs = snap.tabs;
+                self.cached_active = active;
+                self.apply_workspace_chrome_focus();
+                // Resume park — CEF keeps the same browsers (no reload).
+                let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
+                    park_as_profile_id,
+                    resume_profile_id: resume_id,
+                    cef_cache_path: cef_path,
+                    create_tabs: None,
+                    active,
+                });
+                self.evict_workspace_parks();
+                crate::integration::republish_menus(self.app_id);
+                self.session_fp.clear();
+                self.persist_session();
+                return;
+            }
+        }
+
+        // Cold: load session from disk (or empty → blank), mint tab ids.
+        let (create_tabs, active) = self.cold_workspace_from_session();
+        let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
+            park_as_profile_id,
+            resume_profile_id: resume_id,
+            cef_cache_path: cef_path,
+            create_tabs: Some(create_tabs),
+            active,
+        });
+        self.evict_workspace_parks();
+        crate::integration::republish_menus(self.app_id);
+        self.session_fp.clear();
+        self.persist_session();
+    }
+
+    fn cold_workspace_from_session(&mut self) -> (Vec<(TabId, String, String)>, TabId) {
         let (tabs, active_index, sidebar_w) =
             crate::session::BrowserSession::load().bootstrap(None, BLANK_URL);
         self.sidebar_w = sidebar_w;
-        self.session_fp.clear();
 
-        // Build new tab set with fresh ids, then ask the engine to swap.
         let mut new_cached = Vec::with_capacity(tabs.len().max(1));
         let mut open_list = Vec::with_capacity(tabs.len().max(1));
         for tab in &tabs {
@@ -587,6 +648,12 @@ impl<E: Engine> App<E> {
 
         self.cached_tabs = new_cached;
         self.cached_active = active;
+        self.apply_workspace_chrome_focus();
+        (open_list, active)
+    }
+
+    fn apply_workspace_chrome_focus(&mut self) {
+        let active = self.cached_active;
         self.slot
             .paint_tab
             .store(active.0, std::sync::atomic::Ordering::Relaxed);
@@ -595,7 +662,6 @@ impl<E: Engine> App<E> {
         *self.slot.pending.lock().unwrap() = None;
         self.slot.need_park_prime.lock().unwrap().clear();
         self.slot.drop_paint_tabs.lock().unwrap().clear();
-
         if let Some(info) = self.cached_tabs.iter().find(|t| t.id == active) {
             self.url_field = if info.url == BLANK_URL {
                 String::new()
@@ -604,26 +670,35 @@ impl<E: Engine> App<E> {
             };
             self.last_seen_url = info.url.clone();
         }
+    }
 
-        let cef_path = profile.cef_user_data_dir().to_string_lossy().into_owned();
-        let _ = self.cmd_tx.send(Cmd::ReplaceWorkspace {
-            cef_cache_path: cef_path,
-            tabs: open_list,
-            active,
-        });
-        crate::integration::republish_menus(self.app_id);
-        self.persist_session();
+    /// Drop chrome parks (and tell CEF) per shared [`crate::tab_cache`] policy.
+    fn evict_workspace_parks(&mut self) {
+        use crate::tab_cache::eviction_victims;
+        use std::time::Instant;
+
+        let live = self.cached_tabs.len();
+        let victims = eviction_victims(&self.workspace_cache, live, Instant::now());
+        for id in victims {
+            self.workspace_cache.remove(&id);
+            let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
+                profile_id: id.clone(),
+            });
+            tracing::info!(profile = %id, "evicted parked profile workspace");
+        }
     }
 
     fn submit_profile_dialog(&mut self) -> Task<Msg> {
         match self.profile_dialog.clone() {
             Some(ProfileDialog::New) => {
                 self.persist_session();
+                let from = crate::profiles::active().id.clone();
                 match crate::profiles::create_and_activate(&self.profile_name_field) {
                     Ok(profile) => {
                         tracing::info!(id = %profile.id, name = %profile.name, "new profile");
                         self.close_profile_dialog();
-                        self.reload_workspace_for_active_profile();
+                        // New profile: always cold (empty session).
+                        self.enter_profile_workspace(from, true);
                     }
                     Err(e) => {
                         self.profile_dialog_error = Some(e);
@@ -644,11 +719,16 @@ impl<E: Engine> App<E> {
             }
             Some(ProfileDialog::DeleteConfirm) => {
                 let id = crate::profiles::active().id.clone();
+                // Drop park for the profile we're deleting (active or not).
+                self.workspace_cache.remove(&id);
+                let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
+                    profile_id: id.clone(),
+                });
                 match crate::profiles::delete(&id) {
                     Ok(Some(_new_active)) => {
                         self.close_profile_dialog();
-                        tracing::info!("deleted active profile — reloading workspace");
-                        self.reload_workspace_for_active_profile();
+                        // Active deleted — enter the new active (may be parked).
+                        self.enter_profile_workspace(String::new(), false);
                     }
                     Ok(None) => {
                         self.close_profile_dialog();

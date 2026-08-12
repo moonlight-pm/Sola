@@ -19,9 +19,9 @@ Do not invent product policy.
    - Branch: **`naturalethic/cef-browser`** (this worktree).  
    - Single crate `sola-browser`: iced chrome + CEF CPU OSR.  
    - **Dogfood (local):** multipage/chrome + tab switch solid; Profiles
-     menubar (in-process switch — window stays); Bitwarden unlock (prefer
-     **`--release` install**); fill after unlock; **passkey get()** on
-     Google; cold start blank tab.  
+     menubar (in-process; **parked workspaces** resume without reload);
+     Bitwarden unlock (**`--release`**); fill after unlock; passkey get
+     on Google; cold start blank tab.  
    - Manual: `docs/manual/sola-browser.md`.  
    - **Not shipped:** passkey **registration**; loading/history flags from
      CEF; input/scroll / OSR polish.  

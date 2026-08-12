@@ -261,9 +261,21 @@ struct CefThreadState {
     /// Set by on_address_change / on_title_change; checked at
     /// the next cmd-pump tick to rebuild the shared snapshot.
     snapshot_dirty: std::cell::Cell<bool>,
-    /// Per-browser-profile request context (cookies/storage). Rebuilt
-    /// on profile switch without tearing down the iced window.
+    /// Live profile request context (cookies/storage).
     request_context: RefCell<Option<cef::RequestContext>>,
+    /// Live profile id (for parking under the right key).
+    live_profile_id: RefCell<String>,
+    /// Parked profile workspaces — CEF browsers kept alive so switching
+    /// back does not reload pages. Evicted by [`crate::tab_cache`] policy.
+    parked: RefCell<std::collections::HashMap<String, ParkedWorkspace>>,
+}
+
+/// One profile's parked CEF state (hidden browsers + context).
+struct ParkedWorkspace {
+    tabs: Vec<CefTabState>,
+    request_context: Option<cef::RequestContext>,
+    last_used: std::time::Instant,
+    tab_count: usize,
 }
 
 /// Per-tab state. The Browser handle outlives until close;
@@ -314,6 +326,8 @@ fn worker_main(
         next_id,
         snapshot_dirty: std::cell::Cell::new(false),
         request_context: RefCell::new(None),
+        live_profile_id: RefCell::new(String::new()),
+        parked: RefCell::new(std::collections::HashMap::new()),
     });
     CEF_STATE.with(|s| {
         s.set(state.clone()).map_err(|_| ()).expect("CEF_STATE set twice");
@@ -321,8 +335,10 @@ fn worker_main(
 
     initialize_cef(app_id);
     // Initial profile storage context (cookies/local storage).
-    let cef_path = crate::profiles::active().cef_user_data_dir();
+    let active = crate::profiles::active();
+    let cef_path = active.cef_user_data_dir();
     *state.request_context.borrow_mut() = Some(make_profile_request_context(&cef_path));
+    *state.live_profile_id.borrow_mut() = active.id;
 
     let mut pump = CmdPumpTask::new();
     cef::post_delayed_task(
@@ -627,8 +643,7 @@ cef::wrap_display_handler! {
             let state = cef_state();
             let Some(browser) = browser else { return };
             let bid = browser.identifier();
-            if let Some(tab) = state.tabs.borrow().iter().find(|t| t.browser_id == bid) {
-                *tab.url.lock().unwrap() = s;
+            if set_tab_url_title_by_browser_id(&state, bid, Some(s), None) {
                 state.snapshot_dirty.set(true);
             }
         }
@@ -642,8 +657,7 @@ cef::wrap_display_handler! {
             let state = cef_state();
             let Some(browser) = browser else { return };
             let bid = browser.identifier();
-            if let Some(tab) = state.tabs.borrow().iter().find(|t| t.browser_id == bid) {
-                *tab.title.lock().unwrap() = s;
+            if set_tab_url_title_by_browser_id(&state, bid, None, Some(s)) {
                 state.snapshot_dirty.set(true);
             }
         }
@@ -889,12 +903,24 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         Cmd::SetActiveTab(id) => {
             activate_tab(state, id);
         }
-        Cmd::ReplaceWorkspace {
+        Cmd::SwitchProfileWorkspace {
+            park_as_profile_id,
+            resume_profile_id,
             cef_cache_path,
-            tabs,
+            create_tabs,
             active,
         } => {
-            replace_workspace(state, &cef_cache_path, tabs, active);
+            switch_profile_workspace(
+                state,
+                &park_as_profile_id,
+                &resume_profile_id,
+                &cef_cache_path,
+                create_tabs,
+                active,
+            );
+        }
+        Cmd::DropParkedProfile { profile_id } => {
+            drop_parked_profile(state, &profile_id);
         }
         Cmd::Quit => {
             cef::quit_message_loop();
@@ -926,14 +952,58 @@ fn tab_state_by_id(
 /// Look up the tab that owns a given CEF Browser identifier.
 /// Called from RenderHandler::on_paint and DisplayHandler
 /// callbacks, both of which receive the browser and need to
-/// route per-tab.
+/// route per-tab. Live strip first; parked workspaces next
+/// (should be rare — parked browsers are was_hidden).
 fn tab_by_browser_id(state: &CefThreadState, browser_id: i32) -> Option<TabId> {
-    state
+    if let Some(id) = state
         .tabs
         .borrow()
         .iter()
         .find(|t| t.browser_id == browser_id)
         .map(|t| t.id)
+    {
+        return Some(id);
+    }
+    for park in state.parked.borrow().values() {
+        if let Some(t) = park.tabs.iter().find(|t| t.browser_id == browser_id) {
+            return Some(t.id);
+        }
+    }
+    None
+}
+
+/// Update url and/or title for a browser id in the live strip or any park.
+fn set_tab_url_title_by_browser_id(
+    state: &CefThreadState,
+    browser_id: i32,
+    url: Option<String>,
+    title: Option<String>,
+) -> bool {
+    for tab in state.tabs.borrow().iter() {
+        if tab.browser_id == browser_id {
+            if let Some(u) = url {
+                *tab.url.lock().unwrap() = u;
+            }
+            if let Some(t) = title {
+                *tab.title.lock().unwrap() = t;
+            }
+            return true;
+        }
+    }
+    for park in state.parked.borrow().values() {
+        for tab in &park.tabs {
+            if tab.browser_id == browser_id {
+                if let Some(u) = url {
+                    *tab.url.lock().unwrap() = u;
+                }
+                if let Some(t) = title {
+                    *tab.title.lock().unwrap() = t;
+                }
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Make `id` the OSR front tab: hide the previous browser, show + focus +
@@ -989,26 +1059,146 @@ fn make_profile_request_context(cache_path: &std::path::Path) -> cef::RequestCon
         .expect("cef request_context_create_context failed")
 }
 
-fn replace_workspace(
+fn hide_all_tabs(state: &CefThreadState) {
+    for tab in state.tabs.borrow().iter() {
+        if let Some(host) = tab.browser.host() {
+            host.set_focus(0);
+            host.was_hidden(1);
+        }
+    }
+}
+
+fn switch_profile_workspace(
     state: &CefThreadState,
+    park_as_profile_id: &str,
+    resume_profile_id: &str,
     cef_cache_path: &str,
-    tabs: Vec<(TabId, String, String)>,
+    create_tabs: Option<Vec<(TabId, String, String)>>,
     active: TabId,
 ) {
-    // Close every live CEF browser (window stays — this is chrome-side only).
-    let ids: Vec<TabId> = state.tabs.borrow().iter().map(|t| t.id).collect();
-    for id in ids {
-        close_tab(state, id);
+    use std::time::Instant;
+
+    // 1) Park live workspace (keep CEF browsers; do not reload later).
+    hide_all_tabs(state);
+    let live_tabs = std::mem::take(&mut *state.tabs.borrow_mut());
+    let live_ctx = state.request_context.borrow_mut().take();
+    let live_count = live_tabs.len();
+    if !park_as_profile_id.is_empty() && live_count > 0 {
+        // Replacing an older park for the same id (shouldn't happen often).
+        if let Some(old) = state.parked.borrow_mut().remove(park_as_profile_id) {
+            destroy_parked(old);
+        }
+        state.parked.borrow_mut().insert(
+            park_as_profile_id.to_string(),
+            ParkedWorkspace {
+                tabs: live_tabs,
+                request_context: live_ctx,
+                last_used: Instant::now(),
+                tab_count: live_count,
+            },
+        );
+        tracing::info!(
+            profile = %park_as_profile_id,
+            tabs = live_count,
+            "parked profile workspace"
+        );
+    } else {
+        // Nothing to park — destroy leftover browsers if any.
+        for t in live_tabs {
+            if let Some(host) = t.browser.host() {
+                host.close_browser(1);
+            }
+        }
     }
-    // New storage / cookies for the target profile.
-    *state.request_context.borrow_mut() =
-        Some(make_profile_request_context(std::path::Path::new(cef_cache_path)));
-    // Open restored tabs under the new context.
-    for (id, url, title) in tabs {
-        open_tab(state, id, url, title);
+
+    // 2) Resume park or cold-create.
+    let resumed = state.parked.borrow_mut().remove(resume_profile_id);
+    if let Some(park) = resumed {
+        let n = park.tab_count;
+        *state.request_context.borrow_mut() = park.request_context;
+        *state.tabs.borrow_mut() = park.tabs;
+        *state.live_profile_id.borrow_mut() = resume_profile_id.to_string();
+        rebuild_snapshot(state);
+        activate_tab(state, active);
+        tracing::info!(
+            profile = %resume_profile_id,
+            tabs = n,
+            ?active,
+            "resumed parked profile workspace (no reload)"
+        );
+    } else {
+        *state.request_context.borrow_mut() =
+            Some(make_profile_request_context(std::path::Path::new(cef_cache_path)));
+        *state.live_profile_id.borrow_mut() = resume_profile_id.to_string();
+        let tabs = create_tabs.unwrap_or_default();
+        for (id, url, title) in tabs {
+            open_tab(state, id, url, title);
+        }
+        activate_tab(state, active);
+        tracing::info!(
+            profile = %resume_profile_id,
+            ?active,
+            "cold profile workspace (created tabs)"
+        );
     }
-    activate_tab(state, active);
-    tracing::info!(?active, "CEF workspace replaced for profile switch");
+
+    // 3) Eviction under shared policy (CEF-side tab counts).
+    cef_evict_parks(state);
+}
+
+fn destroy_parked(park: ParkedWorkspace) {
+    for t in park.tabs {
+        if let Some(host) = t.browser.host() {
+            host.close_browser(1);
+        }
+    }
+    // request_context drops with park
+}
+
+fn drop_parked_profile(state: &CefThreadState, profile_id: &str) {
+    if let Some(park) = state.parked.borrow_mut().remove(profile_id) {
+        let n = park.tab_count;
+        destroy_parked(park);
+        tracing::info!(profile = %profile_id, tabs = n, "dropped parked profile workspace");
+    }
+}
+
+fn cef_evict_parks(state: &CefThreadState) {
+    use crate::tab_cache::{eviction_victims, WorkspaceSnapshot};
+    use crate::engine::TabInfo;
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    // Build lightweight snapshots for the policy (tab counts + last_used).
+    let mut synthetic: HashMap<String, WorkspaceSnapshot> = HashMap::new();
+    {
+        let parked = state.parked.borrow();
+        for (id, p) in parked.iter() {
+            synthetic.insert(
+                id.clone(),
+                WorkspaceSnapshot {
+                    tabs: (0..p.tab_count)
+                        .map(|i| TabInfo {
+                            id: TabId(i as u64),
+                            url: String::new(),
+                            title: String::new(),
+                            is_loading: false,
+                            can_go_back: false,
+                            can_go_forward: false,
+                        })
+                        .collect(),
+                    active: TabId(0),
+                    sidebar_w: 0.0,
+                    last_used: p.last_used,
+                },
+            );
+        }
+    }
+    let live = state.tabs.borrow().len();
+    let victims = eviction_victims(&synthetic, live, Instant::now());
+    for id in victims {
+        drop_parked_profile(state, &id);
+    }
 }
 
 fn open_tab(state: &CefThreadState, id: TabId, initial_url: String, initial_title: String) {

@@ -35,9 +35,13 @@ A **profile** is a separate web identity + tab workspace (D8).
    if it is the only one). Data dirs are removed; the window reloads the
    next profile’s tabs.
 
-Switching or creating a profile **keeps the window open**: the previous
-profile’s tabs are saved to its `session.json`, then tabs and site data
-(cookies/storage via CEF request context) are replaced for the new profile.
+Switching or creating a profile **keeps the window open**. The previous
+profile’s workspace is **parked** (CEF tabs stay warm in memory so form
+state and SPA work are not reloaded) and also written to `session.json`.
+Returning to a parked profile resumes those same tabs. Parks follow a
+shared eviction policy (idle timeout, max parked profiles, total tab
+budget) — same rules whether the workspace was left via Profiles or
+would be under memory pressure later.
 
 **Cold start** with an empty session opens a single **blank** tab.
 

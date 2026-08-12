@@ -11,6 +11,7 @@ pub mod integration;
 pub mod profiles;
 pub mod run;
 pub mod session;
+pub mod tab_cache;
 pub mod shader;
 pub mod util;
 #[cfg(feature = "bitwarden")]

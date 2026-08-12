@@ -76,14 +76,25 @@ pub enum Cmd<E: Engine> {
     /// Script is sourced from chrome; do not put untrusted page content here
     /// without escaping — vault fill embeds secrets via JSON string literals.
     EvaluateJs(String),
-    /// Close every tab, switch CEF request-context to `cef_cache_path`, then
-    /// open `tabs` and activate `active`. Keeps the iced window alive across
-    /// browser profile switches.
-    ReplaceWorkspace {
+    /// Profile workspace switch without reloading parked pages.
+    ///
+    /// 1. Hide + park the current live tabs under `park_as_profile_id`
+    ///    (same CEF browsers + request context stay in memory).
+    /// 2. If a park exists for `resume_profile_id`, restore it.
+    /// 3. Else create a request context at `cef_cache_path` and open
+    ///    `create_tabs` (cold profile / after eviction).
+    /// 4. Apply the shared eviction policy (idle / tab budget / park count).
+    SwitchProfileWorkspace {
+        park_as_profile_id: String,
+        resume_profile_id: String,
         cef_cache_path: String,
-        tabs: Vec<(TabId, String, String)>,
+        /// `None` → resume from park only (must exist). `Some` → create these
+        /// tabs if not parked (or after forced create).
+        create_tabs: Option<Vec<(TabId, String, String)>>,
         active: TabId,
     },
+    /// Drop a parked profile workspace (eviction / profile deleted).
+    DropParkedProfile { profile_id: String },
     Quit,
 }
 
