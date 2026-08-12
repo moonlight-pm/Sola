@@ -654,6 +654,11 @@ cef::wrap_display_handler! {
                 let msg = message.map(|m| m.to_string()).unwrap_or_default();
                 const PREFIX: &str = "__sola_webauthn__";
                 if let Some(rest) = msg.strip_prefix(PREFIX) {
+                    // Credential assembly breadcrumb from the polyfill.
+                    if let Some(detail) = rest.strip_prefix("_cred__") {
+                        tracing::info!(%detail, "webauthn page credential assembled");
+                        return 1;
+                    }
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) {
                         let id = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
                         let origin = v
@@ -682,6 +687,10 @@ cef::wrap_display_handler! {
                         );
                     }
                     return 1; // suppress console noise
+                }
+                if let Some(detail) = msg.strip_prefix("__sola_webauthn_cred__") {
+                    tracing::info!(detail = %detail.trim(), "webauthn page credential assembled");
+                    return 1;
                 }
             }
             0

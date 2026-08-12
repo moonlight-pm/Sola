@@ -23,7 +23,7 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
   }
   function fromB64url(s){
     if(!s) return new ArrayBuffer(0);
-    s = s.replace(/-/g,'+').replace(/_/g,'/');
+    s = String(s).replace(/-/g,'+').replace(/_/g,'/');
     while (s.length % 4) s += '=';
     var bin = atob(s);
     var out = new Uint8Array(bin.length);
@@ -56,48 +56,95 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
         };
       });
     }
+    // extensions often contain ArrayBuffers — drop non-JSON-safe values.
+    if (pk.extensions) {
+      try { o.extensions = JSON.parse(JSON.stringify(pk.extensions)); }
+      catch (e) { delete o.extensions; }
+    }
     return o;
   }
   function toCredential(j){
-    var rawId = fromB64url(j.rawId || j.id);
-    var id = j.id;
+    var rawIdBuf = fromB64url(j.rawId || j.id);
+    // WebAuthn: id is base64url(rawId) as DOMString.
+    var id = j.id || b64url(rawIdBuf);
     var clientDataJSON = fromB64url(j.clientDataJSON);
     var authenticatorData = fromB64url(j.authenticatorData);
     var signature = fromB64url(j.signature);
-    var userHandle = j.userHandle ? fromB64url(j.userHandle) : null;
-    var response = {
-      clientDataJSON: clientDataJSON,
-      authenticatorData: authenticatorData,
-      signature: signature,
-      userHandle: userHandle,
-      getClientExtensionResults: function(){ return {}; }
-    };
-    // Some sites read via getters on AuthenticatorAssertionResponse prototype.
+    var userHandle = (j.userHandle && j.userHandle.length) ? fromB64url(j.userHandle) : null;
+
+    // Prefer real WebAuthn response object when the platform allows it.
+    var response;
     try {
-      Object.setPrototypeOf(response, AuthenticatorAssertionResponse.prototype);
-    } catch(e) {}
-    var cred = {
-      id: id,
-      rawId: rawId,
-      type: 'public-key',
-      authenticatorAttachment: 'platform',
-      response: response,
-      getClientExtensionResults: function(){ return {}; }
-    };
+      response = new AuthenticatorAssertionResponse({
+        clientDataJSON: clientDataJSON,
+        authenticatorData: authenticatorData,
+        signature: signature,
+        userHandle: userHandle
+      });
+    } catch (e) {
+      response = {
+        clientDataJSON: clientDataJSON,
+        authenticatorData: authenticatorData,
+        signature: signature,
+        userHandle: userHandle
+      };
+      try {
+        Object.setPrototypeOf(response, AuthenticatorAssertionResponse.prototype);
+      } catch (e2) {}
+    }
+
+    var cred;
     try {
-      Object.setPrototypeOf(cred, PublicKeyCredential.prototype);
-    } catch(e) {}
+      cred = new PublicKeyCredential({
+        id: id,
+        rawId: rawIdBuf,
+        response: response,
+        authenticatorAttachment: 'platform',
+        clientExtensionResults: {},
+        type: 'public-key'
+      });
+    } catch (e) {
+      cred = {
+        id: id,
+        rawId: rawIdBuf,
+        type: 'public-key',
+        authenticatorAttachment: 'platform',
+        response: response,
+        getClientExtensionResults: function(){ return {}; }
+      };
+      try {
+        Object.setPrototypeOf(cred, PublicKeyCredential.prototype);
+      } catch (e2) {}
+    }
+    if (typeof cred.getClientExtensionResults !== 'function') {
+      cred.getClientExtensionResults = function(){ return {}; };
+    }
+    // Debug breadcrumb for dogfood (host may collect via console handler).
+    try {
+      var cd = new TextDecoder().decode(clientDataJSON);
+      console.debug('__sola_webauthn_cred__', JSON.stringify({
+        idLen: id.length,
+        rawIdLen: rawIdBuf.byteLength,
+        clientData: cd,
+        sigLen: signature.byteLength,
+        authDataLen: authenticatorData.byteLength
+      }));
+    } catch (e) {}
     return cred;
   }
   window.__solaWebAuthnResolve = function(id, ok, payload){
     var p = pending[id];
-    if (!p) return;
+    if (!p) {
+      console.debug('__sola_webauthn_orphan_resolve__', id, ok);
+      return;
+    }
     delete pending[id];
     if (ok) {
       try {
         var j = (typeof payload === 'string') ? JSON.parse(payload) : payload;
         p.resolve(toCredential(j));
       } catch (e) {
+        console.error('__sola_webauthn_resolve_err__', e);
         p.reject(e);
       }
     } else {
@@ -132,7 +179,6 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
         rpId: (options.publicKey.rpId) || location.hostname,
         publicKey: pk
       });
-      // Host timeout → fail soft so the site can fall back.
       setTimeout(function(){
         if (pending[id]) {
           delete pending[id];
@@ -145,7 +191,6 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
     if (!options || !options.publicKey) {
       return origCreate ? origCreate(options) : Promise.reject(new DOMException('NotSupportedError'));
     }
-    // Registration not implemented — leave to platform / fail.
     return origCreate ? origCreate(options)
       : Promise.reject(new DOMException('Passkey registration is not supported in Sola yet.', 'NotSupportedError'));
   };
@@ -156,7 +201,7 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
 pub fn resolve_webauthn_script(id: u64, ok: bool, payload_json: &str) -> String {
     let payload = serde_json::to_string(payload_json).unwrap_or_else(|_| "\"\"".into());
     format!(
-        "(function(){{ try {{ if (window.__solaWebAuthnResolve) window.__solaWebAuthnResolve({id}, {}, {}); }} catch(e) {{ console.error(e); }} }})();",
+        "(function(){{ try {{ if (window.__solaWebAuthnResolve) window.__solaWebAuthnResolve({id}, {}, {}); }} catch(e) {{ console.error('sola webauthn resolve', e); }} }})();",
         if ok { "true" } else { "false" },
         payload
     )

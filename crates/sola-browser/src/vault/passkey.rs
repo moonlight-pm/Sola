@@ -130,7 +130,9 @@ pub struct PasskeyAssertionJson {
     pub client_data_json: String,
     pub authenticator_data: String,
     pub signature: String,
-    pub user_handle: String,
+    /// Omitted when empty — Google rejects empty userHandle ArrayBuffers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_handle: Option<String>,
 }
 
 fn b64url(data: &[u8]) -> String {
@@ -270,19 +272,41 @@ pub async fn authenticate(
     // CredentialRequestOptions shape expected by passkey-rs.
     let request = format!(r#"{{"publicKey":{public_key_json}}}"#);
 
+    // Web RPs (Google) reject clientDataJSON that includes
+    // `androidPackageName`. `DefaultWithExtraData` always flattens that
+    // field even when empty. Use CustomHash with a hash of the *same*
+    // clean CollectedClientData JSON that Fido2Client will emit when
+    // extra=None (CustomHash path), so signature and returned JSON match.
+    let client_data = web_client_data_for_request(origin, public_key_json)?;
+
     let result = client
-        .authenticate(
-            Origin::Web(origin.to_string()),
-            request,
-            // Web path: no android package. Empty string still tags the
-            // ClientData variant that lets passkey-rs build standard
-            // clientDataJSON (challenge/origin/type).
-            ClientData::DefaultWithExtraData {
-                android_package_name: String::new(),
-            },
-        )
+        .authenticate(Origin::Web(origin.to_string()), request, client_data)
         .await
         .map_err(|e| VaultError::Other(format!("passkey authenticate failed: {e}")))?;
+
+    let client_data_str = String::from_utf8_lossy(&result.response.client_data_json);
+    // Must return this exact clientDataJSON — signature covers its SHA-256.
+    if client_data_str.contains("androidPackageName") {
+        tracing::error!(
+            %client_data_str,
+            "passkey clientDataJSON still has androidPackageName — Google will reject"
+        );
+    }
+    tracing::info!(
+        %client_data_str,
+        raw_id_len = result.raw_id.len(),
+        sig_len = result.response.signature.len(),
+        auth_data_len = result.response.authenticator_data.len(),
+        user_handle_len = result.response.user_handle.len(),
+        cred_id = %result.id,
+        "vault: passkey assertion detail"
+    );
+
+    let user_handle = if result.response.user_handle.is_empty() {
+        None
+    } else {
+        Some(b64url(&result.response.user_handle))
+    };
 
     Ok(PasskeyAssertionJson {
         id: result.id,
@@ -290,6 +314,79 @@ pub async fn authenticate(
         client_data_json: b64url(&result.response.client_data_json),
         authenticator_data: b64url(&result.response.authenticator_data),
         signature: b64url(&result.response.signature),
-        user_handle: b64url(&result.response.user_handle),
+        user_handle,
     })
+}
+
+/// Build `ClientData::DefaultWithCustomHash` matching clean web clientDataJSON.
+///
+/// Mirrors passkey-client's CollectedClientData serialization:
+/// `{"type":"webauthn.get","challenge":…,"origin":…,"crossOrigin":false}`
+fn web_client_data_for_request(
+    origin: &str,
+    public_key_json: &str,
+) -> Result<ClientData, VaultError> {
+    let pk: serde_json::Value = serde_json::from_str(public_key_json)
+        .map_err(|e| VaultError::Other(format!("publicKey JSON: {e}")))?;
+    let challenge_b64 = pk
+        .get("challenge")
+        .and_then(|c| c.as_str())
+        .ok_or_else(|| VaultError::Other("publicKey.challenge missing".into()))?;
+
+    // Re-decode/re-encode so we match passkey-rs `encoding::base64url` (nopad).
+    let challenge_bytes = b64url_decode(challenge_b64)
+        .ok_or_else(|| VaultError::Other("publicKey.challenge not base64url".into()))?;
+    let challenge_canon = b64url(&challenge_bytes);
+
+    // Origin::Web trims trailing `/` for Display.
+    let origin_clean = origin.trim_end_matches('/');
+
+    // Field order must match CollectedClientData Serialize (type, challenge,
+    // origin, crossOrigin). truthiness() always emits crossOrigin as bool.
+    let client_data_json = format!(
+        r#"{{"type":"webauthn.get","challenge":"{challenge_canon}","origin":"{origin_clean}","crossOrigin":false}}"#
+    );
+    let hash = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(client_data_json.as_bytes()).to_vec()
+    };
+    tracing::debug!(%client_data_json, "vault: passkey expected clientDataJSON");
+    Ok(ClientData::DefaultWithCustomHash { hash })
+}
+
+fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    let mut s = s.replace('-', "+").replace('_', "/");
+    while s.len() % 4 != 0 {
+        s.push('=');
+    }
+    fn val(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            b'=' => Some(0),
+            _ => None,
+        }
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    let mut i = 0;
+    while i + 4 <= bytes.len() {
+        let a = val(bytes[i])?;
+        let b = val(bytes[i + 1])?;
+        let c = val(bytes[i + 2])?;
+        let d = val(bytes[i + 3])?;
+        let n = ((a as u32) << 18) | ((b as u32) << 12) | ((c as u32) << 6) | (d as u32);
+        out.push(((n >> 16) & 0xff) as u8);
+        if bytes[i + 2] != b'=' {
+            out.push(((n >> 8) & 0xff) as u8);
+        }
+        if bytes[i + 3] != b'=' {
+            out.push((n & 0xff) as u8);
+        }
+        i += 4;
+    }
+    Some(out)
 }

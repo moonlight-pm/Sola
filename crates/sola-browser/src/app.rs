@@ -1447,14 +1447,16 @@ impl<E: Engine> App<E> {
                 self.vault_email = email;
                 self.persist_vault_email();
                 self.reset_vault_form_keep_email();
-                // If a site asked for a passkey while locked, stay open on the
-                // picker after unlock. Otherwise dismiss (user re-opens to fill).
+                // Passkey ceremony mid-unlock → stay on picker. Otherwise open
+                // the fill/password panel for the active page.
                 if self.pending_passkey.is_some() {
                     self.vault_phase = VaultPanelPhase::PasskeyPick;
                     self.set_vault_panel_open(true);
                     self.request_passkey_candidates();
                 } else {
-                    self.set_vault_panel_open(false);
+                    self.vault_phase = VaultPanelPhase::Credentials;
+                    self.set_vault_panel_open(true);
+                    self.request_vault_matches();
                 }
             }
             VaultEvent::LoginNeedsTwoFactor {
