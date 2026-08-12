@@ -119,6 +119,18 @@ pub enum Msg {
     /// Worker → chrome (drained on Tick when bitwarden enabled).
     #[cfg(feature = "bitwarden")]
     VaultWorker(VaultEvent),
+    // —— Profiles (menubar manage dialogs) ——
+    ProfileNameInput(String),
+    ProfileDialogSubmit,
+    ProfileDialogCancel,
+}
+
+/// In-chrome dialog for creating / renaming / confirming delete of a profile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileDialog {
+    New,
+    Rename,
+    DeleteConfirm,
 }
 
 /// Which form the vault panel shows.
@@ -239,6 +251,12 @@ pub struct App<E: Engine> {
     vault_icon_locked: iced::widget::svg::Handle,
     #[cfg(feature = "bitwarden")]
     vault_icon_unlocked: iced::widget::svg::Handle,
+    /// Profiles menubar manage dialog (new / rename / delete confirm).
+    pub profile_dialog: Option<ProfileDialog>,
+    /// Name field for new/rename profile dialogs.
+    pub profile_name_field: String,
+    /// Inline error under the profile dialog (empty name, last profile, …).
+    pub profile_dialog_error: Option<String>,
 }
 
 impl<E: Engine> App<E> {
@@ -313,6 +331,9 @@ impl<E: Engine> App<E> {
             vault_icon_locked: icon_handle("lucide/lock"),
             #[cfg(feature = "bitwarden")]
             vault_icon_unlocked: icon_handle("lucide/key-round"),
+            profile_dialog: None,
+            profile_name_field: String::new(),
+            profile_dialog_error: None,
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -437,6 +458,98 @@ impl<E: Engine> App<E> {
             active = active.0,
             "session restored"
         );
+    }
+
+    /// Open a profiles manage dialog (from the Profiles menubar).
+    pub fn open_profile_dialog(&mut self, kind: ProfileDialog) {
+        self.profile_dialog_error = None;
+        match kind {
+            ProfileDialog::New => {
+                self.profile_name_field.clear();
+                self.profile_dialog = Some(ProfileDialog::New);
+            }
+            ProfileDialog::Rename => {
+                self.profile_name_field = crate::profiles::active().name.clone();
+                self.profile_dialog = Some(ProfileDialog::Rename);
+            }
+            ProfileDialog::DeleteConfirm => {
+                if crate::profiles::list().len() <= 1 {
+                    tracing::info!("cannot delete the only profile");
+                    return;
+                }
+                self.profile_name_field.clear();
+                self.profile_dialog = Some(ProfileDialog::DeleteConfirm);
+            }
+        }
+    }
+
+    pub fn close_profile_dialog(&mut self) {
+        self.profile_dialog = None;
+        self.profile_name_field.clear();
+        self.profile_dialog_error = None;
+    }
+
+    /// Switch to another profile: persist tabs, set registry active, re-exec.
+    pub fn switch_profile(&mut self, id: &str) {
+        if id == crate::profiles::active().id {
+            return;
+        }
+        self.persist_session();
+        if let Err(e) = crate::profiles::set_active(id) {
+            tracing::warn!(error = %e, id, "switch profile failed");
+            return;
+        }
+        tracing::info!(id, "switching profile — re-exec");
+        sola_core::watcher::exec_self();
+    }
+
+    fn submit_profile_dialog(&mut self) -> Task<Msg> {
+        match self.profile_dialog.clone() {
+            Some(ProfileDialog::New) => {
+                match crate::profiles::create_and_activate(&self.profile_name_field) {
+                    Ok(entry) => {
+                        self.persist_session();
+                        tracing::info!(id = %entry.id, name = %entry.name, "new profile — re-exec");
+                        sola_core::watcher::exec_self();
+                    }
+                    Err(e) => {
+                        self.profile_dialog_error = Some(e);
+                    }
+                }
+            }
+            Some(ProfileDialog::Rename) => {
+                let id = crate::profiles::active().id.clone();
+                match crate::profiles::rename(&id, &self.profile_name_field) {
+                    Ok(()) => {
+                        self.close_profile_dialog();
+                        crate::integration::republish_menus(self.app_id);
+                    }
+                    Err(e) => {
+                        self.profile_dialog_error = Some(e);
+                    }
+                }
+            }
+            Some(ProfileDialog::DeleteConfirm) => {
+                let id = crate::profiles::active().id.clone();
+                match crate::profiles::delete(&id) {
+                    Ok(was_active) => {
+                        self.close_profile_dialog();
+                        if was_active {
+                            // Active profile gone — load the new active after re-exec.
+                            tracing::info!("deleted active profile — re-exec");
+                            sola_core::watcher::exec_self();
+                        } else {
+                            crate::integration::republish_menus(self.app_id);
+                        }
+                    }
+                    Err(e) => {
+                        self.profile_dialog_error = Some(e);
+                    }
+                }
+            }
+            None => {}
+        }
+        Task::none()
     }
 
     /// Write session to disk if the tab list / active / sidebar changed.
@@ -650,6 +763,16 @@ impl<E: Engine> App<E> {
             Msg::VaultWorker(ev) => {
                 self.handle_vault_event(ev);
             }
+            Msg::ProfileNameInput(s) => {
+                self.profile_name_field = s;
+                self.profile_dialog_error = None;
+            }
+            Msg::ProfileDialogCancel => {
+                self.close_profile_dialog();
+            }
+            Msg::ProfileDialogSubmit => {
+                return self.submit_profile_dialog();
+            }
             Msg::NewFrame => {
                 // Allow the next frame stream wakeup (coalesced redraw).
                 self.slot
@@ -674,6 +797,10 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::NavStop => {
+                if self.profile_dialog.is_some() {
+                    self.close_profile_dialog();
+                    return Task::none();
+                }
                 #[cfg(feature = "bitwarden")]
                 if self.vault_panel_open {
                     // Dismiss panel only — keep login / 2FA state for re-open.
@@ -1107,6 +1234,12 @@ impl<E: Engine> App<E> {
             content
         };
 
+        let content: Element<'_, Msg> = if self.profile_dialog.is_some() {
+            stack![content, self.view_profile_dialog()].into()
+        } else {
+            content
+        };
+
         sola_kit::wrap_if_floating(
             self.float.is_floating_any(),
             "Browser",
@@ -1351,6 +1484,141 @@ impl<E: Engine> App<E> {
                 }
             }
         }
+    }
+
+    /// Centered modal for Profiles menubar manage actions.
+    fn view_profile_dialog(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
+
+        let Some(kind) = self.profile_dialog.as_ref() else {
+            return Space::new().width(Length::Shrink).height(Length::Shrink).into();
+        };
+
+        let title = match kind {
+            ProfileDialog::New => "New Profile",
+            ProfileDialog::Rename => "Rename Profile",
+            ProfileDialog::DeleteConfirm => "Delete Profile",
+        };
+        let title_el = text(title)
+            .size(15)
+            .font(sola_kit::fonts::ui_medium());
+
+        let body: Element<'_, Msg> = match kind {
+            ProfileDialog::New | ProfileDialog::Rename => {
+                let hint = match kind {
+                    ProfileDialog::New => "Name for the new profile.",
+                    ProfileDialog::Rename => "New name for this profile.",
+                    ProfileDialog::DeleteConfirm => unreachable!(),
+                };
+                let name_field = text_input("Profile name", &self.profile_name_field)
+                    .id(crate::integration::profile_name_input_id())
+                    .size(13)
+                    .style(sola_kit::components::text_input::style)
+                    .width(Length::Fill)
+                    .on_input(Msg::ProfileNameInput)
+                    .on_submit(Msg::ProfileDialogSubmit);
+
+                let mut col = column![
+                    title_el,
+                    text(hint).size(12).style(|theme: &iced::Theme| {
+                        let t = theme.extended_palette().background.base.text;
+                        iced::widget::text::Style {
+                            color: Some(iced::Color { a: 0.72, ..t }),
+                        }
+                    }),
+                    Space::new().height(SPACE_SM),
+                    name_field,
+                ]
+                .spacing(SPACE_SM)
+                .width(Length::Fixed(300.0));
+
+                if let Some(err) = &self.profile_dialog_error {
+                    col = col.push(
+                        text(err.clone())
+                            .size(12)
+                            .style(|theme: &iced::Theme| iced::widget::text::Style {
+                                color: Some(theme.extended_palette().danger.base.color),
+                            }),
+                    );
+                }
+
+                let submit_label = match kind {
+                    ProfileDialog::New => "Create",
+                    ProfileDialog::Rename => "Rename",
+                    ProfileDialog::DeleteConfirm => unreachable!(),
+                };
+                let actions = row![
+                    kit_button::labeled(submit_label, kit_button::primary)
+                        .on_press(Msg::ProfileDialogSubmit),
+                    kit_button::labeled("Cancel", kit_button::ghost)
+                        .on_press(Msg::ProfileDialogCancel),
+                ]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center);
+                col.push(actions).into()
+            }
+            ProfileDialog::DeleteConfirm => {
+                let name = crate::profiles::active().name.clone();
+                let mut col = column![
+                    title_el,
+                    text(format!(
+                        "Delete “{name}”? Open tabs and site data for this profile will be removed."
+                    ))
+                    .size(12)
+                    .style(|theme: &iced::Theme| {
+                        let t = theme.extended_palette().background.base.text;
+                        iced::widget::text::Style {
+                            color: Some(iced::Color { a: 0.72, ..t }),
+                        }
+                    }),
+                ]
+                .spacing(SPACE_SM)
+                .width(Length::Fixed(300.0));
+
+                if let Some(err) = &self.profile_dialog_error {
+                    col = col.push(
+                        text(err.clone())
+                            .size(12)
+                            .style(|theme: &iced::Theme| iced::widget::text::Style {
+                                color: Some(theme.extended_palette().danger.base.color),
+                            }),
+                    );
+                }
+
+                let actions = row![
+                    kit_button::labeled("Delete", kit_button::primary)
+                        .on_press(Msg::ProfileDialogSubmit),
+                    kit_button::labeled("Cancel", kit_button::ghost)
+                        .on_press(Msg::ProfileDialogCancel),
+                ]
+                .spacing(SPACE_SM)
+                .align_y(Alignment::Center);
+                col.push(actions).into()
+            }
+        };
+
+        let panel = card::modal(container(body).padding(SPACE_MD + SPACE_SM))
+            .width(Length::Fixed(340.0));
+
+        let backdrop = mouse_area(
+            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
+                container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgba(
+                        0.0, 0.0, 0.0, 0.22,
+                    ))),
+                    ..container::Style::default()
+                }
+            }),
+        )
+        .on_press(Msg::ProfileDialogCancel);
+
+        let centered = container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+
+        stack![backdrop, centered].into()
     }
 
     /// Bitwarden panel anchored top-right under the toolbar vault icon.

@@ -6,9 +6,8 @@
 //! It reacts to:
 //!
 //! - `Topic::OpenUrl` — open a fresh tab (focused per `activate`),
-//! - `Topic::MenuAction` from the published "Browser" menu — the
-//!   keyboard-shortcut mechanism (only ⌘/meta items fire; non-meta keys reach
-//!   the page),
+//! - `Topic::MenuAction` from published menus — keyboard shortcuts and
+//!   menubar clicks (Profiles switch / manage included),
 //! - `Topic::Theme` — restyle the chrome live (handled by the kit helper),
 //! - self-addressed quit (`MenuAction "quit"` / `CloseApp`).
 //!
@@ -18,12 +17,15 @@
 use std::sync::Arc;
 
 use iced::Task;
-use sola_bus::topics::{OpenUrlRequest, Topic, TopicKind};
+use sola_bus::topics::{
+    AppMenuPayload, MenuDefinition, MenuItem, OpenUrlRequest, Topic, TopicKind,
+};
 use sola_bus::Message;
 use sola_core::{KeyChord, KeyCode};
 
-use crate::app::{App, BLANK_URL, Msg};
+use crate::app::{App, ProfileDialog, BLANK_URL, Msg};
 use crate::engine::{EditCmd, Engine};
+use crate::profiles;
 
 // Menu action ids — shared between the published menu and the handler so the
 // two never drift.
@@ -38,6 +40,11 @@ pub const ACTION_EDIT_CUT: &str = "edit-cut";
 pub const ACTION_EDIT_COPY: &str = "edit-copy";
 pub const ACTION_EDIT_PASTE: &str = "edit-paste";
 pub const ACTION_EDIT_SELECT_ALL: &str = "edit-select-all";
+pub const ACTION_PROFILE_NEW: &str = "profile-new";
+pub const ACTION_PROFILE_RENAME: &str = "profile-rename";
+pub const ACTION_PROFILE_DELETE: &str = "profile-delete";
+/// Prefix for per-profile switch actions: `profile-switch:<uuid>`.
+pub const ACTION_PROFILE_SWITCH_PREFIX: &str = "profile-switch:";
 
 /// Topics the browser subscribes to. Theme/MenuAction are the live inputs;
 /// CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
@@ -79,10 +86,101 @@ pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 4] = [
     (ACTION_EDIT_SELECT_ALL, "Select All", KeyCode::A.meta()),
 ];
 
+/// Full menubar for the browser (Browser + Edit + Profiles). Rebuilt when
+/// the profile list changes so switcher checkmarks stay accurate.
+pub fn browser_app_menu(app_id: &str) -> AppMenuPayload {
+    AppMenuPayload {
+        app_id: app_id.into(),
+        menus: vec![
+            menu_from_items("Browser", &MENU_ITEMS),
+            menu_from_items("Edit", &EDIT_MENU_ITEMS),
+            profiles_menu(),
+        ],
+    }
+}
+
+fn menu_from_items(label: &str, items: &[(&str, &str, KeyChord)]) -> MenuDefinition {
+    MenuDefinition {
+        label: label.into(),
+        items: items
+            .iter()
+            .map(|(id, item_label, chord)| MenuItem::Action {
+                id: (*id).into(),
+                label: (*item_label).into(),
+                shortcut: Some(chord.clone()),
+                disabled: false,
+                checked: false,
+            })
+            .collect(),
+    }
+}
+
+/// Profiles menubar: list (checked active) + New / Rename / Delete.
+pub fn profiles_menu() -> MenuDefinition {
+    let active_id = profiles::active().id.clone();
+    let entries = profiles::list();
+    let only_one = entries.len() <= 1;
+
+    let mut items: Vec<MenuItem> = entries
+        .into_iter()
+        .map(|p| {
+            let is_active = p.id == active_id;
+            MenuItem::Action {
+                id: format!("{ACTION_PROFILE_SWITCH_PREFIX}{}", p.id),
+                label: p.name,
+                shortcut: None,
+                disabled: false,
+                checked: is_active,
+            }
+        })
+        .collect();
+
+    items.push(MenuItem::Divider);
+    items.push(MenuItem::Action {
+        id: ACTION_PROFILE_NEW.into(),
+        label: "New Profile…".into(),
+        shortcut: None,
+        disabled: false,
+        checked: false,
+    });
+    items.push(MenuItem::Action {
+        id: ACTION_PROFILE_RENAME.into(),
+        label: "Rename Profile…".into(),
+        shortcut: None,
+        disabled: false,
+        checked: false,
+    });
+    items.push(MenuItem::Action {
+        id: ACTION_PROFILE_DELETE.into(),
+        label: "Delete Profile…".into(),
+        shortcut: None,
+        disabled: only_one,
+        checked: false,
+    });
+
+    MenuDefinition {
+        label: "Profiles".into(),
+        items,
+    }
+}
+
+/// Re-publish Browser + Edit + Profiles menus (after create/rename/delete).
+pub fn republish_menus(app_id: &str) {
+    if let Ok(mut client) = sola_kit::app::bus().lock() {
+        if let Err(e) = client.emit(Topic::SetAppMenu(browser_app_menu(app_id))) {
+            tracing::warn!(error = %e, "republish browser menus failed");
+        }
+    }
+}
+
 /// Stable widget id for the chrome URL field, so the `Focus URL` action can
 /// move keyboard focus to it.
 pub fn url_input_id() -> iced::advanced::widget::Id {
     iced::advanced::widget::Id::new("browser-url-bar")
+}
+
+pub fn profile_name_input_id() -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::new("browser-profile-name")
 }
 
 /// What the browser should do in response to a bus event. A plain enum keeps
@@ -101,6 +199,14 @@ pub enum BrowserIntent {
     FocusUrl,
     /// Run an editing command, routed to the focused surface.
     Edit(EditCmd),
+    /// Switch to profile `id` (save session, set active, re-exec).
+    SwitchProfile { id: String },
+    /// Open the new-profile name dialog.
+    NewProfile,
+    /// Open rename dialog for the active profile.
+    RenameProfile,
+    /// Open delete confirmation for the active profile.
+    DeleteProfile,
     Quit,
     None,
 }
@@ -108,11 +214,17 @@ pub enum BrowserIntent {
 /// Map an `OpenUrlRequest` to an intent: always a fresh tab, focused per
 /// `activate` (matches the retired GTK browser's behaviour).
 pub fn intent_for_open_url(req: &OpenUrlRequest) -> BrowserIntent {
-    BrowserIntent::NewTab { url: req.url.clone(), activate: req.activate }
+    BrowserIntent::NewTab {
+        url: req.url.clone(),
+        activate: req.activate,
+    }
 }
 
 /// Map a menu `action_id` to an intent. Unknown ids are ignored.
 pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
+    if let Some(id) = action_id.strip_prefix(ACTION_PROFILE_SWITCH_PREFIX) {
+        return BrowserIntent::SwitchProfile { id: id.to_string() };
+    }
     match action_id {
         ACTION_NEW_TAB => BrowserIntent::NewBlankTab,
         ACTION_CLOSE_TAB => BrowserIntent::CloseActiveTab,
@@ -125,13 +237,20 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_EDIT_COPY => BrowserIntent::Edit(EditCmd::Copy),
         ACTION_EDIT_PASTE => BrowserIntent::Edit(EditCmd::Paste),
         ACTION_EDIT_SELECT_ALL => BrowserIntent::Edit(EditCmd::SelectAll),
+        ACTION_PROFILE_NEW => BrowserIntent::NewProfile,
+        ACTION_PROFILE_RENAME => BrowserIntent::RenameProfile,
+        ACTION_PROFILE_DELETE => BrowserIntent::DeleteProfile,
         _ => BrowserIntent::None,
     }
 }
 
 /// Handle one bus message. Returns a `Task` so intents that need one (focus,
 /// exit) can produce it.
-pub fn handle_bus<E: Engine>(app: &mut App<E>, message: Arc<Message>, app_id: &'static str) -> Task<Msg> {
+pub fn handle_bus<E: Engine>(
+    app: &mut App<E>,
+    message: Arc<Message>,
+    app_id: &'static str,
+) -> Task<Msg> {
     app.float.update(&message);
     // Theme first: restyle the chrome live (also installs the font roles).
     if sola_kit::app::apply_theme_update(&message, &mut app.theme) {
@@ -193,7 +312,26 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             // can't be kept honest. Query the real focus via an operation and
             // finish the routing in `Msg::EditRouted`.
             tracing::debug!(?cmd, "edit intent — querying live URL-bar focus");
-            url_bar_is_focused(move |url_bar_focused| Msg::EditRouted { cmd, url_bar_focused })
+            url_bar_is_focused(move |url_bar_focused| Msg::EditRouted {
+                cmd,
+                url_bar_focused,
+            })
+        }
+        BrowserIntent::SwitchProfile { id } => {
+            app.switch_profile(&id);
+            Task::none()
+        }
+        BrowserIntent::NewProfile => {
+            app.open_profile_dialog(ProfileDialog::New);
+            focus_profile_name()
+        }
+        BrowserIntent::RenameProfile => {
+            app.open_profile_dialog(ProfileDialog::Rename);
+            focus_profile_name()
+        }
+        BrowserIntent::DeleteProfile => {
+            app.open_profile_dialog(ProfileDialog::DeleteConfirm);
+            Task::none()
         }
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),
@@ -204,6 +342,12 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
 fn focus_url_bar() -> Task<Msg> {
     iced::advanced::widget::operate(
         iced::advanced::widget::operation::focusable::focus::<Msg>(url_input_id()),
+    )
+}
+
+fn focus_profile_name() -> Task<Msg> {
+    iced::advanced::widget::operate(
+        iced::advanced::widget::operation::focusable::focus::<Msg>(profile_name_input_id()),
     )
 }
 
@@ -235,25 +379,46 @@ mod tests {
     #[test]
     fn menu_actions_map_to_intents() {
         assert_eq!(intent_for_menu_action(ACTION_RELOAD), BrowserIntent::Reload);
-        assert_eq!(intent_for_menu_action(ACTION_CLOSE_TAB), BrowserIntent::CloseActiveTab);
+        assert_eq!(
+            intent_for_menu_action(ACTION_CLOSE_TAB),
+            BrowserIntent::CloseActiveTab
+        );
         assert_eq!(intent_for_menu_action(ACTION_BACK), BrowserIntent::Back);
         assert_eq!(intent_for_menu_action(ACTION_FORWARD), BrowserIntent::Forward);
-        assert_eq!(intent_for_menu_action(ACTION_FOCUS_URL), BrowserIntent::FocusUrl);
+        assert_eq!(
+            intent_for_menu_action(ACTION_FOCUS_URL),
+            BrowserIntent::FocusUrl
+        );
         assert_eq!(intent_for_menu_action(ACTION_QUIT), BrowserIntent::Quit);
     }
 
     #[test]
     fn new_tab_action_opens_blank_tab() {
-        assert_eq!(intent_for_menu_action(ACTION_NEW_TAB), BrowserIntent::NewBlankTab);
+        assert_eq!(
+            intent_for_menu_action(ACTION_NEW_TAB),
+            BrowserIntent::NewBlankTab
+        );
     }
 
     #[test]
     fn edit_actions_map_to_edit_intents() {
         use crate::engine::EditCmd;
-        assert_eq!(intent_for_menu_action(ACTION_EDIT_COPY), BrowserIntent::Edit(EditCmd::Copy));
-        assert_eq!(intent_for_menu_action(ACTION_EDIT_CUT), BrowserIntent::Edit(EditCmd::Cut));
-        assert_eq!(intent_for_menu_action(ACTION_EDIT_PASTE), BrowserIntent::Edit(EditCmd::Paste));
-        assert_eq!(intent_for_menu_action(ACTION_EDIT_SELECT_ALL), BrowserIntent::Edit(EditCmd::SelectAll));
+        assert_eq!(
+            intent_for_menu_action(ACTION_EDIT_COPY),
+            BrowserIntent::Edit(EditCmd::Copy)
+        );
+        assert_eq!(
+            intent_for_menu_action(ACTION_EDIT_CUT),
+            BrowserIntent::Edit(EditCmd::Cut)
+        );
+        assert_eq!(
+            intent_for_menu_action(ACTION_EDIT_PASTE),
+            BrowserIntent::Edit(EditCmd::Paste)
+        );
+        assert_eq!(
+            intent_for_menu_action(ACTION_EDIT_SELECT_ALL),
+            BrowserIntent::Edit(EditCmd::SelectAll)
+        );
     }
 
     #[test]
@@ -263,9 +428,33 @@ mod tests {
         assert_eq!(
             ids,
             vec![
-                ACTION_EDIT_CUT, ACTION_EDIT_COPY,
-                ACTION_EDIT_PASTE, ACTION_EDIT_SELECT_ALL,
+                ACTION_EDIT_CUT,
+                ACTION_EDIT_COPY,
+                ACTION_EDIT_PASTE,
+                ACTION_EDIT_SELECT_ALL,
             ]
+        );
+    }
+
+    #[test]
+    fn profile_actions_map() {
+        assert_eq!(
+            intent_for_menu_action(ACTION_PROFILE_NEW),
+            BrowserIntent::NewProfile
+        );
+        assert_eq!(
+            intent_for_menu_action(ACTION_PROFILE_RENAME),
+            BrowserIntent::RenameProfile
+        );
+        assert_eq!(
+            intent_for_menu_action(ACTION_PROFILE_DELETE),
+            BrowserIntent::DeleteProfile
+        );
+        assert_eq!(
+            intent_for_menu_action("profile-switch:abc-123"),
+            BrowserIntent::SwitchProfile {
+                id: "abc-123".into()
+            }
         );
     }
 
@@ -276,10 +465,16 @@ mod tests {
 
     #[test]
     fn open_url_honors_activate_and_url() {
-        let req = OpenUrlRequest { url: "https://slate.auto".into(), activate: false };
+        let req = OpenUrlRequest {
+            url: "https://slate.auto".into(),
+            activate: false,
+        };
         assert_eq!(
             intent_for_open_url(&req),
-            BrowserIntent::NewTab { url: "https://slate.auto".into(), activate: false }
+            BrowserIntent::NewTab {
+                url: "https://slate.auto".into(),
+                activate: false
+            }
         );
     }
 }

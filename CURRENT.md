@@ -9,7 +9,7 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-12 (browser CEF single-crate dogfood — chrome solid)
+**As of:** 2026-08-12 (browser Profiles menubar; CEF under profile dirs)
 
 ---
 
@@ -21,8 +21,11 @@ Do not invent product policy.
      profiles, Bitwarden vault) + CEF CPU OSR under `src/cef/`.  
    - **Dogfood (local):** install works; multipage/chrome “very solid”;
      tab switch fixed (hide/show + invalidate + parked last-frame).  
-   - Retired: multi-crate split + WPE content-plane (`naturalethic/browser`
-     failed dogfood).  
+   - **Profiles:** menubar **Profiles** — switch (✓ active), New / Rename /
+     Delete…; switch/create re-exec; CEF `root_cache_path` =
+     `profiles/<uuid>/cef/`. Manual: `docs/manual/sola-browser.md`.  
+     **Dogfood next** after install.  
+   - Retired: multi-crate split + WPE content-plane.  
    - **Next (engine quality, unordered):** loading/history flags from CEF;
      input/scroll polish; deeper CEF OSR quirks as found.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
@@ -50,7 +53,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **`naturalethic/cef-browser`** (browser); master for other daily | Feature work in worktrees / Orca workspaces |
-| Browser | Single-crate CEF; chrome + tab switch dogfooded solid | — |
+| Browser | Single-crate CEF; chrome + tab switch solid; Profiles menubar installed with this slice — dogfood switch/new/rename/delete | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

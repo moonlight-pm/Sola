@@ -1071,11 +1071,16 @@ fn initialize_cef(app_id: &'static str) {
     let locales = resources.join("locales");
     let exe = std::env::current_exe().expect("current_exe");
 
-    // Per-app cache root, scoped by app_id so concurrent sola apps
-    // don't share CEF's singleton lock (which would forward launches
-    // to the running process instead of creating a fresh browser).
-    let cache_root = cef_dir.join("runtime").join(app_id);
+    // Per-profile CEF user data (cookies/storage). Requires
+    // `profiles::ensure_active()` before engine spawn (see `run`).
+    // Scoped by profile so switching identities is real, not tab-only.
+    let cache_root = crate::profiles::active().cef_user_data_dir();
     let _ = std::fs::create_dir_all(&cache_root);
+    tracing::info!(
+        path = %cache_root.display(),
+        profile = %crate::profiles::active().name,
+        "CEF root_cache_path (profile)"
+    );
 
     let mut settings = cef::Settings::default();
     settings.framework_dir_path = cef::CefString::from(&*release.to_string_lossy());

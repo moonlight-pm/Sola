@@ -188,8 +188,15 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
             label,
             shortcut,
             disabled,
-            ..
+            checked,
         } => {
+            // Fixed-width leading slot so labels align across checked / unchecked.
+            let check_slot: Element<'static, Msg> = text(if checked { "✓" } else { " " })
+                .font(fonts::chrome())
+                .size(MENU_TYPE)
+                .width(Length::Fixed(14.0))
+                .into();
+
             let label_txt: Element<'static, Msg> = if disabled {
                 text(label)
                     .font(fonts::chrome())
@@ -222,6 +229,7 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
             };
 
             let item_row: Element<'static, Msg> = row![
+                check_slot,
                 label_txt,
                 iced::widget::Space::new().width(Length::Fill),
                 shortcut_txt,
@@ -229,7 +237,7 @@ fn menu_item_view_owned(item: MenuItem, app_id: String) -> Element<'static, Msg>
             .width(Length::Fill)
             .align_y(iced::alignment::Vertical::Center)
             .padding(ITEM_PAD)
-            .spacing(16.0)
+            .spacing(8.0)
             .into();
 
             if disabled {

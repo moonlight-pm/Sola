@@ -189,11 +189,13 @@ pub fn run<E: Engine>(app_id: &'static str) -> ExitCode {
         redraw_queued: std::sync::atomic::AtomicBool::new(false),
     });
 
-    sola_kit::app::BusSetup::new(app_id)
-        .subscribe(crate::integration::SUBSCRIBE)
-        .app_menu("Browser", crate::integration::MENU_ITEMS)
-        .app_menu_more("Edit", crate::integration::EDIT_MENU_ITEMS)
-        .install();
+    // Browser + Edit + Profiles (dynamic profile list with active check).
+    let menus = crate::integration::browser_app_menu(app_id).menus;
+    let mut bus = sola_kit::app::BusSetup::new(app_id).subscribe(crate::integration::SUBSCRIBE);
+    for def in menus {
+        bus = bus.app_menu_definition(def);
+    }
+    bus.install();
 
     // `engine` is moved into the App on first call. The iced application
     // initializer must be `Fn`, so we wrap `engine` in `Option` and take

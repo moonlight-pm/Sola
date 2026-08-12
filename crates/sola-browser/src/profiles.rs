@@ -1,7 +1,8 @@
-//! Browser profiles (D8) — registry, paths, first-run wipe.
+//! Browser profiles (D8) — registry, paths, first-run wipe, switch/manage.
 //!
 //! Freeze: `docs/specs/2026-08-10-sola-browser-profiles-design.md`.
-//! One active profile at runtime; switcher later.
+//! One active profile per process; switching rewrites the registry and
+//! re-execs the browser so engine storage + tabs reload under the new id.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -18,9 +19,9 @@ static ACTIVE: OnceLock<ActiveProfile> = OnceLock::new();
 pub struct ActiveProfile {
     pub id: String,
     pub name: String,
-    /// WebKit data_dir — cookies, storage, SW, mediakeys, `session.json`.
+    /// Per-profile durable web data (cookies/storage for the engine, `session.json`).
     pub data_dir: PathBuf,
-    /// WebKit cache_dir (discardable).
+    /// Per-profile discardable cache.
     pub cache_dir: PathBuf,
 }
 
@@ -28,12 +29,19 @@ impl ActiveProfile {
     pub fn session_path(&self) -> PathBuf {
         self.data_dir.join("session.json")
     }
+
+    /// CEF `root_cache_path` (user data) — under the profile data dir so
+    /// cookies/storage follow the profile, not a process-global CEF tree.
+    pub fn cef_user_data_dir(&self) -> PathBuf {
+        self.data_dir.join("cef")
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProfileEntry {
-    id: String,
-    name: String,
+/// One row in the registry (public for menus / manage UI).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProfileEntry {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +73,106 @@ pub fn active() -> &'static ActiveProfile {
     ACTIVE
         .get()
         .expect("profiles::ensure_active() must run before profiles::active()")
+}
+
+/// All registered profiles in registry order (re-read from disk).
+pub fn list() -> Vec<ProfileEntry> {
+    read_registry(&registry_path())
+        .map(|r| r.profiles)
+        .unwrap_or_default()
+}
+
+/// Create a new profile with a friendly `name`, make it active in the
+/// registry, create data/cache dirs. Caller must re-exec the process to
+/// load the new active profile into the engine.
+pub fn create_and_activate(name: &str) -> Result<ProfileEntry, String> {
+    let name = sanitize_name(name)?;
+    let mut reg = load_registry_or_empty();
+    let id = new_profile_id();
+    let entry = ProfileEntry {
+        id: id.clone(),
+        name,
+    };
+    reg.profiles.push(entry.clone());
+    reg.active = id;
+    ensure_profile_dirs(&entry.id);
+    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
+    tracing::info!(id = %entry.id, name = %entry.name, "created and activated profile");
+    Ok(entry)
+}
+
+/// Rename a profile by id. Does not require re-exec.
+pub fn rename(id: &str, name: &str) -> Result<(), String> {
+    let name = sanitize_name(name)?;
+    let mut reg = load_registry_or_empty();
+    {
+        let Some(entry) = reg.profiles.iter_mut().find(|p| p.id == id) else {
+            return Err("profile not found".into());
+        };
+        entry.name = name.clone();
+    }
+    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
+    tracing::info!(id, name = %name, "renamed profile");
+    Ok(())
+}
+
+/// Set the active profile id in the registry. Caller must re-exec.
+pub fn set_active(id: &str) -> Result<(), String> {
+    let mut reg = load_registry_or_empty();
+    if !reg.profiles.iter().any(|p| p.id == id) {
+        return Err("profile not found".into());
+    }
+    if reg.active == id {
+        return Ok(());
+    }
+    reg.active = id.to_string();
+    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
+    tracing::info!(id, "set active profile (re-exec required)");
+    Ok(())
+}
+
+/// Delete a profile. Removes registry entry and data/cache dirs.
+///
+/// - Cannot delete the last remaining profile.
+/// - If deleting the active profile, activates another first (caller must
+///   re-exec when the deleted id was active).
+///
+/// Returns whether the active profile changed (re-exec needed).
+pub fn delete(id: &str) -> Result<bool, String> {
+    let mut reg = load_registry_or_empty();
+    if reg.profiles.len() <= 1 {
+        return Err("cannot delete the only profile".into());
+    }
+    if !reg.profiles.iter().any(|p| p.id == id) {
+        return Err("profile not found".into());
+    }
+
+    let was_active = reg.active == id;
+    reg.profiles.retain(|p| p.id != id);
+    if was_active {
+        reg.active = reg.profiles[0].id.clone();
+    }
+    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
+
+    remove_path(&profile_data_dir(id));
+    remove_path(&profile_cache_dir(id));
+    tracing::info!(id, was_active, "deleted profile");
+    Ok(was_active)
+}
+
+fn sanitize_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("name cannot be empty".into());
+    }
+    if name.len() > 64 {
+        return Err("name too long (max 64)".into());
+    }
+    // Avoid control chars / path tricks in the label only (id is UUID).
+    if name.chars().any(|c| c.is_control() || c == '/' || c == '\\') {
+        return Err("name contains invalid characters".into());
+    }
+    Ok(name.to_string())
 }
 
 fn load_or_create_active() -> ActiveProfile {
@@ -100,10 +208,7 @@ fn load_or_create_active() -> ActiveProfile {
 
     // Ensure every registered profile has data + cache dirs (active at least).
     for p in &reg.profiles {
-        let data = profile_data_dir(&p.id);
-        let cache = profile_cache_dir(&p.id);
-        let _ = std::fs::create_dir_all(&data);
-        let _ = std::fs::create_dir_all(&cache);
+        ensure_profile_dirs(&p.id);
     }
 
     let entry = reg
@@ -127,6 +232,7 @@ fn load_or_create_active() -> ActiveProfile {
     let cache_dir = profile_cache_dir(&entry.id);
     let _ = std::fs::create_dir_all(&data_dir);
     let _ = std::fs::create_dir_all(&cache_dir);
+    let _ = std::fs::create_dir_all(data_dir.join("cef"));
 
     ActiveProfile {
         id: entry.id,
@@ -134,6 +240,22 @@ fn load_or_create_active() -> ActiveProfile {
         data_dir,
         cache_dir,
     }
+}
+
+fn load_registry_or_empty() -> ProfilesRegistry {
+    read_registry(&registry_path()).unwrap_or_else(|| ProfilesRegistry {
+        version: REGISTRY_VERSION,
+        active: String::new(),
+        profiles: Vec::new(),
+    })
+}
+
+fn ensure_profile_dirs(id: &str) {
+    let data = profile_data_dir(id);
+    let cache = profile_cache_dir(id);
+    let _ = std::fs::create_dir_all(&data);
+    let _ = std::fs::create_dir_all(&cache);
+    let _ = std::fs::create_dir_all(data.join("cef"));
 }
 
 fn new_profile_id() -> String {
@@ -287,5 +409,12 @@ mod tests {
         let id = new_profile_id();
         assert_eq!(id.len(), 36);
         assert_eq!(id.chars().filter(|c| *c == '-').count(), 4);
+    }
+
+    #[test]
+    fn sanitize_name_rejects_empty_and_path_chars() {
+        assert!(sanitize_name("  ").is_err());
+        assert!(sanitize_name("a/b").is_err());
+        assert_eq!(sanitize_name("  Work  ").unwrap(), "Work");
     }
 }
