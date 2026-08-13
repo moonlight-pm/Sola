@@ -9,26 +9,27 @@ state changes. Read after `AGENTS.md`. Full model:
 [`docs/open-questions.md` § Decision points](docs/open-questions.md#decision-points-ask-human).
 Do not invent product policy.
 
-**As of:** 2026-08-12 (one-window helpers; YouTube auth + instant switch dogfooded)
+**As of:** 2026-08-12 (full-width chrome bar; profile in the strip)
 
 ---
 
 ## Now
 
-1. **Browser (CEF) — cookie persist dogfood, then engine polish**  
+1. **Browser (CEF) — remaining engine polish**  
    - Branch: **`naturalethic/cef-browser`** (this worktree).  
    - Single crate `sola-browser`: iced chrome + CEF CPU OSR.  
-   - **Dogfood (local):** one iced window; Profiles switch instant;
-     YouTube signed in on Alternate; Bitwarden unlock (**`--release`**);
-     fill after unlock; passkey get on Google; vault list MRU first.  
+   - **Dogfood (local):** one iced window; Profiles switch instant
+     (menubar + kit identity select in the full-width chrome bar);
+     YouTube signed in after full quit; colors OK after ARGB→BGRA
+     swizzle; Bitwarden unlock (**`--release`**); fill after unlock;
+     passkey get on Google.  
    - **Profile model:** `app_id` is always `sola-browser` (one switcher
      entry). Each profile is headless `sola-browser --engine` with its
-     own CEF cookie root. Helpers follow the widget size; CPU paints
-     that look like ARGB are swizzled to BGRA (red-wash fix).  
+     own CEF cookie root. Chrome-bar select is the quick switcher.  
    - Manual: `docs/manual/sola-browser.md`.  
-   - **Not shipped:** passkey **registration**; OSR polish.  
-   - **Next:** confirm colors after last install; YouTube login after a
-     full quit.  
+   - **Not shipped:** passkey **registration**; remaining OSR quirks
+     (loading/history flags; first-visit session tabs).  
+   - **Next:** remaining OSR (caret/scroll/IME) and passkey registration.  
 2. **sola-arcade / windowed gamescope** — **partial, dogfoodable** (on master)  
    - Backlog: Portal-class nest fails; residual flicker; title contrast;
      never-played owned without API.  
@@ -54,7 +55,7 @@ warning cleanups; worktree hygiene the user asks for.
 | Bus / UI | sticky `~/.config/sola/state.toml`; Iced + kit | Same stack inside guest when installed |
 | Dist path | Shape 1 colleague module (`INSTALL.md`) | QEMU **vdb** install → loginless Sola **OK**; **ISO e2e pending** |
 | Branch | **`naturalethic/cef-browser`** (browser); master for other daily | Feature work in worktrees / Orca workspaces |
-| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch; YouTube auth this session; Bitwarden unlock/fill; passkey **get** (Google) | — |
+| Browser | One chrome window + per-profile `--engine` helpers; instant Profiles switch (menubar + chrome-bar select); YouTube persists after quit; Bitwarden unlock/fill; passkey **get** (Google) | — |
 | Arcade | Banner list + nest dogfooded (Core Keeper, PEAK); cache + ready-to-play filter + lazy banners; nest Steam exits on game quit; some titles still flaky | — |
 | Nest paint | wayland+`-b`+`-S fit`; **no `-e`**; `--nested-steam` (no BPM) | — |
 

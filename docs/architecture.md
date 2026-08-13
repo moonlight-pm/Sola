@@ -144,7 +144,7 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 | Piece | Role |
 |-------|------|
-| `crates/sola-browser` | **Product browser** — iced chrome (tabs, omnibox, session, profiles, vault) + CEF CPU OSR under `src/cef/` |
+| `crates/sola-browser` | **Product browser** — iced chrome (full-width bar: kit identity select + nav + omnibox; vertical tabs; vault) + CEF CPU OSR under `src/cef/` |
 | App id / binary | `sola-browser` → `/opt/sola/bin/sola-browser` (shell launcher: one “Browser” entry; one Wayland window) |
 | Engine helpers | Per-profile headless `sola-browser --engine --profile=<uuid>` (no iced / no xdg_toplevel). Unix socket `profiles/<uuid>/engine.sock`. CEF `root_cache_path` = that profile’s `…/cef/` so cookies persist. |
 | CEF pin | `cef` crate + workspace `cef-version`; install tarball under `~/.cache/sola/cef-<ver>/` via `cargo make install-cef` |

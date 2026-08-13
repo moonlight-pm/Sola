@@ -63,34 +63,73 @@ pub fn style(theme: &Theme) -> container::Style {
 // the same tree node while it stays constructed.
 // ---------------------------------------------------------------------
 
-/// Gap in logical px between the anchor and the floated panel.
-const ANCHOR_GAP: f32 = 12.0;
+/// Gap in logical px between the anchor and the floated panel (End).
+const ANCHOR_GAP_END: f32 = 12.0;
+/// Tighter gap for a hanging select menu (Below).
+const ANCHOR_GAP_BELOW: f32 = 6.0;
 
-/// Choose the panel's top-left so it sits beside `anchor`: prefer the
-/// right side, flip to the left when the right would overflow, and clamp
-/// vertically (then, as a last resort, horizontally) to keep it
-/// on-screen. Top-aligned with the anchor so the panel reads as
-/// belonging to it.
-fn anchor_offset(anchor: Rectangle, panel: Size, viewport: Size, gap: f32) -> Point {
-    let right_x = anchor.x + anchor.width + gap;
-    let left_x = anchor.x - panel.width - gap;
-    let x = if right_x + panel.width <= viewport.width {
-        right_x
-    } else if left_x >= 0.0 {
-        left_x
-    } else {
-        (viewport.width - panel.width).max(0.0)
-    };
+/// Where the floated panel sits relative to `base`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Placement {
+    /// Prefer the right of the trigger (swatches, overflow menus).
+    #[default]
+    End,
+    /// Hang under the trigger, start-aligned (select / combo).
+    Below,
+}
 
-    let mut y = anchor.y;
-    if y + panel.height > viewport.height {
-        y = viewport.height - panel.height;
+/// Choose the panel's top-left so it sits next to `anchor`.
+fn anchor_offset(
+    anchor: Rectangle,
+    panel: Size,
+    viewport: Size,
+    placement: Placement,
+) -> Point {
+    match placement {
+        Placement::End => {
+            let gap = ANCHOR_GAP_END;
+            let right_x = anchor.x + anchor.width + gap;
+            let left_x = anchor.x - panel.width - gap;
+            let x = if right_x + panel.width <= viewport.width {
+                right_x
+            } else if left_x >= 0.0 {
+                left_x
+            } else {
+                (viewport.width - panel.width).max(0.0)
+            };
+
+            let mut y = anchor.y;
+            if y + panel.height > viewport.height {
+                y = viewport.height - panel.height;
+            }
+            if y < 0.0 {
+                y = 0.0;
+            }
+            Point::new(x, y)
+        }
+        Placement::Below => {
+            let gap = ANCHOR_GAP_BELOW;
+            // Center a narrower panel under the trigger so the list
+            // behind peeks on both sides (overlay, not another row).
+            let mut x = anchor.x + (anchor.width - panel.width) / 2.0;
+            if x + panel.width > viewport.width {
+                x = (viewport.width - panel.width).max(0.0);
+            }
+            if x < 0.0 {
+                x = 0.0;
+            }
+            let below = anchor.y + anchor.height + gap;
+            let above = anchor.y - panel.height - gap;
+            let y = if below + panel.height <= viewport.height {
+                below
+            } else if above >= 0.0 {
+                above
+            } else {
+                (viewport.height - panel.height).max(0.0)
+            };
+            Point::new(x, y)
+        }
     }
-    if y < 0.0 {
-        y = 0.0;
-    }
-
-    Point::new(x, y)
 }
 
 /// An anchored popover. See the module-level note above the constructor.
@@ -98,6 +137,7 @@ pub struct Anchored<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
     base: Element<'a, Message, Theme, Renderer>,
     content: Element<'a, Message, Theme, Renderer>,
     on_dismiss: Message,
+    placement: Placement,
 }
 
 /// Render `base` in place and float `content` beside it; a left-click
@@ -107,7 +147,20 @@ pub fn popover_anchored<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
     on_dismiss: Message,
 ) -> Anchored<'a, Message, Theme, Renderer> {
-    Anchored { base: base.into(), content: content.into(), on_dismiss }
+    Anchored {
+        base: base.into(),
+        content: content.into(),
+        on_dismiss,
+        placement: Placement::End,
+    }
+}
+
+impl<'a, Message, Theme, Renderer> Anchored<'a, Message, Theme, Renderer> {
+    /// Pin the panel relative to the trigger. Default is [`Placement::End`].
+    pub fn placement(mut self, placement: Placement) -> Self {
+        self.placement = placement;
+        self
+    }
 }
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -233,6 +286,7 @@ where
             tree: &mut tree.children[1],
             anchor,
             on_dismiss: self.on_dismiss.clone(),
+            placement: self.placement,
         })))
     }
 }
@@ -254,6 +308,7 @@ struct AnchoredOverlay<'a, 'b, Message, Theme, Renderer> {
     tree: &'b mut Tree,
     anchor: Rectangle,
     on_dismiss: Message,
+    placement: Placement,
 }
 
 impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
@@ -269,7 +324,7 @@ where
             &layout::Limits::new(Size::ZERO, bounds),
         );
         let size = node.size();
-        let offset = anchor_offset(self.anchor, size, bounds, ANCHOR_GAP);
+        let offset = anchor_offset(self.anchor, size, bounds, self.placement);
         layout::Node::with_children(size, vec![node])
             .translate(Vector::new(offset.x, offset.y))
     }
@@ -369,7 +424,12 @@ mod tests {
 
     #[test]
     fn placed_to_the_right_when_there_is_room() {
-        let offset = anchor_offset(anchor(40.0, 100.0), Size::new(480.0, 260.0), Size::new(1600.0, 900.0), 12.0);
+        let offset = anchor_offset(
+            anchor(40.0, 100.0),
+            Size::new(480.0, 260.0),
+            Size::new(1600.0, 900.0),
+            Placement::End,
+        );
         // right of the swatch: anchor.x + width + gap
         assert_eq!(offset.x, 40.0 + 56.0 + 12.0);
         // top aligned with the swatch
@@ -379,21 +439,78 @@ mod tests {
     #[test]
     fn flips_to_the_left_when_the_right_would_overflow() {
         // Swatch hard against the right edge; popover can't fit to the right.
-        let offset = anchor_offset(anchor(1500.0, 100.0), Size::new(480.0, 260.0), Size::new(1600.0, 900.0), 12.0);
+        let offset = anchor_offset(
+            anchor(1500.0, 100.0),
+            Size::new(480.0, 260.0),
+            Size::new(1600.0, 900.0),
+            Placement::End,
+        );
         assert_eq!(offset.x, 1500.0 - 480.0 - 12.0);
     }
 
     #[test]
     fn clamps_bottom_into_the_viewport() {
         // Swatch low on screen: a 260-tall popover would overflow the 900 viewport.
-        let offset = anchor_offset(anchor(40.0, 800.0), Size::new(480.0, 260.0), Size::new(1600.0, 900.0), 12.0);
+        let offset = anchor_offset(
+            anchor(40.0, 800.0),
+            Size::new(480.0, 260.0),
+            Size::new(1600.0, 900.0),
+            Placement::End,
+        );
         assert_eq!(offset.y, 900.0 - 260.0);
     }
 
     #[test]
     fn never_positions_above_the_viewport() {
         // Popover taller than the viewport — clamp to the top edge, not negative.
-        let offset = anchor_offset(anchor(40.0, 10.0), Size::new(480.0, 1000.0), Size::new(1600.0, 900.0), 12.0);
+        let offset = anchor_offset(
+            anchor(40.0, 10.0),
+            Size::new(480.0, 1000.0),
+            Size::new(1600.0, 900.0),
+            Placement::End,
+        );
         assert_eq!(offset.y, 0.0);
+    }
+
+    #[test]
+    fn below_hangs_under_the_trigger() {
+        let offset = anchor_offset(
+            anchor(40.0, 100.0),
+            Size::new(200.0, 120.0),
+            Size::new(1600.0, 900.0),
+            Placement::Below,
+        );
+        // 200-wide panel under a 56-wide swatch: centered, then clamped.
+        assert_eq!(offset.x, 0.0);
+        assert_eq!(offset.y, 100.0 + 56.0 + 6.0);
+    }
+
+    #[test]
+    fn below_centers_a_narrower_panel() {
+        let trigger = Rectangle {
+            x: 40.0,
+            y: 100.0,
+            width: 200.0,
+            height: 28.0,
+        };
+        let offset = anchor_offset(
+            trigger,
+            Size::new(184.0, 120.0),
+            Size::new(1600.0, 900.0),
+            Placement::Below,
+        );
+        assert_eq!(offset.x, 40.0 + 8.0);
+        assert_eq!(offset.y, 100.0 + 28.0 + 6.0);
+    }
+
+    #[test]
+    fn below_flips_above_when_the_bottom_would_overflow() {
+        let offset = anchor_offset(
+            anchor(40.0, 800.0),
+            Size::new(200.0, 160.0),
+            Size::new(1600.0, 900.0),
+            Placement::Below,
+        );
+        assert_eq!(offset.y, 800.0 - 160.0 - 6.0);
     }
 }

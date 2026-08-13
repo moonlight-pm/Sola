@@ -47,6 +47,11 @@ store in a headless engine process (no extra switcher entries). Closing
 the window quits the browser and those helpers. Tabs restore from
 `session.json`.
 
+The **profile name** lives in the left of the full-width top bar
+(aligned with the tab column). Each profile has a small enamel mark;
+the menu hangs under the name as a darker card. Click to switch.
+Manage (new / rename / delete) stays under **Menubar → Profiles**.
+
 **Cold start** with an empty session opens a single **blank** tab.
 
 ## Bitwarden vault

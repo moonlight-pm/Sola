@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use iced::widget::{
@@ -14,14 +14,15 @@ use iced::widget::{
 use sola_kit::components::text_input::text_input;
 use iced::{Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse};
 use sola_kit::components::{
-    TabDescriptor, TabSize, horizontal_divider, toolbar_button, vertical_divider_with,
-    vertical_tabs_sized,
+    TabDescriptor, TabSize, horizontal_divider, vertical_divider_with, vertical_tabs_sized,
 };
+use sola_kit::components::select::{SelectOption, select_sized};
 use sola_kit::components::button as kit_button;
 use sola_kit::components::card;
-use sola_kit::components::icon::icon_handle;
-use sola_kit::components::style::PAD_CONTROL_SM;
+use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
+use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM};
 use sola_kit::components::toolbar as kit_toolbar;
+use sola_kit::components::divider::DIVIDER_HIT_PX;
 
 
 use crate::engine::{Cmd, EditCmd, Engine, FrameSlot, NavCmd, TabId, TabInfo, TabsHandle};
@@ -130,6 +131,12 @@ pub enum Msg {
     ProfileNameInput(String),
     ProfileDialogSubmit,
     ProfileDialogCancel,
+    /// Open / close the sidebar profile switcher.
+    ProfilePickerToggle,
+    /// Outside-click (or Escape) dismissed the sidebar profile switcher.
+    ProfilePickerDismiss,
+    /// Instant-switch to this profile from the sidebar menu.
+    ProfileSwitch(String),
 }
 
 /// In-chrome dialog for creating / renaming / confirming delete of a profile.
@@ -281,6 +288,8 @@ pub struct App<E: Engine> {
     pub profile_dialog_error: Option<String>,
     /// Parked chrome snapshots per profile (mirrors CEF parks; same eviction).
     workspace_cache: std::collections::HashMap<String, crate::tab_cache::WorkspaceSnapshot>,
+    /// Sidebar profile name is a select; true while the menu is open.
+    profile_picker_open: bool,
 }
 
 impl<E: Engine> App<E> {
@@ -361,6 +370,7 @@ impl<E: Engine> App<E> {
             profile_name_field: String::new(),
             profile_dialog_error: None,
             workspace_cache: std::collections::HashMap::new(),
+            profile_picker_open: false,
         };
         #[cfg(feature = "bitwarden")]
         {
@@ -494,6 +504,7 @@ impl<E: Engine> App<E> {
 
     /// Open a profiles manage dialog (from the Profiles menubar).
     pub fn open_profile_dialog(&mut self, kind: ProfileDialog) {
+        self.profile_picker_open = false;
         self.profile_dialog_error = None;
         match kind {
             ProfileDialog::New => {
@@ -524,6 +535,7 @@ impl<E: Engine> App<E> {
     /// Instant switch: park this window's tab chrome, activate `id`,
     /// point the engine router at that profile's helper (spawn if needed).
     pub fn switch_profile(&mut self, id: &str) -> Task<Msg> {
+        self.profile_picker_open = false;
         let from = crate::profiles::active().id;
         if id == from {
             return Task::none();
@@ -985,6 +997,15 @@ impl<E: Engine> App<E> {
             Msg::ProfileDialogSubmit => {
                 return self.submit_profile_dialog();
             }
+            Msg::ProfilePickerToggle => {
+                self.profile_picker_open = !self.profile_picker_open;
+            }
+            Msg::ProfilePickerDismiss => {
+                self.profile_picker_open = false;
+            }
+            Msg::ProfileSwitch(id) => {
+                return self.switch_profile(&id);
+            }
             Msg::NewFrame => {
                 // Allow the next frame stream wakeup (coalesced redraw).
                 self.slot
@@ -1009,6 +1030,10 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::NavStop => {
+                if self.profile_picker_open {
+                    self.profile_picker_open = false;
+                    return Task::none();
+                }
                 if self.profile_dialog.is_some() {
                     self.close_profile_dialog();
                     return Task::none();
@@ -1178,7 +1203,14 @@ impl<E: Engine> App<E> {
                 }
             }
             Msg::TabHover(i) => self.hovered_tab = i,
-            Msg::WebViewFocused => self.url_bar_focused = false,
+            Msg::WebViewFocused => {
+                // Page took the click: drop iced chrome focus so keys go to
+                // the shader → CEF, and tell the host it is the focused OSR
+                // widget (caret blink / IME require SetFocus).
+                self.url_bar_focused = false;
+                let _ = self.cmd_tx.send(Cmd::Focus(true));
+                return crate::integration::unfocus_chrome();
+            }
             Msg::LeftPressed => {
                 // A press landed somewhere. Resolve, against the real widget
                 // tree, whether it focused the URL bar — `text_input` captures
@@ -1191,6 +1223,8 @@ impl<E: Engine> App<E> {
                 let gained = now && !self.url_bar_focused;
                 self.url_bar_focused = now;
                 if gained {
+                    // Omnibox owns keys; CEF must not keep the OSR caret.
+                    let _ = self.cmd_tx.send(Cmd::Focus(false));
                     return crate::integration::select_url_bar();
                 }
             }
@@ -1402,11 +1436,8 @@ impl<E: Engine> App<E> {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        // Right side: nav bar on top of the web content.
-        let content = column![self.view_nav_bar(), horizontal_divider(), webview];
-
-        // Left tab column (resizable) | divider | content.
-        let main = row![
+        // Full-width chrome (profile + nav + omnibox), then tabs | page.
+        let lower = row![
             container(self.view_tab_sidebar())
                 .width(Length::Fixed(self.sidebar_w))
                 .height(Length::Fill),
@@ -1414,9 +1445,12 @@ impl<E: Engine> App<E> {
                 Msg::DividerPress,
                 sola_kit::components::DividerColors::raised_to_canvas(&self.theme),
             ),
-            container(content).width(Length::Fill).height(Length::Fill),
+            container(webview).width(Length::Fill).height(Length::Fill),
         ]
         .height(Length::Fill);
+        let main = column![self.view_chrome_bar(), horizontal_divider(), lower]
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         // Opaque canvas under chrome chrome (sidebar / omnibox / tabs). The
         // window is `transparent: true` so iced's clear is α=0 — without a
@@ -1472,11 +1506,8 @@ impl<E: Engine> App<E> {
         )
     }
 
-    /// Left vertical tab column, built from the kit `vertical_tabs`
-    /// component so it tracks the shared theme. Single-line labels (no
-    /// wrap), active-row highlight, and a close `×` that floats in on
-    /// hover. New tabs come from `⌘T` (the app-menu shortcut), so there's
-    /// no in-column "+" button.
+    /// Left vertical tab column. Profile switch lives in the full-width
+    /// chrome bar; this is just the title stack. New tabs come from `⌘T`.
     pub fn view_tab_sidebar(&self) -> Element<'_, Msg> {
         let tabs: Vec<TabDescriptor<Msg>> = self
             .cached_tabs
@@ -1506,57 +1537,62 @@ impl<E: Engine> App<E> {
             })
             .collect();
 
-        let name = crate::profiles::active().name;
-        column![
-            text(name)
-                .size(12)
-                .font(sola_kit::fonts::ui_medium())
-                .color(self.theme.extended_palette().background.base.text),
-            vertical_tabs_sized(tabs, self.hovered_tab, Msg::TabHover, TabSize::Large),
-        ]
-        .spacing(6)
-        .into()
+        vertical_tabs_sized(tabs, self.hovered_tab, Msg::TabHover, TabSize::Large).into()
     }
 
-    /// Top navigation bar: back / forward / reload·stop + the URL field. All
-    /// widgets are kit-styled, so they track the bus theme.
+    /// Identity select — kit `select`, enamel mark per profile.
+    fn view_profile_picker(&self) -> Element<'_, Msg> {
+        let active = crate::profiles::active();
+        let options = crate::profiles::list().into_iter().map(|p| {
+            SelectOption::new(p.name, p.id == active.id, Msg::ProfileSwitch(p.id.clone()))
+                .mark(p.id)
+        });
+        let inner = (self.sidebar_w - 12.0).max(140.0);
+        select_sized(
+            active.name,
+            options,
+            self.profile_picker_open,
+            Msg::ProfilePickerToggle,
+            Msg::ProfilePickerDismiss,
+            inner,
+        )
+    }
+
+    /// Full-width chrome strip: profile (aligned to the tab column),
+    /// back / forward / reload, omnibox, vault.
     ///
     /// The URL field isn't wrapped in a `mouse_area`: `text_input` captures
     /// the click to place its caret, and `mouse_area` skips `on_press` for
     /// captured events. Click-into-focus + select-all is handled instead via
     /// the global press subscription (`Msg::LeftPressed`) plus a live focus
     /// query, which sees the press regardless of widget capture.
-    pub fn view_nav_bar(&self) -> Element<'_, Msg> {
+    pub fn view_chrome_bar(&self) -> Element<'_, Msg> {
         use sola_kit::components::style::{SPACE_MD, SPACE_SM};
-        // Fixed slot so ↻ ↔ × does not reflow the omnibox.
-        const NAV_BTN_W: f32 = 36.0;
+        const NAV_BTN_W: f32 = 34.0;
         let info = self.active_tab_info();
         let can_back = info.map(|t| t.can_go_back).unwrap_or(false);
         let can_fwd = info.map(|t| t.can_go_forward).unwrap_or(false);
-        // No `on_press` → iced marks Disabled (muted by toolbar style).
-        let back = {
-            let b = toolbar_button("←").width(Length::Fixed(NAV_BTN_W));
-            if can_back {
-                b.on_press(Msg::NavBack)
-            } else {
-                b
-            }
+        let muted = {
+            let t = self.theme.extended_palette().secondary.base.text;
+            iced::Color { a: 0.55, ..t }
         };
-        let forward = {
-            let b = toolbar_button("→").width(Length::Fixed(NAV_BTN_W));
-            if can_fwd {
-                b.on_press(Msg::NavForward)
-            } else {
-                b
-            }
+        let back = self.nav_icon_btn(nav_icon_back(), 16, can_back, NAV_BTN_W, Msg::NavBack, muted);
+        let forward =
+            self.nav_icon_btn(nav_icon_forward(), 16, can_fwd, NAV_BTN_W, Msg::NavForward, muted);
+        let reload_handle = if self.active_is_loading() {
+            nav_icon_stop()
+        } else {
+            nav_icon_reload()
         };
-        // Reload when idle; × stops an in-flight load (Escape also stops).
-        let reload_icon = if self.active_is_loading() { "×" } else { "↻" };
-        let reload_or_stop = toolbar_button(reload_icon)
-            .width(Length::Fixed(NAV_BTN_W))
-            .on_press(Msg::NavReloadOrStop);
-        // Bitwarden: locked = closed lock (muted); unlocked = key (accent).
-        // Different shapes + color so state is obvious at a glance.
+        let reload_or_stop = self.nav_icon_btn(
+            reload_handle,
+            16,
+            true,
+            NAV_BTN_W,
+            Msg::NavReloadOrStop,
+            muted,
+        );
+
         #[cfg(feature = "bitwarden")]
         let vault_btn = {
             let unlocked = self.vault_status.unlocked;
@@ -1566,24 +1602,13 @@ impl<E: Engine> App<E> {
                 self.vault_icon_locked.clone()
             };
             let icon = if unlocked {
-                sola_kit::components::icon::icon_svg_colored(
+                icon_svg_colored(
                     handle,
                     18,
-                    // Accent reads as “vault ready” against chrome.
                     self.theme.extended_palette().primary.base.color,
                 )
             } else {
-                sola_kit::components::icon::icon_svg_colored(
-                    handle,
-                    18,
-                    {
-                        let t = self.theme.extended_palette().background.base.text;
-                        iced::Color {
-                            a: 0.55,
-                            ..t
-                        }
-                    },
-                )
+                icon_svg_colored(handle, 18, muted)
             };
             button(icon)
                 .padding(PAD_CONTROL_SM)
@@ -1598,11 +1623,17 @@ impl<E: Engine> App<E> {
         #[cfg(not(feature = "bitwarden"))]
         let vault_btn = Space::new().width(Length::Fixed(0.0));
 
-        row![
+        let profile = container(self.view_profile_picker())
+            .width(Length::Fixed(self.sidebar_w))
+            .padding(Padding::from([0, 6]))
+            .align_y(Alignment::Center);
+
+        let bar = row![
+            profile,
+            Space::new().width(Length::Fixed(DIVIDER_HIT_PX)),
             back,
             forward,
             reload_or_stop,
-            // Kit body density (13) + DEFAULT_PADDING — chrome inherits tokens.
             text_input("Search or enter URL", &self.url_field)
                 .id(crate::integration::url_input_id())
                 .on_input(Msg::UrlInput)
@@ -1612,11 +1643,43 @@ impl<E: Engine> App<E> {
                 .width(Length::Fill),
             vault_btn,
         ]
-        .spacing(SPACE_MD)
-        .padding([SPACE_SM, SPACE_MD + SPACE_SM])
-        .align_y(iced::Alignment::Center)
-        .height(Length::Fixed(CHROME_HEIGHT))
-        .into()
+        .spacing(SPACE_SM)
+        .padding([SPACE_SM, SPACE_MD])
+        .align_y(Alignment::Center)
+        .height(Length::Fixed(CHROME_HEIGHT));
+
+        container(bar)
+            .width(Length::Fill)
+            .style(|_t: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(CHROME_SURFACE)),
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn nav_icon_btn(
+        &self,
+        handle: iced::widget::svg::Handle,
+        size: u16,
+        enabled: bool,
+        width: f32,
+        msg: Msg,
+        muted: iced::Color,
+    ) -> Element<'_, Msg> {
+        let icon: Element<'_, Msg> = if enabled {
+            icon_svg(handle, size)
+        } else {
+            icon_svg_colored(handle, size, muted)
+        };
+        let b = button(icon)
+            .padding(PAD_CONTROL_SM)
+            .width(Length::Fixed(width))
+            .style(kit_toolbar::style);
+        if enabled {
+            b.on_press(msg).into()
+        } else {
+            b.into()
+        }
     }
 
     #[cfg(feature = "bitwarden")]
@@ -2563,6 +2626,26 @@ fn vault_toolbar_btn_unlocked(
 #[cfg(feature = "bitwarden")]
 fn vault_email_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-vault-email")
+}
+
+fn nav_icon_back() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/arrow-left")).clone()
+}
+
+fn nav_icon_forward() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/arrow-right")).clone()
+}
+
+fn nav_icon_reload() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/rotate-cw")).clone()
+}
+
+fn nav_icon_stop() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/x")).clone()
 }
 
 #[cfg(feature = "bitwarden")]

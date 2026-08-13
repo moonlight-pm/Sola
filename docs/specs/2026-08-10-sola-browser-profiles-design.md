@@ -158,13 +158,13 @@ Delete… dialogs; switch keeps the window and swaps the front CEF helper.
 | CEF user data under profile | **done** (`…/cef/`) |
 | Profiles menubar switch + manage | **done** (2026-08-12) |
 | One-window instant switch + per-profile CEF helpers | **done** (2026-08-12) |
+| Chrome-bar kit identity select (aligned to tab column) | **done** (2026-08-12) |
 | History / downloads under `shared/` | **not yet** |
 
 ## Gaps (explicit)
 
 - History / downloads storage under `shared/`.
 - First visit to a profile this session still opens its session tabs (later switches resume the helper).
-- Confirm cookie restore after a full chrome+helper quit (OSCrypt basic is in; helper split is new).
 
 ## Decision log
 

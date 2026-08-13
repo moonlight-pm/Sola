@@ -347,6 +347,14 @@ fn focus_url_bar() -> Task<Msg> {
     )
 }
 
+/// Drop iced widget focus (URL bar, dialogs) so key events reach the
+/// webview shader after a click into the page.
+pub(crate) fn unfocus_chrome() -> Task<Msg> {
+    iced::advanced::widget::operate(
+        iced::advanced::widget::operation::focusable::unfocus::<Msg>(),
+    )
+}
+
 fn focus_profile_name() -> Task<Msg> {
     iced::advanced::widget::operate(
         iced::advanced::widget::operation::focusable::focus::<Msg>(profile_name_input_id()),

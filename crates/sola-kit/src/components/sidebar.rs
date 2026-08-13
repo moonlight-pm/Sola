@@ -28,6 +28,7 @@
 //! never see a raw `hex::*`.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use iced::widget::scrollable::{Direction, Scrollbar, Viewport};
 use iced::widget::text::Wrapping;
@@ -45,10 +46,10 @@ use iced::{
     Theme, Vector, animation::Easing, mouse, time::Instant, widget::float as float_widget,
 };
 
-use crate::components::icon::{icon_handle, icon_svg_colored};
+use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use crate::components::style::{
-    linear_bg, mix, mix_white, RADIUS_LG, RADIUS_MD, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS,
-    alpha,
+    inset_surface, linear_bg, mix, mix_white, CHROME_SURFACE, RADIUS_LG, RADIUS_MD, RADIUS_SM,
+    SPACE_MD, SPACE_SM, SPACE_XS, alpha,
 };
 use crate::fonts;
 
@@ -542,8 +543,9 @@ struct TabMetrics {
 impl TabSize {
     fn metrics(self) -> TabMetrics {
         match self {
-            TabSize::Normal => TabMetrics { row_pad_v: 6, row_pad_h: 10, font: 13, close: 15, gap: SPACE_XS },
-            TabSize::Large => TabMetrics { row_pad_v: 10, row_pad_h: 12, font: 14, close: 17, gap: SPACE_SM },
+            TabSize::Normal => TabMetrics { row_pad_v: 6, row_pad_h: 10, font: 13, close: 14, gap: SPACE_XS },
+            // Browser chrome: a stack of titles, not fat list-pills.
+            TabSize::Large => TabMetrics { row_pad_v: 7, row_pad_h: 10, font: 12, close: 14, gap: 3.0 },
         }
     }
 }
@@ -588,22 +590,36 @@ where
 
         let activate = button(
             text(label)
-                .font(fonts::ui())
+                .font(if active {
+                    fonts::ui_medium()
+                } else {
+                    fonts::ui()
+                })
                 .size(m.font)
                 .wrapping(Wrapping::None),
         )
-        .style(move |t, status| item_style(t, status, active))
+        .style(move |t, status| tab_item_style(t, status, active))
         .padding(Padding::from([m.row_pad_v, m.row_pad_h]))
         .width(Length::Fill)
         .on_press(on_activate);
 
-        // The close button floats over the row's right edge (a `stack`
-        // layer on top of the label), revealed only while this row is
-        // hovered — never a second cell that steals label width.
+        // Active row is a recess: 1px lighter lip + darker well (no
+        // face gradient). Idle stays a flat title.
+        let activate: Element<'a, Message> = if active {
+            container(activate)
+                .padding(1)
+                .width(Length::Fill)
+                .style(|_theme: &Theme| tab_etch_lip())
+                .into()
+        } else {
+            activate.into()
+        };
+
+        // Close floats over the row's right edge (stack), only while hovered.
         let row_el: Element<'a, Message> = if hovered == Some(i) {
-            let close = button(text("×").font(fonts::ui()).size(m.close))
-                .style(|t, status| item_style(t, status, false))
-                .padding(Padding::from([0, 7]))
+            let close = button(icon_svg(tab_close_icon(), m.close as u16))
+                .style(tab_close_style)
+                .padding(Padding::from([2, 4]))
                 .on_press(on_close);
             stack![
                 activate,
@@ -626,7 +642,98 @@ where
         );
     }
 
-    container(col).style(style).height(Length::Fill).width(Length::Fill)
+    container(col)
+        .style(tab_column_style)
+        .height(Length::Fill)
+        .width(Length::Fill)
+}
+
+/// Browser tab column — same material as the full-width chrome strip.
+fn tab_column_style(theme: &Theme) -> container::Style {
+    let _ = theme;
+    container::Style {
+        background: Some(Background::Color(CHROME_SURFACE)),
+        border: Border::default(),
+        ..container::Style::default()
+    }
+}
+
+/// 1px rim of the etch — a hair lighter than the column so the cut
+/// reads as a lip, not a painted card.
+fn tab_etch_lip() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(mix_white(CHROME_SURFACE, 0.06))),
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_SM.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+fn tab_close_icon() -> iced::widget::svg::Handle {
+    static H: OnceLock<iced::widget::svg::Handle> = OnceLock::new();
+    H.get_or_init(|| icon_handle("lucide/x")).clone()
+}
+
+/// Quiet title stack: idle is muted type on nothing; active is a
+/// darker well (etched into the column), not a gradient card.
+fn tab_item_style(theme: &Theme, status: button::Status, active: bool) -> button::Style {
+    let p = theme.extended_palette();
+    let muted = p.secondary.base.text;
+    let fg = p.background.base.text;
+    if active {
+        return button::Style {
+            background: Some(Background::Color(inset_surface(CHROME_SURFACE, 0.22))),
+            text_color: fg,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 4.0.into(),
+            },
+            shadow: Default::default(),
+            snap: false,
+        };
+    }
+    let (bg, text_color) = match status {
+        button::Status::Hovered | button::Status::Pressed => {
+            (alpha(p.background.strong.color, 0.45), fg)
+        }
+        _ => (Color::TRANSPARENT, muted),
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_SM.into(),
+        },
+        shadow: Default::default(),
+        snap: false,
+    }
+}
+
+fn tab_close_style(theme: &Theme, status: button::Status) -> button::Style {
+    let p = theme.extended_palette();
+    let bg = match status {
+        button::Status::Hovered | button::Status::Pressed => {
+            alpha(p.background.strong.color, 0.80)
+        }
+        _ => Color::TRANSPARENT,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: p.secondary.base.text,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: RADIUS_SM.into(),
+        },
+        shadow: Default::default(),
+        snap: false,
+    }
 }
 
 fn section_header<'a, Message: 'a>(label: String) -> Element<'a, Message> {
@@ -2102,12 +2209,10 @@ where
 
 pub fn style(theme: &Theme) -> container::Style {
     let _p = theme.extended_palette();
-    // OD `--material-sidebar`: cool #121722 (slightly off pure raised).
     // Full outline is intentionally off — the storybook / shell draws a
     // single right hairline separator against the content column.
-    let material = Color::from_rgb(0.071, 0.090, 0.133); // #121722
     container::Style {
-        background: Some(Background::Color(material)),
+        background: Some(Background::Color(CHROME_SURFACE)),
         border: Border::default(),
         ..container::Style::default()
     }
@@ -2276,12 +2381,12 @@ mod tests {
     #[test]
     fn tab_size_metrics_are_stable() {
         let n = TabSize::Normal.metrics();
-        assert_eq!((n.row_pad_v, n.row_pad_h, n.font, n.close), (6, 10, 13, 15));
+        assert_eq!((n.row_pad_v, n.row_pad_h, n.font, n.close), (6, 10, 13, 14));
         assert_eq!(n.gap, SPACE_XS);
 
         let l = TabSize::Large.metrics();
-        assert_eq!((l.row_pad_v, l.row_pad_h, l.font, l.close), (10, 12, 14, 17));
-        assert_eq!(l.gap, SPACE_SM);
+        assert_eq!((l.row_pad_v, l.row_pad_h, l.font, l.close), (7, 10, 12, 14));
+        assert_eq!(l.gap, 3.0);
 
         assert_eq!(TabSize::default(), TabSize::Normal);
     }

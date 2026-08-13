@@ -11,7 +11,7 @@ use crate::shader::{ImportedTexture, SamplePipeline};
 use crate::engine::{Cmd, FrameSlot};
 
 use crate::cef::cpu_import::{self, UploadedFrame};
-use crate::cef::engine::{CefEngine, CefFrame, InputEvent};
+use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::input;
 
 pub struct CefProgram {
@@ -147,23 +147,15 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                 let translated = match k {
                     keyboard::Event::KeyPressed {
                         key, modifiers, text, ..
-                    } => input::key_to_vk(key).map(|vk| InputEvent::Key {
-                        down: true,
-                        vk,
-                        character: input::key_to_character(
-                            text.as_ref().and_then(|t| t.chars().next()),
-                            key,
-                        ),
-                        modifiers: input::modifiers_to_cef(*modifiers),
-                    }),
+                    } => input::translate_key(
+                        true,
+                        key,
+                        text.as_ref().and_then(|t| t.chars().next()),
+                        *modifiers,
+                    ),
                     keyboard::Event::KeyReleased {
                         key, modifiers, ..
-                    } => input::key_to_vk(key).map(|vk| InputEvent::Key {
-                        down: false,
-                        vk,
-                        character: None,
-                        modifiers: input::modifiers_to_cef(*modifiers),
-                    }),
+                    } => input::translate_key(false, key, None, *modifiers),
                     keyboard::Event::ModifiersChanged(_) => None,
                 };
                 if let Some(e) = translated {

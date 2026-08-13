@@ -902,6 +902,13 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             if let Some(tab) = active_tab(state) {
                 if let Some(host) = tab.browser.host() {
                     host.set_focus(if focused { 1 } else { 0 });
+                    // Caret / placeholder animation only dirty-rects after
+                    // Chromium notices focus. Force a VIEW paint so the
+                    // first blink is not stuck off until the next page
+                    // change.
+                    if focused {
+                        host.invalidate(cef::PaintElementType::VIEW);
+                    }
                 }
             }
         }

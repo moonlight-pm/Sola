@@ -97,9 +97,10 @@ pub fn scroll_delta_to_cef(d: mouse::ScrollDelta) -> (i32, i32, bool) {
 // ── keyboard ────────────────────────────────────────────────────
 
 /// iced `Key` → Windows-style VK code (per Chromium's
-/// `keyboard_codes.h`). Covers the same set as the WPE keysym
-/// table — printable ASCII + common named keys. Returns `None`
-/// for keys we can't yet map.
+/// `keyboard_codes.h`). Printable ASCII (letters, digits,
+/// punctuation) + common named keys. Punctuation uses US-layout
+/// OEM VKs; the CHAR event carries the real glyph. Returns `None`
+/// only when we have neither a VK nor a CHAR to send.
 pub fn key_to_vk(key: &Key) -> Option<u32> {
     Some(match key {
         Key::Character(s) => {
@@ -108,19 +109,67 @@ pub fn key_to_vk(key: &Key) -> Option<u32> {
             if chars.next().is_some() {
                 return None;
             }
-            let c = first.to_ascii_uppercase();
-            match c {
-                'A'..='Z' => c as u32,           // VK_A..VK_Z = 0x41..0x5A
-                '0'..='9' => c as u32,           // VK_0..VK_9 = 0x30..0x39
-                ' ' => 0x20,                     // VK_SPACE
-                // Numpad / punctuation keys don't have stable VK
-                // codes across keyboards; rely on CHAR events to
-                // carry the actual codepoint.
-                _ => return None,
-            }
+            character_to_vk(first)?
         }
         Key::Named(n) => named_to_vk(*n)?,
         Key::Unidentified => return None,
+    })
+}
+
+/// US-layout OEM VKs for punctuation so RAWKEYDOWN is not dropped.
+/// CHAR still carries the produced character (`.` vs `>` etc.).
+fn character_to_vk(c: char) -> Option<u32> {
+    let upper = c.to_ascii_uppercase();
+    Some(match upper {
+        'A'..='Z' => upper as u32, // VK_A..VK_Z
+        '0'..='9' => upper as u32, // VK_0..VK_9
+        ' ' => 0x20,               // VK_SPACE
+        '.' | '>' => 0xBE,         // VK_OEM_PERIOD
+        ',' | '<' => 0xBC,         // VK_OEM_COMMA
+        '-' | '_' => 0xBD,         // VK_OEM_MINUS
+        '=' | '+' => 0xBB,         // VK_OEM_PLUS
+        ';' | ':' => 0xBA,         // VK_OEM_1
+        '/' | '?' => 0xBF,         // VK_OEM_2
+        '`' | '~' => 0xC0,         // VK_OEM_3
+        '[' | '{' => 0xDB,         // VK_OEM_4
+        '\\' | '|' => 0xDC,        // VK_OEM_5
+        ']' | '}' => 0xDD,         // VK_OEM_6
+        '\'' | '"' => 0xDE,        // VK_OEM_7
+        '!' => b'1' as u32,
+        '@' => b'2' as u32,
+        '#' => b'3' as u32,
+        '$' => b'4' as u32,
+        '%' => b'5' as u32,
+        '^' => b'6' as u32,
+        '&' => b'7' as u32,
+        '*' => b'8' as u32,
+        '(' => b'9' as u32,
+        ')' => b'0' as u32,
+        _ => return None,
+    })
+}
+
+/// iced key event → CEF `InputEvent::Key`. Sends a CHAR-capable
+/// event even when there is no VK (Unidentified + `text`, or a
+/// non-Latin glyph) so punctuation / composed characters are not
+/// dropped on the floor.
+pub fn translate_key(
+    down: bool,
+    key: &Key,
+    text_first: Option<char>,
+    modifiers: Modifiers,
+) -> Option<InputEvent> {
+    let character = if down {
+        key_to_character(text_first, key)
+    } else {
+        None
+    };
+    let vk = key_to_vk(key).or_else(|| character.map(|c| c as u32))?;
+    Some(InputEvent::Key {
+        down,
+        vk,
+        character,
+        modifiers: modifiers_to_cef(modifiers),
     })
 }
 
@@ -307,5 +356,51 @@ mod tests {
         assert_eq!(button_number(mouse::Button::Middle), None);
         assert_eq!(button_number(mouse::Button::Left), Some(1));
         assert_eq!(button_number(mouse::Button::Right), Some(3));
+    }
+
+    #[test]
+    fn punctuation_has_oem_vk() {
+        // Period was dropped entirely (no VK → no CHAR). Must map.
+        let period = Key::Character(".".into());
+        assert_eq!(key_to_vk(&period), Some(0xBE));
+        let comma = Key::Character(",".into());
+        assert_eq!(key_to_vk(&comma), Some(0xBC));
+        let slash = Key::Character("/".into());
+        assert_eq!(key_to_vk(&slash), Some(0xBF));
+    }
+
+    #[test]
+    fn translate_key_sends_char_for_period() {
+        let ev = translate_key(true, &Key::Character(".".into()), Some('.'), Modifiers::empty())
+            .expect("period must produce a key event");
+        match ev {
+            InputEvent::Key {
+                down,
+                vk,
+                character,
+                ..
+            } => {
+                assert!(down);
+                assert_eq!(vk, 0xBE);
+                assert_eq!(character, Some('.' as u16));
+            }
+            other => panic!("expected Key, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn translate_key_unidentified_uses_text() {
+        // Some compositors give Unidentified + text only.
+        let ev = translate_key(true, &Key::Unidentified, Some('.'), Modifiers::empty())
+            .expect("text-only period must not be dropped");
+        match ev {
+            InputEvent::Key {
+                character, vk, ..
+            } => {
+                assert_eq!(character, Some('.' as u16));
+                assert_eq!(vk, '.' as u32);
+            }
+            other => panic!("expected Key, got {other:?}"),
+        }
     }
 }

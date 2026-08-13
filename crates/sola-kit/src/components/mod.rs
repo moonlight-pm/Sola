@@ -45,6 +45,7 @@ pub mod icon;
 pub mod number_input;
 pub mod popover;
 pub mod readable;
+pub mod select;
 pub mod sidebar;
 pub mod spectrum;
 pub mod split;
@@ -67,7 +68,8 @@ pub use field::field;
 pub use form::{checkbox_style, form_row, toggle_style};
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
 pub use number_input::number_input;
-pub use popover::{popover, popover_anchored};
+pub use popover::{popover, popover_anchored, Placement};
+pub use select::{SelectOption, identity_mark, select, select_sized};
 pub use readable::readable;
 pub use sidebar::{
     PANEL_HEADER_H, PANEL_REORDER_ANIM_MS, PANEL_REORDER_LIFT_SCALE, PANEL_REORDER_THRESHOLD,
