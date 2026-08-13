@@ -211,6 +211,57 @@ pub fn session_name(id: &str) -> String {
     format!("{}{id}", identity().session_prefix)
 }
 
+/// Inverse of [`session_name`] when `session` uses this process's prefix.
+pub fn pane_id_from_session(session: &str) -> Option<String> {
+    session
+        .strip_prefix(identity().session_prefix)
+        .filter(|id| !id.is_empty())
+        .map(String::from)
+}
+
+/// Sessions on our socket with last-activity time (unix seconds).
+pub fn list_sessions_activity() -> Option<Vec<(String, u64)>> {
+    let output = tmux_cmd()
+        .args(["ls", "-F", "#{session_name} #{session_activity}"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("no server running") || stderr.contains("error connecting to") {
+            return Some(Vec::new());
+        }
+        tracing::warn!("tmux ls (activity) failed: {}", stderr.trim());
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| {
+                let (name, activity) = line.rsplit_once(' ')?;
+                if !name.starts_with(identity().session_prefix) {
+                    return None;
+                }
+                Some((name.to_string(), activity.parse().ok()?))
+            })
+            .collect(),
+    )
+}
+
+pub fn rename_session(from: &str, to: &str) -> bool {
+    if from == to {
+        return true;
+    }
+    tmux_cmd()
+        .args(["rename-session", "-t", from, to])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 pub fn capture_scrollback(session: &str) -> Result<String, String> {
     let output = tmux_cmd()
         .args(["capture-pane", "-t", session, "-p", "-S", "-"])
@@ -375,6 +426,36 @@ pub fn pane_current_path(session: &str) -> Option<String> {
     if path.is_empty() { None } else { Some(path) }
 }
 
+/// Foreground pane pid, if tmux still has the session.
+pub fn pane_pid(session: &str) -> Option<i32> {
+    let output = tmux_cmd()
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            session,
+            "-F",
+            "#{pane_pid}",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+/// Stamp a session environment variable (inherited by new panes / shells).
+pub fn set_environment(session: &str, key: &str, value: &str) {
+    let _ = tmux_cmd()
+        .args(["set-environment", "-t", session, key, value])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
 pub fn resize_window(session: &str, cols: u16, rows: u16) {
     let _ = tmux_cmd()
         .args([
@@ -398,6 +479,11 @@ mod tests {
     #[test]
     fn session_name_format() {
         assert_eq!(session_name("abc-123"), "sola-abc-123");
+        assert_eq!(
+            pane_id_from_session("sola-abc-123").as_deref(),
+            Some("abc-123")
+        );
+        assert_eq!(pane_id_from_session("other"), None);
     }
 
     #[test]

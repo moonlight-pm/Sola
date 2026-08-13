@@ -7,9 +7,9 @@
 **Product record:** [`crates/sola-agent-terminal/PRODUCT.md`](../../crates/sola-agent-terminal/PRODUCT.md)  
 **Design law (session):** [`.grok/rules/agent-terminal-design.md`](../../.grok/rules/agent-terminal-design.md)
 
-**Implementation:** skeleton compiles (`cargo make build sola-agent-terminal`)  
-**Dogfood:** not installed  
-**Gaps:** persist, spawn sibling, hooks/status, `sat`, toast-on-done; one hardcoded project/workspace; idle mark only
+**Implementation:** Grok hooks + process-tree + OSC 9999 + status chrome + stable `sat-ws-main`  
+**Dogfood:** installed locally; Grok marks + tmux reattach smoked  
+**Gaps:** persist projects, spawn sibling, `sat`, toast-on-done; demo rows still seeded; Claude presence-only
 
 ---
 
@@ -36,6 +36,7 @@ deprecated for this line of work.
 | Engine | Reuse `sola-terminal` as a **library** (grid, PTY, input). Do not share tmux socket `sola` or `Topic::TerminalSession` |
 | Persistence (PTY) | tmux socket **`sola-at`**, session prefix `sat-`, own systemd unit `sola-at-tmux.service` |
 | Status | Hooks (Grok first) + OSC `9999` + process-tree presence. **Never** infer from OSC 0/2 titles |
+| First-class CLI | **Grok.** Always implement and test Grok first. Other agents are presence-only until Grok hooks are trustworthy |
 | Status vocab | `working` / `waiting` / `done` / idle. Reserved indicator slot (no layout shift) |
 | Process | One `iced::application` window. Independently restartable kit app |
 | Crate / app id | `sola-agent-terminal` |
@@ -76,7 +77,7 @@ sat  ──unix──▶  sola-agent-terminal (iced)
                       │
                       ├── sola-terminal lib  (grid / pty / input / tmux)
                       ├── tmux socket sola-at
-                      ├── hook socket  (later)
+                      ├── hook socket  $XDG_RUNTIME_DIR/sola-at-hooks.sock
                       └── sola-bus     (theme, later stickies, toasts, menu)
 ```
 
@@ -85,9 +86,13 @@ sat  ──unix──▶  sola-agent-terminal (iced)
 ```text
 crates/sola-agent-terminal/
   PRODUCT.md
+  DESIGN.md            # Operate surface, recorded from status chrome
   Cargo.toml
   src/main.rs          # iced application, boot, bus
   src/sidebar.rs       # project / workspace rail
+  src/status.rs        # working / waiting / done / idle + persist
+  src/hooks.rs         # Grok installer + UDS server
+  src/presence.rs      # process-tree who (Grok first)
   src/workspace.rs     # in-memory project + workspace + pane ids
   src/menu.rs
 ```
@@ -104,6 +109,26 @@ Engine stays in `crates/sola-terminal` (`lib.rs`). This crate does not fork it.
 - Compiles under `cargo make build sola-agent-terminal`
 
 Not in skeleton: persist, spawn, hooks, `sat`, splits, toasts.
+
+### Status chrome slice
+
+- Kit `status_mark`: working ring (accent, spinning), waiting diamond
+  (warning), done check (success), idle reserved disc. `Active` unchanged
+  for generic apps.
+- Rail: one live workspace + labeled `demo` rows covering working /
+  waiting / done. Who (agent name) is a trailing secondary.
+- Sidebar rebuilds from the in-memory status on each workspace.
+
+### Grok hooks slice
+
+- Installer writes `~/.grok/hooks/sola-status.json` +
+  `~/.config/sola/agent-terminal/grok-hook.sh`. Leaves `orca-status.json`
+  alone.
+- UDS `$XDG_RUNTIME_DIR/sola-at-hooks.sock`. Pane env: `SOLA_PANE_ID`,
+  `SOLA_AT_HOOKS_SOCK`.
+- Process-tree presence (Grok first). OSC 9999 stripped in `sola-terminal`
+  before the grid. Titles never drive state. Child `Subagent*` events
+  ignored.
 
 ---
 
@@ -131,16 +156,16 @@ mono grid). Not a replacement visual identity.
   done check, idle reserved dim. Who (agent name) stays separate from state.
 - **Motion:** state only, 150–250 ms. No page-load choreography.
 
-Write `DESIGN.md` from the built surface when the first dogfoodable chrome
-exists (impeccable document), not before.
+`DESIGN.md` records the built status-chrome surface. Update it when the
+look changes; do not treat it as a second freeze.
 
 ---
 
 ## Build order (after this freeze)
 
-1. **Skeleton** — this slice  
-2. **Status chrome** — kit `SidebarIndicator` extended; fake states  
-3. **Grok hooks + process-tree + OSC 9999**  
+1. **Skeleton** — done  
+2. **Status chrome** — done (kit `status_mark`; demo states)  
+3. **Grok hooks + process-tree + OSC 9999** — done  
 4. **Projects + workspaces + spawn sibling**  
 5. **`sat`** — `ps`, `workspace spawn`, `pane send`  
 6. **Toasts on done**, then stop

@@ -1,12 +1,13 @@
 //! Project → workspace rail.
 //!
 //! Operate: one scan column. Project name is a quiet section header.
-//! Workspace rows carry a reserved status mark so later working/waiting/done
-//! never shift the title.
+//! Every workspace row carries a reserved status mark. Demo rows are
+//! labeled as such — they exist so the column can be scanned before
+//! hooks exist.
 
 use iced::{Element, Theme};
 use sola_kit::components::{
-    DividerColors, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection,
+    DividerColors, SidebarItem, SidebarPanel, SidebarSection,
 };
 
 use crate::workspace::{Project, Workspace};
@@ -33,24 +34,43 @@ impl Default for SidebarState {
 pub fn view<'a>(
     state: &'a SidebarState,
     project: &'a Project,
-    workspace: &'a Workspace,
+    workspaces: &'a [Workspace],
+    selected: &str,
     theme: &Theme,
     term_bg: iced::Color,
 ) -> Element<'a, Msg> {
-    let item = SidebarItem::new(workspace.name.clone(), Msg::Noop)
-        .active(true)
-        .indicator(SidebarIndicator::Idle)
-        .subtitle(
-            workspace
-                .path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string(),
-        )
-        .id(workspace.id.clone());
+    let items: Vec<SidebarItem<Msg>> = workspaces
+        .iter()
+        .map(|ws| {
+            let subtitle = if ws.demo {
+                "demo".to_string()
+            } else {
+                ws.path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let mut item = SidebarItem::new(
+                ws.name.clone(),
+                if ws.demo {
+                    Msg::Noop
+                } else {
+                    Msg::SelectWorkspace(ws.id.clone())
+                },
+            )
+            .active(ws.id == selected)
+            .indicator(ws.status.indicator())
+            .subtitle(subtitle)
+            .id(ws.id.clone());
+            if let Some(agent) = &ws.agent {
+                item = item.secondary(agent.clone());
+            }
+            item
+        })
+        .collect();
 
-    let sections = vec![SidebarSection::new(project.name.clone(), vec![item]).fill()];
+    let sections = vec![SidebarSection::new(project.name.clone(), items).fill()];
 
     let p = theme.extended_palette();
     let divider = DividerColors {

@@ -8,6 +8,7 @@ pub mod emulator;
 pub mod extkeys;
 pub mod input;
 pub mod links;
+pub mod osc9999;
 pub mod perf;
 pub mod pty;
 pub mod state;

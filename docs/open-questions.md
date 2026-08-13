@@ -72,8 +72,8 @@ sites?
 
 ### D3 — sola-agent-terminal product forks (P2)
 
-**Context:** Freeze is in; skeleton compiles. These were left interim so we did
-not invent policy. Do not treat the interims as locked.
+**Context:** Freeze is in; Grok hooks + tmux reattach smoked. These were left
+interim so we did not invent policy. Do not treat the interims as locked.
 
 **Ask:**
 
@@ -96,6 +96,7 @@ paths or `sat` auto-launch.
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
 | 2026-08-13 | agent-terminal | Promoted idea → freeze. Spawn sibling is v1; design law; not `sola-agent`. D3 forks still open. | freeze + CURRENT + D3 |
+| 2026-08-13 | agent-terminal | **Grok is the first-class CLI** — implement and test Grok first. Claude remains D3 (presence-only until Grok hooks are solid). | freeze + CURRENT + design law |
 | 2026-08-06 | dist | Distribution branch merged to master; qcow e2e OK; ISO e2e still open; interim TZ US/Mountain | freeze + plan + CURRENT |
 | 2026-08-05 | — | Progress documentation practice adopted for Sola | CURRENT, progress-model, AGENTS |
 | 2026-08-05 | dist | ISO primary; wizard = username + disk only; US EN + Mac keyboard fixed; hostname `sola`; no password; loginless → Sola; flower brand splash | [distribution-image freeze](specs/2026-08-05-distribution-image-design.md) |

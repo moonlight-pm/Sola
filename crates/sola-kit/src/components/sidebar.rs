@@ -78,24 +78,7 @@ pub enum SidebarItemChrome {
     Card,
 }
 
-/// Leading status mark for a sidebar row (activity / health, not selection).
-///
-/// Prefer always showing a mark so the title does not shift horizontally
-/// when activity starts/stops. `Idle` is the reserved empty slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SidebarIndicator {
-    /// Turn in flight (tools, streaming). Ring, not a filled dot.
-    Working,
-    /// Needs a human (question, permission).
-    Waiting,
-    /// Turn finished.
-    Done,
-    /// Session is actively working (generic apps — streaming, recent writes).
-    Active,
-    /// Present but idle — dim placeholder so layout stays fixed.
-    #[default]
-    Idle,
-}
+pub use crate::components::status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
 
 /// Trailing control under [`SidebarItem::secondary`], shown only while the
 /// row is hovered (requires [`SidebarPanel::item_hover`] + [`SidebarItem::id`]).
@@ -1131,7 +1114,11 @@ fn item_text_block<'a, Message: 'a>(
         .width(Length::Fill);
     if let Some(sub) = subtitle {
         // Indent subtitle under the title text when a leading dot is present.
-        let sub_pad = if indicator.is_some() { 14.0 } else { 0.0 };
+        let sub_pad = if indicator.is_some() {
+            STATUS_MARK_SLOT + SPACE_SM
+        } else {
+            0.0
+        };
         text_col = text_col.push(
             container(
                 text(sub.to_string())
@@ -1278,62 +1265,7 @@ fn hover_action_button<'a, Message: Clone + 'a>(
 }
 
 fn status_dot<'a, Message: 'a>(indicator: SidebarIndicator) -> Element<'a, Message> {
-    let (fill, stroke, stroke_w) = match indicator {
-        SidebarIndicator::Working => (
-            Color::TRANSPARENT,
-            Color {
-                r: 0.92,
-                g: 0.72,
-                b: 0.18,
-                a: 1.0,
-            },
-            1.5,
-        ),
-        SidebarIndicator::Waiting => (
-            Color {
-                r: 0.92,
-                g: 0.62,
-                b: 0.18,
-                a: 1.0,
-            },
-            Color::TRANSPARENT,
-            0.0,
-        ),
-        SidebarIndicator::Done | SidebarIndicator::Active => (
-            Color {
-                r: 0.24,
-                g: 0.81,
-                b: 0.56,
-                a: 1.0,
-            },
-            Color::TRANSPARENT,
-            0.0,
-        ),
-        // Quiet placeholder — visible enough to reserve space, not attention.
-        SidebarIndicator::Idle => (
-            Color {
-                r: 0.45,
-                g: 0.48,
-                b: 0.55,
-                a: 0.55,
-            },
-            Color::TRANSPARENT,
-            0.0,
-        ),
-    };
-    container(Space::new().width(6.0).height(6.0))
-        .width(Length::Fixed(6.0))
-        .height(Length::Fixed(6.0))
-        .style(move |_t: &Theme| container::Style {
-            background: Some(Background::Color(fill)),
-            border: Border {
-                radius: 999.0.into(),
-                width: stroke_w,
-                color: stroke,
-            },
-            ..container::Style::default()
-        })
-        .into()
+    status_mark(indicator)
 }
 
 /// Collapsed-row content: just the shortcut number (or index+1), centred.

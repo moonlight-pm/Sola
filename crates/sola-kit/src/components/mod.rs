@@ -48,6 +48,7 @@ pub mod readable;
 pub mod sidebar;
 pub mod spectrum;
 pub mod split;
+pub mod status_mark;
 pub mod style;
 pub mod swatch;
 pub mod text;
@@ -72,12 +73,12 @@ pub use readable::readable;
 pub use sidebar::{
     PANEL_HEADER_H, PANEL_REORDER_ANIM_MS, PANEL_REORDER_LIFT_SCALE, PANEL_REORDER_THRESHOLD,
     PANEL_ROW_H, PANEL_ROW_STRIDE, PANEL_W_DEFAULT, PANEL_W_MAX, PANEL_W_MIN, ReorderAnim,
-    ReorderCfg, SIDEBAR_WIDTH, SectionScroll, SidebarHoverAction, SidebarIndicator,
-    SidebarItem, SidebarItemChrome, SidebarPanel, SidebarSection, TabDescriptor, TabSize,
-    panel_dragged_width, panel_drop_index, panel_drop_index_relative, panel_renumber_changed,
-    panel_reordered, panel_sibling_offset, section_overflow_counts, sidebar, sidebar_with_header,
-    vertical_tabs, vertical_tabs_sized,
+    ReorderCfg, SIDEBAR_WIDTH, SectionScroll, SidebarHoverAction, SidebarItem, SidebarItemChrome,
+    SidebarPanel, SidebarSection, TabDescriptor, TabSize, panel_dragged_width, panel_drop_index,
+    panel_drop_index_relative, panel_renumber_changed, panel_reordered, panel_sibling_offset,
+    section_overflow_counts, sidebar, sidebar_with_header, vertical_tabs, vertical_tabs_sized,
 };
+pub use status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
 pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::{split, split_with};
 pub use swatch::{swatch, swatch_sized};

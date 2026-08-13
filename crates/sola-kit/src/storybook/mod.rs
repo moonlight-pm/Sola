@@ -565,6 +565,11 @@ impl Storybook {
                     .map(|_| Msg::Sidebar(pages::sidebar::Msg::ReorderTick)),
             );
         }
+        if self.page == Page::Sidebar {
+            subs.push(
+                iced::window::frames().map(|_| Msg::Sidebar(pages::sidebar::Msg::MarkTick)),
+            );
+        }
 
         // Split dogfood: live divider drag on the Split page.
         if self.split.needs_cursor_subscription() {
@@ -1421,7 +1426,8 @@ mod tests {
         // new arm here, prompting the author to also extend `VARIANTS`.
         fn _exhaustive(p: Page) {
             match p {
-                Page::Theme
+                Page::Overview
+                | Page::Theme
                 | Page::Shell
                 | Page::Text
                 | Page::Button

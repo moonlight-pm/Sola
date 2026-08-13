@@ -16,7 +16,8 @@ socket. No install from agents.
 3. [x] Extend kit `SidebarIndicator` enough for a reserved idle/working/waiting/done slot (idle used now).
 4. [x] Progress docs: capability `spec’d` → `partial` with gaps; CURRENT; architecture.
 
-**Done** (2026-08-13). Next freeze build-order step: status chrome.
+**Done** (2026-08-13). Later slices on this branch: status chrome, Grok hooks,
+stable tmux. Next freeze step: projects + spawn sibling.
 
 ## Not this plan
 

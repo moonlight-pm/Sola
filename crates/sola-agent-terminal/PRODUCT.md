@@ -49,6 +49,9 @@ becoming this product.
 spawn sibling with `--prompt`, Grok hooks + OSC 9999 + process-tree presence,
 `sat` CLI, tmux persist on socket `sola-at`.
 
+**First-class CLI:** **Grok.** Implement and test Grok first whenever adding
+agent support. Other CLIs are presence-only until Grok status is trustworthy.
+
 **Out (v1):** editor, browser, issue trackers, remotes, mobile, ACP chat,
 mailbox orchestration, 15 hook adapters.
 
@@ -67,7 +70,9 @@ policy, whether `sat` may launch the app, Claude hook installer vs presence.
 - Idea: `docs/ideas/2026-08-12-sola-agent-terminal.md` (Orca + sola-terminal research)
 - Freeze: `docs/specs/2026-08-13-sola-agent-terminal-design.md`
 - Incumbent grid: `crates/sola-terminal`
-- Incumbent kit: `crates/sola-kit` (atoms, `SidebarIndicator`, `SidebarPanel`)
+- Incumbent kit: `crates/sola-kit` (atoms, `SidebarIndicator`, `status_mark`, `SidebarPanel`)
+- Surface record: `crates/sola-agent-terminal/DESIGN.md` (status chrome)
+- Grok hooks: `~/.grok/hooks/sola-status.json` (do not touch `orca-status.json`)
 - No customer quotes, screenshots of this app, or usage stats. Do not fabricate.
 
 ## Product Principles

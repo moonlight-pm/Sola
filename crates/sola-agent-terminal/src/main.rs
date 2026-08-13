@@ -1,7 +1,7 @@
 //! sola-agent-terminal — project / workspace rail + agent-aware PTYs.
 //!
-//! Skeleton: one hardcoded project, one workspace, one live pane on our
-//! own tmux socket. Spawn, hooks, and `sat` are later slices.
+//! Status chrome + Grok hooks: reserved marks, hook socket, process-tree
+//! presence, OSC 9999. Demo rows remain for scan. Spawn and `sat` later.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,8 +25,11 @@ use sola_terminal::state::PaneRuntime;
 use sola_terminal::term_view::{self, CellMetrics, Palette};
 use sola_terminal::{extkeys, links, tmux};
 
+mod hooks;
 mod menu;
+mod presence;
 mod sidebar;
+mod status;
 mod workspace;
 
 const APP_ID: &str = "sola-agent-terminal";
@@ -76,7 +79,8 @@ fn main() -> iced::Result {
 
 struct App {
     project: workspace::Project,
-    workspace: workspace::Workspace,
+    workspaces: Vec<workspace::Workspace>,
+    selected: String,
     pane_id: String,
     runtime: Option<PaneRuntime>,
     theme: Theme,
@@ -89,6 +93,10 @@ struct App {
     keys_held_mods: keyboard::Modifiers,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
+    pane_status: status::PaneStatus,
+    hook_sock: String,
+    /// Previous pane id if we renamed an orphan tmux session onto `ws-main`.
+    adopted_from: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,16 +121,29 @@ enum Msg {
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,
+    SelectWorkspace(String),
+    StatusTick,
+    Hook(hooks::Incoming),
+    Osc(String, sola_terminal::osc9999::OscStatus),
+    PresenceTick,
     Noop,
 }
 
 impl App {
     fn boot() -> (Self, Task<Msg>) {
-        let (project, workspace) = workspace::seed();
-        let pane_id = uuid::Uuid::new_v4().to_string();
+        let hook_paths = hooks::start();
+        let _ = sola_terminal::osc9999::sender();
+        let (project, workspaces) = workspace::seed();
+        let selected = workspace::live(&workspaces)
+            .map(|w| w.id.clone())
+            .unwrap_or_else(|| workspace::LIVE_ID.into());
+        let adopted_from = workspace::adopt_orphan_session();
+        let pane_id = selected.clone();
+        let pane_status = status::hydrate(&selected).unwrap_or_default();
         let mut app = Self {
             project,
-            workspace,
+            workspaces,
+            selected,
             pane_id: pane_id.clone(),
             runtime: None,
             theme: default_theme(),
@@ -135,7 +156,11 @@ impl App {
             keys_held_mods: keyboard::Modifiers::empty(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
+            pane_status,
+            hook_sock: hook_paths.socket_path.to_string_lossy().into_owned(),
+            adopted_from,
         };
+        app.sync_live_row();
         let attach = app.attach_pane();
         (
             app,
@@ -157,6 +182,10 @@ impl App {
             emulator::output_subscription().map(Msg::PtyOutput),
             emulator::exit_subscription().map(Msg::PtyExit),
             emulator::title_subscription().map(|(id, t)| Msg::Title(id, t)),
+            hooks::subscription().map(Msg::Hook),
+            sola_terminal::osc9999::subscription()
+                .map(|(id, payload)| Msg::Osc(id, payload)),
+            iced::time::every(Duration::from_secs(1)).map(|_| Msg::PresenceTick),
             event::listen_with(|ev, status, _| match &ev {
                 Event::Keyboard(_) => Some(Msg::Input(ev)),
                 _ if matches!(status, iced::event::Status::Ignored) => Some(Msg::Input(ev)),
@@ -164,6 +193,15 @@ impl App {
             }),
             iced::window::resize_events().map(|(_id, size)| Msg::Resized(size)),
             iced::time::every(Duration::from_millis(530)).map(|_| Msg::BlinkTick),
+            if self
+                .workspaces
+                .iter()
+                .any(|w| w.status == status::AgentStatus::Working)
+            {
+                iced::window::frames().map(|_| Msg::StatusTick)
+            } else {
+                Subscription::none()
+            },
             event::listen_with(|ev, _, _| match ev {
                 Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Msg::CursorMoved(position.x, position.y))
@@ -190,6 +228,40 @@ impl App {
                 Task::none()
             }
             Msg::Noop => Task::none(),
+            Msg::StatusTick => Task::none(),
+            Msg::Hook(incoming) => {
+                if self.pane_is(&incoming.pane_id) {
+                    self.pane_status.apply_hook(&incoming);
+                    status::persist(&self.selected, &self.pane_status);
+                    self.sync_live_row();
+                }
+                Task::none()
+            }
+            Msg::Osc(id, payload) => {
+                if self.pane_is(&id) {
+                    self.pane_status.apply_osc(&payload);
+                    status::persist(&self.selected, &self.pane_status);
+                    self.sync_live_row();
+                }
+                Task::none()
+            }
+            Msg::PresenceTick => {
+                let tmux_session = tmux::session_name(&self.pane_id);
+                let who = presence::scan_session(&tmux_session);
+                self.pane_status.apply_presence(who);
+                self.sync_live_row();
+                Task::none()
+            }
+            Msg::SelectWorkspace(id) => {
+                if self
+                    .workspaces
+                    .iter()
+                    .any(|w| w.id == id && !w.demo)
+                {
+                    self.selected = id;
+                }
+                Task::none()
+            }
             Msg::PtyOutput(id) => {
                 if id == self.pane_id {
                     if let Some(rt) = &self.runtime {
@@ -311,7 +383,8 @@ impl App {
             sidebar::view(
                 &self.sidebar,
                 &self.project,
-                &self.workspace,
+                &self.workspaces,
+                &self.selected,
                 &self.theme,
                 self.palette.bg,
             ),
@@ -373,7 +446,9 @@ impl App {
         let cols = if cols == 0 { DEFAULT_COLS } else { cols };
         let rows = if rows == 0 { DEFAULT_ROWS } else { rows };
         let tmux_session = tmux::session_name(&self.pane_id);
-        let cwd = self.workspace.path.to_string_lossy().into_owned();
+        let cwd = workspace::live(&self.workspaces)
+            .map(|w| w.path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| ".".into());
 
         let listener = Listener::new(
             self.pane_id.clone(),
@@ -385,7 +460,13 @@ impl App {
         let term = em.term();
         let cursor = em.cursor_snap();
 
-        let backend = match PtyBackend::spawn_or_attach(
+        let pane_id = self.pane_id.clone();
+        let hook_sock = self.hook_sock.clone();
+        let env = [
+            ("SOLA_PANE_ID", pane_id.as_str()),
+            ("SOLA_AT_HOOKS_SOCK", hook_sock.as_str()),
+        ];
+        let backend = match PtyBackend::spawn_or_attach_with_env(
             &self.pane_id,
             &tmux_session,
             cols,
@@ -395,6 +476,7 @@ impl App {
             cursor,
             emulator::notify_sender(),
             emulator::exit_sender(),
+            &env,
         ) {
             Ok(b) => b,
             Err(e) => {
@@ -410,6 +492,17 @@ impl App {
             cache: canvas::Cache::default(),
         });
         Task::none()
+    }
+
+    fn pane_is(&self, id: &str) -> bool {
+        id == self.pane_id || self.adopted_from.as_deref() == Some(id)
+    }
+
+    fn sync_live_row(&mut self) {
+        if let Some(ws) = self.workspaces.iter_mut().find(|w| !w.demo) {
+            ws.status = self.pane_status.status;
+            ws.agent = self.pane_status.agent.clone();
+        }
     }
 
     fn resize_pane(&mut self) {

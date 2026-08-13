@@ -10,7 +10,7 @@ See [`progress-model.md`](progress-model.md).
 
 **Status vocabulary:** `shipped` · `partial` · `spec’d` · `planned` · `idea`
 
-**As of:** 2026-08-13 (agent-terminal freeze + compiling skeleton)
+**As of:** 2026-08-13 (agent-terminal Grok hooks, local smoke)
 
 **Manual column:** `yes` = may document as fact · `partial` = limited honest
 docs · `no` = do not present as product · `n/a` = engineering-only.
@@ -63,7 +63,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 | browser-wpe | Browser chrome + WPE engine | partial | browser freezes | local | Chrome features incomplete vs plan; engine quirks | no |
 | browser-cef | Parallel CEF engine | partial | [cef port](specs/2026-05-04-cef-port-design.md) | local | Secondary path; not default for all users | no |
 | agent | sola-agent ACP + Grok leader | partial | [acp runner](specs/2026-07-23-sola-agent-acp-runner-design.md), [ui backlog](specs/2026-07-23-sola-agent-ui-backlog.md) | local + leader | Pin UI missing; backlog A–I incomplete; history disk-only. **Not** the starting point for agent-terminal. | no |
-| agent-terminal | sola-agent-terminal: project groups + workspaces + agent-aware PTYs | partial | [freeze](specs/2026-08-13-sola-agent-terminal-design.md), [idea](ideas/2026-08-12-sola-agent-terminal.md) | compiles (`cargo make build sola-agent-terminal`); not installed | **Gaps:** no persist; no spawn; no hooks/status; no `sat`; one hardcoded project/workspace; idle mark only. Distinct from `sola-agent`. | no |
+| agent-terminal | sola-agent-terminal: project groups + workspaces + agent-aware PTYs | partial | [freeze](specs/2026-08-13-sola-agent-terminal-design.md), [idea](ideas/2026-08-12-sola-agent-terminal.md) | local install; Grok working→done marks + `sat-ws-main` reattach smoked | **Gaps:** no project persist / spawn sibling; no `sat`; no toast-on-done; demo rows still seeded; Claude presence-only. Distinct from `sola-agent`. | no |
 | mail | sola-mail kit client | partial | [mail kit](specs/2026-07-27-sola-mail-kit-design.md) | local IMAP | Rich-text link hits; multiline polish; no full offline | no |
 | monitor | sola-monitor bus audit | partial | monitor kit port | local | UX depth | no |
 | preview | sola-preview + selection capture | partial | [preview](specs/2026-08-04-sola-preview-and-selection-capture-design.md) | local | Zoom; image clipboard; solactl --region | no |
@@ -98,7 +98,7 @@ docs · `no` = do not present as product · `n/a` = engineering-only.
 
 | Area | Notes |
 |------|--------|
-| **agent-terminal** | 2026-08-13: freeze + compiling skeleton on `naturalethic/sola-agent-terminal`; not installed. `sola-terminal` is a lib. |
+| **agent-terminal** | 2026-08-13: Grok hooks + status chrome + stable tmux; local smoke (marks + reattach). Spawn next. |
 | **sola-arcade** | 2026-08-08: banner list + nest; library cache + bg rescan; A–Z/Recent; ready-to-play filter; lazy viewport banners; Install on uninstalled; `--nested-steam` (no BPM); exit nested Steam on game quit; scroll preserve; Cinema exit; gamescope float 16:9 |
 | **Distribution → master** | 2026-08-06: `sola-install`, Plymouth flower, qcow e2e loginless Sola, ISO scaffold |
 | Float defaults | Unassigned windows default-float + kit CSD on first-party apps |

@@ -15,5 +15,6 @@ sola-terminal = { path = "../sola-terminal" }
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "advanced", "canvas"] }
 alacritty_terminal = "=0.26.0"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
-uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

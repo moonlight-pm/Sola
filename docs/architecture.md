@@ -63,7 +63,7 @@ to the bus and tolerate compositor restarts.
 | `crates/sola-kit` | Iced app kit + storybook |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, …) |
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
-| `crates/sola-agent-terminal` | Project / workspace rail + agent-aware PTYs (tmux socket `sola-at`). Skeleton on this branch. |
+| `crates/sola-agent-terminal` | Project / workspace rail + agent-aware PTYs (tmux `sola-at`). Grok hooks on `$XDG_RUNTIME_DIR/sola-at-hooks.sock`; OSC 9999 stripped in the term lib. |
 | `crates/sola-browser*` | Chrome + WPE (primary) / CEF (parallel) |
 | `crates/sola-agent` | Coding agent UI (ACP → Grok leader) — not the start of agent-terminal |
 | `crates/sola-mail` | Kit-native mail client |

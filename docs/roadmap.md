@@ -47,9 +47,9 @@ rows for feature-level progress.
 **Status: partial**
 
 - Terminal iced, browser WPE/CEF, agent ACP, mail kit, preview, kvm  
-- `sola-agent-terminal` freeze + compiling skeleton (this branch; not on master)
+- `sola-agent-terminal` freeze + Grok hooks (this branch; not on master)
 
-**Remaining:** agent-terminal hooks/spawn/`sat`; agent UI backlog; browser chrome
+**Remaining:** agent-terminal spawn/`sat`; agent UI backlog; browser chrome
 completeness; mail polish; kvm input ACL permanence; preview zoom/clipboard.
 
 ---

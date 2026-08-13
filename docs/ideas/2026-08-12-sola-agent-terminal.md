@@ -1,6 +1,6 @@
 # sola-agent-terminal — a native, Orca-shaped workspace tool
 
-**Status:** promoted. Freeze: [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](../specs/2026-08-13-sola-agent-terminal-design.md). Skeleton compiles; not installed.  
+**Status:** promoted. Freeze: [`docs/specs/2026-08-13-sola-agent-terminal-design.md`](../specs/2026-08-13-sola-agent-terminal-design.md). Grok hooks + tmux reattach smoked locally.  
 **Name:** `sola-agent-terminal` (working title).  
 **Out of scope by request:** `crates/sola-agent` (ACP / Grok-leader chat). That crate is a different product and is not a starting point.  
 **Living focus pointer:** root [`CURRENT.md`](../../CURRENT.md) **Now** item 1 (this branch).  
@@ -10,9 +10,9 @@ This note is a research-backed sketch: what Orca actually is, what `sola-termina
 
 ### Where a new session left off (2026-08-13)
 
-Promoted to freeze. Skeleton crate compiles (`cargo make build sola-agent-terminal`): one project / one workspace / one PTY on tmux socket `sola-at`. `sola-terminal` is now a library (`tmux::configure`). Kit `SidebarIndicator` has Working/Waiting/Done. Not installed.
+Promoted to freeze. Grok hooks + status chrome + `sat-ws-main` reattach smoked. Demo rows still seeded.
 
-**Next:** status chrome with live marks, then Grok hooks. Ask D3; do not invent.
+**Next:** projects + workspaces + spawn sibling. Ask D3; do not invent. Grok stays the first-class CLI.
 
 **Decided here (not still a fork):**
 
