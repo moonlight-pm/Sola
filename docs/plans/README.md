@@ -15,6 +15,9 @@ Not freezes (those are [`../specs/`](../specs/)). Not the capability matrix.
 
 ## Active
 
+- [2026-08-13-unified-sidebar-plan.md](2026-08-13-unified-sidebar-plan.md) —
+  unify kit sidebars on browser etch look (`SidebarPanel` / items); worktree
+  `feature/unified-sidebar` — design draft, code not started
 - [2026-08-05-distribution-qemu-image-plan.md](2026-08-05-distribution-qemu-image-plan.md) —
   distribution installer (qcow e2e **done** on master; **ISO e2e** + TZ auto +
   Shape 1 refresh still open)
